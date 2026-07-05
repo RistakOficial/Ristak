@@ -169,6 +169,32 @@ Si tu terminal sigue en Node 20, usa Node 22 temporal:
 npx -p node@22 -p @capacitor/cli@8.4.0 cap sync
 ```
 
+## Analiticas nativas
+
+`/movil/analytics` es la fuente de verdad visual y funcional para la pantalla de
+analiticas en `mobile/`. El cliente nativo debe consumir las mismas APIs que la
+pantalla web movil:
+
+- `/api/dashboard/metrics`
+- `/api/dashboard/financial-overview`
+- `/api/dashboard/visitors`, `/leads`, `/appointments`, `/attendances` y
+  `/sales`
+- `/api/dashboard/funnel`
+- `/api/dashboard/origin-distribution`
+- `/api/whatsapp-api/status`
+- `/api/highlevel/custom-labels`
+
+Los rangos visibles `30d`, `60d`, `180d`, `year` y `custom` deben calcularse con
+la zona horaria de negocio (`account_timezone`) y los importes deben formatearse
+con `account_currency`. No uses la zona del iPhone ni una moneda hardcodeada como
+fuente de verdad de negocio. El rango personalizado usa fechas `YYYY-MM-DD` y
+debe aplicar el mismo rango a metricas, grafica, embudo y origen.
+
+La pantalla nativa debe conservar la estructura de `PhoneAnalytics`: encabezado
+`Analiticas`, selector de periodo, 8 KPIs, grafica principal con chips, scopes
+financieros, embudo con scopes, origen por fuente y origen por numero de
+WhatsApp cuando existan varios numeros detectados.
+
 ## Icono de instalación
 
 El icono público de la app móvil usa el isotipo de Ristak. iOS usa variantes

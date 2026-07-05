@@ -4,8 +4,14 @@ import type {
   ChatContact,
   ConfigValue,
   ContactTag,
+  CustomLabels,
   ConversationAgentState,
+  DashboardFinancialPoint,
+  DashboardFunnelRow,
+  DashboardFunnelScope,
   DashboardMetrics,
+  DashboardSeriesPoint,
+  OriginDistributionData,
   JourneyEvent,
   LoginResponse,
   ProductItem,
@@ -13,6 +19,7 @@ import type {
   SendTextResponse,
   TransactionItem,
   VerifyResponse,
+  WhatsAppApiStatus,
 } from './types';
 
 type RequestOptions = RequestInit & {
@@ -251,6 +258,58 @@ export class RistakApiClient {
         endDate,
       },
     });
+  }
+
+  getFinancialOverview(startDate: string, endDate: string, scope: DashboardFunnelScope = 'all') {
+    return this.request<DashboardFinancialPoint[]>('/dashboard/financial-overview', {
+      params: {
+        startDate,
+        endDate,
+        scope,
+      },
+    });
+  }
+
+  getDashboardSeries(
+    kind: 'visitors' | 'leads' | 'appointments' | 'attendances' | 'sales',
+    startDate: string,
+    endDate: string,
+    groupBy: 'day' | 'month' = 'day',
+  ) {
+    return this.request<DashboardSeriesPoint[]>(`/dashboard/${kind}`, {
+      params: {
+        startDate,
+        endDate,
+        groupBy,
+      },
+    });
+  }
+
+  getFunnelData(startDate: string, endDate: string, scope: DashboardFunnelScope = 'all') {
+    return this.request<DashboardFunnelRow[]>('/dashboard/funnel', {
+      params: {
+        startDate,
+        endDate,
+        scope,
+      },
+    });
+  }
+
+  getOriginDistribution(startDate: string, endDate: string) {
+    return this.request<OriginDistributionData>('/dashboard/origin-distribution', {
+      params: {
+        startDate,
+        endDate,
+      },
+    });
+  }
+
+  getWhatsAppApiStatus() {
+    return this.request<WhatsAppApiStatus>('/whatsapp-api/status');
+  }
+
+  getCustomLabels() {
+    return this.request<CustomLabels>('/highlevel/custom-labels');
   }
 
   getCalendars() {

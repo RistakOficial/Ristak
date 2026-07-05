@@ -120,6 +120,77 @@ export type DashboardMetrics = {
   ltvPromedio?: DashboardKpi;
 };
 
+export type DashboardSeriesPoint = {
+  label: string;
+  value: number;
+};
+
+export type DashboardFinancialPoint = {
+  label: string;
+  value: number;
+  value2: number;
+};
+
+export type DashboardFunnelScope = 'all' | 'attribution' | 'campaigns';
+
+export type DashboardFunnelRow = {
+  stage: string;
+  value: number;
+};
+
+export type SourceDatum = {
+  name: string;
+  value: number;
+  color?: string;
+};
+
+export type WhatsAppNumberOriginDatum = SourceDatum & {
+  phoneNumberId?: string | null;
+  phoneNumber?: string | null;
+  displayPhoneNumber?: string | null;
+  status?: string | null;
+  apiSendEnabled?: boolean;
+  qrSendEnabled?: boolean;
+};
+
+export type OriginDistributionData = {
+  traffic: {
+    sources: SourceDatum[];
+    platforms: SourceDatum[];
+    devices: SourceDatum[];
+    placements: SourceDatum[];
+    browsers: SourceDatum[];
+    os: SourceDatum[];
+  };
+  leads: SourceDatum[];
+  appointments: SourceDatum[];
+  conversions: SourceDatum[];
+  whatsappNumbers?: WhatsAppNumberOriginDatum[];
+};
+
+export type WhatsAppApiPhoneNumber = {
+  id?: string;
+  phone_number?: string | null;
+  display_phone_number?: string | null;
+  verified_name?: string | null;
+  label?: string | null;
+  api_send_enabled?: boolean;
+  qr_send_enabled?: boolean;
+  qr_status?: string | null;
+  qr_connected_phone?: string | null;
+};
+
+export type WhatsAppApiStatus = {
+  phoneNumbers?: WhatsAppApiPhoneNumber[];
+};
+
+export type CustomLabels = {
+  customer: string;
+  customers: string;
+  lead: string;
+  leads: string;
+};
+
 export type ProductPrice = {
   id?: string;
   _id?: string;

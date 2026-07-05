@@ -28,6 +28,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 - Chat movil original: `frontend/src/pages/PhoneChat/PhoneChat.tsx`.
 - Estilos de chat original: `frontend/src/pages/PhoneChat/PhoneChat.module.css`.
+- Analiticas moviles originales: `frontend/src/pages/PhoneAnalytics/PhoneAnalytics.tsx`
+  y `frontend/src/pages/PhoneAnalytics/PhoneAnalytics.module.css`.
+- Servicios de analiticas moviles: `frontend/src/services/dashboardService.ts`
+  y `frontend/src/services/whatsappApiService.ts`.
 - Navegacion movil original: `frontend/src/components/phone/phoneNavigation.ts`.
 - Chips/filtros moviles: `frontend/src/components/phone/ui/PhoneFilterChips.tsx`
   y la configuracion en `PhoneChat.tsx`.
@@ -158,6 +162,27 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     completos para crear cita/pago dentro del sheet y selector de fecha/hora
     avanzado para programacion.
 - [ ] Sheets de configuracion movil relevantes.
+
+## Fase Analiticas
+
+- [x] Consumir los endpoints reales de `/movil/analytics`: metricas,
+  `financial-overview`, series de visitantes/leads/citas/asistencias/ventas,
+  embudo, distribucion de origen, estado de WhatsApp y labels personalizados.
+- [x] Calcular rangos `30d`, `60d`, `180d`, `year` y `custom` con fecha de
+  negocio usando `account_timezone` en vez de depender del reloj local del
+  iPhone.
+- [x] Formatear importes con `account_currency`, no con una moneda hardcodeada
+  como default de negocio.
+- [x] Replicar estructura visible de `PhoneAnalytics`: encabezado `Analiticas`,
+  selector de periodo, 8 tarjetas KPI, grafica principal con chips, scope
+  financiero, leyenda, embudo con scopes, fuentes y origen por numero de
+  WhatsApp.
+- [x] Agregar estados de loading, error, vacio y pull to refresh nativos.
+- [ ] Validar visualmente contra `/movil/analytics` en iPhone real y ajustar
+  proporciones finas de tipografia, espaciado, iconos o animacion si Raúl detecta
+  diferencias.
+- [ ] Extraer componentes nativos reutilizables de analiticas cuando la app deje
+  de vivir centralizada en `mobile/src/App.tsx`.
 
 ## Validacion minima por fase
 

@@ -121,21 +121,68 @@ export function formatCurrency(value?: number, currency = 'MXN') {
   }).format(Number(value || 0));
 }
 
-export function getTodayRange(days = 30) {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - Math.max(0, days - 1));
+export function formatNumber(value?: number) {
+  return new Intl.NumberFormat('es-MX', {
+    maximumFractionDigits: 0,
+  }).format(Number(value || 0));
+}
 
-  const toDateOnly = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
+export function formatRoas(value?: number) {
+  return `${Number(value || 0).toFixed(2)}x`;
+}
+
+export function formatCompactNumber(value?: number) {
+  return new Intl.NumberFormat('es-MX', {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: 1,
+  }).format(Number(value || 0));
+}
+
+export function formatCompactCurrency(value: number | undefined, currency: string) {
+  return new Intl.NumberFormat('es-MX', {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: 1,
+    style: 'currency',
+    currency,
+  }).format(Number(value || 0));
+}
+
+export function normalizeCurrencyCode(value?: string | null) {
+  const currency = String(value || '').trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(currency)) return 'MXN';
+  try {
+    new Intl.NumberFormat('es-MX', { style: 'currency', currency }).format(0);
+    return currency;
+  } catch {
+    return 'MXN';
+  }
+}
+
+function dateOnlyFromParts(parts: { year: number; month: number; day: number }) {
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+export function todayDateOnlyInTimezone(timezone?: string | null, referenceDate: Date = new Date()) {
+  const parts = getZonedDateParts(referenceDate, timezone);
+  return parts ? dateOnlyFromParts(parts) : dateOnlyFromParts(getZonedDateParts(referenceDate, DEFAULT_BUSINESS_TIMEZONE)!);
+}
+
+function addDaysToDateOnly(dateOnly: string, offsetDays: number) {
+  const [year, month, day] = dateOnly.split('-').map((part) => Number(part));
+  if (!year || !month || !day) return dateOnly;
+  const shifted = new Date(Date.UTC(year, month - 1, day + offsetDays));
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+}
+
+export function getTodayRange(days = 30, timezone?: string | null) {
+  const endDate = todayDateOnlyInTimezone(resolveBusinessTimezone(timezone));
+  const startDate = addDaysToDateOnly(endDate, -Math.max(0, days - 1));
 
   return {
-    startDate: toDateOnly(start),
-    endDate: toDateOnly(end),
+    startDate,
+    endDate,
   };
 }
 

@@ -24,6 +24,7 @@ import * as SystemUI from 'expo-system-ui';
 import * as ImagePicker from 'expo-image-picker';
 import {
   Archive,
+  Activity,
   BarChart3,
   Bell,
   BellOff,
@@ -32,9 +33,13 @@ import {
   Camera,
   Check,
   CheckCheck,
+  CheckCircle2,
   ChevronLeft,
+  ChevronDown,
   CircleDollarSign,
   Clock,
+  CreditCard,
+  DollarSign,
   Mail,
   MessageCircle,
   MoreHorizontal,
@@ -45,11 +50,16 @@ import {
   Search,
   Settings,
   Tag,
+  Target,
+  TrendingDown,
+  TrendingUp,
   User,
+  Users,
+  WalletCards,
   X,
   type LucideIcon,
 } from 'lucide-react-native';
-import Svg, { Circle, Path, Rect } from 'react-native-svg';
+import Svg, { Circle, Line, Path, Polyline, Rect, Text as SvgText } from 'react-native-svg';
 import {
   clearAuthToken,
   clearRuntimeState,
@@ -65,11 +75,16 @@ import {
   buildMessagesFromJourney,
   cleanBaseUrl,
   formatChatListDate,
+  formatCompactCurrency,
+  formatCompactNumber,
   formatCurrency,
+  formatNumber,
+  formatRoas,
   formatShortDate,
   getContactAvatar,
   getContactName,
   getTodayRange,
+  normalizeCurrencyCode,
   resolveBusinessTimezone,
 } from './format';
 import type {
@@ -78,12 +93,19 @@ import type {
   ChatContact,
   ChatMessage,
   ContactTag,
+  CustomLabels,
   ConversationAgentState,
+  DashboardFunnelRow,
+  DashboardFunnelScope,
   DashboardMetrics,
+  OriginDistributionData,
   PhoneSection,
   ProductItem,
   RistakUser,
+  SourceDatum,
   TransactionItem,
+  WhatsAppApiPhoneNumber,
+  WhatsAppNumberOriginDatum,
 } from './types';
 
 const COLORS = {
@@ -121,6 +143,35 @@ type ChatFilterPreset = {
   locked?: boolean;
   separatorBefore?: boolean;
 };
+type AnalyticsPeriod = '30d' | '60d' | '180d' | 'year' | 'custom';
+type AnalyticsChartView = 'revenue-spend' | 'visitors-leads' | 'leads-appointments' | 'appointments-attendances' | 'attendances-sales';
+type AnalyticsOriginTab = 'traffic' | 'leads' | 'appointments' | 'conversions';
+type AnalyticsChartPoint = {
+  label: string;
+  value: number;
+  value2: number;
+};
+type AnalyticsChartMeta = {
+  label1: string;
+  label2: string;
+  color1: string;
+  color2: string;
+  currency: boolean;
+};
+type AnalyticsMetricCardConfig = {
+  key: keyof DashboardMetrics;
+  title: string;
+  Icon: LucideIcon;
+  tone: 'green' | 'black' | 'blue' | 'gold' | 'red';
+  formatter: (value: number) => string;
+};
+type AnalyticsPhoneNumberOriginRow = {
+  key: string;
+  name: string;
+  phone: string;
+  value: number;
+  statusLabel: string;
+};
 
 const PHONE_NAV_ITEMS: Array<{ key: PhoneSection; label: string; Icon: LucideIcon }> = [
   { key: 'settings', label: 'Ajustes', Icon: Settings },
@@ -154,6 +205,31 @@ const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
 const AI_AGENT_CHAT_SEARCH_TEXT = 'asistente personal ai ristak ai agente inteligencia artificial ia';
+const DEFAULT_CUSTOM_LABELS: CustomLabels = {
+  customer: 'Cliente',
+  customers: 'Clientes',
+  lead: 'Interesado',
+  leads: 'Interesados',
+};
+const ANALYTICS_PERIOD_OPTIONS: Array<{ id: AnalyticsPeriod; label: string; menuLabel: string; days?: number }> = [
+  { id: '30d', label: '30 días', menuLabel: 'Últimos 30 días', days: 30 },
+  { id: '60d', label: '60 días', menuLabel: 'Últimos 60 días', days: 60 },
+  { id: '180d', label: '180 días', menuLabel: 'Últimos 180 días', days: 180 },
+  { id: 'year', label: 'Año', menuLabel: 'Último año', days: 365 },
+  { id: 'custom', label: 'Personalizado', menuLabel: 'Fecha personalizada' },
+];
+const ANALYTICS_SCOPE_OPTIONS: Array<{ id: DashboardFunnelScope; label: string }> = [
+  { id: 'all', label: 'Todos' },
+  { id: 'attribution', label: 'Al registro' },
+  { id: 'campaigns', label: 'Anuncios' },
+];
+const EMPTY_ORIGIN_DATA: OriginDistributionData = {
+  traffic: { sources: [], platforms: [], devices: [], placements: [], browsers: [], os: [] },
+  leads: [],
+  appointments: [],
+  conversions: [],
+  whatsappNumbers: [],
+};
 const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
   { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', locked: true },
   { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos' },
@@ -311,6 +387,15 @@ function PhoneShell({
     );
   }
 
+  if (activeSection === 'analytics') {
+    return (
+      <AppFrame>
+        <AnalyticsSection api={api} />
+        {dock}
+      </AppFrame>
+    );
+  }
+
   return (
     <AppFrame>
       <SectionHeader
@@ -322,7 +407,6 @@ function PhoneShell({
       />
       {activeSection === 'calendar' ? <CalendarSection api={api} /> : null}
       {activeSection === 'payments' ? <PaymentsSection api={api} /> : null}
-      {activeSection === 'analytics' ? <AnalyticsSection api={api} /> : null}
       {activeSection === 'settings' ? <SettingsSection api={api} /> : null}
       {dock}
     </AppFrame>
@@ -1539,60 +1623,932 @@ function CalendarSection({ api }: { api: RistakApiClient }) {
   );
 }
 
-function AnalyticsSection({ api }: { api: RistakApiClient }) {
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+function getDateOnlyUtcTime(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match) return null;
 
-  const load = useCallback(async () => {
-    const range = getTodayRange(30);
-    setLoading(true);
-    setError('');
-    try {
-      setMetrics(await api.getDashboardMetrics(range.startDate, range.endDate));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudieron cargar las analiticas.');
-    } finally {
-      setLoading(false);
-    }
-  }, [api]);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const time = Date.UTC(year, month - 1, day);
+  const date = new Date(time);
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  return time;
+}
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+function isValidDateOnly(value: string) {
+  return getDateOnlyUtcTime(value) !== null;
+}
 
-  const rows = [
-    { title: 'Ingresos netos', metric: metrics?.ingresosNetos, money: true },
-    { title: 'Gasto publicidad', metric: metrics?.gastosPublicidad, money: true },
-    { title: 'Ganancia neta', metric: metrics?.gananciaNeta, money: true },
-    { title: 'ROAS', metric: metrics?.roas, money: false },
-  ];
+function getDateOnlySpanDays(startDate: string, endDate: string) {
+  const start = getDateOnlyUtcTime(startDate);
+  const end = getDateOnlyUtcTime(endDate);
+  if (start === null || end === null) return 0;
+  return Math.max(0, Math.round((end - start) / 86400000) + 1);
+}
+
+function formatDateOnlyRangeLabel(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
+  if (!match || !isValidDateOnly(value)) return value;
+  const day = match[3];
+  const month = Number(match[2]);
+  const monthLabel = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][month - 1] || '';
+  return `${day}-${monthLabel}`;
+}
+
+function getAnalyticsGroupBy(period: AnalyticsPeriod, startDate?: string, endDate?: string): 'day' | 'month' {
+  if (period === 'custom') {
+    return getDateOnlySpanDays(startDate || '', endDate || '') > 120 ? 'month' : 'day';
+  }
+
+  return period === '180d' || period === 'year' ? 'month' : 'day';
+}
+
+function combineAnalyticsSeries(first: Array<{ label: string; value: number }>, second: Array<{ label: string; value: number }>): AnalyticsChartPoint[] {
+  const firstMap = new Map(first.map((item) => [item.label, Number(item.value) || 0]));
+  const secondMap = new Map(second.map((item) => [item.label, Number(item.value) || 0]));
+  const labels = Array.from(new Set([...firstMap.keys(), ...secondMap.keys()])).sort();
+
+  return labels.map((label) => ({
+    label,
+    value: firstMap.get(label) || 0,
+    value2: secondMap.get(label) || 0,
+  }));
+}
+
+function getVariationLabel(value?: number) {
+  const numeric = Number(value || 0);
+  const rounded = Math.abs(numeric).toFixed(1);
+  if (numeric > 0) return `+${rounded}%`;
+  if (numeric < 0) return `-${rounded}%`;
+  return '0%';
+}
+
+function cleanAnalyticsLabels(labels?: Partial<CustomLabels> | null): CustomLabels {
+  return {
+    customer: String(labels?.customer || '').trim() || DEFAULT_CUSTOM_LABELS.customer,
+    customers: String(labels?.customers || '').trim() || DEFAULT_CUSTOM_LABELS.customers,
+    lead: String(labels?.lead || '').trim() || DEFAULT_CUSTOM_LABELS.lead,
+    leads: String(labels?.leads || '').trim() || DEFAULT_CUSTOM_LABELS.leads,
+  };
+}
+
+function normalizeAnalyticsPhone(value?: string | null) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function getPhoneStatusLabel(phone?: WhatsAppApiPhoneNumber, row?: WhatsAppNumberOriginDatum) {
+  const qrConnected = phone?.qr_status === 'connected' || phone?.qr_send_enabled || row?.qrSendEnabled;
+  const apiActive = phone?.api_send_enabled || row?.apiSendEnabled;
+
+  if (qrConnected && apiActive) return 'API y web';
+  if (qrConnected) return 'Web activo';
+  if (apiActive) return 'API activa';
+  return 'Detectado';
+}
+
+function getPhoneName(phone: WhatsAppApiPhoneNumber, row?: WhatsAppNumberOriginDatum) {
+  return phone.label || phone.verified_name || row?.name || phone.display_phone_number || phone.phone_number || 'Número';
+}
+
+function getPhoneDisplay(phone: WhatsAppApiPhoneNumber, row?: WhatsAppNumberOriginDatum) {
+  return phone.display_phone_number || phone.phone_number || row?.displayPhoneNumber || row?.phoneNumber || '';
+}
+
+function buildPhoneNumberRows(
+  apiRows: WhatsAppNumberOriginDatum[],
+  detectedPhones: WhatsAppApiPhoneNumber[],
+): AnalyticsPhoneNumberOriginRow[] {
+  const usedApiRows = new Set<number>();
+  const rows: AnalyticsPhoneNumberOriginRow[] = [];
+
+  detectedPhones.forEach((phone) => {
+    const phoneId = phone.id || '';
+    const phoneDigits = normalizeAnalyticsPhone(phone.phone_number || phone.display_phone_number || phone.qr_connected_phone);
+    const matchedIndex = apiRows.findIndex((row, index) => {
+      if (usedApiRows.has(index)) return false;
+      const rowDigits = normalizeAnalyticsPhone(row.phoneNumber || row.displayPhoneNumber);
+      return (phoneId && row.phoneNumberId === phoneId) || (phoneDigits && rowDigits && phoneDigits === rowDigits);
+    });
+    const matchedRow = matchedIndex >= 0 ? apiRows[matchedIndex] : undefined;
+
+    if (matchedIndex >= 0) usedApiRows.add(matchedIndex);
+
+    rows.push({
+      key: phone.id || phone.phone_number || phone.display_phone_number || `phone-${rows.length}`,
+      name: getPhoneName(phone, matchedRow),
+      phone: getPhoneDisplay(phone, matchedRow),
+      value: matchedRow?.value || 0,
+      statusLabel: getPhoneStatusLabel(phone, matchedRow),
+    });
+  });
+
+  apiRows.forEach((row, index) => {
+    if (usedApiRows.has(index)) return;
+
+    rows.push({
+      key: row.phoneNumberId || row.phoneNumber || row.displayPhoneNumber || `origin-${index}`,
+      name: row.name,
+      phone: row.displayPhoneNumber || row.phoneNumber || '',
+      value: row.value || 0,
+      statusLabel: getPhoneStatusLabel(undefined, row),
+    });
+  });
+
+  return rows;
+}
+
+function formatChartDateLabel(label: string) {
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(label);
+  if (dateOnly) {
+    const day = Number(dateOnly[3]);
+    const month = Number(dateOnly[2]);
+    const monthLabel = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][month - 1] || '';
+    return `${day} ${monthLabel}`.trim();
+  }
+
+  const monthOnly = /^(\d{4})-(\d{2})$/.exec(label);
+  if (monthOnly) {
+    const month = Number(monthOnly[2]);
+    return ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][month - 1] || label;
+  }
+
+  return label;
+}
+
+function getAnalyticsToneStyle(tone: AnalyticsMetricCardConfig['tone']) {
+  if (tone === 'black') return styles.analyticsToneblack;
+  if (tone === 'blue') return styles.analyticsToneblue;
+  if (tone === 'gold') return styles.analyticsTonegold;
+  if (tone === 'red') return styles.analyticsTonered;
+  return styles.analyticsTonegreen;
+}
+
+function getAnalyticsIconColor(tone: AnalyticsMetricCardConfig['tone']) {
+  return tone === 'black' || tone === 'green' ? COLORS.bg : COLORS.text;
+}
+
+function AnalyticsDualLineChart({
+  data,
+  meta,
+  currency,
+}: {
+  data: AnalyticsChartPoint[];
+  meta: AnalyticsChartMeta;
+  currency: string;
+}) {
+  const width = 320;
+  const height = 176;
+  const padding = { top: 18, right: 14, bottom: 28, left: 14 };
+  const maxValue = Math.max(1, ...data.flatMap((item) => [item.value || 0, item.value2 || 0]));
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+
+  const buildPoints = (key: 'value' | 'value2') => data.map((point, index) => {
+    const x = data.length <= 1
+      ? width / 2
+      : padding.left + (index / (data.length - 1)) * plotWidth;
+    const y = padding.top + plotHeight - ((point[key] || 0) / maxValue) * plotHeight;
+    return `${x.toFixed(2)},${y.toFixed(2)}`;
+  }).join(' ');
+
+  const labelIndexes = Array.from(new Set([
+    0,
+    Math.floor((data.length - 1) / 2),
+    data.length - 1,
+  ])).filter((index) => index >= 0 && data[index]);
 
   return (
-    <ScrollView contentContainerStyle={styles.sectionScroll}>
-      <View style={styles.segmentWrap}>
-        <Text style={styles.segmentActive}>30 dias</Text>
-        <Text style={styles.segmentLabel}>Embudo</Text>
-        <Text style={styles.segmentLabel}>Origen</Text>
-      </View>
-      <SectionState loading={loading} error={error} onRetry={load} />
-      {!loading && !error ? (
-        <SectionBlock title="Resumen">
-          {rows.map((row) => {
-            const value = Number(row.metric?.value || 0);
-            const variation = Number(row.metric?.variation || 0);
-            return (
-              <InfoRow
-                key={row.title}
-                title={row.title}
-                subtitle={`${variation >= 0 ? '+' : ''}${variation.toFixed(1)}% vs periodo anterior`}
-                value={row.money ? formatCurrency(value) : value.toFixed(2)}
-              />
-            );
-          })}
-        </SectionBlock>
+    <View style={styles.analyticsChartCanvas}>
+      <Text style={styles.analyticsChartTopScale}>
+        {meta.currency ? formatCompactCurrency(maxValue, currency) : formatCompactNumber(maxValue)}
+      </Text>
+      <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
+        {[0.25, 0.5, 0.75].map((step) => {
+          const y = padding.top + plotHeight * step;
+          return (
+            <Line
+              key={step}
+              x1={padding.left}
+              x2={width - padding.right}
+              y1={y}
+              y2={y}
+              stroke={COLORS.border}
+              strokeWidth={1}
+            />
+          );
+        })}
+        <Polyline
+          points={buildPoints('value')}
+          fill="none"
+          stroke={meta.color1}
+          strokeWidth={2.6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <Polyline
+          points={buildPoints('value2')}
+          fill="none"
+          stroke={meta.color2}
+          strokeWidth={2.6}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        {data.map((point, index) => {
+          const x = data.length <= 1
+            ? width / 2
+            : padding.left + (index / (data.length - 1)) * plotWidth;
+          const y1 = padding.top + plotHeight - ((point.value || 0) / maxValue) * plotHeight;
+          const y2 = padding.top + plotHeight - ((point.value2 || 0) / maxValue) * plotHeight;
+
+          return (
+            <React.Fragment key={`${point.label}-${index}`}>
+              <Circle cx={x} cy={y1} r={2.8} fill={meta.color1} />
+              <Circle cx={x} cy={y2} r={2.8} fill={meta.color2} />
+            </React.Fragment>
+          );
+        })}
+        {labelIndexes.map((index) => {
+          const x = data.length <= 1
+            ? width / 2
+            : padding.left + (index / (data.length - 1)) * plotWidth;
+
+          return (
+            <SvgText
+              key={index}
+              x={x}
+              y={height - 7}
+              fill={COLORS.muted}
+              fontSize={10}
+              fontWeight="750"
+              textAnchor="middle"
+            >
+              {formatChartDateLabel(data[index]?.label || '')}
+            </SvgText>
+          );
+        })}
+      </Svg>
+    </View>
+  );
+}
+
+function AnalyticsSection({ api }: { api: RistakApiClient }) {
+  const [period, setPeriod] = useState<AnalyticsPeriod>('30d');
+  const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
+  const [customRangeOpen, setCustomRangeOpen] = useState(false);
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+  const [customDraftStartDate, setCustomDraftStartDate] = useState('');
+  const [customDraftEndDate, setCustomDraftEndDate] = useState('');
+  const [customRangeError, setCustomRangeError] = useState('');
+  const [chartView, setChartView] = useState<AnalyticsChartView>('revenue-spend');
+  const [financialScope, setFinancialScope] = useState<DashboardFunnelScope>('all');
+  const [funnelScope, setFunnelScope] = useState<DashboardFunnelScope>('all');
+  const [originTab, setOriginTab] = useState<AnalyticsOriginTab>('traffic');
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
+  const [chartData, setChartData] = useState<AnalyticsChartPoint[]>([]);
+  const [funnelData, setFunnelData] = useState<DashboardFunnelRow[]>([]);
+  const [originData, setOriginData] = useState<OriginDistributionData>(EMPTY_ORIGIN_DATA);
+  const [detectedPhones, setDetectedPhones] = useState<WhatsAppApiPhoneNumber[]>([]);
+  const [labels, setLabels] = useState<CustomLabels>(DEFAULT_CUSTOM_LABELS);
+  const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
+  const [accountCurrency, setAccountCurrency] = useState(normalizeCurrencyCode());
+  const [loading, setLoading] = useState(true);
+  const [chartLoading, setChartLoading] = useState(true);
+  const [funnelLoading, setFunnelLoading] = useState(true);
+  const [originLoading, setOriginLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const activePeriod = ANALYTICS_PERIOD_OPTIONS.find((option) => option.id === period) || ANALYTICS_PERIOD_OPTIONS[0];
+  const defaultCustomRange = useMemo(() => getTodayRange(30, businessTimezone), [businessTimezone]);
+  const customRangeLabel = isValidDateOnly(customStartDate) && isValidDateOnly(customEndDate)
+    ? `${formatDateOnlyRangeLabel(customStartDate)} - ${formatDateOnlyRangeLabel(customEndDate)}`
+    : '';
+  const activePeriodLabel = period === 'custom' ? 'Personalizado' : activePeriod.label;
+  const range = useMemo(() => {
+    if (period === 'custom' && isValidDateOnly(customStartDate) && isValidDateOnly(customEndDate)) {
+      return {
+        startDate: customStartDate,
+        endDate: customEndDate,
+      };
+    }
+
+    return getTodayRange(activePeriod.days ?? 30, businessTimezone);
+  }, [activePeriod.days, businessTimezone, customEndDate, customStartDate, period]);
+  const groupBy = useMemo(() => getAnalyticsGroupBy(period, range.startDate, range.endDate), [period, range.endDate, range.startDate]);
+
+  useEffect(() => {
+    setCustomStartDate((current) => current || defaultCustomRange.startDate);
+    setCustomEndDate((current) => current || defaultCustomRange.endDate);
+    setCustomDraftStartDate((current) => current || defaultCustomRange.startDate);
+    setCustomDraftEndDate((current) => current || defaultCustomRange.endDate);
+  }, [defaultCustomRange.endDate, defaultCustomRange.startDate]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    Promise.all([
+      api.getConfig(['account_timezone', 'account_currency']).catch(() => ({})),
+      api.getCustomLabels().catch(() => DEFAULT_CUSTOM_LABELS),
+    ]).then(([configResponse, labelsResponse]) => {
+      if (cancelled) return;
+      const values = configResponse && typeof configResponse === 'object' && 'config' in configResponse
+        ? configResponse.config
+        : configResponse;
+      const timezone = values && typeof values === 'object' && 'account_timezone' in values
+        ? values.account_timezone
+        : '';
+      const currency = values && typeof values === 'object' && 'account_currency' in values
+        ? values.account_currency
+        : '';
+      setBusinessTimezone(resolveBusinessTimezone(typeof timezone === 'string' ? timezone : ''));
+      setAccountCurrency(normalizeCurrencyCode(typeof currency === 'string' ? currency : ''));
+      setLabels(cleanAnalyticsLabels(labelsResponse));
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  const loadOverview = useCallback(async () => {
+    setLoading(true);
+    setOriginLoading(true);
+    setError('');
+
+    try {
+      const [metricsResponse, originResponse, whatsappStatus] = await Promise.all([
+        api.getDashboardMetrics(range.startDate, range.endDate),
+        api.getOriginDistribution(range.startDate, range.endDate).catch(() => EMPTY_ORIGIN_DATA),
+        api.getWhatsAppApiStatus().catch(() => null),
+      ]);
+
+      setMetrics(metricsResponse);
+      setOriginData({
+        ...EMPTY_ORIGIN_DATA,
+        ...originResponse,
+        traffic: {
+          ...EMPTY_ORIGIN_DATA.traffic,
+          ...(originResponse?.traffic || {}),
+        },
+        whatsappNumbers: originResponse?.whatsappNumbers || [],
+      });
+      setDetectedPhones((whatsappStatus?.phoneNumbers || []).filter((phone) => (
+        Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
+      )));
+    } catch (err) {
+      setMetrics(null);
+      setOriginData(EMPTY_ORIGIN_DATA);
+      setDetectedPhones([]);
+      setError(err instanceof Error ? err.message : 'No se pudieron cargar las analíticas.');
+    } finally {
+      setLoading(false);
+      setOriginLoading(false);
+      setRefreshing(false);
+    }
+  }, [api, range.endDate, range.startDate]);
+
+  useEffect(() => {
+    void loadOverview();
+  }, [loadOverview, reloadKey]);
+
+  useEffect(() => {
+    let active = true;
+
+    const loadChart = async () => {
+      setChartLoading(true);
+
+      try {
+        if (chartView === 'revenue-spend') {
+          const response = await api.getFinancialOverview(range.startDate, range.endDate, financialScope);
+          if (!active) return;
+          setChartData((response || []).map((item) => ({
+            label: item.label,
+            value: item.value || 0,
+            value2: item.value2 || 0,
+          })));
+          return;
+        }
+
+        let response: AnalyticsChartPoint[] = [];
+        if (chartView === 'visitors-leads') {
+          const [visitors, leads] = await Promise.all([
+            api.getDashboardSeries('visitors', range.startDate, range.endDate, groupBy),
+            api.getDashboardSeries('leads', range.startDate, range.endDate, groupBy),
+          ]);
+          response = combineAnalyticsSeries(visitors, leads);
+        } else if (chartView === 'leads-appointments') {
+          const [leads, appointments] = await Promise.all([
+            api.getDashboardSeries('leads', range.startDate, range.endDate, groupBy),
+            api.getDashboardSeries('appointments', range.startDate, range.endDate, groupBy),
+          ]);
+          response = combineAnalyticsSeries(leads, appointments);
+        } else if (chartView === 'appointments-attendances') {
+          const [appointments, attendances] = await Promise.all([
+            api.getDashboardSeries('appointments', range.startDate, range.endDate, groupBy),
+            api.getDashboardSeries('attendances', range.startDate, range.endDate, groupBy),
+          ]);
+          response = combineAnalyticsSeries(appointments, attendances);
+        } else {
+          const [attendances, sales] = await Promise.all([
+            api.getDashboardSeries('attendances', range.startDate, range.endDate, groupBy),
+            api.getDashboardSeries('sales', range.startDate, range.endDate, groupBy),
+          ]);
+          response = combineAnalyticsSeries(attendances, sales);
+        }
+
+        if (active) setChartData(response);
+      } catch {
+        if (active) setChartData([]);
+      } finally {
+        if (active) setChartLoading(false);
+      }
+    };
+
+    void loadChart();
+
+    return () => {
+      active = false;
+    };
+  }, [api, chartView, financialScope, groupBy, range.endDate, range.startDate, reloadKey]);
+
+  useEffect(() => {
+    let active = true;
+    setFunnelLoading(true);
+
+    api.getFunnelData(range.startDate, range.endDate, funnelScope)
+      .then((response) => {
+        if (active) setFunnelData(Array.isArray(response) ? response : []);
+      })
+      .catch(() => {
+        if (active) setFunnelData([]);
+      })
+      .finally(() => {
+        if (active) setFunnelLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [api, funnelScope, range.endDate, range.startDate, reloadKey]);
+
+  const chartOptions = useMemo<Array<{ id: AnalyticsChartView; label: string }>>(() => ([
+    { id: 'revenue-spend', label: 'Ingresos vs gastos' },
+    { id: 'visitors-leads', label: `Visitantes vs ${labels.leads}` },
+    { id: 'leads-appointments', label: `${labels.leads} vs citas` },
+    { id: 'appointments-attendances', label: 'Citas vs asistencias' },
+    { id: 'attendances-sales', label: 'Asistencias vs ventas' },
+  ]), [labels.leads]);
+
+  const chartMeta = useMemo<AnalyticsChartMeta>(() => {
+    if (chartView === 'visitors-leads') {
+      return { label1: 'Visitantes', label2: labels.leads, color1: COLORS.primary, color2: COLORS.accent, currency: false };
+    }
+    if (chartView === 'leads-appointments') {
+      return { label1: labels.leads, label2: 'Citas', color1: COLORS.accent, color2: '#ffd166', currency: false };
+    }
+    if (chartView === 'appointments-attendances') {
+      return { label1: 'Citas', label2: 'Asistencias', color1: '#ffd166', color2: COLORS.primary, currency: false };
+    }
+    if (chartView === 'attendances-sales') {
+      return { label1: 'Asistencias', label2: 'Ventas', color1: COLORS.primary, color2: COLORS.accent, currency: false };
+    }
+    return { label1: 'Ingresos', label2: 'Gastos', color1: COLORS.accent, color2: COLORS.text, currency: true };
+  }, [chartView, labels.leads]);
+
+  const metricCards = useMemo<AnalyticsMetricCardConfig[]>(() => ([
+    { key: 'ingresosNetos', title: 'Ingresos netos', Icon: DollarSign, tone: 'green', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'gastosPublicidad', title: 'Gastos publicidad', Icon: CreditCard, tone: 'black', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'gananciaBruta', title: 'Ganancia bruta', Icon: TrendingUp, tone: 'blue', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'roas', title: 'ROAS', Icon: Activity, tone: 'gold', formatter: formatRoas },
+    { key: 'totalCostos', title: 'Gastos negocio', Icon: WalletCards, tone: 'black', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'gananciaNeta', title: 'Ganancia neta', Icon: CircleDollarSign, tone: 'green', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'reembolsos', title: 'Reembolsos', Icon: TrendingDown, tone: 'red', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'ltvPromedio', title: 'Pago promedio', Icon: Users, tone: 'blue', formatter: (value) => formatCurrency(value, accountCurrency) },
+  ]), [accountCurrency]);
+
+  const hasChartData = chartData.some((point) => point.value > 0 || point.value2 > 0);
+  const funnelRows = funnelData.length > 0
+    ? funnelData
+    : [
+      { stage: 'Visitantes', value: 0 },
+      { stage: labels.leads, value: 0 },
+      { stage: 'Citas', value: 0 },
+      { stage: 'Asistencias', value: 0 },
+      { stage: labels.customers, value: 0 },
+    ];
+  const funnelMax = Math.max(1, ...funnelRows.map((item) => item.value || 0));
+  const totalConversion = funnelRows[0]?.value > 0
+    ? ((funnelRows[funnelRows.length - 1].value / funnelRows[0].value) * 100).toFixed(1)
+    : '0.0';
+  const originOptions = useMemo<Array<{ id: AnalyticsOriginTab; label: string }>>(() => ([
+    { id: 'traffic', label: 'Tráfico' },
+    { id: 'leads', label: labels.leads },
+    { id: 'appointments', label: 'Citas' },
+    { id: 'conversions', label: labels.customers },
+  ]), [labels.customers, labels.leads]);
+  const originRows = useMemo<SourceDatum[]>(() => {
+    if (originTab === 'traffic') return originData.traffic.sources || [];
+    return originData[originTab] || [];
+  }, [originData, originTab]);
+  const originMax = Math.max(1, ...originRows.map((item) => item.value || 0));
+  const originTotal = originRows.reduce((sum, item) => sum + (item.value || 0), 0);
+  const phoneNumberRows = useMemo(
+    () => buildPhoneNumberRows(originData.whatsappNumbers || [], detectedPhones),
+    [detectedPhones, originData.whatsappNumbers],
+  );
+  const phoneNumberMax = Math.max(1, ...phoneNumberRows.map((item) => item.value || 0));
+  const showPhoneNumberOrigin = phoneNumberRows.length >= 2;
+
+  const refresh = () => {
+    setRefreshing(true);
+    setReloadKey((current) => current + 1);
+  };
+
+  const openCustomRangePicker = () => {
+    setCustomDraftStartDate(customStartDate || defaultCustomRange.startDate);
+    setCustomDraftEndDate(customEndDate || defaultCustomRange.endDate);
+    setCustomRangeError('');
+    setPeriodMenuOpen(false);
+    setCustomRangeOpen(true);
+  };
+
+  const closeCustomRangePicker = () => {
+    setCustomRangeOpen(false);
+    setCustomRangeError('');
+  };
+
+  const applyCustomRange = () => {
+    const startDate = customDraftStartDate.trim();
+    const endDate = customDraftEndDate.trim();
+
+    if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate)) {
+      setCustomRangeError('Usa el formato YYYY-MM-DD.');
+      return;
+    }
+
+    if ((getDateOnlyUtcTime(startDate) || 0) > (getDateOnlyUtcTime(endDate) || 0)) {
+      setCustomRangeError('La fecha inicial no puede ser mayor que la final.');
+      return;
+    }
+
+    setCustomStartDate(startDate);
+    setCustomEndDate(endDate);
+    setPeriod('custom');
+    setCustomRangeOpen(false);
+    setCustomRangeError('');
+  };
+
+  return (
+    <>
+      <ScrollView
+        refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
+        contentContainerStyle={styles.analyticsScroll}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.analyticsHeader}>
+          <Text style={styles.analyticsEyebrow}>Ristak</Text>
+          <View style={styles.analyticsTitleRow}>
+            <Text numberOfLines={1} style={styles.analyticsTitle}>Analíticas</Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: periodMenuOpen }}
+              onPress={() => setPeriodMenuOpen((open) => !open)}
+              style={({ pressed }) => [styles.analyticsPeriodToggle, periodMenuOpen && styles.analyticsPeriodToggleOpen, pressed && styles.pressed]}
+            >
+              <Text numberOfLines={1} style={styles.analyticsPeriodToggleText}>{activePeriodLabel}</Text>
+              <ChevronDown size={16} color={COLORS.text} strokeWidth={2.6} />
+            </Pressable>
+          </View>
+          {period === 'custom' && customRangeLabel ? (
+            <Text numberOfLines={1} style={styles.analyticsCustomRangeInline}>{customRangeLabel}</Text>
+          ) : null}
+          {periodMenuOpen ? (
+            <View style={styles.analyticsPeriodMenu}>
+              {ANALYTICS_PERIOD_OPTIONS.map((option) => {
+                const selected = period === option.id;
+                const isCustom = option.id === 'custom';
+                return (
+                  <Pressable
+                    key={option.id}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected }}
+                    onPress={() => {
+                      if (isCustom) {
+                        openCustomRangePicker();
+                        return;
+                      }
+
+                      setPeriod(option.id);
+                      setPeriodMenuOpen(false);
+                    }}
+                    style={({ pressed }) => [
+                      styles.analyticsPeriodOption,
+                      isCustom && styles.analyticsPeriodOptionWide,
+                      selected && styles.analyticsPeriodOptionActive,
+                      pressed && styles.pressed,
+                    ]}
+                  >
+                    <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.analyticsPeriodOptionText, selected && styles.analyticsPeriodOptionTextActive]}>
+                      {isCustom && customRangeLabel ? `${option.menuLabel} - ${customRangeLabel}` : option.menuLabel}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+        </View>
+
+      {error ? (
+        <View style={styles.analyticsInlineError}>
+          <Text style={styles.errorText}>{error}</Text>
+          <SecondaryButton label="Reintentar" onPress={loadOverview} />
+        </View>
       ) : null}
-    </ScrollView>
+
+      <View style={styles.analyticsMetricsGrid}>
+        {metricCards.map(({ key, title, Icon, tone, formatter }) => {
+          const metric = metrics?.[key];
+          const variation = Number(metric?.variation || 0);
+          return (
+            <View key={key} style={styles.analyticsMetricCard}>
+              <View style={[styles.analyticsMetricIcon, getAnalyticsToneStyle(tone)]}>
+                <Icon size={18} color={getAnalyticsIconColor(tone)} strokeWidth={2.55} />
+              </View>
+              <Text numberOfLines={1} style={styles.analyticsMetricTitle}>{title}</Text>
+              <Text numberOfLines={1} adjustsFontSizeToFit style={styles.analyticsMetricValue}>
+                {loading || !metric ? '...' : formatter(Number(metric.value || 0))}
+              </Text>
+              <Text numberOfLines={1} style={[styles.analyticsMetricDelta, variation >= 0 ? styles.analyticsDeltaPositive : styles.analyticsDeltaNegative]}>
+                {loading || !metric ? '' : `${getVariationLabel(variation)} vs antes`}
+              </Text>
+            </View>
+          );
+        })}
+      </View>
+
+      <View style={styles.analyticsPanel}>
+        <View style={styles.analyticsPanelHeader}>
+          <View style={styles.analyticsPanelTitleWrap}>
+            <Text style={styles.analyticsSectionLabel}>Gráfica</Text>
+            <Text numberOfLines={2} style={styles.analyticsPanelTitle}>
+              {chartOptions.find((option) => option.id === chartView)?.label || 'Ingresos vs gastos'}
+            </Text>
+          </View>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.analyticsOptionScroll}
+          contentContainerStyle={styles.analyticsOptionScroller}
+        >
+          {chartOptions.map((option) => (
+            <Pressable
+              key={option.id}
+              accessibilityRole="button"
+              accessibilityState={{ selected: chartView === option.id }}
+              onPress={() => setChartView(option.id)}
+              style={({ pressed }) => [styles.analyticsChip, chartView === option.id && styles.analyticsChipActive, pressed && styles.pressed]}
+            >
+              <Text numberOfLines={1} style={[styles.analyticsChipText, chartView === option.id && styles.analyticsChipTextActive]}>{option.label}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {chartView === 'revenue-spend' ? (
+          <View style={styles.analyticsSegmentedControl}>
+            {ANALYTICS_SCOPE_OPTIONS.map((option) => (
+              <Pressable
+                key={option.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: financialScope === option.id }}
+                onPress={() => setFinancialScope(option.id)}
+                style={[styles.analyticsSegmentButton, financialScope === option.id && styles.analyticsSegmentButtonActive]}
+              >
+                <Text numberOfLines={1} style={[styles.analyticsSegmentText, financialScope === option.id && styles.analyticsSegmentTextActive]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+
+        <View style={styles.analyticsLegendRow}>
+          <View style={styles.analyticsLegendItem}>
+            <View style={[styles.analyticsLegendDot, { backgroundColor: chartMeta.color1 }]} />
+            <Text style={styles.analyticsLegendText}>{chartMeta.label1}</Text>
+          </View>
+          <View style={styles.analyticsLegendItem}>
+            <View style={[styles.analyticsLegendDot, { backgroundColor: chartMeta.color2 }]} />
+            <Text style={styles.analyticsLegendText}>{chartMeta.label2}</Text>
+          </View>
+        </View>
+
+        {chartLoading ? (
+          <View style={styles.analyticsLoadingState}>
+            <ActivityIndicator color={COLORS.accent} />
+          </View>
+        ) : hasChartData ? (
+          <AnalyticsDualLineChart data={chartData} meta={chartMeta} currency={accountCurrency} />
+        ) : (
+          <View style={styles.analyticsEmptyState}>
+            <Text style={styles.analyticsEmptyText}>Sin datos para este periodo.</Text>
+          </View>
+        )}
+      </View>
+
+      <View style={styles.analyticsPanel}>
+        <View style={styles.analyticsPanelHeader}>
+          <View style={styles.analyticsPanelTitleWrap}>
+            <Text style={styles.analyticsSectionLabel}>Embudo</Text>
+            <Text style={styles.analyticsPanelTitle}>Conversiones</Text>
+          </View>
+          <View style={styles.analyticsConversionPill}>
+            <Text style={styles.analyticsConversionPillText}>{totalConversion}%</Text>
+          </View>
+        </View>
+
+        <View style={styles.analyticsSegmentedControl}>
+          {ANALYTICS_SCOPE_OPTIONS.map((option) => (
+            <Pressable
+              key={option.id}
+              accessibilityRole="button"
+              accessibilityState={{ selected: funnelScope === option.id }}
+              onPress={() => setFunnelScope(option.id)}
+              style={[styles.analyticsSegmentButton, funnelScope === option.id && styles.analyticsSegmentButtonActive]}
+            >
+              <Text numberOfLines={1} style={[styles.analyticsSegmentText, funnelScope === option.id && styles.analyticsSegmentTextActive]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {funnelLoading ? (
+          <View style={styles.analyticsLoadingState}>
+            <ActivityIndicator color={COLORS.accent} />
+          </View>
+        ) : (
+          <View style={styles.analyticsFunnelList}>
+            {funnelRows.map((item, index) => {
+              const percentage = ((item.value || 0) / funnelMax) * 100;
+              const previous = funnelRows[index - 1]?.value || 0;
+              const stepRate = index > 0 && previous > 0 ? ((item.value / previous) * 100).toFixed(1) : '';
+              const FunnelIcon = index === 0 ? Users : index === 1 ? Target : index === 2 ? CalendarDays : index === 3 ? CheckCircle2 : DollarSign;
+
+              return (
+                <View key={`${item.stage}-${index}`} style={styles.analyticsFunnelItem}>
+                  <View style={styles.analyticsFunnelIcon}>
+                    <FunnelIcon size={16} color={COLORS.text} strokeWidth={2.45} />
+                  </View>
+                  <View style={styles.analyticsFunnelContent}>
+                    <View style={styles.analyticsFunnelTop}>
+                      <Text numberOfLines={1} style={styles.analyticsFunnelTitle}>{item.stage}</Text>
+                      <Text style={styles.analyticsFunnelValue}>{formatNumber(item.value || 0)}</Text>
+                    </View>
+                    <View style={styles.analyticsProgressTrack}>
+                      <View style={[styles.analyticsProgressFill, { width: `${percentage}%` }]} />
+                    </View>
+                    {stepRate ? <Text style={styles.analyticsMiniCaption}>{stepRate}% desde el paso anterior</Text> : null}
+                  </View>
+                </View>
+              );
+            })}
+          </View>
+        )}
+      </View>
+
+      <View style={styles.analyticsPanel}>
+        <View style={styles.analyticsPanelHeader}>
+          <View style={styles.analyticsPanelTitleWrap}>
+            <Text style={styles.analyticsSectionLabel}>Origen</Text>
+            <Text style={styles.analyticsPanelTitle}>Fuentes</Text>
+          </View>
+          <View style={styles.analyticsConversionPill}>
+            <Text style={styles.analyticsConversionPillText}>{formatNumber(originTotal)}</Text>
+          </View>
+        </View>
+
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.analyticsOptionScroll}
+          contentContainerStyle={styles.analyticsOptionScroller}
+        >
+          {originOptions.map((option) => (
+            <Pressable
+              key={option.id}
+              accessibilityRole="button"
+              accessibilityState={{ selected: originTab === option.id }}
+              onPress={() => setOriginTab(option.id)}
+              style={({ pressed }) => [styles.analyticsChip, originTab === option.id && styles.analyticsChipActive, pressed && styles.pressed]}
+            >
+              <Text numberOfLines={1} style={[styles.analyticsChipText, originTab === option.id && styles.analyticsChipTextActive]}>{option.label}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+
+        {originLoading ? (
+          <View style={styles.analyticsLoadingState}>
+            <ActivityIndicator color={COLORS.accent} />
+          </View>
+        ) : originRows.length > 0 ? (
+          <View style={styles.analyticsSourceList}>
+            {originRows.slice(0, 8).map((item, index) => (
+              <View key={`${item.name}-${index}`} style={styles.analyticsSourceItem}>
+                <View style={styles.analyticsSourceTop}>
+                  <Text numberOfLines={1} style={styles.analyticsSourceTitle}>{item.name}</Text>
+                  <Text style={styles.analyticsSourceValue}>{formatNumber(item.value || 0)}</Text>
+                </View>
+                <View style={styles.analyticsSourceTrack}>
+                  <View style={[styles.analyticsSourceFill, { width: `${((item.value || 0) / originMax) * 100}%`, backgroundColor: item.color || COLORS.accent }]} />
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <View style={styles.analyticsEmptyState}>
+            <Text style={styles.analyticsEmptyText}>Sin origen detectado en este periodo.</Text>
+          </View>
+        )}
+      </View>
+
+        {showPhoneNumberOrigin ? (
+          <View style={styles.analyticsPanel}>
+            <View style={styles.analyticsPanelHeader}>
+              <View style={styles.analyticsPanelTitleWrap}>
+                <Text style={styles.analyticsSectionLabel}>WhatsApp</Text>
+                <Text style={styles.analyticsPanelTitle}>Origen por número</Text>
+              </View>
+            </View>
+
+            <View style={styles.analyticsSourceList}>
+              {phoneNumberRows.map((item) => (
+                <View key={item.key} style={styles.analyticsSourceItem}>
+                  <View style={styles.analyticsPhoneSourceTop}>
+                    <View style={styles.analyticsPhoneSourceCopy}>
+                      <Text numberOfLines={1} style={styles.analyticsSourceTitle}>{item.name}</Text>
+                      <Text numberOfLines={1} style={styles.analyticsMiniCaption}>{item.phone || item.statusLabel}</Text>
+                    </View>
+                    <Text style={styles.analyticsSourceValue}>{formatNumber(item.value)} personas</Text>
+                  </View>
+                  <View style={styles.analyticsSourceTrack}>
+                    <View style={[styles.analyticsSourceFill, { width: `${((item.value || 0) / phoneNumberMax) * 100}%`, backgroundColor: COLORS.text }]} />
+                  </View>
+                  <Text numberOfLines={1} style={styles.analyticsMiniCaption}>{item.statusLabel}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+      </ScrollView>
+      <BottomActionSheet
+        open={customRangeOpen}
+        title="Fecha personalizada"
+        subtitle="Rango de analíticas"
+        onClose={closeCustomRangePicker}
+      >
+        <View style={styles.analyticsCustomSheetBody}>
+          <Text style={styles.analyticsCustomHint}>Escribe el rango en formato YYYY-MM-DD.</Text>
+          <View style={styles.analyticsCustomDateRow}>
+            <View style={styles.analyticsCustomDateField}>
+              <Text style={styles.analyticsCustomDateLabel}>Inicio</Text>
+              <TextInput
+                value={customDraftStartDate}
+                onChangeText={setCustomDraftStartDate}
+                placeholder={defaultCustomRange.startDate}
+                placeholderTextColor={COLORS.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="numbers-and-punctuation"
+                style={styles.analyticsCustomDateInput}
+              />
+            </View>
+            <View style={styles.analyticsCustomDateField}>
+              <Text style={styles.analyticsCustomDateLabel}>Fin</Text>
+              <TextInput
+                value={customDraftEndDate}
+                onChangeText={setCustomDraftEndDate}
+                placeholder={defaultCustomRange.endDate}
+                placeholderTextColor={COLORS.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="numbers-and-punctuation"
+                style={styles.analyticsCustomDateInput}
+              />
+            </View>
+          </View>
+          {customRangeError ? <Text style={styles.errorText}>{customRangeError}</Text> : null}
+          <View style={styles.analyticsCustomActions}>
+            <PrimaryButton label="Aplicar rango" onPress={applyCustomRange} />
+            <SecondaryButton label="Cancelar" onPress={closeCustomRangePicker} />
+          </View>
+        </View>
+      </BottomActionSheet>
+    </>
   );
 }
 
@@ -3137,6 +4093,482 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     fontSize: 12,
     fontWeight: '800',
+  },
+  analyticsScroll: {
+    paddingHorizontal: 14,
+    paddingTop: 8,
+    paddingBottom: 122,
+    gap: 12,
+  },
+  analyticsHeader: {
+    gap: 8,
+    paddingTop: 2,
+  },
+  analyticsEyebrow: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  analyticsTitleRow: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  analyticsTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 42,
+    lineHeight: 48,
+    fontWeight: '900',
+  },
+  analyticsPeriodToggle: {
+    minHeight: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
+    gap: 5,
+    paddingHorizontal: 12,
+    marginTop: 5,
+    maxWidth: 138,
+  },
+  analyticsPeriodToggleOpen: {
+    borderColor: 'rgba(0,168,248,0.36)',
+    backgroundColor: COLORS.panelSoft,
+  },
+  analyticsPeriodToggleText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+    maxWidth: 102,
+  },
+  analyticsCustomRangeInline: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: -3,
+  },
+  analyticsPeriodMenu: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 7,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    alignItems: 'stretch',
+    rowGap: 7,
+  },
+  analyticsPeriodOption: {
+    width: '48.5%',
+    minHeight: 38,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+    backgroundColor: 'transparent',
+  },
+  analyticsPeriodOptionWide: {
+    width: '100%',
+  },
+  analyticsPeriodOptionActive: {
+    backgroundColor: COLORS.text,
+  },
+  analyticsPeriodOptionText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  analyticsPeriodOptionTextActive: {
+    color: COLORS.bg,
+    fontWeight: '900',
+  },
+  analyticsCustomSheetBody: {
+    padding: 14,
+    gap: 12,
+  },
+  analyticsCustomHint: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  analyticsCustomDateRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  analyticsCustomDateField: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
+  },
+  analyticsCustomDateLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  analyticsCustomDateInput: {
+    minHeight: 46,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 12,
+    paddingVertical: 0,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  analyticsCustomActions: {
+    gap: 8,
+  },
+  analyticsInlineError: {
+    gap: 10,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 12,
+  },
+  analyticsMetricsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    rowGap: 8,
+  },
+  analyticsMetricCard: {
+    width: '48.8%',
+    minHeight: 124,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 12,
+    gap: 6,
+  },
+  analyticsMetricIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  analyticsTonegreen: {
+    backgroundColor: COLORS.accent,
+  },
+  analyticsToneblack: {
+    backgroundColor: COLORS.text,
+  },
+  analyticsToneblue: {
+    backgroundColor: 'rgba(70,185,255,0.24)',
+  },
+  analyticsTonegold: {
+    backgroundColor: 'rgba(255,209,102,0.22)',
+  },
+  analyticsTonered: {
+    backgroundColor: 'rgba(255,93,108,0.18)',
+  },
+  analyticsMetricTitle: {
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '800',
+  },
+  analyticsMetricValue: {
+    color: COLORS.text,
+    fontSize: 19,
+    lineHeight: 23,
+    fontWeight: '900',
+  },
+  analyticsMetricDelta: {
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  analyticsDeltaPositive: {
+    color: COLORS.accent,
+  },
+  analyticsDeltaNegative: {
+    color: COLORS.danger,
+  },
+  analyticsPanel: {
+    gap: 12,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 14,
+  },
+  analyticsPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  analyticsPanelTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  analyticsSectionLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  analyticsPanelTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    lineHeight: 26,
+    fontWeight: '900',
+    marginTop: 4,
+  },
+  analyticsOptionScroll: {
+    marginHorizontal: -14,
+  },
+  analyticsOptionScroller: {
+    gap: 7,
+    paddingHorizontal: 14,
+    paddingRight: 18,
+  },
+  analyticsChip: {
+    minHeight: 34,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 13,
+  },
+  analyticsChipActive: {
+    borderColor: 'rgba(0,168,248,0.34)',
+    backgroundColor: COLORS.accentSoft,
+  },
+  analyticsChipText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  analyticsChipTextActive: {
+    color: COLORS.text,
+  },
+  analyticsSegmentedControl: {
+    minHeight: 39,
+    borderRadius: 20,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    padding: 4,
+    gap: 4,
+  },
+  analyticsSegmentButton: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+  },
+  analyticsSegmentButtonActive: {
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  analyticsSegmentText: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  analyticsSegmentTextActive: {
+    color: COLORS.text,
+    fontWeight: '900',
+  },
+  analyticsLegendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  analyticsLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  analyticsLegendDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+  },
+  analyticsLegendText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  analyticsChartCanvas: {
+    minHeight: 190,
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: COLORS.panelSoft,
+    justifyContent: 'flex-end',
+  },
+  analyticsChartTopScale: {
+    position: 'absolute',
+    top: 10,
+    left: 12,
+    zIndex: 1,
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  analyticsLoadingState: {
+    minHeight: 128,
+    borderRadius: 18,
+    backgroundColor: COLORS.panelSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  analyticsEmptyState: {
+    minHeight: 128,
+    borderRadius: 18,
+    backgroundColor: COLORS.panelSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  analyticsEmptyText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  analyticsConversionPill: {
+    minHeight: 32,
+    borderRadius: 16,
+    backgroundColor: COLORS.accent,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  analyticsConversionPillText: {
+    color: COLORS.bg,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  analyticsFunnelList: {
+    gap: 10,
+  },
+  analyticsFunnelItem: {
+    flexDirection: 'row',
+    gap: 9,
+    minWidth: 0,
+  },
+  analyticsFunnelIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panelSoft,
+  },
+  analyticsFunnelContent: {
+    flex: 1,
+    minWidth: 0,
+    gap: 5,
+  },
+  analyticsFunnelTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  analyticsFunnelTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  analyticsFunnelValue: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  analyticsProgressTrack: {
+    height: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: COLORS.panelSoft,
+  },
+  analyticsProgressFill: {
+    minWidth: 6,
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: COLORS.accent,
+  },
+  analyticsMiniCaption: {
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '700',
+  },
+  analyticsSourceList: {
+    gap: 10,
+  },
+  analyticsSourceItem: {
+    gap: 6,
+    paddingVertical: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  analyticsSourceTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  analyticsSourceTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  analyticsSourceValue: {
+    flexShrink: 0,
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  analyticsSourceTrack: {
+    height: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: COLORS.panelSoft,
+  },
+  analyticsSourceFill: {
+    minWidth: 6,
+    height: '100%',
+    borderRadius: 999,
+    backgroundColor: COLORS.accent,
+  },
+  analyticsPhoneSourceTop: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  analyticsPhoneSourceCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
   },
   centerScreen: {
     flex: 1,

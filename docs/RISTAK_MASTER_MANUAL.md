@@ -1591,6 +1591,12 @@ debe revisar el equivalente en
 `mobile/src/App.tsx` y documentar cualquier brecha temporal en
 `docs/MOBILE_APP.md`.
 
+La pantalla de analiticas nativa debe mantenerse alineada con
+`PhoneAnalytics`: periodos `30d`/`60d`/`180d`/`year`/`custom`, 8 KPIs, grafica
+principal, embudo, distribucion de origen y origen por numero de WhatsApp. Los
+rangos se calculan con `account_timezone`, el rango personalizado usa fechas
+`YYYY-MM-DD`, y los importes se formatean con `account_currency`.
+
 Documentos:
 
 - `docs/MOBILE_APP.md`
