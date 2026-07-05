@@ -432,8 +432,11 @@ la zona horaria de la cuenta (`account_timezone`), no con la zona horaria del
 telefono.
 
 El boton `+` abre un bottom sheet nativo para buscar contactos y despues muestra
-el formulario de cita con titulo, calendario activo, fecha, hora, duracion,
-estado, direccion y notas. Guardar crea contra `/api/calendars/appointments`;
+el formulario de cita con orden de paridad movil: contacto, estado, fecha y hora,
+fecha, hora, duracion, resumen horario, zona horaria, direccion, notas y CTA de
+crear cita. Los campos se muestran como cajas/selectores con chevron cuando el
+original los presenta asi; no se deben reemplazar por chips salvo que el original
+los use. Guardar crea contra `/api/calendars/appointments`;
 editar y eliminar usan los endpoints reales de citas/eventos. La fecha y hora
 del formulario se interpretan en `account_timezone` y se mandan al backend como
 instantes UTC. En la vista Hoy/Semana, tocar o mantener presionado un horario del
@@ -443,7 +446,9 @@ desplazan sincronizados; la agenda no repite el anio debajo del mes porque el
 anio ya vive en la pastilla superior. La grilla mensual debe quedar libre sobre
 el fondo de la pantalla y su alto se calcula con las semanas reales del mes
 visible para que el resumen del dia quede pegado aunque el mes tenga menos filas;
-solo la fila Domingo-Sabado debe llevar capsula visual. El swipe entre meses no
+solo la fila Domingo-Sabado debe llevar capsula visual. Los numeros de la grilla
+mensual deben mantenerse compactos respecto a la bolita de seleccion; la bolita
+puede conservar mayor presencia que el texto. El swipe entre meses no
 debe mostrar de regreso el mes anterior en frames intermedios. En el sheet
 `Nueva cita`, la lista de contactos no debe mostrar icono de enviar mensaje
 porque la accion es agendar, no mandar chat.

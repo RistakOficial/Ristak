@@ -105,6 +105,12 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     resumen del dia; el reset del swipe mensual se hace antes del pintado para
     evitar parpadeos al cambiar de mes; y el picker de contactos de `Nueva cita`
     ya no muestra icono de enviar mensaje.
+  - Corregido 2026-07-05, cuarta pasada: la grilla mensual usa texto mas chico
+    manteniendo una bolita de seleccion grande; las pastillas superiores de anio
+    y acciones ya no se estiran hacia el centro; y el formulario de `Nueva cita`
+    vuelve al orden visual del original movil con contacto, estado, selector
+    fecha/hora, fecha, hora, duracion, resumen, zona horaria, direccion, notas y
+    CTA `Crear cita`.
   - Brechas pendientes: replicar validacion avanzada de slots/bloqueos,
     invitados, usuarios Round Robin y el selector visual completo de fecha/hora
     del modal original de `/movil`.

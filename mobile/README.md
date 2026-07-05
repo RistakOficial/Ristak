@@ -22,8 +22,9 @@ ready to replace the store app.
   header, calendar selector sheet, month grid, agenda list, event details sheet,
   create/edit/delete appointment flow, timeline long-press creation, synchronized
   month-title swipe, haptic locked timeline range selection, compact agenda
-  cards, responsive visible-month height, appointment-only contact picker, and
-  business-timezone grouping.
+  cards, compact month typography with large selected-day marker, responsive
+  visible-month height, appointment-only contact picker, original-order
+  appointment form, and business-timezone grouping.
 - Native payments, analytics, settings, bottom dock, and notification parity
   passes from the mobile migration worktrees.
 - Conversation view from `/api/contacts/:id/journey`.

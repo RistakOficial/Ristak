@@ -362,9 +362,9 @@ const VIDEO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const CALENDAR_SELECTED_ID_STORAGE_KEY = 'ristak.native.calendar.selectedCalendarId.v1';
 const CALENDAR_EVENTS_CACHE_STORAGE_KEY = 'ristak.native.calendar.eventsCache.v1';
 const CALENDAR_WEEKDAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
-const CALENDAR_WEEKDAY_ROW_HEIGHT = 40;
-const CALENDAR_MONTH_GRID_TOP_PADDING = 8;
-const CALENDAR_MONTH_DAY_CELL_HEIGHT = 44;
+const CALENDAR_WEEKDAY_ROW_HEIGHT = 36;
+const CALENDAR_MONTH_GRID_TOP_PADDING = 6;
+const CALENDAR_MONTH_DAY_CELL_HEIGHT = 39;
 const CALENDAR_VIEW_OPTIONS: Array<{ view: Exclude<CalendarViewMode, 'years'>; label: string }> = [
   { view: 'day', label: 'Día' },
   { view: 'week', label: 'Semana' },
@@ -3147,6 +3147,59 @@ function formatTimelineHour(hour: number) {
   return hour > 12 ? `${hour - 12} p.m.` : `${hour} a.m.`;
 }
 
+function formatAppointmentDateField(dateOnly: string) {
+  const day = formatDateOnlyDayNumber(dateOnly);
+  const month = formatBusinessShortMonthTitle(dateOnly);
+  const year = formatBusinessYear(dateOnly);
+  if (!day || !month || !year) return dateOnly;
+  return `${day} ${month.charAt(0).toUpperCase()}${month.slice(1)} ${year}`;
+}
+
+function formatAppointmentTimeField(time: string) {
+  const minutes = parseTimeToMinutes(time);
+  if (minutes === null) return time;
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  const period = hour >= 12 ? 'p.m.' : 'a.m.';
+  const displayHour = hour % 12 || 12;
+  return `${displayHour}:${String(minute).padStart(2, '0')} ${period}`;
+}
+
+function formatAppointmentDurationLabel(minutes: number) {
+  if (minutes === 60) return '1 hora';
+  if (minutes < 60) return `${minutes} minutos`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder ? `${hours} h ${remainder} min` : `${hours} horas`;
+}
+
+function getAppointmentStatusLabel(value: string) {
+  return APPOINTMENT_STATUS_OPTIONS.find((option) => option.value === value)?.label || 'Confirmada';
+}
+
+function promptAppointmentValue(title: string, message: string, value: string, onSave: (value: string) => void) {
+  if (Platform.OS === 'ios' && typeof Alert.prompt === 'function') {
+    Alert.prompt(
+      title,
+      message,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Guardar',
+          onPress: (text?: string) => {
+            const next = String(text || '').trim();
+            if (next) onSave(next);
+          },
+        },
+      ],
+      'plain-text',
+      value,
+    );
+    return;
+  }
+  Alert.alert(title, message);
+}
+
 function triggerTimelineSelectionHaptic() {
   void Haptics.selectionAsync().catch(() => {
     Vibration.vibrate(12);
@@ -5172,22 +5225,20 @@ function AppointmentFormSheet({
   }, [loadFreeSlots, open, scheduleMode]);
 
   useEffect(() => {
-    if (!open || !draft) return;
+    if (!open || !draft || (!draft.assignedUserId && !isRoundRobinCalendar(calendar))) return;
     void loadAssignmentUsers();
-  }, [draft?.calendarId, loadAssignmentUsers, open]);
+  }, [calendar, draft?.assignedUserId, draft?.calendarId, loadAssignmentUsers, open]);
 
   const endFields = draft
     ? addMinutesToBusinessDateTime(draft.dateOnly, draft.startTime, draft.durationMinutes)
     : { dateOnly: '', time: '' };
   const selectedSlotGroup = freeSlots.find((group) => group.date === selectedSlotDate) || null;
-  const showAssignmentPicker = Boolean(draft && (
-    draft.assignedUserId ||
-    assignmentUsers.length ||
-    assignmentLoading ||
-    assignmentError ||
-    isRoundRobinCalendar(calendar)
-  ));
   const assignmentRequired = mode === 'create' && isRoundRobinCalendar(calendar);
+  const showAssignmentPicker = Boolean(draft && (
+    assignmentRequired ||
+    draft.assignedUserId ||
+    (isRoundRobinCalendar(calendar) && (assignmentUsers.length || assignmentLoading || assignmentError))
+  ));
 
   return (
     <BottomActionSheet
@@ -5208,19 +5259,13 @@ function AppointmentFormSheet({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            {mode === 'create' && draft.contact ? (
-              <View style={styles.appointmentContactCard}>
-                <View style={styles.appointmentContactIcon}>
-                  <User size={20} color={COLORS.accent} strokeWidth={2.6} />
-                </View>
-                <View style={styles.appointmentContactCopy}>
-                  <Text numberOfLines={1} style={styles.appointmentContactName}>{getContactName(draft.contact)}</Text>
-                  <Text numberOfLines={1} style={styles.appointmentContactMeta}>
-                    {draft.contact.phone || draft.contact.email || 'Contacto seleccionado'}
-                  </Text>
-                </View>
-              </View>
-            ) : null}
+            <AppointmentSelectField
+              icon={Search}
+              label="Contacto"
+              required
+              value={draft.contact ? getContactName(draft.contact) : ''}
+              placeholder="Buscar por nombre, correo o teléfono"
+            />
 
             {showAssignmentPicker ? (
               <View style={styles.appointmentSection}>
@@ -5282,32 +5327,23 @@ function AppointmentFormSheet({
             ) : null}
 
             <View style={styles.appointmentSection}>
-              <Text style={styles.appointmentFieldLabel}>Estado</Text>
-              <View style={styles.appointmentChipRow}>
-                {APPOINTMENT_STATUS_OPTIONS.map((option) => {
-                  const selected = draft.appointmentStatus === option.value;
-                  return (
-                    <Pressable
-                      key={option.value}
-                      accessibilityRole="button"
-                      onPress={() => updateDraft({ appointmentStatus: option.value })}
-                      style={({ pressed }) => [
-                        styles.appointmentChoiceChip,
-                        selected && styles.appointmentChoiceChipActive,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <AppointmentSelectField
+                label="Estado"
+                value={getAppointmentStatusLabel(draft.appointmentStatus)}
+                onPress={() => {
+                  Alert.alert('Estado', 'Selecciona el estado de la cita.', [
+                    ...APPOINTMENT_STATUS_OPTIONS.map((option) => ({
+                      text: option.label,
+                      onPress: () => updateDraft({ appointmentStatus: option.value }),
+                    })),
+                    { text: 'Cancelar', style: 'cancel' },
+                  ]);
+                }}
+              />
             </View>
 
             <View style={styles.appointmentSection}>
-              <Text style={styles.appointmentFieldLabel}>Horario</Text>
+              <AppointmentFieldLabel label="Fecha y hora" required />
               <View style={styles.appointmentSegmentedTabs}>
                 {[
                   { value: 'default' as const, label: 'Por defecto' },
@@ -5422,76 +5458,69 @@ function AppointmentFormSheet({
             </View>
 
             <View style={styles.appointmentFieldGrid}>
-              <AppointmentTextField
+              <AppointmentSelectField
                 compact
                 label="Fecha"
-                value={draft.dateOnly}
-                placeholder="YYYY-MM-DD"
-                onChangeText={(value) => updateDraft({ dateOnly: value })}
+                value={formatAppointmentDateField(draft.dateOnly)}
+                onPress={() => promptAppointmentValue(
+                  'Fecha',
+                  'Escribe la fecha en formato YYYY-MM-DD.',
+                  draft.dateOnly,
+                  (value) => updateDraft({ dateOnly: value }),
+                )}
               />
-              <AppointmentTextField
+              <AppointmentSelectField
                 compact
                 label="Hora"
-                value={draft.startTime}
-                placeholder="HH:mm"
-                onChangeText={(value) => updateDraft({ startTime: value })}
+                value={formatAppointmentTimeField(draft.startTime)}
+                onPress={() => promptAppointmentValue(
+                  'Hora',
+                  'Escribe la hora en formato HH:mm.',
+                  draft.startTime,
+                  (value) => updateDraft({ startTime: value }),
+                )}
               />
             </View>
 
             <View style={styles.appointmentSection}>
-              <Text style={styles.appointmentFieldLabel}>Duración</Text>
-              <View style={styles.appointmentChipRow}>
-                {APPOINTMENT_DURATION_OPTIONS.map((minutes) => {
-                  const selected = draft.durationMinutes === minutes;
-                  return (
-                    <Pressable
-                      key={minutes}
-                      accessibilityRole="button"
-                      onPress={() => updateDraft({ durationMinutes: minutes })}
-                      style={({ pressed }) => [
-                        styles.appointmentChoiceChip,
-                        selected && styles.appointmentChoiceChipActive,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
-                        {minutes}m
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
+              <AppointmentSelectField
+                value={formatAppointmentDurationLabel(draft.durationMinutes)}
+                onPress={() => {
+                  Alert.alert('Duración', 'Selecciona la duración de la cita.', [
+                    ...APPOINTMENT_DURATION_OPTIONS.map((minutes) => ({
+                      text: formatAppointmentDurationLabel(minutes),
+                      onPress: () => updateDraft({ durationMinutes: minutes }),
+                    })),
+                    { text: 'Cancelar', style: 'cancel' },
+                  ]);
+                }}
+              />
               <Text style={styles.appointmentHint}>
-                Termina {endFields.dateOnly !== draft.dateOnly ? `${endFields.dateOnly} ` : ''}{endFields.time} · {timezone}
+                De {formatAppointmentTimeField(draft.startTime)} a {formatAppointmentTimeField(endFields.time)} · {formatAppointmentDurationLabel(draft.durationMinutes)}
               </Text>
             </View>
 
-            <AppointmentTextField
-              editable={false}
+            <AppointmentSelectField
               label="Zona horaria"
               value={timezone}
-              placeholder="Zona horaria"
-              onChangeText={() => undefined}
             />
 
             <AppointmentTextField
               label="Dirección"
               value={draft.address}
-              placeholder="Ubicación o enlace"
-              icon={MapPin}
+              placeholder="Dirección física o enlace de videollamada"
               onChangeText={(value) => updateDraft({ address: value })}
             />
             <AppointmentTextField
               multiline
               label="Notas"
               value={draft.notes}
-              placeholder="Notas internas de la cita"
-              icon={FileText}
+              placeholder="Añade instrucciones, acuerdos o detalles importantes..."
               onChangeText={(value) => updateDraft({ notes: value })}
             />
 
             <PrimaryButton
-              label={mode === 'edit' ? 'Guardar cambios' : 'Agendar cita'}
+              label={mode === 'edit' ? 'Guardar cambios' : 'Crear cita'}
               busy={busy}
               onPress={() => onSave(draft)}
             />
@@ -5523,7 +5552,7 @@ function AppointmentTextField({
 }) {
   return (
     <View style={[styles.appointmentField, compact && styles.appointmentFieldCompact]}>
-      <Text style={styles.appointmentFieldLabel}>{label}</Text>
+      <AppointmentFieldLabel label={label} />
       <View style={[styles.appointmentInputWrap, multiline && styles.appointmentInputWrapMultiline]}>
         {Icon ? <Icon size={17} color={COLORS.muted} strokeWidth={2.4} /> : null}
         <TextInput
@@ -5539,6 +5568,56 @@ function AppointmentTextField({
           style={[styles.appointmentInput, !editable && styles.appointmentInputReadOnly, multiline && styles.appointmentInputMultiline]}
         />
       </View>
+    </View>
+  );
+}
+
+function AppointmentFieldLabel({ label, required }: { label: string; required?: boolean }) {
+  return (
+    <Text style={styles.appointmentFieldLabel}>
+      {label}
+      {required ? <Text style={styles.appointmentRequiredStar}> *</Text> : null}
+    </Text>
+  );
+}
+
+function AppointmentSelectField({
+  compact,
+  icon: Icon,
+  label,
+  placeholder,
+  required,
+  value,
+  onPress,
+}: {
+  compact?: boolean;
+  icon?: LucideIcon;
+  label?: string;
+  placeholder?: string;
+  required?: boolean;
+  value?: string;
+  onPress?: () => void;
+}) {
+  const content = String(value || '').trim();
+  return (
+    <View style={[styles.appointmentField, compact && styles.appointmentFieldCompact]}>
+      {label ? <AppointmentFieldLabel label={label} required={required} /> : null}
+      <Pressable
+        accessibilityRole={onPress ? 'button' : undefined}
+        disabled={!onPress}
+        onPress={onPress}
+        style={({ pressed }) => [
+          styles.appointmentSelectWrap,
+          !onPress && styles.appointmentSelectWrapStatic,
+          pressed && styles.pressed,
+        ]}
+      >
+        {Icon ? <Icon size={20} color={COLORS.muted} strokeWidth={2.35} /> : null}
+        <Text numberOfLines={1} style={[styles.appointmentSelectValue, !content && styles.appointmentSelectPlaceholder]}>
+          {content || placeholder || ''}
+        </Text>
+        {onPress ? <ChevronDown size={18} color={COLORS.muted} strokeWidth={2.45} /> : null}
+      </Pressable>
     </View>
   );
 }
@@ -13456,11 +13535,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 20,
   },
   calendarPeriodChip: {
     minHeight: 42,
-    minWidth: 104,
+    width: 96,
     borderRadius: 21,
     borderWidth: 1,
     borderColor: 'rgba(183,207,255,0.18)',
@@ -13478,8 +13557,7 @@ const styles = StyleSheet.create({
   },
   calendarHeaderCapsule: {
     minHeight: 42,
-    flex: 1,
-    maxWidth: 188,
+    width: 174,
     borderRadius: 21,
     borderWidth: 1,
     borderColor: 'rgba(183,207,255,0.18)',
@@ -13667,7 +13745,7 @@ const styles = StyleSheet.create({
   calendarWeekdayText: {
     flex: 1,
     color: COLORS.muted,
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '900',
     textAlign: 'center',
   },
@@ -13690,9 +13768,9 @@ const styles = StyleSheet.create({
     opacity: 0.64,
   },
   calendarDayNumberWrap: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -13706,7 +13784,7 @@ const styles = StyleSheet.create({
   },
   calendarDayNumber: {
     color: COLORS.text,
-    fontSize: 21,
+    fontSize: 18,
     fontWeight: '800',
   },
   calendarDayNumberMuted: {
@@ -14022,10 +14100,10 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   appointmentFormBody: {
-    paddingHorizontal: 14,
-    paddingTop: 8,
-    paddingBottom: 22,
-    gap: 12,
+    paddingHorizontal: 18,
+    paddingTop: 12,
+    paddingBottom: 26,
+    gap: 14,
   },
   appointmentContactCard: {
     minHeight: 58,
@@ -14063,10 +14141,10 @@ const styles = StyleSheet.create({
   },
   appointmentFieldGrid: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 14,
   },
   appointmentField: {
-    gap: 7,
+    gap: 8,
   },
   appointmentFieldCompact: {
     flex: 1,
@@ -14074,38 +14152,42 @@ const styles = StyleSheet.create({
   },
   appointmentFieldLabel: {
     color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
     textTransform: 'none',
   },
+  appointmentRequiredStar: {
+    color: COLORS.danger,
+    fontWeight: '900',
+  },
   appointmentInputWrap: {
-    minHeight: 44,
-    borderRadius: 14,
+    minHeight: 56,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.panelSoft,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
   },
   appointmentInputWrapMultiline: {
-    minHeight: 86,
+    minHeight: 112,
     alignItems: 'flex-start',
-    paddingTop: 12,
+    paddingTop: 15,
   },
   appointmentInput: {
     flex: 1,
-    minHeight: 42,
+    minHeight: 52,
     color: COLORS.text,
-    fontSize: 15,
+    fontSize: 18,
     fontWeight: '700',
     paddingHorizontal: 0,
     paddingVertical: 0,
   },
   appointmentInputMultiline: {
-    minHeight: 76,
-    lineHeight: 20,
+    minHeight: 100,
+    lineHeight: 25,
     paddingTop: 0,
   },
   appointmentSection: {
@@ -14140,9 +14222,33 @@ const styles = StyleSheet.create({
   },
   appointmentHint: {
     color: COLORS.muted,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 14,
+    lineHeight: 19,
     fontWeight: '700',
+  },
+  appointmentSelectPlaceholder: {
+    color: COLORS.muted,
+  },
+  appointmentSelectValue: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  appointmentSelectWrap: {
+    minHeight: 56,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+  },
+  appointmentSelectWrapStatic: {
+    opacity: 0.98,
   },
   centerScreen: {
     flex: 1,
@@ -15853,23 +15959,23 @@ const styles = StyleSheet.create({
   appointmentSegmentedTab: {
     flex: 1,
     minWidth: 0,
-    borderRadius: 16,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 8,
+    paddingHorizontal: 10,
   },
   appointmentSegmentedTabActive: {
     backgroundColor: 'rgba(255,255,255,0.09)',
   },
   appointmentSegmentedTabs: {
-    minHeight: 40,
-    borderRadius: 20,
+    minHeight: 56,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: 'rgba(255,255,255,0.035)',
     flexDirection: 'row',
-    padding: 4,
-    gap: 4,
+    padding: 5,
+    gap: 5,
   },
   calendarMiniDay: {
     width: '14.2857%',
