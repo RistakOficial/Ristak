@@ -56,6 +56,12 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [x] Login por correo + contrasena con resolucion automatica de tenant, igual que `/movil/login`.
 - [x] Shell inicial con Chat, Citas, Pagos, Analiticas y Ajustes.
 - [x] Primer pase de lista de chats con API real, filtros basicos y filas planas.
+- [x] Consolidar worktrees nativos en una sola app bajo `mobile/`.
+  - Avance: los pases de Chat/lista, Conversacion, Citas, Pagos, Analiticas,
+    Ajustes, dock inferior, login y notificaciones ya conviven en el mismo
+    `mobile/src/App.tsx`, `mobile/src/api.ts`, `mobile/src/types.ts` y helpers.
+    No retomes worktrees antiguos como fuente activa sin comparar contra esta
+    carpeta unificada.
 - [x] Dock inferior nativo.
   - Avance: `mobile/` ya replica la navegacion inferior de `/movil` con
     Ajustes, Chats, Citas, Pagos y Analiticas como iconos sin texto visible,
@@ -80,8 +86,30 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     bloqueos, invitados, usuarios Round Robin y el selector visual completo de
     fecha/hora del modal original de `/movil`.
 - [ ] Paridad completa de Pagos.
+  - Avance: la pantalla nativa de Pagos ya dejó de ser un resumen recortado.
+    Ahora replica el flujo principal de `/movil/payments`: selector de tipo de
+    pago, gating por `/api/integrations/status`, últimos pagos recibidos con
+    periodos Hoy/7 días/30 días/90 días, detalle seleccionable, productos /
+    precios guardados con crear/editar/eliminar, pago único manual, invoice de
+    HighLevel por email/WhatsApp-SMS/both, liga de pasarela, plan de
+    parcialidades y suscripción con contacto requerido. Los cobros usan
+    `account_currency` y `account_timezone` desde `/api/config`; si no se puede
+    leer la moneda de cuenta, los formularios no crean pagos. Los links externos
+    se abren con `Linking` desde un sheet nativo de "link listo". Si HighLevel
+    está conectado, el pago manual crea invoice y registra pago offline en GHL;
+    si no, guarda una transacción local.
+  - Brecha pendiente: el formulario nativo no copia todo el `RecordPaymentModal`
+    web de escritorio; implementa componentes nativos propios basados en la
+    estructura de `/movil`. Aun faltan opciones avanzadas de impuestos, MSI,
+    tarjetas guardadas, selector visual de fecha nativo y envío directo del link
+    por WhatsApp/email/SMS desde la pantalla de link listo.
 - [ ] Paridad completa de Analiticas.
 - [ ] Paridad completa de Ajustes.
+  - Avance: Ajustes nativo ya incluye la lista principal, numeros de WhatsApp,
+    selector de numero para chats, plantillas, agente, lista de chats, campos
+    personalizados, apariencia, notificaciones, dictado de contexto de negocio
+    y registro de push nativo. Sigue pendiente la comparacion visual final contra
+    `/movil/settings` y cualquier microinteraccion que Raul marque diferente.
 - [ ] Push/permisos/entitlements nativos listos para reemplazar `com.ristak.app`.
   - Avance: `mobile/` ya registra token APNs/FCM nativo con
     `expo-notifications` en `/api/push/mobile-devices`, crea canales Android,
@@ -283,15 +311,25 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   - Estado/contexto del agente desde `/api/ai-agent/config`.
 - [x] Agregar edicion de la descripcion del negocio del Asistente Personal AI
   usando `/api/ai-agent/business-context-answer` cuando OpenAI esta conectado.
-- [ ] Replicar dictado de voz nativo de la descripcion del negocio. Avance:
-  el boton `Dictar` ya existe visualmente, pero muestra una alerta porque falta
-  decidir/agregar el modulo de audio nativo equivalente al `MediaRecorder` web.
-- [ ] Replicar activacion real de permisos push del celular. Avance: la UI y
-  preferencias por usuario ya estan, pero falta integrar el modulo nativo de
-  notificaciones/permisos para sustituir el flujo web `pushNotificationsService`.
+- [x] Replicar dictado de voz nativo de la descripcion del negocio.
+  - Avance: el boton `Dictar` usa `expo-audio`, pide microfono, graba en el
+    celular, manda el audio a `/api/ai-agent/transcribe` y guarda la respuesta
+    pulida con `/api/ai-agent/business-context-answer`.
+- [x] Replicar activacion real de permisos push del celular.
+  - Avance: Ajustes consulta el permiso nativo, pide permiso con
+    `expo-notifications`, registra el token APNs/FCM en
+    `/api/push/mobile-devices`, respeta calendarios seleccionados y muestra
+    estado accionable si falta configurar APNs/FCM en el servidor.
+- [x] Replicar gestion basica de numeros de WhatsApp en Ajustes.
+  - Avance: la subpantalla `Numeros de WhatsApp` lee `/api/whatsapp-api/status`,
+    permite refrescar, elegir si la bandeja junta o separa numeros, seleccionar
+    el numero usado en chats y marcar un numero como principal via
+    `/api/whatsapp-api/phone-numbers/default`.
 - [ ] Aplicar visualmente el tema claro/noche al resto de `mobile/`. Avance:
-  `mobile_chat_theme_preference` ya se guarda y la pantalla pinta el estado; el
-  shell nativo todavia usa la paleta oscura base.
+  `mobile_chat_theme_preference` ya se guarda, Ajustes calcula sistema/horario,
+  actualiza `StatusBar` y el fondo nativo con `expo-system-ui`; falta que todos
+  los componentes centrales de Chat/Citas/Pagos/Analiticas consuman una paleta
+  clara completa en vez de depender de la paleta oscura base.
 - [ ] Validar visualmente contra `/movil` en iPhone real y corregir diferencias
   finas de espaciado/tipografia.
 

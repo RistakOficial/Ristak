@@ -512,6 +512,76 @@ export function getTodayRange(days = 30, timezone?: string | null) {
   };
 }
 
+export function dateOnlyInTimezone(value: Date = new Date(), timezone?: string | null) {
+  return getBusinessDateOnly(value, timezone);
+}
+
+export function addDateOnlyDays(dateOnly: string, days: number) {
+  return addDaysToDateOnly(dateOnly, days);
+}
+
+export function addDateOnlyMonths(dateOnly: string, months: number) {
+  const parsed = parseDateOnly(dateOnly);
+  if (!parsed) return dateOnly;
+  const shifted = new Date(Date.UTC(parsed.year, parsed.month - 1 + months, parsed.day));
+  return formatDateOnlyParts({
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+  });
+}
+
+export function getBusinessDateRange(days: number, timezone?: string | null) {
+  const endDate = dateOnlyInTimezone(new Date(), timezone);
+  const safeDays = Math.max(0, Math.floor(days));
+  const startDate = safeDays > 1 ? addDateOnlyDays(endDate, -(safeDays - 1)) : endDate;
+  return { startDate, endDate };
+}
+
+export function formatPaymentDate(value?: string | null, timezone?: string | null) {
+  if (!value) return 'Sin fecha';
+  const parsedDateOnly = parseDateOnly(value);
+  if (parsedDateOnly) {
+    const month = CHAT_SHORT_MONTHS[parsedDateOnly.month - 1] || '';
+    return month ? `${parsedDateOnly.day} ${month}` : value;
+  }
+
+  const parts = getBusinessDateTimeParts(value, timezone);
+  if (!parts) return 'Sin fecha';
+  const month = CHAT_SHORT_MONTHS[parts.month - 1] || '';
+  const hour = parts.hour % 12 || 12;
+  const suffix = parts.hour >= 12 ? 'p.m.' : 'a.m.';
+  return `${parts.day} ${month} ${hour}:${String(parts.minute).padStart(2, '0')} ${suffix}`;
+}
+
+export function getPaymentMethodLabel(method?: string | null) {
+  const normalized = String(method || '').toLowerCase();
+  if (normalized === 'card') return 'Tarjeta';
+  if (normalized === 'transfer' || normalized === 'bank_transfer') return 'Transferencia';
+  if (normalized === 'cash') return 'Efectivo';
+  if (normalized === 'check') return 'Cheque';
+  if (normalized === 'paypal') return 'PayPal';
+  if (normalized.includes('stripe')) return 'Stripe';
+  if (normalized.includes('conekta')) return 'Conekta';
+  if (normalized.includes('mercadopago')) return 'Mercado Pago';
+  if (normalized.includes('clip')) return 'CLIP';
+  if (normalized.includes('rebill')) return 'Rebill';
+  if (normalized.includes('link')) return 'Link';
+  return method || 'Otro';
+}
+
+export function getPaymentStatusLabel(status?: string | null) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'paid') return 'Pagado';
+  if (normalized === 'partial') return 'Parcial';
+  if (normalized === 'refunded') return 'Reembolsado';
+  if (normalized === 'failed') return 'Fallido';
+  if (normalized === 'pending') return 'Pendiente';
+  if (normalized === 'sent') return 'Enviado';
+  if (normalized === 'draft') return 'Borrador';
+  return status || 'Sin estado';
+}
+
 function readString(data: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = data[key];

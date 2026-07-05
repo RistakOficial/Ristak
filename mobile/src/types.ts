@@ -63,9 +63,21 @@ export type ChatContact = {
   lastMessageDirection?: string;
   lastBusinessPhone?: string;
   lastBusinessPhoneNumberId?: string;
+  preferredWhatsAppPhoneNumberId?: string;
+  preferred_whatsapp_phone_number_id?: string;
   unreadCount?: number;
   messageCount?: number;
   tags?: string[];
+  createdAt?: string;
+  updatedAt?: string;
+  customFields?: Array<{
+    id?: string;
+    fieldId?: string;
+    field_id?: string;
+    name?: string;
+    label?: string;
+    value?: unknown;
+  }>;
 };
 
 export type ContactTag = {
@@ -100,6 +112,8 @@ export type ChatAttachment = {
   mimeType?: string;
   isGif?: boolean;
   durationMs?: number;
+  size?: number;
+  caption?: string;
 };
 
 export type ChatLocation = {
@@ -153,9 +167,100 @@ export type ChatMessage = {
 export type SendTextResponse = {
   status?: string;
   transport?: string;
+  channel?: string;
   message?: unknown;
   fallbackReason?: string;
   routingReason?: string;
+};
+
+export type NativeMessageChannel = 'whatsapp' | 'sms' | 'messenger' | 'instagram' | 'email';
+
+export type WhatsAppTemplate = {
+  id?: string;
+  name?: string;
+  description?: string;
+  language?: string;
+  status?: string | null;
+  category?: string;
+  bodyText?: string;
+  body?: string;
+  text?: string;
+  localText?: string;
+  source?: 'whatsapp' | 'local';
+};
+
+export type WhatsAppTemplatesResponse = {
+  total?: number;
+  approved?: number;
+  blocked?: number;
+  items?: WhatsAppTemplate[];
+};
+
+export type MessageTemplate = {
+  id: string;
+  name: string;
+  description?: string;
+  status?: string;
+  bodyText?: string;
+  body?: string;
+  footerText?: string;
+};
+
+export type MessageTemplateBundle = {
+  templates?: MessageTemplate[];
+};
+
+export type BankClabeAccount = {
+  id: string;
+  alias: string;
+  clabe: string;
+  bank?: string;
+  accountHolder?: string;
+};
+
+export type PaymentLinkDeliveryOptions = {
+  channels?: Record<string, {
+    enabled?: boolean;
+    label?: string;
+    reason?: string;
+  }>;
+};
+
+export type ScheduledChatMessage = {
+  id?: string;
+  text?: string;
+  scheduledAt?: string;
+  status?: string;
+  channel?: string;
+  transport?: string;
+  externalId?: string;
+};
+
+export type CreateAppointmentInput = {
+  title: string;
+  contactId: string;
+  contactName?: string;
+  calendarId?: string;
+  startTime: string;
+  endTime: string;
+  notes?: string;
+  appointmentStatus?: string;
+};
+
+export type CreateTransactionInput = {
+  amount: number;
+  currency: string;
+  status: string;
+  paymentMethod: string;
+  paymentMode?: string;
+  title: string;
+  description?: string;
+  contactId: string;
+  contactName?: string;
+  email?: string;
+  phone?: string;
+  date?: string;
+  metadata?: Record<string, unknown>;
 };
 
 export type PhoneSection = 'settings' | 'chat' | 'calendar' | 'payments' | 'analytics';
@@ -224,20 +329,53 @@ export type OriginDistributionData = {
   whatsappNumbers?: WhatsAppNumberOriginDatum[];
 };
 
+export type WhatsAppApiPhoneNumberAvailability = {
+  apiAvailable?: boolean;
+  apiReason?: string;
+  qrReady?: boolean;
+  available?: boolean;
+};
+
 export type WhatsAppApiPhoneNumber = {
-  id?: string;
+  id: string;
+  waba_id?: string | null;
   phone_number?: string | null;
   display_phone_number?: string | null;
   verified_name?: string | null;
+  profile_picture_url?: string | null;
+  business_profile_json?: string | null;
+  quality_rating?: string | null;
+  messaging_limit?: string | null;
+  status?: string | null;
   label?: string | null;
+  is_default_sender?: boolean;
   api_send_enabled?: boolean;
   qr_send_enabled?: boolean;
   qr_status?: string | null;
   qr_connected_phone?: string | null;
+  qr_last_error?: string | null;
+  updated_at?: string | null;
+  availability?: WhatsAppApiPhoneNumberAvailability;
+  provider?: 'ycloud' | 'meta_direct' | string;
 };
 
 export type WhatsAppApiStatus = {
+  provider?: 'ycloud' | 'meta_direct' | string;
+  activeProvider?: 'ycloud' | 'meta_direct' | string;
+  source?: 'WhatsApp_API' | string;
+  connected?: boolean;
+  configured?: boolean;
+  requiresPhoneSelection?: boolean;
+  status?: 'connected' | 'needs_phone' | 'disabled' | 'disconnected' | string;
+  sender?: {
+    phone?: string | null;
+    phoneNumberId?: string | null;
+    wabaId?: string | null;
+  };
   phoneNumbers?: WhatsAppApiPhoneNumber[];
+  selectedPhone?: WhatsAppApiPhoneNumber | null;
+  needsDefaultSelection?: boolean;
+  lastError?: string | null;
 };
 
 export type CustomLabels = {
@@ -299,6 +437,176 @@ export type TransactionItem = {
   dueDate?: string;
   publicPaymentId?: string;
   paymentUrl?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill';
+
+export type PaymentGatewayStatus = {
+  configured?: boolean;
+  connected?: boolean;
+  mode?: 'test' | 'live' | string;
+  accountLabel?: string | null;
+};
+
+export type IntegrationsStatus = {
+  highlevel?: PaymentGatewayStatus;
+  stripe?: PaymentGatewayStatus;
+  conekta?: PaymentGatewayStatus;
+  mercadopago?: PaymentGatewayStatus;
+  clip?: PaymentGatewayStatus;
+  rebill?: PaymentGatewayStatus;
+  [key: string]: unknown;
+};
+
+export type PaymentLinkPayload = {
+  contactId: string;
+  contactName?: string;
+  email?: string;
+  phone?: string;
+  amount: number;
+  currency?: string;
+  applyTax?: boolean;
+  taxCalculationMode?: string;
+  title: string;
+  description?: string;
+  dueDate?: string;
+  source?: string;
+  lineItems?: Array<Record<string, unknown>>;
+  installments?: {
+    enabled?: boolean;
+    maxInstallments?: number;
+  };
+};
+
+export type PaymentLinkResponse = {
+  payment?: TransactionItem;
+  paymentUrl?: string;
+  publicPaymentId?: string;
+  cardSetupLink?: string;
+  cardSetupPaymentId?: string;
+  cardSetupAmount?: number;
+  firstPaymentLink?: string;
+  firstPaymentPaymentId?: string;
+  scheduledPayments?: unknown[];
+  [key: string]: unknown;
+};
+
+export type HighLevelInvoiceResponse = {
+  success?: boolean;
+  invoice?: {
+    id?: string;
+    _id?: string;
+    invoiceNumber?: string;
+    paymentLink?: string;
+    total?: number;
+    amount?: number;
+    currency?: string;
+    [key: string]: unknown;
+  };
+  error?: string;
+  message?: string;
+};
+
+export type HighLevelSendInvoiceResponse = {
+  success?: boolean;
+  message?: string;
+  paymentLink?: string;
+  error?: string;
+};
+
+export type HighLevelRecordPaymentPayload = {
+  amount: number;
+  currency: string;
+  paymentDate?: string;
+  paymentMethod?: string;
+  reference?: string;
+  notes?: string;
+};
+
+export type PaymentPlanPayload = {
+  contact: {
+    id: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+  };
+  totalAmount: number;
+  currency?: string;
+  description?: string;
+  title?: string;
+  invoicePayload?: Record<string, unknown>;
+  firstPayment: {
+    enabled: boolean;
+    type?: string;
+    value?: number;
+    amount: number;
+    date?: string;
+    frequency?: string;
+    method?: string;
+  };
+  remainingAutomatic?: boolean;
+  remainingFrequency?: string;
+  remainingPayments: Array<{
+    sequence: number;
+    type?: string;
+    value?: number;
+    amount: number;
+    percentage?: number | null;
+    dueDate: string;
+    frequency?: string;
+  }>;
+  channels?: Record<string, boolean>;
+  paymentMethodId?: string;
+  cardSetupAmount?: number;
+  source?: string;
+};
+
+export type PaymentSubscription = {
+  id: string;
+  contactId?: string | null;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  name?: string;
+  description?: string | null;
+  status?: string;
+  amount?: number;
+  currency?: string;
+  intervalType?: string;
+  intervalCount?: number;
+  startDate?: string | null;
+  nextRunAt?: string | null;
+  paymentMethod?: string | null;
+  paymentProvider?: string | null;
+  paymentMode?: string | null;
+  stripeCheckoutUrl?: string | null;
+  conektaCheckoutUrl?: string | null;
+  mercadoPagoInitPoint?: string | null;
+  mercadoPagoSandboxInitPoint?: string | null;
+  rebillPaymentLinkUrl?: string | null;
+  rebillCheckoutUrl?: string | null;
+  subscriptionStartUrl?: string | null;
+};
+
+export type SubscriptionPayload = {
+  contactId?: string | null;
+  contactName?: string | null;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  name: string;
+  description?: string;
+  status?: string;
+  amount: number;
+  currency?: string;
+  intervalType: string;
+  intervalCount: number;
+  startDate?: string | null;
+  nextRunAt?: string | null;
+  paymentMethod?: string;
+  paymentProvider?: string;
+  paymentMode?: string;
+  source?: string;
 };
 
 export type CalendarItem = {
@@ -313,6 +621,8 @@ export type CalendarItem = {
   active?: boolean;
   source?: string;
   provider?: string;
+  ghlCalendarId?: string | null;
+  ghl_calendar_id?: string | null;
   calendarType?: string;
   calendar_type?: string;
   eventTitle?: string;
@@ -325,6 +635,34 @@ export type CalendarItem = {
   slot_interval?: number;
   slotIntervalUnit?: string;
   slot_interval_unit?: string;
+  teamMembers?: Array<{
+    id?: string;
+    userId?: string;
+    user_id?: string;
+    name?: string;
+    email?: string;
+  }>;
+};
+
+export type CalendarUser = {
+  id?: string;
+  _id?: string;
+  userId?: string;
+  name?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+};
+
+export type CalendarFreeSlot = {
+  date?: string;
+  startTime?: string;
+  endTime?: string;
+  start?: string;
+  end?: string;
+  reason?: string;
+  title?: string;
+  slots?: string[];
 };
 
 export type CalendarEventItem = {
@@ -400,6 +738,11 @@ export type AIAgentConfigStatus = {
 export type AIAgentBusinessContextAnswerResult = {
   text?: string;
   status?: AIAgentConfigStatus;
+};
+
+export type AIAgentTranscriptionResult = {
+  text?: string;
+  model?: string;
 };
 
 export type WebPushPublicConfig = {

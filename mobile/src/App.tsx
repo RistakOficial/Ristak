@@ -3,10 +3,13 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Appearance,
   Easing,
   FlatList,
   Image,
+  Keyboard,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   PanResponder,
   Platform,
@@ -20,13 +23,27 @@ import {
   TextInput,
   View,
   Vibration,
+  useWindowDimensions,
 } from 'react-native';
-import type { ImageStyle } from 'react-native';
+import type { GestureResponderEvent, ImageStyle, LayoutChangeEvent } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
+import * as Clipboard from 'expo-clipboard';
+import * as DocumentPicker from 'expo-document-picker';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as ImagePicker from 'expo-image-picker';
+import {
+  RecordingPresets,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioPlayer,
+  useAudioPlayerStatus,
+  useAudioRecorder,
+  useAudioRecorderState,
+} from 'expo-audio';
 import {
   Archive,
   Activity,
+  Banknote,
   BarChart3,
   Bell,
   BellRing,
@@ -43,9 +60,13 @@ import {
   CircleDollarSign,
   CircleAlert,
   Clock,
+  Copy,
   CreditCard,
   DollarSign,
+  Edit3,
   FileText,
+  FilePlus,
+  Forward,
   Image as ImageIcon,
   Info,
   ListChecks,
@@ -58,6 +79,7 @@ import {
   Moon,
   Package,
   Pause,
+  Phone,
   Pencil,
   Play,
   Reply,
@@ -71,6 +93,8 @@ import {
   Settings,
   Smartphone,
   Sparkles,
+  Square,
+  Star,
   Sun,
   Tag,
   Target,
@@ -79,6 +103,7 @@ import {
   TrendingUp,
   User,
   Users,
+  Video,
   WalletCards,
   X,
   type LucideIcon,
@@ -116,6 +141,7 @@ import {
   formatCalendarEventTime,
   formatCalendarEventTimeRange,
   formatChatListDate,
+  formatCompactBusinessDate,
   formatCompactCurrency,
   formatCompactNumber,
   formatConversationDayLabel,
@@ -137,8 +163,11 @@ import {
   todayDateOnlyInBusinessTimezone,
 } from './format';
 import type {
+  BankClabeAccount,
+  CalendarFreeSlot,
   CalendarEventItem,
   CalendarItem,
+  CalendarUser,
   ChatContact,
   ChatMessage,
   ChatAttachment,
@@ -148,6 +177,8 @@ import type {
   CustomLabels,
   ConversationAgentState,
   AIAgentConfigStatus,
+  MessageTemplate,
+  NativeMessageChannel,
   DashboardFunnelRow,
   DashboardFunnelScope,
   DashboardMetrics,
@@ -157,10 +188,13 @@ import type {
   ProductItem,
   ProductPrice,
   RistakUser,
+  ScheduledChatMessage,
   SourceDatum,
   TransactionItem,
+  WhatsAppTemplate,
   WhatsAppApiTemplate,
   WhatsAppApiPhoneNumber,
+  WhatsAppApiStatus,
   WhatsAppNumberOriginDatum,
 } from './types';
 
@@ -189,23 +223,52 @@ type SessionState = {
 type Screen = 'boot' | 'login' | 'shell';
 type ChatFilterId = string;
 type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
-type ConversationSheetMode = 'attachments' | 'messageActions' | 'chatMore' | 'tag' | 'schedule' | null;
-type CalendarViewMode = 'day' | 'week' | 'month' | 'year';
+type ConversationSheetMode = 'attachments' | 'messageActions' | 'chatMore' | 'tag' | 'schedule' | 'channel' | 'templates' | 'clabe' | 'payment' | 'appointment' | null;
+type CalendarViewMode = 'day' | 'week' | 'month' | 'year' | 'years';
 type CalendarSheetMode = 'calendar' | 'contactPicker' | 'event' | 'appointmentForm' | null;
 type AppointmentFormMode = 'create' | 'edit';
+type ComposerChannelOption = {
+  value: NativeMessageChannel;
+  label: string;
+  description: string;
+  kind: ChannelBadgeKind;
+  disabledReason?: string;
+};
+type AppointmentScheduleMode = 'default' | 'custom';
+type PendingAppointmentDefaults = {
+  dateOnly: string;
+  startTime: string;
+  durationMinutes: number;
+  title: string;
+};
+type TimelineSelectionState = {
+  dateOnly: string;
+  startMinutes: number;
+  endMinutes: number;
+};
+type TimelinePendingTouch = {
+  dateOnly: string;
+  startMinutes: number;
+  x: number;
+  y: number;
+  timerId: ReturnType<typeof setTimeout>;
+};
 type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
 type PaymentView = 'select' | 'single' | 'partial' | 'subscription' | 'products';
 type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d';
 type ProductFormMode = 'create' | 'edit' | null;
-type SettingsPanel = 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null;
+type SettingsPanel = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null;
+type BusinessVoiceState = 'idle' | 'recording' | 'processing';
 type ConversationDraftAttachment = {
   id: string;
   uri: string;
   dataUrl: string;
-  kind: 'image';
+  kind: 'image' | 'video' | 'audio' | 'document';
   name: string;
   mimeType: string;
+  size?: number;
+  durationMs?: number;
 };
 type ConversationListItem =
   | { type: 'day'; id: string; label: string }
@@ -259,6 +322,7 @@ type AppointmentDraft = {
   contactId: string;
   contact?: ChatContact | null;
   calendarId: string;
+  assignedUserId?: string;
 };
 
 const PHONE_NAV_ITEMS: Array<{ key: PhoneSection; label: string; Icon: LucideIcon }> = [
@@ -291,8 +355,29 @@ const CHAT_SHEET_CLOSE_DURATION_MS = 280;
 const CHAT_SHEET_HIDDEN_TRANSLATE_Y = 860;
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏'];
 const CONVERSATION_ATTACHMENT_LIMIT = 4;
+const MEDIA_ATTACHMENT_MAX_BYTES = 16 * 1024 * 1024;
+const DOCUMENT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+const VIDEO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const CALENDAR_SELECTED_ID_STORAGE_KEY = 'ristak.native.calendar.selectedCalendarId.v1';
+const CALENDAR_EVENTS_CACHE_STORAGE_KEY = 'ristak.native.calendar.eventsCache.v1';
 const CALENDAR_WEEKDAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+const CALENDAR_VIEW_OPTIONS: Array<{ view: Exclude<CalendarViewMode, 'years'>; label: string }> = [
+  { view: 'day', label: 'Día' },
+  { view: 'week', label: 'Semana' },
+  { view: 'month', label: 'Mes' },
+  { view: 'year', label: 'Año' },
+];
+const YEAR_GRID_SIZE = 12;
+const MONTH_SWIPE_MIN_PX = 56;
+const MONTH_SWIPE_COMMIT_RATIO = 0.18;
+const MONTH_SWIPE_MAX_OFFSET_RATIO = 0.92;
+const TIMELINE_HOUR_HEIGHT = 54;
+const TIMELINE_TOTAL_MINUTES = 24 * 60;
+const TIMELINE_GRID_HEIGHT = TIMELINE_HOUR_HEIGHT * 24;
+const TIMELINE_LONG_PRESS_DELAY_MS = 650;
+const TIMELINE_PENDING_MOVE_CANCEL_PX = 12;
+const TIMELINE_TAP_MOVE_TOLERANCE_PX = 10;
+const TIMELINE_TOUCH_ANCHOR_OFFSET_PX = 18;
 const APPOINTMENT_STATUS_OPTIONS = [
   { value: 'pending', label: 'Pendiente' },
   { value: 'confirmed', label: 'Confirmada' },
@@ -324,6 +409,7 @@ const SETTINGS_APP_CONFIG_KEYS = [
   'mobile_chat_show_last_preview',
   'mobile_chat_show_unread_indicators',
   'mobile_chat_theme_preference',
+  'mobile_chat_selected_whatsapp_phone_id',
 ];
 const SETTINGS_USER_CONFIG_KEYS = [
   'chat_push_notifications_enabled',
@@ -987,6 +1073,7 @@ function ChatScreen({
   const [cameraAsset, setCameraAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [chats, setChats] = useState<ChatContact[]>([]);
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
+  const [accountCurrency, setAccountCurrency] = useState(DEFAULT_ACCOUNT_CURRENCY);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -1033,7 +1120,7 @@ function ChatScreen({
 
   useEffect(() => {
     let cancelled = false;
-    api.getConfig(['account_timezone'])
+    api.getConfig(['account_timezone', 'account_currency'])
       .then((response) => {
         if (cancelled) return;
         const values = response && typeof response === 'object' && 'config' in response
@@ -1042,10 +1129,17 @@ function ChatScreen({
         const timezone = values && typeof values === 'object' && 'account_timezone' in values
           ? values.account_timezone
           : '';
+        const currency = values && typeof values === 'object' && 'account_currency' in values
+          ? values.account_currency
+          : '';
         setBusinessTimezone(resolveBusinessTimezone(typeof timezone === 'string' ? timezone : ''));
+        setAccountCurrency(typeof currency === 'string' ? normalizeCurrencyCode(currency) : DEFAULT_ACCOUNT_CURRENCY);
       })
       .catch(() => {
-        if (!cancelled) setBusinessTimezone(resolveBusinessTimezone());
+        if (!cancelled) {
+          setBusinessTimezone(resolveBusinessTimezone());
+          setAccountCurrency(DEFAULT_ACCOUNT_CURRENCY);
+        }
       });
     return () => {
       cancelled = true;
@@ -1591,6 +1685,7 @@ function ChatScreen({
       <NativeConversationScreen
         api={api}
         contact={selected}
+        accountCurrency={accountCurrency}
         archived={archivedChatIds.includes(selected.id)}
         muted={mutedChatIds.includes(selected.id)}
         timezone={businessTimezone}
@@ -2828,9 +2923,44 @@ function getCalendarColor(calendar?: CalendarItem | null) {
   return value.startsWith('#') || value.startsWith('rgb') ? value : COLORS.accent;
 }
 
+function getCalendarType(calendar?: CalendarItem | null) {
+  return String(calendar?.calendarType || calendar?.calendar_type || '').trim().toLowerCase();
+}
+
+function isRoundRobinCalendar(calendar?: CalendarItem | null) {
+  return getCalendarType(calendar) === 'round_robin';
+}
+
+function isHighLevelCalendar(calendar?: CalendarItem | null) {
+  return String(calendar?.source || calendar?.provider || '').trim().toLowerCase() === 'ghl'
+    || Boolean(calendar?.ghlCalendarId || calendar?.ghl_calendar_id);
+}
+
 function calendarIsActive(calendar: CalendarItem) {
   if (calendar.isActive === false || calendar.active === false) return false;
   return true;
+}
+
+function getCalendarTeamMemberId(member: NonNullable<CalendarItem['teamMembers']>[number]) {
+  return String(member.userId || member.user_id || member.id || '').trim();
+}
+
+function getCalendarUserId(user?: CalendarUser | null) {
+  return String(user?.id || user?._id || user?.userId || '').trim();
+}
+
+function getCalendarUserLabel(user?: CalendarUser | null) {
+  const firstLast = `${String(user?.firstName || '').trim()} ${String(user?.lastName || '').trim()}`.trim();
+  return String(user?.name || firstLast || user?.email || getCalendarUserId(user) || 'Usuario').trim();
+}
+
+function getCalendarUserDetail(user?: CalendarUser | null) {
+  return String(user?.email || getCalendarUserId(user)).trim();
+}
+
+function unwrapCalendarUsers(response: Awaited<ReturnType<RistakApiClient['getCalendarUsers']>>) {
+  const users = response && Array.isArray(response.users) ? response.users : [];
+  return users.filter((user) => getCalendarUserId(user));
 }
 
 function unwrapCalendars(response: Awaited<ReturnType<RistakApiClient['getCalendars']>>) {
@@ -2927,8 +3057,143 @@ function formatCalendarAgendaDate(dateOnly: string) {
   return year ? `${capitalized} de ${year}` : capitalized;
 }
 
+function getDateOnlyYear(dateOnly: string) {
+  const date = dateOnlyToCalendarDate(dateOnly);
+  return date?.getFullYear() || new Date().getFullYear();
+}
+
+function getDateOnlyMonthIndex(dateOnly: string) {
+  const date = dateOnlyToCalendarDate(dateOnly);
+  return date?.getMonth() || 0;
+}
+
+function buildYearMonthDateOnly(year: number, monthIndex: number) {
+  return `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`;
+}
+
+function getBusinessWeekRange(dateOnly: string) {
+  const selectedDate = dateOnlyToCalendarDate(dateOnly) || new Date();
+  const start = new Date(selectedDate);
+  start.setDate(selectedDate.getDate() - selectedDate.getDay());
+  const days = Array.from({ length: 7 }).map((_, index) => {
+    const day = new Date(start);
+    day.setDate(start.getDate() + index);
+    return dateOnlyFromCalendarDate(day);
+  });
+  return {
+    days,
+    startDate: days[0] || dateOnly,
+    endDate: days[6] || dateOnly,
+  };
+}
+
+function getYearsGridForDate(dateOnly: string) {
+  const selectedYear = getDateOnlyYear(dateOnly);
+  const startYear = Math.floor(selectedYear / YEAR_GRID_SIZE) * YEAR_GRID_SIZE;
+  return Array.from({ length: YEAR_GRID_SIZE }).map((_, index) => startYear + index);
+}
+
+function normalizeCalendarMinutes(value?: number | null, unit?: string | null) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const normalizedUnit = String(unit || 'mins').toLowerCase();
+  if (normalizedUnit.startsWith('hour')) return amount * 60;
+  return amount;
+}
+
+function getCalendarSlotDurationMinutes(calendar?: CalendarItem | null) {
+  return Math.max(
+    15,
+    Math.min(
+      TIMELINE_TOTAL_MINUTES,
+      normalizeCalendarMinutes(calendar?.slotDuration || calendar?.slot_duration, calendar?.slotDurationUnit || calendar?.slot_duration_unit) || 60,
+    ),
+  );
+}
+
+function getCalendarSnapMinutes(calendar?: CalendarItem | null) {
+  return Math.max(
+    5,
+    Math.min(
+      60,
+      normalizeCalendarMinutes(calendar?.slotInterval || calendar?.slot_interval, calendar?.slotIntervalUnit || calendar?.slot_interval_unit)
+        || normalizeCalendarMinutes(calendar?.slotDuration || calendar?.slot_duration, calendar?.slotDurationUnit || calendar?.slot_duration_unit)
+        || 15,
+    ),
+  );
+}
+
+function parseTimeToMinutes(value?: string | null) {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return hour * 60 + minute;
+}
+
+function formatMinutesAsTime(minutes: number) {
+  const clamped = Math.max(0, Math.min(TIMELINE_TOTAL_MINUTES - 1, Math.round(minutes)));
+  return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
+}
+
+function formatTimelineHour(hour: number) {
+  if (hour === 0) return '12 a.m.';
+  if (hour === 12) return '12 p.m.';
+  return hour > 12 ? `${hour - 12} p.m.` : `${hour} a.m.`;
+}
+
+function formatDateOnlyDayNumber(dateOnly: string) {
+  const date = dateOnlyToCalendarDate(dateOnly);
+  return date?.getDate() || 0;
+}
+
+function getTimelineMinutesFromY(y: number, snapMinutes: number) {
+  const anchorAdjustedY = Math.max(0, Math.min(TIMELINE_GRID_HEIGHT, y - TIMELINE_TOUCH_ANCHOR_OFFSET_PX));
+  const rawMinutes = (anchorAdjustedY / TIMELINE_GRID_HEIGHT) * TIMELINE_TOTAL_MINUTES;
+  const roundedMinutes = Math.round(rawMinutes / snapMinutes) * snapMinutes;
+  return Math.max(0, Math.min(TIMELINE_TOTAL_MINUTES - 15, roundedMinutes));
+}
+
+function getEventTimelineEntry(event: CalendarEventItem, timezone: string) {
+  const startFields = isoToBusinessDateTimeFields(getEventStart(event), timezone);
+  const endFields = isoToBusinessDateTimeFields(getEventEnd(event), timezone);
+  const startMinutes = parseTimeToMinutes(startFields.time);
+  const rawEndMinutes = parseTimeToMinutes(endFields.time);
+  if (startMinutes === null) return null;
+  const endMinutes = Math.max(startMinutes + 30, rawEndMinutes === null ? startMinutes + 60 : rawEndMinutes);
+  const visibleStart = Math.max(0, startMinutes);
+  const visibleEnd = Math.min(TIMELINE_TOTAL_MINUTES, endMinutes);
+  return {
+    top: (visibleStart / TIMELINE_TOTAL_MINUTES) * TIMELINE_GRID_HEIGHT,
+    height: Math.max(28, ((visibleEnd - visibleStart) / TIMELINE_TOTAL_MINUTES) * TIMELINE_GRID_HEIGHT),
+  };
+}
+
+function getNowMinutesForDate(dateOnly: string, timezone: string) {
+  const parts = getBusinessDateTimeParts(new Date(), timezone);
+  if (!parts) return null;
+  const today = `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+  if (today !== dateOnly) return null;
+  return parts.hour * 60 + parts.minute;
+}
+
+function extractAppointmentIdFromUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.searchParams.get('open') === 'appointment'
+      ? parsed.searchParams.get('id') || ''
+      : '';
+  } catch {
+    const openMatch = url.match(/[?&]open=appointment(?:&|$)/);
+    const idMatch = url.match(/[?&]id=([^&#]+)/);
+    return openMatch && idMatch ? decodeURIComponent(idMatch[1] || '') : '';
+  }
+}
+
 function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React.ReactNode }) {
   const initialToday = useMemo(() => todayDateOnlyInBusinessTimezone(), []);
+  const { width: viewportWidth } = useWindowDimensions();
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
   const [calendarView, setCalendarView] = useState<CalendarViewMode>('month');
   const [currentMonthDateOnly, setCurrentMonthDateOnly] = useState(initialToday);
@@ -2949,6 +3214,15 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<ChatContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
+  const [pendingAppointmentDefaults, setPendingAppointmentDefaults] = useState<PendingAppointmentDefaults | null>(null);
+  const [timelineSelection, setTimelineSelection] = useState<TimelineSelectionState | null>(null);
+  const [monthSwipeWidth, setMonthSwipeWidth] = useState(0);
+  const monthSwipeTranslate = useRef(new Animated.Value(0)).current;
+  const timelineSelectionRef = useRef<TimelineSelectionState | null>(null);
+  const timelinePendingTouchRef = useRef<TimelinePendingTouch | null>(null);
+  const timelineSwipeRef = useRef<{ dateOnly: string; x: number; y: number; dx: number; dy: number } | null>(null);
+  const handledOpenAppointmentRef = useRef('');
+  const lastDayTapRef = useRef<{ dateOnly: string; at: number } | null>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const activeCalendars = useMemo(() => calendars.filter(calendarIsActive), [calendars]);
@@ -2957,15 +3231,22 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
   }, [activeCalendars, calendars, selectedCalendarId]);
   const selectedCalendarKey = getCalendarKey(selectedCalendar);
   const todayDateOnly = useMemo(() => todayDateOnlyInBusinessTimezone(businessTimezone), [businessTimezone]);
-  const monthCells = useMemo(
-    () => buildBusinessMonthCells(currentMonthDateOnly, todayDateOnly),
-    [currentMonthDateOnly, todayDateOnly],
-  );
+  const monthPages = useMemo(() => [-1, 0, 1].map((offset) => {
+    const pageDateOnly = addBusinessDateOnlyMonths(currentMonthDateOnly, offset);
+    return {
+      key: `${pageDateOnly}-${offset}`,
+      offset,
+      dateOnly: pageDateOnly,
+      cells: buildBusinessMonthCells(pageDateOnly, todayDateOnly),
+    };
+  }), [currentMonthDateOnly, todayDateOnly]);
+  const headerTitleSwipeWidth = monthSwipeWidth || Math.max(1, viewportWidth - 30);
   const monthRange = useMemo(() => getBusinessMonthRange(currentMonthDateOnly), [currentMonthDateOnly]);
+  const weekRange = useMemo(() => getBusinessWeekRange(selectedDateOnly), [selectedDateOnly]);
+  const yearsGrid = useMemo(() => getYearsGridForDate(currentMonthDateOnly), [currentMonthDateOnly]);
   const eventRange = useMemo(() => {
-    if (calendarView === 'year') {
-      const yearDate = dateOnlyToCalendarDate(currentMonthDateOnly) || new Date();
-      const year = yearDate.getFullYear();
+    if (calendarView === 'year' || calendarView === 'years') {
+      const year = getDateOnlyYear(currentMonthDateOnly);
       return {
         startDate: `${year}-01-01`,
         endDate: `${year}-12-31`,
@@ -2973,14 +3254,9 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     }
 
     if (calendarView === 'week') {
-      const selectedDate = dateOnlyToCalendarDate(selectedDateOnly) || new Date();
-      const start = new Date(selectedDate);
-      start.setDate(selectedDate.getDate() - selectedDate.getDay());
-      const end = new Date(start);
-      end.setDate(start.getDate() + 6);
       return {
-        startDate: dateOnlyFromCalendarDate(start),
-        endDate: dateOnlyFromCalendarDate(end),
+        startDate: weekRange.startDate,
+        endDate: weekRange.endDate,
       };
     }
 
@@ -2995,11 +3271,17 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       startDate: monthRange.gridStart,
       endDate: monthRange.gridEnd,
     };
-  }, [calendarView, currentMonthDateOnly, monthRange.gridEnd, monthRange.gridStart, selectedDateOnly]);
+  }, [calendarView, currentMonthDateOnly, monthRange.gridEnd, monthRange.gridStart, selectedDateOnly, weekRange.endDate, weekRange.startDate]);
   const eventRangeTimestamps = useMemo(
     () => getBusinessRangeTimestamps(eventRange.startDate, eventRange.endDate, businessTimezone),
     [businessTimezone, eventRange.endDate, eventRange.startDate],
   );
+  const calendarEventCacheKey = useMemo(() => [
+    selectedCalendarKey || 'none',
+    businessTimezone,
+    eventRange.startDate,
+    eventRange.endDate,
+  ].join('|'), [businessTimezone, eventRange.endDate, eventRange.startDate, selectedCalendarKey]);
 
   const eventsByDate = useMemo(() => {
     const grouped: Record<string, CalendarEventItem[]> = {};
@@ -3014,6 +3296,11 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     });
     return grouped;
   }, [businessTimezone, events]);
+
+  const weekDays = useMemo(() => weekRange.days.map((dateOnly) => ({
+    dateOnly,
+    events: eventsByDate[dateOnly] || [],
+  })), [eventsByDate, weekRange.days]);
 
   const selectedDayEvents = useMemo(
     () => eventsByDate[selectedDateOnly] || [],
@@ -3044,12 +3331,14 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
   const selectDate = useCallback((dateOnly: string) => {
     setSelectedDateOnly(dateOnly);
     setCurrentMonthDateOnly(dateOnly);
-    if (calendarView === 'year') setCalendarView('month');
+    if (calendarView === 'year' || calendarView === 'years') setCalendarView('month');
   }, [calendarView]);
 
   const movePeriod = useCallback((direction: -1 | 1) => {
-    if (calendarView === 'month' || calendarView === 'year') {
-      const next = calendarView === 'year'
+    if (calendarView === 'month' || calendarView === 'year' || calendarView === 'years') {
+      const next = calendarView === 'years'
+        ? addBusinessDateOnlyMonths(currentMonthDateOnly, direction * YEAR_GRID_SIZE * 12)
+        : calendarView === 'year'
         ? addBusinessDateOnlyMonths(currentMonthDateOnly, direction * 12)
         : addBusinessDateOnlyMonths(currentMonthDateOnly, direction);
       setCurrentMonthDateOnly(next);
@@ -3057,7 +3346,17 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
         const currentDate = dateOnlyToCalendarDate(current);
         const nextDate = dateOnlyToCalendarDate(next);
         if (!currentDate || !nextDate) return next;
-        const target = new Date(nextDate.getFullYear(), nextDate.getMonth(), Math.min(currentDate.getDate(), 28), 12, 0, 0, 0);
+        const targetMonthEnd = getBusinessMonthRange(next).monthEnd;
+        const daysInTargetMonth = formatDateOnlyDayNumber(targetMonthEnd) || 28;
+        const target = new Date(
+          nextDate.getFullYear(),
+          nextDate.getMonth(),
+          Math.min(currentDate.getDate(), daysInTargetMonth),
+          12,
+          0,
+          0,
+          0,
+        );
         return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
       });
       return;
@@ -3068,6 +3367,132 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     setSelectedDateOnly(next);
     setCurrentMonthDateOnly(next);
   }, [calendarView, currentMonthDateOnly, selectedDateOnly]);
+
+  const handleNavigateUp = useCallback(() => {
+    if (calendarView === 'month') {
+      setCalendarView('year');
+      return;
+    }
+    if (calendarView === 'year') {
+      setCalendarView('years');
+      return;
+    }
+    if (calendarView === 'years') {
+      setCalendarView('year');
+      return;
+    }
+    setCurrentMonthDateOnly(selectedDateOnly);
+    setCalendarView('month');
+  }, [calendarView, selectedDateOnly]);
+
+  const handleQuickReturn = useCallback(() => {
+    const today = todayDateOnlyInBusinessTimezone(businessTimezone);
+    setSelectedDateOnly(today);
+    setCurrentMonthDateOnly(today);
+    if (calendarView === 'year') {
+      setCalendarView('month');
+      return;
+    }
+    if (calendarView === 'years') {
+      setCalendarView('year');
+      return;
+    }
+    setCalendarView('day');
+  }, [businessTimezone, calendarView]);
+
+  const handleSelectCalendarView = useCallback((view: Exclude<CalendarViewMode, 'years'>) => {
+    setCalendarView(view);
+    setCurrentMonthDateOnly(selectedDateOnly);
+  }, [selectedDateOnly]);
+
+  const handleSelectMonthFromYear = useCallback((monthIndex: number) => {
+    const year = getDateOnlyYear(currentMonthDateOnly);
+    const currentDate = dateOnlyToCalendarDate(selectedDateOnly);
+    const selectedDay = currentDate?.getDate() || 1;
+    const targetMonthStart = buildYearMonthDateOnly(year, monthIndex);
+    const range = getBusinessMonthRange(targetMonthStart);
+    const daysInMonth = formatDateOnlyDayNumber(range.monthEnd);
+    const nextDateOnly = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(Math.min(selectedDay, daysInMonth)).padStart(2, '0')}`;
+    setSelectedDateOnly(nextDateOnly);
+    setCurrentMonthDateOnly(nextDateOnly);
+    setCalendarView('month');
+  }, [currentMonthDateOnly, selectedDateOnly]);
+
+  const handleSelectYear = useCallback((year: number) => {
+    const selectedMonth = getDateOnlyMonthIndex(selectedDateOnly);
+    const selectedDay = formatDateOnlyDayNumber(selectedDateOnly) || 1;
+    const targetMonthStart = buildYearMonthDateOnly(year, selectedMonth);
+    const range = getBusinessMonthRange(targetMonthStart);
+    const daysInMonth = formatDateOnlyDayNumber(range.monthEnd);
+    const nextDateOnly = `${year}-${String(selectedMonth + 1).padStart(2, '0')}-${String(Math.min(selectedDay, daysInMonth)).padStart(2, '0')}`;
+    setSelectedDateOnly(nextDateOnly);
+    setCurrentMonthDateOnly(nextDateOnly);
+    setCalendarView('year');
+  }, [selectedDateOnly]);
+
+  useEffect(() => {
+    if (monthSwipeWidth > 0) {
+      monthSwipeTranslate.setValue(-monthSwipeWidth);
+    }
+  }, [currentMonthDateOnly, monthSwipeTranslate, monthSwipeWidth]);
+
+  const finishMonthSwipe = useCallback((direction: -1 | 1) => {
+    if (!monthSwipeWidth) return;
+    Animated.timing(monthSwipeTranslate, {
+      toValue: direction > 0 ? -monthSwipeWidth * 2 : 0,
+      duration: 230,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start(() => {
+      movePeriod(direction);
+      monthSwipeTranslate.setValue(-monthSwipeWidth);
+    });
+  }, [monthSwipeTranslate, monthSwipeWidth, movePeriod]);
+
+  const reboundMonthSwipe = useCallback(() => {
+    if (!monthSwipeWidth) return;
+    Animated.timing(monthSwipeTranslate, {
+      toValue: -monthSwipeWidth,
+      duration: 190,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [monthSwipeTranslate, monthSwipeWidth]);
+
+  const monthPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) => (
+      calendarView === 'month'
+      && monthSwipeWidth > 0
+      && Math.abs(gestureState.dx) > 8
+      && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.18
+    ),
+    onPanResponderGrant: () => {
+      monthSwipeTranslate.stopAnimation();
+    },
+    onPanResponderMove: (_, gestureState) => {
+      if (!monthSwipeWidth) return;
+      const maxOffset = monthSwipeWidth * MONTH_SWIPE_MAX_OFFSET_RATIO;
+      const offset = Math.sign(gestureState.dx) * Math.min(Math.abs(gestureState.dx), maxOffset);
+      monthSwipeTranslate.setValue(-monthSwipeWidth + offset);
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      if (!monthSwipeWidth) return;
+      const shouldCommit = Math.abs(gestureState.dx) >= Math.max(MONTH_SWIPE_MIN_PX, monthSwipeWidth * MONTH_SWIPE_COMMIT_RATIO);
+      if (shouldCommit) {
+        finishMonthSwipe(gestureState.dx < 0 ? 1 : -1);
+        return;
+      }
+      reboundMonthSwipe();
+    },
+    onPanResponderTerminate: reboundMonthSwipe,
+    onPanResponderTerminationRequest: () => false,
+  }), [calendarView, finishMonthSwipe, monthSwipeTranslate, monthSwipeWidth, reboundMonthSwipe]);
+
+  const handleMonthLayout = useCallback((event: LayoutChangeEvent) => {
+    const width = Math.max(1, event.nativeEvent.layout.width);
+    setMonthSwipeWidth(width);
+    monthSwipeTranslate.setValue(-width);
+  }, [monthSwipeTranslate]);
 
   const openSheet = useCallback((sheet: Exclude<CalendarSheetMode, null>) => {
     if (sheetCloseTimerRef.current) {
@@ -3148,15 +3573,28 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       if (!Number.isFinite(eventRangeTimestamps.startTime) || !Number.isFinite(eventRangeTimestamps.endTime)) {
         throw new Error('Rango de calendario inválido.');
       }
+      if (!silent) {
+        const cache = await readJsonValue<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
+        const cachedEvents = Array.isArray(cache[calendarEventCacheKey]) ? cache[calendarEventCacheKey] : [];
+        if (cachedEvents.length) {
+          setEvents(cachedEvents);
+        }
+      }
       const response = await api.getCalendarEvents(eventRangeTimestamps.startTime, eventRangeTimestamps.endTime, selectedCalendarKey);
-      setEvents(unwrapCalendarEvents(response));
+      const nextEvents = unwrapCalendarEvents(response);
+      setEvents(nextEvents);
+      const cache = await readJsonValue<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
+      await writeJsonValue(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {
+        ...cache,
+        [calendarEventCacheKey]: nextEvents,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar las citas.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [api, eventRangeTimestamps.endTime, eventRangeTimestamps.startTime, selectedCalendarKey]);
+  }, [api, calendarEventCacheKey, eventRangeTimestamps.endTime, eventRangeTimestamps.startTime, selectedCalendarKey]);
 
   useEffect(() => {
     let cancelled = false;
@@ -3211,6 +3649,40 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     };
   }, [activeSheet, api, contactQuery]);
 
+  const openAppointmentFromLink = useCallback(async (url: string) => {
+    const appointmentId = extractAppointmentIdFromUrl(url);
+    if (!appointmentId || handledOpenAppointmentRef.current === appointmentId) return;
+    handledOpenAppointmentRef.current = appointmentId;
+    try {
+      const appointment = await api.getAppointment(appointmentId);
+      if (!appointment) return;
+      const eventDateOnly = getBusinessDateOnly(getEventStart(appointment), businessTimezone);
+      if (eventDateOnly) {
+        setSelectedDateOnly(eventDateOnly);
+        setCurrentMonthDateOnly(eventDateOnly);
+        setCalendarView('month');
+      }
+      const eventCalendarId = getEventCalendarId(appointment);
+      if (eventCalendarId && calendars.some((calendar) => getCalendarKey(calendar) === eventCalendarId)) {
+        setSelectedCalendarId(eventCalendarId);
+      }
+      setSelectedEvent(appointment);
+      openSheet('event');
+    } catch {
+      Alert.alert('No se abrió la cita', 'El calendario abrió, pero los detalles no cargaron.');
+    }
+  }, [api, businessTimezone, calendars, openSheet]);
+
+  useEffect(() => {
+    void Linking.getInitialURL().then((url) => {
+      if (url) void openAppointmentFromLink(url);
+    });
+    const subscription = Linking.addEventListener('url', ({ url }) => {
+      void openAppointmentFromLink(url);
+    });
+    return () => subscription.remove();
+  }, [openAppointmentFromLink]);
+
   const refresh = useCallback(() => {
     setRefreshing(true);
     void Promise.resolve()
@@ -3223,14 +3695,164 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       });
   }, [loadCalendars, loadEvents]);
 
-  const goToday = useCallback(() => {
-    const today = todayDateOnlyInBusinessTimezone(businessTimezone);
-    setSelectedDateOnly(today);
-    setCurrentMonthDateOnly(today);
-    setCalendarView('month');
-  }, [businessTimezone]);
+  const goToday = handleQuickReturn;
+
+  const openCreateAppointmentRange = useCallback((dateOnly: string, startMinutes: number, endMinutes: number) => {
+    if (!selectedCalendarKey) {
+      Alert.alert('Selecciona calendario', 'Elige un calendario activo antes de agendar.');
+      return;
+    }
+    const normalizedStart = Math.max(0, Math.min(TIMELINE_TOTAL_MINUTES - 15, Math.min(startMinutes, endMinutes)));
+    const normalizedEnd = Math.max(normalizedStart + 15, Math.min(TIMELINE_TOTAL_MINUTES, Math.max(startMinutes, endMinutes)));
+    setSelectedDateOnly(dateOnly);
+    setCurrentMonthDateOnly(dateOnly);
+    setPendingAppointmentDefaults({
+      dateOnly,
+      startTime: formatMinutesAsTime(normalizedStart),
+      durationMinutes: normalizedEnd - normalizedStart,
+      title: selectedCalendar?.eventTitle || selectedCalendar?.event_title || '',
+    });
+    setContactQuery('');
+    setContactResults([]);
+    openSheet('contactPicker');
+  }, [openSheet, selectedCalendar, selectedCalendarKey]);
+
+  const openCreateAppointmentForDateOnly = useCallback((dateOnly: string) => {
+    const startTime = getDefaultAppointmentStartTime(dateOnly, businessTimezone);
+    const startMinutes = parseTimeToMinutes(startTime) ?? 9 * 60;
+    openCreateAppointmentRange(dateOnly, startMinutes, startMinutes + getCalendarSlotDurationMinutes(selectedCalendar));
+  }, [businessTimezone, openCreateAppointmentRange, selectedCalendar]);
+
+  const handleDayPress = useCallback((dateOnly: string) => {
+    const now = Date.now();
+    const previous = lastDayTapRef.current;
+    selectDate(dateOnly);
+    if (previous?.dateOnly === dateOnly && now - previous.at <= 320) {
+      lastDayTapRef.current = null;
+      openCreateAppointmentForDateOnly(dateOnly);
+      return;
+    }
+    lastDayTapRef.current = { dateOnly, at: now };
+  }, [openCreateAppointmentForDateOnly, selectDate]);
+
+  const setTimelineSelectionValue = useCallback((nextSelection: TimelineSelectionState | null) => {
+    timelineSelectionRef.current = nextSelection;
+    setTimelineSelection(nextSelection);
+  }, []);
+
+  const clearTimelinePendingTouch = useCallback(() => {
+    const pending = timelinePendingTouchRef.current;
+    if (!pending) return null;
+    clearTimeout(pending.timerId);
+    timelinePendingTouchRef.current = null;
+    return pending;
+  }, []);
+
+  useEffect(() => () => {
+    clearTimelinePendingTouch();
+    timelineSelectionRef.current = null;
+    timelineSwipeRef.current = null;
+  }, [clearTimelinePendingTouch]);
+
+  const handleTimelineGrant = useCallback((dateOnly: string, event: GestureResponderEvent) => {
+    if (!selectedCalendarKey) {
+      Alert.alert('Selecciona calendario', 'Elige un calendario activo antes de agendar.');
+      return;
+    }
+    setSelectedDateOnly(dateOnly);
+    setCurrentMonthDateOnly(dateOnly);
+    clearTimelinePendingTouch();
+    timelineSwipeRef.current = null;
+    setTimelineSelectionValue(null);
+    const startMinutes = getTimelineMinutesFromY(event.nativeEvent.locationY, getCalendarSnapMinutes(selectedCalendar));
+    const pending: TimelinePendingTouch = {
+      dateOnly,
+      startMinutes,
+      x: event.nativeEvent.pageX,
+      y: event.nativeEvent.pageY,
+      timerId: setTimeout(() => {
+        if (timelinePendingTouchRef.current !== pending) return;
+        timelinePendingTouchRef.current = null;
+        setSelectedDateOnly(dateOnly);
+        setCurrentMonthDateOnly(dateOnly);
+        setTimelineSelectionValue({ dateOnly, startMinutes, endMinutes: startMinutes });
+      }, TIMELINE_LONG_PRESS_DELAY_MS),
+    };
+    timelinePendingTouchRef.current = pending;
+  }, [clearTimelinePendingTouch, selectedCalendar, selectedCalendarKey, setTimelineSelectionValue]);
+
+  const handleTimelineMove = useCallback((dateOnly: string, event: GestureResponderEvent) => {
+    const pending = timelinePendingTouchRef.current;
+    if (pending) {
+      const dx = event.nativeEvent.pageX - pending.x;
+      const dy = event.nativeEvent.pageY - pending.y;
+      if (Math.abs(dx) > TIMELINE_PENDING_MOVE_CANCEL_PX || Math.abs(dy) > TIMELINE_PENDING_MOVE_CANCEL_PX) {
+        if (Math.abs(dx) > Math.abs(dy) * 1.35) {
+          timelineSwipeRef.current = { dateOnly, x: pending.x, y: pending.y, dx, dy };
+        }
+        clearTimelinePendingTouch();
+      }
+      return;
+    }
+
+    const timelineSwipe = timelineSwipeRef.current;
+    if (timelineSwipe && timelineSwipe.dateOnly === dateOnly) {
+      timelineSwipe.dx = event.nativeEvent.pageX - timelineSwipe.x;
+      timelineSwipe.dy = event.nativeEvent.pageY - timelineSwipe.y;
+      return;
+    }
+
+    const activeSelection = timelineSelectionRef.current;
+    if (!activeSelection || activeSelection.dateOnly !== dateOnly) return;
+    const endMinutes = getTimelineMinutesFromY(event.nativeEvent.locationY, getCalendarSnapMinutes(selectedCalendar));
+    setTimelineSelectionValue({ ...activeSelection, endMinutes });
+  }, [clearTimelinePendingTouch, selectedCalendar, setTimelineSelectionValue]);
+
+  const handleTimelineRelease = useCallback((dateOnly: string, event: GestureResponderEvent) => {
+    const pending = clearTimelinePendingTouch();
+    if (pending) {
+      const dx = event.nativeEvent.pageX - pending.x;
+      const dy = event.nativeEvent.pageY - pending.y;
+      const isTap = Math.abs(dx) <= TIMELINE_TAP_MOVE_TOLERANCE_PX && Math.abs(dy) <= TIMELINE_TAP_MOVE_TOLERANCE_PX;
+      if (isTap) {
+        openCreateAppointmentRange(
+          pending.dateOnly,
+          pending.startMinutes,
+          pending.startMinutes + getCalendarSlotDurationMinutes(selectedCalendar),
+        );
+      }
+      return;
+    }
+
+    const timelineSwipe = timelineSwipeRef.current;
+    if (timelineSwipe && timelineSwipe.dateOnly === dateOnly) {
+      const dx = event.nativeEvent.pageX - timelineSwipe.x;
+      const dy = event.nativeEvent.pageY - timelineSwipe.y;
+      timelineSwipeRef.current = null;
+      if (Math.abs(dx) >= MONTH_SWIPE_MIN_PX && Math.abs(dx) > Math.abs(dy) * 1.35) {
+        movePeriod(dx < 0 ? 1 : -1);
+      }
+      return;
+    }
+
+    const activeSelection = timelineSelectionRef.current;
+    if (!activeSelection || activeSelection.dateOnly !== dateOnly) return;
+    setTimelineSelectionValue(null);
+    const sameSlot = activeSelection.startMinutes === activeSelection.endMinutes;
+    const endMinutes = sameSlot
+      ? activeSelection.startMinutes + getCalendarSlotDurationMinutes(selectedCalendar)
+      : activeSelection.endMinutes + 15;
+    openCreateAppointmentRange(activeSelection.dateOnly, activeSelection.startMinutes, endMinutes);
+  }, [clearTimelinePendingTouch, movePeriod, openCreateAppointmentRange, selectedCalendar, setTimelineSelectionValue]);
+
+  const handleTimelineCancel = useCallback(() => {
+    clearTimelinePendingTouch();
+    timelineSwipeRef.current = null;
+    setTimelineSelectionValue(null);
+  }, [clearTimelinePendingTouch, setTimelineSelectionValue]);
 
   const openCreateSheet = useCallback(() => {
+    setPendingAppointmentDefaults(null);
     setContactQuery('');
     setContactResults([]);
     openSheet('contactPicker');
@@ -3242,21 +3864,24 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       return;
     }
     const title = getContactName(contact);
+    const defaults = pendingAppointmentDefaults;
     setAppointmentMode('create');
     setAppointmentDraft({
-      title,
+      title: defaults?.title || title,
       appointmentStatus: 'confirmed',
-      dateOnly: selectedDateOnly,
-      startTime: getDefaultAppointmentStartTime(selectedDateOnly, businessTimezone),
-      durationMinutes: 60,
+      dateOnly: defaults?.dateOnly || selectedDateOnly,
+      startTime: defaults?.startTime || getDefaultAppointmentStartTime(selectedDateOnly, businessTimezone),
+      durationMinutes: defaults?.durationMinutes || 60,
       address: '',
       notes: '',
       contactId: contact.id,
       contact,
       calendarId: selectedCalendarKey,
+      assignedUserId: '',
     });
+    setPendingAppointmentDefaults(null);
     openSheet('appointmentForm');
-  }, [businessTimezone, openSheet, selectedCalendarKey, selectedDateOnly]);
+  }, [businessTimezone, openSheet, pendingAppointmentDefaults, selectedCalendarKey, selectedDateOnly]);
 
   const openEditAppointment = useCallback((event: CalendarEventItem) => {
     const eventId = getEventId(event);
@@ -3287,23 +3912,61 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       contactId: getEventContactId(event),
       contact: null,
       calendarId: getEventCalendarId(event) || selectedCalendarKey,
+      assignedUserId: String(event.assignedUserId || event.assigned_user_id || ''),
     });
     openSheet('appointmentForm');
   }, [businessTimezone, openSheet, selectedCalendarKey, selectedDateOnly]);
 
+  const getDraftBlockedConflict = useCallback(async (
+    draft: AppointmentDraft,
+    calendarId: string,
+    startIso: string,
+    endIso: string,
+  ) => {
+    const draftCalendar = calendars.find((calendar) => getCalendarKey(calendar) === calendarId) || selectedCalendar;
+    if (isHighLevelCalendar(draftCalendar)) return null;
+
+    const startFields = isoToBusinessDateTimeFields(startIso, businessTimezone);
+    const endFields = isoToBusinessDateTimeFields(endIso, businessTimezone);
+    const startMinutes = parseTimeToMinutes(startFields.time);
+    const endMinutes = parseTimeToMinutes(endFields.time);
+    if (startMinutes === null || endMinutes === null) return null;
+
+    const range = getBusinessRangeTimestamps(draft.dateOnly, draft.dateOnly, businessTimezone);
+    if (!Number.isFinite(range.startTime) || !Number.isFinite(range.endTime)) return null;
+
+    const blockedSlots = await api.getBlockedSlots(calendarId, range.startTime, range.endTime);
+    for (const slot of blockedSlots) {
+      const slotDateOnly = String(slot.date || getBusinessDateOnly(String(slot.startTime || ''), businessTimezone) || '').trim();
+      if (slotDateOnly && slotDateOnly !== draft.dateOnly) continue;
+
+      const slotStartFields = isoToBusinessDateTimeFields(String(slot.startTime || ''), businessTimezone);
+      const slotEndFields = isoToBusinessDateTimeFields(String(slot.endTime || ''), businessTimezone);
+      const slotStart = parseTimeToMinutes(slotStartFields.time || String(slot.startTime || ''));
+      const slotEnd = parseTimeToMinutes(slotEndFields.time || String(slot.endTime || ''));
+      if (slotStart === null || slotEnd === null) continue;
+
+      if (startMinutes < slotEnd && endMinutes > slotStart) {
+        return slot;
+      }
+    }
+    return null;
+  }, [api, businessTimezone, calendars, selectedCalendar]);
+
   const saveAppointmentDraft = useCallback(async (draft: AppointmentDraft) => {
     if (appointmentBusy) return;
     const calendarId = draft.calendarId || selectedCalendarKey;
+    const draftCalendar = calendars.find((calendar) => getCalendarKey(calendar) === calendarId) || selectedCalendar;
     if (!calendarId) {
       Alert.alert('Selecciona calendario', 'Elige un calendario activo antes de guardar.');
       return;
     }
-    if (!draft.title.trim()) {
-      Alert.alert('Falta título', 'Escribe el nombre de la cita.');
-      return;
-    }
     if (appointmentMode === 'create' && !draft.contactId) {
       Alert.alert('Contacto requerido', 'Selecciona un contacto para crear la cita.');
+      return;
+    }
+    if (appointmentMode === 'create' && isRoundRobinCalendar(draftCalendar) && !draft.assignedUserId) {
+      Alert.alert('Persona del equipo requerida', 'Selecciona quién atenderá esta cita.');
       return;
     }
 
@@ -3315,22 +3978,37 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       return;
     }
 
-    const payload: Record<string, unknown> = {
-      title: draft.title.trim(),
-      appointmentStatus: draft.appointmentStatus,
-      startTime: startIso,
-      endTime: endIso,
-      notes: draft.notes.trim(),
-      address: draft.address.trim(),
-      timeZone: businessTimezone,
-    };
-    if (appointmentMode === 'create') {
-      payload.calendarId = calendarId;
-      payload.contactId = draft.contactId;
-    }
-
     setAppointmentBusy(true);
     try {
+      const blockedSlot = await getDraftBlockedConflict(draft, calendarId, startIso, endIso);
+      if (blockedSlot) {
+        Alert.alert(
+          'Horario bloqueado',
+          String(blockedSlot.reason || blockedSlot.title || 'Este horario no está disponible. Selecciona otro horario.'),
+        );
+        return;
+      }
+
+      const resolvedTitle = draft.title.trim()
+        || (draft.contact ? getContactName(draft.contact) : '')
+        || 'Cita';
+      const payload: Record<string, unknown> = {
+        title: resolvedTitle,
+        appointmentStatus: draft.appointmentStatus,
+        startTime: startIso,
+        endTime: endIso,
+        notes: draft.notes.trim(),
+        address: draft.address.trim(),
+        timeZone: businessTimezone,
+      };
+      if (appointmentMode === 'create') {
+        payload.calendarId = calendarId;
+        payload.contactId = draft.contactId;
+      }
+      if (draft.assignedUserId) {
+        payload.assignedUserId = draft.assignedUserId;
+      }
+
       if (appointmentMode === 'edit') {
         if (!draft.eventId) throw new Error('La cita no tiene ID.');
         await api.updateAppointment(draft.eventId, payload);
@@ -3346,7 +4024,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     } finally {
       setAppointmentBusy(false);
     }
-  }, [api, appointmentBusy, appointmentMode, businessTimezone, closeSheet, loadEvents, selectedCalendarKey]);
+  }, [api, appointmentBusy, appointmentMode, businessTimezone, calendars, closeSheet, getDraftBlockedConflict, loadEvents, selectedCalendar, selectedCalendarKey]);
 
   const deleteAppointment = useCallback((event: CalendarEventItem) => {
     const eventId = getEventId(event);
@@ -3387,10 +4065,33 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
   const eventSheetClosing = activeSheet !== 'event' && closingSheet === 'event';
   const appointmentFormOpen = activeSheet === 'appointmentForm' || closingSheet === 'appointmentForm';
   const appointmentFormClosing = activeSheet !== 'appointmentForm' && closingSheet === 'appointmentForm';
-  const displayMonthTitle = calendarView === 'year' ? formatBusinessYear(currentMonthDateOnly) : formatBusinessMonthTitle(currentMonthDateOnly);
-  const displayMonthSubtitle = calendarView === 'month'
+  const weekStartLabel = formatCompactBusinessDate(weekRange.startDate);
+  const weekEndLabel = formatCompactBusinessDate(weekRange.endDate);
+  const displayMonthTitle = calendarView === 'month'
+    ? formatBusinessMonthTitle(currentMonthDateOnly)
+    : calendarView === 'year'
+      ? formatBusinessYear(currentMonthDateOnly)
+      : calendarView === 'years'
+        ? `${yearsGrid[0]} - ${yearsGrid[yearsGrid.length - 1]}`
+        : calendarView === 'week'
+          ? `${weekStartLabel} - ${weekEndLabel}`
+          : formatCompactBusinessDate(selectedDateOnly);
+  const displayMonthSubtitle = calendarView === 'week'
+      ? `${formatBusinessMonthTitle(selectedDateOnly)} ${formatBusinessYear(selectedDateOnly)}`
+      : '';
+  const periodChipLabel = calendarView === 'month'
     ? formatBusinessYear(currentMonthDateOnly)
-    : formatBusinessDayHeader(selectedDateOnly);
+    : calendarView === 'year'
+      ? 'Años'
+      : calendarView === 'years'
+        ? 'Año'
+        : formatBusinessMonthTitle(selectedDateOnly);
+  const quickReturnLabel = calendarView === 'year' ? 'Mes' : calendarView === 'years' ? 'Año' : 'Hoy';
+  const listData = calendarView === 'month'
+    ? agendaEvents
+    : calendarView === 'year'
+      ? nextUpcomingEvents
+      : [];
 
   return (
     <AppFrame>
@@ -3399,12 +4100,12 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
           <View style={styles.calendarToolbar}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => setCalendarView(calendarView === 'year' ? 'month' : 'year')}
+              onPress={handleNavigateUp}
               style={({ pressed }) => [styles.calendarPeriodChip, pressed && styles.pressed]}
             >
-              <ChevronLeft size={20} color={COLORS.text} strokeWidth={2.8} />
+              <ChevronLeft size={17} color={COLORS.text} strokeWidth={2.8} />
               <Text numberOfLines={1} style={styles.calendarPeriodText}>
-                {formatBusinessYear(currentMonthDateOnly)}
+                {periodChipLabel}
               </Text>
             </Pressable>
             <View style={styles.calendarHeaderCapsule}>
@@ -3413,31 +4114,53 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
                 onPress={goToday}
                 style={({ pressed }) => [styles.calendarCapsuleTodayButton, pressed && styles.pressed]}
               >
-                <Text style={styles.calendarTodayButtonText}>Hoy</Text>
+                <Text style={styles.calendarTodayButtonText}>{quickReturnLabel}</Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 onPress={() => openSheet('calendar')}
                 style={({ pressed }) => [styles.calendarCapsuleIconButton, pressed && styles.pressed]}
               >
-                <CalendarDays size={25} color={COLORS.text} strokeWidth={2.35} />
+                <CalendarDays size={22} color={COLORS.text} strokeWidth={2.35} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 onPress={openCreateSheet}
                 style={({ pressed }) => [styles.calendarCapsuleIconButton, pressed && styles.pressed]}
               >
-                <Plus size={30} color={COLORS.text} strokeWidth={2.25} />
+                <Plus size={25} color={COLORS.text} strokeWidth={2.25} />
               </Pressable>
             </View>
           </View>
           <View style={styles.calendarTitleRow}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => setCalendarView(calendarView === 'year' ? 'month' : 'year')}
-              style={styles.calendarTitleButton}
+              onPress={handleNavigateUp}
+              style={[
+                styles.calendarTitleButton,
+                calendarView === 'month' && monthSwipeWidth > 0 && styles.calendarTitleSwipeViewport,
+              ]}
             >
-              <Text numberOfLines={1} style={styles.calendarTitle}>{displayMonthTitle}</Text>
+              {calendarView === 'month' && monthSwipeWidth > 0 ? (
+                <Animated.View
+                  style={[
+                    styles.calendarTitleSwipeTrack,
+                    {
+                      width: headerTitleSwipeWidth * 3,
+                      transform: [{ translateX: monthSwipeTranslate }],
+                    },
+                  ]}
+                >
+                  {monthPages.map((page) => (
+                    <View key={`title-${page.key}`} style={[styles.calendarTitleSwipePage, { width: headerTitleSwipeWidth }]}>
+                      <Text numberOfLines={1} style={styles.calendarTitle}>{formatBusinessMonthTitle(page.dateOnly)}</Text>
+                    </View>
+                  ))}
+                </Animated.View>
+              ) : (
+                <Text numberOfLines={1} style={styles.calendarTitle}>{displayMonthTitle}</Text>
+              )}
+              {displayMonthSubtitle ? <Text numberOfLines={1} style={styles.calendarSubtitle}>{displayMonthSubtitle}</Text> : null}
             </Pressable>
           </View>
         </View>
@@ -3449,44 +4172,80 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
           </View>
         ) : (
           <FlatList
-            data={calendarView === 'year' ? nextUpcomingEvents : agendaEvents}
+            data={listData}
             keyExtractor={(item, index) => getEventKey(item, index)}
             refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
             contentContainerStyle={styles.calendarScrollBody}
             ListHeaderComponent={(
               <>
+                {calendarView === 'month' ? (
+                  <CalendarMonthSwipe
+                    eventsByDate={eventsByDate}
+                    monthPages={monthPages}
+                    panHandlers={monthPanResponder.panHandlers}
+                    selectedDateOnly={selectedDateOnly}
+                    translateX={monthSwipeTranslate}
+                    width={monthSwipeWidth}
+                    onLayout={handleMonthLayout}
+                    onSelectDate={handleDayPress}
+                  />
+                ) : null}
                 {calendarView === 'year' ? (
                   <CalendarYearOverview
                     currentMonthDateOnly={currentMonthDateOnly}
                     eventsByDate={eventsByDate}
                     selectedDateOnly={selectedDateOnly}
                     todayDateOnly={todayDateOnly}
-                    onSelect={(dateOnly) => {
-                      setCalendarView('month');
-                      selectDate(dateOnly);
-                    }}
+                    onSelectMonth={handleSelectMonthFromYear}
                   />
-                ) : (
-                  <CalendarMonthGrid
-                    cells={monthCells}
+                ) : null}
+                {calendarView === 'years' ? (
+                  <CalendarYearsOverview
+                    currentYear={getDateOnlyYear(todayDateOnly)}
+                    selectedYear={getDateOnlyYear(selectedDateOnly)}
+                    years={yearsGrid}
+                    onSelectYear={handleSelectYear}
+                  />
+                ) : null}
+                {calendarView === 'day' || calendarView === 'week' ? (
+                  <CalendarTimelineView
+                    calendarColor={getCalendarColor(selectedCalendar)}
+                    calendarView={calendarView}
                     eventsByDate={eventsByDate}
                     selectedDateOnly={selectedDateOnly}
+                    timelineSelection={timelineSelection}
+                    todayDateOnly={todayDateOnly}
+                    timezone={businessTimezone}
+                    weekDays={weekDays}
+                    onCancelTouch={handleTimelineCancel}
+                    onGrant={handleTimelineGrant}
+                    onMove={handleTimelineMove}
+                    onOpenEvent={openEventDetails}
+                    onRelease={handleTimelineRelease}
                     onSelectDate={selectDate}
+                    onSelectDateForCreate={openCreateAppointmentForDateOnly}
                   />
-                )}
-                <View style={styles.calendarAgendaHeader}>
-                  <View style={styles.calendarAgendaHeaderCopy}>
-                    <Text style={styles.calendarAgendaDate}>
-                      {calendarView === 'year' ? 'Próximas citas' : formatCalendarAgendaDate(selectedDateOnly)}
-                    </Text>
-                    <Text style={styles.calendarAgendaTitle}>
-                      {calendarView === 'year'
-                        ? `${nextUpcomingEvents.length} en este rango`
-                        : agendaEvents.length ? `${agendaEvents.length} cita${agendaEvents.length === 1 ? '' : 's'}` : 'Sin citas'}
-                    </Text>
+                ) : null}
+                {calendarView === 'month' ? (
+                  <View style={styles.calendarAgendaHeader}>
+                    <View style={styles.calendarAgendaHeaderCopy}>
+                      <Text style={styles.calendarAgendaDate}>{formatCalendarAgendaDate(selectedDateOnly)}</Text>
+                      <Text style={styles.calendarAgendaTitle}>
+                        {agendaEvents.length ? `${agendaEvents.length} cita${agendaEvents.length === 1 ? '' : 's'}` : 'Sin citas'}
+                      </Text>
+                    </View>
+                    {loading || refreshing ? <ActivityIndicator color={COLORS.text} /> : null}
                   </View>
-                  {loading || refreshing ? <ActivityIndicator color={COLORS.text} /> : null}
-                </View>
+                ) : null}
+                {calendarView === 'year' ? (
+                  <View style={styles.calendarAgendaHeader}>
+                    <View style={styles.calendarAgendaHeaderCopy}>
+                      <Text style={styles.calendarAgendaDate}>Próximas citas</Text>
+                      <Text style={styles.calendarAgendaTitle}>{nextUpcomingEvents.length} en este rango</Text>
+                    </View>
+                    {loading || refreshing ? <ActivityIndicator color={COLORS.text} /> : null}
+                  </View>
+                ) : null}
               </>
             )}
             renderItem={({ item }) => (
@@ -3500,25 +4259,25 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
             ListEmptyComponent={(
               error ? (
                 <CalendarErrorState message={error} onRetry={refresh} />
-              ) : (
+              ) : calendarView === 'year' ? (
                 <CalendarEmptyState
-                  title={calendarView === 'year' ? 'No hay citas próximas' : 'No hay citas en este día'}
-                  subtitle={calendarView === 'year'
-                    ? 'Cambia de calendario o crea una cita nueva.'
-                    : 'Toca otro día del mes o agenda una cita para este contacto.'}
+                  title="No hay citas próximas"
+                  subtitle="Cambia de calendario o crea una cita nueva."
                 />
-              )
+              ) : null
             )}
           />
         )}
 
         <CalendarPickerSheet
+          activeView={calendarView}
           calendars={calendars}
           closing={calendarSheetClosing}
           open={calendarSheetOpen}
           selectedCalendarId={selectedCalendarKey}
           onClose={closeSheet}
           onSelect={chooseCalendar}
+          onSelectView={handleSelectCalendarView}
         />
         <AppointmentContactPickerSheet
           closing={contactPickerClosing}
@@ -3543,6 +4302,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
           onEdit={openEditAppointment}
         />
         <AppointmentFormSheet
+          api={api}
           busy={appointmentBusy}
           calendar={selectedCalendar}
           closing={appointmentFormClosing}
@@ -3560,19 +4320,69 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
   );
 }
 
+function CalendarMonthSwipe({
+  eventsByDate,
+  monthPages,
+  panHandlers,
+  selectedDateOnly,
+  translateX,
+  width,
+  onLayout,
+  onSelectDate,
+}: {
+  eventsByDate: Record<string, CalendarEventItem[]>;
+  monthPages: Array<{
+    key: string;
+    offset: number;
+    dateOnly: string;
+    cells: ReturnType<typeof buildBusinessMonthCells>;
+  }>;
+  panHandlers: ReturnType<typeof PanResponder.create>['panHandlers'];
+  selectedDateOnly: string;
+  translateX: Animated.Value;
+  width: number;
+  onLayout: (event: LayoutChangeEvent) => void;
+  onSelectDate: (dateOnly: string) => void;
+}) {
+  return (
+    <View style={styles.calendarMonthSwipeViewport} onLayout={onLayout} {...panHandlers}>
+      <Animated.View
+        style={[
+          styles.calendarMonthSwipeTrack,
+          width ? { width: width * 3, transform: [{ translateX }] } : null,
+        ]}
+      >
+        {monthPages.map((page) => (
+          <View key={page.key} style={[styles.calendarMonthSwipePage, width ? { width } : null]}>
+            <CalendarMonthGrid
+              cells={page.cells}
+              eventsByDate={eventsByDate}
+              muted={page.offset !== 0}
+              selectedDateOnly={selectedDateOnly}
+              onSelectDate={onSelectDate}
+            />
+          </View>
+        ))}
+      </Animated.View>
+    </View>
+  );
+}
+
 function CalendarMonthGrid({
   cells,
   eventsByDate,
+  muted,
   selectedDateOnly,
   onSelectDate,
 }: {
   cells: ReturnType<typeof buildBusinessMonthCells>;
   eventsByDate: Record<string, CalendarEventItem[]>;
+  muted?: boolean;
   selectedDateOnly: string;
   onSelectDate: (dateOnly: string) => void;
 }) {
   return (
-    <View style={styles.calendarSurface}>
+    <View style={[styles.calendarSurface, muted && styles.calendarSurfaceMuted]}>
       <View style={styles.calendarWeekdayRow}>
         {CALENDAR_WEEKDAYS.map((day, index) => (
           <Text key={`${day}-${index}`} style={styles.calendarWeekdayText}>{day}</Text>
@@ -3628,25 +4438,22 @@ function CalendarYearOverview({
   eventsByDate,
   selectedDateOnly,
   todayDateOnly,
-  onSelect,
+  onSelectMonth,
 }: {
   currentMonthDateOnly: string;
   eventsByDate: Record<string, CalendarEventItem[]>;
   selectedDateOnly: string;
   todayDateOnly: string;
-  onSelect: (dateOnly: string) => void;
+  onSelectMonth: (monthIndex: number) => void;
 }) {
-  const yearDate = dateOnlyToCalendarDate(currentMonthDateOnly) || new Date();
-  const year = yearDate.getFullYear();
+  const year = getDateOnlyYear(currentMonthDateOnly);
 
   return (
     <View style={styles.calendarYearGrid}>
       {Array.from({ length: 12 }).map((_, monthIndex) => {
         const dateOnly = `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`;
         const range = getBusinessMonthRange(dateOnly);
-        const monthEvents = Object.entries(eventsByDate)
-          .filter(([key]) => key >= range.monthStart && key <= range.monthEnd)
-          .reduce((total, [, list]) => total + list.length, 0);
+        const cells = buildBusinessMonthCells(dateOnly, todayDateOnly);
         const selected = selectedDateOnly >= range.monthStart && selectedDateOnly <= range.monthEnd;
         const today = todayDateOnly >= range.monthStart && todayDateOnly <= range.monthEnd;
 
@@ -3654,7 +4461,7 @@ function CalendarYearOverview({
           <Pressable
             key={dateOnly}
             accessibilityRole="button"
-            onPress={() => onSelect(dateOnly)}
+            onPress={() => onSelectMonth(monthIndex)}
             style={({ pressed }) => [
               styles.calendarYearMonth,
               selected && styles.calendarYearMonthSelected,
@@ -3668,14 +4475,299 @@ function CalendarYearOverview({
             ]}>
               {formatBusinessShortMonthTitle(dateOnly)}
             </Text>
-            <View style={styles.calendarYearMonthDots}>
-              {monthEvents ? <View style={styles.calendarYearMonthDot} /> : null}
-              {monthEvents > 1 ? <View style={styles.calendarYearMonthDotWide} /> : null}
+            <View style={styles.calendarMiniMonthGrid}>
+              {cells.map((cell) => {
+                const events = eventsByDate[cell.dateOnly] || [];
+                return (
+                  <View
+                    key={cell.dateOnly}
+                    style={[
+                      styles.calendarMiniDay,
+                      !cell.isCurrentMonth && styles.calendarMiniDayMuted,
+                      cell.dateOnly === selectedDateOnly && styles.calendarMiniDaySelected,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.calendarMiniDayText,
+                        !cell.isCurrentMonth && styles.calendarMiniDayTextMuted,
+                        cell.dateOnly === todayDateOnly && styles.calendarMiniDayTextToday,
+                        cell.dateOnly === selectedDateOnly && styles.calendarMiniDayTextSelected,
+                      ]}
+                    >
+                      {cell.day}
+                    </Text>
+                    {events.length ? <View style={styles.calendarMiniDayDot} /> : null}
+                  </View>
+                );
+              })}
             </View>
-            <Text style={styles.calendarYearMonthCount}>{monthEvents || ''}</Text>
           </Pressable>
         );
       })}
+    </View>
+  );
+}
+
+function CalendarYearsOverview({
+  currentYear,
+  selectedYear,
+  years,
+  onSelectYear,
+}: {
+  currentYear: number;
+  selectedYear: number;
+  years: number[];
+  onSelectYear: (year: number) => void;
+}) {
+  return (
+    <View style={styles.calendarYearsGrid}>
+      {years.map((year) => {
+        const selected = year === selectedYear;
+        const today = year === currentYear;
+        return (
+          <Pressable
+            key={year}
+            accessibilityRole="button"
+            onPress={() => onSelectYear(year)}
+            style={({ pressed }) => [
+              styles.calendarYearButton,
+              selected && styles.calendarYearButtonSelected,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text
+              style={[
+                styles.calendarYearButtonText,
+                today && styles.calendarYearButtonTodayText,
+                selected && styles.calendarYearButtonSelectedText,
+              ]}
+            >
+              {year}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function CalendarViewPicker({
+  activeView,
+  onSelectView,
+}: {
+  activeView: CalendarViewMode;
+  onSelectView: (view: Exclude<CalendarViewMode, 'years'>) => void;
+}) {
+  return (
+    <View style={styles.calendarViewPicker}>
+      {CALENDAR_VIEW_OPTIONS.map(({ view, label }) => {
+        const selected = activeView === view || (activeView === 'years' && view === 'year');
+        return (
+          <Pressable
+            key={view}
+            accessibilityRole="button"
+            onPress={() => onSelectView(view)}
+            style={({ pressed }) => [
+              styles.calendarViewPickerButton,
+              selected && styles.calendarViewPickerButtonActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[styles.calendarViewPickerText, selected && styles.calendarViewPickerTextActive]}>{label}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function CalendarTimelineView({
+  calendarColor,
+  calendarView,
+  eventsByDate,
+  selectedDateOnly,
+  timelineSelection,
+  todayDateOnly,
+  timezone,
+  weekDays,
+  onCancelTouch,
+  onGrant,
+  onMove,
+  onOpenEvent,
+  onRelease,
+  onSelectDate,
+  onSelectDateForCreate,
+}: {
+  calendarColor: string;
+  calendarView: 'day' | 'week';
+  eventsByDate: Record<string, CalendarEventItem[]>;
+  selectedDateOnly: string;
+  timelineSelection: TimelineSelectionState | null;
+  todayDateOnly: string;
+  timezone: string;
+  weekDays: Array<{ dateOnly: string; events: CalendarEventItem[] }>;
+  onCancelTouch: () => void;
+  onGrant: (dateOnly: string, event: GestureResponderEvent) => void;
+  onMove: (dateOnly: string, event: GestureResponderEvent) => void;
+  onOpenEvent: (event: CalendarEventItem) => void;
+  onRelease: (dateOnly: string, event: GestureResponderEvent) => void;
+  onSelectDate: (dateOnly: string) => void;
+  onSelectDateForCreate: (dateOnly: string) => void;
+}) {
+  const dayColumns = calendarView === 'week'
+    ? weekDays
+    : [{ dateOnly: selectedDateOnly, events: eventsByDate[selectedDateOnly] || [] }];
+  const hours = Array.from({ length: 24 }).map((_, index) => index);
+
+  return (
+    <View style={styles.calendarTimelinePanel}>
+      {calendarView === 'week' ? (
+        <View style={styles.calendarWeekTimelineHeader}>
+          <View style={styles.calendarWeekTimelineSpacer} />
+          {weekDays.map(({ dateOnly, events }) => {
+            const selected = dateOnly === selectedDateOnly;
+            const today = dateOnly === todayDateOnly;
+            return (
+              <Pressable
+                key={dateOnly}
+                accessibilityRole="button"
+                onPress={() => onSelectDate(dateOnly)}
+                onLongPress={() => onSelectDateForCreate(dateOnly)}
+                style={({ pressed }) => [
+                  styles.calendarWeekDayButton,
+                  selected && styles.calendarWeekDayButtonSelected,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.calendarWeekDayLabel, today && styles.calendarWeekDayToday]}>{CALENDAR_WEEKDAYS[dateOnlyToCalendarDate(dateOnly)?.getDay() || 0]}</Text>
+                <Text style={[styles.calendarWeekDayNumber, selected && styles.calendarWeekDayNumberSelected]}>{formatDateOnlyDayNumber(dateOnly)}</Text>
+                {events.length ? <Text style={styles.calendarWeekDayCount}>{events.length}</Text> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+      <View style={styles.calendarTimelineBody}>
+        <View style={styles.calendarTimelineHourColumn}>
+          {hours.map((hour) => (
+            <Text key={hour} style={styles.calendarTimelineHourText}>{formatTimelineHour(hour)}</Text>
+          ))}
+        </View>
+        <View style={styles.calendarTimelineColumns}>
+          {dayColumns.map(({ dateOnly, events }) => (
+            <CalendarTimelineGrid
+              key={dateOnly}
+              calendarColor={calendarColor}
+              dateOnly={dateOnly}
+              events={events}
+              hours={hours}
+              selection={timelineSelection}
+              timezone={timezone}
+              onCancelTouch={onCancelTouch}
+              onGrant={onGrant}
+              onMove={onMove}
+              onOpenEvent={onOpenEvent}
+              onRelease={onRelease}
+            />
+          ))}
+        </View>
+      </View>
+    </View>
+  );
+}
+
+function CalendarTimelineGrid({
+  calendarColor,
+  dateOnly,
+  events,
+  hours,
+  selection,
+  timezone,
+  onCancelTouch,
+  onGrant,
+  onMove,
+  onOpenEvent,
+  onRelease,
+}: {
+  calendarColor: string;
+  dateOnly: string;
+  events: CalendarEventItem[];
+  hours: number[];
+  selection: TimelineSelectionState | null;
+  timezone: string;
+  onCancelTouch: () => void;
+  onGrant: (dateOnly: string, event: GestureResponderEvent) => void;
+  onMove: (dateOnly: string, event: GestureResponderEvent) => void;
+  onOpenEvent: (event: CalendarEventItem) => void;
+  onRelease: (dateOnly: string, event: GestureResponderEvent) => void;
+}) {
+  const nowMinutes = getNowMinutesForDate(dateOnly, timezone);
+  const nowTop = nowMinutes === null ? null : (nowMinutes / TIMELINE_TOTAL_MINUTES) * TIMELINE_GRID_HEIGHT;
+  const selectionForDay = selection?.dateOnly === dateOnly ? selection : null;
+  const selectionStart = selectionForDay ? Math.min(selectionForDay.startMinutes, selectionForDay.endMinutes) : 0;
+  const selectionEnd = selectionForDay ? Math.max(selectionForDay.startMinutes, selectionForDay.endMinutes + 15) : 0;
+
+  return (
+    <View style={styles.calendarTimelineGrid}>
+      <View
+        style={styles.calendarTimelineResponderLayer}
+        onStartShouldSetResponder={() => true}
+        onMoveShouldSetResponder={() => false}
+        onResponderGrant={(event) => onGrant(dateOnly, event)}
+        onResponderMove={(event) => onMove(dateOnly, event)}
+        onResponderRelease={(event) => onRelease(dateOnly, event)}
+        onResponderTerminate={onCancelTouch}
+        onResponderTerminationRequest={() => !selectionForDay}
+      >
+        {hours.map((hour) => (
+          <View key={hour} style={[styles.calendarTimelineHourLine, { top: hour * TIMELINE_HOUR_HEIGHT }]} />
+        ))}
+        {selectionForDay ? (
+          <View
+            pointerEvents="none"
+            style={[
+              styles.calendarTimelineSelection,
+              {
+                top: (selectionStart / TIMELINE_TOTAL_MINUTES) * TIMELINE_GRID_HEIGHT,
+                height: Math.max(18, ((selectionEnd - selectionStart) / TIMELINE_TOTAL_MINUTES) * TIMELINE_GRID_HEIGHT),
+              },
+            ]}
+          />
+        ) : null}
+        {nowTop !== null ? (
+          <View pointerEvents="none" style={[styles.calendarTimelineNowLine, { top: nowTop }]}>
+            <Text style={styles.calendarTimelineNowText}>{formatCalendarEventTime(new Date().toISOString(), timezone)}</Text>
+          </View>
+        ) : null}
+      </View>
+      <View pointerEvents="box-none" style={styles.calendarTimelineEventLayer}>
+        {events.map((event, index) => {
+          const timeline = getEventTimelineEntry(event, timezone);
+          if (!timeline) return null;
+          return (
+            <Pressable
+              key={getEventKey(event, index)}
+              accessibilityRole="button"
+              onPress={() => onOpenEvent(event)}
+              style={({ pressed }) => [
+                styles.calendarTimelineEvent,
+                {
+                  top: timeline.top,
+                  height: timeline.height,
+                  borderLeftColor: calendarColor,
+                },
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text numberOfLines={1} style={styles.calendarTimelineEventTitle}>{getEventTitle(event)}</Text>
+              <Text numberOfLines={1} style={styles.calendarTimelineEventTime}>
+                {formatCalendarEventTimeRange(getEventStart(event), getEventEnd(event), timezone)}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -3738,19 +4830,23 @@ function CalendarErrorState({ message, onRetry }: { message: string; onRetry: ()
 }
 
 function CalendarPickerSheet({
+  activeView,
   calendars,
   closing,
   open,
   selectedCalendarId,
   onClose,
   onSelect,
+  onSelectView,
 }: {
+  activeView: CalendarViewMode;
   calendars: CalendarItem[];
   closing: boolean;
   open: boolean;
   selectedCalendarId: string;
   onClose: () => void;
   onSelect: (calendar: CalendarItem) => void;
+  onSelectView: (view: Exclude<CalendarViewMode, 'years'>) => void;
 }) {
   return (
     <BottomActionSheet
@@ -3761,6 +4857,7 @@ function CalendarPickerSheet({
       onClose={onClose}
     >
       <ScrollView contentContainerStyle={styles.calendarSheetList} showsVerticalScrollIndicator={false}>
+        <CalendarViewPicker activeView={activeView} onSelectView={onSelectView} />
         {calendars.map((calendar) => {
           const id = getCalendarKey(calendar);
           const selected = id === selectedCalendarId;
@@ -3957,6 +5054,7 @@ function CalendarEventDetailsSheet({
 }
 
 function AppointmentFormSheet({
+  api,
   busy,
   calendar,
   closing,
@@ -3968,6 +5066,7 @@ function AppointmentFormSheet({
   onClose,
   onSave,
 }: {
+  api: RistakApiClient;
   busy: boolean;
   calendar: CalendarItem | null;
   closing: boolean;
@@ -3979,14 +5078,101 @@ function AppointmentFormSheet({
   onClose: () => void;
   onSave: (draft: AppointmentDraft) => void;
 }) {
+  const [scheduleMode, setScheduleMode] = useState<AppointmentScheduleMode>('custom');
+  const [freeSlots, setFreeSlots] = useState<CalendarFreeSlot[]>([]);
+  const [freeSlotsLoading, setFreeSlotsLoading] = useState(false);
+  const [freeSlotsError, setFreeSlotsError] = useState('');
+  const [selectedSlotDate, setSelectedSlotDate] = useState('');
+  const [selectedSlot, setSelectedSlot] = useState('');
+  const [assignmentUsers, setAssignmentUsers] = useState<CalendarUser[]>([]);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [assignmentError, setAssignmentError] = useState('');
+
   const updateDraft = useCallback((updates: Partial<AppointmentDraft>) => {
     if (!draft) return;
     onChange({ ...draft, ...updates });
   }, [draft, onChange]);
 
+  const loadFreeSlots = useCallback(async () => {
+    const calendarId = getCalendarKey(calendar);
+    if (!draft || !calendarId) return;
+    setFreeSlotsLoading(true);
+    setFreeSlotsError('');
+    try {
+      const startDate = todayDateOnlyInBusinessTimezone(timezone);
+      const endDate = addBusinessDateOnlyDays(startDate, 30);
+      const response = await api.getFreeSlots(calendarId, startDate, endDate, timezone);
+      const nextSlots = Array.isArray(response) ? response.filter((group) => Array.isArray(group.slots) && group.slots.length > 0) : [];
+      setFreeSlots(nextSlots);
+      setSelectedSlotDate((current) => {
+        if (current && nextSlots.some((group) => group.date === current)) return current;
+        if (nextSlots.some((group) => group.date === draft.dateOnly)) return draft.dateOnly;
+        return nextSlots[0]?.date || '';
+      });
+    } catch (err) {
+      setFreeSlots([]);
+      setFreeSlotsError(err instanceof Error ? err.message : 'No se pudieron cargar slots.');
+    } finally {
+      setFreeSlotsLoading(false);
+    }
+  }, [api, calendar, draft, timezone]);
+
+  const loadAssignmentUsers = useCallback(async () => {
+    const teamMemberIds = (calendar?.teamMembers || [])
+      .map(getCalendarTeamMemberId)
+      .filter(Boolean);
+
+    setAssignmentLoading(true);
+    setAssignmentError('');
+    try {
+      const response = teamMemberIds.length > 0 && isRoundRobinCalendar(calendar)
+        ? await api.getCalendarUsersByIds(teamMemberIds)
+        : await api.getCalendarUsers();
+      let users = unwrapCalendarUsers(response);
+      if (!users.length && teamMemberIds.length) {
+        users = teamMemberIds.map((id) => ({ id, name: `Usuario ${id.slice(0, 8)}...` }));
+      }
+      setAssignmentUsers(users);
+    } catch (err) {
+      setAssignmentUsers(teamMemberIds.map((id) => ({ id, name: `Usuario ${id.slice(0, 8)}...` })));
+      setAssignmentError(err instanceof Error ? err.message : 'No se pudo cargar el equipo.');
+    } finally {
+      setAssignmentLoading(false);
+    }
+  }, [api, calendar]);
+
+  useEffect(() => {
+    if (!open || !draft) {
+      setScheduleMode('custom');
+      setFreeSlots([]);
+      setSelectedSlotDate('');
+      setSelectedSlot('');
+      setAssignmentUsers([]);
+      setAssignmentError('');
+      return;
+    }
+    if (scheduleMode === 'default') {
+      void loadFreeSlots();
+    }
+  }, [loadFreeSlots, open, scheduleMode]);
+
+  useEffect(() => {
+    if (!open || !draft) return;
+    void loadAssignmentUsers();
+  }, [draft?.calendarId, loadAssignmentUsers, open]);
+
   const endFields = draft
     ? addMinutesToBusinessDateTime(draft.dateOnly, draft.startTime, draft.durationMinutes)
     : { dateOnly: '', time: '' };
+  const selectedSlotGroup = freeSlots.find((group) => group.date === selectedSlotDate) || null;
+  const showAssignmentPicker = Boolean(draft && (
+    draft.assignedUserId ||
+    assignmentUsers.length ||
+    assignmentLoading ||
+    assignmentError ||
+    isRoundRobinCalendar(calendar)
+  ));
+  const assignmentRequired = mode === 'create' && isRoundRobinCalendar(calendar);
 
   return (
     <BottomActionSheet
@@ -4021,12 +5207,204 @@ function AppointmentFormSheet({
               </View>
             ) : null}
 
-            <AppointmentTextField
-              label="Título"
-              value={draft.title}
-              placeholder="Nombre de la cita"
-              onChangeText={(value) => updateDraft({ title: value })}
-            />
+            {showAssignmentPicker ? (
+              <View style={styles.appointmentSection}>
+                <Text style={styles.appointmentFieldLabel}>
+                  {assignmentRequired ? 'Elegir miembro del equipo' : 'Persona asignada'}
+                </Text>
+                {assignmentLoading ? (
+                  <View style={styles.sheetInlineState}>
+                    <ActivityIndicator color={COLORS.accent} />
+                    <Text style={styles.caption}>Cargando equipo...</Text>
+                  </View>
+                ) : assignmentUsers.length ? (
+                  <View style={styles.appointmentChipRow}>
+                    {!assignmentRequired ? (
+                      <Pressable
+                        accessibilityRole="button"
+                        onPress={() => updateDraft({ assignedUserId: '' })}
+                        style={({ pressed }) => [
+                          styles.appointmentChoiceChip,
+                          !draft.assignedUserId && styles.appointmentChoiceChipActive,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <Text style={[styles.appointmentChoiceText, !draft.assignedUserId && styles.appointmentChoiceTextActive]}>
+                          Sin asignar
+                        </Text>
+                      </Pressable>
+                    ) : null}
+                    {assignmentUsers.map((user) => {
+                      const id = getCalendarUserId(user);
+                      const selected = draft.assignedUserId === id;
+                      return (
+                        <Pressable
+                          key={id}
+                          accessibilityRole="button"
+                          onPress={() => updateDraft({ assignedUserId: id })}
+                          style={({ pressed }) => [
+                            styles.appointmentChoiceChip,
+                            selected && styles.appointmentChoiceChipActive,
+                            pressed && styles.pressed,
+                          ]}
+                        >
+                          <Text numberOfLines={1} style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
+                            {getCalendarUserLabel(user)}
+                          </Text>
+                          <Text numberOfLines={1} style={[styles.appointmentChoiceSubtext, selected && styles.appointmentChoiceTextActive]}>
+                            {getCalendarUserDetail(user)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                ) : (
+                  <Text style={styles.appointmentHint}>
+                    {assignmentError || (assignmentRequired ? 'No pudimos cargar el equipo. Reintenta antes de guardar.' : 'No hay equipo para asignar.')}
+                  </Text>
+                )}
+              </View>
+            ) : null}
+
+            <View style={styles.appointmentSection}>
+              <Text style={styles.appointmentFieldLabel}>Estado</Text>
+              <View style={styles.appointmentChipRow}>
+                {APPOINTMENT_STATUS_OPTIONS.map((option) => {
+                  const selected = draft.appointmentStatus === option.value;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      accessibilityRole="button"
+                      onPress={() => updateDraft({ appointmentStatus: option.value })}
+                      style={({ pressed }) => [
+                        styles.appointmentChoiceChip,
+                        selected && styles.appointmentChoiceChipActive,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <View style={styles.appointmentSection}>
+              <Text style={styles.appointmentFieldLabel}>Horario</Text>
+              <View style={styles.appointmentSegmentedTabs}>
+                {[
+                  { value: 'default' as const, label: 'Por defecto' },
+                  { value: 'custom' as const, label: 'Personalizado' },
+                ].map((option) => {
+                  const selected = scheduleMode === option.value;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      accessibilityRole="button"
+                      onPress={() => setScheduleMode(option.value)}
+                      style={({ pressed }) => [
+                        styles.appointmentSegmentedTab,
+                        selected && styles.appointmentSegmentedTabActive,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              {scheduleMode === 'default' ? (
+                <View style={styles.freeSlotPanel}>
+                  {freeSlotsLoading ? (
+                    <View style={styles.sheetInlineState}>
+                      <ActivityIndicator color={COLORS.accent} />
+                      <Text style={styles.caption}>Buscando horarios...</Text>
+                    </View>
+                  ) : freeSlotsError ? (
+                    <View style={styles.sheetInlineState}>
+                      <Text style={styles.calendarErrorText}>{freeSlotsError}</Text>
+                      <SecondaryButton label="Reintentar" onPress={loadFreeSlots} />
+                    </View>
+                  ) : freeSlots.length ? (
+                    <View style={styles.freeSlotStack}>
+                      <Text style={styles.appointmentHint}>Elige una fecha disponible</Text>
+                      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.freeSlotDateRow}>
+                        {freeSlots.map((group) => {
+                          const groupDate = group.date || '';
+                          const groupSlots = group.slots || [];
+                          const selected = selectedSlotDate === groupDate;
+                          return (
+                            <Pressable
+                              key={groupDate}
+                              accessibilityRole="button"
+                              onPress={() => {
+                                setSelectedSlotDate(groupDate);
+                                setSelectedSlot('');
+                              }}
+                              style={({ pressed }) => [
+                                styles.freeSlotDateChip,
+                                selected && styles.freeSlotDateChipActive,
+                                pressed && styles.pressed,
+                              ]}
+                            >
+                              <Text numberOfLines={1} style={[styles.freeSlotDate, selected && styles.freeSlotDateActive]}>
+                                {formatBusinessDayHeader(groupDate)}
+                              </Text>
+                              <Text numberOfLines={1} style={[styles.freeSlotCount, selected && styles.freeSlotDateActive]}>
+                                {groupSlots.length} horario{groupSlots.length === 1 ? '' : 's'}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                      <Text style={styles.appointmentHint}>Horario</Text>
+                      <View style={styles.freeSlotTimeGrid}>
+                        {(selectedSlotGroup?.slots || []).slice(0, 18).map((slot) => {
+                          const fields = isoToBusinessDateTimeFields(slot, timezone);
+                          const selected = selectedSlot === slot;
+                          const durationMinutes = getCalendarSlotDurationMinutes(calendar);
+                          const slotDateOnly = fields.dateOnly || selectedSlotDate || draft.dateOnly;
+                          const slotStartTime = fields.time || draft.startTime;
+                          const slotEndFields = addMinutesToBusinessDateTime(slotDateOnly, slotStartTime, durationMinutes);
+                          return (
+                            <Pressable
+                              key={slot}
+                              accessibilityRole="button"
+                              onPress={() => {
+                                setSelectedSlot(slot);
+                                updateDraft({
+                                  dateOnly: slotDateOnly,
+                                  startTime: slotStartTime,
+                                  durationMinutes,
+                                });
+                              }}
+                              style={({ pressed }) => [
+                                styles.freeSlotChip,
+                                selected && styles.freeSlotChipActive,
+                                pressed && styles.pressed,
+                              ]}
+                            >
+                              <Text numberOfLines={1} style={[styles.freeSlotTime, selected && styles.freeSlotTimeActive]}>
+                                {formatCalendarEventTime(slot, timezone)}
+                              </Text>
+                              <Text numberOfLines={1} style={[styles.freeSlotDate, selected && styles.freeSlotDateActive]}>
+                                {slotEndFields.time}
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </View>
+                    </View>
+                  ) : (
+                    <Text style={styles.appointmentHint}>No hay horarios disponibles en los próximos 30 días.</Text>
+                  )}
+                </View>
+              ) : null}
+            </View>
 
             <View style={styles.appointmentFieldGrid}>
               <AppointmentTextField
@@ -4073,30 +5451,13 @@ function AppointmentFormSheet({
               </Text>
             </View>
 
-            <View style={styles.appointmentSection}>
-              <Text style={styles.appointmentFieldLabel}>Estado</Text>
-              <View style={styles.appointmentChipRow}>
-                {APPOINTMENT_STATUS_OPTIONS.map((option) => {
-                  const selected = draft.appointmentStatus === option.value;
-                  return (
-                    <Pressable
-                      key={option.value}
-                      accessibilityRole="button"
-                      onPress={() => updateDraft({ appointmentStatus: option.value })}
-                      style={({ pressed }) => [
-                        styles.appointmentChoiceChip,
-                        selected && styles.appointmentChoiceChipActive,
-                        pressed && styles.pressed,
-                      ]}
-                    >
-                      <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
-                        {option.label}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
+            <AppointmentTextField
+              editable={false}
+              label="Zona horaria"
+              value={timezone}
+              placeholder="Zona horaria"
+              onChangeText={() => undefined}
+            />
 
             <AppointmentTextField
               label="Dirección"
@@ -4128,6 +5489,7 @@ function AppointmentFormSheet({
 
 function AppointmentTextField({
   compact,
+  editable = true,
   icon: Icon,
   label,
   multiline,
@@ -4136,6 +5498,7 @@ function AppointmentTextField({
   onChangeText,
 }: {
   compact?: boolean;
+  editable?: boolean;
   icon?: LucideIcon;
   label: string;
   multiline?: boolean;
@@ -4154,31 +5517,25 @@ function AppointmentTextField({
           placeholder={placeholder}
           placeholderTextColor={COLORS.muted}
           multiline={multiline}
+          editable={editable}
           textAlignVertical={multiline ? 'top' : 'center'}
           autoCapitalize="sentences"
           autoCorrect={false}
-          style={[styles.appointmentInput, multiline && styles.appointmentInputMultiline]}
+          style={[styles.appointmentInput, !editable && styles.appointmentInputReadOnly, multiline && styles.appointmentInputMultiline]}
         />
       </View>
     </View>
   );
 }
 
-function getDateOnlyUtcTime(value: string) {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-  const time = Date.UTC(year, month - 1, day);
-  const date = new Date(time);
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
-  return time;
-}
-
 function isValidDateOnly(value: string) {
   return getDateOnlyUtcTime(value) !== null;
+}
+
+function getDateOnlyUtcTime(value: string) {
+  const parsed = dateOnlyToCalendarDate(value);
+  if (!parsed) return null;
+  return Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
 }
 
 function getDateOnlySpanDays(startDate: string, endDate: string) {
@@ -5130,11 +6487,55 @@ function coercePhoneThemePreference(value: unknown): PhoneThemePreference {
   return value === 'light' || value === 'dark' || value === 'auto' || value === 'system' ? value : 'system';
 }
 
-function getThemeMeta(preference: PhoneThemePreference) {
+function getNativePhoneThemeTone(preference: PhoneThemePreference, systemTone: string | null | undefined = Appearance.getColorScheme()) {
+  if (preference === 'light' || preference === 'dark') return preference;
+  if (preference === 'auto') {
+    const hour = new Date().getHours();
+    return hour >= 19 || hour < 6 ? 'dark' : 'light';
+  }
+  return systemTone === 'light' ? 'light' : 'dark';
+}
+
+function getNativePhoneThemeBackground(tone: 'light' | 'dark') {
+  return tone === 'light' ? '#fbfaf6' : COLORS.bg;
+}
+
+function getThemeMeta(preference: PhoneThemePreference, tone: 'light' | 'dark' = getNativePhoneThemeTone(preference)) {
+  const label = tone === 'light' ? 'Claro' : 'Noche';
   if (preference === 'light') return 'Claro';
   if (preference === 'dark') return 'Noche';
-  if (preference === 'auto') return 'Horario: Noche';
-  return 'Sistema: Noche';
+  if (preference === 'auto') return `Horario: ${label}`;
+  return `Sistema: ${label}`;
+}
+
+function getBusinessPhoneValue(phone?: WhatsAppApiPhoneNumber | null) {
+  return phone?.phone_number || phone?.display_phone_number || phone?.qr_connected_phone || '';
+}
+
+function getBusinessPhoneLabel(phone?: WhatsAppApiPhoneNumber | null) {
+  return phone?.label || phone?.verified_name || getBusinessPhoneValue(phone) || 'WhatsApp';
+}
+
+function getBusinessPhoneDisplay(phone?: WhatsAppApiPhoneNumber | null) {
+  const value = getBusinessPhoneValue(phone);
+  const label = getBusinessPhoneLabel(phone);
+  if (!value) return label;
+  return label && label !== value ? `${label} · ${value}` : value;
+}
+
+function getBusinessPhoneStatusLabel(phone: WhatsAppApiPhoneNumber) {
+  if (phone.availability && phone.availability.available === false) return phone.availability.apiReason || 'No disponible';
+  if (phone.api_send_enabled === false && phone.qr_send_enabled) return 'Respaldo QR';
+  if (phone.qr_send_enabled && String(phone.qr_status || '').toLowerCase() === 'connected') return 'QR listo';
+  if (phone.is_default_sender) return 'Principal';
+  return phone.status || 'Disponible';
+}
+
+function getPushPermissionLabel(status: NativePushPermissionStatus) {
+  if (status === 'granted') return 'Activo';
+  if (status === 'denied') return 'Bloqueado';
+  if (status === 'unsupported') return 'No soportado';
+  return 'Activar';
 }
 
 function getTemplateStatus(template: WhatsAppApiTemplate) {
@@ -5208,8 +6609,17 @@ function SettingsScreen({
   const [savedBusinessContext, setSavedBusinessContext] = useState('');
   const [businessContextSaving, setBusinessContextSaving] = useState(false);
   const [businessContextMessage, setBusinessContextMessage] = useState('');
-  const [pushPermission, setPushPermission] = useState<NativePushPermissionStatus>('unsupported');
-  const [pushBusy, setPushBusy] = useState(false);
+  const [businessVoiceState, setBusinessVoiceState] = useState<BusinessVoiceState>('idle');
+  const businessVoiceRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const businessVoiceActiveRef = useRef(false);
+  const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null);
+  const [whatsappLoading, setWhatsappLoading] = useState(false);
+  const [whatsappError, setWhatsappError] = useState('');
+  const [settingDefaultPhoneId, setSettingDefaultPhoneId] = useState<string | null>(null);
+  const [pushPermissionStatus, setPushPermissionStatus] = useState<NativePushPermissionStatus>('prompt');
+  const [pushStatusMessage, setPushStatusMessage] = useState('');
+  const [requestingPush, setRequestingPush] = useState(false);
+  const [nativeThemeTone, setNativeThemeTone] = useState<'light' | 'dark'>(() => getNativePhoneThemeTone('system'));
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -5231,10 +6641,6 @@ function SettingsScreen({
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    void getNativePushPermissionStatus().then(setPushPermission);
-  }, []);
 
   const loadAIAgentStatus = useCallback(async () => {
     setAiAgentLoading(true);
@@ -5267,6 +6673,20 @@ function SettingsScreen({
     }
   }, [api]);
 
+  const loadWhatsAppStatus = useCallback(async (refresh = false) => {
+    setWhatsappLoading(true);
+    setWhatsappError('');
+    try {
+      const status = refresh ? await api.refreshWhatsAppStatus() : await api.getWhatsAppStatus();
+      setWhatsappStatus(status);
+    } catch (err) {
+      setWhatsappStatus(null);
+      setWhatsappError(err instanceof Error ? err.message : 'No se pudieron cargar los números de WhatsApp.');
+    } finally {
+      setWhatsappLoading(false);
+    }
+  }, [api]);
+
   const loadCustomFields = useCallback(async () => {
     setCustomFieldsLoading(true);
     setCustomFieldsError('');
@@ -5280,6 +6700,11 @@ function SettingsScreen({
       setCustomFieldsLoading(false);
     }
   }, [api]);
+
+  const loadPushPermissionStatus = useCallback(async () => {
+    const status = await getNativePushPermissionStatus();
+    setPushPermissionStatus(status);
+  }, []);
 
   const loadCalendars = useCallback(async () => {
     setCalendarsLoading(true);
@@ -5297,13 +6722,24 @@ function SettingsScreen({
   useEffect(() => {
     void loadAIAgentStatus();
     void loadCalendars();
-  }, [loadAIAgentStatus, loadCalendars]);
+    void loadWhatsAppStatus();
+    void loadPushPermissionStatus();
+  }, [loadAIAgentStatus, loadCalendars, loadPushPermissionStatus, loadWhatsAppStatus]);
 
   useEffect(() => {
+    if (activePanel === 'numbers') void loadWhatsAppStatus();
     if (activePanel === 'templates') void loadTemplates();
     if (activePanel === 'custom-fields') void loadCustomFields();
     if (activePanel === 'agent') void loadAIAgentStatus();
-  }, [activePanel, loadAIAgentStatus, loadCustomFields, loadTemplates]);
+    if (activePanel === 'notifications') void loadPushPermissionStatus();
+  }, [activePanel, loadAIAgentStatus, loadCustomFields, loadPushPermissionStatus, loadTemplates, loadWhatsAppStatus]);
+
+  useEffect(() => () => {
+    if (businessVoiceActiveRef.current || businessVoiceRecorder.isRecording) {
+      void businessVoiceRecorder.stop().catch(() => undefined);
+      businessVoiceActiveRef.current = false;
+    }
+  }, [businessVoiceRecorder]);
 
   const getAppBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(appConfig[key], fallback);
   const getUserBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(userConfig[key], fallback);
@@ -5337,25 +6773,6 @@ function SettingsScreen({
     }
   };
 
-  const requestNativePush = async () => {
-    if (pushBusy) return;
-    setPushBusy(true);
-    try {
-      const result = await subscribeToNativePushNotifications(api, { calendarIds: pushCalendarIds });
-      const permission = await getNativePushPermissionStatus();
-      setPushPermission(permission);
-      if (result.status === 'subscribed') {
-        Alert.alert('Alertas activadas', 'Este celular ya puede recibir notificaciones de Ristak.');
-        return;
-      }
-      Alert.alert(result.status === 'not_configured' ? 'Falta preparar alertas' : 'No se activaron', result.reason);
-    } catch (err) {
-      Alert.alert('No se activaron las alertas', err instanceof Error ? err.message : 'Intenta otra vez.');
-    } finally {
-      setPushBusy(false);
-    }
-  };
-
   const aiReady = Boolean(aiAgentConfig?.configured && !aiAgentConfig?.needsReconnect);
   const aiAgentChatEnabled = getAppBoolean('mobile_chat_ai_agent_enabled', true);
   const aiReplySuggestionsEnabled = getAppBoolean('mobile_chat_ai_reply_suggestions_enabled', false);
@@ -5364,6 +6781,7 @@ function SettingsScreen({
   const showUnreadIndicators = getAppBoolean('mobile_chat_show_unread_indicators', true);
   const conversationSortMode = coerceConfigString(appConfig.mobile_chat_sort_mode, 'recent');
   const themePreference = coercePhoneThemePreference(appConfig.mobile_chat_theme_preference);
+  const selectedWhatsAppPhoneId = coerceConfigString(appConfig.mobile_chat_selected_whatsapp_phone_id, 'all');
   const chatPushEnabled = getUserBoolean('chat_push_notifications_enabled', true);
   const calendarPushEnabled = getUserBoolean('calendar_push_notifications_enabled', false);
   const appointmentConfirmationPushEnabled = getUserBoolean('appointment_confirmation_push_notifications_enabled', true);
@@ -5371,7 +6789,24 @@ function SettingsScreen({
   const notificationSoundEnabled = getUserBoolean('push_notification_sound_enabled', true);
   const notificationVibrationEnabled = getUserBoolean('push_notification_vibration_enabled', true);
   const pushCalendarIds = getUserStringArray('calendar_push_notification_calendar_ids');
+  const whatsAppPhones = Array.isArray(whatsappStatus?.phoneNumbers) ? whatsappStatus.phoneNumbers : [];
+  const selectedWhatsAppPhone = selectedWhatsAppPhoneId && selectedWhatsAppPhoneId !== 'all'
+    ? whatsAppPhones.find((phone) => phone.id === selectedWhatsAppPhoneId) || null
+    : null;
+  const defaultWhatsAppPhone = whatsAppPhones.find((phone) => phone.is_default_sender) || whatsappStatus?.selectedPhone || whatsAppPhones[0] || null;
+  const whatsappNumbersMode = selectedWhatsAppPhone ? 'separate' : 'together';
+  const pushPermissionLabel = getPushPermissionLabel(pushPermissionStatus);
   const selectedCalendarCount = pushCalendarIds.length || calendars.length;
+  const customFieldGroups = useMemo(() => {
+    const groups = new Map<string, ContactCustomFieldDefinition[]>();
+    customFields.forEach((definition) => {
+      const title = definition.folderName || 'Campos personalizados';
+      const group = groups.get(title) || [];
+      group.push(definition);
+      groups.set(title, group);
+    });
+    return [...groups.entries()].map(([title, items]) => ({ title, items }));
+  }, [customFields]);
   const blockedTemplates = templates.filter((template) => TEMPLATE_BLOCKED_STATUSES.has(getTemplateStatus(template))).length;
   const notificationCount = [
     chatPushEnabled,
@@ -5379,6 +6814,33 @@ function SettingsScreen({
     appointmentConfirmationPushEnabled,
     paymentPushEnabled,
   ].filter(Boolean).length;
+
+  useEffect(() => {
+    const applyTheme = () => {
+      const tone = getNativePhoneThemeTone(themePreference, Appearance.getColorScheme());
+      setNativeThemeTone(tone);
+      const background = getNativePhoneThemeBackground(tone);
+      void SystemUI.setBackgroundColorAsync(background).catch(() => undefined);
+      StatusBar.setBarStyle(tone === 'light' ? 'dark-content' : 'light-content', true);
+      if (Platform.OS === 'android') {
+        StatusBar.setBackgroundColor(background, true);
+      }
+    };
+
+    applyTheme();
+
+    const appearanceSubscription = themePreference === 'system'
+      ? Appearance.addChangeListener(applyTheme)
+      : null;
+    const interval = themePreference === 'auto'
+      ? setInterval(applyTheme, 60 * 1000)
+      : null;
+
+    return () => {
+      appearanceSubscription?.remove();
+      if (interval) clearInterval(interval);
+    };
+  }, [themePreference]);
 
   const handleLogout = () => {
     Alert.alert(
@@ -5392,14 +6854,14 @@ function SettingsScreen({
     );
   };
 
-  const handleSaveBusinessContext = async () => {
-    const draft = businessContextDraft.trim();
+  const saveRefinedBusinessContext = async (answer: string, successMessage = 'Guardado.') => {
+    const draft = answer.trim();
     if (!draft || businessContextSaving || !aiReady) {
       Alert.alert(
         'Asistente Personal AI',
         aiReady ? 'Escribe la descripción del negocio primero.' : 'Conecta OpenAI para pulir y guardar la descripción.',
       );
-      return;
+      return false;
     }
     setBusinessContextSaving(true);
     setBusinessContextMessage('Puliendo y guardando...');
@@ -5410,13 +6872,111 @@ function SettingsScreen({
       setSavedBusinessContext(next);
       setBusinessContextMessage('Guardado.');
       if (result.status) setAiAgentConfig(result.status);
+      if (successMessage !== 'Guardado.') {
+        Alert.alert('Descripción guardada', successMessage);
+      }
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo guardar la descripción.';
       setBusinessContextMessage(message);
       Alert.alert('No se guardó la descripción', message);
+      return false;
     } finally {
       setBusinessContextSaving(false);
     }
+  };
+
+  const handleSaveBusinessContext = () => {
+    void saveRefinedBusinessContext(businessContextDraft, 'La descripción quedó pulida y guardada.');
+  };
+
+  const startBusinessVoiceDictation = async () => {
+    if (businessVoiceState !== 'idle' || businessContextSaving || aiAgentLoading) return;
+
+    if (!aiReady) {
+      const message = aiAgentConfig?.needsReconnect
+        ? 'Reconecta OpenAI para dictar la descripción.'
+        : 'Conecta OpenAI para dictar y pulir la descripción.';
+      setBusinessContextMessage(message);
+      Alert.alert('OpenAI no está listo', message);
+      return;
+    }
+
+    try {
+      const permission = await requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        const message = 'Este celular no permitió usar el micrófono.';
+        setBusinessContextMessage(message);
+        Alert.alert('Micrófono bloqueado', message);
+        return;
+      }
+
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
+
+      await businessVoiceRecorder.prepareToRecordAsync();
+      businessVoiceRecorder.record();
+      businessVoiceActiveRef.current = true;
+      setBusinessVoiceState('recording');
+      setBusinessContextMessage('Grabando... toca detener cuando termines.');
+    } catch (err) {
+      businessVoiceActiveRef.current = false;
+      void setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+      setBusinessVoiceState('idle');
+      const message = err instanceof Error ? err.message : 'No pude activar el micrófono.';
+      setBusinessContextMessage(message);
+      Alert.alert('Micrófono bloqueado', message);
+    }
+  };
+
+  const stopBusinessVoiceDictation = async () => {
+    if (businessVoiceState !== 'recording') return;
+
+    setBusinessVoiceState('processing');
+    setBusinessContextMessage('Transcribiendo audio...');
+
+    try {
+      if (!businessVoiceActiveRef.current && !businessVoiceRecorder.isRecording) throw new Error('No encontré la grabación activa.');
+      await businessVoiceRecorder.stop();
+      businessVoiceActiveRef.current = false;
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+
+      const audioUri = businessVoiceRecorder.uri;
+      if (!audioUri) throw new Error('No se grabó audio. Intenta otra vez.');
+
+      const transcription = await api.transcribeAIAgentAudio(audioUri, 'audio/m4a');
+      const transcript = String(transcription.text || '').trim();
+      if (!transcript) throw new Error('No se detectó texto en el audio.');
+
+      await saveRefinedBusinessContext(transcript, 'Tu dictado quedó pulido y guardado.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No pude transcribir el audio.';
+      setBusinessContextMessage(message);
+      Alert.alert('No se pudo usar el dictado', message);
+    } finally {
+      businessVoiceActiveRef.current = false;
+      void setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+      setBusinessVoiceState('idle');
+    }
+  };
+
+  const handleBusinessVoiceButton = () => {
+    if (businessVoiceState === 'recording') {
+      void stopBusinessVoiceDictation();
+      return;
+    }
+    void startBusinessVoiceDictation();
   };
 
   const togglePushCalendar = (calendarId: string) => {
@@ -5424,6 +6984,65 @@ function SettingsScreen({
       ? pushCalendarIds.filter((id) => id !== calendarId)
       : [...pushCalendarIds, calendarId];
     void saveUserPreference('calendar_push_notification_calendar_ids', next);
+  };
+
+  const selectWhatsAppNumbersMode = (mode: 'together' | 'separate') => {
+    if (mode === 'together') {
+      void saveAppPreference('mobile_chat_selected_whatsapp_phone_id', 'all');
+      return;
+    }
+
+    const fallbackPhone = selectedWhatsAppPhone || defaultWhatsAppPhone;
+    if (!fallbackPhone?.id) {
+      Alert.alert('Números de WhatsApp', 'No hay un número disponible para separar la bandeja.');
+      return;
+    }
+
+    void saveAppPreference('mobile_chat_selected_whatsapp_phone_id', fallbackPhone.id);
+  };
+
+  const selectChatWhatsAppPhone = (phone: WhatsAppApiPhoneNumber) => {
+    if (!phone.id) return;
+    void saveAppPreference('mobile_chat_selected_whatsapp_phone_id', phone.id);
+  };
+
+  const handleSetDefaultWhatsAppPhone = async (phone: WhatsAppApiPhoneNumber) => {
+    if (!phone.id || settingDefaultPhoneId) return;
+    setSettingDefaultPhoneId(phone.id);
+    try {
+      const status = await api.setDefaultWhatsAppPhoneNumber(phone.id);
+      setWhatsappStatus(status);
+    } catch (err) {
+      Alert.alert('No se cambió el número principal', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setSettingDefaultPhoneId(null);
+    }
+  };
+
+  const handleEnableNativePush = async () => {
+    if (requestingPush) return;
+    setRequestingPush(true);
+    setPushStatusMessage('Activando alertas en este celular...');
+    try {
+      const result = await subscribeToNativePushNotifications(
+        api,
+        { calendarIds: calendarPushEnabled ? pushCalendarIds : [] },
+      );
+      await loadPushPermissionStatus();
+      if (result.status === 'subscribed') {
+        setPushStatusMessage('Alertas activas en este celular.');
+        return;
+      }
+      const message = result.reason || 'No se activaron las alertas en este celular.';
+      setPushStatusMessage(message);
+      Alert.alert(result.status === 'not_configured' ? 'Falta preparar alertas' : 'No se activaron', message);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Intenta otra vez.';
+      setPushStatusMessage(message);
+      Alert.alert('No se activaron las alertas', message);
+    } finally {
+      setRequestingPush(false);
+    }
   };
 
   const renderMainList = () => {
@@ -5435,12 +7054,13 @@ function SettingsScreen({
       Icon: LucideIcon;
       tone: 'green' | 'black' | 'blue' | 'gold' | 'red';
     }> = [
+      { id: 'numbers', title: 'Números de WhatsApp', description: 'Principal y bandejas por remitente.', meta: whatsAppPhones.length ? `${whatsAppPhones.length}` : 'Revisar', Icon: Smartphone, tone: 'green' },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
       { id: 'agent', title: AI_AGENT_CHAT_DISPLAY_NAME, description: 'Chat fijo y sugerencias.', meta: aiReady ? (aiAgentChatEnabled ? 'Activo' : 'Apagado') : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
       { id: 'chats', title: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: customFields.length ? `${customFields.length}` : 'Todos', Icon: ListChecks, tone: 'gold' },
-      { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: getThemeMeta(themePreference), Icon: Sun, tone: 'blue' },
-      { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: notificationCount ? `${notificationCount} activas` : 'Configurar', Icon: Bell, tone: 'red' },
+      { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: getThemeMeta(themePreference, nativeThemeTone), Icon: Sun, tone: 'blue' },
+      { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: pushPermissionLabel, Icon: Bell, tone: 'red' },
     ];
 
     return (
@@ -5474,6 +7094,84 @@ function SettingsScreen({
       </>
     );
   };
+
+  const renderNumbers = () => (
+    <>
+      <SettingsActionCard
+        Icon={Smartphone}
+        title="Números de WhatsApp"
+        subtitle={whatsappStatus?.connected ? 'Administra remitentes conectados.' : 'Conecta WhatsApp para enviar desde la app móvil.'}
+        actionLabel="Actualizar"
+        actionIcon={RefreshCw}
+        busy={whatsappLoading}
+        onPress={() => void loadWhatsAppStatus(true)}
+      />
+      {whatsappError ? <SettingsAlert message={whatsappError} /> : null}
+      {whatsappLoading ? <SettingsInlineLoading label="Cargando números..." /> : null}
+      {!whatsappLoading && !whatsappError ? (
+        <View style={styles.settingsCard}>
+          <Text style={styles.settingsFieldTitle}>Bandeja de chats</Text>
+          <Text style={styles.settingsHint}>
+            Usa todos juntos para ver la bandeja completa o separa por un remitente cuando necesites trabajar sólo un número.
+          </Text>
+          <View style={styles.settingsSegmented}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => selectWhatsAppNumbersMode('together')}
+              style={[styles.settingsSegmentButton, whatsappNumbersMode === 'together' && styles.settingsSegmentButtonActive]}
+            >
+              <Text style={[styles.settingsSegmentText, whatsappNumbersMode === 'together' && styles.settingsSegmentTextActive]}>Juntos</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => selectWhatsAppNumbersMode('separate')}
+              style={[styles.settingsSegmentButton, whatsappNumbersMode === 'separate' && styles.settingsSegmentButtonActive]}
+            >
+              <Text style={[styles.settingsSegmentText, whatsappNumbersMode === 'separate' && styles.settingsSegmentTextActive]}>Separado</Text>
+            </Pressable>
+          </View>
+          {selectedWhatsAppPhone ? <Text style={styles.settingsHint}>Separado por {getBusinessPhoneDisplay(selectedWhatsAppPhone)}.</Text> : null}
+        </View>
+      ) : null}
+      {!whatsappLoading && !whatsappError && whatsAppPhones.length ? (
+        <View style={styles.settingsItemList}>
+          {whatsAppPhones.map((phone) => {
+            const selected = selectedWhatsAppPhoneId === phone.id;
+            const settingDefault = settingDefaultPhoneId === phone.id;
+            return (
+              <View key={phone.id} style={[styles.phoneNumberRow, selected && styles.phoneNumberRowActive]}>
+                <View style={styles.phoneNumberAvatar}>
+                  <Text style={styles.phoneNumberAvatarText}>{getBusinessPhoneLabel(phone).slice(0, 2).toUpperCase()}</Text>
+                </View>
+                <View style={styles.phoneNumberCopy}>
+                  <Text numberOfLines={1} style={styles.phoneNumberTitle}>{getBusinessPhoneLabel(phone)}</Text>
+                  <Text numberOfLines={1} style={styles.phoneNumberSubtitle}>{getBusinessPhoneValue(phone) || 'Sin número visible'} · {getBusinessPhoneStatusLabel(phone)}</Text>
+                </View>
+                <View style={styles.phoneNumberActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={() => selectChatWhatsAppPhone(phone)}
+                    style={[styles.phoneNumberPill, selected && styles.phoneNumberPillActive]}
+                  >
+                    <Text style={[styles.phoneNumberPillText, selected && styles.phoneNumberPillTextActive]}>{selected ? 'En chats' : 'Usar'}</Text>
+                  </Pressable>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={phone.is_default_sender || settingDefault}
+                    onPress={() => void handleSetDefaultWhatsAppPhone(phone)}
+                    style={[styles.phoneNumberPill, phone.is_default_sender && styles.phoneNumberPillActive, (phone.is_default_sender || settingDefault) && styles.disabledButton]}
+                  >
+                    {settingDefault ? <ActivityIndicator color={COLORS.white} /> : <Text style={[styles.phoneNumberPillText, phone.is_default_sender && styles.phoneNumberPillTextActive]}>{phone.is_default_sender ? 'Principal' : 'Hacer principal'}</Text>}
+                  </Pressable>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+      {!whatsappLoading && !whatsappError && !whatsAppPhones.length ? <SettingsEmptyState label="Todavía no hay números de WhatsApp conectados." /> : null}
+    </>
+  );
 
   const renderTemplates = () => (
     <>
@@ -5517,6 +7215,9 @@ function SettingsScreen({
 
   const renderAgent = () => {
     const descriptionChanged = businessContextDraft.trim() !== savedBusinessContext.trim();
+    const recording = businessVoiceState === 'recording';
+    const busyDescription = aiAgentLoading || businessContextSaving || businessVoiceState === 'processing';
+    const micLabel = recording ? 'Detener' : businessVoiceState === 'processing' ? 'Procesando' : 'Dictar';
     return (
       <>
         <View style={styles.businessDescriptionPanel}>
@@ -5537,7 +7238,7 @@ function SettingsScreen({
                 setBusinessContextDraft(text);
                 setBusinessContextMessage('');
               }}
-              editable={!businessContextSaving && !aiAgentLoading}
+              editable={!busyDescription && !recording}
               multiline
               placeholder="Ejemplo: Somos una clínica dental en Ciudad Juárez, atendemos familias..."
               placeholderTextColor={COLORS.muted}
@@ -5546,14 +7247,17 @@ function SettingsScreen({
             />
             <Pressable
               accessibilityRole="button"
-              disabled={!aiReady}
-              onPress={() => {
-                Alert.alert('Dictar', 'El dictado nativo queda pendiente de conectar al módulo de audio; por ahora escribe la descripción aquí.');
-              }}
-              style={({ pressed }) => [styles.businessVoiceButton, !aiReady && styles.disabledButton, pressed && styles.pressed]}
+              disabled={!aiReady || businessContextSaving || aiAgentLoading || businessVoiceState === 'processing'}
+              onPress={handleBusinessVoiceButton}
+              style={({ pressed }) => [
+                styles.businessVoiceButton,
+                recording && styles.businessVoiceButtonRecording,
+                (!aiReady || businessContextSaving || aiAgentLoading || businessVoiceState === 'processing') && styles.disabledButton,
+                pressed && styles.pressed,
+              ]}
             >
-              <Mic size={17} color={COLORS.white} strokeWidth={2.4} />
-              <Text style={styles.businessVoiceButtonText}>Dictar</Text>
+              {businessVoiceState === 'processing' ? <ActivityIndicator color={COLORS.bg} /> : recording ? <Square size={15} color={COLORS.white} fill={COLORS.white} strokeWidth={2.4} /> : <Mic size={17} color={COLORS.bg} strokeWidth={2.4} />}
+              <Text style={[styles.businessVoiceButtonText, recording && styles.businessVoiceButtonTextRecording]}>{micLabel}</Text>
             </Pressable>
           </View>
           <View style={styles.businessDescriptionActions}>
@@ -5562,11 +7266,11 @@ function SettingsScreen({
             </Text>
             <Pressable
               accessibilityRole="button"
-              disabled={!aiReady || businessContextSaving || !descriptionChanged || !businessContextDraft.trim()}
-              onPress={() => void handleSaveBusinessContext()}
-              style={({ pressed }) => [styles.settingsSmallPrimaryButton, (!aiReady || businessContextSaving || !descriptionChanged || !businessContextDraft.trim()) && styles.disabledButton, pressed && styles.pressed]}
+              disabled={!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()}
+              onPress={handleSaveBusinessContext}
+              style={({ pressed }) => [styles.settingsSmallPrimaryButton, (!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()) && styles.disabledButton, pressed && styles.pressed]}
             >
-              {businessContextSaving ? <ActivityIndicator color={COLORS.white} /> : <Save size={16} color={COLORS.white} strokeWidth={2.4} />}
+              {businessContextSaving ? <ActivityIndicator color={COLORS.bg} /> : <Save size={16} color={COLORS.bg} strokeWidth={2.4} />}
               <Text style={styles.settingsSmallPrimaryText}>Guardar</Text>
             </Pressable>
           </View>
@@ -5625,13 +7329,18 @@ function SettingsScreen({
           <Text style={styles.settingsFieldTitle}>Todos aparecen en la info del contacto</Text>
           <Text style={styles.settingsHint}>El chat móvil muestra el catálogo completo, agrupado por carpeta, y cada campo se edita desde la ficha del contacto.</Text>
           <View style={styles.customFieldsList}>
-            {customFields.map((definition, index) => (
-              <View key={definition.definitionId || definition.fieldKey || definition.key || `field-${index}`} style={styles.customFieldRow}>
-                <View style={styles.customFieldCopy}>
-                  <Text numberOfLines={1} style={styles.customFieldTitle}>{definition.label || definition.name || `Campo ${index + 1}`}</Text>
-                  <Text numberOfLines={1} style={styles.customFieldSubtitle}>{definition.folderName || 'Campos personalizados'} · {definition.dataType || 'text'}</Text>
-                </View>
-                <Check size={17} color={COLORS.accent} strokeWidth={2.8} />
+            {customFieldGroups.map((group) => (
+              <View key={group.title} style={styles.customFieldGroup}>
+                <Text style={styles.customFieldGroupTitle}>{group.title}</Text>
+                {group.items.map((definition, index) => (
+                  <View key={definition.definitionId || definition.fieldKey || definition.key || `${group.title}-${index}`} style={styles.customFieldRow}>
+                    <View style={styles.customFieldCopy}>
+                      <Text numberOfLines={1} style={styles.customFieldTitle}>{definition.label || definition.name || `Campo ${index + 1}`}</Text>
+                      <Text numberOfLines={1} style={styles.customFieldSubtitle}>{definition.dataType || 'text'}</Text>
+                    </View>
+                    <Check size={17} color={COLORS.accent} strokeWidth={2.8} />
+                  </View>
+                ))}
               </View>
             ))}
           </View>
@@ -5671,24 +7380,31 @@ function SettingsScreen({
           );
         })}
       </View>
-      <Text style={styles.settingsHint}>Ahorita el chat se ve en modo {getThemeMeta(themePreference).toLowerCase()}.</Text>
+      <Text style={styles.settingsHint}>Ahorita la app se ve en modo {getThemeMeta(themePreference, nativeThemeTone).toLowerCase()} y el fondo nativo del celular ya sigue esa preferencia.</Text>
     </View>
   );
 
   const renderNotifications = () => (
     <>
-      <SettingsActionCard
-        Icon={BellRing}
-        title="Alertas de este celular"
-        subtitle={`Permiso actual: ${formatPushPermission(pushPermission)}.`}
-        actionLabel={pushPermission === 'granted' ? 'Reactivar' : 'Activar'}
-        actionIcon={Bell}
-        busy={pushBusy}
-        onPress={() => void requestNativePush()}
-      />
-      <View style={styles.settingsEnabledCard}>
-        <Check size={18} color="#0f6b3e" strokeWidth={2.6} />
-        <Text style={styles.settingsEnabledText}>Este celular usa las preferencias guardadas de notificaciones.</Text>
+      <View style={[styles.settingsEnabledCard, pushPermissionStatus !== 'granted' && styles.settingsPushCardNeedsAction]}>
+        {pushPermissionStatus === 'granted' ? <Check size={18} color="#0f6b3e" strokeWidth={2.6} /> : <BellRing size={18} color={COLORS.text} strokeWidth={2.6} />}
+        <View style={styles.settingsPushCopy}>
+          <Text style={styles.settingsEnabledText}>
+            {pushPermissionStatus === 'granted'
+              ? `Alertas activas en este celular · ${notificationCount} tipos prendidos.`
+              : `Permiso nativo: ${pushPermissionLabel}.`}
+          </Text>
+          {pushStatusMessage ? <Text style={styles.settingsPushMessage}>{pushStatusMessage}</Text> : null}
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          disabled={requestingPush}
+          onPress={handleEnableNativePush}
+          style={({ pressed }) => [styles.settingsPushActionButton, requestingPush && styles.disabledButton, pressed && styles.pressed]}
+        >
+          {requestingPush ? <ActivityIndicator color={COLORS.bg} /> : <Bell size={15} color={COLORS.bg} strokeWidth={2.5} />}
+          <Text style={styles.settingsPushActionText}>{pushPermissionStatus === 'granted' ? 'Actualizar' : 'Activar'}</Text>
+        </Pressable>
       </View>
       <SettingsToggleRow title="Mensajes del chat" description="Avísame cuando llegue un WhatsApp nuevo." checked={chatPushEnabled} disabled={savingKey === 'chat_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('chat_push_notifications_enabled', checked)} />
       <SettingsToggleRow title="Citas agendadas" description="Avísame cuando alguien reserve una cita nueva." checked={calendarPushEnabled} disabled={savingKey === 'calendar_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('calendar_push_notifications_enabled', checked)} />
@@ -5740,6 +7456,7 @@ function SettingsScreen({
   );
 
   const renderPanel = () => {
+    if (activePanel === 'numbers') return renderNumbers();
     if (activePanel === 'templates') return renderTemplates();
     if (activePanel === 'agent') return renderAgent();
     if (activePanel === 'chats') return renderChats();
@@ -6682,6 +8399,329 @@ function ScheduleMessageSheet({
   );
 }
 
+function NativeTemplatesSheet({
+  busyId,
+  closing,
+  contact,
+  loading,
+  open,
+  templates,
+  onClose,
+  onSend,
+}: {
+  busyId?: string | null;
+  closing?: boolean;
+  contact: ChatContact | null;
+  loading: boolean;
+  open: boolean;
+  templates: WhatsAppTemplate[];
+  onClose: () => void;
+  onSend: (template: WhatsAppTemplate) => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open && Boolean(contact)}
+      title="Plantillas"
+      subtitle={contact ? getContactName(contact) : ''}
+      onClose={onClose}
+    >
+      {contact ? (
+        <View style={styles.templatesSheetBody}>
+          {loading ? (
+            <View style={styles.sheetInlineState}>
+              <ActivityIndicator color={COLORS.accent} />
+              <Text style={styles.caption}>Cargando plantillas...</Text>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled">
+              {templates.map((template, index) => {
+                const body = getTemplateBody(template);
+                const key = template.id || template.name || body || `template-${index}`;
+                return (
+                  <SheetActionRow
+                    key={key}
+                    Icon={MessageCircle}
+                    title={template.name || 'Plantilla'}
+                    subtitle={body || template.category || (template.source === 'local' ? 'Inserta una respuesta guardada.' : 'Enviar plantilla aprobada por WhatsApp.')}
+                    busy={busyId === key}
+                    onPress={() => onSend(template)}
+                  />
+                );
+              })}
+              {!templates.length ? (
+                <Text style={styles.contactPickerEmpty}>No hay plantillas aprobadas o guardadas para mostrar.</Text>
+              ) : null}
+            </ScrollView>
+          )}
+        </View>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+function NativeClabeSheet({
+  accounts,
+  busyId,
+  closing,
+  contact,
+  draft,
+  formOpen,
+  loading,
+  open,
+  onChangeDraft,
+  onClose,
+  onSave,
+  onSend,
+  onToggleForm,
+}: {
+  accounts: BankClabeAccount[];
+  busyId?: string | null;
+  closing?: boolean;
+  contact: ChatContact | null;
+  draft: { alias: string; clabe: string; bank: string; accountHolder: string };
+  formOpen: boolean;
+  loading: boolean;
+  open: boolean;
+  onChangeDraft: React.Dispatch<React.SetStateAction<{ alias: string; clabe: string; bank: string; accountHolder: string }>>;
+  onClose: () => void;
+  onSave: () => void;
+  onSend: (account: BankClabeAccount) => void;
+  onToggleForm: () => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open && Boolean(contact)}
+      title="Enviar CLABE"
+      subtitle={contact ? getContactName(contact) : ''}
+      onClose={onClose}
+    >
+      {contact ? (
+        <View style={styles.clabeSheetBody}>
+          <SecondaryButton label={formOpen ? 'Ocultar formulario' : 'Agregar CLABE'} onPress={onToggleForm} />
+          {formOpen ? (
+            <View style={styles.sheetFormBlock}>
+              <TextInput
+                value={draft.alias}
+                onChangeText={(value) => onChangeDraft((current) => ({ ...current, alias: value }))}
+                placeholder="Alias"
+                placeholderTextColor={COLORS.muted}
+                keyboardAppearance="dark"
+                style={styles.sheetInput}
+              />
+              <TextInput
+                value={formatClabe(draft.clabe)}
+                onChangeText={(value) => onChangeDraft((current) => ({ ...current, clabe: normalizeClabe(value) }))}
+                placeholder="CLABE de 18 dígitos"
+                placeholderTextColor={COLORS.muted}
+                keyboardAppearance="dark"
+                keyboardType="number-pad"
+                style={styles.sheetInput}
+              />
+              <TextInput
+                value={draft.bank}
+                onChangeText={(value) => onChangeDraft((current) => ({ ...current, bank: value }))}
+                placeholder="Banco"
+                placeholderTextColor={COLORS.muted}
+                keyboardAppearance="dark"
+                style={styles.sheetInput}
+              />
+              <TextInput
+                value={draft.accountHolder}
+                onChangeText={(value) => onChangeDraft((current) => ({ ...current, accountHolder: value }))}
+                placeholder="Titular"
+                placeholderTextColor={COLORS.muted}
+                keyboardAppearance="dark"
+                style={styles.sheetInput}
+              />
+              <PrimaryButton label="Guardar CLABE" busy={Boolean(busyId)} onPress={onSave} />
+            </View>
+          ) : null}
+          {loading ? (
+            <View style={styles.sheetInlineState}>
+              <ActivityIndicator color={COLORS.accent} />
+              <Text style={styles.caption}>Cargando cuentas...</Text>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled">
+              {accounts.map((account) => (
+                <SheetActionRow
+                  key={account.id}
+                  Icon={Banknote}
+                  title={account.alias || `CLABE ${account.clabe.slice(-4)}`}
+                  subtitle={[account.bank, account.accountHolder, formatClabe(account.clabe)].filter(Boolean).join(' · ')}
+                  busy={busyId === account.id}
+                  onPress={() => onSend(account)}
+                />
+              ))}
+              {!accounts.length ? (
+                <Text style={styles.contactPickerEmpty}>No hay CLABEs guardadas. Agrega una para enviarla desde el chat.</Text>
+              ) : null}
+            </ScrollView>
+          )}
+        </View>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+function PaymentEntrySheet({
+  accountCurrency,
+  busy,
+  closing,
+  contact,
+  draft,
+  open,
+  onChangeDraft,
+  onClose,
+  onSubmit,
+}: {
+  accountCurrency: string;
+  busy: boolean;
+  closing?: boolean;
+  contact: ChatContact | null;
+  draft: { amount: string; concept: string; method: string };
+  open: boolean;
+  onChangeDraft: React.Dispatch<React.SetStateAction<{ amount: string; concept: string; method: string }>>;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  const methods = [
+    { id: 'cash', label: 'Efectivo' },
+    { id: 'transfer', label: 'Transferencia' },
+    { id: 'card', label: 'Tarjeta' },
+  ];
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open && Boolean(contact)}
+      title="Registrar pago"
+      subtitle={contact ? `${getContactName(contact)} · ${accountCurrency || 'Moneda de cuenta'}` : ''}
+      onClose={onClose}
+    >
+      {contact ? (
+        <View style={styles.paymentSheetBody}>
+          <TextInput
+            value={draft.amount}
+            onChangeText={(value) => onChangeDraft((current) => ({ ...current, amount: value.replace(/[^\d.,]/g, '') }))}
+            placeholder="Monto"
+            placeholderTextColor={COLORS.muted}
+            keyboardAppearance="dark"
+            keyboardType="decimal-pad"
+            style={styles.sheetInput}
+          />
+          <TextInput
+            value={draft.concept}
+            onChangeText={(value) => onChangeDraft((current) => ({ ...current, concept: value }))}
+            placeholder="Concepto"
+            placeholderTextColor={COLORS.muted}
+            keyboardAppearance="dark"
+            style={styles.sheetInput}
+          />
+          <View style={styles.sheetPillRow}>
+            {methods.map((method) => (
+              <Pressable
+                key={method.id}
+                accessibilityRole="button"
+                onPress={() => onChangeDraft((current) => ({ ...current, method: method.id }))}
+                style={[styles.sheetPill, draft.method === method.id && styles.sheetPillActive]}
+              >
+                <Text style={[styles.sheetPillText, draft.method === method.id && styles.sheetPillTextActive]}>{method.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <PrimaryButton label="Registrar pago" busy={busy} onPress={onSubmit} />
+        </View>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+function AppointmentEntrySheet({
+  busy,
+  closing,
+  contact,
+  draft,
+  open,
+  timezone,
+  onChangeDraft,
+  onClose,
+  onSubmit,
+}: {
+  busy: boolean;
+  closing?: boolean;
+  contact: ChatContact | null;
+  draft: { title: string; date: string; time: string; durationMinutes: string; notes: string };
+  open: boolean;
+  timezone: string;
+  onChangeDraft: React.Dispatch<React.SetStateAction<{ title: string; date: string; time: string; durationMinutes: string; notes: string }>>;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open && Boolean(contact)}
+      title="Agendar cita"
+      subtitle={contact ? `${getContactName(contact)} · ${timezone}` : ''}
+      onClose={onClose}
+    >
+      {contact ? (
+        <View style={styles.appointmentSheetBody}>
+          <TextInput
+            value={draft.title}
+            onChangeText={(value) => onChangeDraft((current) => ({ ...current, title: value }))}
+            placeholder={`Cita con ${getContactName(contact)}`}
+            placeholderTextColor={COLORS.muted}
+            keyboardAppearance="dark"
+            style={styles.sheetInput}
+          />
+          <View style={styles.sheetInlineInputs}>
+            <TextInput
+              value={draft.date}
+              onChangeText={(value) => onChangeDraft((current) => ({ ...current, date: value }))}
+              placeholder="YYYY-MM-DD"
+              placeholderTextColor={COLORS.muted}
+              keyboardAppearance="dark"
+              style={[styles.sheetInput, styles.sheetInputFlex]}
+            />
+            <TextInput
+              value={draft.time}
+              onChangeText={(value) => onChangeDraft((current) => ({ ...current, time: value }))}
+              placeholder="HH:mm"
+              placeholderTextColor={COLORS.muted}
+              keyboardAppearance="dark"
+              style={[styles.sheetInput, styles.sheetInputShort]}
+            />
+          </View>
+          <TextInput
+            value={draft.durationMinutes}
+            onChangeText={(value) => onChangeDraft((current) => ({ ...current, durationMinutes: value.replace(/\D+/g, '') }))}
+            placeholder="Duración en minutos"
+            placeholderTextColor={COLORS.muted}
+            keyboardAppearance="dark"
+            keyboardType="number-pad"
+            style={styles.sheetInput}
+          />
+          <TextInput
+            value={draft.notes}
+            onChangeText={(value) => onChangeDraft((current) => ({ ...current, notes: value }))}
+            placeholder="Notas"
+            placeholderTextColor={COLORS.muted}
+            keyboardAppearance="dark"
+            multiline
+            textAlignVertical="top"
+            style={styles.sheetTextArea}
+          />
+          <PrimaryButton label="Agendar cita" busy={busy} onPress={onSubmit} />
+        </View>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+
 function ContactPickerSheet({
   asset,
   closing,
@@ -6871,6 +8911,98 @@ function getContactChannelKind(contact: ChatContact): ChannelBadgeKind {
   if (probe.includes('whatsapp') || probe.includes('api') || probe.includes('qr')) return 'whatsapp';
   return 'unknown';
 }
+
+function getDefaultComposerChannel(contact: ChatContact): NativeMessageChannel {
+  const kind = getContactChannelKind(contact);
+  if (kind === 'instagram' || kind === 'instagram_comment') return 'instagram';
+  if (kind === 'messenger' || kind === 'facebook_comment') return 'messenger';
+  if (kind === 'sms') return 'sms';
+  if (kind === 'email') return 'email';
+  return 'whatsapp';
+}
+
+function getBackendChannelForComposer(channel: NativeMessageChannel) {
+  if (channel === 'sms') return 'sms_qr';
+  if (channel === 'email') return 'email';
+  if (channel === 'messenger') return 'messenger';
+  if (channel === 'instagram') return 'instagram';
+  return 'whatsapp_api';
+}
+
+function contactProbeIncludes(contact: ChatContact, value: string) {
+  return getChannelProbe(contact).includes(value);
+}
+
+function getComposerChannelOptions(contact: ChatContact): ComposerChannelOption[] {
+  const kind = getContactChannelKind(contact);
+  const hasPhone = Boolean(String(contact.phone || '').trim());
+  const isMessengerContact = kind === 'messenger' || kind === 'facebook_comment' || contactProbeIncludes(contact, 'messenger');
+  const isInstagramContact = kind === 'instagram' || kind === 'instagram_comment' || contactProbeIncludes(contact, 'instagram');
+
+  return [
+    {
+      value: 'whatsapp',
+      label: 'WhatsApp',
+      description: contact.lastBusinessPhone ? `Desde ${contact.lastBusinessPhone}` : 'Mensaje por WhatsApp conectado.',
+      kind: 'whatsapp',
+      disabledReason: hasPhone ? undefined : 'Este contacto no tiene teléfono guardado.',
+    },
+    {
+      value: 'sms',
+      label: 'SMS',
+      description: 'Envía por SMS cuando el contacto tiene teléfono.',
+      kind: 'sms',
+      disabledReason: hasPhone ? undefined : 'Este contacto no tiene teléfono guardado.',
+    },
+    {
+      value: 'messenger',
+      label: 'Messenger',
+      description: 'Responde por Facebook Messenger.',
+      kind: 'messenger',
+      disabledReason: isMessengerContact ? undefined : 'Disponible cuando este contacto viene de Messenger.',
+    },
+    {
+      value: 'instagram',
+      label: 'Instagram DM',
+      description: 'Responde por Instagram Direct.',
+      kind: 'instagram',
+      disabledReason: isInstagramContact ? undefined : 'Disponible cuando este contacto viene de Instagram.',
+    },
+    {
+      value: 'email',
+      label: 'Correo',
+      description: 'Disponible desde la vista completa de chats.',
+      kind: 'email',
+      disabledReason: 'El correo todavía se envía desde la vista completa de chats.',
+    },
+  ];
+}
+
+function getContactCustomFieldRows(contact: ChatContact) {
+  return (contact.customFields || [])
+    .map((field, index) => {
+      const rawValue = field.value;
+      const value = Array.isArray(rawValue)
+        ? rawValue.join(', ')
+        : rawValue === null || rawValue === undefined
+          ? ''
+          : String(rawValue);
+      return {
+        id: field.id || field.fieldId || field.field_id || `field-${index}`,
+        label: field.label || field.name || 'Campo',
+        value,
+      };
+    })
+    .filter((field) => field.value.trim());
+}
+
+function formatContactMoney(value: number, accountCurrency: string) {
+  const amount = Number.isFinite(value) ? value : 0;
+  const currency = accountCurrency.trim().toUpperCase();
+  if (currency) return formatCurrency(amount, currency);
+  return amount.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+}
+
 
 function getMessageTypeLabel(type?: string, fallback = 'Mensaje') {
   const normalized = normalizeProbe(type);
@@ -7277,6 +9409,7 @@ function ConversationScreen({
     <NativeConversationScreen
       api={api}
       archived={false}
+      accountCurrency=""
       contact={contact}
       muted={false}
       timezone={resolveBusinessTimezone()}
@@ -7305,7 +9438,189 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
+function NativeContactDetailScreen({
+  accountCurrency,
+  contact,
+  error,
+  journeyMessages,
+  loading,
+  saving,
+  timezone,
+  onAppointment,
+  onBack,
+  onPayment,
+  onSave,
+}: {
+  accountCurrency: string;
+  contact: ChatContact;
+  error?: string;
+  journeyMessages: ChatMessage[];
+  loading?: boolean;
+  saving?: boolean;
+  timezone: string;
+  onAppointment: () => void;
+  onBack: () => void;
+  onPayment: () => void;
+  onSave: (patch: Partial<ChatContact>) => void;
+}) {
+  const [nameDraft, setNameDraft] = useState(getContactName(contact));
+  const [phoneDraft, setPhoneDraft] = useState(contact.phone || '');
+
+  useEffect(() => {
+    setNameDraft(getContactName(contact));
+    setPhoneDraft(contact.phone || '');
+  }, [contact]);
+
+  const mediaCount = journeyMessages.filter((message) => message.attachment?.type === 'image' || message.attachment?.type === 'video').length;
+  const documentCount = journeyMessages.filter((message) => message.attachment?.type === 'document' || message.attachment?.type === 'file').length;
+  const linkCount = journeyMessages.filter((message) => /https?:\/\//i.test(message.text || '')).length;
+  const customFields = getContactCustomFieldRows(contact);
+
+  const saveName = () => {
+    const nextName = nameDraft.trim();
+    if (!nextName || nextName === getContactName(contact)) return;
+    onSave({ name: nextName, full_name: nextName });
+  };
+
+  const savePhone = () => {
+    const nextPhone = phoneDraft.trim();
+    if (nextPhone === (contact.phone || '')) return;
+    Alert.alert(
+      'Actualizar teléfono',
+      contact.phone ? `Cambiarás ${contact.phone} por ${nextPhone || 'Sin número'}.` : `Guardarás ${nextPhone}.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Guardar', onPress: () => onSave({ phone: nextPhone }) },
+      ],
+    );
+  };
+
+  return (
+    <AppFrame>
+      <View style={styles.contactDetailHeader}>
+        <Pressable accessibilityRole="button" onPress={onBack} style={styles.backButton}>
+          <ChevronLeft size={30} color={COLORS.text} strokeWidth={2.5} />
+        </Pressable>
+        <View style={styles.contactDetailHeaderTitle}>
+          <Text style={styles.contactDetailTitle}>Contacto</Text>
+          <Text numberOfLines={1} style={styles.contactDetailSubtitle}>{getContactName(contact)}</Text>
+        </View>
+        {loading ? <ActivityIndicator color={COLORS.accent} /> : <View style={styles.contactDetailHeaderSpacer} />}
+      </View>
+      <ScrollView contentContainerStyle={styles.contactDetailBody} showsVerticalScrollIndicator={false}>
+        <View style={styles.contactDetailHero}>
+          <View style={[styles.contactDetailAvatar, { borderColor: CHANNEL_BADGE_COLORS[getContactChannelKind(contact)] }]}>
+            {getContactAvatar(contact) ? (
+              <Image source={{ uri: getContactAvatar(contact) }} style={styles.contactDetailAvatarImage} />
+            ) : (
+              <Text style={styles.contactDetailAvatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>
+            )}
+          </View>
+          <View style={styles.contactDetailNameEditor}>
+            <TextInput
+              value={nameDraft}
+              onChangeText={setNameDraft}
+              keyboardAppearance="dark"
+              returnKeyType="done"
+              onSubmitEditing={saveName}
+              style={styles.contactDetailNameInput}
+            />
+            <Pressable disabled={saving || !nameDraft.trim() || nameDraft.trim() === getContactName(contact)} onPress={saveName} style={[styles.contactDetailSaveButton, (saving || !nameDraft.trim() || nameDraft.trim() === getContactName(contact)) && styles.disabledButton]}>
+              {saving ? <ActivityIndicator color={COLORS.white} /> : <Save size={16} color={COLORS.white} strokeWidth={2.55} />}
+            </Pressable>
+          </View>
+          <Text numberOfLines={1} style={styles.contactDetailHeroMeta}>{getContactDetail(contact)}</Text>
+          {error ? <Text style={styles.contactDetailError}>{error}</Text> : null}
+        </View>
+
+        <View style={styles.contactDetailQuickActions}>
+          <Pressable onPress={onAppointment} style={({ pressed }) => [styles.contactDetailQuickAction, pressed && styles.pressed]}>
+            <CalendarDays size={20} color={COLORS.accent} strokeWidth={2.45} />
+            <Text style={styles.contactDetailQuickActionText}>Agendar cita</Text>
+          </Pressable>
+          <Pressable onPress={onPayment} style={({ pressed }) => [styles.contactDetailQuickAction, pressed && styles.pressed]}>
+            <CircleDollarSign size={20} color={COLORS.accent} strokeWidth={2.45} />
+            <Text style={styles.contactDetailQuickActionText}>Cobrar</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.contactDetailSection}>
+          <Text style={styles.contactDetailSectionTitle}>Datos principales</Text>
+          <View style={styles.contactDetailEditableRow}>
+            <Phone size={17} color={COLORS.accent} strokeWidth={2.4} />
+            <TextInput
+              value={phoneDraft}
+              onChangeText={setPhoneDraft}
+              keyboardAppearance="dark"
+              keyboardType="phone-pad"
+              placeholder="Sin número"
+              placeholderTextColor={COLORS.muted}
+              style={styles.contactDetailRowInput}
+            />
+            <Pressable disabled={saving || phoneDraft.trim() === (contact.phone || '')} onPress={savePhone} style={[styles.contactDetailMiniButton, (saving || phoneDraft.trim() === (contact.phone || '')) && styles.disabledButton]}>
+              <Edit3 size={15} color={COLORS.accent} strokeWidth={2.45} />
+            </Pressable>
+          </View>
+          <ContactDetailRow Icon={Mail} label="Correo" value={contact.email || 'Sin correo'} />
+          <ContactDetailRow Icon={Tag} label="Estado" value={contact.status || 'Lead'} />
+          <ContactDetailRow Icon={Info} label="Origen" value={contact.source || contact.attribution_session_source || 'Sin origen guardado'} />
+        </View>
+
+        <View style={styles.contactDetailMetrics}>
+          <View style={styles.contactDetailMetric}>
+            <Text style={styles.contactDetailMetricLabel}>Total</Text>
+            <Text style={styles.contactDetailMetricValue}>{formatContactMoney(Number(contact.ltv || 0), accountCurrency)}</Text>
+            <Text style={styles.contactDetailMetricHint}>{Number(contact.purchases || 0)} pago(s)</Text>
+          </View>
+          <View style={styles.contactDetailMetric}>
+            <Text style={styles.contactDetailMetricLabel}>Citas</Text>
+            <Text style={styles.contactDetailMetricValue}>{contact.hasAppointments ? 'Activa' : '0'}</Text>
+            <Text style={styles.contactDetailMetricHint}>{contact.nextAppointmentDate ? formatConversationDayLabel(contact.nextAppointmentDate, timezone) : 'Sin cita'}</Text>
+          </View>
+        </View>
+
+        <View style={styles.contactDetailSection}>
+          <Text style={styles.contactDetailSectionTitle}>Archivo del chat</Text>
+          <ContactDetailRow Icon={ImageIcon} label="Fotos y videos" value={`${mediaCount}`} />
+          <ContactDetailRow Icon={FileText} label="Documentos" value={`${documentCount}`} />
+          <ContactDetailRow Icon={MapPin} label="Enlaces" value={`${linkCount}`} />
+        </View>
+
+        <View style={styles.contactDetailSection}>
+          <Text style={styles.contactDetailSectionTitle}>Campos personalizados</Text>
+          {customFields.length ? customFields.map((field) => (
+            <ContactDetailRow key={field.id} Icon={FileText} label={field.label} value={field.value} />
+          )) : <Text style={styles.contactDetailEmpty}>No hay campos personalizados guardados para este contacto.</Text>}
+        </View>
+      </ScrollView>
+    </AppFrame>
+  );
+}
+
+function ContactDetailRow({
+  Icon,
+  label,
+  value,
+}: {
+  Icon: LucideIcon;
+  label: string;
+  value?: string | number | null;
+}) {
+  return (
+    <View style={styles.contactDetailRow}>
+      <View style={styles.contactDetailRowIcon}>
+        <Icon size={17} color={COLORS.accent} strokeWidth={2.4} />
+      </View>
+      <View style={styles.contactDetailRowCopy}>
+        <Text style={styles.contactDetailRowLabel}>{label}</Text>
+        <Text numberOfLines={2} style={styles.contactDetailRowValue}>{value || 'Sin dato'}</Text>
+      </View>
+    </View>
+  );
+}
+
 function NativeConversationScreen({
+  accountCurrency,
   api,
   archived,
   contact,
@@ -7318,6 +9633,7 @@ function NativeConversationScreen({
   onRefreshChats,
   onToggleMute,
 }: {
+  accountCurrency: string;
   api: RistakApiClient;
   archived: boolean;
   contact: ChatContact;
@@ -7337,11 +9653,18 @@ function NativeConversationScreen({
   const [sending, setSending] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedSendChannel, setSelectedSendChannel] = useState<NativeMessageChannel>(() => getDefaultComposerChannel(contact));
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<ConversationDraftAttachment[]>([]);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
   const [activeSheet, setActiveSheet] = useState<ConversationSheetMode>(null);
   const [closingSheet, setClosingSheet] = useState<ConversationSheetMode>(null);
+  const [contactInfoOpen, setContactInfoOpen] = useState(false);
+  const [contactInfo, setContactInfo] = useState<ChatContact | null>(null);
+  const [contactInfoLoading, setContactInfoLoading] = useState(false);
+  const [contactInfoSaving, setContactInfoSaving] = useState(false);
+  const [contactInfoError, setContactInfoError] = useState('');
   const [chatTags, setChatTags] = useState<ContactTag[]>([]);
   const [chatTagsLoading, setChatTagsLoading] = useState(false);
   const [tagQuery, setTagQuery] = useState('');
@@ -7351,6 +9674,22 @@ function NativeConversationScreen({
   const [agentStates, setAgentStates] = useState<ConversationAgentState[]>([]);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
+  const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templateBusyId, setTemplateBusyId] = useState<string | null>(null);
+  const [bankClabes, setBankClabes] = useState<BankClabeAccount[]>([]);
+  const [clabesLoading, setClabesLoading] = useState(false);
+  const [clabeBusyId, setClabeBusyId] = useState<string | null>(null);
+  const [clabeFormOpen, setClabeFormOpen] = useState(false);
+  const [clabeDraft, setClabeDraft] = useState({ alias: '', clabe: '', bank: '', accountHolder: '' });
+  const [paymentDraft, setPaymentDraft] = useState({ amount: '', concept: 'Pago', method: 'cash' });
+  const [paymentBusy, setPaymentBusy] = useState(false);
+  const [appointmentDraft, setAppointmentDraft] = useState(() => createDefaultAppointmentDraft(timezone));
+  const [appointmentBusy, setAppointmentBusy] = useState(false);
+  const [scheduledMessages, setScheduledMessages] = useState<ChatMessage[]>([]);
+  const [starredMessageIds, setStarredMessageIds] = useState<string[]>([]);
+  const audioRecorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const audioRecorderState = useAudioRecorderState(audioRecorder, 250);
   const listRef = useRef<FlatList<ConversationListItem>>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadRequestRef = useRef(0);
@@ -7365,6 +9704,23 @@ function NativeConversationScreen({
     unreadCountRef.current = contact.unreadCount;
   }, [contact.unreadCount]);
 
+  useEffect(() => {
+    setSelectedSendChannel(getDefaultComposerChannel(contact));
+  }, [contact.id, contact.lastMessageChannel, contact.lastMessageTransport, contact.source]);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardWillShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardVisible(false));
+    const showDid = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideDid = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => {
+      show.remove();
+      hide.remove();
+      showDid.remove();
+      hideDid.remove();
+    };
+  }, []);
+
   const loadConversation = useCallback(async (silent = false) => {
     const requestId = loadRequestRef.current + 1;
     loadRequestRef.current = requestId;
@@ -7374,9 +9730,17 @@ function NativeConversationScreen({
       setLoading(true);
     }
     try {
-      const journey = await api.getConversation(contact.id, 100);
+      const [journey, scheduled] = await Promise.all([
+        api.getConversation(contact.id, 100),
+        api.getScheduledMessages(contact.id).catch(() => []),
+      ]);
       if (requestId !== loadRequestRef.current) return;
-      setMessages(buildMessagesFromJourney(contact.id, journey));
+      const journeyMessages = buildMessagesFromJourney(contact.id, journey);
+      const scheduledItems = buildScheduledMessages(contact.id, scheduled);
+      setScheduledMessages(scheduledItems);
+      setMessages([...journeyMessages, ...scheduledItems].sort((left, right) => (
+        new Date(left.date).getTime() - new Date(right.date).getTime()
+      )));
       void api.markChatRead(contact.id).catch(() => undefined);
       if (Number(unreadCountRef.current || 0) > 0) {
         unreadCountRef.current = 0;
@@ -7459,7 +9823,15 @@ function NativeConversationScreen({
 
   const channelKind = getContactChannelKind(contact);
   const channelColor = CHANNEL_BADGE_COLORS[channelKind];
+  const composerChannelOptions = useMemo(() => getComposerChannelOptions(contact), [contact]);
+  const selectedChannelOption = composerChannelOptions.find((option) => option.value === selectedSendChannel) || composerChannelOptions[0];
+  const selectedChannelKind = selectedChannelOption?.kind || channelKind;
+  const selectedChannelColor = CHANNEL_BADGE_COLORS[selectedChannelKind] || COLORS.accent;
+  const selectedChannelCanSend = Boolean(selectedChannelOption && !selectedChannelOption.disabledReason);
   const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0);
+  const composerPlaceholder = selectedChannelCanSend
+    ? ''
+    : selectedChannelOption?.disabledReason || 'Canal no disponible';
 
   const updateContactPreview = useCallback((text: string, sentAt: string, channel?: string) => {
     onContactPatch(contact.id, {
@@ -7475,34 +9847,16 @@ function NativeConversationScreen({
     setDraftAttachments((current) => current.filter((attachment) => attachment.id !== id));
   };
 
-  const appendImageAttachments = (assets: ImagePicker.ImagePickerAsset[]) => {
-    const prepared = assets.reduce<ConversationDraftAttachment[]>((items, asset, index) => {
-      if (!asset.base64) return items;
-      const mimeType = asset.mimeType || 'image/jpeg';
-      items.push({
-        id: `draft-image-${Date.now()}-${index}`,
-        uri: asset.uri,
-        dataUrl: `data:${mimeType};base64,${asset.base64}`,
-        kind: 'image',
-        name: asset.fileName || `foto-${items.length + 1}.jpg`,
-        mimeType,
-      });
-      return items;
-    }, []);
-
-    if (!prepared.length) {
-      Alert.alert('Foto', 'No pude preparar la imagen para enviarla.');
-      return;
-    }
-
+  const appendDraftAttachments = (prepared: ConversationDraftAttachment[]) => {
+    if (!prepared.length) return;
     setDraftAttachments((current) => [...current, ...prepared].slice(0, CONVERSATION_ATTACHMENT_LIMIT));
     closeSheet();
   };
 
-  const pickImage = async (source: 'camera' | 'library') => {
+  const pickMedia = async (source: 'camera' | 'library') => {
     const remaining = CONVERSATION_ATTACHMENT_LIMIT - draftAttachments.length;
     if (remaining <= 0) {
-      Alert.alert('Adjuntos', `Puedes preparar hasta ${CONVERSATION_ATTACHMENT_LIMIT} fotos por mensaje.`);
+      Alert.alert('Adjuntos', `Puedes preparar hasta ${CONVERSATION_ATTACHMENT_LIMIT} archivos por mensaje.`);
       return;
     }
 
@@ -7516,32 +9870,96 @@ function NativeConversationScreen({
 
     const result = source === 'camera'
       ? await ImagePicker.launchCameraAsync({
-        mediaTypes: ['images'],
+        mediaTypes: ['images', 'videos'],
         quality: 0.86,
         base64: true,
       })
       : await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ['images'],
+        mediaTypes: ['images', 'videos'],
         quality: 0.86,
         base64: true,
         allowsMultipleSelection: remaining > 1,
         selectionLimit: remaining,
       });
     if (result.canceled || !result.assets?.length) return;
-    appendImageAttachments(result.assets.slice(0, remaining));
+    try {
+      const prepared = await Promise.all(result.assets.slice(0, remaining).map((asset, index) => preparePickedMediaAttachment(asset, index)));
+      appendDraftAttachments(prepared.filter(Boolean) as ConversationDraftAttachment[]);
+    } catch (err) {
+      Alert.alert('Adjuntos', err instanceof Error ? err.message : 'No pude preparar el archivo.');
+    }
+  };
+
+  const pickDocument = async () => {
+    const remaining = CONVERSATION_ATTACHMENT_LIMIT - draftAttachments.length;
+    if (remaining <= 0) {
+      Alert.alert('Documentos', `Puedes preparar hasta ${CONVERSATION_ATTACHMENT_LIMIT} archivos por mensaje.`);
+      return;
+    }
+    const result = await DocumentPicker.getDocumentAsync({
+      type: ['application/pdf', 'text/*', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+      multiple: remaining > 1,
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled || !result.assets?.length) return;
+    try {
+      const prepared = await Promise.all(result.assets.slice(0, remaining).map((asset, index) => preparePickedDocumentAttachment(asset, index)));
+      appendDraftAttachments(prepared);
+    } catch (err) {
+      Alert.alert('Documentos', err instanceof Error ? err.message : 'No pude preparar el documento.');
+    }
+  };
+
+  const startVoiceRecording = async () => {
+    if (audioRecorderState.isRecording) return;
+    const permission = await requestRecordingPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Audio', 'Necesito permiso de micrófono para grabar notas de voz.');
+      return;
+    }
+    try {
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+    } catch (err) {
+      Alert.alert('Audio', err instanceof Error ? err.message : 'No pude iniciar la grabación.');
+    }
+  };
+
+  const finishVoiceRecording = async () => {
+    if (!audioRecorderState.isRecording) return;
+    try {
+      await audioRecorder.stop();
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
+      const uri = audioRecorder.uri;
+      if (!uri) throw new Error('La grabación terminó sin archivo.');
+      const durationMs = Math.round((audioRecorderState.durationMillis || audioRecorder.currentTime * 1000 || 0));
+      appendDraftAttachments([await prepareVoiceAttachment(uri, durationMs)]);
+    } catch (err) {
+      Alert.alert('Audio', err instanceof Error ? err.message : 'No pude preparar la nota de voz.');
+    }
   };
 
   const send = async () => {
     const text = draft.trim();
     const attachmentsToSend = draftAttachments;
     if ((!text && attachmentsToSend.length === 0) || sending) return;
-    if (!contact.phone) {
-      Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar WhatsApp.');
+    if (!selectedChannelCanSend) {
+      Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
+      return;
+    }
+    if (attachmentsToSend.length > 0 && selectedSendChannel !== 'whatsapp') {
+      Alert.alert('Adjuntos', 'Los adjuntos nativos se envían por WhatsApp API/QR. Cambia el canal a WhatsApp para mandar este archivo.');
+      return;
+    }
+    if ((selectedSendChannel === 'whatsapp' || selectedSendChannel === 'sms') && !contact.phone) {
+      Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar por este canal.');
       return;
     }
 
     const optimisticId = `local-${Date.now()}`;
     const sentAt = new Date().toISOString();
+    const optimisticChannel = getBackendChannelForComposer(selectedSendChannel);
     const optimisticMessages: ChatMessage[] = attachmentsToSend.length
       ? attachmentsToSend.map((attachment, index) => ({
         id: `${optimisticId}-attachment-${index}`,
@@ -7549,17 +9967,19 @@ function NativeConversationScreen({
         date: sentAt,
         direction: 'outbound',
         text: index === 0 ? text : '',
-        channel: 'native',
+        channel: optimisticChannel,
         transport: 'native',
         status: 'enviando',
         pending: true,
         replyToMessageId: replyingToMessage?.id,
         attachment: {
-          type: 'image',
+          type: attachment.kind,
           dataUrl: attachment.dataUrl,
           url: attachment.uri,
           name: attachment.name,
           mimeType: attachment.mimeType,
+          durationMs: attachment.durationMs,
+          size: attachment.size,
         },
       }))
       : [{
@@ -7568,7 +9988,7 @@ function NativeConversationScreen({
         date: sentAt,
         direction: 'outbound',
         text,
-        channel: 'native',
+        channel: optimisticChannel,
         transport: 'native',
         status: 'enviando',
         pending: true,
@@ -7579,12 +9999,12 @@ function NativeConversationScreen({
     setDraftAttachments([]);
     setReplyingToMessage(null);
     setMessages((current) => [...current, ...optimisticMessages]);
-    updateContactPreview(attachmentsToSend.length ? (text || 'Foto') : text, sentAt, 'native');
+    updateContactPreview(attachmentsToSend.length ? (text || getAttachmentLabel(attachmentsToSend[0]?.kind)) : text, sentAt, optimisticChannel);
     setSending(true);
     try {
       if (attachmentsToSend.length > 0) {
         const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          api.sendImage(contact, attachment.dataUrl, index === 0 ? text : '')
+          sendDraftAttachment(api, contact, attachment, index === 0 ? text : '')
         )));
         setMessages((current) => current.map((message) => {
           if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
@@ -7599,7 +10019,7 @@ function NativeConversationScreen({
           };
         }));
       } else {
-        const response = await api.sendText(contact, text);
+        const response = await api.sendText(contact, text, selectedSendChannel);
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
             ? {
@@ -7658,6 +10078,59 @@ function NativeConversationScreen({
     }
   };
 
+  const copyMessage = async (message: ChatMessage) => {
+    await Clipboard.setStringAsync(getMessagePreviewText(message));
+    closeSheet();
+    Alert.alert('Copiado', 'El mensaje quedó copiado.');
+  };
+
+  const toggleStarMessage = (message: ChatMessage) => {
+    setStarredMessageIds((current) => (
+      current.includes(message.id)
+        ? current.filter((id) => id !== message.id)
+        : [...current, message.id]
+    ));
+    closeSheet();
+  };
+
+  const forwardMessage = (message: ChatMessage) => {
+    const text = getMessagePreviewText(message);
+    setDraft((current) => current ? `${current}\n${text}` : text);
+    closeSheet();
+  };
+
+  const retryMessage = (message: ChatMessage) => {
+    if (!message.failed) return;
+    setDraft(message.text || '');
+    if (message.attachment?.dataUrl || message.attachment?.url) {
+      setDraftAttachments([{
+        id: `retry-${message.id}`,
+        uri: message.attachment.url || message.attachment.dataUrl || '',
+        dataUrl: message.attachment.dataUrl || message.attachment.url || '',
+        kind: normalizeDraftAttachmentKind(message.attachment.type),
+        name: message.attachment.name || getAttachmentLabel(message.attachment.type),
+        mimeType: message.attachment.mimeType || '',
+        durationMs: message.attachment.durationMs,
+        size: message.attachment.size,
+      }]);
+    }
+    closeSheet();
+  };
+
+  const cancelScheduledMessage = async (message: ChatMessage) => {
+    const scheduledId = message.scheduledMessageId || message.providerMessageId || message.id.replace(/^scheduled-/, '');
+    if (!scheduledId) return;
+    closeSheet();
+    try {
+      await api.cancelScheduledMessage(scheduledId, contact.id);
+      setMessages((current) => current.filter((item) => item.id !== message.id));
+      setScheduledMessages((current) => current.filter((item) => item.id !== message.id));
+      Alert.alert('Mensaje cancelado', 'El mensaje programado ya no se enviará.');
+    } catch (err) {
+      Alert.alert('Programado', err instanceof Error ? err.message : 'No se pudo cancelar el mensaje.');
+    }
+  };
+
   const openChatMore = () => {
     setAgentLoading(true);
     openSheet('chatMore');
@@ -7678,6 +10151,204 @@ function NativeConversationScreen({
         Alert.alert('Etiquetas', err instanceof Error ? err.message : 'No se cargaron las etiquetas.');
       })
       .finally(() => setChatTagsLoading(false));
+  };
+
+  const openTemplatesSheet = () => {
+    setTemplatesLoading(true);
+    openSheet('templates');
+    Promise.allSettled([
+      api.getWhatsAppTemplates(),
+      api.getMessageTemplateBundle(),
+    ]).then(([whatsappResult, localResult]) => {
+      const nextTemplates = normalizeNativeTemplates(
+        whatsappResult.status === 'fulfilled' ? whatsappResult.value.items || [] : [],
+        localResult.status === 'fulfilled' ? localResult.value.templates || [] : [],
+      );
+      setTemplates(nextTemplates);
+    }).catch(() => setTemplates([]))
+      .finally(() => setTemplatesLoading(false));
+  };
+
+  const sendTemplateToContact = async (template: WhatsAppTemplate) => {
+    const localText = getTemplateBody(template);
+    if (!contact.phone) {
+      Alert.alert('Plantillas', 'Este contacto necesita teléfono para recibir una plantilla por WhatsApp.');
+      return;
+    }
+
+    if (!template.id && localText) {
+      setDraft((current) => current ? `${current}\n${localText}` : localText);
+      closeSheet();
+      return;
+    }
+
+    const templateKey = template.id || template.name || localText;
+    setTemplateBusyId(templateKey || 'template');
+    try {
+      const response = await api.sendWhatsAppTemplate(contact, template);
+      const sentAt = new Date().toISOString();
+      setMessages((current) => [...current, {
+        id: `template-${Date.now()}`,
+        contactId: contact.id,
+        date: sentAt,
+        direction: 'outbound',
+        text: localText || template.name || 'Plantilla enviada',
+        channel: response.channel || response.transport || 'whatsapp_api',
+        transport: response.transport || 'native',
+        status: response.status || 'sent',
+      }]);
+      updateContactPreview(localText || template.name || 'Plantilla enviada', sentAt, 'whatsapp_api');
+      closeSheet();
+      void loadConversation(true);
+    } catch (err) {
+      Alert.alert('Plantillas', err instanceof Error ? err.message : 'No se pudo enviar la plantilla.');
+    } finally {
+      setTemplateBusyId(null);
+    }
+  };
+
+  const openClabeSheet = () => {
+    setClabesLoading(true);
+    setClabeFormOpen(false);
+    openSheet('clabe');
+    api.getBankClabes()
+      .then((accounts) => setBankClabes(accounts))
+      .catch((err) => {
+        setBankClabes([]);
+        Alert.alert('CLABE', err instanceof Error ? err.message : 'No se cargaron las CLABEs.');
+      })
+      .finally(() => setClabesLoading(false));
+  };
+
+  const saveClabe = async () => {
+    const clabe = normalizeClabe(clabeDraft.clabe);
+    if (clabe.length !== 18) {
+      Alert.alert('CLABE incompleta', 'La CLABE interbancaria debe tener 18 números.');
+      return;
+    }
+    if (bankClabes.some((account) => account.clabe === clabe)) {
+      Alert.alert('CLABE', 'Esa CLABE ya está guardada.');
+      return;
+    }
+    const nextAccount: BankClabeAccount = {
+      id: `clabe-${Date.now()}`,
+      alias: clabeDraft.alias.trim() || `CLABE ${clabe.slice(-4)}`,
+      clabe,
+      bank: clabeDraft.bank.trim(),
+      accountHolder: clabeDraft.accountHolder.trim(),
+    };
+    const nextAccounts = [nextAccount, ...bankClabes];
+    setClabeBusyId(nextAccount.id);
+    try {
+      await api.saveBankClabes(nextAccounts);
+      setBankClabes(nextAccounts);
+      setClabeDraft({ alias: '', clabe: '', bank: '', accountHolder: '' });
+      setClabeFormOpen(false);
+    } catch (err) {
+      Alert.alert('CLABE', err instanceof Error ? err.message : 'No se pudo guardar la CLABE.');
+    } finally {
+      setClabeBusyId(null);
+    }
+  };
+
+  const sendClabe = async (account: BankClabeAccount) => {
+    setClabeBusyId(account.id);
+    try {
+      const text = buildClabeMessage(account);
+      await api.sendText(contact, text, selectedSendChannel);
+      const sentAt = new Date().toISOString();
+      setMessages((current) => [...current, {
+        id: `clabe-${Date.now()}`,
+        contactId: contact.id,
+        date: sentAt,
+        direction: 'outbound',
+        text,
+        channel: getBackendChannelForComposer(selectedSendChannel),
+        transport: 'native',
+        status: 'sent',
+      }]);
+      updateContactPreview('CLABE', sentAt, getBackendChannelForComposer(selectedSendChannel));
+      closeSheet();
+      void loadConversation(true);
+    } catch (err) {
+      Alert.alert('CLABE', err instanceof Error ? err.message : 'No se pudo enviar la CLABE.');
+    } finally {
+      setClabeBusyId(null);
+    }
+  };
+
+  const openPaymentSheet = () => {
+    setPaymentDraft({ amount: '', concept: 'Pago', method: 'cash' });
+    openSheet('payment');
+    void api.getPaymentLinkDeliveryOptions(contact.id).catch(() => undefined);
+  };
+
+  const createPaymentForContact = async () => {
+    const amount = Number(paymentDraft.amount.replace(',', '.'));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert('Registrar pago', 'Escribe un monto mayor a 0.');
+      return;
+    }
+    setPaymentBusy(true);
+    try {
+      await api.createTransaction({
+        amount,
+        currency: accountCurrency,
+        status: 'paid',
+        paymentMethod: paymentDraft.method || 'cash',
+        paymentMode: 'single',
+        title: paymentDraft.concept.trim() || 'Pago',
+        description: paymentDraft.concept.trim() || 'Pago',
+        contactId: contact.id,
+        contactName: getContactName(contact),
+        email: contact.email,
+        phone: contact.phone,
+        metadata: { source: 'native_mobile_chat' },
+      });
+      closeSheet();
+      Alert.alert('Pago registrado', `Se registró ${formatContactMoney(amount, accountCurrency)} para ${getContactName(contact)}.`);
+      onRefreshChats();
+    } catch (err) {
+      Alert.alert('Registrar pago', err instanceof Error ? err.message : 'No se pudo registrar el pago.');
+    } finally {
+      setPaymentBusy(false);
+    }
+  };
+
+  const openAppointmentSheet = () => {
+    setAppointmentDraft(createDefaultAppointmentDraft(timezone));
+    openSheet('appointment');
+  };
+
+  const createAppointmentForContact = async () => {
+    const title = appointmentDraft.title.trim() || `Cita con ${getContactName(contact)}`;
+    const startTime = localDateTimePartsToUtcIso(appointmentDraft.date, appointmentDraft.time, timezone);
+    if (!startTime) {
+      Alert.alert('Agendar cita', 'Usa fecha YYYY-MM-DD y hora HH:mm.');
+      return;
+    }
+    const durationMinutes = Math.max(15, Number(appointmentDraft.durationMinutes || 60) || 60);
+    const endTime = new Date(new Date(startTime).getTime() + durationMinutes * 60000).toISOString();
+    setAppointmentBusy(true);
+    try {
+      await api.createAppointment({
+        title,
+        contactId: contact.id,
+        contactName: getContactName(contact),
+        startTime,
+        endTime,
+        notes: appointmentDraft.notes.trim(),
+        appointmentStatus: 'confirmed',
+      });
+      closeSheet();
+      Alert.alert('Cita agendada', `${title} quedó en la agenda.`);
+      onContactPatch(contact.id, { hasAppointments: true, nextAppointmentDate: startTime });
+      onRefreshChats();
+    } catch (err) {
+      Alert.alert('Agendar cita', err instanceof Error ? err.message : 'No se pudo crear la cita.');
+    } finally {
+      setAppointmentBusy(false);
+    }
   };
 
   const applyTagToContact = async (target: ChatContact, tag: ContactTag) => {
@@ -7726,7 +10397,7 @@ function NativeConversationScreen({
     const scheduledAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
     setScheduleBusy(true);
     try {
-      await api.scheduleText(target, text, scheduledAt);
+      await api.scheduleText(target, text, scheduledAt, selectedSendChannel);
       closeSheet();
       setScheduleText('');
       Alert.alert('Mensaje programado', `Se programó para enviarse en 1 hora a ${getContactName(target)}.`);
@@ -7753,13 +10424,41 @@ function NativeConversationScreen({
     }
   };
 
+  const openContactInfo = async () => {
+    setContactInfoOpen(true);
+    setContactInfo((current) => current?.id === contact.id ? current : contact);
+    setContactInfoError('');
+    setContactInfoLoading(true);
+    try {
+      const details = await api.getContact(contact.id);
+      setContactInfo({ ...contact, ...details });
+      onContactPatch(contact.id, details);
+    } catch (err) {
+      setContactInfoError(err instanceof Error ? err.message : 'No se pudo cargar todo el detalle. Te muestro lo que ya está guardado.');
+    } finally {
+      setContactInfoLoading(false);
+    }
+  };
+
+  const saveContactInfoPatch = async (patch: Partial<ChatContact>) => {
+    if (contactInfoSaving) return;
+    const target = contactInfo || contact;
+    setContactInfoSaving(true);
+    try {
+      const updated = await api.updateContact(target.id, patch);
+      const next = { ...target, ...updated };
+      setContactInfo(next);
+      onContactPatch(target.id, updated);
+    } catch (err) {
+      Alert.alert('Contacto', err instanceof Error ? err.message : 'No se pudo guardar el contacto.');
+    } finally {
+      setContactInfoSaving(false);
+    }
+  };
+
   const navigateToContactTool = (target: ChatContact, section: PhoneSection) => {
     closeSheet();
     onNavigate?.(section);
-    Alert.alert(
-      section === 'calendar' ? 'Agendar cita' : 'Registrar pagos',
-      `${section === 'calendar' ? 'Abriendo Citas' : 'Abriendo Pagos'} para continuar con ${getContactName(target)}.`,
-    );
   };
 
   const markChatAsRead = (target: ChatContact) => {
@@ -7781,13 +10480,37 @@ function NativeConversationScreen({
     closeSheet();
   };
 
+  if (contactInfoOpen) {
+    return (
+      <NativeContactDetailScreen
+        contact={contactInfo || contact}
+        accountCurrency={accountCurrency}
+        journeyMessages={messages}
+        loading={contactInfoLoading}
+        saving={contactInfoSaving}
+        error={contactInfoError}
+        timezone={timezone}
+        onAppointment={() => {
+          setContactInfoOpen(false);
+          setTimeout(openAppointmentSheet, 0);
+        }}
+        onBack={() => setContactInfoOpen(false)}
+        onPayment={() => {
+          setContactInfoOpen(false);
+          setTimeout(openPaymentSheet, 0);
+        }}
+        onSave={saveContactInfoPatch}
+      />
+    );
+  }
+
   return (
     <AppFrame>
       <View style={styles.conversationHeader}>
         <Pressable onPress={onBack} style={styles.backButton}>
           <ChevronLeft size={30} color={COLORS.text} strokeWidth={2.5} />
         </Pressable>
-        <Pressable onPress={openChatMore} style={({ pressed }) => [styles.conversationContactButton, pressed && styles.pressed]}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Ver información del contacto" onPress={openContactInfo} style={({ pressed }) => [styles.conversationContactButton, pressed && styles.pressed]}>
           <View style={[styles.conversationAvatar, { borderColor: channelColor }]}>
             <View style={styles.conversationAvatarCircle}>
               {getContactAvatar(contact) ? (
@@ -7807,15 +10530,12 @@ function NativeConversationScreen({
             <Text numberOfLines={1} style={styles.conversationSubtitle}>{getContactDetail(contact)}</Text>
           </View>
         </Pressable>
-        <View style={styles.conversationHeaderActions}>
-          <Pressable accessibilityRole="button" onPress={openChatMore} style={styles.conversationHeaderIconButton}>
-            <Bot size={18} color={COLORS.accent} strokeWidth={2.45} />
+        <View style={styles.conversationCallActions}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Agendar cita" onPress={openAppointmentSheet} style={({ pressed }) => [styles.conversationCallButton, pressed && styles.pressed]}>
+            <CalendarDays size={23} color={COLORS.text} strokeWidth={2.35} />
           </Pressable>
-          <Pressable accessibilityRole="button" onPress={openTagSheet} style={styles.conversationHeaderIconButton}>
-            <Tag size={18} color={COLORS.accent} strokeWidth={2.45} />
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={() => setSearchOpen((current) => !current)} style={[styles.conversationHeaderIconButton, searchOpen && styles.conversationHeaderIconButtonActive]}>
-            <Search size={18} color={COLORS.accent} strokeWidth={2.45} />
+          <Pressable accessibilityRole="button" accessibilityLabel="Cobrar" onPress={openPaymentSheet} style={({ pressed }) => [styles.conversationCallButton, pressed && styles.pressed]}>
+            <CircleDollarSign size={23} color={COLORS.text} strokeWidth={2.35} />
           </Pressable>
         </View>
       </View>
@@ -7842,7 +10562,7 @@ function NativeConversationScreen({
         </View>
       ) : null}
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={8} style={styles.conversationBody}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0} style={[styles.conversationBody, keyboardVisible && styles.conversationBodyKeyboardActive]}>
         {loading ? (
           <View style={styles.centerState}>
             <ActivityIndicator color={COLORS.accent} />
@@ -7876,6 +10596,7 @@ function NativeConversationScreen({
                     message={item.message}
                     replyTarget={item.message.replyToMessageId ? messages.find((message) => message.id === item.message.replyToMessageId) : null}
                     searchActive={Boolean(searchQuery)}
+                    starred={starredMessageIds.includes(item.message.id)}
                     timezone={timezone}
                     onLongPress={() => openMessageActions(item.message)}
                   />
@@ -7901,7 +10622,7 @@ function NativeConversationScreen({
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.draftAttachmentStrip}>
             {draftAttachments.map((attachment) => (
               <View key={attachment.id} style={styles.draftAttachment}>
-                <Image source={{ uri: attachment.uri }} style={styles.draftAttachmentImage} />
+                <NativeDraftAttachmentPreview attachment={attachment} />
                 <Pressable accessibilityRole="button" onPress={() => removeDraftAttachment(attachment.id)} style={styles.draftAttachmentRemove}>
                   <X size={14} color={COLORS.white} strokeWidth={2.6} />
                 </Pressable>
@@ -7910,9 +10631,30 @@ function NativeConversationScreen({
           </ScrollView>
         ) : null}
 
-        <View style={[styles.composer, hasComposerContent && styles.composerHasContent]}>
-          <Pressable accessibilityRole="button" onPress={openChatMore} style={[styles.composerChannelButton, { backgroundColor: channelColor }]}>
-            <ChannelBadgeIcon kind={channelKind} size={15} />
+        {audioRecorderState.isRecording ? (
+          <View style={styles.voiceRecordingBar}>
+            <View style={styles.voiceRecordingIcon}>
+              <Mic size={16} color={COLORS.white} strokeWidth={2.55} />
+            </View>
+            <Text style={styles.voiceRecordingText}>Grabando nota de voz · {formatDurationMs(audioRecorderState.durationMillis)}</Text>
+            <Pressable accessibilityRole="button" onPress={() => void finishVoiceRecording()} style={styles.voiceRecordingDone}>
+              <Check size={17} color={COLORS.white} strokeWidth={2.7} />
+            </Pressable>
+          </View>
+        ) : null}
+
+        <View style={[styles.composer, keyboardVisible && styles.composerKeyboardActive, hasComposerContent && styles.composerHasContent]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Canal de envío: ${selectedChannelOption?.label || 'WhatsApp'}`}
+            onPress={() => openSheet('channel')}
+            style={({ pressed }) => [
+              styles.composerChannelButton,
+              { borderColor: selectedChannelColor },
+              pressed && styles.pressed,
+            ]}
+          >
+            <ChannelBadgeIcon kind={selectedChannelKind} size={17} />
           </Pressable>
           <Pressable accessibilityRole="button" onPress={() => openSheet('attachments')} style={styles.composerPlus}>
             <Plus size={22} color={COLORS.accent} strokeWidth={2.55} />
@@ -7922,10 +10664,12 @@ function NativeConversationScreen({
               value={draft}
               onChangeText={setDraft}
               multiline
-              placeholder=""
+              editable={selectedChannelCanSend}
+              placeholder={composerPlaceholder}
               placeholderTextColor={COLORS.muted}
+              keyboardAppearance="dark"
               textAlignVertical="center"
-              style={styles.composerInput}
+              style={[styles.composerInput, !selectedChannelCanSend && styles.composerInputDisabled]}
             />
             {draft.trim() && !draftAttachments.length ? (
               <Pressable accessibilityRole="button" onPress={() => {
@@ -7938,12 +10682,26 @@ function NativeConversationScreen({
           </View>
           <View style={[styles.composerTrailingActions, hasComposerContent && styles.composerTrailingActionsCompact]}>
             {!hasComposerContent ? (
-              <Pressable accessibilityRole="button" onPress={() => void pickImage('camera')} style={styles.composerIconButton}>
+              <Pressable accessibilityRole="button" onPress={() => void pickMedia('camera')} style={styles.composerIconButton}>
                 <Camera size={20} color={COLORS.accent} strokeWidth={2.55} />
               </Pressable>
             ) : null}
-            <Pressable disabled={sending || !hasComposerContent} onPress={send} style={[styles.composerSendButton, (!hasComposerContent || sending) && styles.disabledButton]}>
-              {sending ? <ActivityIndicator color={COLORS.white} /> : hasComposerContent ? <Send size={17} color={COLORS.white} strokeWidth={2.65} /> : <Mic size={19} color={COLORS.muted} strokeWidth={2.5} />}
+            <Pressable
+              disabled={sending || !selectedChannelCanSend}
+              onPress={() => {
+                if (hasComposerContent) {
+                  void send();
+                  return;
+                }
+                if (audioRecorderState.isRecording) {
+                  void finishVoiceRecording();
+                  return;
+                }
+                void startVoiceRecording();
+              }}
+              style={[styles.composerSendButton, (sending || !selectedChannelCanSend) && styles.disabledButton, audioRecorderState.isRecording && styles.composerRecordingButton]}
+            >
+              {sending ? <ActivityIndicator color={COLORS.white} /> : hasComposerContent ? <Send size={17} color={COLORS.white} strokeWidth={2.65} /> : <Mic size={19} color={COLORS.white} strokeWidth={2.5} />}
             </Pressable>
           </View>
         </View>
@@ -7953,25 +10711,54 @@ function NativeConversationScreen({
         closing={activeSheet !== 'attachments' && closingSheet === 'attachments'}
         contact={contact}
         open={activeSheet === 'attachments' || closingSheet === 'attachments'}
-        onAppointment={() => navigateToContactTool(contact, 'calendar')}
-        onCamera={() => void pickImage('camera')}
+        onAppointment={openAppointmentSheet}
+        onCamera={() => void pickMedia('camera')}
         onClose={closeSheet}
-        onLibrary={() => void pickImage('library')}
+        onClabe={openClabeSheet}
+        onDocument={() => void pickDocument()}
+        onLibrary={() => void pickMedia('library')}
         onMore={openChatMore}
-        onPayment={() => navigateToContactTool(contact, 'payments')}
+        onPayment={openPaymentSheet}
         onSchedule={() => {
           setScheduleText(draft);
           openSheet('schedule');
         }}
+        onSearch={() => {
+          closeSheet();
+          setSearchOpen(true);
+        }}
         onTag={openTagSheet}
+        onTemplates={openTemplatesSheet}
+      />
+
+      <NativeComposerChannelSheet
+        channels={composerChannelOptions}
+        closing={activeSheet !== 'channel' && closingSheet === 'channel'}
+        contact={contact}
+        open={activeSheet === 'channel' || closingSheet === 'channel'}
+        selected={selectedSendChannel}
+        onClose={closeSheet}
+        onSelect={(channel) => {
+          const option = composerChannelOptions.find((item) => item.value === channel);
+          if (option?.disabledReason) {
+            Alert.alert('Canal no disponible', option.disabledReason);
+            return;
+          }
+          setSelectedSendChannel(channel);
+          closeSheet();
+        }}
       />
 
       <NativeMessageActionSheet
         closing={activeSheet !== 'messageActions' && closingSheet === 'messageActions'}
         message={selectedMessage}
         open={activeSheet === 'messageActions' || closingSheet === 'messageActions'}
+        starred={selectedMessage ? starredMessageIds.includes(selectedMessage.id) : false}
         timezone={timezone}
         onClose={closeSheet}
+        onCancelScheduled={cancelScheduledMessage}
+        onCopy={(message) => void copyMessage(message)}
+        onForward={forwardMessage}
         onInfo={(message) => {
           Alert.alert('Mensaje', [
             `Canal: ${getMessageChannelLabel(message.channel || message.transport)}`,
@@ -7985,6 +10772,8 @@ function NativeConversationScreen({
           setReplyingToMessage(message);
           closeSheet();
         }}
+        onRetry={retryMessage}
+        onStar={toggleStarMessage}
       />
 
       <ChatMoreSheet
@@ -7998,11 +10787,11 @@ function NativeConversationScreen({
         open={activeSheet === 'chatMore' || closingSheet === 'chatMore'}
         unread={getUnreadCount(contact)}
         onAgentAction={runAgentAction}
-        onAppointment={(target) => navigateToContactTool(target, 'calendar')}
+        onAppointment={() => openAppointmentSheet()}
         onArchiveToggle={toggleArchiveFromSheet}
         onClose={closeSheet}
         onMarkRead={markChatAsRead}
-        onPayment={(target) => navigateToContactTool(target, 'payments')}
+        onPayment={() => openPaymentSheet()}
         onSchedule={() => {
           setScheduleText('');
           openSheet('schedule');
@@ -8039,7 +10828,116 @@ function NativeConversationScreen({
         onClose={closeSheet}
         onSubmit={scheduleMessageForContact}
       />
+
+      <NativeTemplatesSheet
+        busyId={templateBusyId}
+        closing={activeSheet !== 'templates' && closingSheet === 'templates'}
+        contact={contact}
+        loading={templatesLoading}
+        open={activeSheet === 'templates' || closingSheet === 'templates'}
+        templates={templates}
+        onClose={closeSheet}
+        onSend={sendTemplateToContact}
+      />
+
+      <NativeClabeSheet
+        accounts={bankClabes}
+        busyId={clabeBusyId}
+        closing={activeSheet !== 'clabe' && closingSheet === 'clabe'}
+        contact={contact}
+        draft={clabeDraft}
+        formOpen={clabeFormOpen}
+        loading={clabesLoading}
+        open={activeSheet === 'clabe' || closingSheet === 'clabe'}
+        onChangeDraft={setClabeDraft}
+        onClose={closeSheet}
+        onSave={saveClabe}
+        onSend={sendClabe}
+        onToggleForm={() => setClabeFormOpen((current) => !current)}
+      />
+
+      <PaymentEntrySheet
+        accountCurrency={accountCurrency}
+        busy={paymentBusy}
+        closing={activeSheet !== 'payment' && closingSheet === 'payment'}
+        contact={contact}
+        draft={paymentDraft}
+        open={activeSheet === 'payment' || closingSheet === 'payment'}
+        onChangeDraft={setPaymentDraft}
+        onClose={closeSheet}
+        onSubmit={createPaymentForContact}
+      />
+
+      <AppointmentEntrySheet
+        busy={appointmentBusy}
+        closing={activeSheet !== 'appointment' && closingSheet === 'appointment'}
+        contact={contact}
+        draft={appointmentDraft}
+        open={activeSheet === 'appointment' || closingSheet === 'appointment'}
+        timezone={timezone}
+        onChangeDraft={setAppointmentDraft}
+        onClose={closeSheet}
+        onSubmit={createAppointmentForContact}
+      />
     </AppFrame>
+  );
+}
+
+function NativeComposerChannelSheet({
+  channels,
+  closing,
+  contact,
+  open,
+  selected,
+  onClose,
+  onSelect,
+}: {
+  channels: ComposerChannelOption[];
+  closing?: boolean;
+  contact: ChatContact;
+  open: boolean;
+  selected: NativeMessageChannel;
+  onClose: () => void;
+  onSelect: (channel: NativeMessageChannel) => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open}
+      title="Canal de envío"
+      subtitle={getContactName(contact)}
+      onClose={onClose}
+    >
+      <View style={styles.channelSheetBody}>
+        {channels.map((channel) => {
+          const active = selected === channel.value;
+          const disabled = Boolean(channel.disabledReason);
+          return (
+            <Pressable
+              key={channel.value}
+              accessibilityRole="button"
+              disabled={disabled}
+              onPress={() => onSelect(channel.value)}
+              style={({ pressed }) => [
+                styles.channelOptionRow,
+                active && styles.channelOptionRowActive,
+                disabled && styles.disabledButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={[styles.channelOptionIcon, { backgroundColor: CHANNEL_BADGE_COLORS[channel.kind] || COLORS.panelSoft }]}>
+                <ChannelBadgeIcon kind={channel.kind} size={18} />
+              </View>
+              <View style={styles.channelOptionCopy}>
+                <Text style={styles.channelOptionTitle}>{channel.label}</Text>
+                <Text numberOfLines={2} style={styles.channelOptionSubtitle}>{channel.disabledReason || channel.description}</Text>
+              </View>
+              {active ? <Check size={18} color={COLORS.accent} strokeWidth={2.6} /> : null}
+            </Pressable>
+          );
+        })}
+      </View>
+    </BottomActionSheet>
   );
 }
 
@@ -8049,24 +10947,32 @@ function NativeConversationAttachmentSheet({
   open,
   onAppointment,
   onCamera,
+  onClabe,
   onClose,
+  onDocument,
   onLibrary,
   onMore,
   onPayment,
   onSchedule,
+  onSearch,
   onTag,
+  onTemplates,
 }: {
   closing?: boolean;
   contact: ChatContact;
   open: boolean;
   onAppointment: () => void;
   onCamera: () => void;
+  onClabe: () => void;
   onClose: () => void;
+  onDocument: () => void;
   onLibrary: () => void;
   onMore: () => void;
   onPayment: () => void;
   onSchedule: () => void;
+  onSearch: () => void;
   onTag: () => void;
+  onTemplates: () => void;
 }) {
   return (
     <BottomActionSheet
@@ -8077,11 +10983,15 @@ function NativeConversationAttachmentSheet({
       onClose={onClose}
     >
       <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
-        <SheetActionRow Icon={Camera} title="Tomar foto" subtitle="Abre la cámara y deja la foto lista para enviar." onPress={onCamera} />
-        <SheetActionRow Icon={ImageIcon} title="Elegir foto" subtitle="Adjunta una imagen desde tu galería." onPress={onLibrary} />
+        <SheetActionRow Icon={Camera} title="Cámara" subtitle="Toma foto o graba video para enviarlo por WhatsApp." onPress={onCamera} />
+        <SheetActionRow Icon={ImageIcon} title="Fotos y videos" subtitle="Adjunta media desde tu galería." onPress={onLibrary} />
+        <SheetActionRow Icon={FilePlus} title="Documento" subtitle="Adjunta PDF, Word, Excel o archivo compatible." onPress={onDocument} />
+        <SheetActionRow Icon={Search} title="Buscar en este chat" subtitle="Encuentra mensajes dentro de la conversación." onPress={onSearch} />
         <View style={styles.sheetSectionDivider}>
           <Text style={styles.sheetSectionLabel}>Herramientas</Text>
         </View>
+        <SheetActionRow Icon={MessageCircle} title="Plantillas" subtitle="Enviar una plantilla aprobada o insertar una respuesta guardada." onPress={onTemplates} />
+        <SheetActionRow Icon={Banknote} title="Enviar CLABE" subtitle="Comparte una cuenta bancaria guardada." onPress={onClabe} />
         <SheetActionRow Icon={CalendarDays} title="Agendar cita" subtitle="Crear una cita para este contacto." onPress={onAppointment} />
         <SheetActionRow Icon={CircleDollarSign} title="Registrar pagos" subtitle="Elegir pago único, plan o suscripción." onPress={onPayment} />
         <SheetActionRow Icon={Clock} title="Programar mensaje" subtitle="Prepara un envío en una hora." onPress={onSchedule} />
@@ -8096,20 +11006,32 @@ function NativeMessageActionSheet({
   closing,
   message,
   open,
+  starred,
   timezone,
+  onCancelScheduled,
   onClose,
+  onCopy,
+  onForward,
   onInfo,
   onReact,
   onReply,
+  onRetry,
+  onStar,
 }: {
   closing?: boolean;
   message: ChatMessage | null;
   open: boolean;
+  starred?: boolean;
   timezone: string;
+  onCancelScheduled: (message: ChatMessage) => void;
   onClose: () => void;
+  onCopy: (message: ChatMessage) => void;
+  onForward: (message: ChatMessage) => void;
   onInfo: (message: ChatMessage) => void;
   onReact: (message: ChatMessage, emoji: string) => void;
   onReply: (message: ChatMessage) => void;
+  onRetry: (message: ChatMessage) => void;
+  onStar: (message: ChatMessage) => void;
 }) {
   return (
     <BottomActionSheet
@@ -8132,6 +11054,15 @@ function NativeMessageActionSheet({
             ))}
           </View>
           <SheetActionRow Icon={Reply} title="Responder" subtitle="Cita este mensaje en tu siguiente respuesta." onPress={() => onReply(message)} />
+          <SheetActionRow Icon={Copy} title="Copiar" subtitle="Copia texto, caption o resumen del mensaje." onPress={() => onCopy(message)} />
+          <SheetActionRow Icon={Star} title={starred ? 'Quitar destacado' : 'Destacar'} subtitle={starred ? 'Quita este mensaje de destacados locales.' : 'Marca este mensaje como importante en esta sesión.'} onPress={() => onStar(message)} />
+          <SheetActionRow Icon={Forward} title="Reenviar" subtitle="Pasa el contenido al compositor para enviarlo." onPress={() => onForward(message)} />
+          {message.failed ? (
+            <SheetActionRow Icon={RefreshCw} title="Reintentar" subtitle="Devuelve el mensaje al compositor para mandarlo de nuevo." onPress={() => onRetry(message)} />
+          ) : null}
+          {isScheduledMessage(message) ? (
+            <SheetActionRow Icon={X} title="Cancelar programado" subtitle="Cancela este mensaje antes de que se envíe." danger onPress={() => onCancelScheduled(message)} />
+          ) : null}
           <SheetActionRow Icon={Smile} title="Reaccionar" subtitle="Usa los emojis rápidos de arriba." onPress={() => undefined} disabled />
           <SheetActionRow Icon={Info} title="Información" subtitle="Ver canal, estado y hora del mensaje." onPress={() => onInfo(message)} />
         </View>
@@ -8145,6 +11076,7 @@ function NativeMessageBubble({
   message,
   replyTarget,
   searchActive,
+  starred,
   timezone,
   onLongPress,
 }: {
@@ -8152,6 +11084,7 @@ function NativeMessageBubble({
   message: ChatMessage;
   replyTarget?: ChatMessage | null;
   searchActive?: boolean;
+  starred?: boolean;
   timezone: string;
   onLongPress?: () => void;
 }) {
@@ -8204,6 +11137,12 @@ function NativeMessageBubble({
           </View>
         ) : null}
         {message.text ? <Text style={styles.messageText}>{message.text}</Text> : null}
+        {starred ? (
+          <View style={styles.messageStarredFlag}>
+            <Star size={11} color={COLORS.meta} fill={COLORS.meta} strokeWidth={2.2} />
+            <Text style={styles.messageStarredText}>Destacado</Text>
+          </View>
+        ) : null}
         {message.routingReason ? <Text numberOfLines={2} style={styles.messageRoutingNote}>{message.routingReason}</Text> : null}
         <View style={styles.messageMetaRow}>
           <Text style={styles.messageMeta}>
@@ -8228,19 +11167,82 @@ function NativeMessageBubble({
 function NativeMessageAttachment({ attachment }: { attachment: ChatAttachment }) {
   const imageUri = attachment.dataUrl || attachment.url;
   if (attachment.type === 'image' && imageUri) {
-    return <Image source={{ uri: imageUri }} style={styles.messageImage} />;
+    return (
+      <Pressable accessibilityRole="imagebutton" onPress={() => void Linking.openURL(imageUri).catch(() => undefined)}>
+        <Image source={{ uri: imageUri }} style={styles.messageImage} />
+      </Pressable>
+    );
   }
 
-  const Icon = attachment.type === 'audio' ? Mic : attachment.type === 'video' ? Play : FileText;
+  if (attachment.type === 'audio' && imageUri) {
+    return <NativeAudioAttachment attachment={attachment} uri={imageUri} />;
+  }
+
+  const isVideo = attachment.type === 'video';
+  const uri = imageUri;
+  const Icon = isVideo ? Video : FileText;
   return (
-    <View style={styles.messageFileCard}>
+    <Pressable
+      accessibilityRole="button"
+      disabled={!uri}
+      onPress={() => uri ? Linking.openURL(uri).catch(() => undefined) : undefined}
+      style={({ pressed }) => [styles.messageFileCard, pressed && styles.pressed]}
+    >
       <View style={styles.messageFileIcon}>
         <Icon size={18} color={COLORS.accent} strokeWidth={2.5} />
       </View>
       <View style={styles.messageFileCopy}>
         <Text numberOfLines={1} style={styles.messageFileTitle}>{attachment.name || getAttachmentLabel(attachment.type)}</Text>
-        <Text numberOfLines={1} style={styles.messageFileSubtitle}>{attachment.mimeType || getAttachmentLabel(attachment.type)}</Text>
+        <Text numberOfLines={1} style={styles.messageFileSubtitle}>{[
+          attachment.mimeType || getAttachmentLabel(attachment.type),
+          attachment.durationMs ? formatDurationMs(attachment.durationMs) : '',
+        ].filter(Boolean).join(' · ')}</Text>
       </View>
+      {isVideo ? <Play size={18} color={COLORS.text} strokeWidth={2.5} /> : null}
+    </Pressable>
+  );
+}
+
+function NativeAudioAttachment({ attachment, uri }: { attachment: ChatAttachment; uri: string }) {
+  const player = useAudioPlayer(uri);
+  const status = useAudioPlayerStatus(player);
+  const playing = Boolean(status.playing);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={() => {
+        if (playing) {
+          player.pause();
+          return;
+        }
+        if (status.currentTime && status.duration && status.currentTime >= status.duration - 0.2) {
+          player.seekTo(0);
+        }
+        player.play();
+      }}
+      style={({ pressed }) => [styles.messageFileCard, pressed && styles.pressed]}
+    >
+      <View style={styles.messageFileIcon}>
+        {playing ? <Pause size={18} color={COLORS.accent} strokeWidth={2.5} /> : <Mic size={18} color={COLORS.accent} strokeWidth={2.5} />}
+      </View>
+      <View style={styles.messageFileCopy}>
+        <Text numberOfLines={1} style={styles.messageFileTitle}>{attachment.name || 'Nota de voz'}</Text>
+        <Text numberOfLines={1} style={styles.messageFileSubtitle}>{formatDurationMs(attachment.durationMs || Number(status.duration || 0) * 1000)}</Text>
+      </View>
+      <Text style={styles.messageAudioState}>{playing ? 'Pausar' : 'Reproducir'}</Text>
+    </Pressable>
+  );
+}
+
+function NativeDraftAttachmentPreview({ attachment }: { attachment: ConversationDraftAttachment }) {
+  if (attachment.kind === 'image') {
+    return <Image source={{ uri: attachment.uri }} style={styles.draftAttachmentImage} />;
+  }
+  const Icon = attachment.kind === 'video' ? Video : attachment.kind === 'audio' ? Mic : FileText;
+  return (
+    <View style={styles.draftAttachmentFile}>
+      <Icon size={21} color={COLORS.accent} strokeWidth={2.55} />
+      <Text numberOfLines={2} style={styles.draftAttachmentFileText}>{attachment.kind === 'audio' ? formatDurationMs(attachment.durationMs) : attachment.name}</Text>
     </View>
   );
 }
@@ -8304,6 +11306,214 @@ function getMessageReceiptStatus(message: ChatMessage): 'sent' | 'delivered' | '
   if (message.readAt || String(message.status || '').toLowerCase() === 'read') return 'read';
   if (message.deliveredAt || String(message.status || '').toLowerCase() === 'delivered') return 'delivered';
   return 'sent';
+}
+
+function normalizeDraftAttachmentKind(type?: string): ConversationDraftAttachment['kind'] {
+  const normalized = normalizeProbe(type);
+  if (normalized.includes('video')) return 'video';
+  if (normalized.includes('audio') || normalized.includes('voice')) return 'audio';
+  if (normalized.includes('document') || normalized.includes('file') || normalized.includes('pdf')) return 'document';
+  return 'image';
+}
+
+function getFilenameFromUri(uri: string, fallback: string) {
+  try {
+    const clean = decodeURIComponent(uri.split('?')[0] || uri);
+    return clean.split('/').filter(Boolean).pop() || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function buildDataUrl(base64: string, mimeType: string) {
+  if (base64.startsWith('data:')) return base64;
+  return `data:${mimeType || 'application/octet-stream'};base64,${base64}`;
+}
+
+async function readFileAsDataUrl(uri: string, mimeType: string) {
+  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  return buildDataUrl(base64, mimeType);
+}
+
+function assertAttachmentSize(size: number | undefined, maxBytes: number, label: string) {
+  if (!size || size <= maxBytes) return;
+  const sizeMb = (size / 1024 / 1024).toFixed(1);
+  const maxMb = Math.round(maxBytes / 1024 / 1024);
+  throw new Error(`${label} pesa ${sizeMb} MB. El máximo permitido aquí es ${maxMb} MB.`);
+}
+
+async function preparePickedMediaAttachment(asset: ImagePicker.ImagePickerAsset, index: number): Promise<ConversationDraftAttachment> {
+  const kind: ConversationDraftAttachment['kind'] = asset.type === 'video' ? 'video' : 'image';
+  const mimeType = asset.mimeType || (kind === 'video' ? 'video/mp4' : 'image/jpeg');
+  const size = asset.fileSize;
+  assertAttachmentSize(size, kind === 'video' ? VIDEO_ATTACHMENT_MAX_BYTES : MEDIA_ATTACHMENT_MAX_BYTES, kind === 'video' ? 'El video' : 'La imagen');
+  const name = asset.fileName || getFilenameFromUri(asset.uri, `${kind}-${Date.now()}-${index}.${kind === 'video' ? 'mp4' : 'jpg'}`);
+  const dataUrl = asset.base64 ? buildDataUrl(asset.base64, mimeType) : await readFileAsDataUrl(asset.uri, mimeType);
+  return {
+    id: `${kind}-${Date.now()}-${index}`,
+    uri: asset.uri,
+    dataUrl,
+    kind,
+    name,
+    mimeType,
+    size,
+    durationMs: typeof asset.duration === 'number' ? asset.duration : undefined,
+  };
+}
+
+async function preparePickedDocumentAttachment(asset: DocumentPicker.DocumentPickerAsset, index: number): Promise<ConversationDraftAttachment> {
+  const mimeType = asset.mimeType || 'application/octet-stream';
+  assertAttachmentSize(asset.size, DOCUMENT_ATTACHMENT_MAX_BYTES, 'El documento');
+  return {
+    id: `document-${Date.now()}-${index}`,
+    uri: asset.uri,
+    dataUrl: await readFileAsDataUrl(asset.uri, mimeType),
+    kind: 'document',
+    name: asset.name || getFilenameFromUri(asset.uri, `documento-${index + 1}`),
+    mimeType,
+    size: asset.size,
+  };
+}
+
+async function prepareVoiceAttachment(uri: string, durationMs?: number): Promise<ConversationDraftAttachment> {
+  const info = await FileSystem.getInfoAsync(uri);
+  const size = info.exists && 'size' in info ? info.size : undefined;
+  assertAttachmentSize(size, MEDIA_ATTACHMENT_MAX_BYTES, 'El audio');
+  const mimeType = Platform.OS === 'ios' ? 'audio/m4a' : 'audio/mp4';
+  return {
+    id: `audio-${Date.now()}`,
+    uri,
+    dataUrl: await readFileAsDataUrl(uri, mimeType),
+    kind: 'audio',
+    name: getFilenameFromUri(uri, 'nota-de-voz.m4a'),
+    mimeType,
+    size,
+    durationMs,
+  };
+}
+
+function sendDraftAttachment(
+  api: RistakApiClient,
+  contact: ChatContact,
+  attachment: ConversationDraftAttachment,
+  caption: string,
+) {
+  if (attachment.kind === 'video') return api.sendVideo(contact, attachment.dataUrl, caption);
+  if (attachment.kind === 'audio') return api.sendAudio(contact, attachment.dataUrl, attachment.durationMs);
+  if (attachment.kind === 'document') return api.sendDocument(contact, attachment.dataUrl, attachment.name, attachment.mimeType, caption);
+  return api.sendImage(contact, attachment.dataUrl, caption);
+}
+
+function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessage[]): ChatMessage[] {
+  if (!Array.isArray(scheduled)) return [];
+  return scheduled
+    .filter((item) => item && item.scheduledAt && !['cancelled', 'canceled', 'sent', 'failed'].includes(String(item.status || '').toLowerCase()))
+    .map((item, index) => {
+      const scheduledId = item.id || item.externalId || `${item.scheduledAt}-${index}`;
+      return {
+        id: `scheduled-${scheduledId}`,
+        scheduledMessageId: item.id || item.externalId || scheduledId,
+        providerMessageId: item.externalId,
+        contactId,
+        date: item.scheduledAt || new Date().toISOString(),
+        scheduledAt: item.scheduledAt,
+        direction: 'outbound',
+        text: item.text || '(mensaje programado)',
+        channel: item.channel || item.transport || 'whatsapp_api',
+        transport: item.transport || 'scheduled',
+        status: 'scheduled',
+      };
+    });
+}
+
+function isScheduledMessage(message: ChatMessage) {
+  return Boolean(message.scheduledAt || message.scheduledMessageId || String(message.status || '').toLowerCase() === 'scheduled');
+}
+
+function normalizeNativeTemplates(whatsappTemplates: WhatsAppTemplate[], localTemplates: MessageTemplate[]) {
+  const whatsapp = (whatsappTemplates || []).map((template) => ({
+    ...template,
+    source: 'whatsapp' as const,
+  }));
+  const local = (localTemplates || [])
+    .filter((template) => !template.status || ['active', 'enabled', 'published'].includes(String(template.status).toLowerCase()))
+    .map((template) => ({
+      id: '',
+      name: template.name,
+      description: template.description,
+      bodyText: template.bodyText || template.body || template.footerText || '',
+      localText: template.bodyText || template.body || template.footerText || '',
+      source: 'local' as const,
+    }))
+    .filter((template) => template.name || template.localText);
+  return [...whatsapp, ...local].slice(0, 60);
+}
+
+function getTemplateBody(template: WhatsAppTemplate) {
+  return template.localText || template.bodyText || template.body || template.text || template.description || '';
+}
+
+function normalizeClabe(value: string) {
+  return value.replace(/\D+/g, '').slice(0, 18);
+}
+
+function formatClabe(value: string) {
+  return normalizeClabe(value).replace(/(\d{3})(?=\d)/g, '$1 ').trim();
+}
+
+function buildClabeMessage(account: BankClabeAccount) {
+  return [
+    account.alias || 'Cuenta bancaria',
+    account.accountHolder ? `Titular: ${account.accountHolder}` : '',
+    account.bank ? `Banco: ${account.bank}` : '',
+    `CLABE: ${formatClabe(account.clabe)}`,
+  ].filter(Boolean).join('\n');
+}
+
+function formatDurationMs(durationMs?: number) {
+  const totalSeconds = Math.max(0, Math.round((durationMs || 0) / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
+}
+
+function getTimezoneOffsetMs(date: Date, timezone: string) {
+  const parts = getBusinessDateTimeParts(date, timezone);
+  if (!parts) return 0;
+  const asUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second);
+  return asUtc - date.getTime();
+}
+
+function localDateTimePartsToUtcIso(dateText: string, timeText: string, timezone: string) {
+  const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateText.trim());
+  const timeMatch = /^(\d{2}):(\d{2})$/.exec(timeText.trim());
+  if (!dateMatch || !timeMatch) return '';
+  const year = Number(dateMatch[1]);
+  const month = Number(dateMatch[2]);
+  const day = Number(dateMatch[3]);
+  const hour = Number(timeMatch[1]);
+  const minute = Number(timeMatch[2]);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return '';
+  let utcMs = Date.UTC(year, month - 1, day, hour, minute);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    utcMs = Date.UTC(year, month - 1, day, hour, minute) - getTimezoneOffsetMs(new Date(utcMs), timezone);
+  }
+  return new Date(utcMs).toISOString();
+}
+
+function createDefaultAppointmentDraft(timezone: string) {
+  const nextHour = new Date(Date.now() + 60 * 60 * 1000);
+  const parts = getBusinessDateTimeParts(nextHour, timezone);
+  if (!parts) {
+    return { title: '', date: '', time: '09:00', durationMinutes: '60', notes: '' };
+  }
+  return {
+    title: '',
+    date: `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`,
+    time: `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`,
+    durationMinutes: '60',
+    notes: '',
+  };
 }
 
 function PrimaryButton({ label, busy, onPress }: { label: string; busy?: boolean; onPress: () => void }) {
@@ -8746,6 +11956,76 @@ const styles = StyleSheet.create({
   settingsItemList: {
     gap: 10,
   },
+  phoneNumberRow: {
+    minHeight: 92,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(10,31,92,0.58)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+  },
+  phoneNumberRowActive: {
+    borderColor: 'rgba(0,168,248,0.45)',
+    backgroundColor: COLORS.accentSoft,
+  },
+  phoneNumberAvatar: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.text,
+  },
+  phoneNumberAvatarText: {
+    color: COLORS.bg,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  phoneNumberCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  phoneNumberTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  phoneNumberSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  phoneNumberActions: {
+    alignItems: 'flex-end',
+    gap: 7,
+  },
+  phoneNumberPill: {
+    minHeight: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  phoneNumberPillActive: {
+    borderColor: 'rgba(0,168,248,0.45)',
+    backgroundColor: COLORS.accent,
+  },
+  phoneNumberPillText: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  phoneNumberPillTextActive: {
+    color: COLORS.bg,
+  },
   templateRow: {
     minHeight: 76,
     borderRadius: 20,
@@ -8886,10 +12166,16 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingHorizontal: 14,
   },
+  businessVoiceButtonRecording: {
+    backgroundColor: COLORS.danger,
+  },
   businessVoiceButtonText: {
     color: COLORS.bg,
     fontSize: 13,
     fontWeight: '900',
+  },
+  businessVoiceButtonTextRecording: {
+    color: COLORS.white,
   },
   businessDescriptionActions: {
     flexDirection: 'row',
@@ -8921,6 +12207,16 @@ const styles = StyleSheet.create({
   customFieldsList: {
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.border,
+  },
+  customFieldGroup: {
+    gap: 2,
+    paddingTop: 12,
+  },
+  customFieldGroupTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+    marginBottom: 2,
   },
   customFieldRow: {
     minHeight: 58,
@@ -9032,12 +12328,42 @@ const styles = StyleSheet.create({
     gap: 10,
     padding: 14,
   },
+  settingsPushCardNeedsAction: {
+    backgroundColor: 'rgba(70,185,255,0.14)',
+    borderColor: 'rgba(70,185,255,0.24)',
+  },
+  settingsPushCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
   settingsEnabledText: {
     flex: 1,
     color: '#86efac',
     fontSize: 14,
     lineHeight: 18,
     fontWeight: '800',
+  },
+  settingsPushMessage: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  settingsPushActionButton: {
+    minHeight: 34,
+    borderRadius: 17,
+    backgroundColor: COLORS.text,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+  },
+  settingsPushActionText: {
+    color: COLORS.bg,
+    fontSize: 12,
+    fontWeight: '900',
   },
   calendarPickerHeader: {
     flexDirection: 'row',
@@ -12491,6 +15817,847 @@ const styles = StyleSheet.create({
   },
   sendLabel: {
     color: COLORS.white,
+    fontWeight: '900',
+  },
+  appointmentChoiceSubtext: {
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 2,
+    maxWidth: 124,
+  },
+  appointmentInputReadOnly: {
+    color: COLORS.muted,
+  },
+  appointmentSegmentedTab: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  appointmentSegmentedTabActive: {
+    backgroundColor: 'rgba(255,255,255,0.09)',
+  },
+  appointmentSegmentedTabs: {
+    minHeight: 44,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+    flexDirection: 'row',
+    padding: 4,
+    gap: 4,
+  },
+  calendarMiniDay: {
+    width: '14.2857%',
+    height: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarMiniDayDot: {
+    position: 'absolute',
+    bottom: 1,
+    width: 2,
+    height: 2,
+    borderRadius: 1,
+    backgroundColor: COLORS.accent,
+  },
+  calendarMiniDayMuted: {
+    opacity: 0.34,
+  },
+  calendarMiniDaySelected: {
+    borderRadius: 8,
+    backgroundColor: COLORS.primary,
+  },
+  calendarMiniDayText: {
+    color: COLORS.text,
+    fontSize: 7,
+    fontWeight: '800',
+  },
+  calendarMiniDayTextMuted: {
+    color: COLORS.muted,
+  },
+  calendarMiniDayTextSelected: {
+    color: COLORS.bg,
+  },
+  calendarMiniDayTextToday: {
+    color: COLORS.accent,
+  },
+  calendarMiniMonthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: 6,
+  },
+  calendarMonthSwipePage: {
+    backgroundColor: COLORS.bg,
+  },
+  calendarMonthSwipeTrack: {
+    flexDirection: 'row',
+  },
+  calendarMonthSwipeViewport: {
+    overflow: 'hidden',
+    backgroundColor: COLORS.bg,
+  },
+  calendarSurfaceMuted: {
+    opacity: 0.62,
+  },
+  calendarTimelineBody: {
+    flexDirection: 'row',
+  },
+  calendarTimelineColumns: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+  },
+  calendarTimelineEvent: {
+    position: 'absolute',
+    left: 5,
+    right: 5,
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(183,207,255,0.18)',
+    backgroundColor: COLORS.panelSoft,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+    overflow: 'hidden',
+  },
+  calendarTimelineEventLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  calendarTimelineEventTime: {
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  calendarTimelineEventTitle: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  calendarTimelineGrid: {
+    flex: 1,
+    minWidth: 0,
+    height: TIMELINE_GRID_HEIGHT,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: COLORS.border,
+    position: 'relative',
+  },
+  calendarTimelineHourColumn: {
+    width: 48,
+    height: TIMELINE_GRID_HEIGHT,
+  },
+  calendarTimelineHourLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.border,
+  },
+  calendarTimelineHourText: {
+    height: TIMELINE_HOUR_HEIGHT,
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    paddingTop: 1,
+  },
+  calendarTimelineNowLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: COLORS.danger,
+  },
+  calendarTimelineNowText: {
+    position: 'absolute',
+    right: 4,
+    top: -15,
+    color: COLORS.danger,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  calendarTimelinePanel: {
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 18,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  calendarTimelineResponderLayer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+  },
+  calendarTimelineSelection: {
+    position: 'absolute',
+    left: 4,
+    right: 4,
+    borderRadius: 12,
+    backgroundColor: 'rgba(70,185,255,0.2)',
+    borderWidth: 1,
+    borderColor: 'rgba(70,185,255,0.48)',
+  },
+  calendarTitleSwipePage: {
+    minWidth: 0,
+  },
+  calendarTitleSwipeTrack: {
+    flexDirection: 'row',
+  },
+  calendarTitleSwipeViewport: {
+    overflow: 'hidden',
+  },
+  calendarViewPicker: {
+    marginHorizontal: 18,
+    marginTop: 12,
+    marginBottom: 4,
+    minHeight: 38,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+    flexDirection: 'row',
+    padding: 4,
+    gap: 4,
+  },
+  calendarViewPickerButton: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarViewPickerButtonActive: {
+    backgroundColor: COLORS.panelSoft,
+  },
+  calendarViewPickerText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  calendarViewPickerTextActive: {
+    color: COLORS.text,
+  },
+  calendarWeekDayButton: {
+    flex: 1,
+    minHeight: 50,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 1,
+  },
+  calendarWeekDayButtonSelected: {
+    backgroundColor: COLORS.accentSoft,
+  },
+  calendarWeekDayCount: {
+    minWidth: 16,
+    minHeight: 16,
+    borderRadius: 8,
+    overflow: 'hidden',
+    textAlign: 'center',
+    color: COLORS.bg,
+    backgroundColor: COLORS.accent,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  calendarWeekDayLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  calendarWeekDayNumber: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  calendarWeekDayNumberSelected: {
+    color: COLORS.accent,
+  },
+  calendarWeekDayToday: {
+    color: COLORS.accent,
+  },
+  calendarWeekTimelineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 58,
+    marginBottom: 8,
+  },
+  calendarWeekTimelineSpacer: {
+    width: 48,
+  },
+  calendarYearButton: {
+    width: '33.3333%',
+    minHeight: 72,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+  },
+  calendarYearButtonSelected: {
+    backgroundColor: COLORS.accentSoft,
+  },
+  calendarYearButtonSelectedText: {
+    color: COLORS.text,
+  },
+  calendarYearButtonText: {
+    color: COLORS.text,
+    fontSize: 25,
+    fontWeight: '900',
+  },
+  calendarYearButtonTodayText: {
+    color: COLORS.accent,
+  },
+  calendarYearsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 22,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  freeSlotChip: {
+    width: '31%',
+    minHeight: 46,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.035)',
+  },
+  freeSlotChipActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentSoft,
+  },
+  freeSlotCount: {
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: '800',
+    marginTop: 3,
+  },
+  freeSlotDate: {
+    color: COLORS.muted,
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  freeSlotDateActive: {
+    color: COLORS.text,
+  },
+  freeSlotDateChip: {
+    minWidth: 132,
+    minHeight: 48,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.035)',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  freeSlotDateChipActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentSoft,
+  },
+  freeSlotDateRow: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  freeSlotPanel: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.025)',
+    padding: 10,
+  },
+  freeSlotStack: {
+    gap: 8,
+  },
+  freeSlotTime: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  freeSlotTimeActive: {
+    color: COLORS.accent,
+  },
+  freeSlotTimeGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  appointmentSheetBody: {
+    padding: 14,
+    gap: 12,
+  },
+  channelOptionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  channelOptionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  channelOptionRow: {
+    minHeight: 58,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(6,18,58,0.48)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  channelOptionRowActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentSoft,
+  },
+  channelOptionSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
+    fontWeight: '700',
+  },
+  channelOptionTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  channelSheetBody: {
+    gap: 7,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 18,
+  },
+  clabeSheetBody: {
+    padding: 14,
+    gap: 12,
+  },
+  composerInputDisabled: {
+    color: COLORS.muted,
+  },
+  composerKeyboardActive: {
+    paddingBottom: 4,
+    backgroundColor: COLORS.panel,
+  },
+  composerRecordingButton: {
+    backgroundColor: COLORS.danger,
+  },
+  contactDetailAvatar: {
+    width: 78,
+    height: 78,
+    borderRadius: 39,
+    borderWidth: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.primary,
+    overflow: 'hidden',
+  },
+  contactDetailAvatarImage: {
+    width: 78,
+    height: 78,
+  },
+  contactDetailAvatarText: {
+    color: COLORS.white,
+    fontSize: 30,
+    fontWeight: '900',
+  },
+  contactDetailBody: {
+    gap: 12,
+    padding: 12,
+    paddingBottom: 28,
+  },
+  contactDetailEditableRow: {
+    minHeight: 48,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 10,
+    backgroundColor: 'rgba(6,18,58,0.42)',
+  },
+  contactDetailEmpty: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  contactDetailError: {
+    color: COLORS.danger,
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: 'center',
+    fontWeight: '800',
+  },
+  contactDetailHeader: {
+    minHeight: 68,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+  },
+  contactDetailHeaderSpacer: {
+    width: 34,
+    height: 34,
+  },
+  contactDetailHeaderTitle: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactDetailHero: {
+    alignItems: 'center',
+    gap: 8,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 14,
+    backgroundColor: 'rgba(16,42,120,0.62)',
+  },
+  contactDetailHeroMeta: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  contactDetailMetric: {
+    flex: 1,
+    minHeight: 92,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 11,
+    backgroundColor: 'rgba(16,42,120,0.58)',
+  },
+  contactDetailMetricHint: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  contactDetailMetricLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  contactDetailMetricValue: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: '900',
+    marginTop: 8,
+  },
+  contactDetailMetrics: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  contactDetailMiniButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  contactDetailNameEditor: {
+    width: '100%',
+    minHeight: 44,
+    borderRadius: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingLeft: 12,
+    backgroundColor: COLORS.panelSoft,
+  },
+  contactDetailNameInput: {
+    flex: 1,
+    minHeight: 44,
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  contactDetailQuickAction: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(16,42,120,0.62)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  contactDetailQuickActionText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  contactDetailQuickActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  contactDetailRow: {
+    minHeight: 48,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: 'rgba(6,18,58,0.32)',
+  },
+  contactDetailRowCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactDetailRowIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  contactDetailRowInput: {
+    flex: 1,
+    minHeight: 44,
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  contactDetailRowLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  contactDetailRowValue: {
+    color: COLORS.text,
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 2,
+    fontWeight: '800',
+  },
+  contactDetailSaveButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 3,
+    backgroundColor: COLORS.accent,
+  },
+  contactDetailSection: {
+    gap: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    padding: 10,
+    backgroundColor: 'rgba(16,42,120,0.48)',
+  },
+  contactDetailSectionTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+    marginBottom: 2,
+  },
+  contactDetailSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 1,
+    fontWeight: '700',
+  },
+  contactDetailTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  conversationBodyKeyboardActive: {
+    backgroundColor: COLORS.panel,
+  },
+  conversationCallActions: {
+    width: 84,
+    minWidth: 84,
+    height: 40,
+    borderRadius: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    overflow: 'hidden',
+    backgroundColor: 'rgba(16,42,120,0.72)',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  conversationCallButton: {
+    width: 41,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 19,
+  },
+  draftAttachmentFile: {
+    width: 74,
+    height: 74,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    padding: 7,
+    backgroundColor: COLORS.panelSoft,
+  },
+  draftAttachmentFileText: {
+    color: COLORS.text,
+    fontSize: 9,
+    lineHeight: 12,
+    textAlign: 'center',
+    fontWeight: '800',
+  },
+  messageAudioState: {
+    color: COLORS.meta,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  messageStarredFlag: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: 999,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(6,18,58,0.24)',
+  },
+  messageStarredText: {
+    color: COLORS.meta,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  paymentSheetBody: {
+    padding: 14,
+    gap: 12,
+  },
+  sheetFormBlock: {
+    gap: 10,
+    padding: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+  },
+  sheetInlineInputs: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sheetInput: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  sheetInputFlex: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sheetInputShort: {
+    width: 104,
+  },
+  sheetPill: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  sheetPillActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accentSoft,
+  },
+  sheetPillRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sheetPillText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  sheetPillTextActive: {
+    color: COLORS.text,
+  },
+  sheetTextArea: {
+    minHeight: 96,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '700',
+  },
+  templatesSheetBody: {
+    minHeight: 160,
+  },
+  voiceRecordingBar: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+  },
+  voiceRecordingDone: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  voiceRecordingIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.danger,
+  },
+  voiceRecordingText: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 13,
     fontWeight: '900',
   },
 });

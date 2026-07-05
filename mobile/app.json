@@ -24,7 +24,7 @@
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Ristak usa la cámara para tomar fotos y enviarlas desde el chat móvil.",
-        "NSMicrophoneUsageDescription": "Ristak usa el micrófono para grabar videos desde el chat móvil.",
+        "NSMicrophoneUsageDescription": "Ristak usa el micrófono para grabar notas de voz y videos desde el chat móvil.",
         "NSPhotoLibraryUsageDescription": "Ristak puede acceder a fotos para compartir contenido desde el chat móvil."
       }
     },
@@ -48,7 +48,13 @@
     "plugins": [
       "expo-secure-store",
       "expo-image-picker",
-      "expo-notifications"
+      "expo-audio",
+      [
+        "expo-notifications",
+        {
+          "enableBackgroundRemoteNotifications": true
+        }
+      ]
     ]
   }
 }

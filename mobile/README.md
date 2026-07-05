@@ -21,6 +21,25 @@ Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
   passes from the mobile migration worktrees.
 - Conversation view from `/api/contacts/:id/journey`.
 - Text sending through `/api/whatsapp-api/messages/text`.
+- Native chat/conversation pass with swipe actions, reusable bottom sheets,
+  camera/photo/video send, templates, CLABE/payment helpers, scheduling, tags,
+  agent actions, attachments and channel selection.
+- Native appointments pass with business-timezone month/timeline views,
+  day agenda, appointment create/edit/delete, free-slot lookup and calendar
+  users.
+- Payments native parity pass for `/movil/payments`: type selector, gateway
+  capability gating, recent received payments by period, product/price CRUD,
+  manual one-time payments, HighLevel invoice send, payment links, installment
+  plans, subscriptions, contact picker, and external link opening with React
+  Native `Linking`. Payment creation reads account currency/timezone from the
+  backend config and blocks instead of creating money records when the account
+  currency cannot be resolved.
+- Native settings pass with WhatsApp number management, AI-agent business
+  context dictation through `expo-audio` + `/api/ai-agent/transcribe`, native
+  push permission/token registration through `expo-notifications`, user/app
+  preference persistence, and theme background updates for the installed app.
+- Push notification support uses the real app bundle (`com.ristak.app`) for iOS
+  APNs validation and registers device tokens through `/api/push/mobile-devices`.
 
 ## Commands
 

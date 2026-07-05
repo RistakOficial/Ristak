@@ -39,6 +39,30 @@ no tiene formulario nativo completo, debe navegar a la seccion nativa
 correspondiente o dejar documentada la brecha en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`; no debe desaparecer del menu.
 
+La seccion nativa `Pagos` debe mantenerse alineada con `/movil/payments`, no con
+un dashboard resumido: selector de tipo de pago, pagos recientes por periodo,
+productos/precios guardados, cobro unico manual o por liga, planes de
+parcialidades y suscripciones deben usar componentes nativos propios y endpoints
+tipados. La moneda de creacion sale de `account_currency` y la zona para rangos
+y fechas sale de `account_timezone`; si no se puede leer la moneda de cuenta, la
+app no debe crear registros de dinero. Pago unico debe soportar invoice de
+HighLevel cuando la integracion este conectada, pago manual con record-payment
+de HighLevel cuando exista invoice, y fallback local solo cuando no exista
+HighLevel o no se haya podido crear invoice. Cuando una pasarela devuelve un
+checkout externo, el cliente nativo debe abrirlo con `Linking` o browser nativo y
+dejar la brecha documentada si aun no envia el link por WhatsApp/email/SMS desde
+el sheet.
+
+El cliente nativo consolidado en `mobile/` ya agrupa los pases hechos en los
+worktrees de Chat, Conversacion, Citas, Pagos, Analiticas, Ajustes, dock inferior,
+login y notificaciones. Antes de crear otro worktree movil, parte de esta carpeta
+unificada y revisa el checklist de paridad. Ajustes nativo ya incluye numeros de
+WhatsApp, selector de numero para la bandeja, dictado de la descripcion del
+agente con `expo-audio` y `/api/ai-agent/transcribe`, activacion de push nativo
+con `expo-notifications`, y tema claro/noche que actualiza el fondo nativo del
+celular. Si una funcion se cambia en `/movil`, valida si tambien debe cambiar en
+`mobile/` en la misma rama.
+
 El avance por fases de esa paridad vive en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`. Antes de retomar la migracion nativa,
 lee ese checklist para saber que ya quedo, que sigue pendiente y que fuentes del

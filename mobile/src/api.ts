@@ -1,37 +1,57 @@
 import type {
+  BankClabeAccount,
   CalendarEventItem,
+  CalendarFreeSlot,
   CalendarItem,
+  CalendarUser,
   ChatContact,
   ChatMessage,
   ConfigValue,
   ContactTag,
   ContactCustomFieldDefinition,
   CustomLabels,
+  AIAgentTranscriptionResult,
   AIAgentBusinessContextAnswerResult,
   AIAgentConfigStatus,
   ConversationAgentState,
+  CreateTransactionInput,
   DashboardFinancialPoint,
   DashboardFunnelRow,
   DashboardFunnelScope,
   DashboardMetrics,
   DashboardSeriesPoint,
+  HighLevelInvoiceResponse,
+  HighLevelRecordPaymentPayload,
+  HighLevelSendInvoiceResponse,
+  IntegrationsStatus,
   OriginDistributionData,
   JourneyEvent,
   LoginResponse,
+  MessageTemplateBundle,
+  NativeMessageChannel,
+  PaymentGatewayProvider,
+  PaymentLinkDeliveryOptions,
+  PaymentLinkPayload,
+  PaymentLinkResponse,
+  PaymentPlanPayload,
+  PaymentSubscription,
   ProductItem,
   RistakUser,
   RuntimeTenant,
   SaveMobilePushDevicePayload,
+  ScheduledChatMessage,
   SendTextResponse,
   TransactionItem,
   VerifyResponse,
   WebPushPublicConfig,
+  WhatsAppTemplate,
   WhatsAppApiTemplatesResponse,
   WhatsAppApiStatus,
 } from './types';
 import { cleanBaseUrl } from './format';
 
 const DEFAULT_INSTALLER_API_BASE_URL = 'https://www.ristak.com';
+const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes';
 
 type RequestOptions = RequestInit & {
   params?: Record<string, string | number | boolean | undefined>;
@@ -168,6 +188,14 @@ function getNativeContactChannel(contact: ChatContact) {
   return 'whatsapp';
 }
 
+function getHighLevelChannel(channel: NativeMessageChannel) {
+  if (channel === 'sms') return 'sms_qr';
+  if (channel === 'messenger') return 'messenger';
+  if (channel === 'instagram') return 'instagram';
+  if (channel === 'email') return 'email';
+  return 'whatsapp_api';
+}
+
 export class RistakApiClient {
   constructor(
     private readonly baseUrl: string,
@@ -260,6 +288,17 @@ export class RistakApiClient {
     return this.request<ChatContact>(`/contacts/${encodeURIComponent(contactId)}`);
   }
 
+  updateContact(contactId: string, patch: Partial<ChatContact>) {
+    const payload: Record<string, unknown> = { ...patch };
+    if (typeof patch.name === 'string' && typeof payload.full_name !== 'string') {
+      payload.full_name = patch.name;
+    }
+    return this.request<ChatContact>(`/contacts/${encodeURIComponent(contactId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
   getConversation(contactId: string, limit = 50) {
     return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/journey`, {
       params: {
@@ -322,7 +361,36 @@ export class RistakApiClient {
     });
   }
 
-  sendText(contact: ChatContact, text: string) {
+  sendText(contact: ChatContact, text: string, channel: NativeMessageChannel = 'whatsapp') {
+    if (channel === 'email') {
+      throw new Error('El correo todavía se envía desde la vista completa de chats.');
+    }
+
+    if (channel === 'messenger' || channel === 'instagram') {
+      return this.request<SendTextResponse>('/whatsapp-api/meta/social/messages/text', {
+        method: 'POST',
+        body: JSON.stringify({
+          contactId: contact.id,
+          platform: channel,
+          message: text,
+          externalId: `native-${channel}-${Date.now()}`,
+        }),
+      });
+    }
+
+    if (channel === 'sms') {
+      return this.request<SendTextResponse>('/highlevel/conversations/messages', {
+        method: 'POST',
+        body: JSON.stringify({
+          contactId: contact.id,
+          channel: 'sms_qr',
+          message: text,
+          toNumber: contact.phone || undefined,
+          externalId: `native-sms-${Date.now()}`,
+        }),
+      });
+    }
+
     return this.request<SendTextResponse>('/whatsapp-api/messages/text', {
       method: 'POST',
       body: JSON.stringify({
@@ -337,6 +405,10 @@ export class RistakApiClient {
     });
   }
 
+  getPaymentLinkDeliveryOptions(contactId: string) {
+    return this.request<PaymentLinkDeliveryOptions>(`/contacts/${encodeURIComponent(contactId)}/payment-link-delivery-options`);
+  }
+
   sendImage(contact: ChatContact, imageDataUrl: string, caption = '') {
     return this.request<SendTextResponse>('/whatsapp-api/messages/image', {
       method: 'POST',
@@ -347,6 +419,75 @@ export class RistakApiClient {
         imageDataUrl,
         caption,
         externalId: `native-image-${Date.now()}`,
+        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        messageOrigin: 'native_mobile_chat',
+      }),
+    });
+  }
+
+  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '') {
+    return this.request<SendTextResponse>('/whatsapp-api/messages/document', {
+      method: 'POST',
+      body: JSON.stringify({
+        to: contact.phone || '',
+        from: contact.lastBusinessPhone || undefined,
+        contactId: contact.id,
+        documentDataUrl,
+        filename,
+        mimeType: mimeType || undefined,
+        caption,
+        externalId: `native-document-${Date.now()}`,
+        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        messageOrigin: 'native_mobile_chat',
+      }),
+    });
+  }
+
+  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '') {
+    return this.request<SendTextResponse>('/whatsapp-api/messages/video', {
+      method: 'POST',
+      body: JSON.stringify({
+        to: contact.phone || '',
+        from: contact.lastBusinessPhone || undefined,
+        contactId: contact.id,
+        videoDataUrl,
+        caption,
+        externalId: `native-video-${Date.now()}`,
+        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        messageOrigin: 'native_mobile_chat',
+      }),
+    });
+  }
+
+  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number) {
+    return this.request<SendTextResponse>('/whatsapp-api/messages/audio', {
+      method: 'POST',
+      body: JSON.stringify({
+        to: contact.phone || '',
+        from: contact.lastBusinessPhone || undefined,
+        contactId: contact.id,
+        audioDataUrl,
+        durationMs,
+        voice: true,
+        externalId: `native-audio-${Date.now()}`,
+        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        messageOrigin: 'native_mobile_chat',
+      }),
+    });
+  }
+
+  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '') {
+    return this.request<SendTextResponse>('/whatsapp-api/messages/location', {
+      method: 'POST',
+      body: JSON.stringify({
+        to: contact.phone || '',
+        from: contact.lastBusinessPhone || undefined,
+        contactId: contact.id,
+        latitude,
+        longitude,
+        name,
+        address,
+        externalId: `native-location-${Date.now()}`,
         phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
       }),
@@ -369,12 +510,12 @@ export class RistakApiClient {
     });
   }
 
-  scheduleText(contact: ChatContact, text: string, scheduledAt: string) {
+  scheduleText(contact: ChatContact, text: string, scheduledAt: string, channel?: NativeMessageChannel) {
     return this.request('/whatsapp-api/messages/scheduled', {
       method: 'POST',
       body: JSON.stringify({
         contactId: contact.id,
-        channel: getNativeContactChannel(contact),
+        channel: channel ? getHighLevelChannel(channel) : getNativeContactChannel(contact),
         transport: 'native',
         messageType: 'text',
         text,
@@ -383,6 +524,57 @@ export class RistakApiClient {
         businessPhoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
         scheduledAt,
         externalId: `native-scheduled-${Date.now()}`,
+      }),
+    });
+  }
+
+  getScheduledMessages(contactId: string) {
+    return this.request<ScheduledChatMessage[]>('/whatsapp-api/messages/scheduled', {
+      params: { contactId },
+    });
+  }
+
+  cancelScheduledMessage(messageId: string, contactId: string) {
+    return this.request<ScheduledChatMessage>(`/whatsapp-api/messages/scheduled/${encodeURIComponent(messageId)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ contactId }),
+    });
+  }
+
+  getMessageTemplateBundle() {
+    return this.request<MessageTemplateBundle>('/settings/message-templates');
+  }
+
+  sendWhatsAppTemplate(contact: ChatContact, template: WhatsAppTemplate) {
+    return this.request<SendTextResponse>('/whatsapp-api/templates/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        to: contact.phone || '',
+        from: contact.lastBusinessPhone || undefined,
+        contactId: contact.id,
+        templateId: template.id || undefined,
+        templateName: template.name || undefined,
+        language: template.language || 'es_MX',
+        externalId: `native-template-${Date.now()}`,
+        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+      }),
+    });
+  }
+
+  async getBankClabes() {
+    const response = await this.getConfig([PAYMENT_BANK_CLABES_CONFIG_KEY]);
+    const config = 'config' in response && response.config ? response.config : response;
+    const value = (config as Record<string, unknown>)[PAYMENT_BANK_CLABES_CONFIG_KEY];
+    return Array.isArray(value) ? value as BankClabeAccount[] : [];
+  }
+
+  saveBankClabes(accounts: BankClabeAccount[]) {
+    return this.request('/config', {
+      method: 'POST',
+      body: JSON.stringify({
+        config: {
+          [PAYMENT_BANK_CLABES_CONFIG_KEY]: accounts,
+        },
       }),
     });
   }
@@ -428,7 +620,7 @@ export class RistakApiClient {
     });
   }
 
-  createTransaction(payload: TransactionPayload) {
+  createTransaction(payload: TransactionPayload | CreateTransactionInput) {
     return this.request<TransactionItem>('/transactions', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -443,10 +635,71 @@ export class RistakApiClient {
   }
 
   createSubscription(payload: SubscriptionPayload) {
-    return this.request('/subscriptions', {
+    return this.request<PaymentSubscription>('/subscriptions', {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  createHighLevelInvoice(payload: Record<string, unknown>) {
+    return this.request<HighLevelInvoiceResponse>('/highlevel/invoices', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  sendHighLevelInvoice(invoiceId: string, sendMethod: 'email' | 'sms' | 'both') {
+    return this.request<HighLevelSendInvoiceResponse>(`/highlevel/invoices/${encodeURIComponent(invoiceId)}/send`, {
+      method: 'POST',
+      body: JSON.stringify({ sendMethod }),
+    });
+  }
+
+  recordHighLevelInvoicePayment(invoiceId: string, payload: HighLevelRecordPaymentPayload) {
+    return this.request(`/highlevel/invoices/${encodeURIComponent(invoiceId)}/record-payment`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  syncHighLevelInvoice(invoiceId: string) {
+    return this.request(`/highlevel/invoices/${encodeURIComponent(invoiceId)}/sync`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
+
+  createPaymentLink(provider: PaymentGatewayProvider, payload: PaymentLinkPayload) {
+    const providerPath: Record<PaymentGatewayProvider, string> = {
+      stripe: '/stripe/payment-links',
+      conekta: '/conekta/payment-links',
+      mercadopago: '/mercadopago/payment-links',
+      clip: '/clip/payment-links',
+      rebill: '/rebill/payment-links',
+    };
+    return this.request<PaymentLinkResponse>(providerPath[provider], {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createPaymentPlan(provider: PaymentGatewayProvider | 'highlevel', payload: PaymentPlanPayload) {
+    const providerPath: Record<PaymentGatewayProvider | 'highlevel', string> = {
+      highlevel: '/transactions/payment-flows/installments',
+      stripe: '/stripe/payment-plans',
+      conekta: '/conekta/payment-plans',
+      mercadopago: '/mercadopago/payment-plans',
+      clip: '/clip/payment-links',
+      rebill: '/rebill/payment-plans',
+    };
+    return this.request<PaymentLinkResponse>(providerPath[provider], {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  getIntegrationsStatus() {
+    return this.request<IntegrationsStatus>('/integrations/status');
   }
 
   getDashboardMetrics(startDate: string, endDate: string) {
@@ -520,6 +773,41 @@ export class RistakApiClient {
         startTime,
         endTime,
         calendarId,
+      },
+    });
+  }
+
+  getAppointment(eventId: string) {
+    return this.request<CalendarEventItem>(`/calendars/events/${encodeURIComponent(eventId)}`);
+  }
+
+  getBlockedSlots(calendarId: string, startTime: number, endTime: number) {
+    return this.request<CalendarFreeSlot[]>(`/calendars/${encodeURIComponent(calendarId)}/free-slots`, {
+      params: {
+        startTime,
+        endTime,
+      },
+    });
+  }
+
+  getFreeSlots(calendarId: string, startDate: string, endDate: string, timezone?: string) {
+    return this.request<CalendarFreeSlot[]>(`/calendars/${encodeURIComponent(calendarId)}/free-slots`, {
+      params: {
+        startDate,
+        endDate,
+        timezone,
+      },
+    });
+  }
+
+  getCalendarUsers() {
+    return this.request<{ users?: CalendarUser[] }>('/highlevel/users');
+  }
+
+  getCalendarUsersByIds(userIds: string[]) {
+    return this.request<{ users?: CalendarUser[] }>('/highlevel/users/by-ids', {
+      params: {
+        userIds: userIds.join(','),
       },
     });
   }
@@ -605,6 +893,65 @@ export class RistakApiClient {
         field: 'businessContext',
         answer,
       }),
+    });
+  }
+
+  async transcribeAIAgentAudio(audioUri: string, mimeType = 'audio/m4a') {
+    const audioResponse = await fetch(audioUri);
+    const audioBlob = await audioResponse.blob();
+    const headers = new Headers({
+      'Content-Type': audioBlob.type || mimeType,
+    });
+
+    if (this.token) {
+      headers.set('Authorization', `Bearer ${this.token}`);
+    }
+
+    const response = await fetch(this.buildUrl('/ai-agent/transcribe'), {
+      method: 'POST',
+      headers,
+      body: audioBlob,
+    });
+
+    let payload: unknown = null;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+
+    if (!response.ok) {
+      const message = payload && typeof payload === 'object'
+        ? String((payload as { error?: unknown; message?: unknown }).error || (payload as { message?: unknown }).message || response.statusText)
+        : response.statusText;
+      const error = new Error(message || `HTTP ${response.status}`) as ApiError;
+      error.status = response.status;
+      error.body = payload;
+      throw error;
+    }
+
+    if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
+      return (payload as { data: AIAgentTranscriptionResult }).data;
+    }
+
+    return payload as AIAgentTranscriptionResult;
+  }
+
+  getWhatsAppStatus() {
+    return this.request<WhatsAppApiStatus>('/whatsapp-api/status');
+  }
+
+  refreshWhatsAppStatus() {
+    return this.request<WhatsAppApiStatus>('/whatsapp-api/refresh', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
+
+  setDefaultWhatsAppPhoneNumber(phoneNumberId: string) {
+    return this.request<WhatsAppApiStatus>('/whatsapp-api/phone-numbers/default', {
+      method: 'POST',
+      body: JSON.stringify({ phoneNumberId }),
     });
   }
 
