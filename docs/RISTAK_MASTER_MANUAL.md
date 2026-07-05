@@ -377,6 +377,13 @@ documento segun esa decision. En Messenger/Instagram nativo el chat conserva
 texto solamente; si HighLevel esta conectado, los adjuntos se publican primero
 como URLs publicas y se envian por `attachments` de HighLevel.
 
+En el chat movil, si el usuario abre la camara desde la bandeja sin estar dentro
+de una conversacion, la captura de foto o video abre un selector de destinatarios.
+Ese selector debe permitir elegir uno o varios contactos, escribir un caption,
+mostrar una mini-preview del media tomado y conservar los badges del canal del
+contacto (WhatsApp, Messenger, Instagram, email o SMS) para que el humano sepa
+por donde esta hablando antes de enviar.
+
 La lista de chats se carga por lotes de 50 conversaciones. Al abrir una
 conversacion, el frontend pide solo los ultimos 50 mensajes combinados del hilo
 (`chatMessagesOnly` + `messageLimit`) y conserva el historial ya visible durante

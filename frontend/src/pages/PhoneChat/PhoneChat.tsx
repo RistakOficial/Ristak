@@ -12584,10 +12584,12 @@ export const PhoneChat: React.FC = () => {
         aria-pressed={selected}
       >
         <span className={styles.cameraShareAvatarWrap}>
-          {renderAvatar(contact)}
-          <span className={styles.cameraShareCheck}>
-            {selected ? <Check size={15} /> : null}
-          </span>
+          {renderAvatar(contact, { showChannelBadge: true })}
+          {selected && (
+            <span className={styles.cameraShareCheck}>
+              <Check size={15} />
+            </span>
+          )}
         </span>
         <span className={styles.cameraShareContactText}>
           <strong>{getContactName(contact)}</strong>
@@ -12669,13 +12671,25 @@ export const PhoneChat: React.FC = () => {
                   onClick={() => toggleCameraShareContact(contact)}
                   aria-label={`Quitar ${getContactName(contact)}`}
                 >
-                  {renderAvatar(contact)}
-                  <span>{getContactName(contact)}</span>
+                  {renderAvatar(contact, { showChannelBadge: true })}
+                  <span className={styles.cameraShareSelectedName}>{getContactName(contact)}</span>
                 </button>
               ))}
             </div>
           )}
           <div className={`${styles.composer} ${cameraShareCaption.trim() || cameraShareSelectedContacts.length > 0 ? styles.composerHasContent : ''} ${styles.cameraShareComposer}`} data-chat-composer="true">
+            <figure className={styles.cameraShareComposerThumb} aria-label={isVideo ? 'Vista previa del video' : 'Vista previa de la foto'}>
+              {isVideo ? (
+                <>
+                  <video src={cameraShareMedia.dataUrl} muted playsInline preload="metadata" />
+                  <span className={styles.cameraShareComposerPlay}>
+                    <Play size={13} />
+                  </span>
+                </>
+              ) : (
+                <img src={cameraShareMedia.dataUrl} alt="" />
+              )}
+            </figure>
             <div className={styles.messageInputWrap}>
               <div
                 ref={cameraShareCaptionRef}

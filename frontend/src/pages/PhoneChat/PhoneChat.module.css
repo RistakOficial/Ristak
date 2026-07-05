@@ -2711,8 +2711,8 @@
 
 .cameraShareCheck {
   position: absolute;
-  right: -2px;
-  bottom: -2px;
+  top: -5px;
+  right: -5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2721,12 +2721,8 @@
   border: 2px solid var(--phone-chat-bg);
   border-radius: 999px;
   color: #ffffff;
-  background: var(--phone-chat-surface-soft);
-  box-shadow: 0 4px 10px rgba(var(--phone-chat-primary-rgb), 0.14);
-}
-
-.cameraShareContactSelected .cameraShareCheck {
   background: var(--phone-chat-accent);
+  box-shadow: 0 4px 10px rgba(var(--phone-chat-primary-rgb), 0.14);
 }
 
 .cameraShareContactText {
@@ -2810,19 +2806,75 @@
   font-size: 11px;
 }
 
-.cameraShareSelectedStrip span {
+.cameraShareSelectedStrip .avatar .avatarChannelBadge {
+  right: -3px;
+  bottom: -2px;
+  width: 15px;
+  height: 15px;
+}
+
+.cameraShareSelectedStrip .avatar .avatarChannelBadge svg,
+.cameraShareSelectedStrip .avatar .avatarChannelBadge .channelIconGlyph {
+  width: 9px;
+  height: 9px;
+}
+
+.cameraShareSelectedName {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.cameraShareComposer {
-  grid-template-columns: minmax(0, 1fr) 42px;
-  padding-top: 4px;
+.composer.cameraShareComposer {
+  --phone-chat-composer-action: 42px;
+  --phone-chat-composer-row: 42px;
+  --phone-chat-composer-input: 40px;
+  grid-template-columns: 38px minmax(0, 1fr) var(--phone-chat-composer-action);
+  gap: 6px;
+  min-height: calc(50px + env(safe-area-inset-bottom));
+  padding: 4px 10px max(8px, env(safe-area-inset-bottom));
 }
 
-.cameraShareComposer .messageInputWrap {
-  min-height: 42px;
+.cameraShareComposerThumb {
+  position: relative;
+  display: block;
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 12px;
+  background: var(--phone-chat-surface-soft);
+  box-shadow: 0 7px 16px rgba(var(--phone-chat-primary-rgb), 0.1);
+}
+
+.cameraShareComposerThumb img,
+.cameraShareComposerThumb video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cameraShareComposerPlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--phone-chat-bg);
+  background: color-mix(in srgb, var(--phone-chat-text) 24%, transparent);
+}
+
+.composer.cameraShareComposer .messageInputWrap {
+  min-width: 0;
+  min-height: var(--phone-chat-composer-input);
+  border-radius: calc(var(--phone-chat-composer-input) / 2);
+}
+
+.composer.cameraShareComposer .composerInput {
+  min-height: var(--phone-chat-composer-input);
+  padding: 9px 10px 8px 14px;
+  line-height: 1.18;
 }
 
 .contactInfoContent {
