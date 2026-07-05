@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ristak-branding-v28'
+const CACHE_NAME = 'ristak-branding-v29'
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
 const LATEST_NOTIFICATION_TAG = 'ristak-latest-notification'
