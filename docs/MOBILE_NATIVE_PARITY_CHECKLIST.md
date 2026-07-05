@@ -85,7 +85,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     queda pendiente en "Mas acciones de chat". El swipe debe mantener la fila
     abierta despues de soltar, mostrar las acciones con alto/ancho alineados a la
     fila, permitir tocar `Mas`/`Archivar` sin que la fila animada tape los
-    botones y cerrarse al tocar otra fila o empezar scroll.
+    botones y cerrarse al tocar otra fila o empezar scroll. La apertura no debe
+    rebotar/cerrarse por umbral alto ni por cancelacion del responder horizontal.
+    Los separadores de chats deben salir del borde inferior del area estirada de
+    la fila, no de una linea falsa con padding debajo del texto.
 - [x] Replicar long press/seleccion multiple.
   - Avance: mantener presionada una fila entra en seleccion multiple, muestra
     check circular, oculta filtros, permite seleccionar visibles, cancelar,

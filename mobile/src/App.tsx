@@ -121,7 +121,7 @@ const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
 const CHAT_SWIPE_ACTION_WIDTH = 184;
 const CHAT_SWIPE_MORE_WIDTH = 84;
 const CHAT_SWIPE_ARCHIVE_WIDTH = CHAT_SWIPE_ACTION_WIDTH - CHAT_SWIPE_MORE_WIDTH;
-const CHAT_SWIPE_OPEN_THRESHOLD = 74;
+const CHAT_SWIPE_OPEN_THRESHOLD = 36;
 const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
   { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', locked: true },
   { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos' },
@@ -1732,8 +1732,9 @@ function ChatRow({
       offsetRef.current = nextOffset;
       translateX.setValue(nextOffset);
     },
-    onPanResponderRelease: () => {
-      if (Math.abs(offsetRef.current) >= CHAT_SWIPE_OPEN_THRESHOLD) {
+    onPanResponderRelease: (_, gestureState) => {
+      const shouldOpen = Math.abs(offsetRef.current) >= CHAT_SWIPE_OPEN_THRESHOLD || gestureState.vx < -0.22;
+      if (shouldOpen) {
         onSwipeOpen();
         animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
         return;
@@ -1741,8 +1742,10 @@ function ChatRow({
       onSwipeClose();
       animateSwipeTo(0);
     },
+    onPanResponderTerminationRequest: () => false,
     onPanResponderTerminate: () => {
-      if (swipeOpen) {
+      if (swipeOpen || Math.abs(offsetRef.current) >= CHAT_SWIPE_OPEN_THRESHOLD) {
+        onSwipeOpen();
         animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
         return;
       }
@@ -2804,7 +2807,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 9,
     minHeight: 74,
-    paddingVertical: 8,
     paddingHorizontal: 13,
     borderRadius: 0,
   },
@@ -2888,10 +2890,11 @@ const styles = StyleSheet.create({
   },
   chatRowBody: {
     flex: 1,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
     minWidth: 0,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
-    paddingBottom: 10,
   },
   rowHeader: {
     flexDirection: 'row',
