@@ -3903,6 +3903,10 @@ function buildCommentReplyTarget(message: ChatMessage): CommentReplyTarget | nul
   }
 }
 
+function getMessageSwipeRawOffset(action: MessageSwipeAction, deltaX: number) {
+  return action === 'info' ? -deltaX : deltaX
+}
+
 async function copyTextToClipboard(text: string) {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(text)
@@ -11304,7 +11308,7 @@ export const PhoneChat: React.FC = () => {
     if (!gesture.action) return
 
     event.preventDefault()
-    const rawOffset = gesture.action === 'commentReply' ? deltaX : -deltaX
+    const rawOffset = getMessageSwipeRawOffset(gesture.action, deltaX)
     const nextOffset = Math.round(Math.min(
       MESSAGE_INFO_SWIPE_ACTION_WIDTH,
       Math.max(0, rawOffset)
