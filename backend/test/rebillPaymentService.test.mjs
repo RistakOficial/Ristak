@@ -60,8 +60,22 @@ function jsonTextResponse(payload, status = 200) {
 
 async function cleanupPublicPayment(publicPaymentId) {
   if (!publicPaymentId) return
+  const rows = await db.all('SELECT contact_id, metadata_json FROM payments WHERE public_payment_id = ?', [publicPaymentId]).catch(() => [])
+  const createdContactIds = (rows || [])
+    .filter((row) => {
+      try {
+        const metadata = JSON.parse(row.metadata_json || '{}')
+        return Boolean(metadata.paymentContactResolution?.created && row.contact_id)
+      } catch {
+        return false
+      }
+    })
+    .map(row => row.contact_id)
   await db.run('DELETE FROM installment_payments WHERE payment_id IN (SELECT id FROM payments WHERE public_payment_id = ?)', [publicPaymentId]).catch(() => undefined)
   await db.run('DELETE FROM payments WHERE public_payment_id = ?', [publicPaymentId]).catch(() => undefined)
+  for (const contactId of createdContactIds) {
+    await cleanupContact(contactId)
+  }
 }
 
 function uniqueSuffix(label = 'rebill_plan') {

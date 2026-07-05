@@ -7,6 +7,7 @@ import { getAccountCurrency } from '../utils/accountLocale.js'
 import { calculatePaymentTax, getPaymentGatewayMode, getPublicPaymentSettings } from './paymentSettingsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
+import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
@@ -995,7 +996,14 @@ async function updatePaymentFromClipPayment(clipPayment) {
     ]
   )
 
-  const updated = await findPaymentById(row.id)
+  let updated = await findPaymentById(row.id)
+  const linkedContactId = await resolvePaymentContactForGatewayPayment(updated, {
+    provider: 'clip',
+    providerPayload: clipPayment
+  })
+  if (linkedContactId && !updated?.contact_id) {
+    updated = await findPaymentById(row.id)
+  }
   if (updated?.id && !ignorePendingRegression) {
     dispatchProductPostWebhooksForPaymentInBackground(updated.id, {
       status: persistedStatus,

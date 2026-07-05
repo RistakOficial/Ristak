@@ -10,6 +10,7 @@ import { calculatePaymentTax, getPaymentGatewayMode, getPaymentSettings, getPubl
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { registerGigstackPaymentForTransactionInBackground } from './gigstackInvoiceService.js'
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
+import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
@@ -2013,13 +2014,26 @@ async function updatePaymentFromIntent(intent, stripeContext = null) {
     ]
   )
 
-  const row = await db.get(
+  let row = await db.get(
     `SELECT p.*, c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone, c.stripe_customer_id
      FROM payments p
      LEFT JOIN contacts c ON c.id = p.contact_id
      WHERE p.${whereColumn} = ?`,
     [whereValue]
   )
+  const linkedContactId = await resolvePaymentContactForGatewayPayment(row, {
+    provider: 'stripe',
+    providerPayload: intent
+  })
+  if (linkedContactId && !row?.contact_id) {
+    row = await db.get(
+      `SELECT p.*, c.full_name AS contact_name, c.email AS contact_email, c.phone AS contact_phone, c.stripe_customer_id
+       FROM payments p
+       LEFT JOIN contacts c ON c.id = p.contact_id
+       WHERE p.${whereColumn} = ?`,
+      [whereValue]
+    )
+  }
   if (row?.id && !ignorePendingRegression && statusChanged) {
     dispatchProductPostWebhooksForPaymentInBackground(row.id, {
       status: persistedStatus,

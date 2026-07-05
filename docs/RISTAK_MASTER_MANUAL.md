@@ -732,6 +732,25 @@ explicita de rechazo/fallo, por ejemplo `declined`, `rejected`, `payment_failed`
 con `backend/src/services/paymentGatewayStatusPolicy.js` y cubrir en pruebas el
 caso de abandono/reintento y el caso de rechazo real.
 
+### Contacto asociado a pagos publicos
+
+Los webhooks y confirmaciones de Stripe, Conekta, Mercado Pago, CLIP y Rebill
+deben resolver `payments.contact_id` antes de disparar efectos de pago pagado
+(stats del contacto, recibo automatico, Gigstack, Meta Purchase y post-webhooks).
+La resolucion usa, en este orden:
+
+- `contact_id` ya guardado en el pago o metadata.
+- Telefono del pago, metadata local o payload del proveedor.
+- Email del pago, metadata local o payload del proveedor.
+
+Si encuentra un contacto existente por telefono o email, liga el pago a ese
+contacto y completa campos faltantes no conflictivos. Si no existe contacto y el
+payload trae email o telefono, Ristak crea uno nuevo con source
+`payment_checkout` y guarda la resolucion en `payments.metadata_json` como
+`paymentContactResolution`. El webhook nunca debe fallar el cobro por no poder
+resolver contacto; si la resolucion falla, se conserva el pago y se registra un
+warning para reintento/diagnostico posterior.
+
 ### Automatizaciones de pago
 
 Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
