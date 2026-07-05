@@ -9,6 +9,15 @@ export const PAYMENT_GATE_BILLING_TYPES = new Set(['single', 'subscription'])
 export const SUBSCRIPTION_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago', 'rebill'])
 export const SUBSCRIPTION_INTERVAL_TYPES = new Set(['daily', 'weekly', 'monthly', 'yearly'])
 
+// TODO(checkout-propio): la meta de producto es que Sites use un checkout de
+// Ristak como shell comun siempre que la pasarela lo permita: Stripe Elements,
+// tokenizer/iframe de Conekta y SDK/componente de Rebill montados dentro de la
+// pagina. El checkout hospedado debe quedar como fallback, o para flujos donde
+// el proveedor lo obligue o sea claramente mas estable (por ejemplo ciertos
+// flujos de suscripcion de Mercado Pago). No construir campos de tarjeta propios:
+// la tokenizacion, PCI, reglas de MSI y guardado/off-session deben seguir viviendo
+// en los componentes oficiales de cada proveedor.
+
 // Opciones de meses ofrecidas en el panel. El monto y la pasarela filtran cuáles
 // aplican realmente (ver msiEligibility / conektaInstallmentMonths).
 export const MSI_INSTALLMENT_CHOICES = [3, 6, 9, 12, 18, 24]
