@@ -1922,7 +1922,7 @@ const ContactsTable: React.FC = () => {
             navigateContactsPath(buildContactsPath(viewMode, value))
           }}
           toolbarStart={
-            <div className={styles.contactConditionsToolbar}>
+            <div className={styles.contactTableAdvancedFilters}>
               <Button
                 type="button"
                 variant={advancedFiltersActive ? 'primary' : 'secondary'}
