@@ -66,8 +66,8 @@ type SubscriptionFormMode = 'create' | 'edit' | null
 type SubscriptionFormStep = 'details' | 'start_method' | 'gateway' | 'saved_card'
 type SubscriptionStartMode = 'link' | 'saved_card' | ''
 type SubscriptionBulkAction = 'activate' | 'pause' | 'cancel'
-type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip'
-type SubscriptionPaymentMethod = 'stripe_saved_card' | 'stripe_link' | 'conekta_subscription' | 'conekta_link' | 'mercadopago_checkout' | 'mercadopago_subscription' | 'clip_link'
+type PaymentGatewayProvider = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
+type SubscriptionPaymentMethod = 'stripe_saved_card' | 'stripe_link' | 'conekta_subscription' | 'conekta_link' | 'mercadopago_checkout' | 'mercadopago_subscription' | 'clip_link' | 'rebill_subscription'
 type SubscriptionDurationType = 'continuous' | 'until_date'
 
 interface SubscriptionFormState {
@@ -173,6 +173,15 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     description: 'Crea un plan de suscripción en Mercado Pago y entrega su link de autorización.',
     requirement: 'El cliente captura o confirma sus datos al autorizar el link en Mercado Pago.',
     result: 'Mercado Pago activa la suscripción cuando el cliente autoriza el link.'
+  },
+  {
+    value: 'rebill_subscription',
+    label: 'Rebill - checkout de suscripción',
+    provider: 'rebill',
+    modeLabel: 'Link de suscripción',
+    description: 'Crea un plan en Rebill y entrega su checkout hospedado para autorizar la suscripción.',
+    requirement: 'Requiere un contacto con email. Rebill sólo acepta frecuencia mensual o anual.',
+    result: 'Rebill activa la suscripción cuando el cliente autoriza el checkout.'
   }
 ]
 
@@ -186,7 +195,8 @@ const LINK_PAYMENT_METHODS = new Set<string>([
   'stripe_payment_link',
   'conekta_link',
   'conekta_payment_link',
-  'mercadopago_subscription'
+  'mercadopago_subscription',
+  'rebill_subscription'
 ])
 const SAVED_CARD_PAYMENT_METHODS = new Set<SubscriptionPaymentMethod>(['stripe_saved_card', 'conekta_subscription'])
 
@@ -249,13 +259,14 @@ function createEmptyForm(timezone: string): SubscriptionFormState {
 }
 
 function resolvePaymentProvider(provider?: string | null): PaymentGatewayProvider {
-  if (provider === 'clip' || provider === 'mercadopago' || provider === 'conekta' || provider === 'stripe') return provider
+  if (provider === 'clip' || provider === 'mercadopago' || provider === 'conekta' || provider === 'stripe' || provider === 'rebill') return provider
   return 'stripe'
 }
 
 function getPaymentProviderFromMethod(paymentMethod: string, paymentProvider: PaymentGatewayProvider): PaymentGatewayProvider {
   if (paymentMethod === 'mercadopago_subscription' || paymentMethod === 'mercadopago_checkout') return 'mercadopago'
   if (paymentMethod === 'conekta_subscription' || paymentMethod === 'conekta_link') return 'conekta'
+  if (paymentMethod === 'rebill_subscription') return 'rebill'
   if (paymentMethod === 'clip_link') return 'clip'
   if (paymentMethod === 'stripe_saved_card' || paymentMethod === 'stripe_link') return 'stripe'
   return paymentProvider
@@ -264,6 +275,7 @@ function getPaymentProviderFromMethod(paymentMethod: string, paymentProvider: Pa
 function getPaymentProviderName(provider: PaymentGatewayProvider) {
   if (provider === 'mercadopago') return 'Mercado Pago'
   if (provider === 'conekta') return 'Conekta'
+  if (provider === 'rebill') return 'Rebill'
   if (provider === 'clip') return 'CLIP'
   return 'Stripe'
 }
@@ -370,6 +382,7 @@ function getPaymentMethodLabel(value?: string | null) {
   if (normalized === 'conekta_link') return 'Link de suscripción Conekta'
   if (normalized === 'mercadopago_checkout') return 'Link de pago Mercado Pago'
   if (normalized === 'mercadopago_subscription') return 'Suscripción Mercado Pago'
+  if (normalized === 'rebill_subscription') return 'Suscripción Rebill'
   if (normalized === 'clip_link') return 'Pago único CLIP vinculado'
   if (normalized === 'manual') return 'Manual'
   return value || 'Sin método'
@@ -377,6 +390,7 @@ function getPaymentMethodLabel(value?: string | null) {
 
 function getSourceLabel(subscription: PaymentSubscription) {
   if (subscription.paymentProvider === 'clip') return 'CLIP'
+  if (subscription.rebillSubscriptionId || subscription.rebillPlanId || subscription.paymentProvider === 'rebill') return 'Rebill'
   if (subscription.mercadoPagoPreapprovalId || subscription.paymentProvider === 'mercadopago') return 'Mercado Pago'
   if (subscription.conektaSubscriptionId || subscription.paymentProvider === 'conekta') return 'Conekta'
   if (subscription.stripeSubscriptionId || subscription.paymentProvider === 'stripe') return 'Stripe'
@@ -386,6 +400,7 @@ function getSourceLabel(subscription: PaymentSubscription) {
 
 function getSubscriptionProviderLogo(subscription: PaymentSubscription): PaymentPlatformLogoId | null {
   if (subscription.paymentProvider === 'clip') return 'clip'
+  if (subscription.rebillSubscriptionId || subscription.rebillPlanId || subscription.paymentProvider === 'rebill') return 'rebill'
   if (subscription.mercadoPagoPreapprovalId || subscription.paymentProvider === 'mercadopago') return 'mercadopago'
   if (subscription.conektaSubscriptionId || subscription.paymentProvider === 'conekta') return 'conekta'
   if (subscription.stripeSubscriptionId || subscription.paymentProvider === 'stripe') return 'stripe'
@@ -414,7 +429,9 @@ function getSubscriptionStartLink(subscription: PaymentSubscription) {
   const mercadoPagoUrl = getMercadoPagoSubscriptionUrl(subscription)
   if (mercadoPagoUrl) return mercadoPagoUrl
 
-  return subscription.subscriptionStartUrl ||
+  return subscription.rebillPaymentLinkUrl ||
+    subscription.rebillCheckoutUrl ||
+    subscription.subscriptionStartUrl ||
     subscription.stripeCheckoutUrl ||
     subscription.conektaCheckoutUrl ||
     buildPublicPaymentUrl(subscription.subscriptionStartPublicPaymentId)
@@ -459,6 +476,7 @@ function buildSubscriptionPaymentLinkPanel(
   const paymentUrl = getSubscriptionStartLink(subscription)
   if (!paymentUrl) return null
   const isMercadoPagoSubscription = paymentMethod === 'mercadopago_subscription'
+  const isRebillSubscription = paymentMethod === 'rebill_subscription'
   const isClipSubscription = paymentMethod === 'clip_link' || subscription.paymentProvider === 'clip'
   if (isClipSubscription) return null
 
@@ -478,8 +496,14 @@ function buildSubscriptionPaymentLinkPanel(
     title: 'Link de suscripción listo',
     description: isMercadoPagoSubscription
       ? 'Comparte este enlace de Mercado Pago para que el cliente autorice la suscripción.'
+      : isRebillSubscription
+        ? 'Comparte este enlace de Rebill para que el cliente autorice la suscripción.'
       : 'Comparte este enlace de la pasarela para que el cliente autorice la suscripción.',
-    linkLabel: isMercadoPagoSubscription ? 'Enlace de suscripción Mercado Pago' : 'Enlace de suscripción',
+    linkLabel: isMercadoPagoSubscription
+      ? 'Enlace de suscripción Mercado Pago'
+      : isRebillSubscription
+        ? 'Enlace de suscripción Rebill'
+        : 'Enlace de suscripción',
     provider,
     paymentUrl,
     amount: Number(subscription.amount || fallback.payload?.amount || 0),
@@ -500,6 +524,8 @@ function getSubscriptionPaymentLinkShareText(link: PaymentLinkReadyData) {
   const amountText = link.amount > 0 ? ` por ${formatCurrency(link.amount, link.currency)}` : ''
   const activationText = link.provider === 'mercadopago'
     ? 'Al autorizarlo, Mercado Pago activará tu suscripción.'
+    : link.provider === 'rebill'
+      ? 'Al autorizarlo, Rebill activará los cobros recurrentes de tu suscripción.'
     : 'Al autorizarlo, la pasarela activará los cobros recurrentes de tu suscripción.'
 
   return `Hola ${contactName}, te comparto el enlace para autorizar tu suscripción${amountText}. ${activationText}\n${link.paymentUrl}`
@@ -558,6 +584,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const [stripeConnected, setStripeConnected] = useState(false)
   const [conektaConnected, setConektaConnected] = useState(false)
   const [mercadoPagoConnected, setMercadoPagoConnected] = useState(false)
+  const [rebillConnected, setRebillConnected] = useState(false)
   const [integrationsLoading, setIntegrationsLoading] = useState(true)
   const [savedPaymentMethods, setSavedPaymentMethods] = useState<StripeSavedPaymentMethod[]>([])
   const [savedConektaPaymentSources, setSavedConektaPaymentSources] = useState<ConektaSavedPaymentSource[]>([])
@@ -610,12 +637,14 @@ export const PaymentSubscriptions: React.FC = () => {
         setStripeConnected(Boolean(data?.stripe?.connected))
         setConektaConnected(Boolean(data?.conekta?.connected))
         setMercadoPagoConnected(Boolean(data?.mercadopago?.connected))
+        setRebillConnected(Boolean(data?.rebill?.connected))
       })
       .catch(() => {
         if (cancelled) return
         setStripeConnected(false)
         setConektaConnected(false)
         setMercadoPagoConnected(false)
+        setRebillConnected(false)
       })
       .finally(() => {
         if (!cancelled) setIntegrationsLoading(false)
@@ -682,9 +711,11 @@ export const PaymentSubscriptions: React.FC = () => {
         ? stripeConnected
         : option.provider === 'conekta'
           ? conektaConnected
-          : mercadoPagoConnected
+          : option.provider === 'rebill'
+            ? rebillConnected
+            : mercadoPagoConnected
     ))
-  ), [conektaConnected, mercadoPagoConnected, stripeConnected])
+  ), [conektaConnected, mercadoPagoConnected, rebillConnected, stripeConnected])
   const availableLinkPaymentMethodOptions = useMemo(() => (
     availablePaymentMethodOptions.filter((option) => isLinkPaymentMethod(option.value))
   ), [availablePaymentMethodOptions])
@@ -696,6 +727,7 @@ export const PaymentSubscriptions: React.FC = () => {
   const showSavedCardStep = formMode === 'create' && formStep === 'saved_card'
   const isMercadoPagoSelected = (formMode === 'edit' || showGatewayStep) && ['mercadopago_subscription', 'mercadopago_checkout'].includes(form.paymentMethod)
   const isConektaSelected = (formMode === 'edit' || showGatewayStep || showSavedCardStep) && ['conekta_subscription', 'conekta_link'].includes(form.paymentMethod)
+  const isRebillSelected = (formMode === 'edit' || showGatewayStep) && form.paymentMethod === 'rebill_subscription'
   const isClipSelected = (formMode === 'edit' || showGatewayStep) && form.paymentMethod === 'clip_link'
   const startsByLink = isLinkPaymentMethod(form.paymentMethod)
   const hasStripeSavedCards = stripeConnected && savedPaymentMethods.length > 0
@@ -748,7 +780,7 @@ export const PaymentSubscriptions: React.FC = () => {
   useEffect(() => {
     if (integrationsLoading || hasSubscriptionGateway) return
 
-    showToast('warning', 'Suscripciones no disponibles', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones.')
+    showToast('warning', 'Suscripciones no disponibles', 'Conecta Stripe, Conekta, Mercado Pago o Rebill para crear suscripciones.')
     navigate('/transactions', { replace: true })
   }, [hasSubscriptionGateway, integrationsLoading, navigate, showToast])
 
@@ -789,7 +821,7 @@ export const PaymentSubscriptions: React.FC = () => {
 
   const openCreateSubscription = () => {
     if (!hasSubscriptionGateway) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones automáticas.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta, Mercado Pago o Rebill para crear suscripciones automáticas.')
       return
     }
 
@@ -882,7 +914,7 @@ export const PaymentSubscriptions: React.FC = () => {
     if (mode === 'link') {
       const fallback = availableLinkPaymentMethodOptions[0]
       if (!fallback) {
-        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta o Mercado Pago para generar un link de suscripción.')
+        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta, Mercado Pago o Rebill para generar un link de suscripción.')
         return
       }
 
@@ -1089,6 +1121,11 @@ export const PaymentSubscriptions: React.FC = () => {
       return null
     }
 
+    if (provider === 'rebill' && !['monthly', 'yearly'].includes(currentForm.intervalType)) {
+      showToast('warning', 'Frecuencia no soportada', 'Rebill sólo acepta suscripciones mensuales o anuales.')
+      return null
+    }
+
     if (isDateBeforeToday(currentForm.startDate, timezone) || (!startByLink && isDateBeforeToday(currentForm.nextRunAt, timezone))) {
       showToast('warning', 'Fecha inválida', 'Las suscripciones automáticas no pueden iniciar ni cobrarse en fechas pasadas.')
       return null
@@ -1134,7 +1171,7 @@ export const PaymentSubscriptions: React.FC = () => {
       if (form.startMode === 'link') {
         const fallback = availableLinkPaymentMethodOptions[0]
         if (!fallback) {
-          showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta o Mercado Pago para generar un link de suscripción.')
+          showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta, Mercado Pago o Rebill para generar un link de suscripción.')
           return
         }
 
@@ -1163,7 +1200,7 @@ export const PaymentSubscriptions: React.FC = () => {
     if (formMode === 'create' && formStep === 'gateway' && !availableLinkPaymentMethodOptions.some((option) => option.value === form.paymentMethod)) {
       const fallback = availableLinkPaymentMethodOptions[0]
       if (!fallback) {
-        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta o Mercado Pago para crear un link de suscripción.')
+        showToast('warning', 'No hay pasarela de link', 'Conecta Stripe, Conekta, Mercado Pago o Rebill para crear un link de suscripción.')
         return
       }
       applyPaymentMethod(fallback)
@@ -1423,7 +1460,7 @@ export const PaymentSubscriptions: React.FC = () => {
           {item.description && <small>{item.description}</small>}
         </button>
       ),
-      searchValue: (_value, item) => [item.name, item.description, item.stripeSubscriptionId, item.conektaSubscriptionId, item.mercadoPagoPreapprovalId],
+      searchValue: (_value, item) => [item.name, item.description, item.stripeSubscriptionId, item.conektaSubscriptionId, item.mercadoPagoPreapprovalId, item.rebillSubscriptionId, item.rebillPlanId],
       sortable: true
     },
     {
@@ -1490,7 +1527,7 @@ export const PaymentSubscriptions: React.FC = () => {
           </div>
         )
       },
-      searchValue: (_value, item) => [item.paymentMethod, item.paymentProvider, item.source, item.stripeCustomerId, item.conektaCustomerId, item.mercadoPagoPreapprovalId],
+      searchValue: (_value, item) => [item.paymentMethod, item.paymentProvider, item.source, item.stripeCustomerId, item.conektaCustomerId, item.mercadoPagoPreapprovalId, item.rebillCustomerId, item.rebillPaymentLinkId],
       sortable: true
     },
     {
@@ -1663,7 +1700,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 onClick={openCreateSubscription}
                 leftIcon={<Plus size={16} />}
                 disabled={integrationsLoading || !hasSubscriptionGateway}
-                title={!hasSubscriptionGateway ? 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones' : undefined}
+                title={!hasSubscriptionGateway ? 'Conecta Stripe, Conekta, Mercado Pago o Rebill para crear suscripciones' : undefined}
               >
                 Nueva suscripción
               </Button>
@@ -1992,7 +2029,7 @@ export const PaymentSubscriptions: React.FC = () => {
                 </div>
               )}
 
-              {formMode === 'edit' && !isMercadoPagoSelected && (
+              {formMode === 'edit' && !isMercadoPagoSelected && !isRebillSelected && (
                 <div className={styles.formGroup}>
                   <label>Próximo cobro</label>
                   <input
@@ -2028,18 +2065,20 @@ export const PaymentSubscriptions: React.FC = () => {
 
               {formMode === 'edit' && (
               <div className={`${styles.providerHint} ${styles.fullWidth}`}>
-                <PaymentPlatformLogo platform={isMercadoPagoSelected ? 'mercadopago' : isConektaSelected ? 'conekta' : isClipSelected ? 'clip' : 'stripe'} size="sm" decorative />
+                <PaymentPlatformLogo platform={isMercadoPagoSelected ? 'mercadopago' : isRebillSelected ? 'rebill' : isConektaSelected ? 'conekta' : isClipSelected ? 'clip' : 'stripe'} size="sm" decorative />
                 <p className={styles.formHint}>
                   {isMercadoPagoSelected
                     ? form.paymentMethod === 'mercadopago_checkout'
                       ? 'Mercado Pago creará la suscripción en su sistema y entregará su link de autorización.'
                       : 'Mercado Pago manejará esta suscripción desde su propio sistema y entregará su link de autorización.'
+                    : isRebillSelected
+                      ? 'Rebill manejará esta suscripción desde su checkout hospedado y enviará webhooks cuando se active, pause, falle o se cancele.'
                     : isConektaSelected
                       ? form.paymentMethod === 'conekta_link'
                         ? 'Conekta generará su link hospedado para autorizar la tarjeta y crear la suscripción.'
                         : 'Para cobros automáticos con Conekta, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'
                       : isClipSelected
-                        ? 'CLIP ya no está disponible para suscripciones. Este registro se conserva solo como historial; usa Stripe, Conekta o Mercado Pago para nuevos cobros recurrentes.'
+                        ? 'CLIP ya no está disponible para suscripciones. Este registro se conserva solo como historial; usa Stripe, Conekta, Mercado Pago o Rebill para nuevos cobros recurrentes.'
                       : form.paymentMethod === 'stripe_link'
                         ? 'Stripe abrirá Checkout para que el cliente autorice y active la suscripción.'
                         : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'}

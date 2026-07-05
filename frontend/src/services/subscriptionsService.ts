@@ -48,6 +48,15 @@ export interface PaymentSubscription {
   conektaNextBillingAt?: string | null
   conektaCheckoutId?: string | null
   conektaCheckoutUrl?: string | null
+  rebillSubscriptionId?: string | null
+  rebillPlanId?: string | null
+  rebillPaymentLinkId?: string | null
+  rebillPaymentLinkUrl?: string | null
+  rebillCustomerId?: string | null
+  rebillCardId?: string | null
+  rebillNextChargeAt?: string | null
+  rebillLastChargeAt?: string | null
+  rebillCheckoutUrl?: string | null
   subscriptionStartPaymentId?: string | null
   subscriptionStartPublicPaymentId?: string | null
   subscriptionStartPaymentProvider?: string | null
@@ -110,6 +119,14 @@ export interface SubscriptionPayload {
   conektaSubscriptionId?: string | null
   conektaPaymentSourceId?: string | null
   conektaNextBillingAt?: string | null
+  rebillSubscriptionId?: string | null
+  rebillPlanId?: string | null
+  rebillPaymentLinkId?: string | null
+  rebillPaymentLinkUrl?: string | null
+  rebillCustomerId?: string | null
+  rebillCardId?: string | null
+  rebillNextChargeAt?: string | null
+  rebillLastChargeAt?: string | null
   metadata?: Record<string, unknown> | null
 }
 

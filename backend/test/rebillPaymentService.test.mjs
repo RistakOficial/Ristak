@@ -139,7 +139,7 @@ function installRebillConfigFetchMock(calls = []) {
 
     if (parsed.pathname === '/v3/webhooks' && method === 'POST') {
       assert.equal(body.url, 'https://app.example.test/api/rebill/webhook')
-      assert.deepEqual(body.events, ['payment.created', 'payment.updated'])
+      assert.deepEqual(body.events, ['payment.created', 'payment.updated', 'subscription.created', 'subscription.updated'])
       return jsonTextResponse({
         id: 'wh_rebill_test',
         url: body.url,

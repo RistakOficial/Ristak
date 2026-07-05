@@ -40,7 +40,7 @@ const CONFIG_KEYS = {
 const DEFAULT_CURRENCY = 'USD'
 const REBILL_API_BASE = 'https://api.rebill.com'
 const REBILL_WEBHOOK_PATH = '/api/rebill/webhook'
-const REBILL_WEBHOOK_EVENTS = ['payment.created', 'payment.updated']
+const REBILL_WEBHOOK_EVENTS = ['payment.created', 'payment.updated', 'subscription.created', 'subscription.updated']
 const REBILL_SUPPORTED_CURRENCIES = new Set(['ARS', 'BRL', 'CLP', 'COP', 'MXN', 'USD'])
 const REBILL_SUPPORTED_INSTALLMENT_MONTHS = [3, 6, 9, 12, 18, 24]
 const SUCCESSFUL_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'approved'])
@@ -764,6 +764,34 @@ async function getRebillClientConfig(mode = '') {
   return config
 }
 
+async function syncRebillWebhookForConfiguredMode(config = {}, baseUrl = '') {
+  const webhook = await ensureRebillWebhookConfigured(config, baseUrl)
+  const mode = normalizeMode(config.mode)
+  if (!webhook.webhookUrl) return webhook
+
+  try {
+    const raw = await readRawConfig()
+    const connections = parseJson(raw[CONFIG_KEYS.modeConnections], {})
+    const previous = connections[mode] && typeof connections[mode] === 'object' ? connections[mode] : null
+    if (!previous) return webhook
+
+    connections[mode] = {
+      ...previous,
+      webhookId: webhook.webhookId,
+      webhookUrl: webhook.webhookUrl,
+      webhookConfigured: webhook.webhookConfigured,
+      webhookStatus: webhook.webhookStatus,
+      webhookLastError: webhook.webhookLastError,
+      webhookSyncedAt: webhook.webhookSyncedAt || previous.webhookSyncedAt || ''
+    }
+    await setAppConfig(CONFIG_KEYS.modeConnections, JSON.stringify(connections))
+  } catch (error) {
+    logger.warn(`No se pudo guardar estado de webhook Rebill: ${error.message}`)
+  }
+
+  return webhook
+}
+
 export async function testRebillPaymentConfig(input = null) {
   const mode = normalizeMode(input?.mode || await getPaymentGatewayMode())
   const previous = await getRebillPaymentConfig({ includeSecrets: true, mode })
@@ -1095,6 +1123,409 @@ function buildInstantProduct(row, metadata = {}) {
         : {})
     }
   }
+}
+
+function toRebillLocalizedText(value, fallback = 'Suscripción Ristak', maxLength = 180) {
+  return [{ language: 'es', text: sanitizeLocalizedText(value, fallback, maxLength) }]
+}
+
+function mapRebillSubscriptionStatus(status) {
+  const normalized = cleanString(status, 80).toLowerCase()
+  if (normalized === 'active') return 'active'
+  if (normalized === 'paused') return 'paused'
+  if (normalized === 'retrying' || normalized === 'defaulted') return 'past_due'
+  if (normalized === 'cancelled' || normalized === 'canceled' || normalized === 'finished') return 'cancelled'
+  if (normalized === 'processing') return 'incomplete'
+  return 'incomplete'
+}
+
+function buildRebillSubscriptionFrequency(intervalType = 'monthly', intervalCount = 1) {
+  const normalizedInterval = cleanString(intervalType, 40).toLowerCase()
+  const count = Math.max(1, Number.parseInt(intervalCount, 10) || 1)
+  if (normalizedInterval === 'yearly') return { period: 'year', count }
+  if (normalizedInterval === 'monthly') return { period: 'month', count }
+
+  const error = new Error('Rebill solo acepta suscripciones mensuales o anuales. Usa Stripe, Conekta o Mercado Pago para frecuencias diarias o semanales.')
+  error.status = 400
+  throw error
+}
+
+function monthDelta(startDate, endDate) {
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return null
+  const years = end.getUTCFullYear() - start.getUTCFullYear()
+  const months = years * 12 + end.getUTCMonth() - start.getUTCMonth()
+  const dayAdjustment = end.getUTCDate() > start.getUTCDate() ? 1 : 0
+  return Math.max(1, months + dayAdjustment)
+}
+
+function estimateRebillBillingCycles({ startDate, endDate, frequency } = {}) {
+  if (!endDate || !frequency?.period) return null
+  const months = monthDelta(startDate || new Date().toISOString(), endDate)
+  if (!months) return null
+  const intervalMonths = frequency.period === 'year'
+    ? 12 * Math.max(1, Number(frequency.count) || 1)
+    : Math.max(1, Number(frequency.count) || 1)
+  return Math.max(2, Math.ceil(months / intervalMonths))
+}
+
+function getRebillPlanId(source = {}) {
+  const plan = source.plan && typeof source.plan === 'object' ? source.plan : {}
+  return cleanString(
+    source.planId ||
+    source.plan_id ||
+    plan.id ||
+    source.plan?.planId ||
+    source.plan?.plan_id,
+    180
+  )
+}
+
+function getRebillPaymentLinkId(source = {}) {
+  const paymentLink = source.paymentLink && typeof source.paymentLink === 'object'
+    ? source.paymentLink
+    : source.payment_link && typeof source.payment_link === 'object'
+      ? source.payment_link
+      : {}
+  return cleanString(
+    source.paymentLinkId ||
+    source.payment_link_id ||
+    paymentLink.id,
+    180
+  )
+}
+
+function getRebillCustomerId(source = {}) {
+  const customer = source.customer && typeof source.customer === 'object' ? source.customer : {}
+  return cleanString(customer.id || source.customerId || source.customer_id, 180)
+}
+
+function getRebillCardId(source = {}) {
+  const card = source.card && typeof source.card === 'object' ? source.card : {}
+  return cleanString(card.id || source.cardId || source.card_id, 180)
+}
+
+function getRebillSubscriptionMetadata(source = {}) {
+  return source.metadata && typeof source.metadata === 'object' ? source.metadata : {}
+}
+
+function getRistakSubscriptionIdFromRebillPayload(source = {}) {
+  const metadata = getRebillSubscriptionMetadata(source)
+  return cleanString(
+    metadata.ristakSubscriptionId ||
+    metadata.ristak_subscription_id ||
+    metadata.subscriptionId ||
+    metadata.subscription_id ||
+    source.externalReference ||
+    source.external_reference,
+    180
+  )
+}
+
+function getRebillSubscriptionStartPaymentFromMetadata(metadata = {}) {
+  const payment = metadata.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object'
+    ? metadata.subscriptionStartPayment
+    : {}
+  return {
+    paymentId: cleanString(
+      payment.paymentId ||
+      payment.payment_id ||
+      metadata.subscriptionStartPaymentId ||
+      metadata.ristakPaymentId ||
+      metadata.ristak_payment_id,
+      180
+    ),
+    publicPaymentId: cleanString(
+      payment.publicPaymentId ||
+      payment.public_payment_id ||
+      metadata.subscriptionStartPublicPaymentId ||
+      metadata.publicPaymentId ||
+      metadata.public_payment_id,
+      180
+    )
+  }
+}
+
+function mapRebillSubscriptionResponse(payload = {}, fallback = {}) {
+  const metadata = getRebillSubscriptionMetadata(payload)
+  const subscriptionId = cleanString(payload.id || payload.subscriptionId || payload.subscription_id, 180)
+  const planId = getRebillPlanId(payload) || cleanString(fallback.rebillPlanId, 180)
+  const paymentLinkId = getRebillPaymentLinkId(payload) || cleanString(fallback.rebillPaymentLinkId, 180)
+  const nextChargeDate = timestampToIso(payload.nextChargeDate || payload.next_charge_date)
+  const lastChargeDate = timestampToIso(payload.lastChargeDate || payload.last_charge_date)
+  const cancelledAt = mapRebillSubscriptionStatus(payload.status) === 'cancelled'
+    ? timestampToIso(payload.cancelledAt || payload.cancelled_at || payload.updatedAt || payload.updated_at) || new Date().toISOString()
+    : null
+
+  return {
+    status: mapRebillSubscriptionStatus(payload.status || fallback.status),
+    rebillSubscriptionId: subscriptionId,
+    rebillPlanId: planId,
+    rebillPaymentLinkId: paymentLinkId,
+    rebillCustomerId: getRebillCustomerId(payload) || cleanString(fallback.rebillCustomerId, 180),
+    rebillCardId: getRebillCardId(payload) || cleanString(fallback.rebillCardId, 180),
+    rebillNextChargeAt: nextChargeDate,
+    rebillLastChargeAt: lastChargeDate,
+    nextRunAt: nextChargeDate || fallback.nextRunAt || null,
+    currentPeriodStart: lastChargeDate || fallback.currentPeriodStart || null,
+    currentPeriodEnd: nextChargeDate || fallback.currentPeriodEnd || null,
+    cancelledAt,
+    paymentMode: normalizeMode(fallback.paymentMode || fallback.mode || payload.mode),
+    metadata,
+    raw: {
+      provider: 'rebill',
+      subscription: payload
+    }
+  }
+}
+
+async function findSubscriptionForRebillPayload(payload = {}) {
+  const metadata = getRebillSubscriptionMetadata(payload)
+  const ristakSubscriptionId = getRistakSubscriptionIdFromRebillPayload(payload)
+  const subscriptionId = cleanString(payload.id || payload.subscriptionId || payload.subscription_id, 180)
+  const planId = getRebillPlanId(payload) || cleanString(metadata.rebillPlanId || metadata.rebill_plan_id, 180)
+  const paymentLinkId = getRebillPaymentLinkId(payload) || cleanString(metadata.rebillPaymentLinkId || metadata.rebill_payment_link_id, 180)
+  const startPayment = getRebillSubscriptionStartPaymentFromMetadata(metadata)
+  const clauses = []
+  const params = []
+
+  if (ristakSubscriptionId) {
+    clauses.push('id = ?')
+    params.push(ristakSubscriptionId)
+  }
+  if (subscriptionId) {
+    clauses.push('rebill_subscription_id = ?')
+    params.push(subscriptionId)
+  }
+  if (planId) {
+    clauses.push('rebill_plan_id = ?')
+    params.push(planId)
+  }
+  if (paymentLinkId) {
+    clauses.push('rebill_payment_link_id = ?')
+    params.push(paymentLinkId)
+  }
+  if (startPayment.paymentId) {
+    clauses.push('metadata_json LIKE ?')
+    params.push(`%${startPayment.paymentId}%`)
+  }
+  if (startPayment.publicPaymentId) {
+    clauses.push('metadata_json LIKE ?')
+    params.push(`%${startPayment.publicPaymentId}%`)
+  }
+
+  if (!clauses.length) return null
+  return db.get(
+    `SELECT *
+       FROM subscriptions
+      WHERE (${clauses.join(' OR ')})
+        AND COALESCE(status, '') <> 'deleted'
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    params
+  ).catch((error) => {
+    logger.warn(`No se pudo buscar suscripción Rebill local: ${error.message}`)
+    return null
+  })
+}
+
+async function updateSubscriptionFromRebillSubscription(payload = {}, fallback = {}) {
+  const mapped = mapRebillSubscriptionResponse(payload, fallback)
+  const subscriptionRow = await findSubscriptionForRebillPayload({
+    ...payload,
+    metadata: {
+      ...getRebillSubscriptionMetadata(payload),
+      ...(fallback.metadata && typeof fallback.metadata === 'object' ? fallback.metadata : {})
+    }
+  })
+  if (!subscriptionRow?.id) return null
+
+  const currentMetadata = parseJson(subscriptionRow.metadata_json, {})
+  const payloadMetadata = {
+    ...getRebillSubscriptionMetadata(payload),
+    ...(fallback.metadata && typeof fallback.metadata === 'object' ? fallback.metadata : {})
+  }
+  const startPayment = getRebillSubscriptionStartPaymentFromMetadata({
+    ...currentMetadata,
+    ...payloadMetadata
+  })
+  let resolvedContactId = cleanString(subscriptionRow.contact_id, 180)
+  let startPaymentRow = null
+
+  if (startPayment.paymentId) {
+    startPaymentRow = await findPaymentById(startPayment.paymentId).catch(() => null)
+  }
+  if (!startPaymentRow && startPayment.publicPaymentId) {
+    startPaymentRow = await findPaymentByPublicId(startPayment.publicPaymentId).catch(() => null)
+  }
+
+  if (startPaymentRow?.id) {
+    resolvedContactId = await resolvePaymentContactForGatewayPayment(startPaymentRow, {
+      provider: 'rebill',
+      providerPayload: payload
+    }) || resolvedContactId
+
+    await db.run(
+      `UPDATE payments
+          SET payment_method = CASE
+                WHEN payment_method IN ('rebill', 'rebill_checkout', 'rebill_payment_link', 'rebill_subscription') THEN 'rebill_subscription'
+                ELSE payment_method
+              END,
+              payment_provider = 'rebill',
+              reference = COALESCE(?, reference),
+              rebill_subscription_id = COALESCE(?, rebill_subscription_id),
+              rebill_customer_id = COALESCE(?, rebill_customer_id),
+              rebill_card_id = COALESCE(?, rebill_card_id),
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+      [
+        mapped.rebillSubscriptionId || null,
+        mapped.rebillSubscriptionId || null,
+        mapped.rebillCustomerId || null,
+        mapped.rebillCardId || null,
+        startPaymentRow.id
+      ]
+    ).catch(() => undefined)
+  }
+
+  const nextMetadata = {
+    ...currentMetadata,
+    rebillSubscription: {
+      id: mapped.rebillSubscriptionId,
+      planId: mapped.rebillPlanId,
+      paymentLinkId: mapped.rebillPaymentLinkId,
+      customerId: mapped.rebillCustomerId,
+      cardId: mapped.rebillCardId,
+      status: cleanString(payload.status, 80),
+      statusDetail: cleanString(payload.statusDetail || payload.status_detail, 80),
+      syncedAt: new Date().toISOString()
+    }
+  }
+  const currentRaw = parseJson(subscriptionRow.raw_json, {})
+
+  await db.run(
+    `UPDATE subscriptions
+        SET contact_id = COALESCE(contact_id, ?),
+            status = ?,
+            payment_method = 'rebill_subscription',
+            payment_provider = 'rebill',
+            payment_mode = ?,
+            rebill_subscription_id = COALESCE(?, rebill_subscription_id),
+            rebill_plan_id = COALESCE(?, rebill_plan_id),
+            rebill_payment_link_id = COALESCE(?, rebill_payment_link_id),
+            rebill_customer_id = COALESCE(?, rebill_customer_id),
+            rebill_card_id = COALESCE(?, rebill_card_id),
+            rebill_next_charge_at = COALESCE(?, rebill_next_charge_at),
+            rebill_last_charge_at = COALESCE(?, rebill_last_charge_at),
+            next_run_at = COALESCE(?, next_run_at),
+            current_period_start = COALESCE(?, current_period_start),
+            current_period_end = COALESCE(?, current_period_end),
+            cancelled_at = COALESCE(?, cancelled_at),
+            metadata_json = ?,
+            raw_json = ?,
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?`,
+    [
+      resolvedContactId || null,
+      mapped.status || subscriptionRow.status || 'incomplete',
+      mapped.paymentMode || subscriptionRow.payment_mode || 'test',
+      mapped.rebillSubscriptionId || null,
+      mapped.rebillPlanId || null,
+      mapped.rebillPaymentLinkId || null,
+      mapped.rebillCustomerId || null,
+      mapped.rebillCardId || null,
+      mapped.rebillNextChargeAt || null,
+      mapped.rebillLastChargeAt || null,
+      mapped.nextRunAt || null,
+      mapped.currentPeriodStart || null,
+      mapped.currentPeriodEnd || null,
+      mapped.cancelledAt || null,
+      JSON.stringify(nextMetadata),
+      JSON.stringify({
+        ...currentRaw,
+        rebill: mapped.raw
+      }),
+      subscriptionRow.id
+    ]
+  )
+
+  return db.get('SELECT * FROM subscriptions WHERE id = ?', [subscriptionRow.id])
+}
+
+async function findRebillSubscriptionForPayment(rebillMetadata = {}, paymentMetadata = {}) {
+  const subscriptionId = cleanString(rebillMetadata.subscriptionId, 180)
+  const metadata = paymentMetadata && typeof paymentMetadata === 'object' ? paymentMetadata : {}
+  if (!subscriptionId && !getRistakSubscriptionIdFromRebillPayload({ metadata })) return null
+
+  return findSubscriptionForRebillPayload({
+    id: subscriptionId,
+    metadata: {
+      ...metadata,
+      ...(subscriptionId
+        ? {
+            rebillSubscriptionId: subscriptionId,
+            rebill_subscription_id: subscriptionId
+          }
+        : {})
+    }
+  })
+}
+
+async function createRebillSubscriptionPaymentFromWebhook(rebillPayment = {}, rebillMetadata = {}, paymentMetadata = {}) {
+  const subscriptionRow = await findRebillSubscriptionForPayment(rebillMetadata, paymentMetadata)
+  if (!subscriptionRow?.id) return null
+
+  const paymentId = createId('rebill_subscription_payment')
+  const amount = normalizePositiveAmount(rebillPayment.amount || subscriptionRow.amount, 0)
+  const currency = assertRebillCurrency(rebillPayment.currency || subscriptionRow.currency)
+  const paidAt = timestampToIso(
+    rebillPayment.approvedAt ||
+    rebillPayment.approved_at ||
+    rebillPayment.paidAt ||
+    rebillPayment.paid_at ||
+    rebillPayment.createdAt ||
+    rebillPayment.created_at
+  )
+  const metadata = {
+    source: 'rebill_subscription_webhook',
+    ristakSubscriptionId: subscriptionRow.id,
+    rebillSubscriptionId: rebillMetadata.subscriptionId,
+    rebillPaymentId: rebillMetadata.paymentId,
+    rebillCustomerId: rebillMetadata.customerId,
+    rebillCardId: rebillMetadata.cardId,
+    contactName: subscriptionRow.contact_name || '',
+    contactEmail: subscriptionRow.contact_email || '',
+    contactPhone: subscriptionRow.contact_phone || ''
+  }
+
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, rebill_payment_id,
+      rebill_subscription_id, rebill_customer_id, rebill_card_id, paid_at,
+      metadata_json, date, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'pending', 'rebill_subscription', ?, 'rebill', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      paymentId,
+      subscriptionRow.contact_id || null,
+      amount,
+      currency,
+      subscriptionRow.payment_mode || 'test',
+      rebillMetadata.paymentId || null,
+      subscriptionRow.name || 'Suscripción',
+      `Cobro recurrente de ${subscriptionRow.name || 'suscripción'}`,
+      rebillMetadata.paymentId || null,
+      rebillMetadata.subscriptionId || null,
+      rebillMetadata.customerId || null,
+      rebillMetadata.cardId || null,
+      paidAt || null,
+      JSON.stringify(metadata),
+      paidAt || timestampToIso(rebillPayment.createdAt || rebillPayment.created_at) || new Date().toISOString()
+    ]
+  )
+
+  return findPaymentById(paymentId)
 }
 
 function getRebillPhoneInformation(value = '') {
@@ -2157,6 +2588,207 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
   }
 }
 
+export async function createRebillSubscriptionPlanLink(input = {}, { baseUrl = '', mode = '' } = {}) {
+  const config = await getRebillClientConfig(mode)
+  await syncRebillWebhookForConfiguredMode(config, baseUrl).catch((error) => {
+    logger.warn(`No se pudo verificar webhook Rebill antes de crear suscripción: ${error.message}`)
+  })
+
+  const subscriptionId = cleanString(input.ristakSubscriptionId || input.subscriptionId, 180)
+  if (!subscriptionId) {
+    const error = new Error('Falta el ID local de la suscripción para Rebill.')
+    error.status = 422
+    throw error
+  }
+
+  const amount = Number(input.amount)
+  if (!Number.isFinite(amount) || amount <= 0) {
+    const error = new Error('El monto de la suscripción debe ser mayor a 0.')
+    error.status = 400
+    throw error
+  }
+
+  const currency = assertRebillCurrency(input.currency || await getConfiguredCurrency())
+  const frequency = buildRebillSubscriptionFrequency(input.intervalType, input.intervalCount)
+  const repetitions = estimateRebillBillingCycles({
+    startDate: input.startDate,
+    endDate: input.cancelAt || input.endDate,
+    frequency
+  })
+  const title = sanitizeLocalizedText(input.name || input.title || 'Suscripción Ristak', 'Suscripción Ristak', 140)
+  const description = sanitizeLocalizedText(input.description || title, title, 300)
+  const subscriptionStartPaymentId = cleanString(input.subscriptionStartPaymentId || input.ristakPaymentId || input.paymentId, 180)
+  const subscriptionStartPublicPaymentId = cleanString(input.subscriptionStartPublicPaymentId || input.publicPaymentId, 180)
+  const contactId = cleanString(input.contactId || input.contact_id, 180)
+  const contactName = cleanString(input.contactName || input.contact_name, 180)
+  const contactEmail = cleanString(input.contactEmail || input.email || input.contact_email, 180)
+  const contactPhone = cleanString(input.contactPhone || input.phone || input.contact_phone, 80)
+  const businessMetadata = buildRebillHostedBusinessMetadata(await getPublicPaymentSettings())
+  const baseMetadata = {
+    ristakSubscriptionId: subscriptionId,
+    ristak_subscription_id: subscriptionId,
+    ristakPaymentId: subscriptionStartPaymentId,
+    ristak_payment_id: subscriptionStartPaymentId,
+    publicPaymentId: subscriptionStartPublicPaymentId,
+    public_payment_id: subscriptionStartPublicPaymentId,
+    subscriptionStartPaymentId,
+    subscriptionStartPublicPaymentId,
+    contactId,
+    contactName,
+    contactEmail,
+    contactPhone,
+    provider: 'rebill',
+    source: 'ristak_rebill_subscription_checkout',
+    ...businessMetadata
+  }
+
+  const { payload: plan } = await rebillApiRequest('/v3/plans', {
+    method: 'POST',
+    config,
+    idempotencyKey: `ristak:rebill-subscription-plan:${subscriptionId}`,
+    body: {
+      name: toRebillLocalizedText(title, 'Suscripción Ristak', 140),
+      description: toRebillLocalizedText(description, title, 300),
+      frequency,
+      ...(repetitions ? { repetitions } : {}),
+      status: 'active',
+      prices: [{ amount: normalizePositiveAmount(amount, 0), currency, isDefault: true }],
+      metadata: baseMetadata
+    }
+  })
+
+  const rebillPlanId = cleanString(plan?.id, 180)
+  if (!rebillPlanId) {
+    const error = new Error('Rebill no devolvió el plan de la suscripción.')
+    error.status = 502
+    throw error
+  }
+
+  const redirectUrls = buildRebillPaymentLinkRedirectUrls(baseUrl, subscriptionStartPublicPaymentId)
+  const prefilledFields = buildRebillPaymentLinkPrefilledFields({
+    contact_name: contactName,
+    contact_email: contactEmail,
+    contact_phone: contactPhone,
+    public_payment_id: subscriptionStartPublicPaymentId
+  }, {
+    contactName,
+    contactEmail,
+    contactPhone
+  })
+  const linkMetadata = {
+    ...baseMetadata,
+    rebillPlanId,
+    rebill_plan_id: rebillPlanId
+  }
+
+  const { payload: paymentLink } = await rebillApiRequest('/v3/payment-links', {
+    method: 'POST',
+    config,
+    idempotencyKey: `ristak:rebill-subscription-link:${subscriptionId}`,
+    body: {
+      type: 'plan',
+      plan: rebillPlanId,
+      title: toRebillLocalizedText(title, 'Suscripción Ristak', 140),
+      description: toRebillLocalizedText(description, title, 300),
+      paymentMethods: [{ methods: ['card'], currency }],
+      showCoupon: false,
+      metadata: linkMetadata,
+      ...(prefilledFields ? { prefilledFields } : {}),
+      ...(redirectUrls ? { redirectUrls } : {})
+    }
+  })
+
+  const rebillPaymentLinkUrl = cleanString(paymentLink?.url, 2000)
+  const rebillPaymentLinkId = cleanString(paymentLink?.id, 180)
+  if (!rebillPaymentLinkUrl) {
+    const error = new Error('Rebill creó el link de suscripción, pero no devolvió URL hospedada.')
+    error.status = 502
+    throw error
+  }
+
+  return {
+    status: 'incomplete',
+    paymentMode: config.mode,
+    rebillPlanId,
+    rebillPaymentLinkId,
+    rebillPaymentLinkUrl,
+    raw: {
+      provider: 'rebill',
+      plan,
+      paymentLink
+    }
+  }
+}
+
+export async function updateRebillRecurringSubscription(input = {}) {
+  const rebillSubscriptionId = cleanString(input.rebillSubscriptionId || input.subscriptionId, 180)
+  if (!rebillSubscriptionId) {
+    const error = new Error('Falta el ID de suscripción de Rebill.')
+    error.status = 422
+    throw error
+  }
+
+  const body = {}
+  if (input.name || input.description) {
+    body.name = toRebillLocalizedText(input.name || input.description || 'Suscripción Ristak', 'Suscripción Ristak', 140)
+    body.description = toRebillLocalizedText(input.description || input.name || 'Suscripción Ristak', 'Suscripción Ristak', 300)
+  }
+  if (input.status) body.status = cleanString(input.status, 40)
+  if (input.amount !== undefined) body.amount = normalizePositiveAmount(input.amount, 0)
+  if (input.nextRunAt || input.nextChargeDate) body.nextChargeDate = timestampToIso(input.nextRunAt || input.nextChargeDate)
+  if (input.intervalType || input.intervalCount) {
+    body.frequency = buildRebillSubscriptionFrequency(input.intervalType || 'monthly', input.intervalCount || 1)
+  }
+  if (input.billingCycles !== undefined || input.repetitions !== undefined) {
+    const cycles = input.billingCycles ?? input.repetitions
+    body.billingCycles = cycles === null ? null : Math.max(2, Number.parseInt(cycles, 10) || 2)
+  }
+
+  const config = await getRebillClientConfig(input.mode || '')
+  const { payload } = await rebillApiRequest(`/v3/subscriptions/${encodeURIComponent(rebillSubscriptionId)}`, {
+    method: 'PATCH',
+    body,
+    config
+  })
+
+  const mapped = mapRebillSubscriptionResponse(payload, { paymentMode: config.mode })
+  await updateSubscriptionFromRebillSubscription(payload, { paymentMode: config.mode }).catch((error) => {
+    logger.warn(`No se pudo refrescar suscripción Rebill ${rebillSubscriptionId}: ${error.message}`)
+  })
+  return mapped
+}
+
+async function setRebillRecurringSubscriptionStatus(rebillSubscriptionId, status) {
+  return updateRebillRecurringSubscription({ rebillSubscriptionId, status })
+}
+
+export async function pauseRebillRecurringSubscription(rebillSubscriptionId) {
+  return setRebillRecurringSubscriptionStatus(rebillSubscriptionId, 'paused')
+}
+
+export async function resumeRebillRecurringSubscription(rebillSubscriptionId) {
+  return setRebillRecurringSubscriptionStatus(rebillSubscriptionId, 'active')
+}
+
+export async function cancelRebillRecurringSubscription(rebillSubscriptionId) {
+  return setRebillRecurringSubscriptionStatus(rebillSubscriptionId, 'cancelled')
+}
+
+export async function refreshRebillSubscription(rebillSubscriptionId, { mode = '' } = {}) {
+  const cleanSubscriptionId = cleanString(rebillSubscriptionId, 180)
+  if (!cleanSubscriptionId) return null
+  const existing = await db.get(
+    `SELECT payment_mode
+       FROM subscriptions
+      WHERE rebill_subscription_id = ?
+      LIMIT 1`,
+    [cleanSubscriptionId]
+  ).catch(() => null)
+  const config = await getRebillClientConfig(existing?.payment_mode || mode)
+  const { payload } = await rebillApiRequest(`/v3/subscriptions/${encodeURIComponent(cleanSubscriptionId)}`, { config })
+  return updateSubscriptionFromRebillSubscription(payload, { paymentMode: config.mode })
+}
+
 export async function createRebillSavedCardPayment(input = {}, { mode = '' } = {}) {
   const config = await getRebillClientConfig(mode)
   const contactId = cleanString(input.contactId || input.contact_id, 180)
@@ -3030,6 +3662,7 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
   if (!rebillPaymentId) return null
 
   let row = await findPaymentByRebillPaymentId(rebillPaymentId)
+  const rebillMetadata = extractRebillMetadata(rebillPayment)
   const metadata = rebillPayment.metadata && typeof rebillPayment.metadata === 'object' ? rebillPayment.metadata : {}
   const localPaymentId = cleanString(metadata.localPaymentId || metadata.local_payment_id || metadata.paymentId || metadata.payment_id, 180)
   const publicPaymentId = cleanString(metadata.publicPaymentId || metadata.public_payment_id, 180)
@@ -3043,6 +3676,9 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
   if (!row && localPaymentId) row = await findPaymentById(localPaymentId)
   if (!row && publicPaymentId) row = await findPaymentByPublicId(publicPaymentId)
   if (!row && paymentLinkId) row = await findPaymentByRebillPaymentLinkId(paymentLinkId)
+  if (!row && (rebillMetadata.subscriptionId || getRistakSubscriptionIdFromRebillPayload({ metadata }))) {
+    row = await createRebillSubscriptionPaymentFromWebhook(rebillPayment, rebillMetadata, metadata)
+  }
   if (!row) return null
 
   const amount = Number(rebillPayment.amount || row.amount)
@@ -3057,7 +3693,6 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
   const previousStatus = cleanString(row.status, 80).toLowerCase()
   const wasPaid = SUCCESSFUL_PAYMENT_STATUSES.has(previousStatus) || Boolean(row.paid_at)
   const becamePaid = nextStatus === 'paid' && !wasPaid
-  const rebillMetadata = extractRebillMetadata(rebillPayment)
   const currentMetadata = parseJson(row.metadata_json, {})
   const selectedInstallments = normalizeRebillSelectedInstallments(rebillPayment.installments)
   const currentInstallments = currentMetadata.rebillInstallments && typeof currentMetadata.rebillInstallments === 'object'
@@ -3077,7 +3712,9 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
   const nextPaymentMethod = REBILL_STORED_CARD_METHODS.has(cleanString(row.payment_method, 80).toLowerCase()) ||
     cleanString(row.payment_method, 80).toLowerCase() === 'rebill_scheduled_card'
     ? 'rebill_saved_card'
-    : 'rebill_checkout'
+    : cleanString(row.payment_method, 80).toLowerCase() === 'rebill_subscription'
+      ? 'rebill_subscription'
+      : 'rebill_checkout'
 
   await db.run(
     `UPDATE payments
@@ -3134,6 +3771,23 @@ async function updatePaymentFromRebillPayment(rebillPayment = {}) {
   }
 
   await syncRebillPaymentPlanFromLocalPayment(updated)
+  if (rebillMetadata.subscriptionId) {
+    await updateSubscriptionFromRebillSubscription({
+      id: rebillMetadata.subscriptionId,
+      status: nextStatus === 'paid' ? 'active' : nextStatus === 'failed' ? 'retrying' : 'processing',
+      amount: Number.isFinite(amount) ? amount : undefined,
+      currency,
+      customer: rebillMetadata.customerId ? { id: rebillMetadata.customerId } : undefined,
+      card: rebillMetadata.card || (rebillMetadata.cardId ? { id: rebillMetadata.cardId } : undefined),
+      metadata
+    }, {
+      paymentMode: updated?.payment_mode || row.payment_mode,
+      rebillCustomerId: rebillMetadata.customerId,
+      rebillCardId: rebillMetadata.cardId
+    }).catch((error) => {
+      logger.warn(`No se pudo sincronizar suscripción Rebill desde pago ${rebillPaymentId}: ${error.message}`)
+    })
+  }
 
   if (updated?.contact_id && becamePaid) {
     registerGigstackPaymentForTransactionInBackground(updated.id)
@@ -3235,8 +3889,59 @@ function extractPaymentIdFromWebhook(body = {}) {
     .find((value) => /^pay_/i.test(value) || /^test_pay_/i.test(value)) || ''
 }
 
+function extractSubscriptionPayloadFromWebhook(body = {}) {
+  const candidates = [
+    body.subscription,
+    body.data?.subscription,
+    body.data?.object,
+    body.data?.result,
+    body.result,
+    body.data,
+    body
+  ]
+
+  return candidates.find((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return false
+    const id = cleanString(candidate.id || candidate.subscriptionId || candidate.subscription_id, 180)
+    return /^sub_/i.test(id) || /^test_sub_/i.test(id)
+  }) || null
+}
+
+function extractSubscriptionIdFromWebhook(body = {}) {
+  const payload = extractSubscriptionPayloadFromWebhook(body)
+  const candidates = [
+    payload?.id,
+    payload?.subscriptionId,
+    payload?.subscription_id,
+    body.subscriptionId,
+    body.subscription_id,
+    body.data?.subscriptionId,
+    body.data?.subscription_id
+  ]
+
+  return candidates
+    .map((value) => cleanString(value, 180))
+    .find((value) => /^sub_/i.test(value) || /^test_sub_/i.test(value)) || ''
+}
+
 export async function handleRebillWebhookEvent(body = {}) {
   const eventType = cleanString(body.event || body.type || body.event_type, 120)
+  if (eventType.startsWith('subscription.')) {
+    const subscriptionPayload = extractSubscriptionPayloadFromWebhook(body)
+    const subscriptionId = extractSubscriptionIdFromWebhook(body)
+    const updated = subscriptionPayload
+      ? await updateSubscriptionFromRebillSubscription(subscriptionPayload)
+      : await refreshRebillSubscription(subscriptionId)
+
+    return {
+      received: true,
+      eventType,
+      rebillSubscriptionId: cleanString(updated?.rebill_subscription_id || subscriptionId, 180) || null,
+      subscriptionId: updated?.id || null,
+      status: updated?.status || null
+    }
+  }
+
   const paymentId = extractPaymentIdFromWebhook(body)
   if (!paymentId) {
     return { received: true, ignored: true, eventType }
