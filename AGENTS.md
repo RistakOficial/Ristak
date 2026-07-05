@@ -110,3 +110,19 @@
 - `main` is the only base and publish target for this repo.
 - Do not switch, cherry-pick, or push any other branch as part of publishing.
 - Do not include unrelated local changes when syncing branches.
+
+## Mobile store releases
+
+- La ruta operativa para subir builds iOS/Android es **Ristak Installer →
+  Configuración → Tiendas móviles**, no secretos en este repo ni GitHub Secrets
+  permanentes.
+- Si el usuario pide subir un build móvil desde este repo, primero revisa
+  `docs/MOBILE_STORE_RELEASES.md` y dispara el flujo desde Ristak Installer
+  (botón de Tiendas móviles o `publishMobileStoreRelease`). El workflow
+  `mobile-store-release` espera un `mobile_release_token` temporal generado por
+  Installer.
+- Para iOS, Installer debe validar el certificado `.p12` guardado contra App
+  Store Connect y refrescar/crear los provisioning profiles App Store de
+  `com.ristak.app` y `com.ristak.app.NotificationService` antes de mandar el
+  build a GitHub Actions. Si falla ese preflight, corrige credenciales en
+  Installer; no regeneres ni pegues secretos en el repo de Ristak.

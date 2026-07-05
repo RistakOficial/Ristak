@@ -9,6 +9,13 @@ mobile build is ready. Installer stores the Apple and Google credentials in its
 database, creates a short-lived token, and sends only that token to GitHub
 Actions for the current run.
 
+Operational rule for agents: if the user asks from this repo to upload a mobile
+build, do not hunt for Apple/Google secrets in Ristak or create new credentials.
+Use Ristak Installer as the control plane. Trigger the **Tiendas móviles** button
+or call Installer's `publishMobileStoreRelease` service from the deployed
+Installer environment, keeping `submit_for_review=false` unless the user
+explicitly says the store listing is ready for review.
+
 For this local machine, use the private operator file:
 
 ```bash
@@ -39,6 +46,14 @@ Do not store mobile store credentials as GitHub repository secrets. GitHub
 Actions should receive only the temporary `mobile_release_token` generated for
 one release run.
 
+Before an iOS dispatch, Installer validates the stored `.p12` certificate
+against App Store Connect, finds active App Store provisioning profiles for
+`com.ristak.app` and `com.ristak.app.NotificationService`, creates missing
+profiles with the correct Apple Distribution certificate, and saves the current
+base64 profile content back into its encrypted settings table. That makes the
+button recover from rotated/expired/missing profiles without leaking Apple
+credentials into this repository.
+
 Set them in Ristak Installer under:
 
 `Configuración > Tiendas móviles`
@@ -59,12 +74,12 @@ Both iOS provisioning profiles must be App Store Connect profiles and must
 include the exact Apple Distribution certificate stored above. One profile is for
 the app bundle `com.ristak.app`; the other is for the Notification Service
 Extension bundle `com.ristak.app.NotificationService`. If the `.p12` certificate
-is rotated, regenerate/download both App Store profiles in Apple Developer with
-that same certificate and update both fields. CI installs the stored profiles
-directly; it does not regenerate profiles by name inside GitHub Actions. The
-main app profile can be manually named or Xcode-managed. CI detects Xcode-managed
-profiles and switches the archive/export to automatic signing so the profile is
-not forced as a manual signing profile.
+is rotated, the next Installer preflight should create or refresh both App Store
+profiles with that same certificate and update both fields. CI installs the
+stored profiles directly; it does not regenerate profiles by name inside GitHub
+Actions. The main app profile can be manually named or Xcode-managed. CI detects
+Xcode-managed profiles and switches the archive/export to automatic signing so
+the profile is not forced as a manual signing profile.
 
 OJO para avatares en push iOS: el app bundle `com.ristak.app` debe tener
 activadas las capabilities Push Notifications y Communication Notifications. El
