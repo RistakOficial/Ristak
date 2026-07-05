@@ -134,24 +134,24 @@ type GoalExecutionOption = {
 
 const goalExecutionOptionsByObjective: Record<ConversationalObjective, GoalExecutionOption[]> = {
   citas: [
-    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA detecta intención real, detiene el bot y avisa para que el equipo agende.' },
-    { value: 'book_appointment', label: 'Que la IA agende', description: 'La IA confirma un horario real y agenda la cita en el calendario.' },
-    { value: 'send_goal_url', label: 'Mandar enlace', description: 'La IA manda el enlace del calendario y la meta se completa cuando la cita queda confirmada.' }
+    { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta intención real, detiene el bot y avisa para que el equipo agende.' },
+    { value: 'book_appointment', label: 'El agente IA', description: 'La IA confirma un horario real y agenda la cita en el calendario.' },
+    { value: 'send_goal_url', label: 'La IA mandando un enlace', description: 'La IA manda el enlace del calendario y la meta se completa cuando la cita queda confirmada.' }
   ],
   ventas: [
-    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA detecta intención de compra, detiene el bot y avisa para que el equipo cierre.' },
-    { value: 'ready_to_buy', label: 'Que la IA cobre', description: 'La IA guía el pago y la venta se completa cuando el pago queda confirmado.' },
-    { value: 'send_goal_url', label: 'Mandar enlace', description: 'La IA manda el enlace de compra y la meta se completa cuando el pago queda confirmado.' }
+    { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta intención de compra, detiene el bot y avisa para que el equipo cierre.' },
+    { value: 'ready_to_buy', label: 'El agente IA', description: 'La IA guía el pago y la venta se completa cuando el pago queda confirmado.' },
+    { value: 'send_goal_url', label: 'La IA mandando un enlace', description: 'La IA manda el enlace de compra y la meta se completa cuando el pago queda confirmado.' }
   ],
   datos: [
-    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA junta los datos y avisa para que el equipo continúe.' }
+    { value: 'ready_for_human', label: 'Un humano', description: 'La IA junta los datos y avisa para que el equipo continúe.' }
   ],
   filtrar: [
-    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA filtra la conversación y avisa cuando el prospecto ya vale atención.' }
+    { value: 'ready_for_human', label: 'Un humano', description: 'La IA filtra la conversación y avisa cuando el prospecto ya vale atención.' }
   ],
   custom: [
-    { value: 'ready_for_human', label: 'Pasar a humano', description: 'La IA detecta que el objetivo está listo y avisa al equipo.' },
-    { value: 'send_trigger_link', label: 'Mandar enlace', description: 'La IA manda un enlace y detiene el bot cuando la persona lo abre.' }
+    { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta que el objetivo está listo y avisa al equipo.' },
+    { value: 'send_trigger_link', label: 'La IA mandando un enlace', description: 'La IA manda un enlace y detiene el bot cuando la persona lo abre.' }
   ]
 }
 
@@ -159,14 +159,14 @@ const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
 
 const attendedChatActionOptions = [
   {
-    value: 'mute_only',
-    label: 'Silenciar hasta terminar',
-    description: 'El contacto sigue en el chat de la IA, pero no manda avisos hasta que la meta termine.'
+    value: 'keep_visible',
+    label: 'Sí',
+    description: 'Sí, avísame cuando lleguen mensajes aunque el agente IA esté tomando la conversación.'
   },
   {
-    value: 'keep_visible',
-    label: 'Avisar aunque responda',
-    description: 'El contacto sigue en el chat de la IA y manda avisos aunque el agente esté respondiendo.'
+    value: 'mute_only',
+    label: 'No',
+    description: 'No, silencia las notificaciones hasta que el agente IA termine o pase el chat al equipo.'
   }
 ] as const
 
@@ -497,11 +497,11 @@ function getSelectedGoalExecutionInfo(
 }
 
 function getGoalExecutionQuestion(objective: ConversationalObjective) {
-  if (objective === 'citas') return '¿Quién quieres que agende la cita?'
-  if (objective === 'ventas') return '¿Quién quieres que cierre el pago?'
-  if (objective === 'datos') return '¿Quién quieres que reciba los datos?'
-  if (objective === 'filtrar') return '¿Quién quieres que atienda al prospecto filtrado?'
-  return '¿Quién quieres que complete el objetivo?'
+  if (objective === 'citas') return '¿Quién debería agendar la cita?'
+  if (objective === 'ventas') return '¿Quién debería cerrar el pago?'
+  if (objective === 'datos') return '¿Quién debería recibir los datos?'
+  if (objective === 'filtrar') return '¿Quién debería atender al prospecto filtrado?'
+  return '¿Quién debería completar el objetivo?'
 }
 
 const systemReplyDeliveryDefaults: Pick<
@@ -1329,8 +1329,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const [teamUsersLoading, setTeamUsersLoading] = useState(false)
   const [guidanceOpen, setGuidanceOpen] = useState({
     requiredData: false,
-    handoffRules: false,
-    extraInstructions: false
+    handoffRules: false
   })
   const testComposerInputRef = useRef<HTMLInputElement | null>(null)
   const testPhotoInputRef = useRef<HTMLInputElement | null>(null)
@@ -1359,8 +1358,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   useEffect(() => {
     setGuidanceOpen({
       requiredData: false,
-      handoffRules: false,
-      extraInstructions: false
+      handoffRules: false
     })
   }, [agent.id])
 
@@ -1429,7 +1427,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const identityError = getAgentIdentityError(agent)
   const requiredDataConfigOpen = guidanceOpen.requiredData || Boolean(String(agent.requiredData || '').trim())
   const handoffRulesConfigOpen = guidanceOpen.handoffRules || Boolean(String(agent.handoffRules || '').trim())
-  const extraInstructionsConfigOpen = guidanceOpen.extraInstructions || Boolean(String(agent.extraInstructions || '').trim())
   const goalWorkflow = getAgentGoalWorkflow(agent)
   const deposit = goalWorkflow.deposit
   const completion = goalWorkflow.completion
@@ -1442,6 +1439,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const showPaymentRequirementSettings = paymentRequirementConfigAvailable && (showAiAppointmentSettings || showAiSalesSettings)
   const showGoalUrlSettings = selectedGoalExecutionAction === 'send_goal_url' && (agent.objective === 'citas' || agent.objective === 'ventas')
   const showTriggerLinkSettings = selectedGoalExecutionAction === 'send_trigger_link'
+  const showCompletionSettings = selectedGoalExecutionAction === 'book_appointment' ||
+    selectedGoalExecutionAction === 'ready_to_buy' ||
+    selectedGoalExecutionAction === 'send_goal_url' ||
+    selectedGoalExecutionAction === 'send_trigger_link'
   const completionMode = completion.mode === 'assign_user' ? 'assign_user' : 'notify_only'
   const selectedCompletionUser = teamUsers.find((user) => user.id === completion.userId) || null
   const teamUserOptions = [
@@ -2686,6 +2687,33 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   </div>
                 )}
               </QuestionSelectRow>
+
+              <div className={styles.configQuestion}>
+                <div className={styles.field}>
+                  <label className={styles.label}>Qué tan persuasivo debe ser</label>
+                  <TabList
+                    fullWidth
+                    tabs={persuasionLevelTabs}
+                    activeTab={agent.persuasionLevel}
+                    onTabChange={(value) => onChange({ persuasionLevel: value as ConversationalPersuasionLevel })}
+                  />
+                  <p className={styles.helper}>{persuasionLevelHelp[agent.persuasionLevel]}</p>
+                </div>
+              </div>
+
+              <div className={styles.configQuestion}>
+                <div className={styles.field}>
+                  <label className={styles.label}>Cómo debe hablar</label>
+                  <TabList
+                    fullWidth
+                    tabs={languageLevelTabs}
+                    activeTab={agent.languageLevel}
+                    onTabChange={(value) => onChange({ languageLevel: value as ConversationalLanguageLevel })}
+                  />
+                  <p className={styles.helper}>{languageLevelHelp[agent.languageLevel]}</p>
+                </div>
+              </div>
+
               <QuestionSelectRow
                 question="¿Cuánto debe esperar antes de contestar?"
                 helper={getResponseDelayHelp(responseDelay)}
@@ -2808,17 +2836,17 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>Chat mientras la IA habla</h3>
+            <h3 className={styles.sectionTitle}>Notificaciones mientras el agente atiende</h3>
             <p className={styles.agentSectionHint}>
-              Decide si el equipo recibe avisos mientras este agente atiende. El contacto siempre se queda en la vista del agente.
+              Decide si el equipo recibe avisos mientras el agente IA toma la conversación. El contacto siempre se queda visible.
             </p>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
-                question="¿Qué pasa con el chat mientras la IA habla?"
+                question="¿Quieres recibir notificaciones mientras el agente IA toma la conversación?"
                 helper={selectedAttendedChatAction.description}
                 value={selectedAttendedChatActionValue}
                 options={attendedChatActionOptions.map((option) => ({ value: option.value, label: option.label }))}
-                selectLabel="Qué hace el chat con conversaciones atendidas"
+                selectLabel="Notificaciones mientras el agente atiende"
                 onChange={(value) => onChange(getAttendedChatActionPatch(value as AttendedChatActionValue))}
               />
             </div>
@@ -2851,57 +2879,59 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 {paymentRequirementSettings}
               </QuestionSelectRow>
 
-              <QuestionSelectRow
-                question="Al momento de cumplir el objetivo, ¿qué quieres que suceda?"
-                helper={completionMode === 'assign_user'
-                  ? (selectedCompletionUser
-                      ? `Se asigna a ${selectedCompletionUser.fullName || selectedCompletionUser.email || selectedCompletionUser.phone || selectedCompletionUser.username} y manda notificación.`
-                      : 'Elige quién lo toma cuando el bot termine.')
-                  : 'El bot deja de atender ese chat y manda una notificación para que el equipo lo vea.'}
-                value={completionMode}
-                options={completionModeOptions.map((option) => ({
-                  value: option.value,
-                  label: option.label,
-                  disabled: option.value === 'assign_user' && (teamUsersLoading || teamUsers.length === 0)
-                }))}
-                selectLabel="Qué pasa al cumplir el objetivo"
-                onChange={(mode) => {
-                  if (mode === 'assign_user' && (teamUsersLoading || teamUsers.length === 0)) return
-                  if (mode === 'assign_user') {
-                    const user = selectedCompletionUser || teamUsers[0] || null
-                    updateCompletion({
-                      mode,
-                      userId: user?.id || completion.userId || '',
-                      userName: user ? (user.fullName || user.email || user.phone || user.username || '') : completion.userName
-                    })
-                    return
-                  }
-                  updateCompletion({ mode: 'notify_only', userId: '', userName: '' })
-                }}
-              >
-                {completionMode === 'assign_user' && teamUsers.length > 0 && (
-                  <div className={styles.inlineFields}>
-                    <div className={styles.field}>
-                      <label className={styles.label}>Usuario asignado</label>
-                      <CustomSelect
-                        value={completion.userId}
-                        onChange={(event) => {
-                          const user = teamUsers.find((item) => item.id === event.target.value) || null
-                          updateCompletion({
-                            userId: user?.id || '',
-                            userName: user ? (user.fullName || user.email || user.phone || user.username || '') : ''
-                          })
-                        }}
-                        portal
-                      >
-                        {teamUserOptions.map((option) => (
-                          <option key={option.value || 'empty-user'} value={option.value}>{option.label}</option>
-                        ))}
-                      </CustomSelect>
+              {showCompletionSettings && (
+                <QuestionSelectRow
+                  question="Cuando la IA cumpla el objetivo, ¿qué debe pasar?"
+                  helper={completionMode === 'assign_user'
+                    ? (selectedCompletionUser
+                        ? `Se asigna a ${selectedCompletionUser.fullName || selectedCompletionUser.email || selectedCompletionUser.phone || selectedCompletionUser.username} y manda notificación.`
+                        : 'Elige quién lo toma cuando el bot termine.')
+                    : 'El bot deja de atender ese chat y manda una notificación para que el equipo lo vea.'}
+                  value={completionMode}
+                  options={completionModeOptions.map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                    disabled: option.value === 'assign_user' && (teamUsersLoading || teamUsers.length === 0)
+                  }))}
+                  selectLabel="Qué pasa al cumplir el objetivo"
+                  onChange={(mode) => {
+                    if (mode === 'assign_user' && (teamUsersLoading || teamUsers.length === 0)) return
+                    if (mode === 'assign_user') {
+                      const user = selectedCompletionUser || teamUsers[0] || null
+                      updateCompletion({
+                        mode,
+                        userId: user?.id || completion.userId || '',
+                        userName: user ? (user.fullName || user.email || user.phone || user.username || '') : completion.userName
+                      })
+                      return
+                    }
+                    updateCompletion({ mode: 'notify_only', userId: '', userName: '' })
+                  }}
+                >
+                  {completionMode === 'assign_user' && teamUsers.length > 0 && (
+                    <div className={styles.inlineFields}>
+                      <div className={styles.field}>
+                        <label className={styles.label}>Usuario asignado</label>
+                        <CustomSelect
+                          value={completion.userId}
+                          onChange={(event) => {
+                            const user = teamUsers.find((item) => item.id === event.target.value) || null
+                            updateCompletion({
+                              userId: user?.id || '',
+                              userName: user ? (user.fullName || user.email || user.phone || user.username || '') : ''
+                            })
+                          }}
+                          portal
+                        >
+                          {teamUserOptions.map((option) => (
+                            <option key={option.value || 'empty-user'} value={option.value}>{option.label}</option>
+                          ))}
+                        </CustomSelect>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </QuestionSelectRow>
+                  )}
+                </QuestionSelectRow>
+              )}
             </div>
 
             {agent.objective === 'custom' && (
@@ -3196,19 +3226,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 )}
               </QuestionSelectRow>
 
-              <QuestionSelectRow
-                question="¿Tus indicaciones obligatorias?"
-                helper="Reglas del negocio que SIEMPRE debe cumplir. Mandan por encima de todo lo demás: si contradicen cómo trae configurado el asistente, ganan las tuyas. Ej: no dar precios hasta que digan su presupuesto, no agendar sin estado clínico, mencionar la promo del mes."
-                value={extraInstructionsConfigOpen ? 'yes' : 'no'}
-                options={binaryChoiceOptions}
-                selectLabel="Indicaciones del negocio"
-                onChange={(value) => {
-                  const enabled = value === 'yes'
-                  setGuidanceOpen((current) => ({ ...current, extraInstructions: enabled }))
-                  if (!enabled) onChange({ extraInstructions: '' })
-                }}
-              >
-                {extraInstructionsConfigOpen && (
+              <div className={styles.configQuestion}>
+                <div className={styles.field}>
+                  <label className={styles.label}>Tus indicaciones obligatorias para el asistente</label>
                   <textarea
                     className={styles.textarea}
                     value={agent.extraInstructions}
@@ -3216,32 +3236,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     onChange={(event) => onChange({ extraInstructions: event.target.value })}
                     rows={5}
                   />
-                )}
-              </QuestionSelectRow>
-
-              <div className={styles.configQuestion}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Qué tan persuasivo debe ser</label>
-                  <TabList
-                    fullWidth
-                    tabs={persuasionLevelTabs}
-                    activeTab={agent.persuasionLevel}
-                    onTabChange={(value) => onChange({ persuasionLevel: value as ConversationalPersuasionLevel })}
-                  />
-                  <p className={styles.helper}>{persuasionLevelHelp[agent.persuasionLevel]}</p>
-                </div>
-              </div>
-
-              <div className={styles.configQuestion}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Cómo debe hablar</label>
-                  <TabList
-                    fullWidth
-                    tabs={languageLevelTabs}
-                    activeTab={agent.languageLevel}
-                    onTabChange={(value) => onChange({ languageLevel: value as ConversationalLanguageLevel })}
-                  />
-                  <p className={styles.helper}>{languageLevelHelp[agent.languageLevel]}</p>
+                  <p className={styles.helper}>
+                    Reglas del negocio que siempre debe cumplir. Si contradicen cómo viene configurado el asistente, ganan estas indicaciones. Puedes dejarlo en blanco.
+                  </p>
                 </div>
               </div>
             </div>
