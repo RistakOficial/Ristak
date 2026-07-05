@@ -16478,10 +16478,18 @@
   align-items: center;
 }
 
+.pagesDropdownContentCell {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  padding: 8px 0;
+}
+
 .pagesDropdownSelectButton {
   width: 100%;
   min-width: 0;
-  min-height: 54px;
+  min-height: 28px;
   display: flex;
   align-items: center;
   border: 0;
@@ -16573,48 +16581,48 @@
   color: var(--color-text-primary);
 }
 
-.pagesDropdownRoutePreview {
+.pagesDropdownRoutePill {
+  max-width: 100%;
   min-width: 0;
-  display: flex;
+  min-height: 24px;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
+  justify-self: start;
+  gap: 6px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, var(--accent) 22%);
+  border-radius: var(--radius-pill, 999px);
+  background: color-mix(in srgb, var(--surface) 82%, var(--accent) 18%);
   color: var(--color-text-secondary);
-  padding: 0 4px;
+  padding: 0 8px;
+  font: inherit;
   font-size: 12px;
   font-weight: var(--font-weight-semibold, 600);
   line-height: 1.25;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
 }
 
-.pagesDropdownRoutePreview span {
+.pagesDropdownRoutePill span:first-child {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pagesDropdownRouteOpenButton {
-  width: 20px;
-  height: 20px;
+.pagesDropdownRoutePill svg {
   flex: 0 0 auto;
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--color-text-secondary);
-  padding: 0;
-  cursor: pointer;
 }
 
-.pagesDropdownRouteOpenButton:hover,
-.pagesDropdownRouteOpenButton:focus-visible {
-  border-color: var(--color-primary);
-  color: var(--color-primary);
+.pagesDropdownRoutePill:hover:not(:disabled),
+.pagesDropdownRoutePill:focus-visible {
+  border-color: var(--accent);
+  color: var(--accent);
   outline: none;
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
-.pagesDropdownRouteOpenButton:disabled {
+.pagesDropdownRoutePill:disabled {
   cursor: not-allowed;
   opacity: 0.48;
 }
@@ -16623,7 +16631,7 @@
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  color: var(--color-primary);
+  color: var(--accent);
 }
 
 .pagesDropdownActionMenu {
@@ -17672,7 +17680,7 @@
 }
 
 .pageFrame .containerFocused .pagesDropdownSelectButton {
-  min-height: 42px;
+  min-height: 28px;
   border-radius: 7px;
 }
 

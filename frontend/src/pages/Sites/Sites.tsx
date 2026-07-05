@@ -28402,10 +28402,33 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
             )}
           </div>
         ) : (
-          <button type="button" className={styles.pagesDropdownSelectButton} onClick={onSelect}>
-            {depth > 0 && <CornerDownRight size={13} style={{ opacity: 0.5, flexShrink: 0 }} />}
-            <span className={styles.pagesDropdownTitleText}>{title}</span>
-          </button>
+          <div className={styles.pagesDropdownContentCell}>
+            <button type="button" className={styles.pagesDropdownSelectButton} onClick={onSelect}>
+              {depth > 0 && <CornerDownRight size={13} style={{ opacity: 0.5, flexShrink: 0 }} />}
+              <span className={styles.pagesDropdownTitleText}>{title}</span>
+            </button>
+            {showRouteEditor && routePreview && (
+              <button
+                type="button"
+                className={styles.pagesDropdownRoutePill}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onOpenRoute?.()
+                }}
+                disabled={!canOpenRoute}
+                aria-label={`Abrir ruta ${routePreview}`}
+                title={`Abrir ${routePreview}${isHomePage ? ' (página principal)' : ''}`}
+              >
+                <span>{routePreview}</span>
+                <ExternalLink size={12} />
+                {isDefaultRoutePage && (
+                  <span className={styles.pagesDropdownRouteDefaultIcon} title="Página oficial">
+                    <Star size={12} fill="currentColor" />
+                  </span>
+                )}
+              </button>
+            )}
+          </div>
         )}
 
         {!locked && (
@@ -28528,33 +28551,6 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
           </div>
         )}
       </div>
-      {showRouteEditor && !renaming && routePreview && (
-        <div
-          className={styles.pagesDropdownRoutePreview}
-          style={depth ? { marginLeft: depth * 18 } : undefined}
-          title={isHomePage ? 'Página principal' : undefined}
-        >
-          <button
-            type="button"
-            className={styles.pagesDropdownRouteOpenButton}
-            onClick={(event) => {
-              event.stopPropagation()
-              onOpenRoute?.()
-            }}
-            disabled={!canOpenRoute}
-            aria-label={`Abrir ruta ${routePreview}`}
-            title={`Abrir ${routePreview}`}
-          >
-            <ExternalLink size={12} />
-          </button>
-          <span>{routePreview}</span>
-          {isDefaultRoutePage && (
-            <span className={styles.pagesDropdownRouteDefaultIcon} title="Página oficial">
-              <Star size={12} fill="currentColor" />
-            </span>
-          )}
-        </div>
-      )}
     </div>
   )
 }
