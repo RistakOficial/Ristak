@@ -19,6 +19,7 @@ import {
   handleMetaDirectWebhookRelayView,
   refreshWhatsAppApiView,
   resetWhatsAppApiCredentialsView,
+  backfillWhatsAppContactProfilePicturesView,
   listScheduledChatMessagesView,
   scheduleChatMessageView,
   sendWhatsAppApiAudioMessageView,
@@ -44,6 +45,7 @@ import {
   restoreWhatsAppPhoneNumberContactsView
 } from '../controllers/whatsappApiController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
@@ -71,6 +73,7 @@ router.post('/phone-numbers/default', setWhatsAppApiDefaultPhoneNumberView)
 router.post('/phone-numbers/:id/reroute', rerouteWhatsAppPhoneNumberContactsView)
 router.post('/phone-numbers/:id/restore', restoreWhatsAppPhoneNumberContactsView)
 router.post('/refresh', refreshWhatsAppApiView)
+router.post('/contacts/profile-pictures/backfill', requireModuleAccess('settings_whatsapp'), backfillWhatsAppContactProfilePicturesView)
 router.post('/disconnect', disconnectWhatsAppApiView)
 router.post('/reset', resetWhatsAppApiCredentialsView)
 router.get('/qr/drip-settings', getWhatsAppQrDripSettingsView)

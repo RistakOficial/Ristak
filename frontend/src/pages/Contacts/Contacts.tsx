@@ -1195,6 +1195,7 @@ const ContactsTable: React.FC = () => {
     const contactsQueryOptions = {
       filter,
       advancedFilters: activeAdvancedFilters,
+      warmProfilePictures: true,
       sortBy: activeSort?.by || 'created_at',
       sortOrder: activeSort?.order || 'DESC' as const
     }

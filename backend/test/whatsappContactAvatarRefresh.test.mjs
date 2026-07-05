@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
+  backfillWhatsAppContactProfilePictures,
   getWhatsAppApiConfigKeys,
   refreshInboundWhatsAppContactProfilePicture
 } from '../src/services/whatsappApiService.js'
@@ -117,25 +118,37 @@ async function cleanup({ contactId, phone, phoneNumberId }) {
   await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
 }
 
-async function seedQrAvatarFixture({ contactId, phone, phoneNumberId, businessPhone, profileUpdatedAt }) {
+async function seedQrAvatarFixture({
+  contactId,
+  phone,
+  phoneNumberId,
+  businessPhone,
+  profileUpdatedAt,
+  profilePictureUrl = 'https://old.example/avatar.jpg',
+  source = 'WhatsApp_QR',
+  seedApiContact = true
+}) {
   await db.run(`
     INSERT INTO contacts (
       id, phone, full_name, first_name, source, created_at, updated_at
-    ) VALUES (?, ?, 'Cliente Avatar', 'Cliente', 'WhatsApp_QR', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `, [contactId, phone])
+    ) VALUES (?, ?, 'Cliente Avatar', 'Cliente', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [contactId, phone, source])
 
-  await db.run(`
-    INSERT INTO whatsapp_api_contacts (
-      id, contact_id, phone, profile_name, profile_picture_url,
-      profile_picture_source, profile_picture_updated_at,
-      first_seen_at, last_seen_at, updated_at
-    ) VALUES (?, ?, ?, 'Cliente Avatar', 'https://old.example/avatar.jpg',
-      'baileys_qr', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `, [`waapi_profile_${contactId}`, contactId, phone, profileUpdatedAt])
+  if (seedApiContact) {
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, profile_picture_url,
+        profile_picture_source, profile_picture_updated_at,
+        first_seen_at, last_seen_at, updated_at
+      ) VALUES (?, ?, ?, 'Cliente Avatar', ?,
+        'baileys_qr', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [`waapi_profile_${contactId}`, contactId, phone, profilePictureUrl, profileUpdatedAt])
+  }
 
   await db.run(`
     INSERT INTO whatsapp_api_phone_numbers (
@@ -218,6 +231,132 @@ test('refresh inbound avatar: si la foto QR esta vencida, vuelve a pedirla y la 
       assert.equal(row.profile_picture_url, 'https://wa.example/avatar-new.jpg')
       assert.equal(row.profile_picture_source, 'baileys_qr')
       assert.equal(row.profile_picture_error, null)
+    })
+  } finally {
+    resetWhatsAppQrServiceForTest()
+    await cleanup({ contactId, phone, phoneNumberId })
+  }
+})
+
+test('backfill avatars: refresca contactos WhatsApp existentes sin esperar mensaje inbound', async () => {
+  const id = randomUUID()
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000023'
+  const phoneNumberId = `phone_qr_avatar_backfill_${id}`
+  const contactId = `rstk_contact_qr_avatar_backfill_${id}`
+  const calls = []
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+
+  await cleanup({ contactId, phone, phoneNumberId })
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '0')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await seedQrAvatarFixture({
+        contactId,
+        phone,
+        phoneNumberId,
+        businessPhone,
+        profileUpdatedAt: null,
+        profilePictureUrl: null
+      })
+
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({
+        connectedJid: `${normalizeDigits(businessPhone)}@s.whatsapp.net`,
+        profilePictureUrl: 'https://wa.example/avatar-backfill.jpg',
+        calls
+      }))
+
+      const result = await backfillWhatsAppContactProfilePictures({
+        limit: 10,
+        onlyMissing: true,
+        contactIds: [contactId]
+      })
+
+      assert.equal(result.ok, true)
+      assert.equal(result.scanned, 1)
+      assert.equal(result.updated, 1)
+      assert.equal(result.qrUpdated, 1)
+      assert.equal(calls.length, 1)
+      assert.equal(calls[0].jid, `${normalizeDigits(phone)}@s.whatsapp.net`)
+
+      const row = await db.get(`
+        SELECT profile_picture_url, profile_picture_source, profile_picture_error
+        FROM whatsapp_api_contacts
+        WHERE phone = ?
+      `, [phone])
+
+      assert.equal(row.profile_picture_url, 'https://wa.example/avatar-backfill.jpg')
+      assert.equal(row.profile_picture_source, 'baileys_qr')
+      assert.equal(row.profile_picture_error, null)
+    })
+  } finally {
+    resetWhatsAppQrServiceForTest()
+    await cleanup({ contactId, phone, phoneNumberId })
+  }
+})
+
+test('backfill avatars: incluye contactos normales del CRM con telefono', async () => {
+  const id = randomUUID()
+  const phone = `+52995${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000024'
+  const phoneNumberId = `phone_qr_avatar_all_crm_${id}`
+  const contactId = `rstk_contact_qr_avatar_all_crm_${id}`
+  const calls = []
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+
+  await cleanup({ contactId, phone, phoneNumberId })
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '0')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await seedQrAvatarFixture({
+        contactId,
+        phone,
+        phoneNumberId,
+        businessPhone,
+        profileUpdatedAt: null,
+        source: 'Manual',
+        seedApiContact: false
+      })
+
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({
+        connectedJid: `${normalizeDigits(businessPhone)}@s.whatsapp.net`,
+        profilePictureUrl: 'https://wa.example/avatar-all-crm.jpg',
+        calls
+      }))
+
+      const result = await backfillWhatsAppContactProfilePictures({
+        limit: 10,
+        onlyMissing: true,
+        contactIds: [contactId]
+      })
+
+      assert.equal(result.ok, true)
+      assert.equal(result.scope, 'all_crm')
+      assert.equal(result.scanned, 1)
+      assert.equal(result.updated, 1)
+      assert.equal(result.qrUpdated, 1)
+      assert.equal(calls.length, 1)
+      assert.equal(calls[0].jid, `${normalizeDigits(phone)}@s.whatsapp.net`)
+
+      const row = await db.get(`
+        SELECT contact_id, profile_picture_url, profile_picture_source
+        FROM whatsapp_api_contacts
+        WHERE phone = ?
+      `, [phone])
+
+      assert.equal(row.contact_id, contactId)
+      assert.equal(row.profile_picture_url, 'https://wa.example/avatar-all-crm.jpg')
+      assert.equal(row.profile_picture_source, 'baileys_qr')
     })
   } finally {
     resetWhatsAppQrServiceForTest()

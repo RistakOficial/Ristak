@@ -214,6 +214,38 @@ export interface WhatsAppMetaDirectTestResponse {
   message?: string
 }
 
+export interface WhatsAppContactProfilePictureBackfillContact {
+  id: string
+  phone: string
+  name?: string | null
+  profilePictureUrl?: string | null
+}
+
+export interface WhatsAppContactProfilePictureBackfillResult {
+  ok: boolean
+  startedAt?: string
+  finishedAt?: string
+  limit: number
+  force: boolean
+  onlyMissing: boolean
+  scope?: 'all_crm' | 'whatsapp_only' | string
+  scanned: number
+  apiAttempted: number
+  qrAttempted: number
+  apiUpdated: number
+  qrUpdated: number
+  updated: number
+  contacts: WhatsAppContactProfilePictureBackfillContact[]
+}
+
+export interface WhatsAppContactProfilePictureBackfillPayload {
+  limit?: number
+  force?: boolean
+  onlyMissing?: boolean
+  contactIds?: string[]
+  scope?: 'all_crm' | 'whatsapp_only'
+}
+
 export interface WhatsAppApiConnectPayload {
   apiKey?: string
   senderPhone?: string
@@ -599,6 +631,9 @@ export const whatsappApiService = {
     apiClient.post<{ restored: number; phoneNumberId: string }>(`/whatsapp-api/phone-numbers/${encodeURIComponent(phoneNumberId)}/restore`)
   ),
   refresh: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/refresh'),
+  backfillContactProfilePictures: (payload: WhatsAppContactProfilePictureBackfillPayload = {}) => (
+    apiClient.post<WhatsAppContactProfilePictureBackfillResult>('/whatsapp-api/contacts/profile-pictures/backfill', payload)
+  ),
   disconnect: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/disconnect'),
   reset: () => apiClient.post<WhatsAppApiStatus>('/whatsapp-api/reset'),
   getQr: (phoneNumberId?: string) => apiClient.get<WhatsAppQrSession | WhatsAppQrSession[]>('/whatsapp-api/qr', {

@@ -92,6 +92,9 @@ const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
+const WHATSAPP_PROFILE_PICTURE_BACKFILL_DEFAULT_LIMIT = 1000
+const WHATSAPP_PROFILE_PICTURE_BACKFILL_MAX_LIMIT = 5000
+const WHATSAPP_PROFILE_PICTURE_BACKFILL_QR_BATCH_LIMIT = 8
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT = 3
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX = 20
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX = 256
@@ -3968,6 +3971,16 @@ async function runYCloudPostConnectionSync({ apiKey, businessPhoneHints = [], wa
   await repairWhatsAppApiContactIdentityFromMessages().catch(error => {
     logger.warn(`No se pudo reparar nombres/fechas de contactos WhatsApp API en segundo plano (${source}): ${error.message}`)
   })
+
+  if (!await stillConnected()) return
+
+  await backfillWhatsAppContactProfilePictures({
+    limit: WHATSAPP_PROFILE_PICTURE_BACKFILL_DEFAULT_LIMIT,
+    onlyMissing: true,
+    scope: 'all_crm'
+  }).catch(error => {
+    logger.warn(`No se pudieron hidratar avatares de contactos WhatsApp en segundo plano (${source}): ${error.message}`)
+  })
 }
 
 function scheduleYCloudPostConnectionSync(options = {}) {
@@ -5414,6 +5427,291 @@ export async function refreshInboundWhatsAppContactProfilePicture(result = {}) {
   return refreshedUrl
     ? { refreshed: true, url: refreshedUrl, source: qrUrl ? 'qr' : 'api' }
     : { refreshed: false, reason: 'not_available' }
+}
+
+function clampWhatsAppProfilePictureBackfillLimit(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed) || parsed <= 0) return WHATSAPP_PROFILE_PICTURE_BACKFILL_DEFAULT_LIMIT
+  return Math.min(Math.max(Math.floor(parsed), 1), WHATSAPP_PROFILE_PICTURE_BACKFILL_MAX_LIMIT)
+}
+
+function chunkProfilePictureBackfillContacts(contacts = [], size = WHATSAPP_PROFILE_PICTURE_BACKFILL_QR_BATCH_LIMIT) {
+  const chunkSize = Math.max(Math.floor(Number(size) || WHATSAPP_PROFILE_PICTURE_BACKFILL_QR_BATCH_LIMIT), 1)
+  const chunks = []
+  for (let index = 0; index < contacts.length; index += chunkSize) {
+    chunks.push(contacts.slice(index, index + chunkSize))
+  }
+  return chunks
+}
+
+function mergeProfilePictureResults(target = new Map(), source = new Map()) {
+  for (const [key, value] of source || []) {
+    const cleanKey = cleanString(key)
+    const cleanValue = cleanString(value)
+    if (cleanKey && cleanValue) target.set(cleanKey, cleanValue)
+  }
+  return target
+}
+
+function applyBackfilledProfilePicturesToContacts(contacts = [], pictures = new Map()) {
+  if (!pictures?.size) return contacts
+  const refreshedAt = nowIso()
+  return contacts.map(contact => {
+    const key = cleanString(contact?.id) || cleanString(contact?.phone)
+    const url = pictures.get(key)
+    return url
+      ? {
+          ...contact,
+          whatsapp_profile_picture_url: url,
+          whatsapp_profile_picture_updated_at: refreshedAt
+        }
+      : contact
+  })
+}
+
+async function listWhatsAppProfilePictureBackfillContacts({ limit, onlyMissing = false, contactIds = [], scope = 'all_crm' } = {}) {
+  const safeLimit = clampWhatsAppProfilePictureBackfillLimit(limit)
+  const rowLimit = Math.min(safeLimit * 4, WHATSAPP_PROFILE_PICTURE_BACKFILL_MAX_LIMIT * 4)
+  const cleanContactIds = [...new Set((Array.isArray(contactIds) ? contactIds : [])
+    .map(cleanString)
+    .filter(Boolean))]
+  const contactIdClause = cleanContactIds.length
+    ? `AND c.id IN (${cleanContactIds.map(() => '?').join(', ')})`
+    : ''
+  const onlyMissingClause = onlyMissing
+    ? "WHERE NULLIF(whatsapp_profile_picture_url, '') IS NULL"
+    : ''
+  const whatsappOnlyClause = cleanString(scope).toLowerCase() === 'whatsapp_only'
+    ? `AND (
+          LOWER(COALESCE(c.source, '')) LIKE '%whatsapp%'
+          OR EXISTS (
+            SELECT 1
+            FROM whatsapp_api_contacts wac
+            WHERE wac.contact_id = c.id
+               OR wac.phone = cp.phone
+               OR wac.phone = c.phone
+          )
+          OR EXISTS (
+            SELECT 1
+            FROM whatsapp_api_messages msg
+            WHERE msg.contact_id = c.id
+               OR cp.phone IN (msg.phone, msg.from_phone, msg.to_phone)
+          )
+        )`
+    : ''
+
+  const rows = await db.all(`
+    WITH contact_phone_lookup AS (
+      SELECT
+        id AS contact_id,
+        phone,
+        1 AS is_primary,
+        updated_at AS phone_updated_at
+      FROM contacts
+      WHERE TRIM(COALESCE(phone, '')) != ''
+      UNION ALL
+      SELECT
+        contact_id,
+        phone,
+        COALESCE(is_primary, 0) AS is_primary,
+        updated_at AS phone_updated_at
+      FROM contact_phone_numbers
+      WHERE TRIM(COALESCE(phone, '')) != ''
+    ),
+    candidates AS (
+      SELECT
+        c.id,
+        cp.phone,
+        c.full_name,
+        c.first_name,
+        c.preferred_whatsapp_phone_number_id,
+        (
+          SELECT profile_name
+          FROM whatsapp_api_contacts wac
+          WHERE wac.contact_id = c.id
+             OR wac.phone = cp.phone
+             OR wac.phone = c.phone
+          ORDER BY wac.updated_at DESC
+          LIMIT 1
+        ) AS whatsapp_profile_name,
+        (
+          SELECT raw_profile_json
+          FROM whatsapp_api_contacts wac
+          WHERE wac.contact_id = c.id
+             OR wac.phone = cp.phone
+             OR wac.phone = c.phone
+          ORDER BY wac.updated_at DESC
+          LIMIT 1
+        ) AS whatsapp_raw_profile_json,
+        (
+          SELECT profile_picture_url
+          FROM whatsapp_api_contacts wac
+          WHERE wac.contact_id = c.id
+             OR wac.phone = cp.phone
+             OR wac.phone = c.phone
+          ORDER BY CASE WHEN NULLIF(wac.profile_picture_url, '') IS NULL THEN 1 ELSE 0 END,
+                   wac.profile_picture_updated_at DESC,
+                   wac.updated_at DESC
+          LIMIT 1
+        ) AS whatsapp_profile_picture_url,
+        (
+          SELECT profile_picture_updated_at
+          FROM whatsapp_api_contacts wac
+          WHERE wac.contact_id = c.id
+             OR wac.phone = cp.phone
+             OR wac.phone = c.phone
+          ORDER BY wac.profile_picture_updated_at DESC, wac.updated_at DESC
+          LIMIT 1
+        ) AS whatsapp_profile_picture_updated_at,
+        (
+          SELECT business_phone
+          FROM whatsapp_api_messages msg
+          WHERE (msg.contact_id = c.id OR cp.phone IN (msg.phone, msg.from_phone, msg.to_phone))
+            AND msg.direction = 'inbound'
+            AND TRIM(COALESCE(msg.business_phone, '')) != ''
+          ORDER BY COALESCE(msg.message_timestamp, msg.created_at) DESC, msg.created_at DESC
+          LIMIT 1
+        ) AS last_inbound_business_phone,
+        (
+          SELECT business_phone_number_id
+          FROM whatsapp_api_messages msg
+          WHERE (msg.contact_id = c.id OR cp.phone IN (msg.phone, msg.from_phone, msg.to_phone))
+            AND msg.direction = 'inbound'
+            AND TRIM(COALESCE(msg.business_phone_number_id, '')) != ''
+          ORDER BY COALESCE(msg.message_timestamp, msg.created_at) DESC, msg.created_at DESC
+          LIMIT 1
+        ) AS last_inbound_business_phone_number_id,
+        (
+          SELECT MAX(COALESCE(msg.message_timestamp, msg.created_at))
+          FROM whatsapp_api_messages msg
+          WHERE msg.contact_id = c.id
+             OR cp.phone IN (msg.phone, msg.from_phone, msg.to_phone)
+        ) AS last_whatsapp_message_at,
+        CASE WHEN COALESCE(cp.is_primary, 0) = 1 THEN 0 ELSE 1 END AS phone_rank
+      FROM contacts c
+      JOIN contact_phone_lookup cp ON cp.contact_id = c.id
+      WHERE c.deleted_at IS NULL
+        ${contactIdClause}
+        AND TRIM(COALESCE(cp.phone, '')) != ''
+        ${whatsappOnlyClause}
+    )
+    SELECT *
+    FROM candidates
+    ${onlyMissingClause}
+    ORDER BY CASE WHEN NULLIF(whatsapp_profile_picture_url, '') IS NULL THEN 0 ELSE 1 END,
+             CASE WHEN whatsapp_profile_picture_updated_at IS NULL THEN 0 ELSE 1 END,
+             whatsapp_profile_picture_updated_at ASC,
+             last_whatsapp_message_at DESC,
+             phone_rank ASC,
+             id ASC
+    LIMIT ?
+  `, [...cleanContactIds, rowLimit])
+
+  const contacts = []
+  const seenContactIds = new Set()
+  const seenPhones = new Set()
+  for (const row of rows || []) {
+    const contactId = cleanString(row.id)
+    const phone = normalizePhoneForStorage(row.phone) || cleanString(row.phone)
+    const key = contactId || phone
+    if (!key || seenContactIds.has(contactId) || seenPhones.has(phone)) continue
+
+    seenContactIds.add(contactId)
+    seenPhones.add(phone)
+    contacts.push({
+      ...row,
+      id: contactId,
+      phone,
+      name: cleanString(row.full_name || row.first_name || row.whatsapp_profile_name || phone)
+    })
+    if (contacts.length >= safeLimit) break
+  }
+
+  return contacts
+}
+
+export async function backfillWhatsAppContactProfilePictures({
+  limit = WHATSAPP_PROFILE_PICTURE_BACKFILL_DEFAULT_LIMIT,
+  force = false,
+  onlyMissing = false,
+  contactIds = [],
+  scope = 'all_crm'
+} = {}) {
+  const safeLimit = clampWhatsAppProfilePictureBackfillLimit(limit)
+  const normalizedScope = cleanString(scope).toLowerCase() === 'whatsapp_only' ? 'whatsapp_only' : 'all_crm'
+  const contacts = await listWhatsAppProfilePictureBackfillContacts({
+    limit: safeLimit,
+    onlyMissing: Boolean(onlyMissing) && !force,
+    contactIds,
+    scope: normalizedScope
+  })
+  const startedAt = nowIso()
+
+  if (!contacts.length) {
+    return {
+      ok: true,
+      startedAt,
+      finishedAt: nowIso(),
+      limit: safeLimit,
+      force: Boolean(force),
+      onlyMissing: Boolean(onlyMissing) && !force,
+      scope: normalizedScope,
+      scanned: 0,
+      apiAttempted: 0,
+      qrAttempted: 0,
+      apiUpdated: 0,
+      qrUpdated: 0,
+      updated: 0,
+      contacts: []
+    }
+  }
+
+  const apiPictures = await warmWhatsAppApiProfilePictures(contacts, {
+    limit: contacts.length,
+    force: Boolean(force)
+  })
+  let hydratedContacts = applyBackfilledProfilePicturesToContacts(contacts, apiPictures)
+  const qrPictures = new Map()
+
+  for (const chunk of chunkProfilePictureBackfillContacts(
+    hydratedContacts,
+    WHATSAPP_PROFILE_PICTURE_BACKFILL_QR_BATCH_LIMIT
+  )) {
+    const chunkPictures = await warmWhatsAppQrProfilePictures(chunk, {
+      limit: chunk.length,
+      force: Boolean(force)
+    })
+    mergeProfilePictureResults(qrPictures, chunkPictures)
+    hydratedContacts = applyBackfilledProfilePicturesToContacts(hydratedContacts, chunkPictures)
+  }
+
+  const updatedKeys = new Set([...apiPictures.keys(), ...qrPictures.keys()].map(cleanString).filter(Boolean))
+
+  return {
+    ok: true,
+    startedAt,
+    finishedAt: nowIso(),
+    limit: safeLimit,
+    force: Boolean(force),
+    onlyMissing: Boolean(onlyMissing) && !force,
+    scope: normalizedScope,
+    scanned: contacts.length,
+    apiAttempted: contacts.length,
+    qrAttempted: contacts.length,
+    apiUpdated: apiPictures.size,
+    qrUpdated: qrPictures.size,
+    updated: updatedKeys.size,
+    contacts: hydratedContacts
+      .filter(contact => updatedKeys.has(cleanString(contact.id) || cleanString(contact.phone)))
+      .map(contact => ({
+        id: contact.id,
+        phone: contact.phone,
+        name: cleanString(contact.full_name || contact.name || contact.whatsapp_profile_name),
+        profilePictureUrl: qrPictures.get(cleanString(contact.id) || cleanString(contact.phone)) ||
+          apiPictures.get(cleanString(contact.id) || cleanString(contact.phone)) ||
+          ''
+      }))
+  }
 }
 
 function scheduleInboundWhatsAppContactProfilePictureRefresh(result = {}, source = 'whatsapp') {

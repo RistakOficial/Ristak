@@ -97,6 +97,7 @@ interface ContactsPageParams {
   filter?: string
   trackingFilters?: Record<string, string[]>
   advancedFilters?: unknown
+  warmProfilePictures?: boolean
   signal?: AbortSignal
 }
 
@@ -201,6 +202,7 @@ const requestContactsPage = async ({
   filter,
   trackingFilters,
   advancedFilters,
+  warmProfilePictures,
   signal
 }: ContactsPageParams = {}): Promise<ContactsPageResult> => {
   const params = new URLSearchParams()
@@ -218,6 +220,7 @@ const requestContactsPage = async ({
   if (advancedFilters) {
     params.append('advancedFilters', JSON.stringify(advancedFilters))
   }
+  if (warmProfilePictures) params.append('warmProfilePictures', 'true')
 
   const url = apiUrl(`/api/contacts?${params.toString()}`)
   const response = await fetch(url, {
