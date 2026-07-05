@@ -28354,9 +28354,11 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   const [slugDraft, setSlugDraft] = useState(slugValue)
   const slugInputRef = useRef<HTMLInputElement>(null)
   const cancelSlugEditRef = useRef(false)
+  const ignoreNextSlugBlurRef = useRef(false)
   const preventMenuCloseAutoFocusRef = useRef(false)
   useEffect(() => {
     cancelSlugEditRef.current = false
+    ignoreNextSlugBlurRef.current = false
     setSlugDraft(slugValue)
   }, [slugValue, renaming])
   const title = page.title || `Página ${index + 1}`
@@ -28377,22 +28379,44 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
 
   useEffect(() => {
     if (!editingRoute) return
-    window.setTimeout(() => {
+    const focusSlugInput = () => {
       slugInputRef.current?.focus()
       slugInputRef.current?.select()
-    }, 0)
+    }
+    const nextTickId = window.setTimeout(focusSlugInput, 0)
+    const afterMenuCloseId = window.setTimeout(focusSlugInput, 80)
+    return () => {
+      window.clearTimeout(nextTickId)
+      window.clearTimeout(afterMenuCloseId)
+    }
   }, [editingRoute])
 
-  const commitSlugEdit = () => {
+  const commitSlugEdit = (options: { close?: boolean } = {}) => {
     if (cancelSlugEditRef.current) {
       cancelSlugEditRef.current = false
       setSlugDraft(slugValue)
-      onDoneRename()
+      if (options.close) {
+        ignoreNextSlugBlurRef.current = true
+        onDoneRename()
+      }
       return
     }
 
-    onRenamePageSlug?.(page.id, slugDraft)
-    onDoneRename()
+    if (normalizeRouteInput(slugDraft) !== normalizeRouteInput(slugValue)) {
+      onRenamePageSlug?.(page.id, slugDraft)
+    }
+    if (options.close) {
+      ignoreNextSlugBlurRef.current = true
+      onDoneRename()
+    }
+  }
+
+  const handleSlugBlur = () => {
+    if (ignoreNextSlugBlurRef.current) {
+      ignoreNextSlugBlurRef.current = false
+      return
+    }
+    commitSlugEdit()
   }
 
   return (
@@ -28431,16 +28455,16 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                   aria-label={`Ruta de ${title}`}
                   placeholder={normalizeRouteInput(title) || 'pagina'}
                   onChange={(value) => setSlugDraft(value)}
-                  onBlur={commitSlugEdit}
+                  onBlur={handleSlugBlur}
                   onKeyDown={(event) => {
                     event.stopPropagation()
                     if (event.key === 'Enter') {
                       event.preventDefault()
-                      event.currentTarget.blur()
+                      commitSlugEdit({ close: true })
                     }
                     if (event.key === 'Escape') {
                       cancelSlugEditRef.current = true
-                      event.currentTarget.blur()
+                      commitSlugEdit({ close: true })
                     }
                   }}
                 />
