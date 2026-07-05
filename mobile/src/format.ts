@@ -15,8 +15,16 @@ export function cleanBaseUrl(value: string) {
 
 export function getContactName(contact?: ChatContact | null) {
   if (!contact) return 'Contacto';
-  const fullName = String(contact.fullName || contact.full_name || '').trim();
-  if (fullName) return fullName;
+  const directName = [
+    contact.name,
+    contact.contactName,
+    contact.displayName,
+    contact.fullName,
+    contact.full_name,
+    contact.profileName,
+    contact.socialName,
+  ].map((value) => String(value || '').trim()).find(Boolean);
+  if (directName) return directName;
 
   const first = String(contact.firstName || contact.first_name || '').trim();
   const last = String(contact.lastName || contact.last_name || '').trim();

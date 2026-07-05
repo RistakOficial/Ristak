@@ -20,6 +20,7 @@ import {
   View,
 } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
+import * as ImagePicker from 'expo-image-picker';
 import {
   Archive,
   BarChart3,
@@ -33,6 +34,7 @@ import {
   Mail,
   MessageCircle,
   MoreHorizontal,
+  Send,
   Plus,
   Search,
   Settings,
@@ -96,6 +98,7 @@ type SessionState = {
 
 type Screen = 'boot' | 'server' | 'login' | 'shell';
 type ChatFilterId = string;
+type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | null;
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
 type ChatFilterPreset = {
   id: ChatFilterId;
@@ -122,6 +125,10 @@ const CHAT_SWIPE_ACTION_WIDTH = 184;
 const CHAT_SWIPE_MORE_WIDTH = 84;
 const CHAT_SWIPE_ARCHIVE_WIDTH = CHAT_SWIPE_ACTION_WIDTH - CHAT_SWIPE_MORE_WIDTH;
 const CHAT_SWIPE_OPEN_THRESHOLD = 36;
+const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
+const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
+const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
+const AI_AGENT_CHAT_SEARCH_TEXT = 'asistente personal ai ristak ai agente inteligencia artificial ia';
 const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
   { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', locked: true },
   { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos' },
@@ -539,11 +546,18 @@ function ChatScreen({
   const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
   const [selectionActionsOpen, setSelectionActionsOpen] = useState(false);
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
+  const [activeSheet, setActiveSheet] = useState<ChatSheetMode>(null);
+  const [sheetContact, setSheetContact] = useState<ChatContact | null>(null);
+  const [contactQuery, setContactQuery] = useState('');
+  const [contactResults, setContactResults] = useState<ChatContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [cameraAsset, setCameraAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [chats, setChats] = useState<ChatContact[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<ChatContact | null>(null);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
 
   const loadChats = useCallback(async (silent = false) => {
@@ -590,6 +604,39 @@ function ChatScreen({
     void writeJsonValue(ARCHIVED_CHAT_IDS_STORAGE_KEY, archivedChatIds);
   }, [archivedChatIds, chatPrefsHydrated]);
 
+  useEffect(() => {
+    if (activeSheet !== 'newChat' && activeSheet !== 'cameraShare') {
+      setContactsLoading(false);
+      return;
+    }
+    const trimmed = contactQuery.trim();
+    if (trimmed.length < 2) {
+      setContactResults([]);
+      setContactsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setContactsLoading(true);
+    const timer = setTimeout(() => {
+      api.searchContacts(trimmed)
+        .then((results) => {
+          if (!cancelled) setContactResults(Array.isArray(results) ? results : []);
+        })
+        .catch(() => {
+          if (!cancelled) setContactResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setContactsLoading(false);
+        });
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeSheet, api, contactQuery]);
+
   const refresh = () => {
     setRefreshing(true);
     void loadChats(true);
@@ -631,6 +678,29 @@ function ChatScreen({
     () => visibleFilterIds.map((id) => filterPresetMap.get(id)).filter((filter): filter is ChatFilterPreset => Boolean(filter)),
     [filterPresetMap, visibleFilterIds],
   );
+  const normalizedContactQuery = contactQuery.trim().toLowerCase();
+  const contactSheetOptions = useMemo(() => {
+    const seen = new Set<string>();
+    return [...chats, ...contactResults].filter((contact) => {
+      if (!contact?.id || seen.has(contact.id)) return false;
+      if (normalizedContactQuery) {
+        const haystack = [
+          getContactName(contact),
+          contact.phone,
+          contact.email,
+          contact.source,
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(normalizedContactQuery)) return false;
+      }
+      seen.add(contact.id);
+      return true;
+    });
+  }, [chats, contactResults, normalizedContactQuery]);
+  const showAssistantRow = !archivedViewOpen && !selectionActive && activeFilter === 'all' && (
+    !query.trim() || AI_AGENT_CHAT_SEARCH_TEXT.includes(query.trim().toLowerCase())
+  );
+  const showArchiveRow = !selectionActive && !query.trim() && (archivedViewOpen || activeFilter === 'all');
+  const chatListHasRows = selectionActive || showAssistantRow || showArchiveRow || filteredChats.length > 0;
 
   const applyFilter = (filterId: ChatFilterId) => {
     if (filterId === CHAT_FILTERS_MORE_VALUE) {
@@ -668,35 +738,72 @@ function ChatScreen({
     setOpenSwipeChatId(null);
   };
 
-  const openChatMoreActions = (contact: ChatContact) => {
-    const archived = archivedChatIds.includes(contact.id);
-    const unread = getUnreadCount(contact);
+  const closeSheet = () => {
+    setActiveSheet(null);
+    setSheetContact(null);
+  };
+
+  const openNewChatSheet = () => {
     setOpenSwipeChatId(null);
-    Alert.alert(getContactName(contact), 'Más acciones', [
-      { text: 'Cancelar', style: 'cancel' },
-      ...(unread > 0 ? [{
-        text: 'Marcar como leído',
-        onPress: () => {
-          setChats((current) => current.map((item) => (
-            item.id === contact.id ? { ...item, unreadCount: 0 } : item
-          )));
-          void api.markChatRead(contact.id).catch((err) => {
-            Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo marcar como leído.');
-          });
-        },
-      }] : []),
-      {
-        text: archived ? 'Restaurar' : 'Archivar',
-        onPress: () => {
-          if (archived) restoreChat(contact);
-          else archiveChat(contact);
-        },
-      },
-      {
-        text: 'Seleccionar',
-        onPress: () => startChatSelection(contact),
-      },
-    ]);
+    setContactQuery('');
+    setContactResults([]);
+    setCameraAsset(null);
+    setSheetContact(null);
+    setActiveSheet('newChat');
+  };
+
+  const openCameraShareSheet = (asset: ImagePicker.ImagePickerAsset) => {
+    setOpenSwipeChatId(null);
+    setContactQuery('');
+    setContactResults([]);
+    setCameraAsset(asset);
+    setSheetContact(null);
+    setActiveSheet('cameraShare');
+  };
+
+  const openChatMoreActions = (contact: ChatContact) => {
+    setOpenSwipeChatId(null);
+    setSheetContact(contact);
+    setActiveSheet('chatMore');
+  };
+
+  const markChatAsRead = (contact: ChatContact) => {
+    setChats((current) => current.map((item) => (
+      item.id === contact.id ? { ...item, unreadCount: 0 } : item
+    )));
+    void api.markChatRead(contact.id).catch((err) => {
+      Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo marcar como leído.');
+    });
+  };
+
+  const openCamera = async () => {
+    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert('Cámara', 'Necesito permiso de cámara para tomar fotos desde la app.');
+      return;
+    }
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ['images'],
+      quality: 0.86,
+    });
+    if (result.canceled || !result.assets?.[0]) return;
+    openCameraShareSheet(result.assets[0]);
+  };
+
+  const openContactFromSheet = (contact: ChatContact) => {
+    setChats((current) => (
+      current.some((item) => item.id === contact.id) ? current : [contact, ...current]
+    ));
+    closeSheet();
+    setSelected(contact);
+  };
+
+  const chooseCameraRecipient = (contact: ChatContact) => {
+    setSheetContact(contact);
+    Alert.alert(
+      'Foto lista',
+      `La foto quedó lista para enviar a ${getContactName(contact)}. El envío multimedia completo sigue pendiente de conectar al composer nativo.`,
+    );
   };
 
   const clearChatSelection = () => {
@@ -797,6 +904,10 @@ function ChatScreen({
     });
   }, [selectionActive, visibleChatIdSet]);
 
+  if (assistantOpen) {
+    return <AssistantConversationScreen onBack={() => setAssistantOpen(false)} />;
+  }
+
   if (selected) {
     return (
       <ConversationScreen
@@ -826,18 +937,14 @@ function ChatScreen({
           <View style={styles.chatHeaderActions}>
             <Pressable
               accessibilityRole="button"
-              onPress={() => searchInputRef.current?.focus()}
+              onPress={() => void openCamera()}
               style={({ pressed }) => [styles.headerIconButton, pressed && styles.pressed]}
             >
               <Camera size={23} color={COLORS.primary} strokeWidth={2.3} />
             </Pressable>
             <Pressable
               accessibilityRole="button"
-              onPress={() => {
-                setQuery('');
-                setActiveFilter('all');
-                searchInputRef.current?.focus();
-              }}
+              onPress={openNewChatSheet}
               style={({ pressed }) => [styles.newChatButton, pressed && styles.pressed]}
             >
               <Plus size={31} color={COLORS.white} strokeWidth={2.45} />
@@ -895,7 +1002,7 @@ function ChatScreen({
           onScrollBeginDrag={() => {
             if (openSwipeChatId) setOpenSwipeChatId(null);
           }}
-          contentContainerStyle={filteredChats.length ? styles.chatList : styles.emptyList}
+          contentContainerStyle={chatListHasRows ? styles.chatList : styles.emptyList}
           ListHeaderComponent={(
             selectionActive ? (
               <ChatSelectionPanel
@@ -910,13 +1017,18 @@ function ChatScreen({
                 onToggleMenu={() => setSelectionActionsOpen((current) => !current)}
                 onToggleVisible={toggleVisibleChatSelection}
               />
-            ) : archivedChatCount > 0 && !query.trim() && (archivedViewOpen || activeFilter === 'all') ? (
-              <ArchiveRow
-                active={archivedViewOpen}
-                count={archivedChatCount}
-                onPress={() => setArchivedViewOpen((current) => !current)}
-              />
-            ) : null
+            ) : (
+              <>
+                {showAssistantRow ? <AssistantChatRow onPress={() => setAssistantOpen(true)} /> : null}
+                {showArchiveRow ? (
+                  <ArchiveRow
+                    active={archivedViewOpen}
+                    count={archivedChatCount}
+                    onPress={() => setArchivedViewOpen((current) => !current)}
+                  />
+                ) : null}
+              </>
+            )
           )}
           renderItem={({ item }) => (
             <ChatRow
@@ -967,6 +1079,37 @@ function ChatScreen({
           setFilterManagerOpen(false);
         }}
         onToggleVisible={toggleVisibleFilter}
+      />
+      <ChatMoreSheet
+        contact={sheetContact}
+        open={activeSheet === 'chatMore'}
+        archived={sheetContact ? archivedChatIds.includes(sheetContact.id) : false}
+        unread={sheetContact ? getUnreadCount(sheetContact) : 0}
+        onArchiveToggle={(contact) => {
+          if (archivedChatIds.includes(contact.id)) restoreChat(contact);
+          else archiveChat(contact);
+          closeSheet();
+        }}
+        onClose={closeSheet}
+        onMarkRead={(contact) => {
+          markChatAsRead(contact);
+          closeSheet();
+        }}
+        onSelect={(contact) => {
+          closeSheet();
+          startChatSelection(contact);
+        }}
+      />
+      <ContactPickerSheet
+        asset={activeSheet === 'cameraShare' ? cameraAsset : null}
+        contacts={contactSheetOptions}
+        loading={contactsLoading}
+        open={activeSheet === 'newChat' || activeSheet === 'cameraShare'}
+        query={contactQuery}
+        title={activeSheet === 'cameraShare' ? 'Enviar foto' : 'Nuevo chat'}
+        onChangeQuery={setContactQuery}
+        onClose={closeSheet}
+        onSelect={activeSheet === 'cameraShare' ? chooseCameraRecipient : openContactFromSheet}
       />
       {footer}
     </AppFrame>
@@ -1428,6 +1571,207 @@ function FilterManagerSheet({
   );
 }
 
+function BottomActionSheet({
+  children,
+  open,
+  title,
+  subtitle,
+  onClose,
+}: {
+  children: React.ReactNode;
+  open: boolean;
+  title: string;
+  subtitle?: string;
+  onClose: () => void;
+}) {
+  return (
+    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={styles.sheetBackdrop}>
+        <Pressable style={styles.sheetScrim} onPress={onClose} />
+        <View style={styles.actionSheet}>
+          <View style={styles.actionSheetHandle} />
+          <View style={styles.actionSheetHeader}>
+            <View style={styles.actionSheetHeaderCopy}>
+              <Text style={styles.actionSheetTitle}>{title}</Text>
+              {subtitle ? <Text numberOfLines={1} style={styles.actionSheetSubtitle}>{subtitle}</Text> : null}
+            </View>
+            <Pressable accessibilityRole="button" onPress={onClose} style={styles.sheetCloseButton}>
+              <X size={18} color={COLORS.text} strokeWidth={2.5} />
+            </Pressable>
+          </View>
+          {children}
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function SheetActionRow({
+  Icon,
+  title,
+  subtitle,
+  danger,
+  onPress,
+}: {
+  Icon: LucideIcon;
+  title: string;
+  subtitle: string;
+  danger?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.sheetActionRow, pressed && styles.pressed]}>
+      <View style={[styles.sheetActionIcon, danger && styles.sheetActionIconDanger]}>
+        <Icon size={20} color={danger ? COLORS.danger : COLORS.accent} strokeWidth={2.6} />
+      </View>
+      <View style={styles.sheetActionCopy}>
+        <Text style={styles.sheetActionTitle}>{title}</Text>
+        <Text numberOfLines={2} style={styles.sheetActionSubtitle}>{subtitle}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function ChatMoreSheet({
+  archived,
+  contact,
+  open,
+  unread,
+  onArchiveToggle,
+  onClose,
+  onMarkRead,
+  onSelect,
+}: {
+  archived: boolean;
+  contact: ChatContact | null;
+  open: boolean;
+  unread: number;
+  onArchiveToggle: (contact: ChatContact) => void;
+  onClose: () => void;
+  onMarkRead: (contact: ChatContact) => void;
+  onSelect: (contact: ChatContact) => void;
+}) {
+  return (
+    <BottomActionSheet
+      open={open && Boolean(contact)}
+      title="Más acciones"
+      subtitle={contact ? getContactName(contact) : ''}
+      onClose={onClose}
+    >
+      {contact ? (
+        <View style={styles.sheetActionList}>
+          {unread > 0 ? (
+            <SheetActionRow
+              Icon={CheckCheck}
+              title="Marcar como leído"
+              subtitle="Quita los pendientes de esta conversación."
+              onPress={() => onMarkRead(contact)}
+            />
+          ) : null}
+          <SheetActionRow
+            Icon={Archive}
+            title={archived ? 'Restaurar chat' : 'Archivar chat'}
+            subtitle={archived ? 'Devuelve la conversación a la bandeja principal.' : 'Mueve la conversación a Archivados.'}
+            onPress={() => onArchiveToggle(contact)}
+          />
+          <SheetActionRow
+            Icon={Check}
+            title="Seleccionar"
+            subtitle="Activa selección múltiple desde esta conversación."
+            onPress={() => onSelect(contact)}
+          />
+        </View>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+function ContactPickerSheet({
+  asset,
+  contacts,
+  loading,
+  open,
+  query,
+  title,
+  onChangeQuery,
+  onClose,
+  onSelect,
+}: {
+  asset?: ImagePicker.ImagePickerAsset | null;
+  contacts: ChatContact[];
+  loading: boolean;
+  open: boolean;
+  query: string;
+  title: string;
+  onChangeQuery: (value: string) => void;
+  onClose: () => void;
+  onSelect: (contact: ChatContact) => void;
+}) {
+  return (
+    <BottomActionSheet
+      open={open}
+      title={title}
+      subtitle={asset ? 'Elige a quién enviar la foto' : 'Busca por nombre, número o correo'}
+      onClose={onClose}
+    >
+      <View style={styles.contactPickerBody}>
+        {asset ? (
+          <Image source={{ uri: asset.uri }} style={styles.cameraPreview} />
+        ) : null}
+        <View style={styles.sheetSearchBox}>
+          <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
+          <TextInput
+            value={query}
+            onChangeText={onChangeQuery}
+            placeholder="Buscar contacto"
+            placeholderTextColor={COLORS.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.sheetSearchInput}
+          />
+          {query ? (
+            <Pressable accessibilityRole="button" onPress={() => onChangeQuery('')} style={styles.clearSearchButton}>
+              <X size={17} color={COLORS.muted} strokeWidth={2.45} />
+            </Pressable>
+          ) : null}
+        </View>
+        {loading ? (
+          <View style={styles.sheetInlineState}>
+            <ActivityIndicator color={COLORS.accent} />
+            <Text style={styles.caption}>Buscando contactos...</Text>
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.contactPickerList} keyboardShouldPersistTaps="handled">
+            {contacts.length ? contacts.slice(0, 40).map((contact) => (
+              <ContactPickerRow key={contact.id} contact={contact} onPress={() => onSelect(contact)} />
+            )) : (
+              <Text style={styles.contactPickerEmpty}>No hay contactos para mostrar.</Text>
+            )}
+          </ScrollView>
+        )}
+      </View>
+    </BottomActionSheet>
+  );
+}
+
+function ContactPickerRow({ contact, onPress }: { contact: ChatContact; onPress: () => void }) {
+  const avatar = getContactAvatar(contact);
+  const channelKind = getContactChannelKind(contact);
+  const channelColor = CHANNEL_BADGE_COLORS[channelKind];
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.contactPickerRow, pressed && styles.pressed]}>
+      <View style={[styles.contactPickerAvatar, { borderColor: channelColor }]}>
+        {avatar ? <Image source={{ uri: avatar }} style={styles.contactPickerAvatarImage} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
+      </View>
+      <View style={styles.contactPickerCopy}>
+        <Text numberOfLines={1} style={styles.contactPickerName}>{getContactName(contact)}</Text>
+        <Text numberOfLines={1} style={styles.contactPickerSubtitle}>{contact.phone || contact.email || getChatPreview(contact)}</Text>
+      </View>
+      <Send size={18} color={COLORS.accent} strokeWidth={2.5} />
+    </Pressable>
+  );
+}
+
 function ArchiveRow({
   active,
   count,
@@ -1445,6 +1789,48 @@ function ArchiveRow({
       <Text style={[styles.archiveRowTitle, active && styles.archiveRowTitleActive]}>Archivados</Text>
       <Text style={[styles.archiveRowCount, active && styles.archiveRowTitleActive]}>{count}</Text>
     </Pressable>
+  );
+}
+
+function AssistantChatRow({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.aiChatRow, pressed && styles.pressed]}>
+      <View style={styles.aiChatAvatar}>
+        <Bot size={27} color={COLORS.accent} strokeWidth={2.4} />
+      </View>
+      <View style={styles.aiChatBody}>
+        <View style={styles.rowHeader}>
+          <Text numberOfLines={1} style={styles.chatName}>{AI_AGENT_CHAT_DISPLAY_NAME}</Text>
+          <Text style={styles.aiChatPinned}>Fijo</Text>
+        </View>
+        <Text numberOfLines={1} style={styles.lastMessage}>{AI_AGENT_CHAT_SUBTITLE}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function AssistantConversationScreen({ onBack }: { onBack: () => void }) {
+  return (
+    <AppFrame>
+      <View style={styles.conversationHeader}>
+        <Pressable onPress={onBack} style={styles.backButton}>
+          <Text style={styles.backLabel}>{'<'}</Text>
+        </Pressable>
+        <View style={styles.conversationTitleWrap}>
+          <Text numberOfLines={1} style={styles.headerTitle}>{AI_AGENT_CHAT_DISPLAY_NAME}</Text>
+          <Text numberOfLines={1} style={styles.caption}>{AI_AGENT_CHAT_SUBTITLE}</Text>
+        </View>
+      </View>
+      <View style={styles.aiConversationBody}>
+        <View style={styles.aiWelcomeBubble}>
+          <Bot size={25} color={COLORS.accent} strokeWidth={2.4} />
+          <Text style={styles.aiWelcomeTitle}>Chat fijo listo</Text>
+          <Text style={styles.aiWelcomeCopy}>
+            Esta entrada nativa ya queda en la bandeja. La conexión completa con el asistente de `/movil` sigue pendiente para usar el mismo historial y proveedor.
+          </Text>
+        </View>
+      </View>
+    </AppFrame>
   );
 }
 
@@ -2476,6 +2862,169 @@ const styles = StyleSheet.create({
   filterManagerToggleTextActive: {
     color: COLORS.bg,
   },
+  actionSheet: {
+    maxHeight: '84%',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    overflow: 'hidden',
+    paddingBottom: 20,
+  },
+  actionSheetHandle: {
+    alignSelf: 'center',
+    width: 48,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(170,192,231,0.38)',
+    marginTop: 9,
+    marginBottom: 4,
+  },
+  actionSheetHeader: {
+    minHeight: 62,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14,
+    paddingHorizontal: 18,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  actionSheetHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  actionSheetTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  actionSheetSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  sheetActionList: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+  },
+  sheetActionRow: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    paddingHorizontal: 6,
+    paddingVertical: 10,
+  },
+  sheetActionIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  sheetActionIconDanger: {
+    backgroundColor: COLORS.dangerSoft,
+  },
+  sheetActionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  sheetActionTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  sheetActionSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 2,
+  },
+  contactPickerBody: {
+    padding: 14,
+    gap: 12,
+  },
+  cameraPreview: {
+    width: '100%',
+    height: 170,
+    borderRadius: 20,
+    backgroundColor: COLORS.bg,
+  },
+  sheetSearchBox: {
+    minHeight: 42,
+    borderRadius: 21,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: COLORS.panelSoft,
+    paddingHorizontal: 12,
+  },
+  sheetSearchInput: {
+    flex: 1,
+    minHeight: 42,
+    color: COLORS.text,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    fontSize: 15,
+  },
+  sheetInlineState: {
+    minHeight: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  contactPickerList: {
+    paddingBottom: 8,
+  },
+  contactPickerRow: {
+    minHeight: 66,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  contactPickerAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    borderWidth: 2,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  contactPickerAvatarImage: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+  },
+  contactPickerCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactPickerName: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  contactPickerSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  contactPickerEmpty: {
+    color: COLORS.muted,
+    fontSize: 14,
+    textAlign: 'center',
+    paddingVertical: 28,
+  },
   primaryButton: {
     minHeight: 52,
     borderRadius: 18,
@@ -2748,6 +3297,61 @@ const styles = StyleSheet.create({
     color: COLORS.muted,
     fontSize: 15,
     fontWeight: '800',
+  },
+  aiChatRow: {
+    minHeight: 74,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 13,
+    backgroundColor: COLORS.bg,
+  },
+  aiChatAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(39,199,216,0.38)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(39,199,216,0.12)',
+  },
+  aiChatBody: {
+    flex: 1,
+    alignSelf: 'stretch',
+    justifyContent: 'center',
+    minWidth: 0,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  aiChatPinned: {
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  aiConversationBody: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  aiWelcomeBubble: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 20,
+    gap: 10,
+    alignItems: 'flex-start',
+  },
+  aiWelcomeTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  aiWelcomeCopy: {
+    color: COLORS.muted,
+    fontSize: 14,
+    lineHeight: 20,
   },
   chatSwipeRow: {
     position: 'relative',

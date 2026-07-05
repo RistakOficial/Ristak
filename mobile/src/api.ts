@@ -106,6 +106,14 @@ export class RistakApiClient {
     });
   }
 
+  searchContacts(query: string) {
+    return this.request<ChatContact[]>('/contacts/search', {
+      params: {
+        q: query.trim(),
+      },
+    });
+  }
+
   getConversation(contactId: string, limit = 50) {
     return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/journey`, {
       params: {

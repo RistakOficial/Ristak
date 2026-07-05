@@ -30,6 +30,11 @@ export type ChatContact = {
   hasAppointments?: boolean;
   nextAppointmentDate?: string | null;
   hasCommentMessage?: boolean;
+  name?: string;
+  contactName?: string;
+  displayName?: string;
+  profileName?: string;
+  socialName?: string;
   fullName?: string;
   full_name?: string;
   firstName?: string;

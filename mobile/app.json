@@ -18,7 +18,9 @@
       "bundleIdentifier": "com.ristak.native",
       "supportsTablet": true,
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "Ristak usa la cámara para tomar fotos y enviarlas desde el chat móvil.",
+        "NSPhotoLibraryUsageDescription": "Ristak puede acceder a fotos para compartir contenido desde el chat móvil."
       }
     },
     "android": {
@@ -35,7 +37,8 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-image-picker"
     ]
   }
 }

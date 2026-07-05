@@ -367,6 +367,14 @@ archivar/restaurar la seleccion. Si `Mas` aun usa un menu nativo temporal en
 `mobile/`, el sheet completo de `/movil` debe quedar registrado como brecha en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
 
+El cliente React Native debe usar bottom sheets nativos para acciones de bandeja,
+no `Alert.alert`, cuando el flujo existe como sheet en `/movil`: `Mas` de la
+fila, `+` de nuevo chat y selector de destinatarios despues de tomar foto. La
+camara nativa usa `expo-image-picker`, requiere `NSCameraUsageDescription` y
+debe abrir una pantalla/sheet de destinatarios antes de enviar; si el envio
+multimedia todavia no esta conectado al composer/canal, esa brecha debe quedar
+en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
+
 En la conversación móvil no uses rails/barras verticales pegadas al lado
 izquierdo como indicador visual de foco, comentario o chat no leído. Los estados
 de no leído/activo deben resolverse con fondo, tipografía y badge, no con una

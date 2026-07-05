@@ -76,12 +76,16 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     bandeja normal, muestra fila `Archivados`, permite entrar/salir de la vista
     y restaurar desde acciones del chat. Falta sincronizar con cualquier
     almacenamiento backend si se decide que archivados sea multi-dispositivo.
+- [ ] Replicar chat fijo de `Asistente Personal AI`.
+  - Avance: la bandeja nativa ya muestra la fila fija `Asistente Personal AI`
+    antes de `Archivados` y abre una pantalla nativa placeholder. Falta conectar
+    el historial/proveedor real del asistente de `/movil`.
 - [ ] Replicar estados de agente: prioridad humana, agente activo/inactivo,
   hub de agente y badges.
 - [x] Replicar swipe de fila: Mas, Archivar/Restaurar.
   - Avance: `mobile/` ya desplaza la fila a la izquierda con acciones `Mas` y
-    `Archivar/Restaurar`. `Mas` abre un menu nativo temporal con marcar leido,
-    archivar/restaurar y seleccionar; el sheet visual completo de `/movil`
+    `Archivar/Restaurar`. `Mas` abre un bottom sheet nativo con marcar leido,
+    archivar/restaurar y seleccionar; el sheet exacto completo de `/movil`
     queda pendiente en "Mas acciones de chat". El swipe debe mantener la fila
     abierta despues de soltar, mostrar las acciones con alto/ancho alineados a la
     fila, permitir tocar `Mas`/`Archivar` sin que la fila animada tape los
@@ -117,10 +121,20 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 ### 3. Menus y sheets
 
 - [ ] Nuevo chat / selector de contacto.
+  - Avance: el boton `+` ya abre bottom sheet nativo reusable, busca contactos
+    via `/contacts/search`, mezcla resultados con chats recientes y abre la
+    conversacion seleccionada. Falta crear contacto nuevo si no existe y replicar
+    todos los estados del sheet original.
 - [ ] Selector de destinatarios despues de foto/video.
+  - Avance: el boton de camara ya pide permiso, abre camara nativa con
+    `expo-image-picker`, muestra preview y selector de destinatario. Falta
+    conectar el envio multimedia real por canal/composer.
 - [ ] Menu global de agente.
 - [ ] Administrador de filtros.
 - [ ] Mas acciones de chat.
+  - Avance: `mobile/` ya usa bottom sheet desde swipe `Mas`, no `Alert.alert`.
+    Incluye marcar leido, archivar/restaurar y seleccionar. Faltan las demas
+    acciones completas de `/movil`.
 - [ ] Sheets de configuracion movil relevantes.
 
 ## Validacion minima por fase

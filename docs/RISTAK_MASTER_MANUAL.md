@@ -1541,8 +1541,10 @@ La lista de chats nativa debe mantenerse alineada con `PhoneChat`: header de
 chats, buscador, chips de filtros, filas planas, avatares con aro/badge de canal,
 preview de ultimo mensaje, estados de no leido, fila/vista de archivados,
 swipe lateral `Mas` + `Archivar`/`Restaurar` y seleccion multiple por long
-press. Cuando cambien filtros, labels, canales, unread, archivados, seleccion,
-swipe o preview en `/movil`, se debe revisar el equivalente en
+press. Tambien debe usar sheets nativos para `Mas`, `+`/nuevo chat y selector de
+destinatarios despues de camara. Cuando cambien filtros, labels, canales,
+unread, archivados, seleccion, swipe, camara, sheets o preview en `/movil`, se
+debe revisar el equivalente en
 `mobile/src/App.tsx` y documentar cualquier brecha temporal en
 `docs/MOBILE_APP.md`.
 
