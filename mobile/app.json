@@ -1,0 +1,41 @@
+{
+  "expo": {
+    "name": "Ristak Native",
+    "slug": "ristak-native-mobile",
+    "version": "1.0.0",
+    "description": "Native React Native mobile client for Ristak chat.",
+    "scheme": "ristak-native",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#07111f",
+    "primaryColor": "#3278ff",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "ios": {
+      "bundleIdentifier": "com.ristak.native",
+      "supportsTablet": true,
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.ristak.native",
+      "adaptiveIcon": {
+        "backgroundColor": "#07111f",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
+  }
+}

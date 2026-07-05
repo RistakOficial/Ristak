@@ -1,0 +1,66 @@
+# Ristak Native Mobile
+
+React Native mobile app for Ristak. This app is separate from the legacy
+Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
+
+## What Works Now
+
+- Runtime setup for a Ristak installation URL.
+- Email/password login against `/api/auth/login`.
+- Secure token and installation URL storage using Expo SecureStore.
+- Chat inbox from `/api/contacts/chats`.
+- Native chat inbox parity pass for `/movil`: same high-level header, search,
+  quick filter chips, unread emphasis, contact avatar ring/channel badge, and
+  last-message preview rules.
+- Conversation view from `/api/contacts/:id/journey`.
+- Text sending through `/api/whatsapp-api/messages/text`.
+
+## Commands
+
+From the repo root:
+
+```bash
+npm run mobile:native:start
+npm run mobile:native:ios
+npm run mobile:native:android
+npm run mobile:native:typecheck
+```
+
+From this folder:
+
+```bash
+npm run start
+npm run ios
+npm run android
+npm run typecheck
+```
+
+`npm run prebuild` generates native `ios/` and `android/` directories using Expo
+Continuous Native Generation. The generated directories should stay disposable
+unless a native customization is intentionally promoted to tracked code.
+
+## Double-Maintenance Rule
+
+While `/movil` and this React Native app coexist, mobile product changes must be
+handled in both places:
+
+- `/movil`: `frontend/src/pages/PhoneChat/` and related mobile web components.
+- Native: `mobile/src/`.
+
+If a change intentionally applies to only one surface, document that decision in
+the PR/change summary and update `docs/MOBILE_APP.md` when behavior changes.
+
+## Parity Rule
+
+The React Native app must match `/movil` as the user-facing product. The code can
+be native and structurally different, but the visible result must keep the same
+navigation order, section names, hierarchy, flows, permissions, settings, and
+states. Do not redesign or simplify a native screen unless the matching `/movil`
+behavior is intentionally changed or a documented migration gap remains.
+
+For the chat list specifically, keep `mobile/src/App.tsx` aligned with
+`frontend/src/pages/PhoneChat/PhoneChat.tsx` and
+`PhoneChat.module.css`: chips are the visible filter surface, rows stay flat
+instead of card-based, unread state is shown through background/type/badge, and
+social-channel color belongs on the avatar ring/badge rather than the initials
+fill.

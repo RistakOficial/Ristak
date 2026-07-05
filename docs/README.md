@@ -34,7 +34,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | Pixel, tracking, sesiones, conversiones y rastreo web | [TRACKING_PIXEL.md](./TRACKING_PIXEL.md) y [PIXEL_SETUP.md](./PIXEL_SETUP.md) |
 | Atribucion de compras/citas, ultimo paid touch, superficie y payload Meta CAPI | [CONVERSION_ATTRIBUTION.md](./CONVERSION_ATTRIBUTION.md) |
 | Media, Bunny Storage, Bunny Stream y cuotas | [MEDIA_STORAGE_BUNNY.md](./MEDIA_STORAGE_BUNNY.md) |
-| App movil nativa y rutas moviles | [MOBILE_APP.md](./MOBILE_APP.md) |
+| App movil nativa y rutas moviles | [MOBILE_APP.md](./MOBILE_APP.md) y [MOBILE_NATIVE_PARITY_CHECKLIST.md](./MOBILE_NATIVE_PARITY_CHECKLIST.md) |
 | Builds para App Store / Play Store | [MOBILE_STORE_RELEASES.md](./MOBILE_STORE_RELEASES.md) |
 | Bridge embebido MDP | [mdp-program-bridge.md](./mdp-program-bridge.md) |
 | Calendarios locales y embebidos | [../backend/src/services/README_CALENDARS.md](../backend/src/services/README_CALENDARS.md) y [../frontend/src/pages/Appointments/README.md](../frontend/src/pages/Appointments/README.md) |

@@ -1,6 +1,41 @@
 # Ristak Mobile App
 
-Ristak ya puede compilarse como app nativa iOS/Android con Capacitor. La app usa las mismas pantallas móviles bajo `/movil`, pero dentro de un contenedor nativo con cámara, fotos y notificaciones push del celular. Las rutas legacy `/phone/*` redirigen a `/movil/*`.
+Ristak tiene dos superficies moviles que deben mantenerse coordinadas:
+
+- Produccion actual: shell Capacitor bajo `/movil`, construido desde
+  `frontend/`, `frontend/ios/App` y `frontend/android`. Este sigue usando el
+  bundle/package de tienda `com.ristak.app`.
+- Cliente nativo nuevo: app React Native/Expo en `mobile/`. No carga el CRM
+  completo en un WebView; habla directo con el backend de Ristak por API. Durante
+  la migracion usa bundle/package separado `com.ristak.native` para poder
+  convivir con la app publicada. Solo debe tomar `com.ristak.app` cuando se haya
+  validado en iPhone/Android reales y se decida reemplazar el binario de tienda.
+
+Regla obligatoria de mantenimiento: cualquier cambio de producto movil, chat,
+login, permisos, push, pagos, agenda, filtros, labels visibles o contrato de API
+debe revisarse tanto en `/movil` como en `mobile/`. Si el cambio aplica a las dos
+apps, se implementa en las dos. Si aplica solo a una, el resumen del cambio debe
+decir por que y esta guia debe actualizarse cuando cambie el comportamiento
+visible.
+
+Contrato de paridad nativa: `mobile/` puede usar React Native, Expo y componentes
+nativos diferentes, pero el resultado para el usuario debe ser identico a
+`/movil`: mismas secciones, orden de navegacion, nombres visibles, jerarquia
+visual, flujos, permisos y estados. No se permite redisenar, simplificar o
+"mejorar" una pantalla nativa dejando atras funcionalidad existente de `/movil`
+sin documentar explicitamente la decision y su motivo.
+
+El avance por fases de esa paridad vive en
+`docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`. Antes de retomar la migracion nativa,
+lee ese checklist para saber que ya quedo, que sigue pendiente y que fuentes del
+codigo original deben revisarse.
+
+## Shell Capacitor `/movil`
+
+Ristak ya puede compilarse como app nativa iOS/Android con Capacitor. La app usa
+las mismas pantallas moviles bajo `/movil`, pero dentro de un contenedor nativo
+con camara, fotos y notificaciones push del celular. Las rutas legacy `/phone/*`
+redirigen a `/movil/*`.
 
 En iOS el contenedor nativo está configurado como app de iPhone/iPad enfocada en `/movil`. Al abrir desde Xcode o desde el icono del celular, primero resuelve la empresa contra el portal central, guarda la URL pública de la instalación del cliente y después arranca el login/chat móvil contra ese Render.
 
@@ -74,6 +109,8 @@ evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
 ## Requisitos
 
 - Node 22 o superior para usar Capacitor 8.
+- Node 22.x o superior para la app React Native/Expo en `mobile/`. La toolchain
+  de Expo SDK 57 / React Native 0.86 no debe validarse con Node 20.18.
 - Android: JDK instalado para poder correr Gradle/Android Studio.
 - iOS: Xcode completo, no solo Command Line Tools.
 - Web/Android de una sola instalación: `VITE_API_URL` apuntando al backend público HTTPS antes de construir el binario.
@@ -83,6 +120,21 @@ evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
 - iOS: activar la capability Push Notifications en Xcode y configurar APNs.
 
 ## Comandos
+
+Desde la raiz del repo para el cliente React Native nuevo:
+
+```bash
+npm run mobile:native:start
+npm run mobile:native:ios
+npm run mobile:native:android
+npm run mobile:native:prebuild
+npm run mobile:native:typecheck
+```
+
+`mobile/ios` y `mobile/android` son generados por Expo Continuous Native
+Generation con `npm run mobile:native:prebuild`. Deben tratarse como
+descartables salvo que una personalizacion nativa se promueva deliberadamente a
+codigo versionado.
 
 Desde `frontend/`:
 
@@ -290,6 +342,20 @@ origen social del contacto sólo debe vivir en el aro exterior del avatar
 (`--avatar-ring-color`) y en el badge/icono de canal (`.avatarChannelBadge*`).
 No vuelvas a usar verde WhatsApp, rosa Instagram o azul Messenger como relleno
 completo del avatar de iniciales.
+
+La bandeja nativa en `mobile/src/App.tsx` debe seguir esta misma regla de paridad:
+header de chats con acciones superiores, buscador tipo pill, chips horizontales
+(`Todos`, `No leídos`, `Citas`, `Clientes`, `Leads`, `Comentarios`, `+`) y filas
+planas con separador desde el bloque de texto. Los filtros se calculan con los
+mismos campos que `/movil` recibe de `/api/contacts/chats`: `unreadCount`,
+`status`, `purchases`/`ltv`, `hasAppointments`/`nextAppointmentDate`,
+`lastMessageType`, `hasCommentMessage`, `lastMessageChannel`,
+`lastMessageTransport` y señales de origen. El preview debe respetar el texto del
+último mensaje, caer a labels de media (`Foto`, `Video`, `Audio`, `Documento`,
+`Ubicación`, `Comentario`) y prefijar mensajes salientes con `Tú:` en la
+superficie final. El avatar nativo debe mantener iniciales/foto en relleno
+Ristak y reservar el color de red social para aro/badge, igual que
+`PhoneChat.module.css`.
 
 En la conversación móvil no uses rails/barras verticales pegadas al lado
 izquierdo como indicador visual de foco, comentario o chat no leído. Los estados

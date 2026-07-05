@@ -40,7 +40,7 @@ El producto combina:
 | Backend | Node.js ESM, Express |
 | Base de datos local | SQLite |
 | Base de datos produccion | PostgreSQL en Render cuando existe `DATABASE_URL` |
-| Movil nativo | Capacitor |
+| Movil nativo | Capacitor para `/movil` en produccion; React Native/Expo en `mobile/` como cliente nativo nuevo |
 | Deploy | Render Blueprint / web service |
 | Pagos | Stripe, Conekta, Mercado Pago, CLIP, Rebill, HighLevel invoices |
 | IA | OpenAI Agents / providers configurables |
@@ -49,6 +49,7 @@ Comandos principales:
 
 - Frontend: `cd frontend && npm run typecheck`, `npm run design:audit`, `npm run build`.
 - Backend: `cd backend && npm test`.
+- Mobile React Native: `npm run mobile:native:typecheck`, `npm run mobile:native:start`, `npm run mobile:native:ios`, `npm run mobile:native:android`.
 - Raiz: `npm run build`, `npm start`.
 - Docs: `git diff --check` para validar whitespace basico.
 
@@ -58,6 +59,9 @@ Comandos principales:
   startup runtime, crons y servidor de frontend en produccion.
 - `backend/src/routes/`: rutas HTTP agrupadas por dominio.
 - `backend/src/controllers/`: controladores con validacion HTTP y respuesta.
+- `mobile/`: app React Native/Expo nueva para iOS/Android. Convive con el shell
+  Capacitor de `/movil` y debe mantenerse sincronizada con cualquier cambio de
+  producto movil que tambien afecte al shell publicado.
 - `backend/src/services/`: logica de negocio, integraciones y persistencia.
 - `backend/src/jobs/`: crons, watchdogs y runtime de jobs.
 - `backend/src/config/database.js`: conexion SQLite/Postgres, tablas base,
@@ -170,9 +174,14 @@ Rutas publicas:
 
 Shell movil:
 
-- Vive bajo el prefijo movil (`/movil` en la app actual).
+- Produccion actual vive bajo el prefijo movil (`/movil` en la app actual) y se
+  empaqueta con Capacitor.
 - Incluye chat, pagos, analiticas, calendario, ajustes y secciones moviles.
 - Las rutas legacy `/phone/*` redirigen al shell nuevo.
+- El cliente React Native nuevo vive en `mobile/` y habla directo con las mismas
+  APIs del backend. Mientras convivan, los cambios moviles deben revisarse en
+  `/movil` y en `mobile/`; si una superficie queda fuera, el cambio debe
+  documentar la razon.
 
 Shell desktop protegido:
 
@@ -1497,12 +1506,38 @@ ubicacion y uso, nunca valores.
 
 ## App movil
 
-La app movil usa Capacitor y el shell web movil bajo el prefijo movil. Incluye
-chat, pagos, analytics, calendario y ajustes.
+La app movil publicada usa Capacitor y el shell web movil bajo el prefijo
+`/movil`. Incluye chat, pagos, analytics, calendario y ajustes.
+
+El nuevo cliente nativo React Native/Expo vive en `mobile/`. Es una app separada
+del WebView, con almacenamiento seguro local y consumo directo de APIs del
+backend. Arranca como app paralela con bundle/package `com.ristak.native`; no
+debe reemplazar el bundle de tienda `com.ristak.app` hasta validar la migracion
+en dispositivos reales y actualizar el flujo de release.
+
+Regla obligatoria para futuros cambios: si una feature, label, permiso, push,
+agenda, pago, filtro, login o contrato de API cambia la experiencia movil, la IA
+debe revisar e implementar lo necesario tanto en `/movil` como en `mobile/`.
+Cuando solo aplique a una superficie, el resumen del cambio debe explicar por
+que.
+
+La app React Native no es un rediseño. Su contrato de producto es paridad visual
+y funcional con `/movil`: mismo orden de secciones, nombres visibles,
+jerarquia, flujos, permisos, estados y comportamiento final. La implementacion
+puede ser nativa distinta, pero el usuario no debe sentir que esta usando una app
+diferente o recortada.
+
+La lista de chats nativa debe mantenerse alineada con `PhoneChat`: header de
+chats, buscador, chips de filtros, filas planas, avatares con aro/badge de canal,
+preview de ultimo mensaje y estados de no leido. Cuando cambien filtros,
+labels, canales, unread, archivados o preview en `/movil`, se debe revisar el
+equivalente en `mobile/src/App.tsx` y documentar cualquier brecha temporal en
+`docs/MOBILE_APP.md`.
 
 Documentos:
 
 - `docs/MOBILE_APP.md`
+- `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`
 - `docs/MOBILE_STORE_RELEASES.md`
 
 Las credenciales de stores no deben vivir en el repo. Los builds de tienda se
