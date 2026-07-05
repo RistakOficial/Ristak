@@ -1,19 +1,19 @@
-import React, { Suspense, useEffect } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import React, { Suspense, useEffect, useMemo, useState } from 'react'
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/common'
+import { AutomationLibrary } from './AutomationLibrary'
 import { AutomationsHome } from './AutomationsHome'
 import styles from './Automations.module.css'
+import editorStyles from './editor/AutomationEditor.module.css'
 
 // El editor (canvas, registro de nodos, composer…) es el grafo más pesado del
 // módulo: se carga en su propio chunk para que /automations abra al instante.
-const AutomationEditor = React.lazy(() =>
-  import('./editor/AutomationEditor').then((module) => ({ default: module.AutomationEditor }))
-)
+const loadAutomationEditor = () => import('./editor/AutomationEditor')
+const createAutomationEditor = () =>
+  React.lazy(() => loadAutomationEditor().then((module) => ({ default: module.AutomationEditor })))
 
-const editorPreload = () => import('./editor/AutomationEditor')
-const AUTOMATION_EDITOR_RELOAD_KEY = 'ristak:automation-editor-chunk-reload'
-const AUTOMATION_EDITOR_RELOAD_WINDOW_MS = 10_000
+const editorPreload = loadAutomationEditor
 
 function isDynamicImportFailure(error: unknown) {
   const message = error instanceof Error ? error.message : String(error || '')
@@ -27,19 +27,16 @@ function isDynamicImportFailure(error: unknown) {
   ].some((needle) => message.includes(needle))
 }
 
-function getEditorReloadKey() {
-  if (typeof window === 'undefined') return AUTOMATION_EDITOR_RELOAD_KEY
-  return `${AUTOMATION_EDITOR_RELOAD_KEY}:${window.location.pathname}`
-}
-
 type AutomationEditorBoundaryProps = {
   children: React.ReactNode
+  currentAutomationId?: string
+  onBack: () => void
+  onRetry: () => void
 }
 
 type AutomationEditorBoundaryState = {
   error: Error | null
   isDynamicImportError: boolean
-  reloading: boolean
 }
 
 class AutomationEditorBoundary extends React.Component<
@@ -48,90 +45,114 @@ class AutomationEditorBoundary extends React.Component<
 > {
   state: AutomationEditorBoundaryState = {
     error: null,
-    isDynamicImportError: false,
-    reloading: false
+    isDynamicImportError: false
   }
 
   static getDerivedStateFromError(error: Error): AutomationEditorBoundaryState {
-    return { error, isDynamicImportError: isDynamicImportFailure(error), reloading: false }
+    return { error, isDynamicImportError: isDynamicImportFailure(error) }
   }
 
-  componentDidCatch(error: Error) {
-    if (!isDynamicImportFailure(error) || typeof window === 'undefined') return
-
-    const reloadKey = getEditorReloadKey()
-
-    try {
-      const lastReloadedAt = Number(window.sessionStorage.getItem(reloadKey) || 0)
-
-      if (Date.now() - lastReloadedAt > AUTOMATION_EDITOR_RELOAD_WINDOW_MS) {
-        window.sessionStorage.setItem(reloadKey, String(Date.now()))
-        this.setState({ reloading: true })
-        window.setTimeout(() => window.location.reload(), 50)
-      }
-    } catch {
-      this.setState({ reloading: true })
-      window.setTimeout(() => window.location.reload(), 50)
+  componentDidUpdate(prevProps: AutomationEditorBoundaryProps) {
+    if (prevProps.currentAutomationId !== this.props.currentAutomationId && this.state.error) {
+      this.setState({ error: null, isDynamicImportError: false })
     }
   }
 
   handleRetry = () => {
-    if (typeof window === 'undefined') return
-
-    try {
-      window.sessionStorage.removeItem(getEditorReloadKey())
-    } catch {
-      // La recarga manual sigue funcionando aunque sessionStorage no esté disponible.
-    }
-
-    window.location.reload()
+    this.setState({ error: null, isDynamicImportError: false })
+    this.props.onRetry()
   }
 
   render() {
-    const { error, isDynamicImportError, reloading } = this.state
+    const { error, isDynamicImportError } = this.state
 
     if (!error) return this.props.children
 
-    if (reloading) {
-      return (
-        <div className={styles.editorLoadingState} role="status" aria-live="polite">
-          <Loader2 size={16} className="animate-spin" />
-          <span>Actualizando editor...</span>
-        </div>
-      )
-    }
-
     return (
-      <div className={styles.editorRecoveryState} role="alert">
-        <div className={styles.editorRecoveryIcon} aria-hidden="true">
-          <AlertTriangle size={18} />
-        </div>
-        <div className={styles.editorRecoveryCopy}>
-          <h2>{isDynamicImportError ? 'No se pudo abrir esta automatización' : 'Algo falló al abrir el editor'}</h2>
-          <p>
-            {isDynamicImportError
-              ? 'El navegador intentó usar una versión anterior del editor. Actualiza la página para cargar la versión más reciente.'
-              : 'Actualiza la página para intentar abrir el editor otra vez.'}
-          </p>
-        </div>
-        <div className={styles.editorRecoveryActions}>
-          <Button variant="primary" size="sm" leftIcon={<RefreshCw size={15} />} onClick={this.handleRetry}>
-            Actualizar
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            leftIcon={<ArrowLeft size={15} />}
-            onClick={() => {
-              window.location.href = '/automations'
-            }}
-          >
-            Volver
-          </Button>
+      <div className={editorStyles.editorShell}>
+        <div className={editorStyles.editorMain}>
+          <AutomationLibrary currentAutomationId={this.props.currentAutomationId} />
+          <div className={styles.editorRecoveryState} role="alert">
+            <div className={styles.editorRecoveryIcon} aria-hidden="true">
+              <AlertTriangle size={18} />
+            </div>
+            <div className={styles.editorRecoveryCopy}>
+              <h2>{isDynamicImportError ? 'No se pudo abrir esta automatización' : 'Algo falló al abrir el editor'}</h2>
+              <p>
+                {isDynamicImportError
+                  ? 'El editor no terminó de cargar. Intenta de nuevo sin recargar toda la app.'
+                  : 'Intenta abrir el editor otra vez sin salir de Automatizaciones.'}
+              </p>
+            </div>
+            <div className={styles.editorRecoveryActions}>
+              <Button variant="primary" size="sm" leftIcon={<RefreshCw size={15} />} onClick={this.handleRetry}>
+                Reintentar
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                leftIcon={<ArrowLeft size={15} />}
+                onClick={this.props.onBack}
+              >
+                Volver
+              </Button>
+            </div>
+          </div>
         </div>
       </div>
     )
   }
+}
+
+const AutomationEditorLoading: React.FC<{
+  currentAutomationId?: string
+  onBack: () => void
+}> = ({ currentAutomationId, onBack }) => (
+  <div className={editorStyles.editorShell}>
+    <header className={editorStyles.toolbar}>
+      <button
+        type="button"
+        className={editorStyles.toolbarBack}
+        title="Volver a Automatizaciones"
+        onClick={onBack}
+      >
+        <ArrowLeft size={15} />
+      </button>
+      <span className={editorStyles.saveIndicator} role="status" aria-live="polite">
+        <Loader2 size={12} className="animate-spin" />
+        Cargando automatización...
+      </span>
+    </header>
+    <div className={editorStyles.editorMain}>
+      <AutomationLibrary currentAutomationId={currentAutomationId} />
+      <div className={editorStyles.editorLoading} role="status" aria-live="polite">
+        <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+      </div>
+    </div>
+  </div>
+)
+
+const AutomationEditorRoute: React.FC = () => {
+  const { automationId = '' } = useParams()
+  const navigate = useNavigate()
+  const [retryKey, setRetryKey] = useState(0)
+  const LazyAutomationEditor = useMemo(createAutomationEditor, [automationId, retryKey])
+  const goBack = () => navigate('/automations')
+
+  return (
+    <AutomationEditorBoundary
+      currentAutomationId={automationId}
+      onBack={goBack}
+      onRetry={() => setRetryKey((current) => current + 1)}
+    >
+      <Suspense
+        key={retryKey}
+        fallback={<AutomationEditorLoading currentAutomationId={automationId} onBack={goBack} />}
+      >
+        <LazyAutomationEditor />
+      </Suspense>
+    </AutomationEditorBoundary>
+  )
 }
 
 export const Automations: React.FC = () => {
@@ -147,22 +168,7 @@ export const Automations: React.FC = () => {
   return (
     <Routes>
       <Route index element={<AutomationsHome />} />
-      <Route
-        path=":automationId"
-        element={
-          <AutomationEditorBoundary>
-            <Suspense
-              fallback={
-                <div className={styles.editorLoadingState} role="status" aria-live="polite">
-                  <Loader2 size={15} className="animate-spin" />
-                </div>
-              }
-            >
-              <AutomationEditor />
-            </Suspense>
-          </AutomationEditorBoundary>
-        }
-      />
+      <Route path=":automationId" element={<AutomationEditorRoute />} />
       <Route path="*" element={<Navigate to="/automations" replace />} />
     </Routes>
   )
