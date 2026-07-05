@@ -224,7 +224,7 @@ test('suscripciones: Rebill crea plan y checkout hospedado para autorizar la sus
 
         if (parsed.pathname === '/v3/payment-links' && method === 'POST') {
           assert.equal(body.type, undefined)
-          assert.equal(body.plan, 'pln_rebill_test')
+          assert.deepEqual(body.plan, { id: 'pln_rebill_test' })
           assert.deepEqual(body.paymentMethods, [{ methods: ['card'], currency: 'MXN' }])
           assert.equal(body.showCoupon, false)
           assert.equal(body.metadata.rebillPlanId, 'pln_rebill_test')
