@@ -224,6 +224,22 @@ numero mostrado por automatico coincide con el que el usuario toca, igual debe
 guardarse como fijo; no cierres el sheet solo porque visualmente ya era el
 numero activo.
 
+## Agenda de citas desde el chat movil
+
+El sheet de `Agendar cita` dentro de una conversacion puede abrirse en dos modos:
+formulario completo o calendario mensual. El boton de calendario del encabezado
+del sheet cambia entre ambos modos y guarda la preferencia por usuario en
+`user_config.mobile_chat_appointment_entry_mode`, con valores `form` o
+`calendar`.
+
+El modo calendario solo aparece cuando hay un contacto activo bloqueado para la
+cita. Mantiene el selector de calendario arriba, pinta una vista mensual unica
+sin semana/dia/anio, permite cambiar de mes con flechas o swipe horizontal y
+despues pide hora, duracion, ubicacion e invitados. La fecha y hora se convierten
+a UTC usando la zona horaria de la cuenta; no debe depender de la zona horaria
+del navegador. Al guardar usa el mismo endpoint de citas que el formulario
+normal y respeta bloqueos nativos del calendario antes de crear la cita.
+
 ## Filtros de la bandeja del chat movil
 
 La bandeja de `/movil` no debe volver a mostrar el dropdown `Numero / Ver todos`

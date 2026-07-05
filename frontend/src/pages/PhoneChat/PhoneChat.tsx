@@ -51,6 +51,7 @@ import {
   Search,
   Send,
   Sparkles,
+  SquarePen,
   Smartphone,
   Star,
   Sun,
@@ -79,7 +80,7 @@ import { PhoneScrollHideHeader } from '@/components/phone/PhoneScrollHideHeader'
 import { PhoneSelect } from '@/components/phone/PhoneSelect'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
-import { PhoneFilterChips, PhoneSheet, PhoneTextArea, PhoneTextField } from '@/components/phone/ui'
+import { PhoneButton, PhoneDurationField, PhoneFilterChips, PhoneSheet, PhoneTextArea, PhoneTextField, PhoneTimeField, formatDurationLabel, formatTimeLabel } from '@/components/phone/ui'
 import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature } from '@/utils/accessControl'
@@ -87,6 +88,8 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import {
+  dateOnlyToLocalDate,
+  formatDateOnlyFromDate,
   localDateTimeInputToUTCISOString,
   toDateTimeLocalInputValue,
   todayDateOnlyInTimezone
@@ -215,6 +218,7 @@ const CHAT_REALTIME_PREVIEW_ID_PREFIX = 'realtime-preview-'
 const CHAT_REALTIME_PREVIEW_MAX_AGE_MS = 2 * 60 * 1000
 const CHAT_NOTIFICATION_PREVIEW_FALLBACK_TEXT = 'Mensaje nuevo'
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes'
+const PHONE_CHAT_APPOINTMENT_ENTRY_MODE_CONFIG_KEY = 'mobile_chat_appointment_entry_mode'
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat'
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI'
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak'
@@ -394,6 +398,7 @@ type MessageAudioRate = typeof MESSAGE_AUDIO_RATE_OPTIONS[number]
 type PaymentMode = 'single' | 'partial' | 'subscription'
 type PaymentSheetStep = 'choice' | 'form'
 type ActionSheet = 'attachments' | 'templates' | 'clabe' | 'payment' | 'appointment' | 'settings' | 'newChat' | 'chatMore' | 'schedule' | 'agentMenu' | 'tag' | 'filters' | null
+type AppointmentEntryMode = 'form' | 'calendar'
 type WideSidebarMode = 'chats' | 'newChat' | 'appointment'
 type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'create_agent' | 'provider_key' | 'ready_human'
@@ -438,6 +443,18 @@ interface PhoneChatCustomFilterDraft {
   label: string
   match: PhoneChatCustomFilterMatchMode
   rules: PhoneChatCustomFilterRule[]
+}
+interface AppointmentCalendarGuest {
+  id: string
+  name: string
+  contact: string
+}
+interface AppointmentMonthCell {
+  key: string
+  date: Date
+  dateKey: string
+  isCurrentMonth: boolean
+  events: CalendarEvent[]
 }
 interface PhoneChatConditionField extends ContactAdvancedField {
   section: string
@@ -503,6 +520,12 @@ const DEFAULT_ADVANCED_CHAT_FILTERS: AdvancedChatFilters = {
   activity: 'all'
 }
 const DEFAULT_PHONE_CHAT_FILTER_CHIPS = ['all', 'unread', 'appointments', 'customers', 'leads', 'comments']
+const APPOINTMENT_MONTH_NAMES = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+]
+const APPOINTMENT_WEEKDAY_LABELS = ['D', 'L', 'M', 'M', 'J', 'V', 'S']
+const APPOINTMENT_MONTH_SWIPE_MIN_PX = 54
 const PHONE_CHAT_FILTERS_MORE_VALUE = '__filters_more__'
 const PHONE_CHAT_COMMENTS_FILTER_ID = 'comments'
 const PHONE_CHAT_PHONE_FILTER_PREFIX = 'phone:'
@@ -4867,6 +4890,94 @@ function createDefaultAppointmentRange(timeZone: string) {
   }
 }
 
+function normalizeCalendarDurationMinutes(value?: number | null, unit?: string | null) {
+  const amount = Number(value)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  const normalizedUnit = String(unit || 'mins').toLowerCase()
+  if (normalizedUnit.startsWith('hour')) return amount * 60
+  return amount
+}
+
+function getAppointmentCalendarDefaultDuration(calendar?: Calendar | null) {
+  return Math.max(
+    15,
+    Math.min(
+      24 * 60,
+      normalizeCalendarDurationMinutes(calendar?.slotDuration, calendar?.slotDurationUnit) ?? 60
+    )
+  )
+}
+
+function getAppointmentRangeDurationMinutes(start?: string, end?: string, fallback = 60) {
+  const startMs = Date.parse(start || '')
+  const endMs = Date.parse(end || '')
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return fallback
+  return Math.max(1, Math.round((endMs - startMs) / 60000))
+}
+
+function getAppointmentDateKey(date: Date) {
+  return formatDateOnlyFromDate(date)
+}
+
+function startOfAppointmentWeek(date: Date) {
+  const next = new Date(date)
+  next.setDate(next.getDate() - next.getDay())
+  next.setHours(0, 0, 0, 0)
+  return next
+}
+
+function buildAppointmentMonthCells(monthDate: Date, eventsByDate: Record<string, CalendarEvent[]>): AppointmentMonthCell[] {
+  const firstOfMonth = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1)
+  const start = startOfAppointmentWeek(firstOfMonth)
+
+  return Array.from({ length: 42 }).map((_, index) => {
+    const date = new Date(start)
+    date.setDate(start.getDate() + index)
+    const dateKey = getAppointmentDateKey(date)
+    return {
+      key: dateKey,
+      date,
+      dateKey,
+      isCurrentMonth: date.getMonth() === monthDate.getMonth(),
+      events: eventsByDate[dateKey] || []
+    }
+  })
+}
+
+function getAppointmentMonthFetchRange(monthDate: Date, timeZone: string) {
+  const cells = buildAppointmentMonthCells(monthDate, {})
+  const startCell = cells[0]
+  const endCell = cells[cells.length - 1]
+  if (!startCell || !endCell) return null
+
+  const afterEnd = new Date(endCell.date)
+  afterEnd.setDate(endCell.date.getDate() + 1)
+  const startIso = localDateTimeInputToUTCISOString(`${startCell.dateKey}T00:00`, timeZone)
+  const endIso = localDateTimeInputToUTCISOString(`${getAppointmentDateKey(afterEnd)}T00:00`, timeZone)
+  const startTime = Date.parse(startIso || '')
+  const endTime = Date.parse(endIso || '')
+
+  if (!Number.isFinite(startTime) || !Number.isFinite(endTime) || endTime <= startTime) return null
+  return {
+    startTime,
+    endTime: endTime - 1
+  }
+}
+
+function getAppointmentCalendarTimeFromRange(start?: string, timeZone?: string) {
+  if (!start || !timeZone) return ''
+  return toDateTimeLocalInputValue(start, timeZone).slice(11, 16)
+}
+
+function createAppointmentCalendarGuestId() {
+  return `guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function isHighLevelAppointmentCalendar(calendar?: Calendar | null) {
+  return calendar?.source === 'ghl' || Boolean(calendar?.ghlCalendarId)
+}
+
 function createEmptyClabeForm(): BankClabeFormState {
   return {
     alias: '',
@@ -4944,6 +5055,8 @@ export const PhoneChat: React.FC = () => {
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
+  const [storedAppointmentEntryMode, setStoredAppointmentEntryMode] = useUserConfig<AppointmentEntryMode>(PHONE_CHAT_APPOINTMENT_ENTRY_MODE_CONFIG_KEY, 'form')
+  const [appointmentEntryModeOverride, setAppointmentEntryModeOverride] = useState<AppointmentEntryMode | null>(null)
   const [calendarPushEnabled, setCalendarPushEnabled] = useUserConfig<boolean>('calendar_push_notifications_enabled', false) // MOB-006
   const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled] = useUserConfig<boolean>('appointment_confirmation_push_notifications_enabled', true) // MOB-006
   const [chatPushEnabled, setChatPushEnabled] = useUserConfig<boolean>('chat_push_notifications_enabled', true) // MOB-006
@@ -5144,10 +5257,27 @@ export const PhoneChat: React.FC = () => {
   const dismissedRestoreIdsRef = useRef<Set<string>>(new Set())
   const composerPlusRef = useRef<HTMLButtonElement | null>(null)
   const composerScheduleRef = useRef<HTMLButtonElement | null>(null)
+  const appointmentCalendarTouchRef = useRef<{ x: number; y: number } | null>(null)
+  const appointmentCalendarOpenedRef = useRef(false)
   const [scheduleSheetAnchor, setScheduleSheetAnchor] = useState<{ right: number; bottom: number } | null>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
   const [calendarsLoading, setCalendarsLoading] = useState(false)
   const [selectedCalendarId, setSelectedCalendarId] = useState('')
+  const [appointmentCalendarDate, setAppointmentCalendarDate] = useState(() => todayDateOnlyInTimezone(timezone))
+  const [appointmentCalendarMonth, setAppointmentCalendarMonth] = useState(() => (
+    dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date()
+  ))
+  const [appointmentCalendarTime, setAppointmentCalendarTime] = useState('')
+  const [appointmentCalendarDuration, setAppointmentCalendarDuration] = useState(60)
+  const [appointmentCalendarAddress, setAppointmentCalendarAddress] = useState('')
+  const [appointmentCalendarGuestsOpen, setAppointmentCalendarGuestsOpen] = useState(false)
+  const [appointmentCalendarGuestName, setAppointmentCalendarGuestName] = useState('')
+  const [appointmentCalendarGuestContact, setAppointmentCalendarGuestContact] = useState('')
+  const [appointmentCalendarGuests, setAppointmentCalendarGuests] = useState<AppointmentCalendarGuest[]>([])
+  const [appointmentCalendarEvents, setAppointmentCalendarEvents] = useState<CalendarEvent[]>([])
+  const [appointmentCalendarEventsLoading, setAppointmentCalendarEventsLoading] = useState(false)
+  const [appointmentCalendarError, setAppointmentCalendarError] = useState('')
+  const [appointmentCalendarSaving, setAppointmentCalendarSaving] = useState(false)
   const [agentProducts, setAgentProducts] = useState<ProductItem[]>([])
   const [agentProductsLoading, setAgentProductsLoading] = useState(false)
   const [sheet, setSheet] = useState<ActionSheet>(null)
@@ -5883,6 +6013,101 @@ export const PhoneChat: React.FC = () => {
     : selectedCalendar
   const appointmentSheetInitialContact = wideAppointmentDefaults ? null : initialContact
   const appointmentSheetTitle = wideAppointmentDefaults?.title || appointmentSheetInitialContact?.name || ''
+  const canUseAppointmentCalendarEntry = Boolean(appointmentSheetInitialContact?.id)
+  const requestedAppointmentEntryMode = appointmentEntryModeOverride || (storedAppointmentEntryMode === 'calendar' ? 'calendar' : 'form')
+  const activeAppointmentEntryMode: AppointmentEntryMode = canUseAppointmentCalendarEntry && requestedAppointmentEntryMode === 'calendar'
+    ? 'calendar'
+    : 'form'
+  const appointmentCalendarEventsByDate = useMemo(() => {
+    const grouped: Record<string, CalendarEvent[]> = {}
+    appointmentCalendarEvents.forEach((event) => {
+      const localValue = toDateTimeLocalInputValue(event.startTime, timezone)
+      const dateKey = localValue.slice(0, 10)
+      if (!dateKey) return
+      if (!grouped[dateKey]) grouped[dateKey] = []
+      grouped[dateKey].push(event)
+    })
+    Object.keys(grouped).forEach((dateKey) => {
+      grouped[dateKey].sort((left, right) => parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime))
+    })
+    return grouped
+  }, [appointmentCalendarEvents, timezone])
+  const appointmentCalendarMonthCells = useMemo(
+    () => buildAppointmentMonthCells(appointmentCalendarMonth, appointmentCalendarEventsByDate),
+    [appointmentCalendarEventsByDate, appointmentCalendarMonth]
+  )
+  const appointmentCalendarSelectedDate = dateOnlyToLocalDate(appointmentCalendarDate)
+  const appointmentCalendarSelectedEvents = appointmentCalendarEventsByDate[appointmentCalendarDate] || []
+  useEffect(() => {
+    if (sheet !== 'appointment') {
+      appointmentCalendarOpenedRef.current = false
+      return
+    }
+
+    if (appointmentCalendarOpenedRef.current) return
+    appointmentCalendarOpenedRef.current = true
+
+    const fallbackDate = todayDateOnlyInTimezone(timezone)
+    const rangeLocalValue = toDateTimeLocalInputValue(appointmentSheetRange.start, appointmentSheetRange.timeZone || timezone)
+    const nextDate = rangeLocalValue.slice(0, 10) || fallbackDate
+    const nextMonth = dateOnlyToLocalDate(nextDate) || dateOnlyToLocalDate(fallbackDate) || new Date()
+    const nextTime = rangeLocalValue.slice(11, 16) || getAppointmentCalendarTimeFromRange(defaultAppointmentRange.start, timezone) || '09:00'
+    const fallbackDuration = getAppointmentCalendarDefaultDuration(appointmentSheetCalendar)
+    const nextDuration = getAppointmentRangeDurationMinutes(
+      appointmentSheetRange.start,
+      appointmentSheetRange.end,
+      fallbackDuration
+    )
+
+    setAppointmentCalendarDate(nextDate)
+    setAppointmentCalendarMonth(new Date(nextMonth.getFullYear(), nextMonth.getMonth(), 1))
+    setAppointmentCalendarTime(nextTime)
+    setAppointmentCalendarDuration(nextDuration)
+    setAppointmentCalendarAddress('')
+    setAppointmentCalendarGuestsOpen(false)
+    setAppointmentCalendarGuestName('')
+    setAppointmentCalendarGuestContact('')
+    setAppointmentCalendarGuests([])
+    setAppointmentCalendarError('')
+  }, [appointmentSheetCalendar, appointmentSheetRange.end, appointmentSheetRange.start, appointmentSheetRange.timeZone, defaultAppointmentRange.start, sheet, timezone])
+
+  useEffect(() => {
+    if (sheet !== 'appointment' || activeAppointmentEntryMode !== 'calendar' || !appointmentSheetCalendarId) {
+      setAppointmentCalendarEvents([])
+      setAppointmentCalendarEventsLoading(false)
+      return
+    }
+
+    const range = getAppointmentMonthFetchRange(appointmentCalendarMonth, timezone)
+    if (!range) {
+      setAppointmentCalendarEvents([])
+      return
+    }
+
+    let cancelled = false
+    setAppointmentCalendarEventsLoading(true)
+
+    calendarsService.getEvents(
+      locationId || '',
+      range.startTime,
+      range.endTime,
+      accessToken || undefined,
+      appointmentSheetCalendarId
+    )
+      .then((events) => {
+        if (!cancelled) setAppointmentCalendarEvents(Array.isArray(events) ? events : [])
+      })
+      .catch(() => {
+        if (!cancelled) setAppointmentCalendarEvents([])
+      })
+      .finally(() => {
+        if (!cancelled) setAppointmentCalendarEventsLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [accessToken, activeAppointmentEntryMode, appointmentCalendarMonth, appointmentSheetCalendarId, locationId, sheet, timezone])
   const whatsappConnected = Boolean(whatsappStatus?.connected && whatsappStatus?.configured)
   const businessPhones = whatsappStatus?.phoneNumbers || []
   const chatPhoneFilterEnabled = businessPhones.length > 1
@@ -10174,6 +10399,199 @@ export const PhoneChat: React.FC = () => {
     }
     setSheet('appointment')
     closeSwipeActions()
+  }
+
+  const persistAppointmentEntryMode = (mode: AppointmentEntryMode) => {
+    setAppointmentEntryModeOverride(mode)
+    setStoredAppointmentEntryMode(mode)
+      .then(() => setAppointmentEntryModeOverride(null))
+      .catch(() => {
+        setAppointmentEntryModeOverride(null)
+        showToast('warning', 'No se guardó la vista', 'La cita cambió de vista, pero no se pudo guardar como predeterminada.')
+      })
+  }
+
+  const handleToggleAppointmentEntryMode = () => {
+    if (!canUseAppointmentCalendarEntry) return
+    persistAppointmentEntryMode(activeAppointmentEntryMode === 'calendar' ? 'form' : 'calendar')
+  }
+
+  const moveAppointmentCalendarMonth = (direction: -1 | 1) => {
+    setAppointmentCalendarMonth((current) => new Date(current.getFullYear(), current.getMonth() + direction, 1))
+  }
+
+  const selectAppointmentCalendarDate = (date: Date) => {
+    const dateKey = getAppointmentDateKey(date)
+    setAppointmentCalendarDate(dateKey)
+    setAppointmentCalendarMonth(new Date(date.getFullYear(), date.getMonth(), 1))
+    setAppointmentCalendarError('')
+  }
+
+  const handleAppointmentCalendarTouchStart = (event: React.TouchEvent<HTMLDivElement>) => {
+    const touch = event.touches[0]
+    if (!touch) return
+    appointmentCalendarTouchRef.current = { x: touch.clientX, y: touch.clientY }
+  }
+
+  const handleAppointmentCalendarTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => {
+    const start = appointmentCalendarTouchRef.current
+    appointmentCalendarTouchRef.current = null
+    const touch = event.changedTouches[0]
+    if (!start || !touch) return
+
+    const deltaX = touch.clientX - start.x
+    const deltaY = touch.clientY - start.y
+    if (Math.abs(deltaX) < APPOINTMENT_MONTH_SWIPE_MIN_PX || Math.abs(deltaX) <= Math.abs(deltaY)) return
+    moveAppointmentCalendarMonth(deltaX < 0 ? 1 : -1)
+  }
+
+  const handleAddAppointmentCalendarGuest = () => {
+    const name = appointmentCalendarGuestName.trim()
+    const contact = appointmentCalendarGuestContact.trim()
+    if (!name || !contact) {
+      showToast('warning', 'Invitado incompleto', 'Escribe nombre y WhatsApp o correo del invitado.')
+      return
+    }
+
+    const normalizedContact = contact.toLowerCase()
+    if (appointmentCalendarGuests.some((guest) => guest.contact.toLowerCase() === normalizedContact)) {
+      showToast('info', 'Invitado ya agregado', `${name} ya está en la cita.`)
+      return
+    }
+
+    setAppointmentCalendarGuests((current) => [
+      ...current,
+      {
+        id: createAppointmentCalendarGuestId(),
+        name,
+        contact
+      }
+    ])
+    setAppointmentCalendarGuestName('')
+    setAppointmentCalendarGuestContact('')
+    setAppointmentCalendarError('')
+  }
+
+  const checkAppointmentCalendarBlockedSlot = async (startIso: string, endIso: string) => {
+    if (!appointmentSheetCalendar || isHighLevelAppointmentCalendar(appointmentSheetCalendar) || !locationId) return null
+
+    const appointmentStartMs = Date.parse(startIso)
+    const appointmentEndMs = Date.parse(endIso)
+    if (!Number.isFinite(appointmentStartMs) || !Number.isFinite(appointmentEndMs) || appointmentEndMs <= appointmentStartMs) return null
+
+    const startLocal = toDateTimeLocalInputValue(startIso, timezone)
+    const dateKey = startLocal.slice(0, 10)
+    const dayDate = dateOnlyToLocalDate(dateKey)
+    if (!dateKey || !dayDate) return null
+
+    const nextDate = new Date(dayDate)
+    nextDate.setDate(dayDate.getDate() + 1)
+    const dayStartIso = localDateTimeInputToUTCISOString(`${dateKey}T00:00`, timezone)
+    const dayEndIso = localDateTimeInputToUTCISOString(`${getAppointmentDateKey(nextDate)}T00:00`, timezone)
+    const dayStartMs = Date.parse(dayStartIso || '')
+    const dayEndMs = Date.parse(dayEndIso || '')
+    if (!Number.isFinite(dayStartMs) || !Number.isFinite(dayEndMs) || dayEndMs <= dayStartMs) return null
+
+    const blockedSlots = await calendarsService.getBlockedSlots(
+      appointmentSheetCalendar.id,
+      locationId,
+      Math.min(dayStartMs, appointmentStartMs),
+      Math.max(dayEndMs - 1, appointmentEndMs),
+      accessToken || undefined
+    )
+
+    return blockedSlots.find((slot: any) => {
+      const rawStart = String(slot?.startTime || slot?.start_time || slot?.startIso || '').trim()
+      const rawEnd = String(slot?.endTime || slot?.end_time || slot?.endIso || rawStart).trim()
+      const rawStartMs = rawStart.includes('T') ? parseSortableDateValue(rawStart) : 0
+      const rawEndMs = rawEnd.includes('T') ? parseSortableDateValue(rawEnd) : 0
+      if (rawStartMs && rawEndMs && rawEndMs > rawStartMs) {
+        return appointmentStartMs < rawEndMs && appointmentEndMs > rawStartMs
+      }
+
+      const slotDate = String(slot?.date || '').slice(0, 10)
+      const slotStart = rawStart.slice(0, 5)
+      const slotEnd = rawEnd.slice(0, 5)
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(slotDate) || !/^\d{2}:\d{2}$/.test(slotStart) || !/^\d{2}:\d{2}$/.test(slotEnd)) {
+        return false
+      }
+
+      const slotLocalDate = dateOnlyToLocalDate(slotDate)
+      if (!slotLocalDate) return false
+      const slotEndDate = new Date(slotLocalDate)
+      if (slotEnd <= slotStart) slotEndDate.setDate(slotLocalDate.getDate() + 1)
+
+      const slotStartIso = localDateTimeInputToUTCISOString(`${slotDate}T${slotStart}`, timezone)
+      const slotEndIso = localDateTimeInputToUTCISOString(`${getAppointmentDateKey(slotEndDate)}T${slotEnd}`, timezone)
+      const slotStartMs = Date.parse(slotStartIso || '')
+      const slotEndMs = Date.parse(slotEndIso || '')
+      if (!Number.isFinite(slotStartMs) || !Number.isFinite(slotEndMs) || slotEndMs <= slotStartMs) return false
+
+      return appointmentStartMs < slotEndMs && appointmentEndMs > slotStartMs
+    }) || null
+  }
+
+  const handleSubmitAppointmentCalendar = async () => {
+    if (appointmentCalendarSaving) return
+
+    const contact = appointmentSheetInitialContact
+    if (!contact?.id) {
+      setAppointmentCalendarError('Abre un contacto antes de agendar.')
+      return
+    }
+
+    const calendarForAppointment = appointmentSheetCalendar
+    if (!calendarForAppointment?.id) {
+      setAppointmentCalendarError('Elige un calendario activo.')
+      return
+    }
+
+    if (!appointmentCalendarDate || !appointmentCalendarTime) {
+      setAppointmentCalendarError('Selecciona fecha y hora para la cita.')
+      return
+    }
+
+    const startIso = localDateTimeInputToUTCISOString(`${appointmentCalendarDate}T${appointmentCalendarTime}`, timezone)
+    const startMs = Date.parse(startIso || '')
+    const safeDuration = Math.max(1, Number(appointmentCalendarDuration) || getAppointmentCalendarDefaultDuration(calendarForAppointment))
+    const endIso = Number.isFinite(startMs)
+      ? new Date(startMs + safeDuration * 60 * 1000).toISOString()
+      : ''
+
+    if (!startIso || !endIso) {
+      setAppointmentCalendarError('La fecha u hora no es válida.')
+      return
+    }
+
+    setAppointmentCalendarSaving(true)
+    setAppointmentCalendarError('')
+
+    try {
+      const blockedSlot = await checkAppointmentCalendarBlockedSlot(startIso, endIso)
+      if (blockedSlot) {
+        setAppointmentCalendarError('Ese horario está bloqueado. Elige otra hora.')
+        return
+      }
+
+      const guestsNotes = appointmentCalendarGuests.length > 0
+        ? `Invitados:\n${appointmentCalendarGuests.map((guest) => `- ${guest.name}: ${guest.contact}`).join('\n')}`
+        : ''
+
+      await handleCreateAppointment({
+        title: appointmentSheetTitle || contact.name || 'Cita',
+        appointmentStatus: calendarForAppointment.autoConfirm === false ? 'pending' : 'confirmed',
+        startTime: startIso,
+        endTime: endIso,
+        notes: guestsNotes,
+        address: appointmentCalendarAddress.trim(),
+        timeZone: timezone,
+        contactId: contact.id
+      })
+    } catch {
+      setAppointmentCalendarError('No se pudo agendar. Intenta otra vez.')
+    } finally {
+      setAppointmentCalendarSaving(false)
+    }
   }
 
   useEffect(() => {
@@ -17393,6 +17811,241 @@ export const PhoneChat: React.FC = () => {
     </div>
   )
 
+  const renderAppointmentCalendarMode = () => {
+    const calendarOptions = calendars.map((calendar) => ({
+      value: calendar.id,
+      label: calendar.name || 'Calendario sin nombre',
+      description: calendar.source === 'ghl' ? 'HighLevel' : calendar.source === 'google' ? 'Google' : 'Ristak'
+    }))
+    const monthLabel = `${capitalizeFirst(APPOINTMENT_MONTH_NAMES[appointmentCalendarMonth.getMonth()] || '')} ${appointmentCalendarMonth.getFullYear()}`
+    const selectedDateLabel = appointmentCalendarSelectedDate
+      ? `${appointmentCalendarSelectedDate.getDate()} de ${APPOINTMENT_MONTH_NAMES[appointmentCalendarSelectedDate.getMonth()]}`
+      : 'Fecha sin elegir'
+    const todayKey = todayDateOnlyInTimezone(timezone)
+    const selectedEventCount = appointmentCalendarSelectedEvents.length
+    const selectedEventLabel = appointmentCalendarEventsLoading
+      ? 'Cargando citas...'
+      : selectedEventCount === 0
+        ? 'Sin citas visibles'
+        : `${selectedEventCount} cita${selectedEventCount === 1 ? '' : 's'} visible${selectedEventCount === 1 ? '' : 's'}`
+    const canSubmitAppointmentCalendar = Boolean(
+      appointmentSheetCalendar?.id &&
+      appointmentSheetInitialContact?.id &&
+      appointmentCalendarDate &&
+      appointmentCalendarTime &&
+      !appointmentCalendarSaving
+    )
+
+    return (
+      <div
+        className={styles.appointmentCalendarMode}
+        data-bottom-sheet-no-drag="true"
+        data-bottom-sheet-scrollable="true"
+        data-phone-chat-scrollable="true"
+      >
+        <label className={styles.appointmentCalendarField}>
+          <span>Calendario</span>
+          <PhoneSelect
+            value={appointmentSheetCalendarId}
+            onChange={(calendarId) => {
+              setSelectedCalendarId(calendarId)
+              const nextCalendar = calendars.find((calendar) => calendar.id === calendarId)
+              if (nextCalendar) {
+                setAppointmentCalendarDuration(getAppointmentCalendarDefaultDuration(nextCalendar))
+              }
+            }}
+            options={calendarOptions}
+            title="Calendario"
+            placeholder={calendarsLoading ? 'Cargando calendarios...' : 'Elegir calendario'}
+            disabled={calendarsLoading || calendarOptions.length === 0}
+            ariaLabel="Calendario de la cita"
+            buttonClassName={styles.appointmentCalendarSelectButton}
+            inlineOnWide
+          />
+        </label>
+
+        <section
+          className={styles.appointmentMonthSurface}
+          aria-label="Calendario mensual"
+          onTouchStart={handleAppointmentCalendarTouchStart}
+          onTouchEnd={handleAppointmentCalendarTouchEnd}
+        >
+          <div className={styles.appointmentMonthHeader}>
+            <button type="button" onClick={() => moveAppointmentCalendarMonth(-1)} aria-label="Mes anterior">
+              <ChevronLeft size={18} />
+            </button>
+            <strong>{monthLabel}</strong>
+            <button type="button" onClick={() => moveAppointmentCalendarMonth(1)} aria-label="Mes siguiente">
+              <ChevronRight size={18} />
+            </button>
+          </div>
+
+          <div className={styles.appointmentWeekdays} aria-hidden="true">
+            {APPOINTMENT_WEEKDAY_LABELS.map((day, index) => (
+              <span key={`${day}-${index}`}>{day}</span>
+            ))}
+          </div>
+
+          <div className={styles.appointmentMonthGrid}>
+            {appointmentCalendarMonthCells.map((cell) => {
+              const selected = cell.dateKey === appointmentCalendarDate
+              const today = cell.dateKey === todayKey
+              const markerCount = Math.min(3, cell.events.length)
+              return (
+                <button
+                  key={cell.key}
+                  type="button"
+                  className={[
+                    styles.appointmentMonthDay,
+                    !cell.isCurrentMonth ? styles.appointmentMonthDayMuted : '',
+                    selected ? styles.appointmentMonthDaySelected : '',
+                    today ? styles.appointmentMonthDayToday : ''
+                  ].filter(Boolean).join(' ')}
+                  aria-pressed={selected}
+                  aria-label={`${cell.date.getDate()} de ${APPOINTMENT_MONTH_NAMES[cell.date.getMonth()]}`}
+                  onClick={() => selectAppointmentCalendarDate(cell.date)}
+                >
+                  <span>{cell.date.getDate()}</span>
+                  <em aria-hidden="true">
+                    {Array.from({ length: markerCount }).map((_, index) => (
+                      <b key={`${cell.key}-marker-${index}`} />
+                    ))}
+                  </em>
+                </button>
+              )
+            })}
+          </div>
+        </section>
+
+        <div className={styles.appointmentCalendarSelection} aria-live="polite">
+          <strong>{selectedDateLabel}</strong>
+          <span>{selectedEventLabel}</span>
+        </div>
+
+        <div className={styles.appointmentCalendarTimeRow}>
+          <PhoneTimeField
+            label="Hora"
+            value={appointmentCalendarTime}
+            onChange={(value) => {
+              setAppointmentCalendarTime(value)
+              setAppointmentCalendarError('')
+            }}
+            title="Hora de la cita"
+            quickStepMinutes={15}
+            quickStartHour={6}
+            quickEndHour={22}
+          />
+          <label className={styles.appointmentCalendarDurationField}>
+            <span>Duración</span>
+            <PhoneDurationField
+              value={appointmentCalendarDuration}
+              onChange={(minutes) => {
+                setAppointmentCalendarDuration(minutes)
+                setAppointmentCalendarError('')
+              }}
+              title="Duración de la cita"
+              placeholder="Duración"
+            />
+          </label>
+        </div>
+
+        <PhoneTextField
+          label="Ubicación"
+          value={appointmentCalendarAddress}
+          onChange={(value) => {
+            setAppointmentCalendarAddress(value)
+            setAppointmentCalendarError('')
+          }}
+          placeholder="Consultorio, Zoom, Google Meet..."
+          leading={<MapPin size={16} />}
+        />
+
+        <section className={styles.appointmentCalendarGuests}>
+          <div className={styles.appointmentCalendarGuestsHeader}>
+            <span>
+              <strong>Invitados</strong>
+              <small>{appointmentCalendarGuests.length ? `${appointmentCalendarGuests.length} agregado${appointmentCalendarGuests.length === 1 ? '' : 's'}` : 'Opcional'}</small>
+            </span>
+            <button
+              type="button"
+              className={appointmentCalendarGuestsOpen ? styles.appointmentCalendarGuestsToggleActive : ''}
+              aria-pressed={appointmentCalendarGuestsOpen}
+              onClick={() => setAppointmentCalendarGuestsOpen((current) => !current)}
+            >
+              {appointmentCalendarGuestsOpen ? 'Ocultar' : 'Agregar'}
+            </button>
+          </div>
+
+          {appointmentCalendarGuestsOpen && (
+            <div className={styles.appointmentCalendarGuestForm}>
+              <PhoneTextField
+                label="Nombre"
+                value={appointmentCalendarGuestName}
+                onChange={setAppointmentCalendarGuestName}
+                placeholder="Nombre completo"
+              />
+              <PhoneTextField
+                label="WhatsApp o correo"
+                value={appointmentCalendarGuestContact}
+                onChange={setAppointmentCalendarGuestContact}
+                placeholder="persona@email.com"
+              />
+              <PhoneButton
+                variant="secondary"
+                fullWidth
+                icon={<User size={16} />}
+                onClick={handleAddAppointmentCalendarGuest}
+              >
+                Agregar invitado
+              </PhoneButton>
+            </div>
+          )}
+
+          {appointmentCalendarGuests.length > 0 && (
+            <div className={styles.appointmentCalendarGuestList}>
+              {appointmentCalendarGuests.map((guest) => (
+                <div key={guest.id} className={styles.appointmentCalendarGuestItem}>
+                  <span>
+                    <strong>{guest.name}</strong>
+                    <small>{guest.contact}</small>
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Quitar ${guest.name}`}
+                    onClick={() => setAppointmentCalendarGuests((current) => current.filter((item) => item.id !== guest.id))}
+                  >
+                    <X size={15} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {appointmentCalendarDate && appointmentCalendarTime && (
+          <p className={styles.appointmentCalendarPreview}>
+            {selectedDateLabel} · {formatTimeLabel(appointmentCalendarTime)} · {formatDurationLabel(appointmentCalendarDuration)}
+          </p>
+        )}
+
+        {appointmentCalendarError && (
+          <p className={styles.appointmentCalendarError}>{appointmentCalendarError}</p>
+        )}
+
+        <PhoneButton
+          fullWidth
+          size="lg"
+          loading={appointmentCalendarSaving}
+          disabled={!canSubmitAppointmentCalendar}
+          icon={<Check size={17} />}
+          onClick={handleSubmitAppointmentCalendar}
+        >
+          Agendar cita
+        </PhoneButton>
+      </div>
+    )
+  }
+
   const renderScheduleSheet = () => {
     const previewDate = getScheduleDateFromDraft(scheduleDraft, timezone)
     const scheduleTemplatePreview = scheduleTemplate ? getTemplateBodyPreview(scheduleTemplate) : ''
@@ -20915,7 +21568,10 @@ export const PhoneChat: React.FC = () => {
           >
             <div className={styles.sheetHandle} aria-hidden="true" />
             {sheet !== 'attachments' && (
-              <div className={styles.sheetHeader}>
+              <div className={`${styles.sheetHeader} ${sheet === 'appointment' && canUseAppointmentCalendarEntry ? styles.sheetHeaderWithAction : ''}`}>
+                {sheet === 'appointment' && canUseAppointmentCalendarEntry && (
+                  <span className={styles.sheetHeaderActionSpacer} aria-hidden="true" />
+                )}
                 <div>
                   <p>{activeContact ? getContactName(activeContact) : aiAgentConversationOpen ? AI_AGENT_CHAT_DISPLAY_NAME : 'Ristak'}</p>
                   <h2>
@@ -20950,6 +21606,17 @@ export const PhoneChat: React.FC = () => {
                     )}
                   </h2>
                 </div>
+                {sheet === 'appointment' && canUseAppointmentCalendarEntry && (
+                  <button
+                    type="button"
+                    className={`${styles.sheetHeaderIconButton} ${activeAppointmentEntryMode === 'calendar' ? styles.sheetHeaderIconButtonActive : ''}`}
+                    aria-label={activeAppointmentEntryMode === 'calendar' ? 'Usar formulario de cita' : 'Usar calendario mensual'}
+                    aria-pressed={activeAppointmentEntryMode === 'calendar'}
+                    onClick={handleToggleAppointmentEntryMode}
+                  >
+                    {activeAppointmentEntryMode === 'calendar' ? <SquarePen size={18} /> : <CalendarDays size={18} />}
+                  </button>
+                )}
               </div>
             )}
 
@@ -20965,38 +21632,44 @@ export const PhoneChat: React.FC = () => {
             {sheet === 'schedule' && renderScheduleSheet()}
 
             {sheet === 'appointment' && (
-              <div className={`${styles.actionFormContent} ${styles.actionFormContentPlain}`}>
-                <div
-                  className={styles.embeddedActionForm}
-                  data-bottom-sheet-no-drag="true"
-                  data-bottom-sheet-scrollable="true"
-                  data-phone-chat-scrollable="true"
-                >
-                  <AppointmentModal
-                    key={`action-appointment-${appointmentSheetCalendarId}-${appointmentSheetRange.start}-${appointmentSheetRange.end}-${appointmentSheetInitialContact?.id || 'unassigned'}`}
-                    isOpen
-                    onClose={actionSheetDismiss.requestClose}
-                    mode="create"
-                    calendar={appointmentSheetCalendar}
-                    defaultStart={appointmentSheetRange.start}
-                    defaultEnd={appointmentSheetRange.end}
-                    defaultTimeZone={appointmentSheetRange.timeZone}
-                    defaultTitle={appointmentSheetTitle}
-                    initialContact={appointmentSheetInitialContact}
-                    lockInitialContact={Boolean(appointmentSheetInitialContact?.id)}
-                    enableGuests
-                    defaultScheduleMode="custom"
-                    accessToken={accessToken || undefined}
-                    locationId={locationId || undefined}
-                    presentation="embedded"
-                    calendars={calendars}
-                    calendarsLoading={calendarsLoading}
-                    selectedCalendarId={appointmentSheetCalendarId}
-                    onCalendarChange={setSelectedCalendarId}
-                    onSave={handleCreateAppointment}
-                  />
+              activeAppointmentEntryMode === 'calendar' ? (
+                <div className={`${styles.actionFormContent} ${styles.actionFormContentPlain}`}>
+                  {renderAppointmentCalendarMode()}
                 </div>
-              </div>
+              ) : (
+                <div className={`${styles.actionFormContent} ${styles.actionFormContentPlain}`}>
+                  <div
+                    className={styles.embeddedActionForm}
+                    data-bottom-sheet-no-drag="true"
+                    data-bottom-sheet-scrollable="true"
+                    data-phone-chat-scrollable="true"
+                  >
+                    <AppointmentModal
+                      key={`action-appointment-${appointmentSheetCalendarId}-${appointmentSheetRange.start}-${appointmentSheetRange.end}-${appointmentSheetInitialContact?.id || 'unassigned'}`}
+                      isOpen
+                      onClose={actionSheetDismiss.requestClose}
+                      mode="create"
+                      calendar={appointmentSheetCalendar}
+                      defaultStart={appointmentSheetRange.start}
+                      defaultEnd={appointmentSheetRange.end}
+                      defaultTimeZone={appointmentSheetRange.timeZone}
+                      defaultTitle={appointmentSheetTitle}
+                      initialContact={appointmentSheetInitialContact}
+                      lockInitialContact={Boolean(appointmentSheetInitialContact?.id)}
+                      enableGuests
+                      defaultScheduleMode="custom"
+                      accessToken={accessToken || undefined}
+                      locationId={locationId || undefined}
+                      presentation="embedded"
+                      calendars={calendars}
+                      calendarsLoading={calendarsLoading}
+                      selectedCalendarId={appointmentSheetCalendarId}
+                      onCalendarChange={setSelectedCalendarId}
+                      onSave={handleCreateAppointment}
+                    />
+                  </div>
+                </div>
+              )
             )}
 
             {sheet === 'payment' && (

@@ -618,11 +618,17 @@ Reglas base:
 - La atribucion interna de la cita (ultimo paid touch valido del contacto) se
   guarda como snapshot en `appointments.attribution_*` + `conversion_surface`
   al crearse, independiente del payload que se mande a Meta.
+- En el chat movil, el sheet de `Agendar cita` permite alternar entre formulario
+  completo y calendario mensual. La preferencia vive por usuario en
+  `user_config.mobile_chat_appointment_entry_mode`; el modo mensual mantiene
+  selector de calendario, cambio de mes por swipe/flechas y captura de hora,
+  duracion, ubicacion e invitados antes de crear la cita por el endpoint normal.
 
 Documentacion especifica:
 
 - `backend/src/services/README_CALENDARS.md`
 - `frontend/src/pages/Appointments/README.md`
+- `docs/MOBILE_APP.md`
 
 ## Pagos
 
