@@ -5,13 +5,20 @@ Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
 
 ## What Works Now
 
-- Runtime setup for a Ristak installation URL.
-- Email/password login against `/api/auth/login`.
-- Secure token and installation URL storage using Expo SecureStore.
+- Email/password login that resolves the correct Ristak installation
+  automatically through the installer mobile resolver.
+- Secure token and resolved installation URL storage using Expo SecureStore.
+- Native push registration for iOS/Android, notification tap handling, and
+  device-level alert activation from Settings.
 - Chat inbox from `/api/contacts/chats`.
 - Native chat inbox parity pass for `/movil`: same high-level header, search,
   quick filter chips, unread emphasis, contact avatar ring/channel badge, and
   last-message preview rules.
+- Native appointments page parity pass for `/movil`: original mobile calendar
+  header, calendar selector sheet, month grid, agenda list, event details sheet,
+  create/edit/delete appointment flow, and business-timezone grouping.
+- Native payments, analytics, settings, bottom dock, and notification parity
+  passes from the mobile migration worktrees.
 - Conversation view from `/api/contacts/:id/journey`.
 - Text sending through `/api/whatsapp-api/messages/text`.
 

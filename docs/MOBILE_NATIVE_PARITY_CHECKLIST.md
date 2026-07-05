@@ -28,9 +28,19 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 - Chat movil original: `frontend/src/pages/PhoneChat/PhoneChat.tsx`.
 - Estilos de chat original: `frontend/src/pages/PhoneChat/PhoneChat.module.css`.
+- Analiticas moviles originales: `frontend/src/pages/PhoneAnalytics/PhoneAnalytics.tsx`
+  y `frontend/src/pages/PhoneAnalytics/PhoneAnalytics.module.css`.
+- Servicios de analiticas moviles: `frontend/src/services/dashboardService.ts`
+  y `frontend/src/services/whatsappApiService.ts`.
 - Navegacion movil original: `frontend/src/components/phone/phoneNavigation.ts`.
+- Pagos movil original: `frontend/src/pages/PhonePayments/PhonePayments.tsx`.
+- Estilos de pagos original: `frontend/src/pages/PhonePayments/PhonePayments.module.css`.
+- Formularios de cobro original: `frontend/src/components/common/RecordPaymentModal/`
+  y `frontend/src/components/phone/PhoneSubscriptionForm.tsx`.
 - Chips/filtros moviles: `frontend/src/components/phone/ui/PhoneFilterChips.tsx`
   y la configuracion en `PhoneChat.tsx`.
+- Ajustes moviles originales: `frontend/src/pages/PhoneSettings/PhoneSettings.tsx`
+  y `frontend/src/pages/PhoneSettings/PhoneSettings.module.css`.
 - Iconos de canal: `frontend/src/components/phone/PhoneMessageChannelIcon.tsx`.
 - App nativa nueva: `mobile/src/App.tsx`, `mobile/src/api.ts`,
   `mobile/src/types.ts`.
@@ -40,16 +50,52 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 ## Estado general
 
 - [x] Crear app React Native/Expo en `mobile/`.
-- [x] Separar bundle nativo temporal `com.ristak.native`.
-- [x] Login por URL de instalacion + email/password.
+- [x] Separar bundle nativo temporal para pruebas visuales; para validar push iOS
+      real la build instalada usa `com.ristak.app` y
+      `com.ristak.app.NotificationService`.
+- [x] Login por correo + contrasena con resolucion automatica de tenant, igual que `/movil/login`.
 - [x] Shell inicial con Chat, Citas, Pagos, Analiticas y Ajustes.
 - [x] Primer pase de lista de chats con API real, filtros basicos y filas planas.
+- [x] Dock inferior nativo.
+  - Avance: `mobile/` ya replica la navegacion inferior de `/movil` con
+    Ajustes, Chats, Citas, Pagos y Analiticas como iconos sin texto visible,
+    indicador animado que persigue la coordenada real del dedo durante el swipe
+    horizontal entre tabs, supresion del tap fantasma despues de arrastrar, badge
+    de no leidos en Chats y espacio inferior reservado para que las listas no se
+    corten detras del panel. Si cambia
+    `frontend/src/components/phone/PhoneEcosystemNav.*`, revisar tambien
+    `mobile/src/App.tsx`.
 - [ ] Paridad completa de Chat.
 - [ ] Paridad completa de Citas.
+  - Avance: `mobile/` ya reemplaza el placeholder generico de Citas por una
+    pantalla nativa con header movil tipo `/movil`: pastilla de periodo con
+    anio, capsula `Hoy` / calendario / `+`, titulo grande del mes, grilla
+    mensual amplia, agenda del dia, pull to refresh y sheet de detalles. Los
+    eventos se agrupan con `account_timezone` y `calendarId`, no con la zona
+    horaria del telefono. El boton `+` busca contactos y abre un formulario
+    nativo que crea citas reales en `/api/calendars/appointments`; el detalle
+    permite editar y eliminar contra los endpoints reales. El formulario ya
+    cubre titulo, estado, fecha, hora, duracion, direccion, notas y conversion a
+    UTC con zona del negocio. Falta replicar validacion avanzada de slots/
+    bloqueos, invitados, usuarios Round Robin y el selector visual completo de
+    fecha/hora del modal original de `/movil`.
 - [ ] Paridad completa de Pagos.
 - [ ] Paridad completa de Analiticas.
 - [ ] Paridad completa de Ajustes.
 - [ ] Push/permisos/entitlements nativos listos para reemplazar `com.ristak.app`.
+  - Avance: `mobile/` ya registra token APNs/FCM nativo con
+    `expo-notifications` en `/api/push/mobile-devices`, crea canales Android,
+    atiende taps de push para abrir el chat por `contactId`/`url`, y el backend
+    genera avatar PNG de iniciales cuando el contacto no tiene foto publica. En
+    iOS local se porto `RistakNotificationService` a `mobile/ios/` para usar
+    Communication Notifications con `contactAvatarUrl`. Las credenciales APNs se
+    mantienen en Ristak Installer como broker central; el cliente no debe cargar
+    `.p8` salvo modo standalone real. Falta decidir si
+    `mobile/ios` se trackea en Git o se convierte en config plugin estable; hoy
+    `mobile/ios` esta ignorado por `mobile/.gitignore` y la extension vive en
+    el proyecto local instalado al iPhone. Falta generar/tracked `mobile/android`
+    y portar el renderer `RistakFirebaseMessagingService` para paridad Android
+    data-only completa.
 
 ## Fase Chat
 
@@ -119,13 +165,44 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 ### 2. Conversacion
 
 - [ ] Header de conversacion con avatar/canal/estado como `/movil`.
+  - Avance: `mobile/` ya abre `NativeConversationScreen` desde la bandeja, usa
+    avatar/foto/inicial, aro/badge de canal, nombre del contacto, detalle
+    principal y acciones de agente, etiqueta y busqueda en el header. Falta
+    replicar estado online/agente exacto y selector de numero/remitente de
+    `/movil`.
 - [ ] Timeline con globos inbound/outbound, email desplegable, media, ubicacion,
   notas de voz, documentos y comentarios FB/IG.
+  - Avance: el parser nativo de `buildMessagesFromJourney` ya entiende
+    `whatsapp_message`, `meta_message`, `email_message`,
+    `appointment_confirmation`, adjuntos basicos, ubicacion, comentarios,
+    estados, timestamps de lectura/entrega, reacciones y mensajes de sistema.
+    La UI nativa ya agrupa por dia con zona horaria del negocio, pinta globos
+    inbound/outbound, media imagen, tarjetas de archivo/ubicacion, contexto de
+    comentario, receipts y errores. Falta correo desplegable completo, player
+    real de audio/video, documentos abribles y carga incremental de mensajes
+    anteriores.
 - [ ] Composer completo: texto, adjuntos, camara, ubicacion, sugerencia IA,
   voice note, reply/reactions y teclado.
+  - Avance: el composer nativo ya muestra boton de canal, `+`, texto multilinea,
+    reloj para programar cuando hay texto, camara cuando esta vacio, preview de
+    respuesta, tira de fotos preparadas y boton enviar/mic visual. El `+` abre
+    sheet con tomar foto, elegir foto, cita, pagos, programar, etiqueta y mas
+    acciones. Falta voice note real, ubicacion, sugerencia IA, plantillas,
+    picker avanzado de fecha/hora y soporte de video/audio/documento desde el
+    picker.
 - [ ] Envio por canal correcto: WhatsApp API, QR, HighLevel, Messenger,
   Instagram, email/SMS cuando aplique.
+  - Avance: texto nativo usa `/whatsapp-api/messages/text`; fotos del composer
+    usan `/whatsapp-api/messages/image`; programacion usa
+    `/whatsapp-api/messages/scheduled`; reacciones intentan
+    `/whatsapp-api/messages/reaction`. Falta rutas QR/Baileys, HighLevel,
+    Messenger/Instagram Meta nativo, email/SMS y fallback por ventana de 24h
+    como en `/movil`.
 - [ ] Info de mensaje, receipts, errores, pendientes y reintentos.
+  - Avance: long press sobre globo abre bottom sheet con preview, reacciones
+    rapidas, responder e informacion de canal/estado/hora. Los globos muestran
+    pending/error y ticks sent/delivered/read. Falta reintento real, pantalla
+    completa de info del mensaje y acciones especiales de programados.
 - [ ] Contact info/modal movil y campos personalizados.
 - [ ] Agenda desde chat.
 - [ ] Validar en iPhone real.
@@ -137,10 +214,13 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     via `/contacts/search`, mezcla resultados con chats recientes y abre la
     conversacion seleccionada. Falta crear contacto nuevo si no existe y replicar
     todos los estados del sheet original.
-- [ ] Selector de destinatarios despues de foto/video.
+- [x] Selector de destinatarios despues de foto/video para WhatsApp.
   - Avance: el boton de camara ya pide permiso, abre camara nativa con
-    `expo-image-picker`, muestra preview y selector de destinatario. Falta
-    conectar el envio multimedia real por canal/composer.
+    `expo-image-picker`, permite tomar foto o grabar video, muestra preview,
+    bloquea doble envio, convierte el archivo local a data URL con
+    `expo-file-system` y envia por `/whatsapp-api/messages/image` o
+    `/whatsapp-api/messages/video` al contacto seleccionado. Pendiente extender
+    esta accion a canales no WhatsApp si el contacto no tiene telefono.
 - [ ] Menu global de agente.
 - [ ] Administrador de filtros.
 - [ ] Mas acciones de chat.
@@ -159,12 +239,89 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     avanzado para programacion.
 - [ ] Sheets de configuracion movil relevantes.
 
+## Fase Pagos
+
+- [x] Primer viewport nativo sin header generico de usuario.
+- [x] Selector con las mismas opciones principales de `/movil/payments`:
+  `Registrar pago unico`, `Planes de pago`, `Suscripcion` y `Precios Guardados`.
+- [x] Panel desplegable de ultimos pagos con periodos `Hoy`, `7 dias`,
+  `30 dias` y `90 dias`, consumiendo `/api/transactions` con rango de negocio.
+- [x] Moneda visible tomada de `account_currency` y fecha/rangos desde
+  `/api/settings/timezone`.
+- [x] Vista nativa de `Precios Guardados` con cargar, refrescar, crear, editar y
+  eliminar productos via `/api/products`.
+- [x] Formulario nativo funcional para registrar pago unico manual via
+  `/api/transactions`.
+- [x] Primer formulario nativo de parcialidades contra
+  `/api/transactions/payment-flows/installments`.
+- [x] Primer formulario nativo de suscripcion contra `/api/subscriptions`.
+- [ ] Portar paridad completa de `RecordPaymentModal`: busqueda/seleccion de
+  productos, impuestos, links de pago, tarjetas guardadas, Stripe/Conekta/
+  Mercado Pago/CLIP, MSI, transferencias, estados de link listo, copia/compartir
+  y errores especificos de pasarela.
+- [ ] Portar paridad completa de `PhoneSubscriptionForm`: selector de proveedor
+  segun capacidades reales, autorizacion/copia de link, contactos bloqueados y
+  validaciones especificas por proveedor.
+- [ ] Validar visualmente contra `/movil/payments` en iPhone real.
+
+## Fase Ajustes
+
+- [x] Separar `Ajustes` del header generico nativo para que no muestre el
+  correo/usuario debajo del titulo.
+- [x] Replicar la lista principal de `/movil`: Plantillas, Asistente Personal
+  AI, Lista de chat, Campos personalizados, Apariencia, Notificaciones y
+  `Cerrar sesion`, con iconos, metas y navegacion interna.
+- [x] Conectar lectura/escritura de preferencias reales:
+  - Globales via `/api/config`: agente en chat, sugerencias IA, archivados,
+    orden, preview, no leidos y tema.
+  - Por usuario via `/api/user-config`: push de chat/citas/confirmaciones/pagos,
+    sonido, vibracion y calendarios con alerta.
+- [x] Conectar subpantallas de lectura real:
+  - Plantillas desde `/api/whatsapp-api/templates`.
+  - Campos personalizados desde `/api/contacts/custom-fields`.
+  - Calendarios desde `/api/calendars`.
+  - Estado/contexto del agente desde `/api/ai-agent/config`.
+- [x] Agregar edicion de la descripcion del negocio del Asistente Personal AI
+  usando `/api/ai-agent/business-context-answer` cuando OpenAI esta conectado.
+- [ ] Replicar dictado de voz nativo de la descripcion del negocio. Avance:
+  el boton `Dictar` ya existe visualmente, pero muestra una alerta porque falta
+  decidir/agregar el modulo de audio nativo equivalente al `MediaRecorder` web.
+- [ ] Replicar activacion real de permisos push del celular. Avance: la UI y
+  preferencias por usuario ya estan, pero falta integrar el modulo nativo de
+  notificaciones/permisos para sustituir el flujo web `pushNotificationsService`.
+- [ ] Aplicar visualmente el tema claro/noche al resto de `mobile/`. Avance:
+  `mobile_chat_theme_preference` ya se guarda y la pantalla pinta el estado; el
+  shell nativo todavia usa la paleta oscura base.
+- [ ] Validar visualmente contra `/movil` en iPhone real y corregir diferencias
+  finas de espaciado/tipografia.
+
+## Fase Analiticas
+
+- [x] Consumir los endpoints reales de `/movil/analytics`: metricas,
+  `financial-overview`, series de visitantes/leads/citas/asistencias/ventas,
+  embudo, distribucion de origen, estado de WhatsApp y labels personalizados.
+- [x] Calcular rangos `30d`, `60d`, `180d`, `year` y `custom` con fecha de
+  negocio usando `account_timezone` en vez de depender del reloj local del
+  iPhone.
+- [x] Formatear importes con `account_currency`, no con una moneda hardcodeada
+  como default de negocio.
+- [x] Replicar estructura visible de `PhoneAnalytics`: encabezado `Analiticas`,
+  selector de periodo, 8 tarjetas KPI, grafica principal con chips, scope
+  financiero, leyenda, embudo con scopes, fuentes y origen por numero de
+  WhatsApp.
+- [x] Agregar estados de loading, error, vacio y pull to refresh nativos.
+- [ ] Validar visualmente contra `/movil/analytics` en iPhone real y ajustar
+  proporciones finas de tipografia, espaciado, iconos o animacion si Raúl detecta
+  diferencias.
+- [ ] Extraer componentes nativos reutilizables de analiticas cuando la app deje
+  de vivir centralizada en `mobile/src/App.tsx`.
+
 ## Validacion minima por fase
 
 - `npm run mobile:native:typecheck`.
 - `git diff --check`.
 - Instalar Release en iPhone fisico cuando cambie UI principal:
   `npx expo run:ios --device "iPhone Pro de Raúl" --configuration Release`.
-- Lanzar `com.ristak.native` sin Metro para confirmar bundle embebido.
+- Lanzar la build instalada sin Metro para confirmar bundle embebido.
 - Comparar contra `/movil` abierto localmente o contra el codigo fuente original
   si no hay screenshot disponible.

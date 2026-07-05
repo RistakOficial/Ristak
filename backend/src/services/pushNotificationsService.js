@@ -1,6 +1,7 @@
 import crypto from 'crypto'
 import fs from 'fs/promises'
 import http2 from 'http2'
+import sharp from 'sharp'
 import webPush from 'web-push'
 import { db, getAppConfig, setAppConfig, getUserAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
@@ -35,6 +36,18 @@ const APNS_PRIVATE_KEY_FILE = process.env.APNS_PRIVATE_KEY_FILE || ''
 const APNS_ENV = String(process.env.APNS_ENV || process.env.NODE_ENV || 'production').toLowerCase()
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
+const NOTIFICATION_INITIALS_AVATAR_PATH = '/api/push/contact-avatar'
+const NOTIFICATION_INITIALS_AVATAR_SIZE = 512
+const NOTIFICATION_INITIALS_AVATAR_COLORS = [
+  '#0ea5e9',
+  '#2563eb',
+  '#7c3aed',
+  '#db2777',
+  '#059669',
+  '#0891b2',
+  '#4f46e5',
+  '#be123c'
+]
 const ANDROID_CHANNELS = {
   alerts: 'ristak_alerts',
   sound: 'ristak_sound',
@@ -590,6 +603,34 @@ function cleanPublicImageUrl(value = '') {
   }
 }
 
+function cleanPublicBaseUrl(value = '') {
+  const raw = cleanNotificationText(value).replace(/\/+$/, '')
+  if (!raw) return ''
+  try {
+    const parsed = new URL(raw)
+    return (parsed.protocol === 'https:' || parsed.protocol === 'http:') ? parsed.href.replace(/\/+$/, '') : ''
+  } catch {
+    return ''
+  }
+}
+
+function getNotificationPublicBaseUrl() {
+  const candidates = [
+    process.env.PUBLIC_APP_URL,
+    process.env.APP_PUBLIC_URL,
+    process.env.FRONTEND_URL,
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.PUBLIC_URL,
+    process.env.APP_URL
+  ]
+
+  for (const candidate of candidates) {
+    const baseUrl = cleanPublicBaseUrl(candidate)
+    if (baseUrl) return baseUrl
+  }
+  return ''
+}
+
 function getNotificationImageUrl(payload = {}) {
   return cleanPublicImageUrl(
     payload.notificationImageUrl ||
@@ -714,6 +755,105 @@ function findProfilePictureUrlInValue(value) {
   return ''
 }
 
+function escapeSvgText(value = '') {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+function normalizeNotificationInitials(value = '') {
+  const clean = cleanNotificationText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+  const words = clean
+    .split(/[^a-z0-9]+/i)
+    .map((word) => word.trim())
+    .filter(Boolean)
+
+  if (words.length >= 2) {
+    return `${words[0][0]}${words[1][0]}`.toUpperCase()
+  }
+  if (words.length === 1) {
+    return words[0].slice(0, 2).toUpperCase()
+  }
+
+  const alphanumeric = clean.match(/[a-z0-9]/gi)?.join('') || ''
+  return (alphanumeric.slice(0, 2) || 'C').toUpperCase()
+}
+
+function getNotificationAvatarColorIndex(seed = '') {
+  const bytes = crypto.createHash('sha256').update(cleanNotificationText(seed) || 'contact').digest()
+  return bytes[0] % NOTIFICATION_INITIALS_AVATAR_COLORS.length
+}
+
+function getNotificationInitialsAvatarSignatureSecret() {
+  const seed = [
+    VAPID_PRIVATE_KEY,
+    APNS_PRIVATE_KEY,
+    FCM_SERVICE_ACCOUNT_JSON,
+    process.env.JWT_SECRET,
+    process.env.SESSION_SECRET,
+    process.env.INTERNAL_INSTALLER_TOKEN,
+    'ristak-notification-initials-avatar'
+  ].filter(Boolean).join('|')
+
+  return crypto.createHash('sha256').update(seed).digest()
+}
+
+function signNotificationInitialsAvatar({ contactId = '', initials = '', colorIndex = 0 } = {}) {
+  return crypto
+    .createHmac('sha256', getNotificationInitialsAvatarSignatureSecret())
+    .update(`${cleanNotificationText(contactId)}:${normalizeNotificationInitials(initials)}:${Number(colorIndex) || 0}`)
+    .digest('base64url')
+    .slice(0, 36)
+}
+
+function safeEqualSignature(left = '', right = '') {
+  const a = Buffer.from(String(left || ''))
+  const b = Buffer.from(String(right || ''))
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
+}
+
+function getNotificationContactFallbackName(payload = {}, contact = null) {
+  const candidates = [
+    getNotificationContactName(payload),
+    contact?.full_name,
+    [contact?.first_name, contact?.last_name].filter(Boolean).join(' '),
+    contact?.whatsapp_profile_name,
+    contact?.meta_social_profile_name,
+    contact?.meta_social_username,
+    contact?.email,
+    contact?.phone,
+    payload.contactId,
+    payload.contact_id
+  ]
+
+  for (const candidate of candidates) {
+    const value = stripAppNameFromNotificationText(candidate)
+    if (value && !isAppNameNotificationText(value)) return value
+  }
+
+  return 'Contacto'
+}
+
+function buildNotificationInitialsAvatarUrl({ contactId = '', displayName = '' } = {}) {
+  const baseUrl = getNotificationPublicBaseUrl()
+  const id = cleanNotificationText(contactId)
+  if (!baseUrl || !id) return ''
+
+  const initials = normalizeNotificationInitials(displayName)
+  const colorIndex = getNotificationAvatarColorIndex(`${id}:${displayName}:${initials}`)
+  const signature = signNotificationInitialsAvatar({ contactId: id, initials, colorIndex })
+  const url = new URL(`${baseUrl}${NOTIFICATION_INITIALS_AVATAR_PATH}/${encodeURIComponent(id)}`)
+  url.searchParams.set('i', initials)
+  url.searchParams.set('c', String(colorIndex))
+  url.searchParams.set('s', signature)
+  return url.href
+}
+
 async function getContactNotificationAvatarUrl(contactId = '') {
   const id = String(contactId || '').trim()
   if (!id) return ''
@@ -763,6 +903,90 @@ async function getContactNotificationAvatarUrl(contactId = '') {
     findProfilePictureUrlInValue(contact?.whatsapp_raw_profile_json)
 }
 
+async function getContactNotificationFallbackAvatarUrl(contactId = '', payload = {}) {
+  const id = String(contactId || '').trim()
+  if (!id) return ''
+
+  const contact = await db.get(`
+    SELECT
+      c.id,
+      c.phone,
+      c.email,
+      c.full_name,
+      c.first_name,
+      c.last_name,
+      (
+        SELECT profile_name
+        FROM whatsapp_api_contacts
+        WHERE contact_id = c.id
+           OR phone = c.phone
+           OR phone IN (SELECT phone FROM contact_phone_numbers WHERE contact_id = c.id)
+        ORDER BY updated_at DESC
+        LIMIT 1
+      ) AS whatsapp_profile_name,
+      (
+        SELECT profile_name
+        FROM meta_social_contacts
+        WHERE contact_id = c.id
+        ORDER BY updated_at DESC
+        LIMIT 1
+      ) AS meta_social_profile_name,
+      (
+        SELECT username
+        FROM meta_social_contacts
+        WHERE contact_id = c.id
+        ORDER BY updated_at DESC
+        LIMIT 1
+      ) AS meta_social_username
+    FROM contacts c
+    WHERE c.id = ?
+    LIMIT 1
+  `, [id]).catch((error) => {
+    logger.warn(`[Push] No se pudo resolver iniciales de contacto para notificación: ${error.message}`)
+    return null
+  })
+
+  const displayName = getNotificationContactFallbackName(payload, contact)
+  return buildNotificationInitialsAvatarUrl({ contactId: id, displayName })
+}
+
+export async function renderNotificationInitialsAvatarPng({
+  contactId = '',
+  initials = '',
+  colorIndex = '',
+  signature = ''
+} = {}) {
+  const id = cleanNotificationText(contactId)
+  const cleanInitials = normalizeNotificationInitials(initials).slice(0, 2)
+  const parsedColorIndex = Number(colorIndex)
+  const safeColorIndex = Number.isInteger(parsedColorIndex) && parsedColorIndex >= 0
+    ? parsedColorIndex % NOTIFICATION_INITIALS_AVATAR_COLORS.length
+    : 0
+  const expectedSignature = signNotificationInitialsAvatar({
+    contactId: id,
+    initials: cleanInitials,
+    colorIndex: safeColorIndex
+  })
+
+  if (!id || !signature || !safeEqualSignature(signature, expectedSignature)) {
+    throw new Error('Avatar de notificación inválido')
+  }
+
+  const background = NOTIFICATION_INITIALS_AVATAR_COLORS[safeColorIndex]
+  const fontSize = cleanInitials.length > 1 ? 188 : 230
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${NOTIFICATION_INITIALS_AVATAR_SIZE}" height="${NOTIFICATION_INITIALS_AVATAR_SIZE}" viewBox="0 0 ${NOTIFICATION_INITIALS_AVATAR_SIZE} ${NOTIFICATION_INITIALS_AVATAR_SIZE}">
+      <rect width="100%" height="100%" rx="${NOTIFICATION_INITIALS_AVATAR_SIZE / 2}" fill="${background}"/>
+      <circle cx="256" cy="256" r="238" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="18"/>
+      <text x="256" y="278" text-anchor="middle" dominant-baseline="middle" font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}" font-weight="800" fill="#f8fbff">${escapeSvgText(cleanInitials)}</text>
+    </svg>
+  `
+
+  return sharp(Buffer.from(svg), { limitInputPixels: NOTIFICATION_INITIALS_AVATAR_SIZE * NOTIFICATION_INITIALS_AVATAR_SIZE })
+    .png()
+    .toBuffer()
+}
+
 async function enrichNotificationPayloadForDelivery(payload = {}) {
   const normalized = normalizeNotificationPayload(payload)
   const contactIds = normalizePayloadContactIds(normalized)
@@ -779,13 +1003,14 @@ async function enrichNotificationPayloadForDelivery(payload = {}) {
   }
 
   const contactAvatarUrl = await getContactNotificationAvatarUrl(contactIds[0])
-  if (!contactAvatarUrl) return normalized
+  const fallbackAvatarUrl = contactAvatarUrl || await getContactNotificationFallbackAvatarUrl(contactIds[0], normalized)
+  if (!fallbackAvatarUrl) return normalized
 
   return {
     ...normalized,
     contactId: normalized.contactId || contactIds[0],
-    contactAvatarUrl,
-    senderAvatarUrl: contactAvatarUrl
+    contactAvatarUrl: fallbackAvatarUrl,
+    senderAvatarUrl: fallbackAvatarUrl
   }
 }
 

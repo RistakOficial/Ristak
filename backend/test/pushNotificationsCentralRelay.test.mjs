@@ -46,7 +46,7 @@ async function readJsonBody(req) {
   return raw ? JSON.parse(raw) : {}
 }
 
-async function startCentralPushServer() {
+async function startCentralPushServer({ pushStatus = {} } = {}) {
   const requests = []
   const server = http.createServer(async (req, res) => {
     try {
@@ -60,8 +60,9 @@ async function startCentralPushServer() {
           push: {
             configured: true,
             nativeConfigured: true,
-            iosConfigured: false,
-            androidConfigured: true
+            iosConfigured: true,
+            androidConfigured: true,
+            ...pushStatus
           }
         }))
         return
@@ -155,6 +156,84 @@ test('delega Android al Installer central cuando FCM local no esta configurado',
     assert.equal(sendRequest.body.payload.title, 'Mensaje nuevo')
   } finally {
     if (db) await db.run('DELETE FROM mobile_push_devices WHERE id = ?', [deviceId]).catch(() => {})
+    if (licenseService) licenseService.setVerifiedAppBaseUrlResolverForTests()
+    restoreEnv(envSnapshot)
+    await new Promise((resolve) => central.server.close(resolve))
+  }
+})
+
+test('delega iOS al Installer central con avatar de iniciales cuando el contacto no tiene foto', async () => {
+  const envSnapshot = snapshotEnv()
+  const central = await startCentralPushServer()
+  let db = null
+  let licenseService = null
+  const suffix = randomUUID()
+  const contactId = `contact_ios_central_${suffix}`
+  const deviceId = `native_push_ios_central_${suffix}`
+  const userId = `user_ios_central_${suffix}`
+  const token = `ios-token-${suffix}`
+
+  try {
+    for (const key of ENV_KEYS) delete process.env[key]
+    process.env.LICENSE_SERVER_URL = central.baseUrl
+    process.env.CLIENT_ID = 'cli_push_ios'
+    process.env.LICENSE_KEY = 'lic_push_ios'
+    process.env.INSTALLATION_ID = 'inst_push_ios'
+    process.env.APP_URL = 'https://app.ristak.test'
+    process.env.PUBLIC_URL = 'https://app.ristak.test'
+
+    const databaseModule = await import('../src/config/database.js')
+    const pushService = await import('../src/services/pushNotificationsService.js')
+    licenseService = await import('../src/services/licenseService.js')
+    db = databaseModule.db
+
+    licenseService.setVerifiedAppBaseUrlResolverForTests(async () => 'https://app.ristak.test')
+
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, first_name, last_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Raul Sin Foto', 'Raul', 'Sin Foto', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, `+52656${Date.now().toString().slice(-8)}`])
+    await db.run(`
+      INSERT INTO mobile_push_devices (
+        id, user_id, platform, token, calendar_ids_json, enabled, created_at, updated_at
+      ) VALUES (?, ?, 'ios', ?, '[]', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [deviceId, userId, token])
+
+    const result = await pushService.sendAppNotificationPayload({
+      title: 'Raul Sin Foto',
+      body: 'Hola desde iPhone',
+      category: 'chat',
+      contactId,
+      contactName: 'Raul Sin Foto',
+      threadId: `chat-${contactId}`,
+      tag: `chat-${contactId}`
+    }, { userIds: [userId] })
+
+    assert.equal(result.nativeSent, 1)
+    assert.equal(result.sent, 1)
+
+    const sendRequest = central.requests.find((request) => request.url === '/api/license/mobile-push/send')
+    assert.ok(sendRequest)
+    assert.deepEqual(sendRequest.body.devices, [{
+      id: deviceId,
+      platform: 'ios',
+      token,
+      experience: {
+        soundEnabled: true,
+        vibrationEnabled: true
+      }
+    }])
+    assert.equal(sendRequest.body.payload.title, 'Raul Sin Foto')
+    assert.equal(sendRequest.body.payload.contactName, 'Raul Sin Foto')
+    assert.equal(sendRequest.body.payload.contactId, contactId)
+    assert.match(sendRequest.body.payload.contactAvatarUrl, /^https:\/\/app\.ristak\.test\/api\/push\/contact-avatar\//)
+    assert.equal(sendRequest.body.payload.senderAvatarUrl, sendRequest.body.payload.contactAvatarUrl)
+    assert.equal(sendRequest.body.payload.notificationImageUrl, undefined)
+  } finally {
+    if (db) {
+      await db.run('DELETE FROM mobile_push_devices WHERE id = ?', [deviceId]).catch(() => {})
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => {})
+    }
     if (licenseService) licenseService.setVerifiedAppBaseUrlResolverForTests()
     restoreEnv(envSnapshot)
     await new Promise((resolve) => central.server.close(resolve))

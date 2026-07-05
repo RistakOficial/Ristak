@@ -7,6 +7,7 @@ import {
   buildFcmMessageBody,
   buildPaymentNotificationPayload,
   normalizeNotificationPayload,
+  renderNotificationInitialsAvatarPng,
   sendChatMessageNotification,
   sendAppNotificationPayload,
   setAppNotificationPayloadSenderForTest
@@ -477,6 +478,57 @@ test('push general o de multiples contactos no usa imagen aunque llegue imageUrl
     assert.equal(sentPayloads[1].notificationImageUrl, undefined)
   } finally {
     setAppNotificationPayloadSenderForTest(null)
+  }
+})
+
+test('push de un contacto sin foto usa avatar de iniciales firmado', async () => {
+  const previousPublicUrl = process.env.PUBLIC_URL
+  process.env.PUBLIC_URL = 'https://push.example.test'
+
+  const contactId = `contact_${randomUUID()}`
+  const sentPayloads = []
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, email, full_name, first_name, last_name, source) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [contactId, `+52656${Date.now()}`, `${contactId}@example.test`, 'Raul Gomez', 'Raul', 'Gomez', 'whatsapp_api']
+    )
+
+    await sendAppNotificationPayload({
+      title: 'Raul Gomez',
+      body: 'Hola desde WhatsApp',
+      category: 'chat',
+      contactId,
+      contactName: 'Raul Gomez'
+    })
+
+    assert.equal(sentPayloads.length, 1)
+    assert.match(sentPayloads[0].contactAvatarUrl, /^https:\/\/push\.example\.test\/api\/push\/contact-avatar\//)
+    assert.equal(sentPayloads[0].senderAvatarUrl, sentPayloads[0].contactAvatarUrl)
+    assert.equal(sentPayloads[0].notificationImageUrl, undefined)
+
+    const avatarUrl = new URL(sentPayloads[0].contactAvatarUrl)
+    assert.equal(avatarUrl.searchParams.get('i'), 'RG')
+    const png = await renderNotificationInitialsAvatarPng({
+      contactId,
+      initials: avatarUrl.searchParams.get('i'),
+      colorIndex: avatarUrl.searchParams.get('c'),
+      signature: avatarUrl.searchParams.get('s')
+    })
+    assert.equal(png[0], 0x89)
+    assert.equal(png.subarray(1, 4).toString('ascii'), 'PNG')
+  } finally {
+    if (previousPublicUrl === undefined) {
+      delete process.env.PUBLIC_URL
+    } else {
+      process.env.PUBLIC_URL = previousPublicUrl
+    }
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   }
 })
 

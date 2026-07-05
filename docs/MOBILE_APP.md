@@ -6,10 +6,10 @@ Ristak tiene dos superficies moviles que deben mantenerse coordinadas:
   `frontend/`, `frontend/ios/App` y `frontend/android`. Este sigue usando el
   bundle/package de tienda `com.ristak.app`.
 - Cliente nativo nuevo: app React Native/Expo en `mobile/`. No carga el CRM
-  completo en un WebView; habla directo con el backend de Ristak por API. Durante
-  la migracion usa bundle/package separado `com.ristak.native` para poder
-  convivir con la app publicada. Solo debe tomar `com.ristak.app` cuando se haya
-  validado en iPhone/Android reales y se decida reemplazar el binario de tienda.
+  completo en un WebView; habla directo con el backend de Ristak por API. Para
+  pruebas visuales puede usar un bundle temporal, pero las pruebas reales de push
+  iOS deben usar `com.ristak.app` porque APNs rechaza tokens generados por otro
+  bundle cuando el servidor firma con el topic de tienda.
 
 Regla obligatoria de mantenimiento: cualquier cambio de producto movil, chat,
 login, permisos, push, pagos, agenda, filtros, labels visibles o contrato de API
@@ -131,7 +131,10 @@ evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
 - Android: JDK instalado para poder correr Gradle/Android Studio.
 - iOS: Xcode completo, no solo Command Line Tools.
 - Web/Android de una sola instalación: `VITE_API_URL` apuntando al backend público HTTPS antes de construir el binario.
-- iOS multi-cliente: `VITE_INSTALLER_API_URL` puede apuntar al portal central; si falta usa `https://www.ristak.com`.
+- iOS multi-cliente del shell `/movil`: `VITE_INSTALLER_API_URL` puede apuntar al portal central; si falta usa `https://www.ristak.com`.
+- App React Native en `mobile/`: el login no pide URL. Resuelve el tenant con
+  `/api/mobile/resolve` usando `EXPO_PUBLIC_INSTALLER_API_URL` si existe; si no,
+  usa `https://www.ristak.com`.
 - Android: `frontend/android/app/google-services.json` del proyecto Firebase.
   Este archivo vive fuera de Git y debe pertenecer al paquete `com.ristak.app`.
 - iOS: activar la capability Push Notifications en Xcode y configurar APNs.
@@ -169,6 +172,32 @@ Si tu terminal sigue en Node 20, usa Node 22 temporal:
 npx -p node@22 -p @capacitor/cli@8.4.0 cap sync
 ```
 
+## Analiticas nativas
+
+`/movil/analytics` es la fuente de verdad visual y funcional para la pantalla de
+analiticas en `mobile/`. El cliente nativo debe consumir las mismas APIs que la
+pantalla web movil:
+
+- `/api/dashboard/metrics`
+- `/api/dashboard/financial-overview`
+- `/api/dashboard/visitors`, `/leads`, `/appointments`, `/attendances` y
+  `/sales`
+- `/api/dashboard/funnel`
+- `/api/dashboard/origin-distribution`
+- `/api/whatsapp-api/status`
+- `/api/highlevel/custom-labels`
+
+Los rangos visibles `30d`, `60d`, `180d`, `year` y `custom` deben calcularse con
+la zona horaria de negocio (`account_timezone`) y los importes deben formatearse
+con `account_currency`. No uses la zona del iPhone ni una moneda hardcodeada como
+fuente de verdad de negocio. El rango personalizado usa fechas `YYYY-MM-DD` y
+debe aplicar el mismo rango a metricas, grafica, embudo y origen.
+
+La pantalla nativa debe conservar la estructura de `PhoneAnalytics`: encabezado
+`Analiticas`, selector de periodo, 8 KPIs, grafica principal con chips, scopes
+financieros, embudo con scopes, origen por fuente y origen por numero de
+WhatsApp cuando existan varios numeros detectados.
+
 ## Icono de instalación
 
 El icono público de la app móvil usa el isotipo de Ristak. iOS usa variantes
@@ -197,11 +226,17 @@ inicio":
 - Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
   `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
 
-Las push de mensajes, citas y pagos deben intentar mostrar el avatar del
-contacto cuando el payload pertenece a exactamente un contacto y existe una foto
-publica. El avatar del contacto viaja solo en `contactAvatarUrl` y
-`senderAvatarUrl`; no debe copiarse a `notificationImageUrl`. Si no hay foto,
-son varios contactos o la alerta es general, se usa el isotipo de Ristak.
+Las push de mensajes, citas y pagos deben mostrar identidad de contacto cuando
+el payload pertenece a exactamente un contacto. Si existe una foto publica, esa
+foto viaja en `contactAvatarUrl` y `senderAvatarUrl`. Si no existe foto, el
+backend debe generar un PNG publico de iniciales en
+`/api/push/contact-avatar/:contactId` con firma en querystring y usar esa URL en
+los mismos campos. Solo cuando son varios contactos o la alerta es general se
+usa el isotipo de Ristak.
+
+El avatar del contacto, sea foto real o iniciales generadas, no debe copiarse a
+`notificationImageUrl`. `notificationImageUrl` y `notificationAttachmentUrl`
+son exclusivamente para multimedia real del mensaje.
 
 `notificationImageUrl` y `notificationAttachmentUrl` quedan reservados para
 contenido multimedia real del mensaje, por ejemplo una foto, video o gif que el
@@ -249,11 +284,19 @@ ser data-only: `title`, `body`, `contactAvatarUrl`/`senderAvatarUrl`,
 reemplaza el `MessagingService` generico de Capacitor, conserva el registro de
 token llamando a `PushNotificationsPlugin.onNewToken(...)` y renderiza las push
 con `MessagingStyle`, `largeIcon` circular del avatar cuando existe y AppIcon de
-Ristak cuando no hay avatar. Si llega media real, la muestra con
+Ristak solo cuando la alerta no pertenece a un contacto unico. Si llega media real, la muestra con
 `BigPictureStyle` y mantiene el avatar/logo como large icon. No vuelvas a usar
 `message.notification` ni `android.notification.image` para Android porque el
 sistema/Firebase toma el control visual y se pierden avatar, logo correcto y
 estilo de conversación.
+
+En `mobile/`, la app React Native registra el token nativo con
+`expo-notifications` contra `/api/push/mobile-devices`, crea los mismos canales
+Android (`ristak_alerts`, `ristak_sound`, `ristak_vibrate`, `ristak_silent`) y
+abre el chat correcto al tocar una push usando `contactId` o `url`. Mientras el
+proyecto `mobile/android` no este generado/tracked, la paridad Android del
+renderer `RistakFirebaseMessagingService` sigue pendiente; no sustituye todavia
+al renderer Android de `frontend/android`.
 
 En iOS/APNs el payload incluye `mutable-content` cuando existe
 `contactAvatarUrl`/`senderAvatarUrl` o media real. La extension
@@ -262,9 +305,11 @@ En iOS/APNs el payload incluye `mutable-content` cuando existe
 adjunta `notificationImageUrl` / `notificationAttachmentUrl` como media del
 mensaje. La app principal debe tener el entitlement
 `com.apple.developer.usernotifications.communication` y los perfiles de firma
-deben incluir esa capability. Si el avatar no existe, la descarga falla, hay
-varios contactos o la alerta es general, iOS muestra el AppIcon instalado de
-`frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/`.
+deben incluir esa capability. La app nueva de `mobile/` usa el mismo Swift de
+`RistakNotificationService` bajo `mobile/ios/RistakNotificationService` con
+bundle `com.ristak.app.NotificationService` para pruebas reales de push. Si la
+descarga falla, hay varios contactos o la alerta es general, iOS muestra el
+AppIcon instalado.
 
 ## Tema visual móvil
 
@@ -281,6 +326,12 @@ Tokens principales:
 - Componentes compartidos móviles: `frontend/src/components/phone/` y
   `frontend/src/components/phone/ui/` deben heredar `--phone-chat-accent` y
   `--phone-chat-primary`.
+
+El dock inferior nativo en `mobile/src/App.tsx` debe mantenerse en paridad con
+`frontend/src/components/phone/PhoneEcosystemNav.*`: mismos items, orden,
+sin texto visible bajo los iconos, gesto horizontal entre secciones, indicador
+animado que persigue la coordenada real del dedo, badge de Chats y espacio
+inferior reservado para que las listas no queden cortadas detras del panel.
 
 Regla de criterio: el verde se reserva para marca WhatsApp
 (`--phone-channel-whatsapp`, `PhoneMessageChannelIcon`, iconos/canal WhatsApp) o
@@ -340,6 +391,26 @@ despues pide hora, duracion, ubicacion e invitados. La fecha y hora se convierte
 a UTC usando la zona horaria de la cuenta; no debe depender de la zona horaria
 del navegador. Al guardar usa el mismo endpoint de citas que el formulario
 normal y respeta bloqueos nativos del calendario antes de crear la cita.
+
+## Pagina de Citas nativa
+
+La seccion `Citas` de `mobile/` debe recrear la pagina movil original de
+`frontend/src/pages/PhoneCalendar/PhoneCalendar.tsx`, no el placeholder generico
+de bloques. La pantalla nativa usa el header movil original: pastilla de periodo
+con chevron y anio, capsula de acciones `Hoy` / calendario / `+`, titulo grande
+del mes, grilla mensual amplia, agenda del dia y sheet de detalles de cita. El
+selector de calendario vive en el icono de calendario de la capsula, no como fila
+permanente debajo del titulo. Todas las agrupaciones de eventos se calculan con
+la zona horaria de la cuenta (`account_timezone`), no con la zona horaria del
+telefono.
+
+El boton `+` abre un bottom sheet nativo para buscar contactos y despues muestra
+el formulario de cita con titulo, calendario activo, fecha, hora, duracion,
+estado, direccion y notas. Guardar crea contra `/api/calendars/appointments`;
+editar y eliminar usan los endpoints reales de citas/eventos. La fecha y hora
+del formulario se interpretan en `account_timezone` y se mandan al backend como
+instantes UTC. Brecha pendiente: replicar validacion avanzada de slots/bloqueos,
+usuarios Round Robin e invitados del modal web original.
 
 ## Filtros de la bandeja del chat movil
 
@@ -403,11 +474,43 @@ archivar/restaurar la seleccion. Si `Mas` aun usa un menu nativo temporal en
 
 El cliente React Native debe usar bottom sheets nativos para acciones de bandeja,
 no `Alert.alert`, cuando el flujo existe como sheet en `/movil`: `Mas` de la
-fila, `+` de nuevo chat y selector de destinatarios despues de tomar foto. La
-camara nativa usa `expo-image-picker`, requiere `NSCameraUsageDescription` y
-debe abrir una pantalla/sheet de destinatarios antes de enviar; si el envio
-multimedia todavia no esta conectado al composer/canal, esa brecha debe quedar
-en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
+fila, `+` de nuevo chat y selector de destinatarios despues de tomar foto o
+video. La camara nativa usa `expo-image-picker`, requiere
+`NSCameraUsageDescription` y `NSMicrophoneUsageDescription`, limita video a una
+duracion corta enviable, muestra preview y abre un sheet de destinatarios. Para
+WhatsApp, `mobile/` convierte el archivo local a data URL con `expo-file-system`
+y envia por `/api/whatsapp-api/messages/image` o
+`/api/whatsapp-api/messages/video`; si el contacto no tiene telefono o se debe
+enviar por otro canal, esa brecha debe quedar en
+`docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
+
+La pagina nativa de Pagos vive en `mobile/src/App.tsx` (`PaymentsSection`) y debe
+mantener paridad visual con `frontend/src/pages/PhonePayments/PhonePayments.tsx`:
+primer viewport sin header generico de usuario, titulo `Elige como quieres
+pagar`, opciones `Registrar pago unico`, `Planes de pago`, `Suscripcion` y
+`Precios Guardados`, panel desplegable de ultimos pagos con periodos `Hoy`, `7
+dias`, `30 dias`, `90 dias`, y vista de productos con crear/editar/eliminar. La
+app nativa lee `account_currency` via `/api/config`, zona horaria via
+`/api/settings/timezone`, transacciones via `/api/transactions` con
+`startDate/endDate` y productos via `/api/products`; cualquier importe visible
+debe formatearse con la moneda del registro o de la cuenta, no con una moneda
+hardcodeada. El formulario nativo actual cubre registro manual de pago unico y
+creacion basica de parcialidades/suscripciones contra los endpoints existentes;
+si se porta el flujo completo de links, tarjetas guardadas, MSI, impuestos o
+pasarelas de `RecordPaymentModal`, esa brecha debe cerrarse tambien en
+`mobile/` y registrarse en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
+
+La conversacion nativa en `mobile/src/App.tsx` debe cargar el mismo journey
+recortado que `/movil` (`/contacts/:id/journey` con `chatMessagesOnly` y
+`messageLimit`), agrupar mensajes por dia usando la zona horaria del negocio,
+mostrar avatar/badge de canal en el header y exponer acciones equivalentes por
+bottom sheet: adjuntos/camara, agendar cita, registrar pagos, programar mensaje,
+agregar etiqueta, silenciar, archivar/restaurar y controles de agente. El
+composer nativo manda texto por `/whatsapp-api/messages/text` y fotos por
+`/whatsapp-api/messages/image`; cualquier canal pendiente (QR, HighLevel,
+Messenger, Instagram, email/SMS, audio/video/documentos completos) debe quedar
+marcado como brecha en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md` hasta que use el
+mismo contrato que `/movil`.
 
 En la conversación móvil no uses rails/barras verticales pegadas al lado
 izquierdo como indicador visual de foco, comentario o chat no leído. Los estados
@@ -475,6 +578,19 @@ FCM_SERVICE_ACCOUNT_JSON=
 tienda.
 
 iOS nativo:
+
+En produccion managed, la ruta recomendada es que Ristak Installer concentre las
+credenciales APNs cifradas en su base (`mobile_apns_key_id`,
+`mobile_apns_team_id`, `mobile_apns_bundle_id`, `mobile_apns_private_key_p8`,
+`mobile_apns_environment`) y reporte `iosConfigured=true` en
+`/api/license/mobile-push/status`. La instalacion cliente registra el token APNs
+en `/api/push/mobile-devices` y delega el envio al portal central. El broker
+central intenta el ambiente configurado y reintenta el alterno cuando APNs
+responde `BadDeviceToken`, cubriendo builds de desarrollo/sandbox y
+produccion sin duplicar secretos por cliente.
+
+Solo una instalacion standalone que de verdad no use Installer debe configurar
+APNs localmente:
 
 ```bash
 APNS_KEY_ID=
