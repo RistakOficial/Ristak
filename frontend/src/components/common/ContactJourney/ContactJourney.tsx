@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { Image as ImageIcon, MessageCircle } from 'lucide-react'
+import { FaFacebookMessenger, FaInstagram } from 'react-icons/fa'
 import { Icon } from '@/components/common'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
@@ -62,6 +64,7 @@ const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|fo
 const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
 const INSTAGRAM_META_MESSAGE_PATTERN = /(instagram|ig)/i
 const MESSENGER_META_MESSAGE_PATTERN = /(messenger|facebook|fb)/i
+const META_COMMENT_MESSAGE_TYPES = new Set(['comment', 'comment_reply_public', 'comment_reply_private'])
 
 const getEventData = (event?: JourneyEvent | null): Record<string, any> =>
   event && event.data && typeof event.data === 'object' ? event.data : {}
@@ -505,6 +508,22 @@ const getMetaMessagePlatformKey = (event?: JourneyEvent | null): string => {
 const isMetaMessageJourneyEvent = (event?: JourneyEvent | null) =>
   Boolean(event?.type === 'meta_message' && !isOutboundJourneyMessage(event))
 
+const getMetaMessageType = (event?: JourneyEvent | null): string =>
+  String(getEventData(event).message_type || '').trim().toLowerCase()
+
+const isMetaCommentJourneyEvent = (event?: JourneyEvent | null): boolean => {
+  const data = getEventData(event)
+  return Boolean(data.comment_id || META_COMMENT_MESSAGE_TYPES.has(getMetaMessageType(event)))
+}
+
+const hasMetaMessageMedia = (event?: JourneyEvent | null): boolean => {
+  const data = getEventData(event)
+  return Boolean(data.media_url || data.post_image_url || data.media_id)
+}
+
+const getMetaMessageDailyKind = (event?: JourneyEvent | null): 'comment' | 'message' =>
+  isMetaCommentJourneyEvent(event) ? 'comment' : 'message'
+
 const getMetaMessageTitle = (event?: JourneyEvent | null): string => {
   const platform = getMetaMessagePlatformKey(event)
   if (platform === 'instagram') return 'Instagram'
@@ -514,20 +533,33 @@ const getMetaMessageTitle = (event?: JourneyEvent | null): string => {
 
 const getMetaMessageSurfaceLabel = (event?: JourneyEvent | null): string => {
   const data = getEventData(event)
-  const source = String(data.source || '').trim()
-  if (source) return source
+  if (isMetaCommentJourneyEvent(event)) {
+    const platform = getMetaMessagePlatformKey(event)
+    if (platform === 'instagram') return 'Comentario de Instagram'
+    if (platform === 'messenger') return 'Comentario de Messenger'
+    return 'Comentario social'
+  }
 
+  const source = String(data.source || '').trim()
   const title = getMetaMessageTitle(event)
-  return title === 'Meta' ? 'Mensaje social' : title
+  if (source) {
+    const normalizedSource = source.toLowerCase()
+    if (title !== 'Meta' && (normalizedSource === 'messenger' || normalizedSource === 'instagram')) {
+      return `Mensaje privado de ${title}`
+    }
+    return source
+  }
+
+  return title === 'Meta' ? 'Mensaje social' : `Mensaje privado de ${title}`
 }
 
 const getMetaMessageSubtypeLabel = (event?: JourneyEvent | null): string => {
   const data = getEventData(event)
-  if (data.comment_id) return 'Comentario'
+  if (isMetaCommentJourneyEvent(event)) return 'Comentario'
   if (String(data.source || '').toLowerCase().includes('dm')) return 'DM'
   if (data.media_url) return 'Multimedia'
   if (data.postback_payload) return 'Respuesta'
-  return 'Mensaje'
+  return 'Privado'
 }
 
 const getMetaMessageIcon = (event: JourneyEvent) => {
@@ -542,6 +574,42 @@ const getMetaMessageColor = (event: JourneyEvent) => {
   if (platform === 'instagram') return 'instagram'
   if (platform === 'messenger') return 'facebook'
   return 'blue'
+}
+
+const renderMetaMessageIcon = (event: JourneyEvent) => {
+  const platform = getMetaMessagePlatformKey(event)
+  const isComment = isMetaCommentJourneyEvent(event)
+  const mainIconLabel = isComment
+    ? `${getMetaMessageSurfaceLabel(event)} en publicación`
+    : hasMetaMessageMedia(event)
+      ? `${getMetaMessageTitle(event)} con multimedia`
+      : `${getMetaMessageTitle(event)} privado`
+  const BrandIcon = platform === 'instagram'
+    ? FaInstagram
+    : platform === 'messenger'
+      ? FaFacebookMessenger
+      : null
+
+  return (
+    <span
+      className={styles.metaJourneyGlyph}
+      data-meta-action={isComment ? 'comment' : hasMetaMessageMedia(event) ? 'media' : 'message'}
+      aria-label={mainIconLabel}
+      role="img"
+    >
+      {isComment || hasMetaMessageMedia(event)
+        ? <ImageIcon className={styles.metaJourneyGlyphPrimary} size={18} strokeWidth={1.8} aria-hidden="true" />
+        : <MessageCircle className={styles.metaJourneyGlyphPrimary} size={18} strokeWidth={1.8} aria-hidden="true" />}
+      {isComment && (
+        <MessageCircle className={styles.metaJourneyGlyphAction} size={10} strokeWidth={2} aria-hidden="true" />
+      )}
+      <span className={styles.metaJourneyGlyphBrand} data-platform={platform} aria-hidden="true">
+        {BrandIcon
+          ? <BrandIcon />
+          : <Icon name="meta" size={10} color="currentColor" aria-hidden="true" focusable="false" />}
+      </span>
+    </span>
+  )
 }
 
 const getEventIcon = (event: JourneyEvent) => {
@@ -842,7 +910,8 @@ const getTooltipContent = (event?: JourneyEvent | null, timezone?: string): Tool
     appendTooltipItem(items, 'Perfil', data.profile_name, undefined, { section: 'Origen' })
     appendTooltipItem(items, 'Usuario', data.username ? `@${String(data.username).replace(/^@+/, '')}` : '', undefined, { section: 'Origen' })
     appendTooltipItem(items, 'Mensaje', data.message_text, undefined, { section: 'Mensaje' })
-    appendTooltipItem(items, 'Tipo', data.message_type || getMetaMessageSubtypeLabel(event), undefined, { section: 'Mensaje' })
+    items.push({ label: 'Tipo', value: getMetaMessageSubtypeLabel(event), section: 'Mensaje' })
+    appendTooltipItem(items, 'Tipo interno', data.message_type, undefined, { section: 'Detalles' })
     appendTooltipItem(items, 'Medio', data.media_url, undefined, { section: 'Mensaje', kind: 'url' })
     appendTooltipItem(items, 'Respuesta', data.postback_payload, undefined, { section: 'Mensaje' })
     appendTooltipItem(items, 'Dirección', data.direction, undefined, { section: 'Detalles' })
@@ -1015,6 +1084,7 @@ const metaMessageEventScore = (event: JourneyEvent): number => {
   const completenessFields = [
     'message_text', 'message_type', 'profile_name', 'username', 'media_url',
     'postback_payload', 'comment_id', 'post_message', 'post_permalink',
+    'post_image_url', 'post_type', 'media_id', 'parent_comment_id',
     'permalink', 'meta_message_id', 'meta_social_message_id', 'status'
   ]
   const completeness = completenessFields.reduce(
@@ -1052,7 +1122,7 @@ const getDailyContactJourneyGroupKey = (event: JourneyEvent, timezone: string): 
     isWhatsAppJourneyEvent(event)
       ? `whatsapp:${isAdAttributedEvent(event) ? 'ad' : 'direct'}`
       : isMetaMessageJourneyEvent(event)
-        ? `meta:${getMetaMessagePlatformKey(event)}`
+        ? `meta:${getMetaMessagePlatformKey(event)}:${getMetaMessageDailyKind(event)}`
       : isWebContactJourneyEvent(event)
         ? 'contact:web'
         : 'contact'
@@ -1209,7 +1279,7 @@ export const ContactJourney = ({ contactId, layout = 'default' }: ContactJourney
     }
   }, [activeEventIndex])
 
-  // Agrupa contacto/WhatsApp a un solo evento por día local antes de pintar.
+  // Agrupa contacto y mensajes sociales por día local antes de pintar.
   const displayJourney = useMemo(() => buildDisplayJourney(journey, timezone), [journey, timezone])
   const displayRows = useMemo(() => chunkJourneyRows(displayJourney), [displayJourney])
   const visibleTooltipIndex = activeEventIndex ?? hoveredEventIndex
@@ -1300,7 +1370,9 @@ export const ContactJourney = ({ contactId, layout = 'default' }: ContactJourney
           }}
         >
           <div className={`${styles.eventDot} ${styles[color]}`}>
-            <Icon name={iconName as any} size={18} />
+            {event.type === 'meta_message'
+              ? renderMetaMessageIcon(event)
+              : <Icon name={iconName as any} size={18} />}
             {isAdAttributed && (
               <span className={getAdPlatformBadgeClass(event.data?.ad_platform)} title={event.data?.ad_platform || 'Anuncio'}>
                 <Icon name={adPlatformIcon as any} size={11} />

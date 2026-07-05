@@ -317,10 +317,14 @@ Capacidades:
   legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
   compras. Si un evento trae metadata de mensaje social o email, el tooltip debe
   explicar canal, contenido, perfil/usuario, estado e identificadores utiles; no
-  debe quedarse como "Evento" sin detalle. Los mensajes de WhatsApp, Messenger e
-  Instagram se resumen en marcadores diarios por canal usando el dia local de la
-  zona horaria del negocio, para evitar repetir varios puntos por mensajes del
-  mismo dia.
+  debe quedarse como "Evento" sin detalle. Los mensajes de WhatsApp se resumen
+  en marcadores diarios por canal y los eventos de Messenger/Instagram se
+  resumen por dia local, plataforma y tipo de accion (`message` vs `comment`).
+  Asi un DM y un comentario del mismo dia no se pisan entre si, pero cinco
+  comentarios del mismo dia siguen contando como un solo punto de comentario.
+  Los marcadores visuales de Messenger e Instagram deben diferenciar DM privado
+  vs comentario con iconografia de plataforma y accion, no con el mismo glifo
+  generico para todo.
 
 Los contactos alimentan reportes, automations, chat, pagos, citas y conversiones.
 

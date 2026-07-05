@@ -266,6 +266,62 @@
   height: 11px;
 }
 
+.metaJourneyGlyph {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: currentColor;
+}
+
+.eventDot .metaJourneyGlyphPrimary {
+  width: 18px;
+  height: 18px;
+}
+
+.eventDot .metaJourneyGlyph[data-meta-action='comment'] .metaJourneyGlyphPrimary {
+  width: 19px;
+  height: 19px;
+}
+
+.metaJourneyGlyphAction,
+.metaJourneyGlyphBrand {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: currentColor;
+}
+
+.metaJourneyGlyphAction {
+  left: -3px;
+  bottom: -1px;
+  width: 13px;
+  height: 13px;
+}
+
+.metaJourneyGlyphBrand {
+  right: -5px;
+  bottom: -4px;
+  width: 16px;
+  height: 16px;
+}
+
+.eventDot .metaJourneyGlyphAction {
+  width: 13px;
+  height: 13px;
+}
+
+.eventDot .metaJourneyGlyphBrand svg {
+  width: 10px;
+  height: 10px;
+}
+
 /* Colores sutiles al estilo de la app con BUEN CONTRASTE */
 .eventDot.blue {
   background-color: rgba(59, 130, 246, 0.12);
