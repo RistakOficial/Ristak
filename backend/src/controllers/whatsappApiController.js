@@ -21,6 +21,7 @@ import {
   sendWhatsAppApiDocumentMessage,
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiInteractiveMessage,
+  sendWhatsAppApiLocationMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
   sendWhatsAppApiVideoMessage,
@@ -583,6 +584,32 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo enviar el mensaje por WhatsApp_API'
+    })
+  }
+}
+
+export async function sendWhatsAppApiLocationMessageView(req, res) {
+  try {
+    const data = await sendWhatsAppApiLocationMessage({
+      to: req.body?.to,
+      from: req.body?.from,
+      latitude: req.body?.latitude,
+      longitude: req.body?.longitude,
+      name: req.body?.name,
+      address: req.body?.address,
+      externalId: req.body?.externalId,
+      transport: req.body?.transport,
+      contactId: req.body?.contactId,
+      phoneNumberId: req.body?.phoneNumberId,
+      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+    })
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando ubicación WhatsApp_API: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo enviar la ubicación por WhatsApp_API'
     })
   }
 }

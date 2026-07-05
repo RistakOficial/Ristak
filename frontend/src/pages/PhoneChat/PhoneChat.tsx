@@ -413,12 +413,20 @@ type ContactInfoDetailPanel = 'payments' | 'appointments' | 'journey' | 'agent_h
 type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null
 type ContactInfoArchiveTab = 'media' | 'links' | 'documents'
 type ChatAttachmentType = 'image' | 'audio' | 'video' | 'document' | 'file'
+type ChatLocation = {
+  latitude: number
+  longitude: number
+  name?: string
+  address?: string
+  url?: string
+}
 type MessageActionMenuMode = 'main' | 'more'
 type MessageActionMenuPlacement = 'above' | 'below'
 type MessageActionMenuAlign = 'start' | 'end'
 type ManualAgentInterruptionAction = 'pause' | 'skip'
 type SendMessageOptions = {
   textOverride?: string
+  locationOverride?: ChatLocation
   preserveComposer?: boolean
   skipAgentInterruptionConfirm?: boolean
 }
@@ -1176,6 +1184,7 @@ interface ChatMessage {
     durationMs?: number
     isGif?: boolean
   }
+  location?: ChatLocation
 }
 
 type PhoneConversationTimelineItem =
@@ -2392,6 +2401,7 @@ function areChatListsEquivalent(left: ChatContact[], right: ChatContact[]) {
 function getMessageSignature(message: ChatMessage) {
   const attachment = message.attachment
   const emailDetails = message.emailDetails
+  const location = message.location
   return [
     message.id,
     message.text,
@@ -2420,7 +2430,12 @@ function getMessageSignature(message: ChatMessage) {
     attachment?.name,
     attachment?.mimeType,
     attachment?.durationMs,
-    attachment?.isGif
+    attachment?.isGif,
+    location?.latitude,
+    location?.longitude,
+    location?.name,
+    location?.address,
+    location?.url
   ].map(compactCompareValue).join('\u001f')
 }
 
@@ -2459,6 +2474,17 @@ function getMessageAttachmentMatchKey(message: ChatMessage) {
   ].join(':')
 }
 
+function getMessageLocationMatchKey(message: ChatMessage) {
+  const location = message.location
+  if (!location) return ''
+  return [
+    location.latitude.toFixed(6),
+    location.longitude.toFixed(6),
+    normalizeMessageMatchText(location.name),
+    normalizeMessageMatchText(location.address)
+  ].join(':')
+}
+
 function messagesLookLikeSameOptimisticSend(loaded: ChatMessage, optimistic: ChatMessage) {
   if (loaded.id === optimistic.id) return true
   if (loaded.direction !== optimistic.direction || optimistic.direction !== 'outbound') return false
@@ -2473,13 +2499,16 @@ function messagesLookLikeSameOptimisticSend(loaded: ChatMessage, optimistic: Cha
   const loadedAttachment = getMessageAttachmentMatchKey(loaded)
   const optimisticAttachment = getMessageAttachmentMatchKey(optimistic)
   const sameAttachment = Boolean(loadedAttachment && optimisticAttachment && loadedAttachment === optimisticAttachment)
+  const loadedLocation = getMessageLocationMatchKey(loaded)
+  const optimisticLocation = getMessageLocationMatchKey(optimistic)
+  const sameLocation = Boolean(loadedLocation && optimisticLocation && loadedLocation === optimisticLocation)
 
-  if (sameText || sameAttachment) {
+  if (sameText || sameAttachment || sameLocation) {
     return !loadedTime || !optimisticTime || loadedTime >= optimisticTime - 5000
   }
 
   return optimistic.id.startsWith('template-') &&
-    Boolean(loadedText || loaded.attachment) &&
+    Boolean(loadedText || loaded.attachment || loaded.location) &&
     (!loadedTime || !optimisticTime || loadedTime >= optimisticTime - 5000)
 }
 
@@ -2528,6 +2557,11 @@ function getJourneyEventSignature(event: JourneyEvent) {
     data.media_mime_type,
     data.media_filename,
     data.media_duration_ms,
+    data.location_latitude,
+    data.location_longitude,
+    data.location_name,
+    data.location_address,
+    data.location_url,
     data.subject,
     data.amount,
     data.title,
@@ -2745,6 +2779,121 @@ function getJourneyMediaAttachment(event: JourneyEvent): ChatMessage['attachment
   return undefined
 }
 
+function parseLocationCoordinate(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  const number = typeof value === 'number' ? value : Number(String(value).trim())
+  return Number.isFinite(number) ? number : null
+}
+
+function buildLocationUrl(location: Pick<ChatLocation, 'latitude' | 'longitude'>) {
+  return `https://www.google.com/maps?q=${encodeURIComponent(`${location.latitude},${location.longitude}`)}`
+}
+
+function normalizeLocationValue(value: unknown): ChatLocation | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const location = value as Record<string, unknown>
+  const latitude = parseLocationCoordinate(
+    location.latitude ??
+    location.lat ??
+    location.degreesLatitude ??
+    location.degrees_latitude
+  )
+  const longitude = parseLocationCoordinate(
+    location.longitude ??
+    location.lng ??
+    location.lon ??
+    location.degreesLongitude ??
+    location.degrees_longitude
+  )
+  if (latitude === null || longitude === null) return undefined
+
+  const normalized: ChatLocation = {
+    latitude,
+    longitude,
+    name: String(location.name || location.title || '').trim() || undefined,
+    address: String(location.address || location.description || '').trim() || undefined,
+    url: String(location.url || location.href || '').trim() || undefined
+  }
+  if (!normalized.url) normalized.url = buildLocationUrl(normalized)
+  return normalized
+}
+
+function getJourneyLocation(event: JourneyEvent): ChatLocation | undefined {
+  const data = (event.data || {}) as Record<string, unknown>
+  const messageType = String(data.message_type || data.messageType || data.type || '').toLowerCase()
+  const direct = normalizeLocationValue({
+    latitude: data.location_latitude ?? data.locationLatitude ?? data.latitude ?? data.lat,
+    longitude: data.location_longitude ?? data.locationLongitude ?? data.longitude ?? data.lng ?? data.lon,
+    name: data.location_name || data.locationName || data.name,
+    address: data.location_address || data.locationAddress || data.address,
+    url: data.location_url || data.locationUrl || data.url
+  })
+  if (direct) return direct
+
+  const candidates = [
+    data.location,
+    data.locationMessage,
+    data.whatsappMessage && typeof data.whatsappMessage === 'object' ? (data.whatsappMessage as Record<string, unknown>).location : null,
+    data.whatsappInboundMessage && typeof data.whatsappInboundMessage === 'object' ? (data.whatsappInboundMessage as Record<string, unknown>).location : null,
+    data.message && typeof data.message === 'object' ? (data.message as Record<string, unknown>).location : null,
+    data.response && typeof data.response === 'object' ? (data.response as Record<string, unknown>).location : null,
+    data.request && typeof data.request === 'object' ? (data.request as Record<string, unknown>).location : null
+  ]
+  for (const candidate of candidates) {
+    const location = normalizeLocationValue(candidate)
+    if (location) return location
+  }
+
+  return messageType.includes('location') ? direct : undefined
+}
+
+function cleanLocationMessageText(text = '', location?: ChatLocation) {
+  if (!location) return text
+  const normalized = text.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (!normalized || ['ubicacion', 'ubicación', 'location'].includes(normalized)) return ''
+  return text
+}
+
+function getLocationTitle(location?: ChatLocation) {
+  return location?.name || 'Ubicación'
+}
+
+function getLocationSubtitle(location?: ChatLocation) {
+  if (!location) return ''
+  return location.address || `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`
+}
+
+function buildLocationFallbackText(location: ChatLocation) {
+  return `📍 ${getLocationTitle(location)}\n${location.url || buildLocationUrl(location)}`
+}
+
+function getCurrentGeolocationPosition(): Promise<GeolocationPosition> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Este dispositivo no permite compartir ubicación desde el navegador.'))
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 60000
+    })
+  })
+}
+
+function buildCurrentLocation(position: GeolocationPosition): ChatLocation {
+  const location = {
+    latitude: position.coords.latitude,
+    longitude: position.coords.longitude,
+    name: 'Ubicación'
+  }
+  return {
+    ...location,
+    url: buildLocationUrl(location)
+  }
+}
+
 function normalizeArchiveUrl(value = '') {
   const trimmed = String(value || '').trim().replace(/[)\],.;!?]+$/g, '')
   if (!trimmed) return ''
@@ -2882,9 +3031,10 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   ).trim()
   const messageType = String(event.data?.message_type || '')
   const attachment = getJourneyMediaAttachment(event)
-  const text = cleanAttachmentMessageText(rawText, attachment)
+  const location = getJourneyLocation(event)
+  const text = cleanLocationMessageText(cleanAttachmentMessageText(rawText, attachment), location)
 
-  if (!text && !messageType && !attachment) return null
+  if (!text && !messageType && !attachment && !location) return null
 
   const direction = normalizeWhatsAppBusinessDirection(event.data?.direction)
 
@@ -2894,7 +3044,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
         ? event.data?.meta_social_message_id || event.data?.meta_message_id || `meta-message-${index}`
         : event.data?.whatsapp_api_message_id || event.data?.whatsapp_message_id || event.data?.attribution_record_id || `message-${index}`
     ),
-    text: text || (attachment ? '' : getMessageTypeLabel(messageType, isMetaMessage ? 'Mensaje de Meta' : 'Mensaje de WhatsApp')),
+    text: text || (attachment || location ? '' : getMessageTypeLabel(messageType, isMetaMessage ? 'Mensaje de Meta' : 'Mensaje de WhatsApp')),
     date: event.date,
     direction,
     status: String(event.data?.status || ''),
@@ -2946,7 +3096,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
           permalink: String(eventData.post_permalink || eventData.permalink || '').trim()
         }
       : undefined,
-    attachment
+    attachment,
+    location
   }
 }
 
@@ -3023,6 +3174,7 @@ function getMessageAttachmentActionLabel(message: ChatMessage) {
 function getMessageActionText(message: ChatMessage) {
   const text = message.text.trim()
   if (text) return text
+  if (message.location) return getLocationTitle(message.location)
   return getMessageAttachmentActionLabel(message) || 'Mensaje'
 }
 
@@ -10715,11 +10867,12 @@ export const PhoneChat: React.FC = () => {
   const handleSendMessage = async (transport: 'api' | 'qr' = 'api', options: SendMessageOptions = {}) => {
     const textOverride = options.textOverride?.trim()
     const hasTextOverride = Boolean(textOverride)
-    const preserveComposer = Boolean(hasTextOverride && options.preserveComposer)
+    const locationToSend = options.locationOverride
+    const preserveComposer = Boolean((hasTextOverride || locationToSend) && options.preserveComposer)
     const text = hasTextOverride ? textOverride || '' : messageTextRef.current.trim()
-    const attachmentsToSend = hasTextOverride ? [] : draftAttachments
-    const voiceToSend = hasTextOverride ? null : voiceDraft
-    if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend)) return
+    const attachmentsToSend = hasTextOverride || locationToSend ? [] : draftAttachments
+    const voiceToSend = hasTextOverride || locationToSend ? null : voiceDraft
+    if (!activeContact || (!text && attachmentsToSend.length === 0 && !voiceToSend && !locationToSend)) return
     const sendAttachmentsThroughHighLevel = attachmentsToSend.length > 0 && highLevelConnected && Boolean(activeMetaSocialChannel)
 
     if (
@@ -10744,6 +10897,10 @@ export const PhoneChat: React.FC = () => {
     //    al comentario (inicia el chat privado).
     // Un contacto con DM ya existente NO entra aquí por la barra (cae al DM normal).
     if (commentReplyTarget || isCommentContact(activeContact)) {
+      if (locationToSend) {
+        showToast('warning', 'Solo texto', 'Las respuestas a comentarios no aceptan ubicación por ahora.')
+        return
+      }
       if (!text) {
         showToast('warning', 'Escribe algo', 'Escribe tu respuesta al comentario.')
         return
@@ -10832,8 +10989,9 @@ export const PhoneChat: React.FC = () => {
 
     if (sendingThroughMetaSocial && activeMetaSocialChannel && !sendAttachmentsThroughHighLevel) {
       const channelLabel = GHL_CHAT_CHANNEL_LABELS[activeMetaSocialChannel]
+      const outgoingText = locationToSend ? buildLocationFallbackText(locationToSend) : text
 
-      if (!text) {
+      if (!outgoingText) {
         showToast('warning', 'Escribe algo', 'Manda un mensaje escrito desde este chat.')
         return
       }
@@ -10861,11 +11019,12 @@ export const PhoneChat: React.FC = () => {
 
       const optimisticMessage: ChatMessage = {
         id: optimisticId,
-        text,
+        text: locationToSend ? '' : text,
         date: sentAt,
         direction: 'outbound',
         status: 'enviando',
-        transport: activeMetaSocialChannel
+        transport: activeMetaSocialChannel,
+        ...(locationToSend ? { location: locationToSend } : {})
       }
 
       setMessages((current) => [...current, optimisticMessage])
@@ -10873,7 +11032,7 @@ export const PhoneChat: React.FC = () => {
         contact.id === activeContact.id
           ? {
               ...contact,
-              lastMessageText: text,
+              lastMessageText: locationToSend ? 'Ubicación' : text,
               lastMessageDate: sentAt,
               lastMessageDirection: 'outbound',
               lastMessageChannel: activeMetaSocialChannel,
@@ -10886,7 +11045,7 @@ export const PhoneChat: React.FC = () => {
         const result = await whatsappApiService.sendMetaSocialText({
           contactId: activeContact.id,
           platform: activeMetaSocialChannel,
-          message: text,
+          message: outgoingText,
           externalId: optimisticId
         })
         const resultData = result.data || result
@@ -10912,7 +11071,7 @@ export const PhoneChat: React.FC = () => {
             ? { ...message, status: 'error', errorReason: errorMessage }
             : message
         )))
-        if (!preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
+        if (!locationToSend && !preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
           setComposerMessageText(text)
           composerInputRef.current.textContent = text
         }
@@ -10933,7 +11092,7 @@ export const PhoneChat: React.FC = () => {
       const channelLabel = GHL_CHAT_CHANNEL_LABELS[optimisticChannel]
       const autoSmsFallback = requestedChannel === 'whatsapp_api' && optimisticChannel === 'sms_qr'
 
-      if (!text && !voiceToSend && attachmentsToSend.length === 0) {
+      if (!text && !voiceToSend && attachmentsToSend.length === 0 && !locationToSend) {
         showToast('warning', 'Escribe o adjunta algo', 'Manda texto, una nota de voz o un archivo desde este chat.')
         return
       }
@@ -10952,6 +11111,7 @@ export const PhoneChat: React.FC = () => {
           : optimisticChannel === 'messenger'
             ? 'ghl_messenger'
             : 'ghl_instagram'
+      const outgoingText = locationToSend ? buildLocationFallbackText(locationToSend) : text
 
       setComposerStatus('sending')
       if (!preserveComposer) {
@@ -10983,9 +11143,21 @@ export const PhoneChat: React.FC = () => {
               mimeType: attachment.type
             }
           }))
+        : locationToSend
+        ? [{
+            id: optimisticId,
+            text: '',
+            date: sentAt,
+            direction: 'outbound',
+            status: 'enviando',
+            businessPhone: selectedBusinessPhoneValue || '',
+            businessPhoneNumberId: selectedBusinessPhone?.id || '',
+            transport: transportLabel,
+            location: locationToSend
+          }]
         : [{
             id: optimisticId,
-            text,
+            text: outgoingText,
             date: sentAt,
             direction: 'outbound',
             status: 'enviando',
@@ -11010,7 +11182,7 @@ export const PhoneChat: React.FC = () => {
         contact.id === activeContact.id
           ? {
               ...contact,
-              lastMessageText: voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
+              lastMessageText: locationToSend ? 'Ubicación' : voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
               lastMessageDate: sentAt,
               lastMessageDirection: 'outbound',
               lastMessageChannel: optimisticChannel,
@@ -11023,7 +11195,7 @@ export const PhoneChat: React.FC = () => {
         const result = await highLevelService.sendConversationMessage({
           contactId: activeContact.id,
           channel: requestedChannel,
-          message: text,
+          message: outgoingText,
           audioDataUrl: voiceToSend?.dataUrl,
           durationMs: voiceToSend?.durationMs,
           attachmentDataUrls: attachmentsToSend.map((attachment) => ({
@@ -11087,7 +11259,7 @@ export const PhoneChat: React.FC = () => {
           setDraftAttachments(attachmentsToSend)
           setVoiceDraft(voiceToSend)
         }
-        if (!preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
+        if (!locationToSend && !preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
           setComposerMessageText(text)
           composerInputRef.current.textContent = text
         }
@@ -11153,7 +11325,19 @@ export const PhoneChat: React.FC = () => {
       voiceSendAfterStopRef.current = false
       setVoiceDraft(null)
     }
-    const optimisticMessages: ChatMessage[] = voiceToSend
+    const optimisticMessages: ChatMessage[] = locationToSend
+      ? [{
+          id: optimisticId,
+          text: '',
+          date: sentAt,
+          direction: 'outbound',
+          status: resolvedTransport === 'qr' ? 'enviando por QR' : 'enviando',
+          businessPhone: selectedBusinessPhoneValue,
+          businessPhoneNumberId: selectedBusinessPhone?.id || '',
+          transport: resolvedTransport,
+          location: locationToSend
+        }]
+      : voiceToSend
       ? [{
           id: `${optimisticId}-audio`,
           text: '',
@@ -11204,7 +11388,7 @@ export const PhoneChat: React.FC = () => {
       contact.id === activeContact.id
         ? {
             ...contact,
-            lastMessageText: voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
+            lastMessageText: locationToSend ? 'Ubicación' : voiceToSend ? 'Mensaje de voz' : attachmentsToSend.length > 0 ? (text || getAttachmentPreviewText(attachmentsToSend)) : text,
             lastMessageDate: sentAt,
             lastMessageDirection: 'outbound',
             messageCount: Number(contact.messageCount || 0) + Math.max(1, voiceToSend ? 1 : attachmentsToSend.length)
@@ -11213,7 +11397,40 @@ export const PhoneChat: React.FC = () => {
     )))
 
     try {
-      if (voiceToSend) {
+      if (locationToSend) {
+        const result = await whatsappApiService.sendLocation({
+          to: activeContact.phone,
+          from: selectedBusinessPhoneValue,
+          contactId: activeContact.id,
+          latitude: locationToSend.latitude,
+          longitude: locationToSend.longitude,
+          name: locationToSend.name,
+          address: locationToSend.address,
+          externalId: optimisticId,
+          transport: resolvedTransport,
+          phoneNumberId: selectedBusinessPhone?.id || undefined,
+          messageOrigin: 'manual_chat'
+        })
+        setMessages((current) => current.map((message) => (
+          message.id === optimisticId
+            ? {
+                ...message,
+                status: result.status || 'sent',
+                transport: result.transport || message.transport,
+                routingReason: result.routingReason || result.fallbackReason || message.routingReason,
+                location: result.location
+                  ? {
+                      latitude: Number(result.location.latitude) || locationToSend.latitude,
+                      longitude: Number(result.location.longitude) || locationToSend.longitude,
+                      name: result.location.name || locationToSend.name,
+                      address: result.location.address || locationToSend.address,
+                      url: result.location.url || locationToSend.url
+                    }
+                  : message.location
+              }
+            : message
+        )))
+      } else if (voiceToSend) {
         const result = await whatsappApiService.sendAudio({
           to: activeContact.phone || '',
           from: selectedBusinessPhoneValue,
@@ -11360,13 +11577,55 @@ export const PhoneChat: React.FC = () => {
         setDraftAttachments(attachmentsToSend)
         setVoiceDraft(voiceToSend)
       }
-      if (!preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
+      if (!locationToSend && !preserveComposer && text && !messageTextRef.current.trim() && composerInputRef.current) {
         setComposerMessageText(text)
         composerInputRef.current.textContent = text
       }
       showToast('error', 'No se envió el mensaje', errorMessage)
     } finally {
       setComposerStatus('idle')
+    }
+  }
+
+  const handleShareLocation = async () => {
+    if (composerStatus === 'sending') return
+    if (!activeContact) {
+      showToast('warning', 'Abre un chat', 'Elige un contacto antes de compartir ubicación.')
+      return
+    }
+    if (aiAgentConversationOpen) {
+      handleUnavailableAttachment('Ubicación')
+      return
+    }
+    if (activeHighLevelChatChannel === 'email') {
+      showToast('info', 'Correo electrónico', 'Las ubicaciones de correo se manejan desde la vista completa de chats.')
+      return
+    }
+    if (draftAttachments.length > 0 || voiceDraft || voiceRecording || voiceProcessing) {
+      showToast('warning', 'Termina el adjunto', 'Manda o elimina el archivo/audio antes de compartir ubicación.')
+      return
+    }
+
+    setSheet(null)
+    setComposerStatus('sending')
+    try {
+      const position = await getCurrentGeolocationPosition()
+      const location = buildCurrentLocation(position)
+      setComposerStatus('idle')
+      await handleSendMessage('api', {
+        locationOverride: location,
+        preserveComposer: true
+      })
+    } catch (error: any) {
+      setComposerStatus('idle')
+      const denied = Number(error?.code || 0) === 1
+      showToast(
+        'error',
+        denied ? 'Ubicación bloqueada' : 'No se pudo obtener ubicación',
+        denied
+          ? 'Permite ubicación para Ristak desde ajustes del celular y vuelve a intentar.'
+          : getErrorMessage(error, 'Revisa permisos de ubicación e intenta otra vez.')
+      )
     }
   }
 
@@ -12858,6 +13117,32 @@ export const PhoneChat: React.FC = () => {
     </div>
   )
 
+  const renderLocationMessage = (message: ChatMessage) => {
+    const location = message.location
+    if (!location) return null
+
+    const href = location.url || buildLocationUrl(location)
+    const title = getLocationTitle(location)
+    const subtitle = getLocationSubtitle(location)
+
+    return (
+      <a className={styles.messageLocation} href={href} target="_blank" rel="noreferrer">
+        <span className={styles.messageLocationMap} aria-hidden="true">
+          <span className={`${styles.messageLocationRoad} ${styles.messageLocationRoadA}`} />
+          <span className={`${styles.messageLocationRoad} ${styles.messageLocationRoadB}`} />
+          <span className={`${styles.messageLocationRoad} ${styles.messageLocationRoadC}`} />
+          <span className={styles.messageLocationPin}>
+            <MapPin size={26} fill="currentColor" />
+          </span>
+        </span>
+        <span className={styles.messageLocationDetails}>
+          <strong>{title}</strong>
+          {subtitle && <small>{subtitle}</small>}
+        </span>
+      </a>
+    )
+  }
+
   const renderMessageFile = (message: ChatMessage) => {
     const attachment = message.attachment
     if (!attachment || !['document', 'file'].includes(attachment.type)) return null
@@ -13299,7 +13584,8 @@ export const PhoneChat: React.FC = () => {
     const isAudioAttachment = message.attachment?.type === 'audio'
     const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
     const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
-    const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage || message.attachment?.type === 'image'
+    const isLocationMessage = Boolean(message.location)
+    const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage || message.attachment?.type === 'image' || isLocationMessage
     const starred = starredMessageIdSet.has(message.id)
 
     return (
@@ -13325,6 +13611,7 @@ export const PhoneChat: React.FC = () => {
             Mensaje de voz
           </span>
         )}
+        {isLocationMessage && renderLocationMessage(message)}
         {!hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
         {hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
         <span className={styles.messageActionPreviewMeta}>
@@ -13359,7 +13646,8 @@ export const PhoneChat: React.FC = () => {
       message.direction === 'outbound' ? styles.messageActionPreviewOutbound : '',
       scheduled ? styles.messageBubbleScheduled : '',
       message.attachment?.type === 'audio' ? styles.messageAudioBubble : '',
-      message.attachment && ['document', 'file'].includes(message.attachment.type) ? styles.messageFileBubble : ''
+      message.attachment && ['document', 'file'].includes(message.attachment.type) ? styles.messageFileBubble : '',
+      message.location ? styles.messageLocationBubble : ''
     ].filter(Boolean).join(' ')
 
     return (
@@ -13676,7 +13964,8 @@ export const PhoneChat: React.FC = () => {
               const isVideoMessage = message.attachment?.type === 'video' && Boolean(message.attachment.dataUrl || message.attachment.url)
               const isGifVideoMessage = isVideoMessage && Boolean(message.attachment?.isGif)
               const isFileMessage = Boolean(message.attachment && ['document', 'file'].includes(message.attachment.type))
-              const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage
+              const isLocationMessage = Boolean(message.location)
+              const hasRichAttachment = isAudioAttachment || isVideoMessage || isFileMessage || isLocationMessage
               const isEmailMessage = Boolean(message.emailDetails)
               const activeMessageSwipe = draggingMessageInfoSwipe?.messageId === message.id ? draggingMessageInfoSwipe : null
               const messageSwipeOffset = activeMessageSwipe?.offset || 0
@@ -13710,7 +13999,7 @@ export const PhoneChat: React.FC = () => {
                       {messageSwipeAction === 'commentReply' ? <Reply size={17} /> : <ReceiptText size={17} />}
                     </span>
                     <div
-                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
+                      className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isLocationMessage ? styles.messageLocationBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
                       data-chat-message-id={message.id}
                       data-chat-search-id={searchTargetId}
                       style={messageSwipeTransform ? { transform: messageSwipeTransform } : undefined}
@@ -13789,6 +14078,7 @@ export const PhoneChat: React.FC = () => {
                     {isFileMessage && renderMessageFile(message)}
                     {isAudioMessage && renderAudioMessage(message)}
                     {isAudioAttachment && !isAudioMessage && renderAudioUnavailableMessage(message)}
+                    {isLocationMessage && renderLocationMessage(message)}
                     {isEmailMessage && renderEmailMessage(message)}
                     {!isEmailMessage && !hasRichAttachment && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
                     {!isEmailMessage && hasRichAttachment && !isAudioMessage && message.text && <WhatsAppFormattedText text={message.text} className={styles.messageText} />}
@@ -16094,7 +16384,7 @@ export const PhoneChat: React.FC = () => {
           { label: 'Fotos', Icon: ImageIcon, className: styles.actionBlue, onClick: () => handlePickPhoto('photos') },
           ...(isWideChatDevice ? [] : [{ label: 'Cámara', Icon: Camera, className: styles.actionDark, onClick: () => handlePickPhoto('camera') }]),
           { label: 'Documentos', Icon: FileText, className: styles.actionSky, onClick: handlePickDocument },
-          { label: 'Ubicación', Icon: MapPin, className: styles.actionGreen, onClick: () => handleUnavailableAttachment('Ubicación') },
+          { label: 'Ubicación', Icon: MapPin, className: styles.actionGreen, onClick: handleShareLocation },
           { label: 'CLABE', Icon: Banknote, className: styles.actionClabe, onClick: handleOpenClabeSheet }
         ]
 

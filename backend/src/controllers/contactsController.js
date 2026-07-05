@@ -1445,6 +1445,63 @@ const getWhatsAppMediaFromPayload = (rawPayload, messageType = '') => {
   return media
 }
 
+const getWhatsAppLocationFromPayload = (rawPayload, messageType = '') => {
+  const payload = parseJsonObject(rawPayload)
+  if (!payload) return {}
+
+  const parseCoordinate = (value) => {
+    if (value === null || value === undefined || value === '') return null
+    const number = Number(value)
+    return Number.isFinite(number) ? number : null
+  }
+  const normalizeLocation = (location = {}) => {
+    if (!location || typeof location !== 'object') return null
+    const latitude = parseCoordinate(
+      location.latitude ??
+      location.lat ??
+      location.degreesLatitude ??
+      location.degrees_latitude
+    )
+    const longitude = parseCoordinate(
+      location.longitude ??
+      location.lng ??
+      location.lon ??
+      location.degreesLongitude ??
+      location.degrees_longitude
+    )
+    if (latitude === null || longitude === null) return null
+
+    return {
+      location_latitude: latitude,
+      location_longitude: longitude,
+      location_name: cleanString(location.name || location.title),
+      location_address: cleanString(location.address || location.description),
+      location_url: cleanString(location.url || location.href) ||
+        `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}`
+    }
+  }
+
+  const normalizedType = cleanString(messageType).toLowerCase()
+  const candidates = [
+    payload.location,
+    payload.locationMessage,
+    payload.qrRaw?.location,
+    payload.whatsappMessage?.location,
+    payload.whatsappInboundMessage?.location,
+    payload.message?.location,
+    payload.response?.location,
+    payload.request?.location,
+    normalizedType ? payload[normalizedType] : null
+  ]
+
+  for (const candidate of candidates) {
+    const location = normalizeLocation(candidate)
+    if (location) return location
+  }
+
+  return {}
+}
+
 const splitName = (name = '') => {
   const parts = cleanString(name).split(/\s+/).filter(Boolean)
   return {
@@ -4977,6 +5034,7 @@ export const getContactJourney = async (req, res) => {
       if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
 
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
+      const payloadLocation = getWhatsAppLocationFromPayload(msg.raw_payload_json, msg.message_type)
       const media = {
         media_url: cleanString(msg.media_url) || payloadMedia.media_url,
         media_id: payloadMedia.media_id,
@@ -4996,6 +5054,7 @@ export const getContactJourney = async (req, res) => {
         message_text: msg.message_text,
         message_type: msg.message_type,
         ...media,
+        ...payloadLocation,
         referral_source_url: msg.detected_source_url,
         referral_source_type: msg.detected_source_type,
         referral_ctwa_clid: msg.detected_ctwa_clid,

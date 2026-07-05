@@ -980,6 +980,7 @@ function isGenericChatMediaText(value = '', type = '') {
     voice: new Set(['audio', 'mensaje de voz', 'nota de voz', 'voice message']),
     document: new Set(['documento', 'document', 'archivo', 'file']),
     file: new Set(['documento', 'document', 'archivo', 'file']),
+    location: new Set(['ubicacion', 'location']),
     sticker: new Set(['sticker', 'pegatina'])
   }
 
@@ -995,6 +996,7 @@ function getChatMessageBody(message = {}) {
     if (!bodyText || bodyIsGeneric || isLikelyDocumentFilename(bodyText)) return documentBody.slice(0, 220)
   }
   if (isChatAudioType(type) && (!bodyText || bodyIsGeneric)) return buildChatVoiceBody(message)
+  if (type === 'location') return '📍 Ubicación'
 
   const typeLabels = {
     image: '📷 Envió una foto.',
@@ -1007,7 +1009,7 @@ function getChatMessageBody(message = {}) {
     document: buildChatDocumentBody(message, bodyText),
     file: buildChatDocumentBody(message, bodyText),
     sticker: 'Sticker',
-    location: 'Ubicación',
+    location: '📍 Ubicación',
     contacts: 'Contacto',
     contact: 'Contacto',
     reaction: 'Reacción',

@@ -131,6 +131,16 @@ y si hay nombre de archivo debe mostrar `📄 <archivo.ext>` con conteo de pagin
 cuando el proveedor lo mande. Estos casos no usan `notificationImageUrl` porque
 no son previews laterales de imagen/video.
 
+Para ubicaciones entrantes, la push debe mostrar `📍 Ubicación` y no debe usar
+`notificationImageUrl` / `notificationAttachmentUrl`; la ubicación no es media
+lateral. En el chat móvil, los mensajes `location` se renderizan como una
+tarjeta tipo mapa con pin y enlace a Google Maps usando las coordenadas
+guardadas en el payload del proveedor. El botón `+ > Ubicación` comparte la
+ubicación actual del dispositivo: por WhatsApp API oficial o QR se manda como
+mensaje nativo de ubicación; por Messenger, Instagram o HighLevel se manda como
+texto con link de mapa cuando no exista soporte nativo verificado. iOS requiere
+`NSLocationWhenInUseUsageDescription` en `frontend/ios/App/App/Info.plist`.
+
 En Android el small icon del sistema sigue siendo `ic_stat_ristak` porque
 Android exige un icono monocromatico de la app; las previews multimedia usan
 `notificationImageUrl` cuando existe media real. En iOS/APNs el payload incluye

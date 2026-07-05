@@ -30,6 +30,8 @@
 	<string>Ristak usa la cámara para tomar fotos y grabar videos desde el chat.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Ristak usa el micrófono para grabar notas de voz y videos desde el chat.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Ristak usa tu ubicación solo cuando eliges compartirla desde el chat.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Ristak puede guardar fotos tomadas desde el chat si decides conservarlas.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

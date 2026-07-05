@@ -294,6 +294,54 @@ test('push de chat de nota de voz usa copy con duracion tipo WhatsApp', async ()
   }
 })
 
+test('push de chat de ubicacion usa pin y no attachment lateral', async () => {
+  const suffix = randomUUID()
+  const contactId = `push_location_contact_${suffix}`
+  const apiContactId = `push_location_api_${suffix}`
+  const phone = `+52157${Date.now().toString().slice(-8)}`
+  const avatarUrl = `https://cdn.example.test/avatars/${suffix}.jpg`
+  const sentPayloads = []
+
+  setAppNotificationPayloadSenderForTest(async (payload) => {
+    sentPayloads.push(payload)
+    return { sent: 1, skipped: false }
+  })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (id, phone, full_name, source, created_at, updated_at)
+      VALUES (?, ?, 'Raul Ubicacion', 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [contactId, phone])
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, profile_picture_url,
+        profile_picture_source, profile_picture_updated_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'Raul Ubicacion', ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [apiContactId, contactId, phone, avatarUrl])
+
+    await sendChatMessageNotification({
+      contactId,
+      contactName: 'Raul Ubicacion',
+      text: 'Ubicación',
+      messageType: 'location',
+      messageId: `location_${suffix}`,
+      timestamp: new Date().toISOString()
+    })
+
+    assert.equal(sentPayloads.length, 1)
+    assert.equal(sentPayloads[0].title, 'Raul Ubicacion')
+    assert.equal(sentPayloads[0].body, '📍 Ubicación')
+    assert.equal(sentPayloads[0].contactAvatarUrl, avatarUrl)
+    assert.equal(sentPayloads[0].senderAvatarUrl, avatarUrl)
+    assert.equal(sentPayloads[0].notificationImageUrl, undefined)
+    assert.equal(sentPayloads[0].notificationAttachmentUrl, undefined)
+  } finally {
+    setAppNotificationPayloadSenderForTest(null)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ?', [apiContactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
+})
+
 test('push de chat de documento usa nombre de archivo y paginas cuando existen', async () => {
   const suffix = randomUUID()
   const contactId = `push_document_contact_${suffix}`

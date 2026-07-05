@@ -257,6 +257,20 @@ export interface WhatsAppApiTextSendPayload {
   messageOrigin?: 'manual_chat' | string
 }
 
+export interface WhatsAppApiLocationSendPayload {
+  to: string
+  from?: string
+  contactId?: string
+  latitude: number
+  longitude: number
+  name?: string
+  address?: string
+  externalId?: string
+  transport?: 'api' | 'qr'
+  phoneNumberId?: string
+  messageOrigin?: 'manual_chat' | string
+}
+
 export interface WhatsAppApiInteractiveSendPayload {
   to: string
   from?: string
@@ -388,6 +402,13 @@ export interface WhatsAppApiSendResponse {
   fallbackFrom?: string
   fallbackReason?: string
   routingReason?: string
+  location?: {
+    latitude?: number
+    longitude?: number
+    name?: string
+    address?: string
+    url?: string
+  }
   audio?: {
     link?: string
     url?: string
@@ -572,6 +593,7 @@ export const whatsappApiService = {
     apiClient.delete<ScheduledChatMessage>(`/whatsapp-api/messages/scheduled/${encodeURIComponent(id)}`, contactId ? { contactId } : undefined)
   ),
   sendText: (payload: WhatsAppApiTextSendPayload) => postSendResponse('/whatsapp-api/messages/text', payload),
+  sendLocation: (payload: WhatsAppApiLocationSendPayload) => postSendResponse('/whatsapp-api/messages/location', payload),
   sendInteractive: (payload: WhatsAppApiInteractiveSendPayload) => postSendResponse('/whatsapp-api/messages/interactive', payload),
   sendImage: (payload: WhatsAppApiImageSendPayload) => postSendResponse('/whatsapp-api/messages/image', payload),
   sendDocument: (payload: WhatsAppApiDocumentSendPayload) => postSendResponse('/whatsapp-api/messages/document', payload),

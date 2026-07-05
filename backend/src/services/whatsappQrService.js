@@ -115,6 +115,28 @@ function cleanString(value) {
   return String(value).trim()
 }
 
+function normalizeQrLocation({ latitude, longitude, name, address } = {}) {
+  const lat = Number(latitude)
+  const lng = Number(longitude)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return {
+    latitude: lat,
+    longitude: lng,
+    name: cleanString(name),
+    address: cleanString(address),
+    url: `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}`
+  }
+}
+
+function normalizeBaileysLocationMessage(locationMessage = {}) {
+  return normalizeQrLocation({
+    latitude: locationMessage.degreesLatitude ?? locationMessage.latitude ?? locationMessage.lat,
+    longitude: locationMessage.degreesLongitude ?? locationMessage.longitude ?? locationMessage.lng,
+    name: locationMessage.name,
+    address: locationMessage.address
+  })
+}
+
 function normalizeWhatsAppWebVersion(value) {
   if (!Array.isArray(value) || value.length !== 3) return null
   const parts = value.map(part => Number(part))
@@ -996,7 +1018,12 @@ function describeBaileysMessageContent(content) {
   }
   if (unwrapped.stickerMessage) return { type: 'sticker', text: '' }
   if (unwrapped.locationMessage) {
-    return { type: 'location', text: cleanString(unwrapped.locationMessage.name || unwrapped.locationMessage.address) }
+    const location = normalizeBaileysLocationMessage(unwrapped.locationMessage)
+    return {
+      type: 'location',
+      text: cleanString(unwrapped.locationMessage.name || unwrapped.locationMessage.address || 'Ubicación'),
+      ...(location ? { location } : {})
+    }
   }
   if (unwrapped.contactMessage || unwrapped.contactsArrayMessage) {
     return { type: 'contacts', text: cleanString(unwrapped.contactMessage?.displayName) }
@@ -1194,6 +1221,7 @@ async function handleQrIncomingMessages(phone, upsert = {}) {
         profileName: cleanString(message.pushName),
         contactPhone,
         timestamp: getBaileysMessageTimestampIso(message),
+        raw: content.location ? { location: content.location } : null,
         // Solo se ejecuta si el número NO tiene WhatsApp API operativa (lo decide
         // captureQrChatMessage tras su guard). Con API activa la media la hospeda el
         // proveedor y no gastamos nuestro storage.
@@ -2790,6 +2818,60 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
     recipientJid: sendResult.recipientJid,
     type: 'text',
     text: { body },
+    status: sendResult.status,
+    transport: 'qr',
+    createTime: nowIso(),
+    raw: sendResult.raw
+  }
+}
+
+export async function sendWhatsAppQrLocationMessage({ phoneNumberId, from, to, latitude, longitude, name, address, externalId, skipQrSendProtection = false } = {}) {
+  const phone = await resolveQrPhone({ phoneNumberId, from })
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const location = normalizeQrLocation({ latitude, longitude, name, address })
+
+  if (await markMissingAuthStateIfNeeded(phone)) {
+    throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
+  }
+  if (Number(phone.qr_send_enabled || 0) !== 1) {
+    throw new Error('Ese número no tiene el envío por QR activado')
+  }
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!location) throw new Error('Faltan coordenadas válidas para la ubicación')
+
+  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de ubicación' })
+  const recipient = await resolveRecipientJid(sock, toPhone)
+  rememberRistakQrOutboundAttempt({
+    phoneId: phone.id,
+    contactPhone: recipient.verifiedPhone || toPhone,
+    type: 'location',
+    text: location.name || location.address || 'Ubicación'
+  })
+  const response = await sendProtectedQrMessage({
+    sock,
+    phone,
+    recipient,
+    type: 'location',
+    payload: {
+      location: {
+        degreesLatitude: location.latitude,
+        degreesLongitude: location.longitude,
+        ...(location.name ? { name: location.name } : {}),
+        ...(location.address ? { address: location.address } : {})
+      }
+    },
+    skipQrSendProtection
+  })
+  const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
+
+  return {
+    id: sendResult.id,
+    wamid: sendResult.wamid,
+    from: phone.expectedPhone,
+    to: recipient.verifiedPhone || toPhone,
+    recipientJid: sendResult.recipientJid,
+    type: 'location',
+    location,
     status: sendResult.status,
     transport: 'qr',
     createTime: nowIso(),

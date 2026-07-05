@@ -18,6 +18,7 @@ import {
   sendWhatsAppQrAudioMessage,
   sendWhatsAppQrDocumentMessage,
   sendWhatsAppQrImageMessage,
+  sendWhatsAppQrLocationMessage,
   sendWhatsAppQrVideoMessage,
   sendWhatsAppQrTextMessage,
   startWhatsAppQrConnection,
@@ -2984,6 +2985,18 @@ async function retryFailedOfficialApiMessageViaQr({
         fallbackReason: reason,
         persist: false
       })
+    } else if (cleanMessageType === 'location') {
+      const location = normalizeWhatsAppLocation(normalizedMessage?.location || {})
+      if (!location) return null
+      fallbackResponse = await sendLocationViaQrFallback({
+        phoneNumberId: phoneRow.id,
+        fromPhone,
+        toPhone,
+        location,
+        externalId: fallbackExternalId,
+        fallbackReason: reason,
+        persist: false
+      })
     } else if (cleanMessageType === 'image') {
       const image = normalizedMessage?.image || {}
       const link = cleanString(image.link || image.url)
@@ -4346,9 +4359,27 @@ function extractMessageText(message = {}) {
     message.template?.name ||
     message.location?.name ||
     message.location?.address ||
+    (cleanString(message.type).toLowerCase() === 'location' ? 'Ubicación' : '') ||
     message.reaction?.emoji ||
     ''
   )
+}
+
+function normalizeWhatsAppLocation({ latitude, longitude, name, address } = {}) {
+  const lat = Number(latitude)
+  const lng = Number(longitude)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return {
+    latitude: lat,
+    longitude: lng,
+    name: cleanString(name),
+    address: cleanString(address),
+    url: `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}`
+  }
+}
+
+function buildWhatsAppLocationText(location = {}) {
+  return cleanString(location.name || location.address) || 'Ubicación'
 }
 
 function extractButtonReply(message = {}) {
@@ -7461,6 +7492,47 @@ async function sendTextViaMetaDirect({ to, text, from, externalId } = {}) {
   })
 }
 
+async function sendLocationViaMetaDirect({ to, location, from, externalId } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!location) throw new Error('Faltan coordenadas válidas para la ubicación')
+
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+    method: 'POST',
+    token: config.systemUserToken,
+    body: {
+      messaging_product: 'whatsapp',
+      to: toPhone,
+      type: 'location',
+      location: {
+        latitude: location.latitude,
+        longitude: location.longitude,
+        ...(location.name ? { name: location.name } : {}),
+        ...(location.address ? { address: location.address } : {})
+      },
+      ...(externalId ? { biz_opaque_callback_data: externalId } : {})
+    }
+  })
+
+  const message = Array.isArray(response?.messages) ? response.messages[0] : null
+  const contact = Array.isArray(response?.contacts) ? response.contacts[0] : null
+  const messageId = cleanString(response?.id || response?.messageId || response?.message_id || message?.id)
+
+  return {
+    ...response,
+    id: messageId || cleanString(externalId),
+    wamid: cleanString(response?.wamid || response?.waMessageId || message?.id) || messageId || null,
+    status: cleanString(response?.status || message?.message_status) || 'sent',
+    from: normalizePhoneForStorage(config.displayPhoneNumber || from) || cleanString(config.displayPhoneNumber || from),
+    to: normalizePhoneForStorage(contact?.input || toPhone) || cleanString(contact?.input || toPhone),
+    type: 'location',
+    transport: 'api',
+    location
+  }
+}
+
 export async function sendMetaDirectTestMessage({ to, text } = {}) {
   return sendTextViaMetaDirect({ to, text: text || 'Prueba de WhatsApp directo desde Ristak' })
 }
@@ -8532,6 +8604,57 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
   }
 }
 
+async function sendLocationViaQrFallback({ fromPhone, toPhone, location, externalId, phoneNumberId, contactId, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
+  try {
+    const response = await sendWhatsAppQrLocationMessage({
+      phoneNumberId,
+      from: fromPhone,
+      to: toPhone,
+      latitude: location?.latitude,
+      longitude: location?.longitude,
+      name: location?.name,
+      address: location?.address,
+      externalId,
+      skipQrSendProtection
+    })
+    const responseLocation = normalizeWhatsAppLocation(response.location || location)
+
+    if (persist) {
+      await upsertMessage({
+        payload: {
+          id: response.id || externalId || hashId('waqr_location_event', `${fromPhone}|${toPhone}|${responseLocation?.latitude}|${responseLocation?.longitude}`),
+          type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
+          transport: 'qr',
+          fallbackReason: fallbackReason || null,
+          createTime: response.createTime || nowIso(),
+          whatsappMessage: response
+        },
+        message: {
+          ...response,
+          from: response.from || fromPhone,
+          to: response.to || toPhone,
+          type: 'location',
+          text: { body: buildWhatsAppLocationText(responseLocation) },
+          location: responseLocation,
+          transport: 'qr',
+          createTime: response.createTime || nowIso()
+        },
+        direction: 'outbound',
+        transport: 'qr',
+        contactId
+      })
+    }
+
+    return {
+      ...decorateQrFallbackResponse(response, fallbackReason),
+      location: responseLocation
+    }
+  } catch (fallbackError) {
+    if (originalError) throw buildQrFallbackError(originalError, fallbackError)
+    throw fallbackError
+  }
+}
+
 async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
   try {
     const localMediaUrl = localMedia ? buildLocalMediaUrl(localMedia, publicBaseUrl) : ''
@@ -8975,6 +9098,188 @@ export async function sendWhatsAppApiTextMessage({
   if (fallbackSendResponse) return fallbackSendResponse
 
   return response
+}
+
+export async function sendWhatsAppApiLocationMessage({
+  to,
+  from,
+  latitude,
+  longitude,
+  name,
+  address,
+  externalId,
+  transport = 'api',
+  allowQrFallback = true,
+  contactId,
+  phoneNumberId,
+  skipQrSendProtection = false
+} = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const location = normalizeWhatsAppLocation({ latitude, longitude, name, address })
+
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!location) throw new Error('Faltan coordenadas válidas para la ubicación')
+
+  if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
+    const response = await sendLocationViaMetaDirect({ to: toPhone, location, from: fromPhone, externalId })
+    const persistedMessage = await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waapi_location_meta_event', `${fromPhone}|${toPhone}|${location.latitude}|${location.longitude}`),
+        type: 'whatsapp.message.updated',
+        createTime: nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: 'location',
+        text: { body: buildWhatsAppLocationText(location) },
+        location,
+        transport: 'api',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'api',
+      contactId
+    })
+    const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+    if (fallbackSendResponse) return fallbackSendResponse
+    return { ...response, location }
+  }
+
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
+
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
+
+  if (cleanTransport === 'qr') {
+    return sendLocationViaQrFallback({
+      phoneNumberId,
+      fromPhone,
+      toPhone,
+      location,
+      externalId,
+      contactId,
+      skipQrSendProtection
+    })
+  }
+
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
+  })
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
+    return sendLocationViaQrFallback({
+      phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
+      fromPhone,
+      toPhone,
+      location,
+      externalId,
+      contactId,
+      fallbackReason: fallbackDecision.reason,
+      skipQrSendProtection
+    })
+  }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
+
+  const requestBody = {
+    from: fromPhone,
+    to: toPhone,
+    type: 'location',
+    location: {
+      latitude: location.latitude,
+      longitude: location.longitude,
+      ...(location.name ? { name: location.name } : {}),
+      ...(location.address ? { address: location.address } : {})
+    },
+    filterUnsubscribed: true,
+    filterBlocked: true,
+    ...(externalId ? { externalId } : {})
+  }
+
+  let response
+  try {
+    response = await ycloudRequest('/whatsapp/messages', {
+      apiKey: config.apiKey,
+      method: 'POST',
+      body: requestBody
+    })
+  } catch (error) {
+    const retryDecision = await getOfficialApiFallbackDecision({
+      config,
+      fromPhone,
+      phoneNumberId,
+      error
+    })
+    if (allowQrFallback && retryDecision.shouldFallback) {
+      logger.warn(`[WhatsApp API] Envio de ubicación API fallo; usando QR para ${fromPhone}: ${retryDecision.reason}`)
+      return sendLocationViaQrFallback({
+        phoneNumberId: retryDecision.fallbackPhoneRow?.id || phoneNumberId,
+        fromPhone,
+        toPhone,
+        location,
+        externalId,
+        contactId,
+        fallbackReason: retryDecision.reason,
+        originalError: error,
+        skipQrSendProtection
+      })
+    }
+    await persistFailedOutboundApiMessage({
+      fromPhone,
+      toPhone,
+      type: 'location',
+      content: { text: { body: buildWhatsAppLocationText(location) }, location },
+      externalId,
+      contactId,
+      error
+    })
+    throw error
+  }
+
+  const responseLocation = normalizeWhatsAppLocation({
+    ...location,
+    ...(response.location || {})
+  }) || location
+
+  const persistedMessage = await upsertMessage({
+    payload: {
+      id: response.id || externalId || hashId('waapi_location_event', `${fromPhone}|${toPhone}|${location.latitude}|${location.longitude}`),
+      type: 'whatsapp.message.updated',
+      createTime: nowIso(),
+      whatsappMessage: response
+    },
+    message: {
+      ...response,
+      from: response.from || fromPhone,
+      to: response.to || toPhone,
+      type: response.type || 'location',
+      text: response.text || { body: buildWhatsAppLocationText(location) },
+      location: responseLocation,
+      transport: 'api',
+      createTime: response.createTime || nowIso()
+    },
+    direction: 'outbound',
+    transport: 'api',
+    contactId
+  })
+  const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
+  if (fallbackSendResponse) return fallbackSendResponse
+
+  return {
+    ...response,
+    type: response.type || 'location',
+    location: responseLocation
+  }
 }
 
 export async function sendWhatsAppApiImageMessage({

@@ -11,6 +11,7 @@ import {
   sendWhatsAppApiAudioMessage,
   sendWhatsAppApiDocumentMessage,
   sendWhatsAppApiImageMessage,
+  sendWhatsAppApiLocationMessage,
   sendWhatsAppApiVideoMessage,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
@@ -256,6 +257,56 @@ test('envío API de imagen sube media al proveedor y conserva preview interno si
       if (previewMediaAssetId) {
         await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
       }
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})
+
+test('envío API de ubicación manda payload location y lo persiste en historial', async () => {
+  await withYCloudProviderMediaCapture(async (captures) => {
+    const suffix = randomUUID()
+    const to = `+52155${Date.now().toString().slice(-8)}`
+    const externalId = `provider-location-${suffix}`
+
+    try {
+      const response = await sendWhatsAppApiLocationMessage({
+        to,
+        latitude: 31.6904,
+        longitude: -106.4245,
+        name: 'Ubicación',
+        address: 'Ciudad Juárez',
+        externalId,
+        allowQrFallback: false
+      })
+
+      assert.equal(captures.uploads.length, 0)
+      assert.equal(captures.messages.length, 1)
+      assert.equal(captures.messages[0].type, 'location')
+      assert.deepEqual(captures.messages[0].location, {
+        latitude: 31.6904,
+        longitude: -106.4245,
+        name: 'Ubicación',
+        address: 'Ciudad Juárez'
+      })
+      assert.equal(response.location.latitude, 31.6904)
+      assert.equal(response.location.longitude, -106.4245)
+
+      const row = await db.get(
+        `SELECT message_type, message_text, raw_payload_json
+         FROM whatsapp_api_messages
+         WHERE ycloud_message_id = ?`,
+        ['ycloud_provider_message_1']
+      )
+      assert.ok(row)
+      assert.equal(row.message_type, 'location')
+      assert.equal(row.message_text, 'Ubicación')
+      const raw = JSON.parse(row.raw_payload_json)
+      assert.equal(raw.location.latitude, 31.6904)
+      assert.equal(raw.location.longitude, -106.4245)
+      assert.equal(raw.location.address, 'Ciudad Juárez')
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ?', ['ycloud_provider_message_1', to])
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
       await db.run('DELETE FROM contacts WHERE phone = ?', [to])
     }
