@@ -11,6 +11,7 @@ import {
   Globe2,
   Mail,
   MonitorSmartphone,
+  MousePointerClick,
   Settings2,
   Tags,
   User,
@@ -77,7 +78,7 @@ const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/media': Database,
   '/settings/custom-fields': Settings2,
   '/settings/variable-fields': Code2,
-  '/settings/trigger-links': Globe2,
+  '/settings/trigger-links': MousePointerClick,
   '/settings/tags': Tags,
   '/settings/developers': Code2
 }
