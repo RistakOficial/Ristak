@@ -311,6 +311,28 @@ test('identity: CLIP/MercadoPago do NOT get the shared block (they collect ident
   assert.doesNotMatch(both, /<div class="rstk-checkout-identity"/)
 })
 
+test('identity: Rebill published checkout uses Rebill label and hosted identity flow', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({
+    paymentGate: {
+      enabled: true,
+      gateway: 'rebill',
+      mode: 'test',
+      amount: 500,
+      currency: 'MXN',
+      productName: 'Curso',
+      buttonText: 'Pagar'
+    }
+  }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+
+  assert.match(html, /data-provider="rebill"/)
+  assert.match(html, /<span class="rstk-payment-kicker">Rebill<\/span>/)
+  assert.match(html, /Ayuda para pruebas de Rebill/)
+  assert.doesNotMatch(html, /<span class="rstk-payment-kicker">Stripe<\/span>/)
+  assert.doesNotMatch(html, /<div class="rstk-checkout-identity"/)
+  assert.match(html, /data-collect-email="false"/)
+  assert.match(html, /data-collect-phone="false"/)
+})
+
 test('E4: field text color sanitizer allows modern rgb(... / ...) values', async () => {
   const html = await renderPublicSiteHtml(paymentSite({ paymentFieldTextColor: 'rgb(0 0 0 / 50%)' }), {
     pageId: 'page-1', trackingEnabled: false, preview: true
