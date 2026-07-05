@@ -1,4 +1,7 @@
 export const PAYMENT_GATEWAYS: Set<string>
+export const PAYMENT_GATE_BILLING_TYPES: Set<string>
+export const SUBSCRIPTION_GATEWAYS: Set<string>
+export const SUBSCRIPTION_INTERVAL_TYPES: Set<string>
 export const MSI_INSTALLMENT_CHOICES: number[]
 export const MSI_LINK_GATEWAYS: Set<string>
 export const STRIPE_MSI_MIN_AMOUNT: number
@@ -13,6 +16,8 @@ export interface NormalizedPaymentGateLike {
 }
 
 export function isNormalizedPaymentGateEnabled(config?: NormalizedPaymentGateLike): boolean
+
+export function supportsSiteSubscriptionGateway(gateway?: string): boolean
 
 export function conektaInstallmentMonths(input?: { maxInstallments?: number; amount?: number }): number[]
 

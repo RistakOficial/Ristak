@@ -556,6 +556,9 @@ function mergeRawJson(currentRaw, providerKey, value) {
 }
 
 function buildSubscriptionStartPaymentInput(row) {
+  const rowMetadata = parseJson(row.metadata_json, {})
+  const rowSource = cleanString(row.source)
+  const source = rowSource && rowSource !== 'ristak' ? rowSource : 'subscription_start_link'
   return {
     ristakSubscriptionId: row.id,
     contactId: row.contact_id,
@@ -575,7 +578,7 @@ function buildSubscriptionStartPaymentInput(row) {
     title: `Inicio de ${row.name || 'suscripción'}`,
     description: row.description || row.name || 'Pago inicial de suscripción',
     dueDate: toDateOnly(row.start_date),
-    source: 'subscription_start_link',
+    source,
     lineItems: [
       {
         name: row.name || 'Suscripción',
@@ -586,6 +589,8 @@ function buildSubscriptionStartPaymentInput(row) {
       }
     ],
     metadata: {
+      ...(rowMetadata && typeof rowMetadata === 'object' ? rowMetadata : {}),
+      source,
       ristakSubscriptionId: row.id,
       ristak_subscription_id: row.id,
       subscriptionStart: {
@@ -627,7 +632,9 @@ async function createSubscriptionStartPaymentRecord(row, baseUrl = '') {
   const now = new Date().toISOString()
   const paymentUrl = buildPublicPaymentUrl(baseUrl, publicPaymentId)
   const input = buildSubscriptionStartPaymentInput(row)
+  const subscriptionMetadata = parseJson(row.metadata_json, {})
   const paymentMetadata = {
+    ...(subscriptionMetadata && typeof subscriptionMetadata === 'object' ? subscriptionMetadata : {}),
     contactName: cleanString(row.contact_name),
     contactEmail: cleanString(row.contact_email),
     contactPhone: cleanString(row.contact_phone),
@@ -709,9 +716,10 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
       `UPDATE payments
        SET status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
            reference = COALESCE(?, reference),
+           payment_url = COALESCE(?, payment_url),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [cleanString(checkout.stripeCheckoutSessionId) || null, startPayment.paymentId]
+      [cleanString(checkout.stripeCheckoutSessionId) || null, checkoutUrl || null, startPayment.paymentId]
     )
 
     return {
@@ -751,9 +759,10 @@ async function createSubscriptionStartPaymentLinkIfNeeded(row, payload = {}) {
       `UPDATE payments
        SET status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
            reference = COALESCE(?, reference),
+           payment_url = COALESCE(?, payment_url),
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [cleanString(checkout.conektaCheckoutId) || null, startPayment.paymentId]
+      [cleanString(checkout.conektaCheckoutId) || null, checkoutUrl || null, startPayment.paymentId]
     )
 
     return {
@@ -829,7 +838,9 @@ async function attachMercadoPagoSubscriptionIfNeeded(row, payload = {}) {
     cancelAt: row.cancel_at,
     subscriptionStartPaymentId: startPayment.paymentId,
     subscriptionStartPublicPaymentId: startPayment.publicPaymentId,
-    publicPaymentId: startPayment.publicPaymentId
+    publicPaymentId: startPayment.publicPaymentId,
+    source: row.source || currentMetadata.source,
+    metadata: currentMetadata
   }, {
     baseUrl
   })
@@ -843,9 +854,10 @@ async function attachMercadoPagoSubscriptionIfNeeded(row, payload = {}) {
     `UPDATE payments
      SET status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
          reference = COALESCE(?, reference),
+         payment_url = COALESCE(?, payment_url),
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [nextRow.mercadopago_preapproval_plan_id || nextRow.mercadopago_preapproval_id || null, startPayment.paymentId]
+    [nextRow.mercadopago_preapproval_plan_id || nextRow.mercadopago_preapproval_id || null, checkoutUrl || null, startPayment.paymentId]
   ).catch(() => undefined)
 
   return {
@@ -922,7 +934,9 @@ async function attachRebillSubscriptionIfNeeded(row, payload = {}) {
     cancelAt: row.cancel_at,
     subscriptionStartPaymentId: startPayment.paymentId,
     subscriptionStartPublicPaymentId: startPayment.publicPaymentId,
-    publicPaymentId: startPayment.publicPaymentId
+    publicPaymentId: startPayment.publicPaymentId,
+    source: row.source || currentMetadata.source,
+    metadata: currentMetadata
   }, {
     baseUrl,
     mode: row.payment_mode
@@ -937,9 +951,10 @@ async function attachRebillSubscriptionIfNeeded(row, payload = {}) {
          payment_method = 'rebill_subscription',
          payment_provider = 'rebill',
          reference = COALESCE(?, reference),
+         payment_url = COALESCE(?, payment_url),
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [nextRow.rebill_payment_link_id || nextRow.rebill_plan_id || null, startPayment.paymentId]
+    [nextRow.rebill_payment_link_id || nextRow.rebill_plan_id || null, checkoutUrl || null, startPayment.paymentId]
   ).catch(() => undefined)
 
   return {

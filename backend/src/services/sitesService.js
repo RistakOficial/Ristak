@@ -54,6 +54,7 @@ import {
   preparePublicStripeInstallmentPlans
 } from './publicPaymentGateService.js'
 import { msiEligibility } from '../../../shared/sites/paymentGateContract.js'
+import { createSubscription } from './subscriptionsService.js'
 import { renderTemplate } from './automationEngine.js'
 import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
@@ -15923,6 +15924,7 @@ function buildPaymentCheckoutRuntimeScript() {
         blockId: root.getAttribute('data-payment-block-id') || '',
         pageId: root.getAttribute('data-payment-page-id') || '',
         provider: root.getAttribute('data-provider') || 'stripe',
+        billingType: root.getAttribute('data-billing-type') || 'single',
         buttonText: root.getAttribute('data-button-text') || 'Pagar',
         postAction: root.getAttribute('data-post-action') || 'success_message',
         postUrl: root.getAttribute('data-post-url') || '',
@@ -15981,6 +15983,12 @@ function buildPaymentCheckoutRuntimeScript() {
       function collectPayer() { return { email: idVal(identityEmail), phone: idVal(identityPhone) }; }
       function validateIdentity() {
         if (!identityActive()) return true;
+        if (cfg.billingType === 'subscription') {
+          if (idVal(identityEmail) && idVal(identityPhone)) { if (identityErr) identityErr.hidden = true; return true; }
+          if (identityErr) identityErr.hidden = false;
+          setMessage('error', 'Escribe tu correo y teléfono para continuar.');
+          return false;
+        }
         if (idVal(identityEmail) || idVal(identityPhone)) { if (identityErr) identityErr.hidden = true; return true; }
         if (identityErr) identityErr.hidden = false;
         setMessage('error', 'Escribe tu correo o teléfono para continuar.');
@@ -16093,6 +16101,7 @@ function buildPaymentCheckoutRuntimeScript() {
       // pagado, corre la acción de éxito.
       postJson(INIT_URL, { siteId: cfg.siteId, blockId: cfg.blockId, pageId: cfg.pageId, paymentPublicId: stored }).then(function (d) {
         if (d.paid) { showLoading(false); if (d.publicPaymentId) root.setAttribute('data-checkout-public-id', d.publicPaymentId); runPostAction(); return; }
+        if (d.billingType === 'subscription') return mountSubscriptionCheckout(d);
 	        if (d.provider === 'conekta') return mountConekta(d);
 	        if (d.provider === 'mercadopago') return mountMercadoPago(d);
 	        if (d.provider === 'clip') return mountClip(d);
@@ -16652,6 +16661,45 @@ function buildPaymentCheckoutRuntimeScript() {
         if (!target) throw new Error('Rebill no devolvio una URL de checkout.');
         setMessage('info', 'Abriendo checkout seguro de Rebill.');
         window.location.href = preserve(target);
+      }
+      function redirectToHostedCheckout(paymentUrl, label) {
+        var target = String(paymentUrl || '').trim();
+        if (!target) throw new Error((label || 'La pasarela') + ' no devolvio una URL de checkout.');
+        setMessage('info', 'Abriendo checkout seguro.');
+        window.location.href = preserve(target);
+      }
+      function mountSubscriptionCheckout(d) {
+        showLoading(false);
+        if (els.fields) els.fields.hidden = true;
+        if (els.pay) els.pay.hidden = false;
+        payLabel(d.amount, d.currency);
+        if (d && d.publicPaymentId && d.paymentUrl) {
+          try { sessionStorage.setItem(storageKey, d.publicPaymentId); } catch (e) {}
+          root.setAttribute('data-checkout-public-id', d.publicPaymentId);
+          setMessage('info', 'Tienes una suscripcion pendiente de autorizacion.');
+        }
+        els.pay.addEventListener('click', function () {
+          if (els.pay.disabled) return;
+          if (!validateIdentity()) return;
+          setPayBusy(true);
+          setMessage('info', 'Preparando checkout de suscripcion.');
+          if (d && d.paymentUrl) {
+            try { redirectToHostedCheckout(d.paymentUrl, d.provider || 'La pasarela'); } catch (e) { setPayBusy(false); setMessage('error', (e && e.message) || 'No se pudo abrir el checkout.'); }
+            return;
+          }
+          payCharge({ payer: collectPayer() }).then(function (r) {
+            var target = (r && (r.subscriptionStartUrl || r.paymentUrl || r.checkoutUrl || r.redirectUrl)) || '';
+            var publicPaymentId = String((r && r.publicPaymentId) || '').trim();
+            if (publicPaymentId) {
+              try { sessionStorage.setItem(storageKey, publicPaymentId); } catch (e) {}
+              root.setAttribute('data-checkout-public-id', publicPaymentId);
+            }
+            redirectToHostedCheckout(target, r && r.provider);
+          }).catch(function (e) {
+            setPayBusy(false);
+            setMessage('error', (e && e.message) || 'No se pudo preparar la suscripcion.');
+          });
+        });
       }
 	      function mountRebill(d) {
 	        if (d && d.publicPaymentId && d.paymentUrl) {
@@ -18905,6 +18953,22 @@ function formatPaymentAmount(amount, currency = 'MXN') {
   }
 }
 
+function formatPaymentSubscriptionCadence(paymentGate = {}) {
+  const source = paymentGate.subscription && typeof paymentGate.subscription === 'object' ? paymentGate.subscription : {}
+  const count = Math.max(1, Math.trunc(Number(source.intervalCount || source.interval_count || 1) || 1))
+  const interval = cleanString(source.intervalType || source.interval_type || 'monthly').toLowerCase()
+  if (count === 1) {
+    if (interval === 'daily') return 'día'
+    if (interval === 'weekly') return 'semana'
+    if (interval === 'yearly') return 'año'
+    return 'mes'
+  }
+  if (interval === 'daily') return `${count} días`
+  if (interval === 'weekly') return `${count} semanas`
+  if (interval === 'yearly') return `${count} años`
+  return `${count} meses`
+}
+
 // Resuelve, en el servidor, qué pasa tras un pago CONFIRMADO. Espeja el patrón de
 // completion de formularios (getNextPage/buildPageHref) para que "siguiente página" y
 // "página específica" ya vengan como URL lista; el runtime solo la ejecuta al confirmar paid.
@@ -19039,6 +19103,8 @@ function renderPaymentBlock(block = {}, context = {}) {
   const description = cleanString(paymentGate.description) || ''
   const buttonLabel = cleanString(paymentGate.buttonText) || 'Pagar'
   const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
+  const isSubscriptionCheckout = paymentGate.billingType === 'subscription'
+  const amountDisplayText = isSubscriptionCheckout ? `${amountText} / ${formatPaymentSubscriptionCadence(paymentGate)}` : amountText
   const post = resolvePaymentPostAction(settings, paymentGate, block, context)
   const isTestBlock = paymentGate.mode === 'test'
   const paymentTestGuide = isTestBlock ? renderPaymentTestGuide(paymentGate.gateway) : ''
@@ -19053,9 +19119,9 @@ function renderPaymentBlock(block = {}, context = {}) {
   // inyecta para Stripe/Conekta. El comprador debe dar al menos uno (correo o telefono).
   const paymentGateway = cleanString(paymentGate.gateway)
   const providerCollectsIdentity = paymentGateway === 'clip' || paymentGateway === 'mercadopago' || paymentGateway === 'rebill'
-  const collectEmail = settings.paymentCollectEmail !== false
-  const collectPhone = settings.paymentCollectPhone !== false
-  const showIdentityFields = !providerCollectsIdentity && (collectEmail || collectPhone)
+  const collectEmail = isSubscriptionCheckout ? true : settings.paymentCollectEmail !== false
+  const collectPhone = isSubscriptionCheckout ? true : settings.paymentCollectPhone !== false
+  const showIdentityFields = (isSubscriptionCheckout || !providerCollectsIdentity) && (collectEmail || collectPhone)
   const identityInputStyle = 'width:100%;box-sizing:border-box;border:1px solid color-mix(in srgb, var(--rstk-muted, CanvasText) 28%, transparent);border-radius:var(--rstk-radius, 12px);background:var(--rstk-input-bg, color-mix(in srgb, var(--rstk-surface, Canvas) 86%, transparent));color:var(--rstk-checkout-field-text, var(--rstk-block-text, var(--rstk-ink, CanvasText)));padding:12px 13px;font:inherit;min-width:0;'
   const checkoutAlign = blockHorizontalAlign(settings, 'paymentTextAlign', 'left')
   // Se permite '/' para colores CSS modernos (p. ej. rgb(0 0 0 / 50%)) sin romper la
@@ -19083,6 +19149,9 @@ function renderPaymentBlock(block = {}, context = {}) {
       data-payment-page-id="${escapeHtml(pageId)}"
       data-payment-block-id="${escapeHtml(block.id || '')}"
       data-provider="${escapeHtml(paymentGate.gateway)}"
+      data-billing-type="${isSubscriptionCheckout ? 'subscription' : 'single'}"
+      data-subscription-interval-type="${escapeHtml(paymentGate.subscription?.intervalType || 'monthly')}"
+      data-subscription-interval-count="${escapeHtml(String(paymentGate.subscription?.intervalCount || 1))}"
       data-amount="${escapeHtml(String(paymentGate.amount))}"
       data-currency="${escapeHtml(paymentGate.currency)}"
       data-button-text="${escapeHtml(buttonLabel)}"
@@ -19099,7 +19168,7 @@ function renderPaymentBlock(block = {}, context = {}) {
             ${showKicker ? `<span class="rstk-payment-kicker">${escapeHtml(getPaymentGatewayLabel(paymentGate.gateway))}</span>` : ''}
             <strong class="rstk-checkout-title">${escapeHtml(productName)}</strong>
             ${description ? `<p class="rstk-checkout-desc">${escapeHtml(description)}</p>` : ''}
-            <span class="rstk-checkout-amount">${escapeHtml(amountText)}</span>
+            <span class="rstk-checkout-amount">${escapeHtml(amountDisplayText)}</span>
           </div>
           ${isTestBlock ? '<p class="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>' : ''}
           <div class="rstk-checkout-body" data-rstk-checkout-body>
@@ -19115,7 +19184,7 @@ function renderPaymentBlock(block = {}, context = {}) {
             <div class="rstk-checkout-fields" data-rstk-checkout-fields hidden></div>
             <div class="rstk-checkout-installments" data-rstk-checkout-installments hidden></div>
             <button type="button" class="rstk-button-link rstk-checkout-pay" data-rstk-checkout-pay hidden>
-              ${renderSubmitButtonContent(`${buttonLabel} · ${amountText}`, '', settings, { labelAttr: ' data-rstk-checkout-pay-label' })}
+              ${renderSubmitButtonContent(`${buttonLabel} · ${amountDisplayText}`, '', settings, { labelAttr: ' data-rstk-checkout-pay-label' })}
             </button>
             <p class="rstk-checkout-message" data-rstk-checkout-message role="status" hidden></p>
             ${paymentTestGuide}
@@ -25755,6 +25824,16 @@ function normalizePaymentMsiSnapshot(value) {
   }
 }
 
+function normalizePaymentSubscriptionSnapshot(value) {
+  if (!value || typeof value !== 'object') return { intervalType: '', intervalCount: 0 }
+  const intervalType = cleanString(value.intervalType || value.interval_type || value.interval, 40).toLowerCase()
+  const intervalCount = Math.trunc(Number(value.intervalCount || value.interval_count || value.every || 0))
+  return {
+    intervalType,
+    intervalCount: Number.isFinite(intervalCount) && intervalCount > 0 ? intervalCount : 0
+  }
+}
+
 function paymentGateMatchesCurrentSnapshot(status, paymentGate = {}) {
   if (!status) return false
 
@@ -25781,6 +25860,18 @@ function paymentGateMatchesCurrentSnapshot(status, paymentGate = {}) {
   if (expectedMsi.enabled || recordedMsi.enabled) {
     if (expectedMsi.enabled !== recordedMsi.enabled) return false
     if (expectedMsi.maxInstallments !== recordedMsi.maxInstallments) return false
+  }
+
+  const expectedBillingType = cleanString(paymentGate.billingType).toLowerCase() === 'subscription' ? 'subscription' : 'single'
+  const recordedBillingType = cleanString(metadataGate.billingType || metadataGate.billing_type || metadata.billingType || metadata.billing_type).toLowerCase()
+  if (recordedBillingType && recordedBillingType !== expectedBillingType) return false
+
+  if (expectedBillingType === 'subscription') {
+    if (recordedBillingType !== 'subscription') return false
+    const expectedSubscription = normalizePaymentSubscriptionSnapshot(paymentGate.subscription)
+    const recordedSubscription = normalizePaymentSubscriptionSnapshot(metadataGate.subscription || metadata.subscription)
+    if ((expectedSubscription.intervalType || 'monthly') !== (recordedSubscription.intervalType || 'monthly')) return false
+    if ((expectedSubscription.intervalCount || 1) !== (recordedSubscription.intervalCount || 1)) return false
   }
 
   return true
@@ -25921,6 +26012,8 @@ function buildSiteCheckoutMountResponse(paymentGate = {}, context = {}, keys = {
     buttonText: paymentGate.buttonText,
     pendingMessage: paymentGate.pendingMessage,
     paidMessage: paymentGate.paidMessage,
+    billingType: paymentGate.billingType || 'single',
+    subscription: paymentGate.subscription || null,
     installments: msi,
     msi: paymentGate.msi || null,
     blockId: cleanString(context.blockId),
@@ -25970,6 +26063,19 @@ export async function initSitePaymentCheckout(req, body = {}) {
     }, paymentGate)
     if (pending && pending.paid && sameContext) {
       return buildSiteCheckoutMountResponse(paymentGate, context, { paid: true, publicPaymentId: existing, status: pending.status })
+    }
+    if (pending && !pending.paid && sameContext && paymentGate.billingType === 'subscription') {
+      const paymentUrl = cleanString(pending.paymentUrl, 2000)
+      if (paymentUrl) {
+        return buildSiteCheckoutMountResponse(paymentGate, context, {
+          provider: pending.provider || paymentGate.gateway,
+          publicPaymentId: existing,
+          status: pending.status,
+          paymentUrl,
+          hostedPaymentUrl: paymentUrl,
+          redirectUrl: paymentUrl
+        })
+      }
     }
     if (pending && !pending.paid && sameContext && paymentGate.gateway === 'rebill') {
       const rebillCheckout = await getPaymentGateCheckoutDescriptor(existing, { baseUrl })
@@ -26025,10 +26131,155 @@ async function finalizeFailedSiteCheckout(publicPaymentId, error) {
   }
 }
 
+function getSiteSubscriptionPaymentMethod(gateway = '') {
+  const provider = cleanString(gateway).toLowerCase()
+  if (provider === 'mercadopago') return 'mercadopago_subscription'
+  if (provider === 'rebill') return 'rebill_subscription'
+  if (provider === 'conekta') return 'conekta_link'
+  if (provider === 'stripe') return 'stripe_link'
+  return ''
+}
+
+function getSiteSubscriptionStartUrl(subscription = {}) {
+  return cleanString(
+    subscription.subscriptionStartUrl ||
+    subscription.stripeCheckoutUrl ||
+    subscription.conektaCheckoutUrl ||
+    subscription.mercadoPagoSandboxInitPoint ||
+    subscription.mercadoPagoInitPoint ||
+    subscription.rebillPaymentLinkUrl ||
+    subscription.rebillCheckoutUrl,
+    2000
+  )
+}
+
+async function createSiteSubscriptionCheckout({ site, context, paymentGate, baseUrl, expectedBlockId, payer = {}, body = {} }) {
+  const provider = cleanString(paymentGate.gateway).toLowerCase()
+  const paymentMethod = getSiteSubscriptionPaymentMethod(provider)
+  if (!paymentMethod) {
+    const error = new Error('Esta pasarela no soporta suscripciones en Sites.')
+    error.status = 400
+    throw error
+  }
+
+  const payerEmail = cleanString(payer.email)
+  const payerPhone = cleanString(payer.phone)
+  if (!payerEmail || !payerPhone) {
+    const error = new Error('Escribe correo y teléfono para crear la suscripción.')
+    error.status = 400
+    throw error
+  }
+
+  let checkoutContactId = cleanString(body.contactId || payer.contactId || payer.contact_id)
+  if (!checkoutContactId) {
+    const upserted = await upsertContactFromSubmissionWithResult({
+      site,
+      contact: {
+        email: payerEmail,
+        phone: payerPhone,
+        fullName: cleanString(payer.name || payer.fullName) || payerEmail || payerPhone
+      },
+      meta: {
+        pageUrl: cleanString(body.pageUrl || body.page_url),
+        visitorId: cleanString(body.visitorId || body.visitor_id)
+      }
+    }).catch(() => null)
+    checkoutContactId = upserted?.contactId || ''
+  }
+
+  if (!checkoutContactId) {
+    const error = new Error('No se pudo crear o encontrar el contacto para esta suscripción.')
+    error.status = 400
+    throw error
+  }
+
+  const subscriptionConfig = paymentGate.subscription && typeof paymentGate.subscription === 'object'
+    ? paymentGate.subscription
+    : {}
+  const intervalType = cleanString(subscriptionConfig.intervalType || subscriptionConfig.interval_type || 'monthly').toLowerCase() || 'monthly'
+  const intervalCount = Math.max(1, Math.trunc(Number(subscriptionConfig.intervalCount || subscriptionConfig.interval_count || 1) || 1))
+  if (provider === 'conekta' && intervalType === 'daily') {
+    const error = new Error('Conekta no acepta suscripciones diarias. Usa semanal, mensual o anual.')
+    error.status = 400
+    throw error
+  }
+  if (provider === 'rebill' && !['monthly', 'yearly'].includes(intervalType)) {
+    const error = new Error('Rebill sólo acepta suscripciones mensuales o anuales.')
+    error.status = 400
+    throw error
+  }
+  const subscription = await createSubscription({
+    contactId: checkoutContactId,
+    contactName: cleanString(payer.name || payer.fullName),
+    contactEmail: payerEmail,
+    contactPhone: payerPhone,
+    name: paymentGate.productName,
+    description: paymentGate.description,
+    amount: paymentGate.amount,
+    currency: paymentGate.currency,
+    intervalType,
+    intervalCount,
+    status: 'incomplete',
+    paymentMethod,
+    paymentProvider: provider,
+    paymentMode: paymentGate.mode === 'test' ? 'test' : undefined,
+    source: 'site_checkout_subscription',
+    baseUrl,
+    metadata: {
+      source: 'site_checkout_subscription',
+      siteId: site.id,
+      siteName: site.name || '',
+      pageId: cleanString(context.blockPageId),
+      blockPageId: cleanString(context.blockPageId),
+      paymentBlockId: expectedBlockId,
+      paymentGate: {
+        source: 'site_checkout_subscription',
+        siteId: site.id,
+        pageId: cleanString(context.blockPageId),
+        blockPageId: cleanString(context.blockPageId),
+        paymentBlockId: expectedBlockId,
+        gateway: provider,
+        billingType: 'subscription',
+        amount: paymentGate.amount,
+        currency: paymentGate.currency,
+        productName: paymentGate.productName,
+        mode: paymentGate.mode,
+        subscription: {
+          intervalType,
+          intervalCount
+        }
+      }
+    }
+  })
+
+  const subscriptionStartUrl = getSiteSubscriptionStartUrl(subscription)
+  if (!subscriptionStartUrl) {
+    const error = new Error('No se pudo crear el checkout de suscripción.')
+    error.status = 502
+    throw error
+  }
+
+  return {
+    publicPaymentId: cleanString(subscription.subscriptionStartPublicPaymentId),
+    provider,
+    billingType: 'subscription',
+    subscriptionId: subscription.id,
+    subscriptionStartUrl,
+    paymentUrl: subscriptionStartUrl,
+    checkoutUrl: subscriptionStartUrl,
+    status: cleanString(subscription.subscriptionStartPaymentStatus || subscription.status || 'pending'),
+    paidMessage: paymentGate.paidMessage
+  }
+}
+
 export async function paySiteCheckout(req, body = {}) {
   const { site, context, paymentGate, baseUrl, expectedBlockId } = await resolveSiteCheckoutBlock(req, body)
   enforcePublicSubmitRateLimit(req, `checkout-pay:${site.id}:${expectedBlockId}`)
   const payer = body.payer && typeof body.payer === 'object' ? body.payer : {}
+
+  if (paymentGate.billingType === 'subscription') {
+    return createSiteSubscriptionCheckout({ site, context, paymentGate, baseUrl, expectedBlockId, payer, body })
+  }
 
   // Liga el pago a un contacto: si el checkout (o el embudo) trae correo/telefono,
   // resolvemos/creamos el contacto con el MISMO helper que usan los formularios,

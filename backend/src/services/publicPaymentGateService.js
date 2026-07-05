@@ -9,6 +9,8 @@ import { createClipPaymentLink, getPublicClipPayment, getClipPaymentConfig, crea
 import { createRebillPaymentLink, getPublicRebillPayment, getRebillPaymentConfig, confirmPublicRebillPayment } from './rebillPaymentService.js'
 import {
   PAYMENT_GATEWAYS,
+  SUBSCRIPTION_GATEWAYS,
+  SUBSCRIPTION_INTERVAL_TYPES,
   MSI_INSTALLMENT_CHOICES,
   MSI_LINK_GATEWAYS,
   STRIPE_MSI_MIN_AMOUNT,
@@ -67,6 +69,13 @@ function parseJson(value, fallback = {}) {
 }
 
 function getHostedPaymentUrlFromMetadata(metadata = {}) {
+  const subscriptionStart = metadata?.subscriptionStartPayment && typeof metadata.subscriptionStartPayment === 'object'
+    ? metadata.subscriptionStartPayment
+    : null
+  if (subscriptionStart) {
+    const subscriptionUrl = cleanString(subscriptionStart.paymentUrl || subscriptionStart.checkoutUrl || subscriptionStart.url, 2000)
+    if (subscriptionUrl) return subscriptionUrl
+  }
   const link = metadata?.rebillHostedPaymentLink && typeof metadata.rebillHostedPaymentLink === 'object'
     ? metadata.rebillHostedPaymentLink
     : null
@@ -123,6 +132,24 @@ function normalizeGateMode(value) {
   return cleanString(value, 20).toLowerCase() === 'test' ? 'test' : 'inherit'
 }
 
+function normalizeBillingType(value) {
+  return cleanString(value, 40).toLowerCase() === 'subscription' ? 'subscription' : 'single'
+}
+
+function normalizeSubscriptionInterval(value) {
+  const interval = cleanString(value, 40).toLowerCase()
+  return SUBSCRIPTION_INTERVAL_TYPES.has(interval) ? interval : 'monthly'
+}
+
+function normalizeSubscriptionConfig(value = {}) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  const count = Number.parseInt(source.intervalCount || source.interval_count || source.every || 1, 10)
+  return {
+    intervalType: normalizeSubscriptionInterval(source.intervalType || source.interval_type || source.interval),
+    intervalCount: Number.isFinite(count) && count > 0 ? Math.min(24, count) : 1
+  }
+}
+
 function normalizeGateMsi(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const enabled = normalizeBoolean(source.enabled || source.required)
@@ -145,6 +172,8 @@ export function normalizePaymentGateConfig(value = {}) {
     : {}
 
   const amount = normalizeAmount(source.amount || source.price || source.total)
+  const gateway = normalizeGateway(source.gateway || source.provider)
+  const billingType = normalizeBillingType(source.billingType || source.billing_type || source.type)
   const productName = cleanString(
     source.productName ||
     source.product_name ||
@@ -156,7 +185,8 @@ export function normalizePaymentGateConfig(value = {}) {
 
   return {
     enabled: normalizeBoolean(source.enabled || source.required),
-    gateway: normalizeGateway(source.gateway || source.provider),
+    gateway,
+    billingType: SUBSCRIPTION_GATEWAYS.has(gateway) ? billingType : 'single',
     amount,
     currency: normalizeCurrency(source.currency),
     productName,
@@ -175,7 +205,8 @@ export function normalizePaymentGateConfig(value = {}) {
       220
     ),
     mode: normalizeGateMode(source.mode),
-    msi: normalizeGateMsi(source.msi || source.installments)
+    msi: billingType === 'subscription' ? { enabled: false, maxInstallments: 0 } : normalizeGateMsi(source.msi || source.installments),
+    subscription: normalizeSubscriptionConfig(source.subscription || source.recurring || source.billing)
   }
 }
 
@@ -249,10 +280,12 @@ export async function createPaymentGateLink(configInput = {}, {
         ...(metadata?.paymentGate && typeof metadata.paymentGate === 'object' ? metadata.paymentGate : {}),
         source,
         gateway: config.gateway,
+        billingType: config.billingType,
         amount: config.amount,
         currency: config.currency,
         productName: config.productName,
         mode: config.mode,
+        ...(config.billingType === 'subscription' ? { subscription: config.subscription } : {}),
         ...(installments ? { msi: installments } : {})
       }
     }

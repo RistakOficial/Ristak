@@ -3,10 +3,13 @@ import assert from 'node:assert/strict'
 
 import {
   PAYMENT_GATEWAYS,
+  PAYMENT_GATE_BILLING_TYPES,
+  SUBSCRIPTION_GATEWAYS,
   MSI_INSTALLMENT_CHOICES,
   MSI_LINK_GATEWAYS,
   STRIPE_MSI_MIN_AMOUNT,
   isNormalizedPaymentGateEnabled,
+  supportsSiteSubscriptionGateway,
   conektaInstallmentMonths,
   msiEligibility,
   buildStripeAppearanceVariables
@@ -21,6 +24,11 @@ test('MSI constants stay in lockstep with the runtime', () => {
   assert.ok(!MSI_LINK_GATEWAYS.has('stripe'))
   assert.equal(STRIPE_MSI_MIN_AMOUNT, 300)
   assert.ok(PAYMENT_GATEWAYS.has('stripe') && PAYMENT_GATEWAYS.has('conekta') && PAYMENT_GATEWAYS.has('mercadopago') && PAYMENT_GATEWAYS.has('clip') && PAYMENT_GATEWAYS.has('rebill'))
+  assert.ok(PAYMENT_GATE_BILLING_TYPES.has('single') && PAYMENT_GATE_BILLING_TYPES.has('subscription'))
+  assert.ok(SUBSCRIPTION_GATEWAYS.has('stripe') && SUBSCRIPTION_GATEWAYS.has('conekta') && SUBSCRIPTION_GATEWAYS.has('mercadopago') && SUBSCRIPTION_GATEWAYS.has('rebill'))
+  assert.equal(SUBSCRIPTION_GATEWAYS.has('clip'), false)
+  assert.equal(supportsSiteSubscriptionGateway('clip'), false)
+  assert.equal(supportsSiteSubscriptionGateway('rebill'), true)
 })
 
 test('isNormalizedPaymentGateEnabled mirrors backend/frontend predicate', () => {
@@ -331,6 +339,50 @@ test('identity: Rebill published checkout uses Rebill label and hosted identity 
   assert.doesNotMatch(html, /<div class="rstk-checkout-identity"/)
   assert.match(html, /data-collect-email="false"/)
   assert.match(html, /data-collect-phone="false"/)
+})
+
+test('subscription checkout: hosted gateways still collect email and phone before redirect', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({
+    paymentGate: {
+      enabled: true,
+      gateway: 'rebill',
+      billingType: 'subscription',
+      mode: 'test',
+      amount: 1200,
+      currency: 'MXN',
+      productName: 'Membresía',
+      buttonText: 'Suscribirme',
+      subscription: { intervalType: 'monthly', intervalCount: 1 }
+    }
+  }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+
+  assert.match(html, /data-provider="rebill"/)
+  assert.match(html, /data-billing-type="subscription"/)
+  assert.match(html, /data-subscription-interval-type="monthly"/)
+  assert.match(html, /<input[^>]+data-rstk-identity-email/)
+  assert.match(html, /<input[^>]+data-rstk-identity-phone/)
+  assert.match(html, /data-collect-email="true"/)
+  assert.match(html, /data-collect-phone="true"/)
+  assert.match(html, /Suscribirme · [^<]+ \/ mes/)
+})
+
+test('subscription checkout: CLIP config normalizes back to single payment', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({
+    paymentGate: {
+      enabled: true,
+      gateway: 'clip',
+      billingType: 'subscription',
+      amount: 500,
+      currency: 'MXN',
+      productName: 'Membresía',
+      buttonText: 'Pagar',
+      subscription: { intervalType: 'monthly', intervalCount: 1 }
+    }
+  }), { pageId: 'page-1', trackingEnabled: false, preview: true })
+
+  assert.match(html, /data-provider="clip"/)
+  assert.match(html, /data-billing-type="single"/)
+  assert.doesNotMatch(html, /data-billing-type="subscription"/)
 })
 
 test('E4: field text color sanitizer allows modern rgb(... / ...) values', async () => {

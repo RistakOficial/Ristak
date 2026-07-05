@@ -4176,13 +4176,18 @@ const defaultPaymentGateConfig = (currencyFallback = 'MXN'): CommonPaymentGateCo
   enabled: true,
   mode: 'test',
   gateway: 'stripe',
+  billingType: 'single',
   amount: 100,
   currency: currencyFallback,
   productName: 'Pago requerido',
   description: 'Completa el pago para continuar.',
   buttonText: 'Completar pago',
   pendingMessage: 'Completa el pago para continuar.',
-  paidMessage: 'Pago confirmado. Continuamos.'
+  paidMessage: 'Pago confirmado. Continuamos.',
+  subscription: {
+    intervalType: 'monthly',
+    intervalCount: 1
+  }
 }, currencyFallback)
 
 const getPaymentGateFromSettings = (settings: Record<string, unknown> = {}, currencyFallback = 'MXN') => {
@@ -4195,6 +4200,24 @@ const getPaymentGateFromSettings = (settings: Record<string, unknown> = {}, curr
 const getPaymentGatewayLabel = (gateway: CommonPaymentGateConfig['gateway']) => (
   gateway === 'mercadopago' ? 'Mercado Pago' : gateway === 'conekta' ? 'Conekta' : gateway === 'clip' ? 'CLIP' : gateway === 'rebill' ? 'Rebill' : 'Stripe'
 )
+
+const getPaymentBillingTypeLabel = (paymentGate: CommonPaymentGateConfig) =>
+  paymentGate.billingType === 'subscription' ? 'Suscripción' : 'Pago único'
+
+const getPaymentSubscriptionCadenceLabel = (paymentGate: CommonPaymentGateConfig) => {
+  const count = Math.max(1, Math.trunc(Number(paymentGate.subscription?.intervalCount || 1)))
+  const interval = paymentGate.subscription?.intervalType || 'monthly'
+  if (count === 1) {
+    if (interval === 'daily') return 'día'
+    if (interval === 'weekly') return 'semana'
+    if (interval === 'yearly') return 'año'
+    return 'mes'
+  }
+  if (interval === 'daily') return `${count} días`
+  if (interval === 'weekly') return `${count} semanas`
+  if (interval === 'yearly') return `${count} años`
+  return `${count} meses`
+}
 
 // Espejo de isPaymentGateEnabled del backend (publicPaymentGateService):
 // habilitado + monto > 0 + pasarela conocida.
@@ -6894,7 +6917,7 @@ const getMetaDetectedPaymentSurfaces = (
           surfaces.push({
             id: `payment-block:${block.id || surfaces.length + 1}`,
             label: paymentGate.productName || block.label || `Pago ${surfaces.length + 1}`,
-            detail: `${formatPaymentAmount(paymentGate.amount, paymentGate.currency)} · ${getPaymentGatewayLabel(paymentGate.gateway)}`
+            detail: `${formatPaymentAmount(paymentGate.amount, paymentGate.currency)} · ${getPaymentBillingTypeLabel(paymentGate)} · ${getPaymentGatewayLabel(paymentGate.gateway)}`
           })
         }
       }
@@ -32654,12 +32677,22 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const productName = paymentGate.productName || block.content || block.label || 'Pago requerido'
     const description = paymentGate.description || ''
     const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
+    const isSubscriptionCheckout = paymentGate.billingType === 'subscription'
+    const amountDisplayText = isSubscriptionCheckout
+      ? `${amountText} / ${getPaymentSubscriptionCadenceLabel(paymentGate)}`
+      : amountText
     const buttonLabel = paymentGate.buttonText || 'Pagar'
     // Paridad payment #1/#2: el gate deshabilitado (o monto 0 / pasarela desconocida)
     // NO se publica; el editor lo sigue mostrando para editarlo pero avisa que no será
     // visible en el sitio. La elegibilidad de MSI decide qué fila muestra el vivo.
     const gateEnabled = isPaymentGateConfigEnabled(paymentGate)
-    const msiInfo = msiEligibility({
+    const msiInfo = isSubscriptionCheckout ? {
+      enabled: false,
+      standaloneMonths: [],
+      insideElement: false,
+      insideBrick: false,
+      hostedRedirect: false
+    } : msiEligibility({
       gateway: paymentGate.gateway,
       currency: paymentGate.currency,
       amount: paymentGate.amount,
@@ -32674,11 +32707,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const showKicker = getSettingBoolean(settings, 'paymentShowGatewayName', true)
     const showCountry = getSettingBoolean(settings, 'paymentShowCountry', true)
     const showSecureNote = getSettingBoolean(settings, 'paymentShowSecureNote', true)
-    // Identidad del comprador (correo/teléfono). En vivo solo se inyecta para
-    // Stripe/Conekta (CLIP y Mercado Pago ya la piden en su SDK); el mock espeja eso.
+    // Identidad del comprador (correo/teléfono). En suscripciones de Sites siempre
+    // se pide antes del redirect para crear/ligar el contacto local.
     const collectEmail = getSettingBoolean(settings, 'paymentCollectEmail', true)
     const collectPhone = getSettingBoolean(settings, 'paymentCollectPhone', true)
-    const showIdentityFields = (isStripe || isConekta) && (collectEmail || collectPhone)
+    const effectiveCollectEmail = isSubscriptionCheckout ? true : collectEmail
+    const effectiveCollectPhone = isSubscriptionCheckout ? true : collectPhone
+    const showIdentityFields = (isSubscriptionCheckout || isStripe || isConekta) && (effectiveCollectEmail || effectiveCollectPhone)
     const secureNoteText = getSettingString(settings, 'paymentSecureNote') || PAYMENT_SECURE_NOTE_DEFAULT
     const paymentTextAlign = getHorizontalAlign(settings, 'paymentTextAlign', 'left')
     // Paridad payment #5: SOLO el ajuste manual explícito fija --rstk-checkout-field-text
@@ -32733,13 +32768,13 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
     const mockFields = (
       <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
         {/* Identidad del comprador (correo/teléfono), arriba de la tarjeta. */}
-        {showIdentityFields && collectEmail && (
+        {showIdentityFields && effectiveCollectEmail && (
           <>
             <span className="rstk-mock-lbl">Correo electrónico</span>
             <div className="rstk-mock-input"><span className="rstk-mock-ph">tu@correo.com</span></div>
           </>
         )}
-        {showIdentityFields && collectPhone && (
+        {showIdentityFields && effectiveCollectPhone && (
           <>
             <span className="rstk-mock-lbl">Teléfono</span>
             <div className="rstk-mock-input"><span className="rstk-mock-ph">55 1234 5678</span></div>
@@ -32856,6 +32891,25 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
         )}
       </div>
     )
+    const subscriptionHostedPreview = (
+      <div className="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
+        {showIdentityFields && effectiveCollectEmail && (
+          <>
+            <span className="rstk-mock-lbl">Correo electrónico</span>
+            <div className="rstk-mock-input"><span className="rstk-mock-ph">tu@correo.com</span></div>
+          </>
+        )}
+        {showIdentityFields && effectiveCollectPhone && (
+          <>
+            <span className="rstk-mock-lbl">Teléfono</span>
+            <div className="rstk-mock-input"><span className="rstk-mock-ph">55 1234 5678</span></div>
+          </>
+        )}
+        <p className="rstk-checkout-secure">
+          Se abrirá el checkout seguro de {getPaymentGatewayLabel(paymentGate.gateway)} para autorizar la suscripción.
+        </p>
+      </div>
+    )
     return (
       <section
         className={`rstk-payment-block rstk-payment-${layout}`}
@@ -32870,7 +32924,7 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
               {showKicker && <span className="rstk-payment-kicker">{getPaymentGatewayLabel(paymentGate.gateway)}</span>}
               <strong className="rstk-checkout-title">{productName}</strong>
               {description ? <p className="rstk-checkout-desc">{description}</p> : null}
-              <span className="rstk-checkout-amount">{amountText}</span>
+              <span className="rstk-checkout-amount">{amountDisplayText}</span>
             </div>
             {isTest && <p className="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>}
             <div className="rstk-checkout-body">
@@ -32884,19 +32938,19 @@ const CanvasPreviewBlock: React.FC<CanvasPreviewBlockProps> = ({
                   Mercado Pago usa su propio emulador fiel del Brick (mpBrickPreview).
                   Rebill en Sites redirige al checkout hospedado, asi que no fingimos
                   campos de tarjeta embebidos. */}
-              {isMercadoPago ? mpBrickPreview : isRebill ? rebillHostedPreview : mockFields}
+              {isSubscriptionCheckout ? subscriptionHostedPreview : isMercadoPago ? mpBrickPreview : isRebill ? rebillHostedPreview : mockFields}
               {/* Fila standalone: Conekta la arma en vivo. Stripe MSI se muestra dentro
                   del mock de tarjeta justo después del número, que es su disparador. */}
-              {isConekta && msiInfo.standaloneMonths.length > 0 && (
+              {!isSubscriptionCheckout && isConekta && msiInfo.standaloneMonths.length > 0 && (
                 <div className="rstk-checkout-installments">
                   <div className="rstk-checkout-select rstk-mock-select" aria-hidden="true">
                     <span>Un solo pago</span>
                   </div>
                 </div>
               )}
-              {!isMercadoPago && (
+              {(isSubscriptionCheckout || !isMercadoPago) && (
                 <button type="button" className="rstk-button-link rstk-checkout-pay" disabled>
-                  <SubmitButtonContent label={`${buttonLabel} · ${amountText}`} settings={settings} />
+                  <SubmitButtonContent label={`${buttonLabel} · ${amountDisplayText}`} settings={settings} />
                 </button>
               )}
               {paymentTestGuide && (

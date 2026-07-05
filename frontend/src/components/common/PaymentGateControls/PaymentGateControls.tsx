@@ -14,11 +14,15 @@ import { ProductFormModal } from '@/components/common/ProductFormModal/ProductFo
 import {
   CLIP_MSI_MIN_AMOUNT,
   STRIPE_MSI_MIN_AMOUNT,
-  MSI_INSTALLMENT_CHOICES as SHARED_MSI_INSTALLMENT_CHOICES
+  MSI_INSTALLMENT_CHOICES as SHARED_MSI_INSTALLMENT_CHOICES,
+  SUBSCRIPTION_GATEWAYS as SHARED_SUBSCRIPTION_GATEWAYS,
+  SUBSCRIPTION_INTERVAL_TYPES as SHARED_SUBSCRIPTION_INTERVAL_TYPES
 } from '../../../../../shared/sites/paymentGateContract.js'
 import styles from './PaymentGateControls.module.css'
 
 export type PaymentGateGateway = 'stripe' | 'conekta' | 'mercadopago' | 'clip' | 'rebill'
+export type PaymentGateBillingType = 'single' | 'subscription'
+export type PaymentGateSubscriptionInterval = 'daily' | 'weekly' | 'monthly' | 'yearly'
 
 // Modo por bloque SEGURO: solo puede forzar 'test' (probar sin cobrar aunque la
 // plataforma esté en live). 'inherit' = usa el modo global. Nunca 'live' → imposible
@@ -30,9 +34,15 @@ export interface PaymentGateMsi {
   maxInstallments: number
 }
 
+export interface PaymentGateSubscriptionConfig {
+  intervalType: PaymentGateSubscriptionInterval
+  intervalCount: number
+}
+
 export interface PaymentGateConfig {
   enabled: boolean
   gateway: PaymentGateGateway
+  billingType: PaymentGateBillingType
   amount: number
   currency: string
   productName: string
@@ -42,11 +52,18 @@ export interface PaymentGateConfig {
   paidMessage: string
   mode: PaymentGateMode
   msi: PaymentGateMsi
+  subscription: PaymentGateSubscriptionConfig
 }
 
 // Meses sin intereses: Stripe/CLIP los muestran dentro de su SDK, Mercado Pago
 // dentro del Brick, Conekta usa selector propio y Rebill abre su checkout hospedado.
 export const MSI_GATEWAYS = new Set<PaymentGateGateway>(['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
+export const SUBSCRIPTION_GATEWAYS = new Set<PaymentGateGateway>(
+  Array.from(SHARED_SUBSCRIPTION_GATEWAYS) as PaymentGateGateway[]
+)
+const SUBSCRIPTION_INTERVAL_TYPES = new Set<PaymentGateSubscriptionInterval>(
+  Array.from(SHARED_SUBSCRIPTION_INTERVAL_TYPES) as PaymentGateSubscriptionInterval[]
+)
 // Lista de opciones en el contrato compartido para no divergir con el backend/runtime.
 export const MSI_INSTALLMENT_CHOICES = SHARED_MSI_INSTALLMENT_CHOICES
 
@@ -97,6 +114,9 @@ const normalizeGateway = (value: unknown): PaymentGateGateway => {
 const normalizeMode = (value: unknown): PaymentGateMode =>
   cleanText(value).toLowerCase() === 'test' ? 'test' : 'inherit'
 
+const normalizeBillingType = (value: unknown): PaymentGateBillingType =>
+  cleanText(value).toLowerCase() === 'subscription' ? 'subscription' : 'single'
+
 const normalizeMsi = (value: unknown): PaymentGateMsi => {
   const source = (value && typeof value === 'object' ? value : {}) as Partial<PaymentGateMsi> & { months?: number; max_installments?: number }
   const enabled = Boolean(source.enabled)
@@ -104,6 +124,25 @@ const normalizeMsi = (value: unknown): PaymentGateMsi => {
   if (!enabled || !Number.isFinite(requested) || requested <= 1) return { enabled: false, maxInstallments: 0 }
   const allowed = MSI_INSTALLMENT_CHOICES.filter(months => months <= requested)
   return { enabled: true, maxInstallments: allowed.length ? allowed[allowed.length - 1] : MSI_INSTALLMENT_CHOICES[0] }
+}
+
+const normalizeSubscriptionInterval = (value: unknown): PaymentGateSubscriptionInterval => {
+  const interval = cleanText(value).toLowerCase() as PaymentGateSubscriptionInterval
+  return SUBSCRIPTION_INTERVAL_TYPES.has(interval) ? interval : 'monthly'
+}
+
+const normalizeSubscription = (value: unknown): PaymentGateSubscriptionConfig => {
+  const source = (value && typeof value === 'object' ? value : {}) as Partial<PaymentGateSubscriptionConfig> & {
+    interval_type?: unknown
+    interval_count?: unknown
+    interval?: unknown
+    every?: unknown
+  }
+  const count = Number.parseInt(String(source.intervalCount ?? source.interval_count ?? source.every ?? 1), 10)
+  return {
+    intervalType: normalizeSubscriptionInterval(source.intervalType ?? source.interval_type ?? source.interval),
+    intervalCount: Number.isFinite(count) && count > 0 ? Math.min(24, count) : 1
+  }
 }
 
 // Catálogo de productos (opcional): el id y el monto pueden venir en varios campos.
@@ -120,10 +159,13 @@ export const normalizePaymentGateConfig = (
 ): PaymentGateConfig => {
   const source = value || {}
   const productName = asText(source.productName, 'Pago requerido')
+  const gateway = normalizeGateway(source.gateway)
+  const billingType = normalizeBillingType((source as { billingType?: unknown; billing_type?: unknown; type?: unknown }).billingType ?? (source as { billing_type?: unknown }).billing_type ?? (source as { type?: unknown }).type)
 
   return {
     enabled: Boolean(source.enabled),
-    gateway: normalizeGateway(source.gateway),
+    gateway,
+    billingType: SUBSCRIPTION_GATEWAYS.has(gateway) ? billingType : 'single',
     amount: normalizeAmount(source.amount),
     currency: normalizeCurrency(source.currency, currencyFallback),
     productName,
@@ -132,7 +174,8 @@ export const normalizePaymentGateConfig = (
     pendingMessage: asText(source.pendingMessage, 'Para continuar, completa el pago y deja esta página abierta.'),
     paidMessage: asText(source.paidMessage, 'Pago confirmado. Continuamos con tu solicitud.'),
     mode: normalizeMode(source.mode),
-    msi: normalizeMsi(source.msi ?? (source as { installments?: unknown }).installments)
+    msi: billingType === 'subscription' ? { enabled: false, maxInstallments: 0 } : normalizeMsi(source.msi ?? (source as { installments?: unknown }).installments),
+    subscription: normalizeSubscription((source as { subscription?: unknown }).subscription)
   }
 }
 
@@ -179,16 +222,35 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   const normalizeAllowedPaymentGateConfig = useCallback((source?: Partial<PaymentGateConfig> | null) => {
     const normalized = normalizePaymentGateConfig(source, currencyFallback)
     const gateway = normalizeAllowedGateway(normalized.gateway)
+    const billingType = SUBSCRIPTION_GATEWAYS.has(gateway) ? normalized.billingType : 'single'
     return {
       ...normalized,
       gateway,
-      msi: MSI_GATEWAYS.has(gateway) ? normalized.msi : { enabled: false, maxInstallments: 0 }
+      billingType,
+      msi: billingType === 'single' && MSI_GATEWAYS.has(gateway) ? normalized.msi : { enabled: false, maxInstallments: 0 }
     }
   }, [currencyFallback, normalizeAllowedGateway])
   const config = useMemo(() => normalizeAllowedPaymentGateConfig(value), [normalizeAllowedPaymentGateConfig, value])
   const selectedGateway = allowedGatewayOptions.find(option => option.value === config.gateway) || allowedGatewayOptions[0]
   const clipControlsMsi = config.gateway === 'clip'
   const rebillControlsMsi = config.gateway === 'rebill'
+  const gatewaySupportsSubscriptions = SUBSCRIPTION_GATEWAYS.has(config.gateway)
+  const billingTypeOptions = gatewaySupportsSubscriptions
+    ? [
+        { value: 'single', label: 'Pago único' },
+        { value: 'subscription', label: 'Suscripción' }
+      ]
+    : [{ value: 'single', label: 'Pago único' }]
+  const intervalOptions = [
+    { value: 'monthly', label: 'Mensual' },
+    { value: 'yearly', label: 'Anual' },
+    ...(config.gateway === 'rebill'
+      ? []
+      : [
+          { value: 'weekly', label: 'Semanal' },
+          ...(config.gateway === 'conekta' ? [] : [{ value: 'daily', label: 'Diaria' }])
+        ])
+  ]
 
   useEffect(() => {
     let active = true
@@ -326,7 +388,11 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               <CustomSelect
                 value={config.gateway}
                 onValueChange={(gateway) => {
-                  patchConfig({ gateway: normalizeAllowedGateway(gateway) })
+                  const nextGateway = normalizeAllowedGateway(gateway)
+                  patchConfig({
+                    gateway: nextGateway,
+                    billingType: SUBSCRIPTION_GATEWAYS.has(nextGateway) ? config.billingType : 'single'
+                  })
                   commitSoon()
                 }}
                 onBlur={onCommit}
@@ -337,6 +403,28 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                 }))}
               />
             </label>
+
+            <label className={styles.field}>
+              <span>Tipo de cobro</span>
+              <CustomSelect
+                value={config.billingType}
+                onValueChange={(billingType) => {
+                  patchConfig({
+                    billingType: billingType === 'subscription' && gatewaySupportsSubscriptions ? 'subscription' : 'single'
+                  })
+                  commitSoon()
+                }}
+                onBlur={onCommit}
+                options={billingTypeOptions}
+              />
+            </label>
+
+            {config.gateway === 'clip' && (
+              <p className={`${styles.testNote} ${styles.fieldWide}`}>
+                <Info size={15} />
+                CLIP solo está disponible para pagos únicos en Sites.
+              </p>
+            )}
 
             <div className={styles.field}>
               <div className={styles.catalogLabelRow}>
@@ -409,7 +497,44 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
               />
             </label>
 
-            {MSI_GATEWAYS.has(config.gateway) && (
+            {config.billingType === 'subscription' && (
+              <>
+                <label className={styles.field}>
+                  <span>Frecuencia</span>
+                  <CustomSelect
+                    value={config.subscription.intervalType}
+                    onValueChange={(intervalType) => {
+                      patchConfig({
+                        subscription: {
+                          ...config.subscription,
+                          intervalType: normalizeSubscriptionInterval(intervalType)
+                        }
+                      })
+                      commitSoon()
+                    }}
+                    onBlur={onCommit}
+                    options={intervalOptions}
+                  />
+                </label>
+                <label className={styles.field}>
+                  <span>Repetir cada</span>
+                  <NumberInput
+                    value={config.subscription.intervalCount || 1}
+                    min="1"
+                    step="1"
+                    onValueChange={(intervalCount) => patchConfig({
+                      subscription: {
+                        ...config.subscription,
+                        intervalCount: Math.max(1, Math.trunc(Number(intervalCount) || 1))
+                      }
+                    })}
+                    onBlur={onCommit}
+                  />
+                </label>
+              </>
+            )}
+
+            {config.billingType === 'single' && MSI_GATEWAYS.has(config.gateway) && (
               <div className={`${styles.field} ${styles.fieldWide}`}>
                 <div className={styles.toggleRow}>
                   <div className={styles.toggleCopy}>
