@@ -28354,6 +28354,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   const [slugDraft, setSlugDraft] = useState(slugValue)
   const slugInputRef = useRef<HTMLInputElement>(null)
   const cancelSlugEditRef = useRef(false)
+  const preventMenuCloseAutoFocusRef = useRef(false)
   useEffect(() => {
     cancelSlugEditRef.current = false
     setSlugDraft(slugValue)
@@ -28517,11 +28518,17 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                 align="end"
                 sideOffset={8}
                 className={styles.pagesDropdownActionMenu}
+                onCloseAutoFocus={(event) => {
+                  if (!preventMenuCloseAutoFocusRef.current) return
+                  preventMenuCloseAutoFocusRef.current = false
+                  event.preventDefault()
+                }}
               >
                 <DropdownMenuItem
                   className={styles.pagesDropdownActionItem}
                   onSelect={(event) => {
                     event.stopPropagation()
+                    preventMenuCloseAutoFocusRef.current = true
                     onStartRename()
                   }}
                 >
@@ -28533,6 +28540,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                     className={styles.pagesDropdownActionItem}
                     onSelect={(event) => {
                       event.stopPropagation()
+                      preventMenuCloseAutoFocusRef.current = true
                       onStartRouteEdit?.()
                     }}
                   >
