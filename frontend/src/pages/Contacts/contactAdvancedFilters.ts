@@ -67,6 +67,7 @@ export interface ContactAdvancedSort {
 
 export interface ContactAdvancedFilterConfig {
   version: 1
+  groupMode?: 'all' | 'any'
   groups: ContactAdvancedGroup[]
   sort?: ContactAdvancedSort | null
 }
@@ -161,17 +162,21 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
   {
     label: 'Contacto',
     fields: [
-      { key: 'full_name', label: 'Nombre', type: 'text' },
-      { key: 'first_name', label: 'Nombre propio', type: 'text' },
-      { key: 'last_name', label: 'Apellido', type: 'text' },
-      { key: 'email', label: 'Email', type: 'text' },
+      { key: 'first_name', label: 'Nombre', type: 'text' },
+      { key: 'last_name', label: 'Apellidos', type: 'text' },
+      { key: 'full_name', label: 'Nombre completo', type: 'text' },
+      { key: 'email', label: 'Correo electronico', type: 'text' },
       { key: 'phone', label: 'Telefono', type: 'text' },
-      { key: 'source', label: 'Fuente del contacto', type: 'text' },
+      { key: 'source', label: 'Fuente de contacto', type: 'text' },
       { key: 'status', label: 'Condicion comercial', type: 'select', options: statusOptions },
       { key: 'priority', label: 'Prioridad', type: 'select', options: priorityOptions },
-      { key: 'created_at', label: 'Fecha de creacion', type: 'date' },
-      { key: 'updated_at', label: 'Fecha de ultima actualizacion', type: 'date' },
+      { key: 'created_at', label: 'Creada', type: 'date' },
+      { key: 'updated_at', label: 'Actualizado', type: 'date' },
+      { key: 'assigned_user_id', label: 'Propietario', type: 'text' },
       { key: 'visitor_id', label: 'Visitor ID', type: 'text' },
+      { key: 'ghl_contact_id', label: 'ID de cliente potencial', type: 'text' },
+      { key: 'stripe_customer_id', label: 'ID de Stripe', type: 'text' },
+      { key: 'conekta_customer_id', label: 'ID de Conekta', type: 'text' },
       { key: 'preferred_whatsapp_phone_number_id', label: 'Numero WhatsApp asignado', type: 'text' }
     ]
   },
@@ -194,6 +199,7 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'active_appointments_count', label: 'Cantidad de citas activas', type: 'number' },
       { key: 'attended_appointments_count', label: 'Cantidad de asistencias', type: 'number' },
       { key: 'appointment_date', label: 'Fecha de cita', type: 'date' },
+      { key: 'contact_appointment_date', label: 'Ultima cita registrada', type: 'date' },
       { key: 'appointment_status', label: 'Estado de cita', type: 'text' },
       { key: 'appointment_calendar', label: 'Calendario de cita', type: 'text' },
       { key: 'appointment_assigned_user', label: 'Usuario asignado a cita', type: 'text' },
@@ -220,8 +226,14 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
     ]
   },
   {
-    label: 'Tracking y origen',
+    label: 'Atribucion y tracking',
     fields: [
+      { key: 'attribution_url', label: 'Primera atribucion', type: 'text' },
+      { key: 'attribution_session_source', label: 'Fuente de atribucion', type: 'text' },
+      { key: 'attribution_medium', label: 'Medio de atribucion', type: 'text' },
+      { key: 'attribution_ctwa_clid', label: 'ID de clic de WhatsApp/Facebook', type: 'text' },
+      { key: 'attribution_ad_name', label: 'Anuncio de atribucion', type: 'text' },
+      { key: 'attribution_ad_id', label: 'ID de anuncio de atribucion', type: 'text' },
       { key: 'landing_page', label: 'Pagina de entrada', type: 'text' },
       { key: 'referrer_url', label: 'URL referida', type: 'text' },
       { key: 'utm_source', label: 'Fuente UTM', type: 'text' },
@@ -312,6 +324,7 @@ export const createContactAdvancedGroup = (fieldKey = 'tags'): ContactAdvancedGr
 
 export const createDefaultContactAdvancedConfig = (): ContactAdvancedFilterConfig => ({
   version: 1,
+  groupMode: 'all',
   groups: [],
   sort: null
 })
@@ -357,7 +370,12 @@ export const normalizeContactAdvancedConfig = (value: unknown): ContactAdvancedF
       } as ContactAdvancedSort
     : null
 
-  return { version: 1, groups, sort: sort?.by ? sort : null }
+  return {
+    version: 1,
+    groupMode: raw.groupMode === 'any' ? 'any' : 'all',
+    groups,
+    sort: sort?.by ? sort : null
+  }
 }
 
 export const countContactAdvancedRules = (config: ContactAdvancedFilterConfig) =>

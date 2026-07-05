@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { ListFilter, Plus, RotateCcw, Trash2 } from 'lucide-react'
-import { Button, CustomSelect, Modal } from '@/components/common'
+import { createPortal } from 'react-dom'
+import { ListFilter, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react'
+import { Button, CustomSelect, SearchField } from '@/components/common'
 import type { ContactCustomFieldDefinition } from '@/types'
 import type { ContactTag } from '@/services/contactTagsService'
 import styles from './Contacts.module.css'
@@ -33,13 +34,34 @@ interface ContactAdvancedFiltersModalProps {
   onApply: (config: ContactAdvancedFilterConfig) => void
 }
 
+type FieldPickerTarget =
+  | { type: 'newGroup' }
+  | { type: 'newRule'; groupId: string }
+  | { type: 'existingRule'; groupId: string; ruleId: string }
+
+interface ContactFilterFieldChoice {
+  id: string
+  fieldKey: string
+  label: string
+  type: ContactAdvancedField['type']
+  groupLabel: string
+  options?: ContactAdvancedField['options']
+  customKey?: string
+  searchText: string
+}
+
 const EMPTY_OPTION = { value: '', label: 'Selecciona' }
 
+const groupModeOptions = [
+  { value: 'all', label: 'Todos los grupos' },
+  { value: 'any', label: 'Cualquier grupo' }
+]
+
 const customFieldKey = (field: ContactCustomFieldDefinition) =>
-  field.definitionId || field.key || field.fieldKey || field.name || field.label
+  String(field.definitionId || field.key || field.fieldKey || field.name || field.label || '').trim()
 
 const customFieldLabel = (field: ContactCustomFieldDefinition) =>
-  field.label || field.name || field.fieldKey || field.key || field.definitionId
+  String(field.label || field.name || field.fieldKey || field.key || field.definitionId || 'Campo personalizado').trim()
 
 const updateRule = (
   groups: ContactAdvancedGroup[],
@@ -57,10 +79,18 @@ const scalarValue = (value: ContactAdvancedRule['value']) => {
   return String(value)
 }
 
-const defaultFieldGroup = CONTACT_ADVANCED_FIELD_GROUPS[0]
+const choiceIdForRule = (rule: ContactAdvancedRule) =>
+  rule.field === 'custom_field' && rule.customKey ? `custom:${rule.customKey}` : rule.field
 
-const findFieldGroupForField = (fieldKey?: string) =>
-  CONTACT_ADVANCED_FIELD_GROUPS.find(fieldGroup => fieldGroup.fields.some(field => field.key === fieldKey))
+const fieldTypeLabel = (type: ContactAdvancedField['type']) => {
+  if (type === 'date') return 'Fecha'
+  if (type === 'number') return 'Numero'
+  if (type === 'boolean') return 'Si / No'
+  if (type === 'select') return 'Lista'
+  if (type === 'tags') return 'Etiquetas'
+  if (type === 'custom_field') return 'Campo personalizado'
+  return 'Texto'
+}
 
 export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalProps> = ({
   isOpen,
@@ -71,47 +101,95 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
   onApply
 }) => {
   const [draft, setDraft] = useState<ContactAdvancedFilterConfig>(() => normalizeContactAdvancedConfig(value))
-  const [selectedFieldGroupLabel, setSelectedFieldGroupLabel] = useState(defaultFieldGroup.label)
+  const [fieldSearchTerm, setFieldSearchTerm] = useState('')
+  const [fieldPickerTarget, setFieldPickerTarget] = useState<FieldPickerTarget | null>(null)
 
   useEffect(() => {
     if (!isOpen) return
     const normalized = normalizeContactAdvancedConfig(value)
-    const firstRuleField = normalized.groups.flatMap(group => group.rules).find(Boolean)?.field
-    const initialFieldGroup = findFieldGroupForField(firstRuleField) || defaultFieldGroup
-    setSelectedFieldGroupLabel(initialFieldGroup.label)
-    setDraft({
-      ...normalized,
-      groups: normalized.groups.length > 0 ? normalized.groups : [createContactAdvancedGroup(initialFieldGroup.fields[0]?.key)]
-    })
+    setDraft(normalized)
+    setFieldSearchTerm('')
+    setFieldPickerTarget(normalized.groups.length > 0 ? null : { type: 'newGroup' })
   }, [isOpen, value])
 
-  const selectedFieldGroup = useMemo(
-    () => CONTACT_ADVANCED_FIELD_GROUPS.find(fieldGroup => fieldGroup.label === selectedFieldGroupLabel) || defaultFieldGroup,
-    [selectedFieldGroupLabel]
-  )
+  useEffect(() => {
+    if (!isOpen || typeof document === 'undefined') return undefined
 
-  const selectedDefaultFieldKey = selectedFieldGroup.fields[0]?.key || defaultFieldGroup.fields[0]?.key || 'full_name'
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
 
-  const fieldGroupRuleCounts = useMemo(() => {
-    const counts = new Map<string, number>()
-    draft.groups.forEach(group => {
-      group.rules.forEach(rule => {
-        const fieldGroup = findFieldGroupForField(rule.field)
-        if (!fieldGroup) return
-        counts.set(fieldGroup.label, (counts.get(fieldGroup.label) || 0) + 1)
-      })
-    })
-    return counts
-  }, [draft])
-
-  const getFieldOptionsForRule = (rule: ContactAdvancedRule): ContactAdvancedField[] => {
-    const currentField = getContactAdvancedField(rule.field)
-    const selectedFields = selectedFieldGroup.fields
-    if (!currentField || selectedFields.some(field => field.key === currentField.key)) {
-      return selectedFields
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
     }
-    return [currentField, ...selectedFields]
-  }
+
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen, onClose])
+
+  const fieldChoices = useMemo<ContactFilterFieldChoice[]>(() => {
+    const activeCustomFields = customFieldDefinitions.filter(field => !field.archived)
+    const includeGenericCustomField = activeCustomFields.length === 0
+
+    const staticChoices = CONTACT_ADVANCED_FIELD_GROUPS.flatMap(fieldGroup => fieldGroup.fields.flatMap(field => {
+      if (field.key === 'custom_field' && !includeGenericCustomField) return []
+      return [{
+        id: field.key,
+        fieldKey: field.key,
+        label: field.label,
+        type: field.type,
+        options: field.options,
+        groupLabel: fieldGroup.label,
+        searchText: [field.label, fieldGroup.label, field.key, fieldTypeLabel(field.type)].join(' ').toLowerCase()
+      }]
+    }))
+
+    const customChoices = activeCustomFields.flatMap(field => {
+      const key = customFieldKey(field)
+      if (!key) return []
+      const label = customFieldLabel(field)
+      const groupLabel = field.folderName || field.fieldGroup || 'Campos personalizados'
+      return [{
+        id: `custom:${key}`,
+        fieldKey: 'custom_field',
+        label,
+        type: 'custom_field' as const,
+        customKey: key,
+        groupLabel,
+        searchText: [
+          label,
+          groupLabel,
+          key,
+          field.description,
+          field.dataType,
+          field.sourceFormName,
+          field.sourceFieldName,
+          field.sourceLabel,
+          'campo personalizado'
+        ].filter(Boolean).join(' ').toLowerCase()
+      }]
+    })
+
+    return [...staticChoices, ...customChoices]
+  }, [customFieldDefinitions])
+
+  const choiceById = useMemo(() => new Map(fieldChoices.map(choice => [choice.id, choice])), [fieldChoices])
+
+  const filteredFieldGroups = useMemo(() => {
+    const query = fieldSearchTerm.trim().toLowerCase()
+    const groups = new Map<string, ContactFilterFieldChoice[]>()
+
+    fieldChoices.forEach(choice => {
+      if (query && !choice.searchText.includes(query)) return
+      const items = groups.get(choice.groupLabel) || []
+      items.push(choice)
+      groups.set(choice.groupLabel, items)
+    })
+
+    return Array.from(groups.entries()).map(([label, fields]) => ({ label, fields }))
+  }, [fieldChoices, fieldSearchTerm])
 
   const tagOptions = useMemo(() => [
     EMPTY_OPTION,
@@ -120,19 +198,59 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
 
   const customFieldOptions = useMemo(() => [
     EMPTY_OPTION,
-    ...customFieldDefinitions.map(field => ({
-      value: customFieldKey(field),
-      label: customFieldLabel(field)
-    })).filter(option => option.value)
+    ...customFieldDefinitions
+      .filter(field => !field.archived)
+      .map(field => ({
+        value: customFieldKey(field),
+        label: customFieldLabel(field)
+      }))
+      .filter(option => option.value)
   ], [customFieldDefinitions])
 
   const activeRules = countContactAdvancedRules(draft)
+  const isFieldPickerVisible = Boolean(fieldPickerTarget) || draft.groups.length === 0
+  const groupJoinLabel = draft.groupMode === 'any' ? 'O' : 'Y'
+
+  const choiceForRule = (rule: ContactAdvancedRule) => {
+    const selected = choiceById.get(choiceIdForRule(rule))
+    if (selected) return selected
+    const field = getContactAdvancedField(rule.field)
+    return {
+      id: rule.field || 'full_name',
+      fieldKey: field?.key || 'full_name',
+      label: field?.label || 'Campo',
+      type: field?.type || 'text',
+      options: field?.options,
+      groupLabel: 'Contacto',
+      searchText: ''
+    } as ContactFilterFieldChoice
+  }
+
+  const createRuleForChoice = (choice: ContactFilterFieldChoice) => {
+    const field = getContactAdvancedField(choice.fieldKey)
+    const rule = createContactAdvancedRule(choice.fieldKey)
+    return {
+      ...rule,
+      field: field?.key || choice.fieldKey,
+      operator: getDefaultOperatorForContactAdvancedField(field),
+      value: '',
+      valueTo: '',
+      customKey: choice.customKey || ''
+    }
+  }
 
   const setSort = (sortValue: string) => {
     const option = CONTACT_ADVANCED_SORT_OPTIONS.find(item => item.value === sortValue)
     setDraft(current => ({
       ...current,
       sort: option?.sort || null
+    }))
+  }
+
+  const setConfigGroupMode = (mode: string) => {
+    setDraft(current => ({
+      ...current,
+      groupMode: mode === 'any' ? 'any' : 'all'
     }))
   }
 
@@ -150,8 +268,48 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
     }))
   }
 
-  const addGroup = () => {
-    setDraft(current => ({ ...current, groups: [...current.groups, createContactAdvancedGroup(selectedDefaultFieldKey)] }))
+  const openFieldPicker = (target: FieldPickerTarget) => {
+    setFieldSearchTerm('')
+    setFieldPickerTarget(target)
+  }
+
+  const selectFieldChoice = (choice: ContactFilterFieldChoice) => {
+    const nextRule = createRuleForChoice(choice)
+    const target = fieldPickerTarget || { type: 'newGroup' as const }
+
+    setDraft(current => {
+      if (target.type === 'existingRule') {
+        return {
+          ...current,
+          groups: updateRule(current.groups, target.groupId, target.ruleId, () => nextRule)
+        }
+      }
+
+      if (target.type === 'newRule') {
+        return {
+          ...current,
+          groups: current.groups.map(group => group.id === target.groupId
+            ? { ...group, rules: [...group.rules, nextRule] }
+            : group
+          )
+        }
+      }
+
+      const group = createContactAdvancedGroup(choice.fieldKey)
+      return {
+        ...current,
+        groups: [
+          ...current.groups,
+          {
+            ...group,
+            rules: [nextRule]
+          }
+        ]
+      }
+    })
+
+    setFieldSearchTerm('')
+    setFieldPickerTarget(null)
   }
 
   const removeGroup = (groupId: string) => {
@@ -159,16 +317,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
       ...current,
       groups: current.groups.filter(group => group.id !== groupId)
     }))
-  }
-
-  const addRule = (groupId: string) => {
-    setDraft(current => ({
-      ...current,
-      groups: current.groups.map(group => group.id === groupId
-        ? { ...group, rules: [...group.rules, createContactAdvancedRule(selectedDefaultFieldKey)] }
-        : group
-      )
-    }))
+    setFieldPickerTarget(current => current && 'groupId' in current && current.groupId === groupId ? null : current)
   }
 
   const removeRule = (groupId: string, ruleId: string) => {
@@ -178,22 +327,6 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
         ? { ...group, rules: group.rules.filter(rule => rule.id !== ruleId) }
         : group
       ).filter(group => group.rules.length > 0)
-    }))
-  }
-
-  const setRuleField = (groupId: string, ruleId: string, fieldKey: string) => {
-    const field = getContactAdvancedField(fieldKey)
-    const operator = getDefaultOperatorForContactAdvancedField(field)
-    setDraft(current => ({
-      ...current,
-      groups: updateRule(current.groups, groupId, ruleId, rule => ({
-        ...rule,
-        field: field?.key || 'full_name',
-        operator,
-        value: '',
-        valueTo: '',
-        customKey: ''
-      }))
     }))
   }
 
@@ -217,12 +350,15 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
   }
 
   const resetDraft = () => {
-    setDraft({ version: 1, groups: [createContactAdvancedGroup(selectedDefaultFieldKey)], sort: null })
+    setDraft({ version: 1, groupMode: 'all', groups: [], sort: null })
+    setFieldSearchTerm('')
+    setFieldPickerTarget({ type: 'newGroup' })
   }
 
   const applyDraft = () => {
     const normalized = normalizeContactAdvancedConfig({
       ...draft,
+      groupMode: draft.groupMode === 'any' ? 'any' : 'all',
       groups: draft.groups
         .map(group => ({
           ...group,
@@ -251,6 +387,17 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
     const rangeValue = rule.valueTo === null || rule.valueTo === undefined ? '' : String(rule.valueTo)
 
     if (field.type === 'custom_field') {
+      if (rule.customKey) {
+        return (
+          <input
+            type="text"
+            value={value}
+            onChange={(event) => setRulePatch(groupId, rule.id, { value: event.target.value })}
+            placeholder="Valor"
+          />
+        )
+      }
+
       return (
         <div className={styles.conditionValuePair}>
           <CustomSelect
@@ -370,175 +517,233 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
     )
   }
 
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Condiciones de contactos"
-      subtitle="Contactos, etiquetas, campos, citas, pagos y tracking."
-      size="xl"
-      contentClassName={styles.contactConditionsModalContent}
-      closeOnBackdropClick={false}
-    >
-      <div className={styles.contactConditionsShell}>
-        <div className={styles.contactConditionsLayout}>
-          <aside className={styles.contactFilterCategories} aria-label="Categorias de filtros">
-            <span className={styles.contactFilterCategoryTitle}>Categorias</span>
-            <div className={styles.contactFilterCategoryList}>
-              {CONTACT_ADVANCED_FIELD_GROUPS.map(fieldGroup => {
-                const ruleCount = fieldGroupRuleCounts.get(fieldGroup.label) || 0
-                const isActive = fieldGroup.label === selectedFieldGroup.label
+  const renderFieldPicker = () => (
+    <div className={styles.contactFilterPicker}>
+      <div className={styles.contactFilterPickerHeader}>
+        <div>
+          <span>Selecciona un campo</span>
+          <span>{fieldChoices.length} campos</span>
+        </div>
+        {draft.groups.length > 0 && (
+          <Button type="button" variant="secondary" size="sm" onClick={() => setFieldPickerTarget(null)}>
+            Volver
+          </Button>
+        )}
+      </div>
 
-                return (
-                  <Button
-                    key={fieldGroup.label}
-                    type="button"
-                    variant={isActive ? 'primary' : 'ghost'}
-                    size="sm"
-                    fullWidth
-                    className={styles.contactFilterCategoryButton}
-                    data-active={isActive ? 'true' : undefined}
-                    onClick={() => setSelectedFieldGroupLabel(fieldGroup.label)}
-                  >
-                    <span className={styles.contactFilterCategoryCopy}>
-                      <span>{fieldGroup.label}</span>
-                      <span>{fieldGroup.fields.length} campos</span>
-                    </span>
-                    {ruleCount > 0 && (
-                      <span className={styles.contactFilterCategoryCount}>{ruleCount}</span>
-                    )}
-                  </Button>
-                )
-              })}
-            </div>
-          </aside>
+      <SearchField
+        value={fieldSearchTerm}
+        onChange={setFieldSearchTerm}
+        onClear={() => setFieldSearchTerm('')}
+        placeholder="Buscar campo"
+        className={styles.contactFieldFinder}
+        size="md"
+      />
 
-          <div className={styles.contactConditionsBuilder}>
-            <div className={styles.contactConditionsTopbar}>
-              <div className={styles.contactConditionsSummary}>
-                <ListFilter size={16} />
-                <span>{selectedFieldGroup.label}</span>
-                <span>{activeRules} condiciones</span>
-              </div>
-              <div className={styles.contactConditionsSort}>
-                <span>Orden</span>
-                <CustomSelect
-                  value={contactAdvancedSortValue(draft.sort)}
-                  onValueChange={setSort}
-                  options={CONTACT_ADVANCED_SORT_OPTIONS}
-                />
-              </div>
-            </div>
-
-            <div className={styles.contactConditionGroups}>
-              {draft.groups.map((group, groupIndex) => (
-                <section key={group.id} className={styles.contactConditionGroup}>
-                  <div className={styles.contactConditionGroupHeader}>
-                    <div className={styles.contactConditionGroupMeta}>
-                      <span>Grupo {groupIndex + 1}</span>
-                      <CustomSelect
-                        value={group.mode}
-                        onValueChange={(nextValue) => setGroupMode(group.id, nextValue === 'any' ? 'any' : 'all')}
-                        options={[
-                          { value: 'all', label: 'Todas se cumplen' },
-                          { value: 'any', label: 'Cualquiera se cumple' }
-                        ]}
-                      />
-                      <label className={styles.contactConditionToggle}>
-                        <input
-                          type="checkbox"
-                          checked={Boolean(group.negate)}
-                          onChange={() => toggleGroupNegate(group.id)}
-                        />
-                        <span>No se cumple</span>
-                      </label>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      iconOnly
-                      aria-label="Eliminar grupo"
-                      onClick={() => removeGroup(group.id)}
-                    >
-                      <Trash2 size={16} />
-                    </Button>
-                  </div>
-
-                  <div className={styles.contactConditionRules}>
-                    {group.rules.map(rule => {
-                      const field = getContactAdvancedField(rule.field)
-                      const operators = getContactAdvancedOperators(field)
-
-                      return (
-                        <div key={rule.id} className={styles.contactConditionRule}>
-                          <CustomSelect
-                            value={rule.field}
-                            onValueChange={(nextValue) => setRuleField(group.id, rule.id, nextValue)}
-                          >
-                            {getFieldOptionsForRule(rule).map(item => (
-                              <option key={item.key} value={item.key}>
-                                {item.label}
-                              </option>
-                            ))}
-                          </CustomSelect>
-                          <CustomSelect
-                            value={rule.operator}
-                            onValueChange={(nextValue) => setRuleOperator(group.id, rule.id, nextValue as ContactAdvancedOperator)}
-                            options={operators}
-                          />
-                          <div className={styles.contactConditionValue}>
-                            {renderValueInput(group.id, rule)}
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            iconOnly
-                            aria-label="Eliminar condicion"
-                            onClick={() => removeRule(group.id, rule.id)}
-                          >
-                            <Trash2 size={16} />
-                          </Button>
-                        </div>
-                      )
-                    })}
-                  </div>
-
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => addRule(group.id)}
-                  >
-                    <Plus size={16} />
-                    Añadir condicion
-                  </Button>
-                </section>
+      <div className={styles.contactFilterFieldGroups}>
+        {filteredFieldGroups.length === 0 ? (
+          <div className={styles.contactFilterEmptyState}>No hay campos con ese nombre.</div>
+        ) : filteredFieldGroups.map(fieldGroup => (
+          <section key={fieldGroup.label} className={styles.contactFilterFieldGroup}>
+            <span>{fieldGroup.label}</span>
+            <div className={styles.contactFilterFieldList}>
+              {fieldGroup.fields.map(choice => (
+                <Button
+                  key={choice.id}
+                  type="button"
+                  variant="ghost"
+                  fullWidth
+                  className={styles.contactFilterFieldButton}
+                  onClick={() => selectFieldChoice(choice)}
+                >
+                  <span className={styles.contactFilterFieldCopy}>
+                    <span>{choice.label}</span>
+                    <span>{fieldTypeLabel(choice.type)}</span>
+                  </span>
+                </Button>
               ))}
             </div>
+          </section>
+        ))}
+      </div>
+    </div>
+  )
 
-            <div className={styles.contactConditionsFooter}>
-              <Button type="button" variant="secondary" onClick={addGroup}>
-                <Plus size={16} />
-                Añadir grupo
-              </Button>
-              <div className={styles.contactConditionsFooterActions}>
-                <Button type="button" variant="ghost" onClick={resetDraft}>
-                  <RotateCcw size={16} />
-                  Limpiar
-                </Button>
-                <Button type="button" variant="secondary" onClick={onClose}>
-                  Cancelar
-                </Button>
-                <Button type="button" variant="primary" onClick={applyDraft}>
-                  Aplicar filtros
-                </Button>
-              </div>
-            </div>
+  const renderBuilder = () => (
+    <div className={styles.contactConditionsBuilder}>
+      <div className={styles.contactConditionsTopbar}>
+        <div className={styles.contactConditionsSummary}>
+          <ListFilter size={16} />
+          <span>{activeRules} condiciones</span>
+        </div>
+        <div className={styles.contactConditionsToolbar}>
+          <div className={styles.contactConditionsSort}>
+            <span>Grupos</span>
+            <CustomSelect
+              value={draft.groupMode || 'all'}
+              onValueChange={setConfigGroupMode}
+              options={groupModeOptions}
+            />
+          </div>
+          <div className={styles.contactConditionsSort}>
+            <span>Orden</span>
+            <CustomSelect
+              value={contactAdvancedSortValue(draft.sort)}
+              onValueChange={setSort}
+              options={CONTACT_ADVANCED_SORT_OPTIONS}
+            />
           </div>
         </div>
       </div>
-    </Modal>
+
+      <div className={styles.contactConditionGroups}>
+        {draft.groups.map((group, groupIndex) => (
+          <React.Fragment key={group.id}>
+            {groupIndex > 0 && (
+              <div className={styles.contactConditionGroupJoiner}>
+                <span>{groupJoinLabel}</span>
+              </div>
+            )}
+            <section className={styles.contactConditionGroup}>
+              <div className={styles.contactConditionGroupHeader}>
+                <div className={styles.contactConditionGroupMeta}>
+                  <span>Grupo {groupIndex + 1}</span>
+                  <CustomSelect
+                    value={group.mode}
+                    onValueChange={(nextValue) => setGroupMode(group.id, nextValue === 'any' ? 'any' : 'all')}
+                    options={[
+                      { value: 'all', label: 'Todas se cumplen' },
+                      { value: 'any', label: 'Cualquiera se cumple' }
+                    ]}
+                  />
+                  <label className={styles.contactConditionToggle}>
+                    <input
+                      type="checkbox"
+                      checked={Boolean(group.negate)}
+                      onChange={() => toggleGroupNegate(group.id)}
+                    />
+                    <span>No se cumple</span>
+                  </label>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label="Eliminar grupo"
+                  onClick={() => removeGroup(group.id)}
+                >
+                  <Trash2 size={16} />
+                </Button>
+              </div>
+
+              <div className={styles.contactConditionRules}>
+                {group.rules.map(rule => {
+                  const field = getContactAdvancedField(rule.field)
+                  const operators = getContactAdvancedOperators(field)
+                  const choice = choiceForRule(rule)
+
+                  return (
+                    <div key={rule.id} className={styles.contactConditionRule}>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className={styles.contactConditionFieldButton}
+                        onClick={() => openFieldPicker({ type: 'existingRule', groupId: group.id, ruleId: rule.id })}
+                      >
+                        <span>{choice.label}</span>
+                        <Pencil size={14} />
+                      </Button>
+                      <CustomSelect
+                        value={rule.operator}
+                        onValueChange={(nextValue) => setRuleOperator(group.id, rule.id, nextValue as ContactAdvancedOperator)}
+                        options={operators}
+                      />
+                      <div className={styles.contactConditionValue}>
+                        {renderValueInput(group.id, rule)}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        iconOnly
+                        aria-label="Eliminar condicion"
+                        onClick={() => removeRule(group.id, rule.id)}
+                      >
+                        <Trash2 size={16} />
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => openFieldPicker({ type: 'newRule', groupId: group.id })}
+              >
+                <Plus size={16} />
+                Añadir filtro anidado
+              </Button>
+            </section>
+          </React.Fragment>
+        ))}
+      </div>
+
+      <Button type="button" variant="secondary" onClick={() => openFieldPicker({ type: 'newGroup' })}>
+        <Plus size={16} />
+        Añadir filtro
+      </Button>
+    </div>
+  )
+
+  if (!isOpen || typeof document === 'undefined') return null
+
+  return createPortal(
+    <div
+      className={styles.contactFilterDrawerBackdrop}
+      onMouseDown={(event) => {
+        if (event.currentTarget === event.target) onClose()
+      }}
+    >
+      <aside
+        className={styles.contactFilterDrawer}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Filtros avanzados"
+      >
+        <header className={styles.contactFilterDrawerHeader}>
+          <div>
+            <h2>Filtros avanzados</h2>
+            <span>{activeRules} condiciones activas</span>
+          </div>
+          <Button type="button" variant="ghost" size="sm" iconOnly aria-label="Cerrar filtros" onClick={onClose}>
+            <X size={18} />
+          </Button>
+        </header>
+
+        <div className={styles.contactFilterDrawerBody}>
+          {isFieldPickerVisible ? renderFieldPicker() : renderBuilder()}
+        </div>
+
+        <footer className={styles.contactFilterDrawerFooter}>
+          <Button type="button" variant="ghost" onClick={resetDraft}>
+            <RotateCcw size={16} />
+            Borra todos los filtros
+          </Button>
+          <div className={styles.contactFilterDrawerActions}>
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancelar
+            </Button>
+            <Button type="button" variant="primary" onClick={applyDraft}>
+              Aplicar
+            </Button>
+          </div>
+        </footer>
+      </aside>
+    </div>,
+    document.body
   )
 }

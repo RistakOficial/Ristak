@@ -11,6 +11,7 @@ import {
 
 test('normalizeContactAdvancedFilters conserva solo grupos y reglas validas', () => {
   const normalized = normalizeContactAdvancedFilters({
+    groupMode: 'any',
     groups: [
       {
         id: 'group-1',
@@ -27,6 +28,7 @@ test('normalizeContactAdvancedFilters conserva solo grupos y reglas validas', ()
   })
 
   assert.equal(normalized.groups.length, 1)
+  assert.equal(normalized.groupMode, 'any')
   assert.equal(normalized.groups[0].mode, 'any')
   assert.equal(normalized.groups[0].negate, true)
   assert.equal(normalized.groups[0].rules.length, 1)
@@ -79,6 +81,47 @@ test('buildContactListWhere combina filtros rapidos, tracking y condiciones avan
   assert.ok(where.params.includes('city'))
   assert.ok(where.params.includes('%juarez%'))
   assert.ok(where.params.includes(100))
+})
+
+test('buildContactListWhere permite grupos con OR y campos nativos extendidos', () => {
+  const where = buildContactListWhere({
+    alias: 'c',
+    advancedFilters: {
+      groupMode: 'any',
+      groups: [
+        {
+          mode: 'all',
+          rules: [{ field: 'assigned_user_id', operator: 'is', value: 'owner_1' }]
+        },
+        {
+          mode: 'all',
+          rules: [{ field: 'ghl_contact_id', operator: 'contains', value: 'lead_123' }]
+        }
+      ]
+    }
+  })
+
+  assert.match(where.whereClause, /c\.assigned_user_id/)
+  assert.match(where.whereClause, /c\.ghl_contact_id/)
+  assert.match(where.whereClause, /\)\sOR\s\(/)
+  assert.ok(where.params.includes('owner_1'))
+  assert.ok(where.params.includes('%lead_123%'))
+})
+
+test('buildContactListWhere parametriza la fecha actual en citas futuras', () => {
+  const where = buildContactListWhere({
+    alias: 'c',
+    advancedFilters: {
+      groups: [{
+        mode: 'all',
+        rules: [{ field: 'has_future_appointment', operator: 'yes' }]
+      }]
+    }
+  })
+
+  assert.match(where.whereClause, /COALESCE\(a_bool\.start_time, a_bool\.date_added\) >= \?/)
+  assert.doesNotMatch(where.whereClause, /new Date|toISOString|T\d{2}:\d{2}:\d{2}.*Z/)
+  assert.match(String(where.params.at(-1)), /^\d{4}-\d{2}-\d{2}T/)
 })
 
 test('el filtro Clientes incluye pagos exitosos test sin meterlos al total pagado', () => {

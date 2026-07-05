@@ -268,7 +268,12 @@ export function normalizeContactAdvancedFilters(raw = {}) {
       }
     : null
 
-  return { version: 1, groups, ...(sort?.by ? { sort } : {}) }
+  return {
+    version: 1,
+    groupMode: parsed.groupMode === 'any' ? 'any' : 'all',
+    groups,
+    ...(sort?.by ? { sort } : {})
+  }
 }
 
 const contactTextFieldExpression = (field, contactAlias = 'c') => {
@@ -281,6 +286,10 @@ const contactTextFieldExpression = (field, contactAlias = 'c') => {
     phone: `${contactAlias}.phone`,
     source: `${contactAlias}.source`,
     visitor_id: `${contactAlias}.visitor_id`,
+    assigned_user_id: `${contactAlias}.assigned_user_id`,
+    ghl_contact_id: `${contactAlias}.ghl_contact_id`,
+    stripe_customer_id: `${contactAlias}.stripe_customer_id`,
+    conekta_customer_id: `${contactAlias}.conekta_customer_id`,
     attribution_url: `${contactAlias}.attribution_url`,
     attribution_session_source: `${contactAlias}.attribution_session_source`,
     attribution_medium: `${contactAlias}.attribution_medium`,
@@ -419,10 +428,15 @@ const buildDateMatchCondition = (expression, operator, value, valueTo, timezone)
 }
 
 const buildBooleanCondition = (baseCondition, operator, value) => {
+  const descriptor = typeof baseCondition === 'string'
+    ? { condition: baseCondition, params: [] }
+    : { condition: baseCondition?.condition || '', params: baseCondition?.params || [] }
+  if (!descriptor.condition) return null
+
   const wantsTrue = operator === 'yes' || value === true || value === 'true' || value === 'yes'
   return {
-    condition: wantsTrue ? `(${baseCondition})` : `(NOT (${baseCondition}))`,
-    params: []
+    condition: wantsTrue ? `(${descriptor.condition})` : `(NOT (${descriptor.condition}))`,
+    params: descriptor.params
   }
 }
 
@@ -822,22 +836,28 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
     has_failed_payment: `EXISTS (SELECT 1 FROM payments p_bool WHERE p_bool.contact_id = ${contactAlias}.id AND ${paymentFailedPredicate('p_bool')})`,
     has_active_appointment: existsActiveAppointment(contactAlias),
     has_attended_appointment: `(${existsAttendanceSignal(contactAlias)} OR ${existsAttendedAppointment(contactAlias)})`,
-    has_past_appointment: `EXISTS (
-      SELECT 1
-      FROM appointments a_bool
-      WHERE a_bool.contact_id = ${contactAlias}.id
-        AND ${CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION}
-        AND NULLIF(TRIM(CAST(COALESCE(a_bool.start_time, a_bool.date_added) AS TEXT)), '') IS NOT NULL
-        AND COALESCE(a_bool.start_time, a_bool.date_added) < '${new Date().toISOString()}'
-    )`,
-    has_future_appointment: `EXISTS (
-      SELECT 1
-      FROM appointments a_bool
-      WHERE a_bool.contact_id = ${contactAlias}.id
-        AND ${CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION}
-        AND NULLIF(TRIM(CAST(COALESCE(a_bool.start_time, a_bool.date_added) AS TEXT)), '') IS NOT NULL
-        AND COALESCE(a_bool.start_time, a_bool.date_added) >= '${new Date().toISOString()}'
-    )`,
+    has_past_appointment: {
+      condition: `EXISTS (
+        SELECT 1
+        FROM appointments a_bool
+        WHERE a_bool.contact_id = ${contactAlias}.id
+          AND ${CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION}
+          AND NULLIF(TRIM(CAST(COALESCE(a_bool.start_time, a_bool.date_added) AS TEXT)), '') IS NOT NULL
+          AND COALESCE(a_bool.start_time, a_bool.date_added) < ?
+      )`,
+      params: [DateTime.utc().toISO({ suppressMilliseconds: false })]
+    },
+    has_future_appointment: {
+      condition: `EXISTS (
+        SELECT 1
+        FROM appointments a_bool
+        WHERE a_bool.contact_id = ${contactAlias}.id
+          AND ${CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION}
+          AND NULLIF(TRIM(CAST(COALESCE(a_bool.start_time, a_bool.date_added) AS TEXT)), '') IS NOT NULL
+          AND COALESCE(a_bool.start_time, a_bool.date_added) >= ?
+      )`,
+      params: [DateTime.utc().toISO({ suppressMilliseconds: false })]
+    },
     has_confirmation_badge: `EXISTS (
       SELECT 1
       FROM appointments a_bool
@@ -924,7 +944,8 @@ const buildAdvancedFiltersCondition = (advancedFilters = {}, contactAlias = 'c',
   })
 
   if (!groupConditions.length) return null
-  return { condition: `(${groupConditions.join(' AND ')})`, params }
+  const groupJoiner = normalized.groupMode === 'any' ? ' OR ' : ' AND '
+  return { condition: `(${groupConditions.join(groupJoiner)})`, params }
 }
 
 export function buildContactListWhere({

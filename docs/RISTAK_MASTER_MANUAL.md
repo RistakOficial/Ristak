@@ -277,17 +277,20 @@ Capacidades:
   automatizaciones.
 - Telefonos normalizados.
 - La lista de contactos usa una sola entrada visible de filtros: el boton
-  "Todos" abre un modal por categorias. Primero se elige la categoria
-  (Contacto, Etiquetas y campos, Citas y asistencia, Pagos, Tracking y origen o
-  Automatizaciones) y despues se arman las condiciones del lado derecho.
+  "Todos" abre un panel lateral derecho de filtros avanzados. Primero se elige
+  un campo desde un catalogo buscable y luego se arma la condicion del lado
+  derecho. El catalogo mezcla campos nativos, etiquetas, citas, pagos,
+  atribucion/tracking, automatizaciones y campos personalizados activos en la
+  misma lista; datos como ciudad, pais o codigo postal se filtran como campos
+  personalizados cuando no existen como columna nativa del contacto.
 - Filtros avanzados combinables en la lista de contactos. El endpoint
   `/api/contacts` aplica del lado servidor los filtros rapidos (todos, leads,
   citados, asistencias, clientes), conserva compatibilidad con filtros legacy de
   tracking (paginas, fuentes, dispositivos, navegadores, sistemas,
   placements/anuncios) y aplica condiciones avanzadas por grupos AND/OR sobre
   etiquetas, campos personalizados, fechas de creacion/actualizacion, citas,
-  asistencias, pagos, tracking y automatizaciones. Las fechas de negocio se
-  interpretan en la zona horaria de la cuenta y los pagos usan estados
+  asistencias, pagos, atribucion, tracking y automatizaciones. Las fechas de
+  negocio se interpretan en la zona horaria de la cuenta y los pagos usan estados
   live/exitosos/fallidos normalizados. La clasificacion CRM `Cliente` se activa
   con cualquier pago exitoso del contacto, incluyendo `payment_mode = test`,
   para poder probar checkouts sandbox de punta a punta. Las metricas financieras
