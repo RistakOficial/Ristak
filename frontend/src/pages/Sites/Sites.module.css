@@ -16518,6 +16518,35 @@
   align-items: center;
 }
 
+.pagesDropdownTitleCellStacked {
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  padding: 8px 0;
+}
+
+.pagesDropdownRouteEditTitle {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.2;
+}
+
+.pagesDropdownRouteEditTitle svg {
+  flex: 0 0 auto;
+}
+
+.pagesDropdownRouteEditTitle span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .pagesDropdownContentCell {
   min-width: 0;
   display: grid;

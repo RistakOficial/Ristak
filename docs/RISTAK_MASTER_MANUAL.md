@@ -1131,6 +1131,8 @@ manual nacen con slugs neutrales secuenciales (`/rstk01`, `/rstk02`, etc.) para
 evitar rutas automaticas tipo `/sitio-01` o colisiones entre paginas nuevas. La
 ruta legacy del sitio
 `/<site-slug>` se conserva por compatibilidad y abre la landing como antes. La
+opcion "Cambiar ruta" en el menu de tres puntos de cada pagina abre el editor de
+ruta de esa pagina especifica, separado de "Cambiar nombre". La
 ruta predeterminada del dominio puede apuntar a un sitio completo o a una pagina
 especifica (`siteId + pageId`): cuando apunta a una pagina, esa pagina abre en
 la raiz del dominio (`https://dominio/`) y su slug propio sigue resolviendo como

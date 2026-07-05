@@ -27905,6 +27905,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onSaveSite
 }) => {
   const [renamingPageId, setRenamingPageId] = useState<string | null>(null)
+  const [routeEditingPageId, setRouteEditingPageId] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
   const [draggingPageId, setDraggingPageId] = useState<string | null>(null)
   const [dragOrderedPageIds, setDragOrderedPageIds] = useState<string[] | null>(null)
@@ -27969,6 +27970,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   useEffect(() => {
     if (!open) {
       setRenamingPageId(null)
+      setRouteEditingPageId(null)
       setDraggingPageId(null)
       setDragOrderedPageIds(null)
       dragOrderedPageIdsRef.current = null
@@ -28171,6 +28173,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       locked={locked}
                       fixedPage={fixedPage}
                       renaming={renamingPageId === page.id}
+                      routeEditing={routeEditingPageId === page.id}
                       pageToneClass={pageToneClass}
                       canDelete={pageCanDelete}
                       canDuplicate={pageCanDuplicate}
@@ -28185,7 +28188,13 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       onSelect={() => handleSelectPage(page.id)}
                       onStartRename={() => {
                         onSelectPage(page.id)
+                        setRouteEditingPageId(null)
                         setRenamingPageId(page.id)
+                      }}
+                      onStartRouteEdit={() => {
+                        onSelectPage(page.id)
+                        setRenamingPageId(page.id)
+                        setRouteEditingPageId(page.id)
                       }}
                       onDuplicate={() => {
                         onDuplicatePage(page.id)
@@ -28204,7 +28213,10 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       canSetDefaultRoute={Boolean(onSetDefaultPageRoute)}
                       onOpenRoute={onOpenPageRoute ? () => { onOpenPageRoute(page.id) } : undefined}
                       onSetDefaultRoute={onSetDefaultPageRoute ? () => { onSetDefaultPageRoute(page.id) } : undefined}
-                      onDoneRename={() => setRenamingPageId(null)}
+                      onDoneRename={() => {
+                        setRenamingPageId(null)
+                        setRouteEditingPageId(null)
+                      }}
                     />
                   )
                 })}
@@ -28268,6 +28280,7 @@ interface FunnelPageDropdownItemProps {
   locked: boolean
   fixedPage: boolean
   renaming: boolean
+  routeEditing?: boolean
   pageToneClass: string
   canDelete: boolean
   canDuplicate: boolean
@@ -28281,6 +28294,7 @@ interface FunnelPageDropdownItemProps {
   onDemote?: () => void
   onSelect: () => void
   onStartRename: () => void
+  onStartRouteEdit?: () => void
   onDuplicate: () => void
   onDelete: () => void
   onRenamePage: (pageId: string, title: string) => void
@@ -28306,6 +28320,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   locked,
   fixedPage,
   renaming,
+  routeEditing = false,
   pageToneClass,
   canDelete,
   canDuplicate,
@@ -28319,6 +28334,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   onDemote,
   onSelect,
   onStartRename,
+  onStartRouteEdit,
   onDuplicate,
   onDelete,
   onRenamePage,
@@ -28336,10 +28352,16 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
 }) => {
   const [menuOpen, setMenuOpen] = useState(false)
   const [slugDraft, setSlugDraft] = useState(slugValue)
-  useEffect(() => { setSlugDraft(slugValue) }, [slugValue, renaming])
+  const slugInputRef = useRef<HTMLInputElement>(null)
+  const cancelSlugEditRef = useRef(false)
+  useEffect(() => {
+    cancelSlugEditRef.current = false
+    setSlugDraft(slugValue)
+  }, [slugValue, renaming])
   const title = page.title || `Página ${index + 1}`
   const showRouteEditor = routeEditable && !fixedPage
   const canEditSlug = showRouteEditor && Boolean(onRenamePageSlug)
+  const editingRoute = renaming && routeEditing && canEditSlug
   const dragDisabled = locked || fixedPage
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: page.id,
@@ -28350,6 +28372,26 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
     transition,
     zIndex: isDragging || menuOpen ? 4 : undefined,
     marginLeft: depth ? depth * 18 : undefined
+  }
+
+  useEffect(() => {
+    if (!editingRoute) return
+    window.setTimeout(() => {
+      slugInputRef.current?.focus()
+      slugInputRef.current?.select()
+    }, 0)
+  }, [editingRoute])
+
+  const commitSlugEdit = () => {
+    if (cancelSlugEditRef.current) {
+      cancelSlugEditRef.current = false
+      setSlugDraft(slugValue)
+      onDoneRename()
+      return
+    }
+
+    onRenamePageSlug?.(page.id, slugDraft)
+    onDoneRename()
   }
 
   return (
@@ -28373,24 +28415,43 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
         </span>
 
         {renaming && !locked ? (
-          <div className={styles.pagesDropdownTitleCell}>
-            <EditablePageTitle
-              pageId={page.id}
-              title={title}
-              inputClassName={styles.pagesDropdownTitleInput}
-              onFocus={() => undefined}
-              onRename={onRenamePage}
-              onDone={onDoneRename}
-            />
-            {canEditSlug && (
-              <PathInput
-                prefix={slugPrefix}
-                prefixTitle={routePreview}
-                value={slugDraft}
-                aria-label={`Ruta de ${title}`}
-                placeholder={normalizeRouteInput(title) || 'pagina'}
-                onChange={(value) => setSlugDraft(value)}
-                onBlur={() => { onRenamePageSlug?.(page.id, slugDraft) }}
+          <div className={`${styles.pagesDropdownTitleCell} ${editingRoute ? styles.pagesDropdownTitleCellStacked : ''}`}>
+            {editingRoute ? (
+              <>
+                <span className={styles.pagesDropdownRouteEditTitle}>
+                  <Link2 size={13} />
+                  <span>{title}</span>
+                </span>
+                <PathInput
+                  ref={slugInputRef}
+                  prefix={slugPrefix}
+                  prefixTitle={routePreview}
+                  value={slugDraft}
+                  aria-label={`Ruta de ${title}`}
+                  placeholder={normalizeRouteInput(title) || 'pagina'}
+                  onChange={(value) => setSlugDraft(value)}
+                  onBlur={commitSlugEdit}
+                  onKeyDown={(event) => {
+                    event.stopPropagation()
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      event.currentTarget.blur()
+                    }
+                    if (event.key === 'Escape') {
+                      cancelSlugEditRef.current = true
+                      event.currentTarget.blur()
+                    }
+                  }}
+                />
+              </>
+            ) : (
+              <EditablePageTitle
+                pageId={page.id}
+                title={title}
+                inputClassName={styles.pagesDropdownTitleInput}
+                onFocus={() => undefined}
+                onRename={onRenamePage}
+                onDone={onDoneRename}
               />
             )}
           </div>
@@ -28464,8 +28525,21 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
                     onStartRename()
                   }}
                 >
-                  {canEditSlug ? 'Nombre y ruta' : 'Cambiar nombre'}
+                  <Pencil size={14} />
+                  Cambiar nombre
                 </DropdownMenuItem>
+                {canEditSlug && (
+                  <DropdownMenuItem
+                    className={styles.pagesDropdownActionItem}
+                    onSelect={(event) => {
+                      event.stopPropagation()
+                      onStartRouteEdit?.()
+                    }}
+                  >
+                    <Link2 size={14} />
+                    Cambiar ruta
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   className={styles.pagesDropdownActionItem}
                   disabled={!canDuplicate}
