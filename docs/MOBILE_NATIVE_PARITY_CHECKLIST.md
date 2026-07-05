@@ -50,9 +50,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 ## Estado general
 
 - [x] Crear app React Native/Expo en `mobile/`.
-- [x] Separar bundle nativo temporal para pruebas visuales; para validar push iOS
-      real la build instalada usa `com.ristak.app` y
-      `com.ristak.app.NotificationService`.
+- [x] Separar bundle nativo para pruebas visuales lado a lado. La app nativa
+      default se instala como `com.ristak.native`; `com.ristak.app` y
+      `com.ristak.app.NotificationService` quedan reservados para la app
+      Capacitor de tienda hasta que la migracion nativa reemplace ese paquete de
+      forma explicita.
 - [x] Login por correo + contrasena con resolucion automatica de tenant, igual que `/movil/login`.
 - [x] Shell inicial con Chat, Citas, Pagos, Analiticas y Ajustes.
 - [x] Primer pase de lista de chats con API real, filtros basicos y filas planas.

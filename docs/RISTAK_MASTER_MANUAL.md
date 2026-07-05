@@ -1673,6 +1673,10 @@ El nuevo cliente nativo React Native/Expo vive en `mobile/`. Es una app separada
 del WebView, con almacenamiento seguro local y consumo directo de APIs del
 backend. Arranca como app paralela con bundle/package `com.ristak.native`; no
 debe reemplazar el bundle de tienda `com.ristak.app` hasta validar la migracion
+completa. La configuracion default de `mobile/app.json` debe mantenerse en
+`com.ristak.native` para poder comparar ambas apps instaladas en el mismo
+telefono; usar `com.ristak.app` desde `mobile/` es una decision de migracion o
+release, no una configuracion local normal.
 en dispositivos reales y actualizar el flujo de release.
 
 Regla obligatoria para futuros cambios: si una feature, label, permiso, push,

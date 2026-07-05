@@ -2,6 +2,10 @@
 
 React Native mobile app for Ristak. This app is separate from the legacy
 Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
+Its default installed identity is `com.ristak.native`, while the legacy
+Capacitor app keeps the store identity `com.ristak.app`. Do not change the
+native default back to `com.ristak.app` unless the migration is intentionally
+ready to replace the store app.
 
 ## What Works Now
 
@@ -41,8 +45,10 @@ Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
   context dictation through `expo-audio` + `/api/ai-agent/transcribe`, native
   push permission/token registration through `expo-notifications`, user/app
   preference persistence, and theme background updates for the installed app.
-- Push notification support uses the real app bundle (`com.ristak.app`) for iOS
-  APNs validation and registers device tokens through `/api/push/mobile-devices`.
+- Native push registration is wired through `/api/push/mobile-devices`. The
+  default side-by-side build uses `com.ristak.native`; APNs tests that require
+  the store topic `com.ristak.app` must be run as an intentional migration or
+  release build, not as the everyday comparison build.
 
 ## Commands
 

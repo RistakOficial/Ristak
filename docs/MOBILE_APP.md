@@ -6,10 +6,13 @@ Ristak tiene dos superficies moviles que deben mantenerse coordinadas:
   `frontend/`, `frontend/ios/App` y `frontend/android`. Este sigue usando el
   bundle/package de tienda `com.ristak.app`.
 - Cliente nativo nuevo: app React Native/Expo en `mobile/`. No carga el CRM
-  completo en un WebView; habla directo con el backend de Ristak por API. Para
-  pruebas visuales puede usar un bundle temporal, pero las pruebas reales de push
-  iOS deben usar `com.ristak.app` porque APNs rechaza tokens generados por otro
-  bundle cuando el servidor firma con el topic de tienda.
+  completo en un WebView; habla directo con el backend de Ristak por API. Su
+  identidad default de comparacion es `com.ristak.native` para que pueda vivir
+  instalada junto a la app Capacitor `com.ristak.app`. No regreses `mobile/` a
+  `com.ristak.app` salvo que la migracion nativa vaya a reemplazar
+  intencionalmente la app de tienda. Las pruebas APNs contra el topic de tienda
+  `com.ristak.app` deben tratarse como builds de migracion/release, no como el
+  default local.
 
 Regla obligatoria de mantenimiento: cualquier cambio de producto movil, chat,
 login, permisos, push, pagos, agenda, filtros, labels visibles o contrato de API

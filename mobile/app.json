@@ -15,7 +15,7 @@
       "android"
     ],
     "ios": {
-      "bundleIdentifier": "com.ristak.app",
+      "bundleIdentifier": "com.ristak.native",
       "supportsTablet": true,
       "entitlements": {
         "aps-environment": "$(APS_ENVIRONMENT)",
@@ -29,7 +29,7 @@
       }
     },
     "android": {
-      "package": "com.ristak.app",
+      "package": "com.ristak.native",
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO"
