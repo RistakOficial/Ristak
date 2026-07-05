@@ -1542,6 +1542,9 @@ guardada del flujo y no exige que la automatización esté publicada. Si hay
 cambios locales sin guardar, primero debe guardarse. Las inscripciones manuales
 desde contactos, acciones masivas, jobs programados y eventos reales siguen
 usando únicamente automatizaciones publicadas y su `published_flow`.
+El modal de prueba usa un solo campo **Contacto**: el usuario puede buscar un
+contacto existente o crear uno nuevo desde el mismo selector, y la prueba corre
+sobre ese contacto elegido.
 
 Los disparadores de comentario de Facebook e Instagram se activan solo con
 eventos reales de comentario. La respuesta no se configura como un DM suelto:

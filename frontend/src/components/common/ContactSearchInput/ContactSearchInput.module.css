@@ -109,6 +109,12 @@
   flex-direction: column;
 }
 
+.dropdownPortal {
+  position: fixed;
+  right: auto;
+  z-index: var(--z-index-modal-popover, var(--z-index-popover));
+}
+
 .suggestions {
   list-style: none;
   padding: 0;
@@ -242,7 +248,9 @@
 
 /* New contact form */
 .newContactForm {
+  min-height: 0;
   padding: var(--spacing-md);
+  overflow-y: auto;
 }
 
 .formHeader {

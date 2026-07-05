@@ -2378,35 +2378,6 @@
   min-width: 0;
 }
 
-.testRunFields {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 12px;
-}
-
-.testRunField {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.testRunField:first-child {
-  grid-column: 1 / -1;
-}
-
-.testRunField > span {
-  color: var(--text-dim);
-  font-size: var(--font-size-sm);
-  font-weight: 500;
-}
-
-.testRunField input {
-  width: 100%;
-  min-height: 42px;
-  box-sizing: border-box;
-}
-
 .testRunError {
   margin: 0;
   color: var(--neg);
@@ -2498,13 +2469,8 @@
 }
 
 @media (max-width: 640px) {
-  .testRunFields,
   .testRunLog li {
     grid-template-columns: 1fr;
-  }
-
-  .testRunField:first-child {
-    grid-column: auto;
   }
 
   .testRunActions {
