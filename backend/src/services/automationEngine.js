@@ -1874,11 +1874,11 @@ function triggerMatches(trigger, eventType, ctx) {
     case 'comment-received': {
       // AISLADO de 'message-received' a propósito: solo los disparos de comentario
       // entran aquí, así que las automatizaciones de DM NUNCA se disparan con
-      // comentarios (y viceversa). Se filtra por platform (campo de ctx, no por el
-      // canal normalizado, que colapsa *_comment → messenger/instagram).
+      // comentarios (y viceversa). Se filtra por platform del evento: Facebook
+      // queda como Facebook para producto, aunque el transporte privado sea Messenger.
       if (trigger.type !== 'trigger-facebook-comment' && trigger.type !== 'trigger-instagram-comment') return false
-      const wantPlatform = trigger.type === 'trigger-instagram-comment' ? 'instagram' : 'messenger'
-      if (str(ctx.platform) !== wantPlatform) return false
+      const wantPlatform = trigger.type === 'trigger-instagram-comment' ? 'instagram' : 'facebook'
+      if (normalizeCommentEventPlatform(ctx.platform) !== wantPlatform) return false
       const post = str(config.post)
       if (post && !postMatches(post, ctx)) return false
       return keywordsMatch(config, ctx.messageText)
@@ -1978,6 +1978,10 @@ function triggerMatches(trigger, eventType, ctx) {
     default:
       return false
   }
+}
+
+function normalizeCommentEventPlatform(platform) {
+  return str(platform) === 'instagram' ? 'instagram' : 'facebook'
 }
 
 const EVENT_DESCRIPTIONS = {
@@ -3733,7 +3737,7 @@ function evaluateGoalMet(config, ctx) {
   }
 }
 
-// Nodo de acción: responder un comentario (público en el post o DM privado) a
+// Nodo de acción: responder un comentario (público en el post o mensaje privado) a
 // mitad de un flujo. Usa ctx.commentId/ctx.platform del disparo de comentario;
 // si no vienen (flujo disparado por otra cosa), el servicio resuelve el último
 // comentario entrante del contacto.
@@ -3755,6 +3759,8 @@ async function sendCommentReplyFromNode(node, ctx, replyType) {
   const contactId = ctx.contact?.id
   if (!contactId) throw new Error('Falta el contacto para responder el comentario')
 
+  // La UI y los eventos dicen Facebook; la API privada/publica de Meta usa el
+  // transporte Messenger para comentarios de Facebook.
   const platform = str(ctx.platform) === 'instagram' ? 'instagram' : 'messenger'
   const rawBlocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
   // Compatibilidad con configs viejas de texto plano.
@@ -4691,8 +4697,7 @@ async function enrollMatching(automations, eventType, baseCtx) {
     if (!matched) continue
 
     // La respuesta al comentario ya NO se configura en el disparador: se hace con
-    // los nodos de acción "Responder comentario (público)" / "Responder por
-    // privado (DM)" dentro del flujo.
+    // el nodo de acción "Responder comentario" dentro del flujo.
 
     // Controles del disparador de comentario ("Evitar disparos duplicados" y
     // "Solo el primer comentario de cada persona"): consultan la BD, por eso van

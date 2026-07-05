@@ -2876,7 +2876,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
               .then(engine => engine.handleAutomationEvent('comment-received', {
                 contactId: localContact.id,
                 contactName: localContact.contactName,
-                platform: comment.platform,
+                platform: comment.platform === 'instagram' ? 'instagram' : 'facebook',
                 messageText: comment.messageText,
                 commentId: comment.commentId,
                 postId: comment.postId,

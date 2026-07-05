@@ -138,7 +138,7 @@ const CHANNEL_LABELS: Record<string, string> = {
   whatsapp: 'WhatsApp',
   messenger: 'Messenger',
   instagram: 'Instagram',
-  any: 'Messenger / Instagram'
+  any: 'Facebook / Instagram'
 }
 
 export interface WaitMessageSourceOption {

@@ -49,9 +49,8 @@ const EXECUTABLE_NODE_TYPES = new Set([
 ])
 
 // (AUTO-002) Disparadores que el motor (triggerMatches en automationEngine.js)
-// realmente reconoce y que algún controlador emite. Los disparadores de comentarios
-// de Facebook/Instagram, clic en anuncio y Click-to-WhatsApp NO tienen caso ni emisor,
-// por lo que una automatización con ellos nunca correría: se bloquea su publicación.
+// realmente reconoce y que algún controlador emite. Si un disparador no está aquí,
+// una automatización con él no debe publicarse porque nunca correría.
 // IMPORTANTE: mantener en sync con triggerMatches.
 const SUPPORTED_TRIGGER_TYPES = new Set([
   'trigger-whatsapp-message',

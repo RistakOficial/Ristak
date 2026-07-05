@@ -962,6 +962,87 @@ test('disparador de mensaje de WhatsApp inscribe al contacto cuando llega un men
   }
 })
 
+test('disparador de comentario de Facebook inscribe al contacto con plataforma Facebook', async () => {
+  const runCase = async (platform, label) => {
+    const suffix = `${label}_${randomUUID()}`
+    const contactId = `rstk_contact_fb_comment_${suffix}`
+    const automationId = `automation_fb_comment_${suffix}`
+    const flow = {
+      nodes: [
+        {
+          id: 'start',
+          type: 'start',
+          label: 'Cuando...',
+          config: {
+            triggers: [
+              {
+                id: 'trigger-facebook-comment',
+                type: 'trigger-facebook-comment',
+                config: { keywords: ['precio'], match: 'contains' }
+              }
+            ]
+          }
+        },
+        {
+          id: 'done',
+          type: 'extra-comment',
+          label: 'Listo',
+          config: {}
+        }
+      ],
+      edges: [
+        { id: 'edge-start-done', sourceNodeId: 'start', targetNodeId: 'done' }
+      ],
+      settings: {}
+    }
+
+    try {
+      await db.run(
+        `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          contactId,
+          `+1555${Date.now().toString().slice(-8)}${label.length}`,
+          `fb-comment-${suffix}@example.com`,
+          'Contacto Facebook Comment',
+          'Contacto',
+          '{}'
+        ]
+      )
+      await db.run(
+        `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+         VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+        [automationId, 'Test comentario Facebook', JSON.stringify(flow), JSON.stringify(flow)]
+      )
+
+      await handleAutomationEvent('comment-received', {
+        contactId,
+        platform,
+        messageText: 'precio por favor',
+        commentId: `comment_${suffix}`,
+        postId: `post_${suffix}`
+      })
+
+      const enrollment = await db.get(
+        'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+        [automationId, contactId]
+      )
+      assert.ok(enrollment)
+      assert.equal(enrollment.status, 'completed')
+      assert.equal(enrollment.current_node_id, 'done')
+      const log = JSON.parse(enrollment.log)
+      assert.ok(log.some((entry) => String(entry.detail || '').includes('publicación de Facebook')))
+    } finally {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+      await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+      await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+    }
+  }
+
+  await runCase('facebook', 'facebook')
+  await runCase('messenger', 'messenger_compat')
+})
+
 test('acción de correo en automatizaciones envía email al contacto y registra salida', async () => {
   await initializeMasterKey()
 

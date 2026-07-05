@@ -1501,15 +1501,15 @@ const CHANNEL_NODES: NodeDefinition[] = [
     senderLabel: 'Cuenta de Instagram (opcional)'
   }),
   {
-    // Responder un comentario (FB/IG) a mitad de un flujo. Agnóstico de plataforma:
-    // usa el comentario del contacto en curso. Público = en el post; privado =
-    // private reply por Messenger/Instagram DM desde ese comentario.
+    // Responder un comentario (Facebook/IG) a mitad de un flujo. Agnóstico de
+    // plataforma: usa el comentario del contacto en curso. Público = en el post;
+    // privado = private reply por Messenger/Instagram DM desde ese comentario.
     type: 'channel-comment-public-reply',
     kind: 'action',
     label: 'Responder comentario',
-    brand: 'Messenger / Instagram',
+    brand: 'Facebook / Instagram',
     category: 'action-content',
-    description: 'Responde el comentario recibido: público en la publicación o privado por Messenger/Instagram DM.',
+    description: 'Responde el comentario recibido: público en Facebook/Instagram o privado por Messenger/Instagram DM.',
     icon: MessageCircleReply,
     accent: 'green',
     addButtonLabel: 'Responder comentario',
@@ -1527,7 +1527,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
         label: 'Tipo de respuesta',
         type: 'select',
         required: true,
-        help: 'Público responde en la publicación. Privado manda el primer mensaje por Messenger o Instagram DM usando el comentario como permiso de Meta.',
+        help: 'Público responde en Facebook o Instagram. Privado manda el primer mensaje por Messenger o Instagram DM usando el comentario como permiso de Meta.',
         options: [
           { value: 'public', label: 'Responder comentario público' },
           { value: 'private', label: 'Responder por mensaje privado' }
@@ -1549,7 +1549,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     type: 'channel-comment-dm-reply',
     kind: 'action',
     label: 'Responder comentario',
-    brand: 'Messenger',
+    brand: 'Facebook / Instagram',
     category: 'action-content',
     description: 'Mensaje privado al comentarista. Se conserva para automatizaciones antiguas.',
     icon: MessageSquareText,

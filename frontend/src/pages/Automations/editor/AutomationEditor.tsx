@@ -651,10 +651,14 @@ export const AutomationEditor: React.FC = () => {
         showToast('success', 'Automatización guardada', 'Los cambios quedaron guardados')
       }
       return true
-    } catch {
+    } catch (error) {
       setSaveState('error')
       if (options.notify) {
-        showToast('error', 'No se pudo guardar', 'Revisa tu conexión e intenta de nuevo')
+        showToast(
+          'error',
+          'No se pudo guardar',
+          error instanceof Error && error.message ? error.message : 'Revisa tu conexión e intenta de nuevo'
+        )
       }
       return false
     }
@@ -1393,9 +1397,8 @@ export const AutomationEditor: React.FC = () => {
     setStatusBusy(true)
     try {
       const hadPendingChanges = Boolean(current.hasUnpublishedChanges || getHasUnsavedChanges())
-      const saved = await persistAutomation()
+      const saved = await persistAutomation({ notify: true })
       if (!saved) {
-        showToast('error', 'No se pudo guardar', 'Revisa el nombre o tu conexión e intenta de nuevo')
         return
       }
       const updated = await automationsService.updateAutomation(current.id, { status })

@@ -1427,8 +1427,9 @@ Los disparadores de comentario de Facebook e Instagram se activan solo con
 eventos reales de comentario. La respuesta no se configura como un DM suelto:
 el editor usa la acción **Responder comentario**, y dentro de esa acción el
 usuario elige si responder públicamente en la publicación o mandar un mensaje
-privado al comentarista por Messenger/Instagram DM, usando el `comment_id` del
-evento segun el contrato de Meta. Las respuestas privadas a comentario cuentan
+privado al comentarista; para Facebook ese privado viaja por Messenger y para
+Instagram por Instagram DM, usando el `comment_id` del evento segun el contrato
+de Meta. Las respuestas privadas a comentario cuentan
 como mensaje enviado para una espera posterior de respuesta; las respuestas
 publicas no abren una espera de DM.
 
