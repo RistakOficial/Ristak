@@ -49,10 +49,14 @@ import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
 } from '../services/whatsappQrDripService.js'
+import { onWhatsAppQrConnectionOpen } from '../services/whatsappQrService.js'
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { markHumanTakeoverByPhone, markHumanTakeoverIfActive } from '../services/conversationalAgentService.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
+
+const QR_CONNECTED_AVATAR_BACKFILL_DEBOUNCE_MS = 30 * 60 * 1000
+const qrConnectedAvatarBackfills = new Map()
 
 // Un envío manual desde la app significa intervención humana. Si la UI ya pausó
 // u omitió al agente, esta llamada no pisa ese estado porque solo toca activos.
@@ -69,6 +73,31 @@ function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
 }
+
+function scheduleQrConnectedAvatarBackfill({ phoneNumberId } = {}) {
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  if (!cleanPhoneNumberId) return
+
+  const now = Date.now()
+  const lastRunAt = Number(qrConnectedAvatarBackfills.get(cleanPhoneNumberId) || 0)
+  if (lastRunAt && now - lastRunAt < QR_CONNECTED_AVATAR_BACKFILL_DEBOUNCE_MS) return
+  qrConnectedAvatarBackfills.set(cleanPhoneNumberId, now)
+
+  setTimeout(() => {
+    backfillWhatsAppContactProfilePictures({
+      onlyMissing: true,
+      scope: 'all_crm'
+    })
+      .then(result => {
+        logger.info(`[WhatsApp QR] Backfill de avatares tras conectar ${cleanPhoneNumberId}: ${result.updated}/${result.scanned} actualizados`)
+      })
+      .catch(error => {
+        logger.warn(`[WhatsApp QR] No se pudo hidratar avatares tras conectar ${cleanPhoneNumberId}: ${error.message}`)
+      })
+  }, 0)
+}
+
+onWhatsAppQrConnectionOpen(scheduleQrConnectedAvatarBackfill)
 
 function isManualChatMessageOrigin(value) {
   return cleanString(value).toLowerCase() === 'manual_chat'

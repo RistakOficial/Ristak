@@ -503,8 +503,12 @@ al negocio. Busca primero por API/YCloud, luego por QR/Baileys en tandas
 pequenas, y guarda el resultado en `whatsapp_api_contacts.profile_picture_url`.
 Si un operador necesita limitarlo a perfiles previamente relacionados con
 WhatsApp puede mandar `scope: whatsapp_only`, pero no es el comportamiento
-normal. El frontend tambien debe ocultar cualquier imagen de avatar que dispare
-`onError` y mostrar iniciales en su lugar.
+normal. Al conectar o refrescar WhatsApp API/YCloud, el sync de contactos dispara
+este backfill en segundo plano; al abrirse una conexion WhatsApp QR/Baileys, el
+controller tambien dispara un backfill `all_crm` de avatares faltantes con
+debounce por numero para no repetirlo en cada reconexion. El frontend tambien
+debe ocultar cualquier imagen de avatar que dispare `onError` y mostrar
+iniciales en su lugar.
 
 Antes de mandar mensajes libres por WhatsApp API/YCloud, `whatsappApiService`
 debe revisar la ultima respuesta entrante del cliente para ese contacto y numero
