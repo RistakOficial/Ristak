@@ -140,6 +140,7 @@ const APP_NAME_NOTIFICATION_TEXTS = new Set([
 ])
 const NOTIFICATION_TITLE_EMOJI_BY_TEXT = new Map([
   ['Pago recibido', '💸'],
+  ['Pago completado', '💸'],
   ['Pago rechazado', '❌'],
   ['Pago requiere atención', '⚠️'],
   ['Pago pendiente', '⏳'],
@@ -162,15 +163,15 @@ const NOTIFICATION_TITLE_EMOJI_PREFIXES = Array.from(
   new Set(NOTIFICATION_TITLE_EMOJI_BY_TEXT.values())
 )
 const PAYMENT_STATUS_TITLES = {
-  paid: 'Pago recibido',
-  succeeded: 'Pago recibido',
-  completed: 'Pago recibido',
-  complete: 'Pago recibido',
-  fulfilled: 'Pago recibido',
-  success: 'Pago recibido',
-  captured: 'Pago recibido',
-  approved: 'Pago recibido',
-  accredited: 'Pago recibido',
+  paid: 'Pago completado',
+  succeeded: 'Pago completado',
+  completed: 'Pago completado',
+  complete: 'Pago completado',
+  fulfilled: 'Pago completado',
+  success: 'Pago completado',
+  captured: 'Pago completado',
+  approved: 'Pago completado',
+  accredited: 'Pago completado',
   failed: 'Pago rechazado',
   failure: 'Pago rechazado',
   error: 'Pago rechazado',
@@ -192,6 +193,39 @@ const PAYMENT_STATUS_TITLES = {
   deleted: 'Pago cancelado',
   scheduled: 'Pago programado',
   sent: 'Pago enviado',
+  draft: 'Pago creado'
+}
+const PAYMENT_STATUS_BODY_LABELS = {
+  paid: 'Pago completado',
+  succeeded: 'Pago completado',
+  completed: 'Pago completado',
+  complete: 'Pago completado',
+  fulfilled: 'Pago completado',
+  success: 'Pago completado',
+  captured: 'Pago completado',
+  approved: 'Pago completado',
+  accredited: 'Pago completado',
+  failed: 'Pago rechazado',
+  failure: 'Pago rechazado',
+  error: 'Pago rechazado',
+  declined: 'Pago rechazado',
+  rejected: 'Pago rechazado',
+  requires_action: 'Pago requiere atención',
+  pending: 'Pago pendiente',
+  processing: 'Pago pendiente',
+  in_process: 'Pago pendiente',
+  partial: 'Pago parcial',
+  overdue: 'Pago vencido',
+  refunded: 'Pago reembolsado',
+  refund: 'Pago reembolsado',
+  partially_refunded: 'Pago reembolsado',
+  void: 'Pago cancelado',
+  voided: 'Pago cancelado',
+  cancelled: 'Pago cancelado',
+  canceled: 'Pago cancelado',
+  deleted: 'Pago cancelado',
+  scheduled: 'Pago programado',
+  sent: 'Link de pago enviado',
   draft: 'Pago creado'
 }
 const APPOINTMENT_STATUS_TITLES = {
@@ -1196,6 +1230,11 @@ function getPaymentNotificationTitle(payment = {}) {
   return addNotificationTitleEmoji(PAYMENT_STATUS_TITLES[status] || 'Pago actualizado')
 }
 
+function getPaymentNotificationStatusLabel(payment = {}) {
+  const status = normalizePaymentStatus(payment.paymentStatus || payment.payment_status || payment.status || 'paid')
+  return PAYMENT_STATUS_BODY_LABELS[status] || 'Pago actualizado'
+}
+
 function getPaymentContactLabel(payment = {}) {
   const contact = cleanNotificationText(
     payment.contactName ||
@@ -1219,7 +1258,7 @@ function getPaymentConceptLabel(payment = {}) {
     payment.name ||
     ''
   )
-  if (!concept || /^pago(?:\s+(?:registrado|recibido|manual|programado))?$/i.test(concept)) return ''
+  if (!concept || /^pago(?:\s+(?:registrado|recibido|manual|programado|required|requerido|obligatorio|solicitado|pendiente))?$/i.test(concept)) return ''
   return concept.slice(0, 90)
 }
 
@@ -1237,6 +1276,7 @@ function getPaymentDetailLabel(payment = {}) {
 
 function getPaymentNotificationBody(payment = {}) {
   const parts = [
+    getPaymentNotificationStatusLabel(payment),
     getPaymentContactLabel(payment),
     formatPaymentAmount(payment.amount, payment.currency),
     getPaymentConceptLabel(payment),

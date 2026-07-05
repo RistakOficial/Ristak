@@ -38,11 +38,11 @@ test('normaliza payloads push para no usar Ristak/Reistack como titulo', () => {
 test('agrega emoji inicial a titulos semanticos de citas y pagos', () => {
   assert.equal(
     normalizeNotificationPayload({
-      title: 'Pago recibido',
+      title: 'Pago completado',
       body: 'Ana Pago · $1,500.00',
       category: 'payment'
     }).title,
-    '💸 Pago recibido'
+    '💸 Pago completado'
   )
 
   assert.equal(
@@ -74,8 +74,9 @@ test('construye titulos semanticos para pagos', () => {
     title: 'Consulta dental'
   })
 
-  assert.equal(received.title, '💸 Pago recibido')
+  assert.equal(received.title, '💸 Pago completado')
   assert.equal(received.contactName, 'Ana Pago')
+  assert.match(received.body, /Pago completado/)
   assert.match(received.body, /Ana Pago/)
   assert.match(received.body, /\$1,500\.00/)
   assert.match(received.body, /Consulta dental/)
@@ -90,6 +91,7 @@ test('construye titulos semanticos para pagos', () => {
   })
 
   assert.equal(rejected.title, '❌ Pago rechazado')
+  assert.match(rejected.body, /Pago rechazado/)
   assert.match(rejected.body, /Luis Cliente/)
   assert.match(rejected.body, /Tarjeta rechazada/)
 
@@ -102,6 +104,56 @@ test('construye titulos semanticos para pagos', () => {
   })
 
   assert.equal(refunded.title, '↩️ Pago reembolsado')
+  assert.match(refunded.body, /Pago reembolsado/)
+})
+
+test('push de pago publico no usa Pago requerido como resultado del checkout', () => {
+  const payload = buildPaymentNotificationPayload({
+    id: 'site_payment_completed_test',
+    contactName: 'Raul Cliente',
+    amount: 2000,
+    currency: 'MXN',
+    status: 'paid',
+    title: 'Pago requerido',
+    description: 'Completa el pago para continuar.',
+    payment_provider: 'rebill',
+    public_payment_id: 'rstk_pay_push_test'
+  })
+
+  assert.equal(payload.title, '💸 Pago completado')
+  assert.match(payload.body, /Pago completado/)
+  assert.match(payload.body, /Raul Cliente/)
+  assert.match(payload.body, /\$2,000\.00/)
+  assert.doesNotMatch(payload.body, /Pago requerido/i)
+})
+
+test('push de pagos cubre estados pendientes y de atencion sin sonar a exito', () => {
+  const pending = buildPaymentNotificationPayload({
+    id: 'pay_pending_test',
+    contactName: 'Ana Pendiente',
+    amount: 750,
+    currency: 'MXN',
+    status: 'pending',
+    title: 'Pago requerido'
+  })
+
+  assert.equal(pending.title, '⏳ Pago pendiente')
+  assert.match(pending.body, /Pago pendiente/)
+  assert.doesNotMatch(pending.body, /Pago completado/)
+  assert.doesNotMatch(pending.body, /Pago requerido/i)
+
+  const requiresAction = buildPaymentNotificationPayload({
+    id: 'pay_requires_action_test',
+    contactName: 'Luis Atencion',
+    amount: 900,
+    currency: 'MXN',
+    status: 'requires_action',
+    failureReason: 'El banco pide autenticacion adicional.'
+  })
+
+  assert.equal(requiresAction.title, '⚠️ Pago requiere atención')
+  assert.match(requiresAction.body, /Pago requiere atención/)
+  assert.match(requiresAction.body, /autenticacion adicional/)
 })
 
 test('push de contacto unico usa avatar del contacto cuando existe foto publica', async () => {

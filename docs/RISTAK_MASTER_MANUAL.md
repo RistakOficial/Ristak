@@ -761,6 +761,22 @@ payload trae email o telefono, Ristak crea uno nuevo con source
 resolver contacto; si la resolucion falla, se conserva el pago y se registra un
 warning para reintento/diagnostico posterior.
 
+### Push de estado de pagos
+
+Las notificaciones push de pagos deben comunicar el resultado real del cobro, no
+el titulo del bloque, boton o concepto del checkout. Esta regla aplica a pagos
+manuales, links publicos, Sites y webhooks de Stripe, Conekta, Mercado Pago,
+CLIP, Rebill y HighLevel invoices.
+
+Estados exitosos (`paid`, `approved`, `succeeded`, `completed` y equivalentes)
+deben mostrarse como `Pago completado`. Rechazos o fallos reales (`failed`,
+`declined`, `rejected`, `error`) deben mostrarse como `Pago rechazado`.
+Pendientes/procesando deben mostrarse como `Pago pendiente`, `requires_action`
+como `Pago requiere atencion`, reembolsos como `Pago reembolsado` y cancelados
+como `Pago cancelado`. El cuerpo de la push puede incluir cliente, monto,
+concepto y razon de fallo, pero etiquetas genericas de Sites como `Pago
+requerido` no deben aparecer como si fueran el resultado del pago.
+
 ### Automatizaciones de pago
 
 Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
