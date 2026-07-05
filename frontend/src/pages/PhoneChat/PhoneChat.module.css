@@ -4394,12 +4394,12 @@
 }
 
 .messageLocationBubble {
-  width: min(292px, calc(100vw - 88px));
-  padding: 4px;
+  width: min(310px, calc(100vw - 82px));
+  padding: 3px;
 }
 
 .messageLocationBubble p {
-  padding: 2px 5px 0;
+  padding: 2px 7px 0;
 }
 
 .messageLocation {
@@ -4409,85 +4409,64 @@
   overflow: hidden;
   color: inherit;
   text-decoration: none;
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--phone-chat-surface) 76%, transparent);
+  border: 1px solid color-mix(in srgb, var(--phone-chat-border) 74%, transparent);
+  border-radius: 17px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 94%, transparent);
+  box-shadow:
+    0 1px 0 color-mix(in srgb, var(--phone-chat-surface) 78%, transparent),
+    0 12px 28px color-mix(in srgb, var(--phone-chat-text) 9%, transparent);
 }
 
 .messageRow_outbound .messageLocation {
-  background: color-mix(in srgb, var(--phone-chat-outbound) 62%, var(--phone-chat-surface) 38%);
+  border-color: color-mix(in srgb, var(--phone-chat-outbound-meta) 18%, transparent);
+  background: color-mix(in srgb, var(--phone-chat-outbound) 76%, var(--phone-chat-surface) 24%);
 }
 
 .messageLocationMap {
+  --location-pin-color: #ec4b64;
   position: relative;
   display: block;
   width: 100%;
-  aspect-ratio: 16 / 9;
+  aspect-ratio: 1.92 / 1;
   overflow: hidden;
-  border-radius: 10px 10px 7px 7px;
+  border-radius: 14px;
   background:
-    linear-gradient(28deg, transparent 0 38%, color-mix(in srgb, var(--phone-chat-accent) 18%, transparent) 39% 44%, transparent 45% 100%),
-    linear-gradient(104deg, transparent 0 45%, color-mix(in srgb, var(--phone-chat-text) 12%, transparent) 46% 51%, transparent 52% 100%),
-    linear-gradient(0deg, color-mix(in srgb, var(--phone-chat-accent) 16%, transparent) 0 30%, transparent 31% 100%),
-    color-mix(in srgb, var(--phone-chat-surface-soft) 86%, var(--phone-chat-accent) 14%);
+    radial-gradient(circle at 48% 48%, color-mix(in srgb, var(--location-pin-color) 15%, transparent), transparent 18%),
+    linear-gradient(118deg, transparent 0 27%, color-mix(in srgb, var(--phone-chat-surface) 82%, transparent) 28% 34%, transparent 35% 100%),
+    linear-gradient(17deg, transparent 0 48%, color-mix(in srgb, var(--phone-chat-surface) 86%, transparent) 49% 56%, transparent 57% 100%),
+    color-mix(in srgb, var(--phone-chat-accent-soft) 62%, var(--phone-chat-surface) 38%);
+  isolation: isolate;
 }
 
-.messageLocationMap::before,
-.messageLocationMap::after {
-  content: "";
+.messageLocationTileLayer {
   position: absolute;
-  inset: auto;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--phone-chat-surface) 92%, transparent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--phone-chat-text) 8%, transparent);
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
 }
 
-.messageLocationMap::before {
-  width: 135%;
-  height: 18px;
-  left: -18%;
-  top: 38%;
-  transform: rotate(-13deg);
-}
-
-.messageLocationMap::after {
-  width: 120%;
-  height: 15px;
-  left: -11%;
-  bottom: 22%;
-  transform: rotate(9deg);
-}
-
-.messageLocationRoad {
+.messageLocationTile {
   position: absolute;
+  width: 144px;
+  height: 144px;
+  object-fit: cover;
+  opacity: 0.94;
+  filter: saturate(0.96) contrast(1.02) brightness(1.03);
+  transform: translateZ(0);
+}
+
+.messageLocationMapOverlay {
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  display: block;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--phone-chat-surface) 96%, var(--phone-chat-accent) 4%);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--phone-chat-text) 7%, transparent);
-}
-
-.messageLocationRoadA {
-  width: 14px;
-  height: 130%;
-  left: 28%;
-  top: -15%;
-  transform: rotate(21deg);
-}
-
-.messageLocationRoadB {
-  width: 12px;
-  height: 112%;
-  right: 24%;
-  top: -7%;
-  transform: rotate(-18deg);
-}
-
-.messageLocationRoadC {
-  width: 88%;
-  height: 12px;
-  left: 6%;
-  top: 16%;
-  transform: rotate(7deg);
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06), transparent 38%),
+    radial-gradient(circle at 50% 46%, transparent 0 17%, rgba(255, 255, 255, 0.2) 18%, transparent 29%),
+    linear-gradient(0deg, rgba(3, 12, 30, 0.18), transparent 34%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--phone-chat-surface) 62%, transparent),
+    inset 0 -28px 42px rgba(3, 12, 30, 0.12);
 }
 
 .messageLocationPin {
@@ -4498,18 +4477,65 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 42px;
+  height: 42px;
+  color: var(--location-pin-color);
+  filter:
+    drop-shadow(0 2px 1px rgba(255, 255, 255, 0.48))
+    drop-shadow(0 12px 12px rgba(3, 12, 30, 0.26));
+  transform: translate(-50%, -82%);
+}
+
+.messageLocationPin::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 15px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(3, 12, 30, 0.22);
+  filter: blur(2px);
+  transform: translateX(-50%);
+}
+
+.messageLocationPin svg {
+  position: relative;
+  z-index: 1;
   width: 34px;
   height: 34px;
-  color: var(--neg);
-  filter: drop-shadow(0 5px 8px color-mix(in srgb, var(--phone-chat-text) 22%, transparent));
-  transform: translate(-50%, -86%);
+  stroke: color-mix(in srgb, var(--location-pin-color) 64%, #ffffff 36%);
+  stroke-width: 1.7;
+}
+
+.messageLocationAttribution {
+  position: absolute;
+  right: 7px;
+  bottom: 6px;
+  z-index: 2;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: rgba(3, 12, 30, 0.66);
+  background: rgba(255, 255, 255, 0.78);
+  font-size: 8px;
+  font-weight: 720;
+  line-height: 1;
+  backdrop-filter: blur(8px);
 }
 
 .messageLocationDetails {
   display: grid;
   min-width: 0;
-  gap: 1px;
-  padding: 7px 8px 8px;
+  gap: 3px;
+  padding: 9px 10px 10px;
+}
+
+.messageLocationTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 10px;
 }
 
 .messageLocationDetails strong,
@@ -4520,26 +4546,88 @@
 }
 
 .messageLocationDetails strong {
-  font-size: 14px;
+  min-width: 0;
+  font-size: 15px;
   font-weight: 760;
+  letter-spacing: 0;
 }
 
 .messageLocationDetails small {
   color: var(--phone-chat-muted);
-  font-size: 11px;
-  font-weight: 680;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0;
+}
+
+.messageLocationAction {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 3px;
+  color: var(--phone-chat-accent);
+  font-size: 10px;
+  font-weight: 780;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.messageLocationCoordinates {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 3px 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--phone-chat-muted) 92%, var(--phone-chat-text) 8%);
+  background: color-mix(in srgb, var(--phone-chat-accent-soft) 42%, transparent);
+  font-size: 10px;
+  font-weight: 720;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 :global(body[data-phone-chat-tone="dark"]) .messageLocation {
-  background: color-mix(in srgb, var(--phone-chat-surface-soft) 42%, transparent);
+  border-color: color-mix(in srgb, var(--phone-chat-border) 84%, transparent);
+  background: color-mix(in srgb, var(--phone-chat-surface-soft) 72%, transparent);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04),
+    0 14px 30px rgba(0, 0, 0, 0.28);
 }
 
 :global(body[data-phone-chat-tone="dark"]) .messageLocationMap {
+  --location-pin-color: #ff5d78;
   background:
-    linear-gradient(28deg, transparent 0 38%, color-mix(in srgb, var(--phone-chat-accent) 24%, transparent) 39% 44%, transparent 45% 100%),
-    linear-gradient(104deg, transparent 0 45%, color-mix(in srgb, var(--phone-chat-text) 15%, transparent) 46% 51%, transparent 52% 100%),
-    linear-gradient(0deg, color-mix(in srgb, var(--phone-chat-accent) 18%, transparent) 0 30%, transparent 31% 100%),
-    color-mix(in srgb, var(--phone-chat-panel) 82%, var(--phone-chat-accent) 18%);
+    radial-gradient(circle at 48% 48%, rgba(255, 93, 120, 0.22), transparent 18%),
+    linear-gradient(118deg, transparent 0 27%, rgba(255, 255, 255, 0.12) 28% 34%, transparent 35% 100%),
+    linear-gradient(17deg, transparent 0 48%, rgba(255, 255, 255, 0.1) 49% 56%, transparent 57% 100%),
+    color-mix(in srgb, var(--phone-chat-panel) 76%, var(--phone-chat-accent) 24%);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .messageLocationTile {
+  opacity: 0.84;
+  filter: saturate(0.88) contrast(1.05) brightness(0.72);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .messageLocationMapOverlay {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent 38%),
+    radial-gradient(circle at 50% 46%, transparent 0 17%, rgba(255, 255, 255, 0.08) 18%, transparent 29%),
+    linear-gradient(0deg, rgba(0, 0, 0, 0.3), transparent 34%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.09),
+    inset 0 -32px 48px rgba(0, 0, 0, 0.24);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .messageLocationAttribution {
+  color: rgba(245, 249, 255, 0.72);
+  background: rgba(4, 16, 42, 0.62);
+}
+
+:global(body[data-phone-chat-tone="dark"]) .messageLocationCoordinates {
+  background: color-mix(in srgb, var(--phone-chat-accent) 18%, transparent);
 }
 
 .messageStarBadge {

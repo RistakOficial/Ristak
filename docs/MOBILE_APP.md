@@ -135,10 +135,17 @@ Para ubicaciones entrantes, la push debe mostrar `📍 Ubicación` y no debe usa
 `notificationImageUrl` / `notificationAttachmentUrl`; la ubicación no es media
 lateral. En el chat móvil, los mensajes `location` se renderizan como una
 tarjeta tipo mapa con pin y enlace a Google Maps usando las coordenadas
-guardadas en el payload del proveedor. El botón `+ > Ubicación` comparte la
-ubicación actual del dispositivo: por WhatsApp API oficial o QR se manda como
-mensaje nativo de ubicación; por Messenger, Instagram o HighLevel se manda como
-texto con link de mapa cuando no exista soporte nativo verificado. iOS requiere
+guardadas en el payload del proveedor. El preview visual usa tiles HTTPS de
+OpenStreetMap (`https://tile.openstreetmap.org/{z}/{x}/{y}.png`) solo para las
+tarjetas visibles y debe mantener atribucion `© OpenStreetMap contributors`; no
+debe hacer prefetch masivo, descargas offline ni scraping. No uses
+Nominatim/reverse geocoding publico como buscador generico o enriquecedor
+automatico desde el cliente: si algun dia se necesita direccion enriquecida,
+debe pasar por un proveedor/servicio propio con cache y politica de uso
+revisada. El botón `+ > Ubicación` comparte la ubicación actual del dispositivo:
+por WhatsApp API oficial o QR se manda como mensaje nativo de ubicación; por
+Messenger, Instagram o HighLevel se manda como texto con link de mapa cuando no
+exista soporte nativo verificado. iOS requiere
 `NSLocationWhenInUseUsageDescription` en `frontend/ios/App/App/Info.plist`.
 
 En Android el small icon del sistema sigue siendo `ic_stat_ristak` porque

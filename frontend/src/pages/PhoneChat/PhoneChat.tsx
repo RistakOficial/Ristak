@@ -3323,6 +3323,67 @@ function buildLocationUrl(location: Pick<ChatLocation, 'latitude' | 'longitude'>
   return `https://www.google.com/maps?q=${encodeURIComponent(`${location.latitude},${location.longitude}`)}`
 }
 
+const LOCATION_MAP_TILE_ZOOM = 16
+const LOCATION_MAP_TILE_SIZE = 144
+const LOCATION_MAP_MAX_LATITUDE = 85.05112878
+
+type LocationMapTile = {
+  key: string
+  url: string
+  left: number
+  top: number
+}
+
+function clampLocationLatitude(latitude: number) {
+  return Math.max(-LOCATION_MAP_MAX_LATITUDE, Math.min(LOCATION_MAP_MAX_LATITUDE, latitude))
+}
+
+function normalizeLocationLongitude(longitude: number) {
+  return ((((longitude + 180) % 360) + 360) % 360) - 180
+}
+
+function getOpenStreetMapTilePosition(location: Pick<ChatLocation, 'latitude' | 'longitude'>) {
+  const latitude = clampLocationLatitude(location.latitude)
+  const longitude = normalizeLocationLongitude(location.longitude)
+  const latitudeRad = (latitude * Math.PI) / 180
+  const scale = 2 ** LOCATION_MAP_TILE_ZOOM
+  const x = ((longitude + 180) / 360) * scale
+  const y = (
+    1 - Math.log(Math.tan(latitudeRad) + (1 / Math.cos(latitudeRad))) / Math.PI
+  ) / 2 * scale
+
+  return { x, y, scale }
+}
+
+function getLocationMapTiles(location: ChatLocation): LocationMapTile[] {
+  const { x, y, scale } = getOpenStreetMapTilePosition(location)
+  const baseX = Math.floor(x)
+  const baseY = Math.floor(y)
+  const fractionX = x - baseX
+  const fractionY = y - baseY
+  const tiles: LocationMapTile[] = []
+
+  for (let row = -1; row <= 1; row += 1) {
+    for (let column = -1; column <= 1; column += 1) {
+      const wrappedX = ((baseX + column) % scale + scale) % scale
+      const clampedY = Math.max(0, Math.min(scale - 1, baseY + row))
+
+      tiles.push({
+        key: `${LOCATION_MAP_TILE_ZOOM}-${wrappedX}-${clampedY}`,
+        url: `https://tile.openstreetmap.org/${LOCATION_MAP_TILE_ZOOM}/${wrappedX}/${clampedY}.png`,
+        left: (column - fractionX) * LOCATION_MAP_TILE_SIZE,
+        top: (row - fractionY) * LOCATION_MAP_TILE_SIZE
+      })
+    }
+  }
+
+  return tiles
+}
+
+function formatLocationCoordinates(location: Pick<ChatLocation, 'latitude' | 'longitude'>) {
+  return `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`
+}
+
 function normalizeLocationValue(value: unknown): ChatLocation | undefined {
   if (!value || typeof value !== 'object') return undefined
   const location = value as Record<string, unknown>
@@ -3394,7 +3455,7 @@ function getLocationTitle(location?: ChatLocation) {
 
 function getLocationSubtitle(location?: ChatLocation) {
   if (!location) return ''
-  return location.address || `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`
+  return location.address || formatLocationCoordinates(location)
 }
 
 function buildLocationFallbackText(location: ChatLocation) {
@@ -14154,20 +14215,50 @@ export const PhoneChat: React.FC = () => {
     const href = location.url || buildLocationUrl(location)
     const title = getLocationTitle(location)
     const subtitle = getLocationSubtitle(location)
+    const tiles = getLocationMapTiles(location)
+    const coordinates = formatLocationCoordinates(location)
 
     return (
-      <a className={styles.messageLocation} href={href} target="_blank" rel="noreferrer">
-        <span className={styles.messageLocationMap} aria-hidden="true">
-          <span className={`${styles.messageLocationRoad} ${styles.messageLocationRoadA}`} />
-          <span className={`${styles.messageLocationRoad} ${styles.messageLocationRoadB}`} />
-          <span className={`${styles.messageLocationRoad} ${styles.messageLocationRoadC}`} />
+      <a
+        className={styles.messageLocation}
+        href={href}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`Abrir ${title} en Maps`}
+      >
+        <span className={styles.messageLocationMap}>
+          <span className={styles.messageLocationTileLayer} aria-hidden="true">
+            {tiles.map((tile) => (
+              <img
+                key={tile.key}
+                className={styles.messageLocationTile}
+                src={tile.url}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                style={{
+                  left: `calc(50% + ${tile.left}px)`,
+                  top: `calc(50% + ${tile.top}px)`
+                }}
+              />
+            ))}
+          </span>
+          <span className={styles.messageLocationMapOverlay} aria-hidden="true" />
           <span className={styles.messageLocationPin}>
             <MapPin size={26} fill="currentColor" />
           </span>
+          <span className={styles.messageLocationAttribution}>© OpenStreetMap contributors</span>
         </span>
         <span className={styles.messageLocationDetails}>
-          <strong>{title}</strong>
+          <span className={styles.messageLocationTitleRow}>
+            <strong>{title}</strong>
+            <span className={styles.messageLocationAction}>
+              Abrir
+              <ExternalLink size={12} />
+            </span>
+          </span>
           {subtitle && <small>{subtitle}</small>}
+          {subtitle !== coordinates && <span className={styles.messageLocationCoordinates}>{coordinates}</span>}
         </span>
       </a>
     )
