@@ -248,7 +248,8 @@ export function normalizeContactAdvancedFilters(raw = {}) {
               operator: cleanString(rule?.operator, 80),
               value: rule?.value,
               valueTo: rule?.valueTo,
-              customKey: cleanString(rule?.customKey, 180)
+              customKey: cleanString(rule?.customKey, 180),
+              valueType: cleanString(rule?.valueType, 40)
             })).filter(rule => rule.field && rule.operator)
           : []
 
@@ -528,12 +529,73 @@ const customFieldKeyVariants = (key) => uniqueCleanStrings([
   String(key || '').replace(/^custom:/, '')
 ], 180).map(lowerValue)
 
+const customFieldNumberExpression = (valueExpression) => {
+  if (isPostgresDatabase) {
+    return `CASE
+      WHEN TRIM(CAST(${valueExpression} AS TEXT)) ~ '^-?[0-9]+(\\.[0-9]+)?$'
+      THEN CAST(${valueExpression} AS NUMERIC)
+      ELSE NULL
+    END`
+  }
+
+  return `CAST(NULLIF(TRIM(CAST(${valueExpression} AS TEXT)), '') AS REAL)`
+}
+
+const customFieldDateTextExpression = (valueExpression) => (
+  isPostgresDatabase
+    ? `LEFT(TRIM(CAST(${valueExpression} AS TEXT)), 10)`
+    : `substr(TRIM(CAST(${valueExpression} AS TEXT)), 1, 10)`
+)
+
+const buildCustomFieldDateMatchCondition = (valueExpression, rule) => {
+  const dateExpression = customFieldDateTextExpression(valueExpression)
+  const emptyExpression = `NULLIF(${dateExpression}, '')`
+  const operator = rule.operator
+
+  if (operator === 'empty') return { condition: `${emptyExpression} IS NULL`, params: [] }
+  if (operator === 'not_empty') return { condition: `${emptyExpression} IS NOT NULL`, params: [] }
+
+  if (operator === 'last_days' || operator === 'older_days') {
+    const days = Math.max(0, Number.parseInt(cleanString(rule.value, 40), 10) || 0)
+    if (!days) return null
+    const threshold = DateTime.now()
+      .setZone(rule.timezone || 'UTC')
+      .minus({ days })
+      .toISODate()
+    return {
+      condition: operator === 'last_days' ? `${dateExpression} >= ?` : `${dateExpression} < ?`,
+      params: [threshold]
+    }
+  }
+
+  const left = cleanString(rule.value, 40).slice(0, 10)
+  if (!left) return null
+
+  if (operator === 'between') {
+    const right = cleanString(rule.valueTo, 40).slice(0, 10)
+    if (!right) return null
+    return {
+      condition: `${dateExpression} BETWEEN ? AND ?`,
+      params: [left <= right ? left : right, left <= right ? right : left]
+    }
+  }
+
+  if (operator === 'before') return { condition: `${dateExpression} < ?`, params: [left] }
+  if (operator === 'after') return { condition: `${dateExpression} > ?`, params: [left] }
+  return { condition: `${dateExpression} = ?`, params: [left] }
+}
+
+const customFieldTruthyCondition = (valueExpression) => (
+  `LOWER(TRIM(CAST(${valueExpression} AS TEXT))) IN ('true', '1', 'yes', 'si', 'sí', 'on', 'checked')`
+)
+
 const buildCustomFieldCondition = (rule, contactAlias = 'c') => {
   const keyValues = customFieldKeyVariants(rule.customKey || rule.value)
   if (!keyValues.length) return null
 
   const rows = customFieldRowsExpression(contactAlias)
   const operator = rule.operator
+  const valueType = lowerValue(rule.valueType)
   const hasMatchingField = `${rows.keyExpression} IN (${placeholderList(keyValues)})`
 
   if (operator === 'empty') {
@@ -558,6 +620,44 @@ const buildCustomFieldCondition = (rule, contactAlias = 'c') => {
       )`,
       params: keyValues
     }
+  }
+
+  if (valueType === 'number') {
+    const valueCondition = buildNumberMatchCondition(customFieldNumberExpression(rows.valueExpression), operator, rule.value, rule.valueTo)
+    if (!valueCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM ${rows.from}
+        WHERE ${hasMatchingField}
+          AND ${valueCondition.condition}
+      )`,
+      params: [...keyValues, ...valueCondition.params]
+    }
+  }
+
+  if (valueType === 'date') {
+    const valueCondition = buildCustomFieldDateMatchCondition(rows.valueExpression, rule)
+    if (!valueCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM ${rows.from}
+        WHERE ${hasMatchingField}
+          AND ${valueCondition.condition}
+      )`,
+      params: [...keyValues, ...valueCondition.params]
+    }
+  }
+
+  if (valueType === 'boolean') {
+    const truthyCondition = `EXISTS (
+      SELECT 1
+      FROM ${rows.from}
+      WHERE ${hasMatchingField}
+        AND ${customFieldTruthyCondition(rows.valueExpression)}
+    )`
+    return buildBooleanCondition({ condition: truthyCondition, params: keyValues }, operator, rule.value)
   }
 
   const valueCondition = buildTextMatchCondition(`CAST(${rows.valueExpression} AS TEXT)`, operator, rule.value)

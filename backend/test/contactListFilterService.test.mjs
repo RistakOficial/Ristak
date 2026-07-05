@@ -108,6 +108,32 @@ test('buildContactListWhere permite grupos con OR y campos nativos extendidos', 
   assert.ok(where.params.includes('%lead_123%'))
 })
 
+test('buildContactListWhere respeta tipos de campos personalizados avanzados', () => {
+  const where = buildContactListWhere({
+    alias: 'c',
+    advancedFilters: {
+      groups: [{
+        mode: 'all',
+        rules: [
+          { field: 'custom_field', customKey: 'budget', valueType: 'number', operator: 'gt', value: '2500' },
+          { field: 'custom_field', customKey: 'birthday', valueType: 'date', operator: 'between', value: '2026-07-01', valueTo: '2026-07-31' },
+          { field: 'custom_field', customKey: 'vip', valueType: 'boolean', operator: 'yes' }
+        ]
+      }]
+    }
+  })
+
+  assert.match(where.whereClause, /CAST\(NULLIF\(TRIM\(CAST\(/)
+  assert.match(where.whereClause, /substr\(TRIM\(CAST\(/)
+  assert.match(where.whereClause, /LOWER\(TRIM\(CAST\(/)
+  assert.ok(where.params.includes('budget'))
+  assert.ok(where.params.includes(2500))
+  assert.ok(where.params.includes('birthday'))
+  assert.ok(where.params.includes('2026-07-01'))
+  assert.ok(where.params.includes('2026-07-31'))
+  assert.ok(where.params.includes('vip'))
+})
+
 test('buildContactListWhere parametriza la fecha actual en citas futuras', () => {
   const where = buildContactListWhere({
     alias: 'c',

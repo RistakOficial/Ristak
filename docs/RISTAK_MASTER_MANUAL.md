@@ -283,6 +283,12 @@ Capacidades:
   atribucion/tracking, automatizaciones y campos personalizados activos en la
   misma lista; datos como ciudad, pais o codigo postal se filtran como campos
   personalizados cuando no existen como columna nativa del contacto.
+- El panel de filtros debe usar lenguaje de usuario final en espanol claro:
+  bloques, condiciones, combinar, ordenar y excluir. No debe exponer terminos
+  tecnicos como "anidado". Cada campo debe renderizar el control congruente con
+  su tipo: fechas con selector de fecha, cantidades/importes con valor numerico,
+  campos booleanos como si/no, listas conocidas como dropdown y campañas,
+  conjuntos o anuncios como busqueda contra el catalogo global de Meta Ads.
 - Filtros avanzados combinables en la lista de contactos. El endpoint
   `/api/contacts` aplica del lado servidor los filtros rapidos (todos, leads,
   citados, asistencias, clientes), conserva compatibilidad con filtros legacy de

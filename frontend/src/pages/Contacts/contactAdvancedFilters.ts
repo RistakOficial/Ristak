@@ -1,5 +1,7 @@
 export type ContactAdvancedFieldType = 'text' | 'number' | 'date' | 'boolean' | 'select' | 'tags' | 'custom_field'
 
+export type ContactAdvancedFieldCatalog = 'campaigns' | 'adsets' | 'ads'
+
 export type ContactAdvancedOperator =
   | 'is'
   | 'is_not'
@@ -37,6 +39,8 @@ export interface ContactAdvancedField {
   label: string
   type: ContactAdvancedFieldType
   options?: ContactAdvancedOption[]
+  catalog?: ContactAdvancedFieldCatalog
+  placeholder?: string
 }
 
 export interface ContactAdvancedFieldGroup {
@@ -51,6 +55,7 @@ export interface ContactAdvancedRule {
   value?: string | string[] | number | boolean | null
   valueTo?: string | number | null
   customKey?: string
+  valueType?: ContactAdvancedFieldType
 }
 
 export interface ContactAdvancedGroup {
@@ -158,6 +163,80 @@ const paymentModeOptions: ContactAdvancedOption[] = [
   { value: 'test', label: 'Prueba' }
 ]
 
+const appointmentStatusOptions: ContactAdvancedOption[] = [
+  { value: 'confirmed', label: 'Confirmada' },
+  { value: 'scheduled', label: 'Agendada' },
+  { value: 'showed', label: 'Asistió' },
+  { value: 'attended', label: 'Asistió' },
+  { value: 'completed', label: 'Completada' },
+  { value: 'no_show', label: 'No asistió' },
+  { value: 'cancelled', label: 'Cancelada' },
+  { value: 'canceled', label: 'Cancelada' }
+]
+
+const paymentProviderOptions: ContactAdvancedOption[] = [
+  { value: 'stripe', label: 'Stripe' },
+  { value: 'conekta', label: 'Conekta' },
+  { value: 'rebill', label: 'Rebill' },
+  { value: 'mercadopago', label: 'Mercado Pago' },
+  { value: 'paypal', label: 'PayPal' },
+  { value: 'manual', label: 'Manual' }
+]
+
+const paymentMethodOptions: ContactAdvancedOption[] = [
+  { value: 'card', label: 'Tarjeta' },
+  { value: 'credit_card', label: 'Tarjeta de crédito' },
+  { value: 'debit_card', label: 'Tarjeta de débito' },
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'transfer', label: 'Transferencia' },
+  { value: 'oxxo', label: 'OXXO' },
+  { value: 'spei', label: 'SPEI' },
+  { value: 'link', label: 'Link de pago' }
+]
+
+const sourcePlatformOptions: ContactAdvancedOption[] = [
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'google', label: 'Google' },
+  { value: 'youtube', label: 'YouTube' },
+  { value: 'tiktok', label: 'TikTok' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'directo', label: 'Directo' },
+  { value: 'otro', label: 'Otro' }
+]
+
+const deviceOptions: ContactAdvancedOption[] = [
+  { value: 'desktop', label: 'Computadora' },
+  { value: 'mobile', label: 'Celular' },
+  { value: 'tablet', label: 'Tablet' }
+]
+
+const browserOptions: ContactAdvancedOption[] = [
+  { value: 'chrome', label: 'Chrome' },
+  { value: 'safari', label: 'Safari' },
+  { value: 'edge', label: 'Edge' },
+  { value: 'firefox', label: 'Firefox' },
+  { value: 'opera', label: 'Opera' },
+  { value: 'samsung', label: 'Samsung Internet' }
+]
+
+const operatingSystemOptions: ContactAdvancedOption[] = [
+  { value: 'ios', label: 'iOS' },
+  { value: 'android', label: 'Android' },
+  { value: 'macos', label: 'macOS' },
+  { value: 'windows', label: 'Windows' },
+  { value: 'linux', label: 'Linux' }
+]
+
+const automationStatusOptions: ContactAdvancedOption[] = [
+  { value: 'active', label: 'Activa' },
+  { value: 'waiting', label: 'En espera' },
+  { value: 'completed', label: 'Finalizada' },
+  { value: 'cancelled', label: 'Cancelada' },
+  { value: 'canceled', label: 'Cancelada' },
+  { value: 'failed', label: 'Fallida' }
+]
+
 export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
   {
     label: 'Contacto',
@@ -200,7 +279,7 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'attended_appointments_count', label: 'Cantidad de asistencias', type: 'number' },
       { key: 'appointment_date', label: 'Fecha de cita', type: 'date' },
       { key: 'contact_appointment_date', label: 'Última cita registrada', type: 'date' },
-      { key: 'appointment_status', label: 'Estado de cita', type: 'text' },
+      { key: 'appointment_status', label: 'Estado de cita', type: 'select', options: appointmentStatusOptions },
       { key: 'appointment_calendar', label: 'Calendario de cita', type: 'text' },
       { key: 'appointment_assigned_user', label: 'Usuario asignado a cita', type: 'text' },
       { key: 'appointment_title', label: 'Título de cita', type: 'text' }
@@ -220,9 +299,9 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'payment_date', label: 'Fecha de pago', type: 'date' },
       { key: 'payment_amount', label: 'Importe de pago', type: 'number' },
       { key: 'payment_status', label: 'Estado de pago', type: 'select', options: paymentStatusOptions },
-      { key: 'payment_provider', label: 'Proveedor de pago', type: 'text' },
+      { key: 'payment_provider', label: 'Proveedor de pago', type: 'select', options: paymentProviderOptions },
       { key: 'payment_mode', label: 'Modo de pago', type: 'select', options: paymentModeOptions },
-      { key: 'payment_method', label: 'Método de pago', type: 'text' }
+      { key: 'payment_method', label: 'Método de pago', type: 'select', options: paymentMethodOptions }
     ]
   },
   {
@@ -232,8 +311,8 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'attribution_session_source', label: 'Fuente de atribución', type: 'text' },
       { key: 'attribution_medium', label: 'Medio de atribución', type: 'text' },
       { key: 'attribution_ctwa_clid', label: 'ID de clic de WhatsApp/Facebook', type: 'text' },
-      { key: 'attribution_ad_name', label: 'Anuncio de atribución', type: 'text' },
-      { key: 'attribution_ad_id', label: 'ID de anuncio de atribución', type: 'text' },
+      { key: 'attribution_ad_name', label: 'Anuncio de atribución', type: 'text', catalog: 'ads', placeholder: 'Buscar anuncio' },
+      { key: 'attribution_ad_id', label: 'ID de anuncio de atribución', type: 'text', catalog: 'ads', placeholder: 'Buscar anuncio por nombre o ID' },
       { key: 'landing_page', label: 'Página de entrada', type: 'text' },
       { key: 'referrer_url', label: 'URL referida', type: 'text' },
       { key: 'utm_source', label: 'Fuente UTM', type: 'text' },
@@ -241,15 +320,15 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'utm_campaign', label: 'Campaña', type: 'text' },
       { key: 'utm_content', label: 'Contenido / anuncio', type: 'text' },
       { key: 'utm_term', label: 'Término UTM', type: 'text' },
-      { key: 'source_platform', label: 'Plataforma', type: 'text' },
+      { key: 'source_platform', label: 'Plataforma', type: 'select', options: sourcePlatformOptions },
       { key: 'site_source_name', label: 'Fuente del sitio', type: 'text' },
-      { key: 'campaign_name', label: 'Nombre de campaña', type: 'text' },
-      { key: 'adset_name', label: 'Nombre de conjunto', type: 'text' },
-      { key: 'ad_name', label: 'Nombre de anuncio', type: 'text' },
-      { key: 'ad_id', label: 'ID de anuncio', type: 'text' },
-      { key: 'device_type', label: 'Dispositivo', type: 'text' },
-      { key: 'browser', label: 'Navegador', type: 'text' },
-      { key: 'os', label: 'Sistema operativo', type: 'text' },
+      { key: 'campaign_name', label: 'Nombre de campaña', type: 'text', catalog: 'campaigns', placeholder: 'Buscar campaña' },
+      { key: 'adset_name', label: 'Nombre de conjunto', type: 'text', catalog: 'adsets', placeholder: 'Buscar conjunto de anuncios' },
+      { key: 'ad_name', label: 'Nombre de anuncio', type: 'text', catalog: 'ads', placeholder: 'Buscar anuncio' },
+      { key: 'ad_id', label: 'ID de anuncio', type: 'text', catalog: 'ads', placeholder: 'Buscar anuncio por nombre o ID' },
+      { key: 'device_type', label: 'Dispositivo', type: 'select', options: deviceOptions },
+      { key: 'browser', label: 'Navegador', type: 'select', options: browserOptions },
+      { key: 'os', label: 'Sistema operativo', type: 'select', options: operatingSystemOptions },
       { key: 'placement', label: 'Ubicación del anuncio', type: 'text' },
       { key: 'geo_city', label: 'Ciudad', type: 'text' },
       { key: 'geo_region', label: 'Región', type: 'text' },
@@ -260,7 +339,7 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
     label: 'Automatizaciones',
     fields: [
       { key: 'active_automation', label: 'Está en automatización activa', type: 'boolean' },
-      { key: 'automation_status', label: 'Estado en automatización', type: 'text' }
+      { key: 'automation_status', label: 'Estado en automatización', type: 'select', options: automationStatusOptions }
     ]
   }
 ]
@@ -280,6 +359,14 @@ export const CONTACT_ADVANCED_SORT_OPTIONS: Array<ContactAdvancedOption & { sort
 ]
 
 const fieldMap = new Map(CONTACT_ADVANCED_FIELD_GROUPS.flatMap(group => group.fields.map(field => [field.key, field])))
+const allOperatorValues = new Set([
+  ...textOperators,
+  ...numberOperators,
+  ...dateOperators,
+  ...booleanOperators,
+  ...tagOperators,
+  ...selectOperators
+].map(option => option.value))
 
 export const getContactAdvancedField = (fieldKey: string) => fieldMap.get(fieldKey)
 
@@ -339,8 +426,10 @@ export const normalizeContactAdvancedConfig = (value: unknown): ContactAdvancedF
           ? rawGroup.rules.map((rule, ruleIndex) => {
               const rawRule = rule as Partial<ContactAdvancedRule>
               const field = getContactAdvancedField(String(rawRule.field || '')) || CONTACT_ADVANCED_FIELD_GROUPS[0].fields[0]
-              const operators = getContactAdvancedOperators(field).map(option => option.value)
-              const operator = operators.includes(String(rawRule.operator || ''))
+              const operatorValues = field.type === 'custom_field'
+                ? allOperatorValues
+                : new Set(getContactAdvancedOperators(field).map(option => option.value))
+              const operator = operatorValues.has(String(rawRule.operator || '') as ContactAdvancedOperator)
                 ? rawRule.operator as ContactAdvancedOperator
                 : getDefaultOperatorForContactAdvancedField(field)
               return {
@@ -349,7 +438,8 @@ export const normalizeContactAdvancedConfig = (value: unknown): ContactAdvancedF
                 operator,
                 value: rawRule.value ?? '',
                 valueTo: rawRule.valueTo ?? '',
-                customKey: rawRule.customKey ? String(rawRule.customKey) : ''
+                customKey: rawRule.customKey ? String(rawRule.customKey) : '',
+                valueType: rawRule.valueType ? rawRule.valueType as ContactAdvancedFieldType : undefined
               }
             })
           : []
