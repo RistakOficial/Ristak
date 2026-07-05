@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Animated,
+  Easing,
   FlatList,
   Image,
   KeyboardAvoidingView,
@@ -125,6 +126,9 @@ const CHAT_SWIPE_ACTION_WIDTH = 184;
 const CHAT_SWIPE_MORE_WIDTH = 84;
 const CHAT_SWIPE_ARCHIVE_WIDTH = CHAT_SWIPE_ACTION_WIDTH - CHAT_SWIPE_MORE_WIDTH;
 const CHAT_SWIPE_OPEN_THRESHOLD = 36;
+const CHAT_SHEET_OPEN_DURATION_MS = 260;
+const CHAT_SHEET_CLOSE_DURATION_MS = 280;
+const CHAT_SHEET_HIDDEN_TRANSLATE_Y = 860;
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
@@ -547,6 +551,7 @@ function ChatScreen({
   const [selectionActionsOpen, setSelectionActionsOpen] = useState(false);
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [activeSheet, setActiveSheet] = useState<ChatSheetMode>(null);
+  const [closingSheet, setClosingSheet] = useState<ChatSheetMode>(null);
   const [sheetContact, setSheetContact] = useState<ChatContact | null>(null);
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<ChatContact[]>([]);
@@ -559,6 +564,7 @@ function ChatScreen({
   const [selected, setSelected] = useState<ChatContact | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
+  const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadChats = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -738,33 +744,67 @@ function ChatScreen({
     setOpenSwipeChatId(null);
   };
 
-  const closeSheet = () => {
+  const clearSheetCloseTimer = useCallback(() => {
+    if (sheetCloseTimerRef.current) {
+      clearTimeout(sheetCloseTimerRef.current);
+      sheetCloseTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearSheetCloseTimer, [clearSheetCloseTimer]);
+
+  const openSheet = useCallback((sheet: Exclude<ChatSheetMode, null>) => {
+    clearSheetCloseTimer();
+    setClosingSheet(null);
+    setActiveSheet(sheet);
+  }, [clearSheetCloseTimer]);
+
+  const closeSheet = useCallback(() => {
+    if (!activeSheet) return;
+    const sheet = activeSheet;
+    clearSheetCloseTimer();
+    setClosingSheet(sheet);
     setActiveSheet(null);
-    setSheetContact(null);
+    sheetCloseTimerRef.current = setTimeout(() => {
+      sheetCloseTimerRef.current = null;
+      setClosingSheet(null);
+      setSheetContact(null);
+      if (sheet === 'cameraShare') {
+        setCameraAsset(null);
+      }
+    }, CHAT_SHEET_CLOSE_DURATION_MS + 40);
+  }, [activeSheet, clearSheetCloseTimer]);
+
+  const resetSheetState = () => {
+    clearSheetCloseTimer();
+    setClosingSheet(null);
   };
 
   const openNewChatSheet = () => {
+    resetSheetState();
     setOpenSwipeChatId(null);
     setContactQuery('');
     setContactResults([]);
     setCameraAsset(null);
     setSheetContact(null);
-    setActiveSheet('newChat');
+    openSheet('newChat');
   };
 
   const openCameraShareSheet = (asset: ImagePicker.ImagePickerAsset) => {
+    resetSheetState();
     setOpenSwipeChatId(null);
     setContactQuery('');
     setContactResults([]);
     setCameraAsset(asset);
     setSheetContact(null);
-    setActiveSheet('cameraShare');
+    openSheet('cameraShare');
   };
 
   const openChatMoreActions = (contact: ChatContact) => {
+    resetSheetState();
     setOpenSwipeChatId(null);
     setSheetContact(contact);
-    setActiveSheet('chatMore');
+    openSheet('chatMore');
   };
 
   const markChatAsRead = (contact: ChatContact) => {
@@ -920,6 +960,15 @@ function ChatScreen({
       />
     );
   }
+
+  const chatMoreSheetOpen = activeSheet === 'chatMore' || closingSheet === 'chatMore';
+  const chatMoreSheetClosing = activeSheet !== 'chatMore' && closingSheet === 'chatMore';
+  const contactPickerSheet = activeSheet === 'cameraShare' || closingSheet === 'cameraShare'
+    ? 'cameraShare'
+    : activeSheet === 'newChat' || closingSheet === 'newChat'
+      ? 'newChat'
+      : null;
+  const contactPickerClosing = !activeSheet && (closingSheet === 'newChat' || closingSheet === 'cameraShare');
 
   return (
     <AppFrame>
@@ -1082,7 +1131,8 @@ function ChatScreen({
       />
       <ChatMoreSheet
         contact={sheetContact}
-        open={activeSheet === 'chatMore'}
+        open={chatMoreSheetOpen}
+        closing={chatMoreSheetClosing}
         archived={sheetContact ? archivedChatIds.includes(sheetContact.id) : false}
         unread={sheetContact ? getUnreadCount(sheetContact) : 0}
         onArchiveToggle={(contact) => {
@@ -1101,15 +1151,16 @@ function ChatScreen({
         }}
       />
       <ContactPickerSheet
-        asset={activeSheet === 'cameraShare' ? cameraAsset : null}
+        asset={contactPickerSheet === 'cameraShare' ? cameraAsset : null}
         contacts={contactSheetOptions}
+        closing={contactPickerClosing}
         loading={contactsLoading}
-        open={activeSheet === 'newChat' || activeSheet === 'cameraShare'}
+        open={Boolean(contactPickerSheet)}
         query={contactQuery}
-        title={activeSheet === 'cameraShare' ? 'Enviar foto' : 'Nuevo chat'}
+        title={contactPickerSheet === 'cameraShare' ? 'Enviar foto' : 'Nuevo chat'}
         onChangeQuery={setContactQuery}
         onClose={closeSheet}
-        onSelect={activeSheet === 'cameraShare' ? chooseCameraRecipient : openContactFromSheet}
+        onSelect={contactPickerSheet === 'cameraShare' ? chooseCameraRecipient : openContactFromSheet}
       />
       {footer}
     </AppFrame>
@@ -1573,22 +1624,56 @@ function FilterManagerSheet({
 
 function BottomActionSheet({
   children,
+  closing = false,
   open,
   title,
   subtitle,
   onClose,
 }: {
   children: React.ReactNode;
+  closing?: boolean;
   open: boolean;
   title: string;
   subtitle?: string;
   onClose: () => void;
 }) {
+  const sheetProgress = useRef(new Animated.Value(1)).current;
+  const dimmerOpacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!open) {
+      sheetProgress.setValue(1);
+      dimmerOpacity.setValue(0);
+      return;
+    }
+
+    Animated.parallel([
+      Animated.timing(dimmerOpacity, {
+        toValue: closing ? 0 : 1,
+        duration: closing ? CHAT_SHEET_CLOSE_DURATION_MS : CHAT_SHEET_OPEN_DURATION_MS,
+        easing: closing ? Easing.out(Easing.quad) : Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(sheetProgress, {
+        toValue: closing ? 1 : 0,
+        duration: closing ? CHAT_SHEET_CLOSE_DURATION_MS : CHAT_SHEET_OPEN_DURATION_MS,
+        easing: closing ? Easing.inOut(Easing.cubic) : Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [closing, dimmerOpacity, open, sheetProgress]);
+
+  const translateY = sheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, CHAT_SHEET_HIDDEN_TRANSLATE_Y],
+  });
+
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.sheetBackdrop}>
+    <Modal visible={open} transparent animationType="none" onRequestClose={onClose}>
+      <View style={styles.sheetModalRoot}>
+        <Animated.View pointerEvents="none" style={[styles.sheetDimmer, { opacity: dimmerOpacity }]} />
         <Pressable style={styles.sheetScrim} onPress={onClose} />
-        <View style={styles.actionSheet}>
+        <Animated.View style={[styles.actionSheet, { transform: [{ translateY }] }]}>
           <View style={styles.actionSheetHandle} />
           <View style={styles.actionSheetHeader}>
             <View style={styles.actionSheetHeaderCopy}>
@@ -1600,7 +1685,7 @@ function BottomActionSheet({
             </Pressable>
           </View>
           {children}
-        </View>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -1634,6 +1719,7 @@ function SheetActionRow({
 
 function ChatMoreSheet({
   archived,
+  closing,
   contact,
   open,
   unread,
@@ -1643,6 +1729,7 @@ function ChatMoreSheet({
   onSelect,
 }: {
   archived: boolean;
+  closing?: boolean;
   contact: ChatContact | null;
   open: boolean;
   unread: number;
@@ -1653,6 +1740,7 @@ function ChatMoreSheet({
 }) {
   return (
     <BottomActionSheet
+      closing={closing}
       open={open && Boolean(contact)}
       title="Más acciones"
       subtitle={contact ? getContactName(contact) : ''}
@@ -1688,6 +1776,7 @@ function ChatMoreSheet({
 
 function ContactPickerSheet({
   asset,
+  closing,
   contacts,
   loading,
   open,
@@ -1698,6 +1787,7 @@ function ContactPickerSheet({
   onSelect,
 }: {
   asset?: ImagePicker.ImagePickerAsset | null;
+  closing?: boolean;
   contacts: ChatContact[];
   loading: boolean;
   open: boolean;
@@ -1709,6 +1799,7 @@ function ContactPickerSheet({
 }) {
   return (
     <BottomActionSheet
+      closing={closing}
       open={open}
       title={title}
       subtitle={asset ? 'Elige a quién enviar la foto' : 'Busca por nombre, número o correo'}
@@ -1795,6 +1886,7 @@ function ArchiveRow({
 function AssistantChatRow({ onPress }: { onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.aiChatRow, pressed && styles.pressed]}>
+      <View pointerEvents="none" style={styles.aiChatDivider} />
       <View style={styles.aiChatAvatar}>
         <Bot size={27} color={COLORS.accent} strokeWidth={2.4} />
       </View>
@@ -2749,6 +2841,18 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
     backgroundColor: 'rgba(1,8,28,0.42)',
   },
+  sheetModalRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  sheetDimmer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: 'rgba(1,8,28,0.52)',
+  },
   sheetScrim: {
     position: 'absolute',
     top: 0,
@@ -3299,12 +3403,21 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   aiChatRow: {
+    position: 'relative',
     minHeight: 74,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,
     paddingHorizontal: 13,
     backgroundColor: COLORS.bg,
+  },
+  aiChatDivider: {
+    position: 'absolute',
+    right: 0,
+    bottom: 0,
+    left: 0,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.border,
   },
   aiChatAvatar: {
     width: 48,
@@ -3318,11 +3431,8 @@ const styles = StyleSheet.create({
   },
   aiChatBody: {
     flex: 1,
-    alignSelf: 'stretch',
     justifyContent: 'center',
     minWidth: 0,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.border,
   },
   aiChatPinned: {
     color: COLORS.accent,

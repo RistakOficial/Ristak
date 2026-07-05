@@ -25,6 +25,13 @@ visual, flujos, permisos y estados. No se permite redisenar, simplificar o
 "mejorar" una pantalla nativa dejando atras funcionalidad existente de `/movil`
 sin documentar explicitamente la decision y su motivo.
 
+En la bandeja de chats nativa, los bottom sheets reutilizables (`Mas`, `+` /
+nuevo chat y selector posterior a camara) deben atenuar el fondo con fade
+independiente y mover solo el panel. No metas el scrim oscuro dentro de una
+animacion `slide`: se ve como un bloque sombreado subiendo. El cierre debe
+mantener el contenido vivo hasta terminar la animacion para poder reabrir el
+mismo sheet/contacto sin que se trabe.
+
 El avance por fases de esa paridad vive en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`. Antes de retomar la migracion nativa,
 lee ese checklist para saber que ya quedo, que sigue pendiente y que fuentes del
