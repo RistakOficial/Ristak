@@ -1390,9 +1390,17 @@ al evento (`calendario embebido`, `formulario embebido` y `pago`) nacen apuntand
 a `Ir a la siguiente pagina` solo si la pagina actual tiene otra pagina por
 delante. Si el bloque se crea en la ultima pagina, o no existe un destino
 posterior real, conserva el comportamiento original del elemento: reglas del
-calendario, reglas del formulario o mensaje de exito del pago. Ese default solo
-se aplica al crear el bloque; si el usuario cambia la accion a reglas propias,
-pagina especifica o redireccion, se respeta su configuracion guardada.
+calendario, reglas del formulario o mensaje de exito del pago. En bloques de
+pago la accion posterior siempre queda guardada de forma explicita en
+`settings.postPayment`: mostrar mensaje de exito, ir a la siguiente pagina,
+redirigir a una pagina especifica o redirigir a una URL externa. Si el usuario
+elige pagina especifica o URL externa, debe configurar ese destino en el
+inspector del bloque; el renderer publico valida que la pagina exista o que la
+URL sea `http/https`, y si llega una configuracion vieja/incompleta cae a
+mensaje de exito para no dejar al comprador en una redireccion rota. Ese default
+solo se aplica al crear o guardar el bloque; si el usuario cambia la accion a
+reglas propias, pagina especifica o redireccion, se respeta su configuracion
+guardada mientras sea valida.
 
 En embudos multipagina, los bloques de pago top-level solo bloquean el submit de
 la pagina donde viven. Un formulario en una pagina anterior debe crear contacto y
