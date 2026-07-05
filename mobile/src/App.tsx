@@ -64,11 +64,13 @@ import { RistakApiClient, getUserDisplayName } from './api';
 import {
   buildMessagesFromJourney,
   cleanBaseUrl,
+  formatChatListDate,
   formatCurrency,
   formatShortDate,
   getContactAvatar,
   getContactName,
   getTodayRange,
+  resolveBusinessTimezone,
 } from './format';
 import type {
   CalendarEventItem,
@@ -136,7 +138,15 @@ const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
 const CHAT_SWIPE_ACTION_WIDTH = 184;
 const CHAT_SWIPE_MORE_WIDTH = 84;
 const CHAT_SWIPE_ARCHIVE_WIDTH = CHAT_SWIPE_ACTION_WIDTH - CHAT_SWIPE_MORE_WIDTH;
-const CHAT_SWIPE_OPEN_THRESHOLD = 36;
+const CHAT_SWIPE_GESTURE_START_DISTANCE = 3;
+const CHAT_SWIPE_OPEN_TRIGGER_DISTANCE = 2;
+const CHAT_SWIPE_CLOSE_TRIGGER_DISTANCE = 2;
+const CHAT_SWIPE_OPEN_DURATION_MS = 250;
+const CHAT_SWIPE_CLOSE_DURATION_MS = 180;
+const CHAT_ROW_MIN_HEIGHT = 86;
+const CHAT_AVATAR_SIZE = 58;
+const CHAT_AVATAR_INNER_SIZE = 50;
+const CHAT_CHANNEL_BADGE_SIZE = 22;
 const CHAT_SHEET_OPEN_DURATION_MS = 260;
 const CHAT_SHEET_CLOSE_DURATION_MS = 280;
 const CHAT_SHEET_HIDDEN_TRANSLATE_Y = 860;
@@ -582,6 +592,7 @@ function ChatScreen({
   const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
   const [cameraAsset, setCameraAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [chats, setChats] = useState<ChatContact[]>([]);
+  const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -625,6 +636,27 @@ function ChatScreen({
       setChatPrefsHydrated(true);
     });
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.getConfig(['account_timezone'])
+      .then((response) => {
+        if (cancelled) return;
+        const values = response && typeof response === 'object' && 'config' in response
+          ? response.config
+          : response;
+        const timezone = values && typeof values === 'object' && 'account_timezone' in values
+          ? values.account_timezone
+          : '';
+        setBusinessTimezone(resolveBusinessTimezone(typeof timezone === 'string' ? timezone : ''));
+      })
+      .catch(() => {
+        if (!cancelled) setBusinessTimezone(resolveBusinessTimezone());
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
 
   useEffect(() => {
     if (!chatPrefsHydrated) return;
@@ -1211,7 +1243,7 @@ function ChatScreen({
         <FlatList
           data={filteredChats}
           keyExtractor={(item) => item.id}
-          extraData={`${openSwipeChatId || ''}|${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${selectionActive ? 'selecting' : 'normal'}`}
+          extraData={`${openSwipeChatId || ''}|${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${businessTimezone}|${selectionActive ? 'selecting' : 'normal'}`}
           refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
           onScrollBeginDrag={() => {
             if (openSwipeChatId) setOpenSwipeChatId(null);
@@ -1251,6 +1283,7 @@ function ChatScreen({
               selectionActive={selectionActive}
               selected={selectedChatIdSet.has(item.id)}
               swipeOpen={openSwipeChatId === item.id}
+              timezone={businessTimezone}
               onArchiveToggle={() => {
                 if (archivedChatIds.includes(item.id)) restoreChat(item);
                 else archiveChat(item);
@@ -1704,10 +1737,22 @@ function ChatFilterBar({
   unreadTotal: number;
   onChange: (filter: ChatFilterId) => void;
 }) {
+  const scrollRef = useRef<ScrollView>(null);
+  const filterSignature = useMemo(() => filters.map((filter) => filter.id).join('|'), [filters]);
+
+  useEffect(() => {
+    if (active === 'all' || active === 'unread' || active === 'appointments') {
+      scrollRef.current?.scrollTo({ x: 0, animated: false });
+    }
+  }, [active, filterSignature]);
+
   return (
     <ScrollView
+      ref={scrollRef}
       horizontal
+      contentInsetAdjustmentBehavior="never"
       showsHorizontalScrollIndicator={false}
+      style={styles.filterChipScroll}
       contentContainerStyle={styles.filterChipRow}
     >
       {filters.map((filter) => {
@@ -2466,7 +2511,7 @@ function getAgentActionSuccess(action: AgentAction, contactName: string) {
   return `El agente quedó omitido en ${contactName}.`;
 }
 
-function ChannelBadgeIcon({ kind, size = 13 }: { kind: ChannelBadgeKind; size?: number }) {
+function ChannelBadgeIcon({ kind, size = 15 }: { kind: ChannelBadgeKind; size?: number }) {
   if (kind === 'email') return <Mail size={size} color={COLORS.white} strokeWidth={2.7} />;
   if (kind === 'sms' || kind === 'unknown') return <MessageCircle size={size} color={COLORS.white} strokeWidth={2.7} />;
 
@@ -2603,6 +2648,7 @@ function ChatRow({
   selected,
   selectionActive,
   swipeOpen,
+  timezone,
   onArchiveToggle,
   onPress,
   onLongPress,
@@ -2616,6 +2662,7 @@ function ChatRow({
   selected: boolean;
   selectionActive: boolean;
   swipeOpen: boolean;
+  timezone: string;
   onArchiveToggle: () => void;
   onPress: () => void;
   onLongPress?: () => void;
@@ -2634,11 +2681,11 @@ function ChatRow({
 
   const animateSwipeTo = useCallback((toValue: number) => {
     offsetRef.current = toValue;
-    Animated.spring(translateX, {
+    Animated.timing(translateX, {
       toValue,
       useNativeDriver: true,
-      friction: 8,
-      tension: 76,
+      duration: toValue < 0 ? CHAT_SWIPE_OPEN_DURATION_MS : CHAT_SWIPE_CLOSE_DURATION_MS,
+      easing: Easing.out(Easing.cubic),
     }).start();
   }, [translateX]);
 
@@ -2649,11 +2696,16 @@ function ChatRow({
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, gestureState) => {
       if (selectionActive) return false;
-      return Math.abs(gestureState.dx) > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) + 4;
+      return Math.abs(gestureState.dx) > CHAT_SWIPE_GESTURE_START_DISTANCE
+        && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) + 2;
     },
     onPanResponderGrant: () => {
       onSwipeStart();
-      dragStartOffsetRef.current = offsetRef.current;
+      translateX.stopAnimation((value) => {
+        const currentOffset = Math.max(-CHAT_SWIPE_ACTION_WIDTH, Math.min(0, Number(value) || 0));
+        offsetRef.current = currentOffset;
+        dragStartOffsetRef.current = currentOffset;
+      });
     },
     onPanResponderMove: (_, gestureState) => {
       const nextOffset = Math.max(
@@ -2664,8 +2716,20 @@ function ChatRow({
       translateX.setValue(nextOffset);
     },
     onPanResponderRelease: (_, gestureState) => {
-      const shouldOpen = Math.abs(offsetRef.current) >= CHAT_SWIPE_OPEN_THRESHOLD || gestureState.vx < -0.22;
-      if (shouldOpen) {
+      const startedOpen = dragStartOffsetRef.current <= -CHAT_SWIPE_ACTION_WIDTH + 1;
+      const movedLeft = gestureState.dx <= -CHAT_SWIPE_OPEN_TRIGGER_DISTANCE || gestureState.vx < -0.03;
+      const movedRight = gestureState.dx >= CHAT_SWIPE_CLOSE_TRIGGER_DISTANCE || gestureState.vx > 0.03;
+      if (startedOpen) {
+        if (movedRight) {
+          onSwipeClose();
+          animateSwipeTo(0);
+          return;
+        }
+        onSwipeOpen();
+        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
+        return;
+      }
+      if (movedLeft || offsetRef.current <= -CHAT_SWIPE_OPEN_TRIGGER_DISTANCE) {
         onSwipeOpen();
         animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
         return;
@@ -2675,7 +2739,7 @@ function ChatRow({
     },
     onPanResponderTerminationRequest: () => false,
     onPanResponderTerminate: () => {
-      if (swipeOpen || Math.abs(offsetRef.current) >= CHAT_SWIPE_OPEN_THRESHOLD) {
+      if (offsetRef.current <= -CHAT_SWIPE_ACTION_WIDTH / 2) {
         onSwipeOpen();
         animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
         return;
@@ -2726,7 +2790,6 @@ function ChatRow({
         </View>
       ) : null}
       <Animated.View
-        pointerEvents={swipeOpen && !selectionActive ? 'none' : 'auto'}
         style={[styles.chatSwipeContent, { transform: [{ translateX }] }]}
       >
         <Pressable
@@ -2760,7 +2823,7 @@ function ChatRow({
           <View style={styles.chatRowBody}>
             <View style={styles.rowHeader}>
               <Text numberOfLines={1} style={[styles.chatName, unread > 0 && styles.chatNameUnread]}>{getContactName(contact)}</Text>
-              <Text style={[styles.rowTime, unread > 0 && styles.rowTimeUnread]}>{formatShortDate(contact.lastMessageDate)}</Text>
+              <Text style={[styles.rowTime, unread > 0 && styles.rowTimeUnread]}>{formatChatListDate(contact.lastMessageDate, timezone)}</Text>
             </View>
             <View style={styles.rowFooter}>
               <Text numberOfLines={1} style={[styles.lastMessage, unread > 0 && styles.lastMessageUnread]}>{getChatPreview(contact)}</Text>
@@ -3230,8 +3293,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  filterChipScroll: {
+    marginHorizontal: -14,
+  },
   filterChipRow: {
+    alignItems: 'center',
     gap: 8,
+    paddingHorizontal: 14,
     paddingTop: 9,
     paddingBottom: 2,
   },
@@ -3975,7 +4043,7 @@ const styles = StyleSheet.create({
   },
   chatSwipeRow: {
     position: 'relative',
-    minHeight: 74,
+    minHeight: CHAT_ROW_MIN_HEIGHT,
     overflow: 'hidden',
     backgroundColor: COLORS.bg,
   },
@@ -3988,7 +4056,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    minHeight: 74,
+    minHeight: CHAT_ROW_MIN_HEIGHT,
     flexDirection: 'row',
     justifyContent: 'flex-end',
     zIndex: 0,
@@ -4001,7 +4069,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
-    minHeight: 74,
+    minHeight: CHAT_ROW_MIN_HEIGHT,
   },
   chatSwipeMore: {
     width: CHAT_SWIPE_MORE_WIDTH,
@@ -4029,17 +4097,17 @@ const styles = StyleSheet.create({
     width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
-    minHeight: 74,
-    paddingHorizontal: 13,
+    gap: 12,
+    minHeight: CHAT_ROW_MIN_HEIGHT,
+    paddingHorizontal: 14,
     borderRadius: 0,
   },
   chatRowUnread: {
     backgroundColor: 'rgba(39,199,216,0.07)',
   },
   chatRowSelecting: {
-    gap: 8,
-    paddingLeft: 9,
+    gap: 10,
+    paddingLeft: 10,
   },
   chatRowSelected: {
     backgroundColor: COLORS.accentSoft,
@@ -4063,9 +4131,9 @@ const styles = StyleSheet.create({
   },
   avatar: {
     position: 'relative',
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: CHAT_AVATAR_SIZE,
+    height: CHAT_AVATAR_SIZE,
+    borderRadius: CHAT_AVATAR_SIZE / 2,
     borderWidth: 2,
     alignItems: 'center',
     justifyContent: 'center',
@@ -4077,30 +4145,30 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   avatarCircle: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: CHAT_AVATAR_INNER_SIZE,
+    height: CHAT_AVATAR_INNER_SIZE,
+    borderRadius: CHAT_AVATAR_INNER_SIZE / 2,
     backgroundColor: COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   avatarImage: {
-    width: 42,
-    height: 42,
+    width: CHAT_AVATAR_INNER_SIZE,
+    height: CHAT_AVATAR_INNER_SIZE,
   },
   avatarText: {
     color: COLORS.text,
     fontWeight: '900',
-    fontSize: 16,
+    fontSize: 18,
   },
   avatarChannelBadge: {
     position: 'absolute',
-    right: -3,
+    right: -4,
     bottom: -2,
-    minWidth: 19,
-    height: 19,
-    borderRadius: 10,
+    minWidth: CHAT_CHANNEL_BADGE_SIZE,
+    height: CHAT_CHANNEL_BADGE_SIZE,
+    borderRadius: CHAT_CHANNEL_BADGE_SIZE / 2,
     paddingHorizontal: 4,
     alignItems: 'center',
     justifyContent: 'center',
@@ -4137,8 +4205,8 @@ const styles = StyleSheet.create({
   },
   rowTime: {
     color: COLORS.muted,
-    fontSize: 11,
-    fontWeight: '700',
+    fontSize: 12,
+    fontWeight: '800',
   },
   rowTimeUnread: {
     color: COLORS.accent,
@@ -4153,16 +4221,16 @@ const styles = StyleSheet.create({
   lastMessage: {
     flex: 1,
     color: COLORS.muted,
-    fontSize: 14,
+    fontSize: 15,
   },
   lastMessageUnread: {
     color: COLORS.meta,
     fontWeight: '700',
   },
   unreadPill: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
     backgroundColor: COLORS.accent,
     alignItems: 'center',
     justifyContent: 'center',
@@ -4170,7 +4238,7 @@ const styles = StyleSheet.create({
   },
   unreadText: {
     color: COLORS.bg,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '900',
   },
   conversationHeader: {

@@ -1,5 +1,8 @@
 import type { ChatContact, JourneyEvent, ChatMessage } from './types';
 
+const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City';
+const CHAT_SHORT_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
 export function cleanBaseUrl(value: string) {
   const trimmed = value.trim().replace(/\/+$/, '');
   if (!trimmed) return '';
@@ -54,6 +57,60 @@ export function formatShortDate(value?: string) {
     day: '2-digit',
     month: 'short',
   });
+}
+
+export function resolveBusinessTimezone(value?: string | null) {
+  const timezone = String(value || '').trim() || DEFAULT_BUSINESS_TIMEZONE;
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: timezone });
+    return timezone;
+  } catch {
+    return DEFAULT_BUSINESS_TIMEZONE;
+  }
+}
+
+function getZonedDateParts(value: string | Date, timezone?: string | null) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const resolvedTimezone = resolveBusinessTimezone(timezone);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: resolvedTimezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date);
+  const partValue = (type: string) => Number(parts.find((part) => part.type === type)?.value || 0);
+  const year = partValue('year');
+  const month = partValue('month');
+  const day = partValue('day');
+  if (!year || !month || !day) return null;
+  return { date, year, month, day, timezone: resolvedTimezone };
+}
+
+function dateOnlyUtcDay(parts: { year: number; month: number; day: number }) {
+  return Date.UTC(parts.year, parts.month - 1, parts.day);
+}
+
+export function formatChatListDate(value?: string | null, timezone?: string | null, referenceDate: Date = new Date()) {
+  if (!value) return '';
+  const messageParts = getZonedDateParts(value, timezone);
+  if (!messageParts) return '';
+  const todayParts = getZonedDateParts(referenceDate, messageParts.timezone);
+  if (!todayParts) return '';
+
+  const diffDays = Math.round((dateOnlyUtcDay(todayParts) - dateOnlyUtcDay(messageParts)) / 86400000);
+  if (diffDays === 0) return 'Hoy';
+  if (diffDays === 1) return 'Ayer';
+  if (diffDays > 1 && diffDays < 7) {
+    return new Intl.DateTimeFormat('es-MX', {
+      timeZone: messageParts.timezone,
+      weekday: 'long',
+    }).format(messageParts.date);
+  }
+
+  const month = CHAT_SHORT_MONTHS[messageParts.month - 1] || '';
+  if (!month) return '';
+  return `${String(messageParts.day).padStart(2, '0')}-${month}`;
 }
 
 export function formatCurrency(value?: number, currency = 'MXN') {

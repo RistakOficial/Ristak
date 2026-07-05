@@ -93,9 +93,18 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     abierta despues de soltar, mostrar las acciones con alto/ancho alineados a la
     fila, permitir tocar `Mas`/`Archivar` sin que la fila animada tape los
     botones y cerrarse al tocar otra fila o empezar scroll. La apertura no debe
-    rebotar/cerrarse por umbral alto ni por cancelacion del responder horizontal.
-    Los separadores de chats deben salir del borde inferior del area estirada de
-    la fila, no de una linea falsa con padding debajo del texto.
+    rebotar/cerrarse por umbral alto ni por cancelacion del responder horizontal:
+    un arrastre corto a la izquierda abre y, una vez abierta, un arrastre corto a
+    la derecha cierra. Los separadores de chats deben salir del borde inferior
+    del area estirada de la fila, no de una linea falsa con padding debajo del
+    texto. Las filas base deben conservar altura tactil amplia y avatar grande.
+- [x] Replicar filtros horizontales de chat.
+  - Avance: los chips de filtros en `mobile/` usan todo el ancho util y arrancan
+    al margen izquierdo de la pantalla; no deben quedar centrados con `Todos` o
+    cualquier chip lateral cortado al cambiar de filtro.
+- [x] Replicar fechas relativas de la lista.
+  - Avance: la lista nativa formatea con zona horaria del negocio: `Hoy`,
+    `Ayer`, dia de semana para 2 a 6 dias y fecha corta despues de una semana.
 - [x] Replicar long press/seleccion multiple.
   - Avance: mantener presionada una fila entra en seleccion multiple, muestra
     check circular, oculta filtros, permite seleccionar visibles, cancelar,

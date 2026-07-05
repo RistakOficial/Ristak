@@ -292,6 +292,23 @@ usar `--phone-chat-primary`, `--phone-chat-text-on-primary`,
 `--phone-chat-sheet-shadow`; no uses verdes heredados ni fondos beige/verdosos
 fijos para paneles como "Agendar con".
 
+## Lista de chats nativa
+
+En `mobile/`, la lista de chats debe mantener paridad visual y tactil con
+`/movil`: los filtros horizontales arrancan pegados al margen util de la
+pantalla y no deben auto-centrarse dejando chips cortados en los laterales. Las
+filas deben ser suficientemente altas para lectura tactil, con avatar grande y
+acciones laterales del mismo alto real de la fila.
+
+El swipe de una fila debe responder con umbral bajo: un arrastre corto hacia la
+izquierda abre `Mas` y `Archivar/Restaurar`; si la fila ya esta abierta, un
+arrastre corto hacia la derecha la cierra. La animacion debe ser suave y no debe
+rebotar a abierto/cerrado por un umbral grande despues de soltar.
+
+Las fechas de la lista de chats se formatean con la zona horaria del negocio:
+`Hoy`, `Ayer`, dia de la semana para los ultimos 2 a 6 dias, y despues fecha
+corta como `04-jul`. No uses una fecha fija para mensajes de hoy.
+
 ## Remitente de WhatsApp en chat movil
 
 En `/movil`, el boton de canal del composer debe listar cada WhatsApp conectado
