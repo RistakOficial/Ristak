@@ -7,6 +7,7 @@ import {
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Linking,
   Modal,
   PanResponder,
   Platform,
@@ -34,19 +35,29 @@ import {
   Camera,
   Check,
   CheckCheck,
+  ChevronDown,
   ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Clock,
+  CreditCard,
+  ExternalLink,
   Mail,
   MessageCircle,
   MoreHorizontal,
+  Package,
   Pause,
+  Pencil,
   Play,
-  Send,
   Plus,
+  RefreshCw,
+  Repeat2,
+  Save,
   Search,
+  Send,
   Settings,
   Tag,
+  Trash2,
   User,
   Video,
   X,
@@ -72,12 +83,20 @@ import {
 } from './notifications';
 import {
   buildMessagesFromJourney,
+  addDateOnlyDays,
+  addDateOnlyMonths,
+  dateOnlyInTimezone,
   formatChatListDate,
   formatCurrency,
+  formatPaymentDate,
+  getBusinessDateRange,
   formatShortDate,
   getContactAvatar,
   getContactName,
+  getPaymentMethodLabel,
+  getPaymentStatusLabel,
   getTodayRange,
+  normalizeCurrencyCode,
   resolveBusinessTimezone,
 } from './format';
 import type {
@@ -88,8 +107,12 @@ import type {
   ContactTag,
   ConversationAgentState,
   DashboardMetrics,
+  IntegrationsStatus,
+  PaymentGatewayProvider,
+  PaymentLinkResponse,
   PhoneSection,
   ProductItem,
+  ProductPrice,
   RistakUser,
   TransactionItem,
 } from './types';
@@ -129,6 +152,78 @@ type ChatFilterPreset = {
   section: string;
   locked?: boolean;
   separatorBefore?: boolean;
+};
+type PaymentView = 'select' | 'single' | 'partial' | 'subscription' | 'products';
+type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d';
+type ProductFormMode = 'create' | 'edit' | null;
+type SinglePaymentMode = 'highlevel_invoice' | 'payment_link' | 'manual';
+type ManualPaymentMethod = 'cash' | 'bank_transfer' | 'card' | 'check' | 'other';
+type HighLevelInvoiceSendMethod = 'email' | 'sms' | 'both';
+type PaymentContactSheetTarget = 'single' | 'partial' | 'subscription' | null;
+type PaymentPlanProvider = PaymentGatewayProvider | 'highlevel';
+type PaymentLinkReady = {
+  title: string;
+  description: string;
+  url: string;
+  amount: number;
+  currency: string;
+};
+
+type PaymentCapabilities = {
+  loading: boolean;
+  highLevelConnected: boolean;
+  hasConnectedPaymentGateway: boolean;
+  canUsePaymentPlans: boolean;
+  canUseSubscriptions: boolean;
+  linkProviders: PaymentGatewayProvider[];
+  planProviders: PaymentPlanProvider[];
+  subscriptionProviders: PaymentGatewayProvider[];
+};
+
+type ProductFormState = {
+  name: string;
+  description: string;
+  priceName: string;
+  amount: string;
+};
+
+type SinglePaymentDraft = {
+  contact: ChatContact | null;
+  title: string;
+  description: string;
+  amount: string;
+  chargeType: 'direct' | 'product';
+  productId: string;
+  mode: SinglePaymentMode;
+  provider: PaymentGatewayProvider | '';
+  paymentDate: string;
+  dueDate: string;
+  manualMethod: ManualPaymentMethod;
+  sendMethod: HighLevelInvoiceSendMethod;
+  reference: string;
+  notes: string;
+};
+
+type PartialPaymentDraft = {
+  contact: ChatContact | null;
+  title: string;
+  totalAmount: string;
+  firstPaymentAmount: string;
+  firstPaymentMethod: 'card' | 'cash' | 'bank_transfer' | 'deposit';
+  installmentCount: string;
+  frequency: 'weekly' | 'biweekly' | 'monthly' | 'yearly';
+  provider: PaymentPlanProvider | '';
+};
+
+type SubscriptionDraft = {
+  contact: ChatContact | null;
+  name: string;
+  amount: string;
+  intervalType: 'daily' | 'weekly' | 'monthly' | 'yearly';
+  intervalCount: string;
+  startDate: string;
+  description: string;
+  provider: PaymentGatewayProvider | '';
 };
 
 const PHONE_NAV_ITEMS: Array<{ key: PhoneSection; label: string; Icon: LucideIcon }> = [
@@ -219,6 +314,54 @@ const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
 const AI_AGENT_CHAT_SEARCH_TEXT = 'asistente personal ai ristak ai agente inteligencia artificial ia';
+const ACCOUNT_CURRENCY_CONFIG_KEY = 'account_currency';
+const ACCOUNT_TIMEZONE_CONFIG_KEY = 'account_timezone';
+const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'partial']);
+const RECENT_PAYMENT_PERIODS: Array<{ id: RecentPaymentsPeriod; label: string; days: number }> = [
+  { id: 'today', label: 'Hoy', days: 1 },
+  { id: '7d', label: '7 días', days: 7 },
+  { id: '30d', label: '30 días', days: 30 },
+  { id: '90d', label: '90 días', days: 90 },
+];
+const PROVIDER_LABELS: Record<PaymentGatewayProvider, string> = {
+  stripe: 'Stripe',
+  conekta: 'Conekta',
+  mercadopago: 'Mercado Pago',
+  clip: 'CLIP',
+  rebill: 'Rebill',
+};
+const PLAN_PROVIDER_LABELS: Record<PaymentPlanProvider, string> = {
+  highlevel: 'Ristak / HighLevel',
+  stripe: 'Stripe',
+  conekta: 'Conekta',
+  mercadopago: 'Mercado Pago',
+  clip: 'CLIP',
+  rebill: 'Rebill',
+};
+const MANUAL_PAYMENT_METHODS: Array<{ id: ManualPaymentMethod; label: string }> = [
+  { id: 'cash', label: 'Efectivo' },
+  { id: 'bank_transfer', label: 'Transferencia bancaria' },
+  { id: 'card', label: 'Tarjeta' },
+  { id: 'check', label: 'Cheque' },
+  { id: 'other', label: 'Otro' },
+];
+const HIGHLEVEL_INVOICE_SEND_METHODS: Array<{ id: HighLevelInvoiceSendMethod; label: string }> = [
+  { id: 'email', label: 'Email' },
+  { id: 'sms', label: 'WhatsApp/SMS' },
+  { id: 'both', label: 'Email + WhatsApp' },
+];
+const SUBSCRIPTION_INTERVALS: Array<{ id: SubscriptionDraft['intervalType']; label: string }> = [
+  { id: 'daily', label: 'Diario' },
+  { id: 'weekly', label: 'Semanal' },
+  { id: 'monthly', label: 'Mensual' },
+  { id: 'yearly', label: 'Anual' },
+];
+const PAYMENT_PLAN_FREQUENCIES: Array<{ id: PartialPaymentDraft['frequency']; label: string }> = [
+  { id: 'weekly', label: 'Semanal' },
+  { id: 'biweekly', label: 'Quincenal' },
+  { id: 'monthly', label: 'Mensual' },
+  { id: 'yearly', label: 'Anual' },
+];
 const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
   { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', locked: true },
   { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos' },
@@ -350,6 +493,7 @@ function PhoneShell({
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
   const [notificationContactId, setNotificationContactId] = useState('');
+  const [paymentContact, setPaymentContact] = useState<ChatContact | null>(null);
   const autoRegisteredPushKeyRef = useRef('');
   const clearNotificationContactId = useCallback(() => setNotificationContactId(''), []);
   const dock = <PhoneDock active={activeSection} onSelect={setActiveSection} />;
@@ -390,6 +534,10 @@ function PhoneShell({
         notificationContactId={notificationContactId}
         onNotificationHandled={clearNotificationContactId}
         onNavigate={setActiveSection}
+        onOpenPayments={(contact) => {
+          setPaymentContact(contact);
+          setActiveSection('payments');
+        }}
       />
     );
   }
@@ -404,7 +552,7 @@ function PhoneShell({
         onChangeServer={onChangeServer}
       />
       {activeSection === 'calendar' ? <CalendarSection api={api} /> : null}
-      {activeSection === 'payments' ? <PaymentsSection api={api} /> : null}
+      {activeSection === 'payments' ? <PaymentsSection api={api} initialContact={paymentContact} onInitialContactConsumed={() => setPaymentContact(null)} /> : null}
       {activeSection === 'analytics' ? <AnalyticsSection api={api} /> : null}
       {activeSection === 'settings' ? <SettingsSection api={api} /> : null}
       {dock}
@@ -590,12 +738,14 @@ function ChatScreen({
   notificationContactId,
   onNotificationHandled,
   onNavigate,
+  onOpenPayments,
 }: {
   api: RistakApiClient;
   footer?: React.ReactNode;
   notificationContactId?: string;
   onNotificationHandled?: () => void;
   onNavigate?: (section: PhoneSection) => void;
+  onOpenPayments?: (contact: ChatContact) => void;
 }) {
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ChatFilterId>('all');
@@ -989,6 +1139,10 @@ function ChatScreen({
 
   const navigateToContactTool = (contact: ChatContact, section: PhoneSection) => {
     closeSheet();
+    if (section === 'payments') {
+      onOpenPayments?.(contact);
+      return;
+    }
     onNavigate?.(section);
     Alert.alert(
       section === 'calendar' ? 'Agendar cita' : 'Registrar pagos',
@@ -1530,80 +1684,1758 @@ function ChatScreen({
   );
 }
 
-function PaymentsSection({ api }: { api: RistakApiClient }) {
+function PaymentsSection({
+  api,
+  initialContact,
+  onInitialContactConsumed,
+}: {
+  api: RistakApiClient;
+  initialContact?: ChatContact | null;
+  onInitialContactConsumed?: () => void;
+}) {
+  const [view, setView] = useState<PaymentView>('select');
+  const [accountCurrency, setAccountCurrency] = useState('');
+  const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
+  const [capabilities, setCapabilities] = useState<PaymentCapabilities>(() => getEmptyPaymentCapabilities(true));
   const [products, setProducts] = useState<ProductItem[]>([]);
-  const [transactions, setTransactions] = useState<TransactionItem[]>([]);
+  const [recentPayments, setRecentPayments] = useState<TransactionItem[]>([]);
+  const [recentPaymentsOpen, setRecentPaymentsOpen] = useState(false);
+  const [recentPaymentsPeriod, setRecentPaymentsPeriod] = useState<RecentPaymentsPeriod>('30d');
+  const [selectedRecentPaymentId, setSelectedRecentPaymentId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [recentLoading, setRecentLoading] = useState(false);
   const [error, setError] = useState('');
+  const [productFormMode, setProductFormMode] = useState<ProductFormMode>(null);
+  const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null);
+  const [productForm, setProductForm] = useState<ProductFormState>(() => createEmptyProductForm());
+  const [savingProduct, setSavingProduct] = useState(false);
+  const [deletingProductId, setDeletingProductId] = useState('');
+  const [contactSheetTarget, setContactSheetTarget] = useState<PaymentContactSheetTarget>(null);
+  const [contactQuery, setContactQuery] = useState('');
+  const [contactResults, setContactResults] = useState<ChatContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [linkReady, setLinkReady] = useState<PaymentLinkReady | null>(null);
+  const [savingPayment, setSavingPayment] = useState(false);
+  const [singleDraft, setSingleDraft] = useState<SinglePaymentDraft>(() => createSinglePaymentDraft(businessTimezone));
+  const [partialDraft, setPartialDraft] = useState<PartialPaymentDraft>(() => createPartialPaymentDraft());
+  const [subscriptionDraft, setSubscriptionDraft] = useState<SubscriptionDraft>(() => createSubscriptionDraft(businessTimezone));
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const selectedRecentPeriod = RECENT_PAYMENT_PERIODS.find((period) => period.id === recentPaymentsPeriod) || RECENT_PAYMENT_PERIODS[2];
+  const selectedRecentPayment = recentPayments.find((payment) => getTransactionId(payment) === selectedRecentPaymentId) || null;
+  const selectedProduct = products.find((product) => getProductId(product) === singleDraft.productId) || null;
+  const selectedProductPrice = getPrimaryPrice(selectedProduct);
+  const usableCurrency = accountCurrency || normalizeCurrencyCode(selectedProductPrice?.currency || selectedProduct?.currency || selectedRecentPayment?.currency) || 'MXN';
+
+  const loadBase = useCallback(async ({ refresh = false }: { refresh?: boolean } = {}) => {
+    if (refresh) setRefreshing(true);
+    else setLoading(true);
     setError('');
     try {
-      const [productsResponse, transactionsResponse] = await Promise.all([
+      const [configResponse, integrations, productsResponse] = await Promise.all([
+        api.getConfig([ACCOUNT_CURRENCY_CONFIG_KEY, ACCOUNT_TIMEZONE_CONFIG_KEY]),
+        api.getIntegrationsStatus(),
         api.getProducts(),
-        api.getTransactions(20),
       ]);
-      setProducts(Array.isArray(productsResponse.products) ? productsResponse.products : []);
-      setTransactions(Array.isArray(transactionsResponse)
-        ? transactionsResponse
-        : Array.isArray(transactionsResponse.transactions) ? transactionsResponse.transactions : []);
+      const config = unwrapConfig(configResponse);
+      const nextCurrency = normalizeCurrencyCode(String(config[ACCOUNT_CURRENCY_CONFIG_KEY] || ''));
+      const nextTimezone = resolveBusinessTimezone(String(config[ACCOUNT_TIMEZONE_CONFIG_KEY] || ''));
+      const nextCapabilities = getPaymentCapabilities(integrations);
+      const nextProducts = Array.isArray(productsResponse.products) ? productsResponse.products : [];
+
+      setAccountCurrency(nextCurrency);
+      setBusinessTimezone(nextTimezone);
+      setCapabilities(nextCapabilities);
+      setProducts(nextProducts);
+      setSingleDraft((current) => ({
+        ...current,
+        mode: getAvailableSinglePaymentMode(current.mode, nextCapabilities),
+        provider: current.provider || nextCapabilities.linkProviders[0] || '',
+        paymentDate: current.paymentDate || dateOnlyInTimezone(new Date(), nextTimezone),
+        dueDate: current.dueDate || addDateOnlyDays(dateOnlyInTimezone(new Date(), nextTimezone), 7),
+      }));
+      setPartialDraft((current) => ({
+        ...current,
+        provider: current.provider || nextCapabilities.planProviders[0] || '',
+      }));
+      setSubscriptionDraft((current) => ({
+        ...current,
+        provider: current.provider || nextCapabilities.subscriptionProviders[0] || '',
+        startDate: current.startDate || dateOnlyInTimezone(new Date(), nextTimezone),
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar los pagos.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [api]);
 
+  const loadRecentPayments = useCallback(async () => {
+    const period = RECENT_PAYMENT_PERIODS.find((item) => item.id === recentPaymentsPeriod) || RECENT_PAYMENT_PERIODS[2];
+    const range = getBusinessDateRange(period.days, businessTimezone);
+    setRecentLoading(true);
+    try {
+      const response = await api.getTransactions(80, {
+        startDate: range.startDate,
+        endDate: range.endDate,
+      });
+      const list = Array.isArray(response)
+        ? response
+        : Array.isArray(response.transactions) ? response.transactions : [];
+      const received = list
+        .filter((payment) => Number(payment.amount ?? payment.total ?? 0) > 0 && SUCCESS_PAYMENT_STATUSES.has(String(payment.status || '').toLowerCase()))
+        .sort((left, right) => getTransactionTime(right) - getTransactionTime(left));
+      setRecentPayments(received);
+      setSelectedRecentPaymentId((current) => (received.some((payment) => getTransactionId(payment) === current) ? current : ''));
+    } catch (err) {
+      Alert.alert('Últimos pagos', err instanceof Error ? err.message : 'No pude cargar pagos recibidos.');
+    } finally {
+      setRecentLoading(false);
+    }
+  }, [api, businessTimezone, recentPaymentsPeriod]);
+
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadBase();
+  }, [loadBase]);
+
+  useEffect(() => {
+    if (!recentPaymentsOpen) return;
+    void loadRecentPayments();
+  }, [loadRecentPayments, recentPaymentsOpen]);
+
+  useEffect(() => {
+    if (!initialContact) return;
+    setSingleDraft((current) => ({ ...current, contact: initialContact }));
+    setPartialDraft((current) => ({ ...current, contact: initialContact }));
+    setSubscriptionDraft((current) => ({ ...current, contact: initialContact }));
+    setView('single');
+    onInitialContactConsumed?.();
+  }, [initialContact, onInitialContactConsumed]);
+
+  useEffect(() => {
+    if (!contactSheetTarget) {
+      setContactsLoading(false);
+      return;
+    }
+    const query = contactQuery.trim();
+    if (query.length < 2) {
+      setContactResults([]);
+      setContactsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setContactsLoading(true);
+    const timer = setTimeout(() => {
+      api.searchContacts(query)
+        .then((results) => {
+          if (!cancelled) setContactResults(Array.isArray(results) ? results : []);
+        })
+        .catch(() => {
+          if (!cancelled) setContactResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setContactsLoading(false);
+        });
+    }, 220);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [api, contactQuery, contactSheetTarget]);
+
+  const openContactSheet = (target: PaymentContactSheetTarget) => {
+    setContactSheetTarget(target);
+    setContactQuery('');
+    setContactResults([]);
+  };
+
+  const closeContactSheet = () => {
+    setContactSheetTarget(null);
+    setContactQuery('');
+    setContactResults([]);
+    setContactsLoading(false);
+  };
+
+  const selectPaymentContact = (contact: ChatContact) => {
+    if (contactSheetTarget === 'single') setSingleDraft((current) => ({ ...current, contact }));
+    if (contactSheetTarget === 'partial') setPartialDraft((current) => ({ ...current, contact }));
+    if (contactSheetTarget === 'subscription') setSubscriptionDraft((current) => ({ ...current, contact }));
+    closeContactSheet();
+  };
+
+  const refreshProducts = async () => {
+    const response = await api.getProducts();
+    setProducts(Array.isArray(response.products) ? response.products : []);
+  };
+
+  const openCreateProduct = () => {
+    setEditingProduct(null);
+    setProductForm(createEmptyProductForm());
+    setProductFormMode('create');
+  };
+
+  const openEditProduct = (product: ProductItem) => {
+    const price = getPrimaryPrice(product);
+    setEditingProduct(product);
+    setProductForm({
+      name: product.name || '',
+      description: product.description || '',
+      priceName: price?.name || 'Precio base',
+      amount: getPriceAmount(price) ? String(getPriceAmount(price)) : '',
+    });
+    setProductFormMode('edit');
+  };
+
+  const closeProductForm = () => {
+    setProductFormMode(null);
+    setEditingProduct(null);
+    setProductForm(createEmptyProductForm());
+  };
+
+  const saveProduct = async () => {
+    const name = productForm.name.trim();
+    const amount = Number(productForm.amount);
+    const currency = accountCurrency;
+    if (!currency) {
+      Alert.alert('Moneda de cuenta', 'No pude leer la moneda configurada de la cuenta. Actualiza la pantalla e intenta otra vez.');
+      return;
+    }
+    if (!name) {
+      Alert.alert('Falta el nombre', 'Escribe cómo se llama el producto.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert('Falta el precio', 'Escribe un precio válido para poder cobrarlo.');
+      return;
+    }
+
+    const currentPrice = editingProduct ? getPrimaryPrice(editingProduct) : null;
+    const payload = {
+      name,
+      description: productForm.description.trim(),
+      currency,
+      prices: [{
+        id: getPriceId(currentPrice),
+        localId: currentPrice?.localId,
+        name: productForm.priceName.trim() || 'Precio base',
+        amount,
+        currency,
+        type: 'one_time',
+      }],
+    };
+
+    setSavingProduct(true);
+    try {
+      if (productFormMode === 'edit' && editingProduct) {
+        await api.updateProduct(getProductId(editingProduct), payload);
+        Alert.alert('Producto actualizado', `${name} ya quedó listo para cobrar.`);
+      } else {
+        await api.createProduct(payload);
+        Alert.alert('Producto creado', `${name} ya aparece en tu catálogo.`);
+      }
+      closeProductForm();
+      await refreshProducts();
+    } catch (err) {
+      Alert.alert('No se guardó el producto', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setSavingProduct(false);
+    }
+  };
+
+  const confirmDeleteProduct = (product: ProductItem) => {
+    const productId = getProductId(product);
+    if (!productId) return;
+    Alert.alert('Eliminar producto', `Se quitará "${product.name || 'Producto'}" de la lista para cobrar. Los pagos anteriores no se borran.`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: () => {
+          setDeletingProductId(productId);
+          api.deleteProduct(productId)
+            .then(() => {
+              setProducts((current) => current.filter((item) => getProductId(item) !== productId));
+              if (editingProduct && getProductId(editingProduct) === productId) closeProductForm();
+            })
+            .catch((err) => Alert.alert('No se eliminó', err instanceof Error ? err.message : 'Intenta otra vez.'))
+            .finally(() => setDeletingProductId(''));
+        },
+      },
+    ]);
+  };
+
+  const submitSinglePayment = async () => {
+    if (savingPayment) return;
+    const amount = Number(singleDraft.chargeType === 'product' && selectedProductPrice ? getPriceAmount(selectedProductPrice) : singleDraft.amount);
+    const contact = singleDraft.contact;
+    const currency = accountCurrency || normalizeCurrencyCode(selectedProductPrice?.currency || selectedProduct?.currency);
+    if (!currency) {
+      Alert.alert('Moneda de cuenta', 'No pude leer la moneda configurada de la cuenta. Actualiza la pantalla e intenta otra vez.');
+      return;
+    }
+    if (!contact) {
+      Alert.alert('Selecciona un contacto', 'El cobro necesita un cliente guardado.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert('Ingresa un monto válido', 'El monto debe ser mayor a cero.');
+      return;
+    }
+
+    const title = singleDraft.title.trim() || 'Pago';
+    const description = singleDraft.description.trim() || title;
+    const lineItems = [{
+      name: selectedProduct?.name || title,
+      description: selectedProduct?.description || description,
+      amount,
+      qty: 1,
+      currency,
+      ...(selectedProduct ? {
+        productId: getProductId(selectedProduct),
+        priceId: getPriceId(selectedProductPrice),
+      } : {}),
+    }];
+    const createLocalManualPayment = () => api.createTransaction({
+      date: singleDraft.paymentDate,
+      contactId: contact.id,
+      contactName: getContactName(contact),
+      email: contact.email || '',
+      phone: contact.phone || '',
+      amount,
+      currency,
+      method: singleDraft.manualMethod,
+      status: 'paid',
+      reference: singleDraft.reference.trim(),
+      title,
+      description: [description, singleDraft.notes.trim()].filter(Boolean).join('\n'),
+      dueDate: singleDraft.dueDate,
+      metadata: { lineItems, source: 'native_mobile_payments' },
+    });
+    const invoicePayload = buildNativeInvoicePayload({
+      contact,
+      title,
+      description,
+      amount,
+      currency,
+      dueDate: singleDraft.dueDate,
+      lineItems,
+      source: 'native_mobile_payments',
+    });
+
+    setSavingPayment(true);
+    try {
+      if (singleDraft.mode === 'manual') {
+        if (capabilities.highLevelConnected) {
+          let invoiceId = '';
+          try {
+            const invoiceResponse = await api.createHighLevelInvoice(invoicePayload);
+            invoiceId = getHighLevelInvoiceId(invoiceResponse);
+            if (!invoiceId) throw new Error('No se pudo obtener el ID del invoice.');
+            await api.recordHighLevelInvoicePayment(invoiceId, {
+              amount,
+              currency,
+              paymentDate: singleDraft.paymentDate,
+              paymentMethod: singleDraft.manualMethod,
+              reference: singleDraft.reference.trim(),
+              notes: singleDraft.notes.trim(),
+            });
+            void api.syncHighLevelInvoice(invoiceId).catch(() => undefined);
+          } catch (err) {
+            if (invoiceId) throw err;
+            await createLocalManualPayment();
+          }
+        } else {
+          await createLocalManualPayment();
+        }
+        Alert.alert('Pago registrado', 'El pago quedó guardado correctamente.');
+        setView('select');
+        if (recentPaymentsOpen) void loadRecentPayments();
+        return;
+      }
+
+      if (singleDraft.mode === 'highlevel_invoice') {
+        if (!capabilities.highLevelConnected) {
+          Alert.alert('HighLevel no conectado', 'Conecta HighLevel o crea el cobro con una pasarela de Ristak.');
+          return;
+        }
+        if ((singleDraft.sendMethod === 'email' || singleDraft.sendMethod === 'both') && !contact.email) {
+          Alert.alert('Falta el email', 'Este invoice necesita email para enviarse por correo.');
+          return;
+        }
+        if ((singleDraft.sendMethod === 'sms' || singleDraft.sendMethod === 'both') && !contact.phone) {
+          Alert.alert('Falta el teléfono', 'Este invoice necesita teléfono para enviarse por WhatsApp/SMS.');
+          return;
+        }
+        const invoiceResponse = await api.createHighLevelInvoice(invoicePayload);
+        const invoiceId = getHighLevelInvoiceId(invoiceResponse);
+        if (!invoiceId) throw new Error('No se pudo obtener el ID del invoice.');
+        const sendResponse = await api.sendHighLevelInvoice(invoiceId, singleDraft.sendMethod);
+        const url = sendResponse.paymentLink || getHighLevelInvoiceUrl(invoiceResponse);
+        if (url) {
+          setLinkReady({
+            title: 'Invoice HighLevel enviado',
+            description: sendResponse.message || 'El enlace quedó enviado por HighLevel y también está listo para abrirlo.',
+            url,
+            amount,
+            currency,
+          });
+        } else {
+          Alert.alert('Invoice enviado', sendResponse.message || 'HighLevel recibió el invoice correctamente.');
+          setView('select');
+        }
+        if (recentPaymentsOpen) void loadRecentPayments();
+        return;
+      }
+
+      const provider = singleDraft.provider || capabilities.linkProviders[0];
+      if (!provider) {
+        Alert.alert('Pasarela no conectada', 'Conecta una pasarela o registra el pago manualmente.');
+        return;
+      }
+      if (provider === 'clip') {
+        if (currency !== 'MXN') {
+          Alert.alert('Moneda no soportada', 'CLIP sólo acepta MXN. Usa otra pasarela o registra el pago manual.');
+          return;
+        }
+        if (!contact.email || !contact.phone) {
+          Alert.alert('Faltan datos del cliente', 'CLIP necesita email y teléfono para crear el link de pago.');
+          return;
+        }
+      }
+
+      const response = await api.createPaymentLink(provider, {
+        contactId: contact.id,
+        contactName: getContactName(contact),
+        email: contact.email || '',
+        phone: contact.phone || '',
+        amount,
+        currency,
+        applyTax: false,
+        title,
+        description,
+        dueDate: singleDraft.dueDate,
+        source: 'native_mobile_payments',
+        lineItems,
+      });
+      const url = getPaymentResponseUrl(response);
+      if (!url) {
+        Alert.alert('Link creado', 'El cobro se creó, pero el backend no devolvió un enlace para abrir.');
+        setView('select');
+        return;
+      }
+      setLinkReady({
+        title: `Enlace ${PROVIDER_LABELS[provider]} listo`,
+        description: 'Compártelo con el cliente para que complete el pago en la página segura.',
+        url,
+        amount,
+        currency,
+      });
+      if (recentPaymentsOpen) void loadRecentPayments();
+    } catch (err) {
+      Alert.alert('No se pudo crear el cobro', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  const submitPartialPayment = async () => {
+    if (savingPayment) return;
+    const contact = partialDraft.contact;
+    const totalAmount = Number(partialDraft.totalAmount);
+    const firstPaymentAmount = Math.max(0, Number(partialDraft.firstPaymentAmount || 0));
+    const installmentCount = Math.max(1, Number.parseInt(partialDraft.installmentCount, 10) || 1);
+    const currency = accountCurrency;
+    const provider = partialDraft.provider || capabilities.planProviders[0];
+    if (!currency) {
+      Alert.alert('Moneda de cuenta', 'No pude leer la moneda configurada de la cuenta. Actualiza la pantalla e intenta otra vez.');
+      return;
+    }
+    if (!provider) {
+      Alert.alert('Planes no disponibles', 'Tu cuenta no tiene HighLevel o una pasarela de planes conectada.');
+      return;
+    }
+    if (!contact) {
+      Alert.alert('Selecciona un contacto', 'El plan necesita un cliente guardado.');
+      return;
+    }
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+      Alert.alert('Ingresa un total válido', 'El total del plan debe ser mayor a cero.');
+      return;
+    }
+    if (firstPaymentAmount >= totalAmount) {
+      Alert.alert('Primer pago inválido', 'El primer pago debe ser menor al total cuando hay parcialidades restantes.');
+      return;
+    }
+
+    const title = partialDraft.title.trim() || 'Plan de parcialidades';
+    const remainingTotal = Math.round((totalAmount - firstPaymentAmount) * 100) / 100;
+    const baseRemaining = Math.floor((remainingTotal / installmentCount) * 100) / 100;
+    let allocated = 0;
+    const startDate = dateOnlyInTimezone(new Date(), businessTimezone);
+    const remainingPayments = Array.from({ length: installmentCount }, (_, index) => {
+      const isLast = index === installmentCount - 1;
+      const amount = isLast ? Math.round((remainingTotal - allocated) * 100) / 100 : baseRemaining;
+      allocated += amount;
+      return {
+        sequence: index + 1,
+        type: 'amount',
+        value: amount,
+        amount,
+        percentage: null,
+        dueDate: getInstallmentDueDate(startDate, partialDraft.frequency, index + 1),
+        frequency: partialDraft.frequency,
+      };
+    });
+
+    setSavingPayment(true);
+    try {
+      const payload = {
+        contact: {
+          id: contact.id,
+          name: getContactName(contact),
+          email: contact.email || '',
+          phone: contact.phone || '',
+        },
+        totalAmount,
+        currency,
+        description: title,
+        title,
+        invoicePayload: buildNativeInvoicePayload({
+          contact,
+          title,
+          amount: totalAmount,
+          currency,
+          dueDate: addDateOnlyDays(startDate, 7),
+        }),
+        firstPayment: {
+          enabled: firstPaymentAmount > 0,
+          type: 'amount',
+          value: firstPaymentAmount,
+          amount: firstPaymentAmount,
+          date: startDate,
+          frequency: partialDraft.frequency,
+          method: firstPaymentAmount > 0 ? partialDraft.firstPaymentMethod : 'none',
+        },
+        remainingAutomatic: provider !== 'highlevel',
+        remainingFrequency: partialDraft.frequency,
+        remainingPayments,
+        channels: {
+          email: Boolean(contact.email),
+          whatsapp: Boolean(contact.phone),
+          sms: false,
+        },
+        source: 'native_mobile_payments',
+      };
+      const response = await api.createPaymentPlan(provider, payload);
+      const url = getPaymentResponseUrl(response);
+      if (url) {
+        setLinkReady({
+          title: 'Enlace de parcialidades listo',
+          description: 'Comparte el enlace para que el cliente autorice el primer pago o la tarjeta del plan.',
+          url,
+          amount: firstPaymentAmount || Number(response.cardSetupAmount || 0) || totalAmount,
+          currency,
+        });
+      } else {
+        Alert.alert('Plan creado', 'Las parcialidades quedaron registradas correctamente.');
+        setView('select');
+      }
+      if (recentPaymentsOpen) void loadRecentPayments();
+    } catch (err) {
+      Alert.alert('No se pudo crear el plan', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  const submitSubscription = async () => {
+    if (savingPayment) return;
+    const contact = subscriptionDraft.contact;
+    const provider = subscriptionDraft.provider || capabilities.subscriptionProviders[0];
+    const amount = Number(subscriptionDraft.amount);
+    const currency = accountCurrency;
+    if (!currency) {
+      Alert.alert('Moneda de cuenta', 'No pude leer la moneda configurada de la cuenta. Actualiza la pantalla e intenta otra vez.');
+      return;
+    }
+    if (!provider) {
+      Alert.alert('Pasarela no conectada', 'Conecta Stripe, Conekta, Mercado Pago o Rebill para crear suscripciones.');
+      return;
+    }
+    if (!subscriptionDraft.name.trim()) {
+      Alert.alert('Falta el nombre', 'Escribe cómo se llama la suscripción.');
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      Alert.alert('Falta el monto', 'Escribe un monto válido para la suscripción.');
+      return;
+    }
+    if (!contact) {
+      Alert.alert('Selecciona un contacto', 'La suscripción necesita un cliente guardado.');
+      return;
+    }
+    if ((provider === 'mercadopago' || provider === 'rebill') && !contact.email) {
+      Alert.alert('Falta el email', `${PROVIDER_LABELS[provider]} necesita email para que el cliente autorice la suscripción.`);
+      return;
+    }
+    if (provider === 'conekta' && subscriptionDraft.intervalType === 'daily') {
+      Alert.alert('Frecuencia no soportada', 'Conekta no acepta suscripciones diarias.');
+      return;
+    }
+    if (provider === 'rebill' && !['monthly', 'yearly'].includes(subscriptionDraft.intervalType)) {
+      Alert.alert('Frecuencia no soportada', 'Rebill sólo acepta suscripciones mensuales o anuales.');
+      return;
+    }
+
+    setSavingPayment(true);
+    try {
+      const requiresExternalAuthorization = provider === 'mercadopago' || provider === 'rebill';
+      const startDate = subscriptionDraft.startDate || dateOnlyInTimezone(new Date(), businessTimezone);
+      const subscription = await api.createSubscription({
+        contactId: contact.id,
+        contactName: getContactName(contact),
+        contactEmail: contact.email || null,
+        contactPhone: contact.phone || null,
+        name: subscriptionDraft.name.trim(),
+        description: subscriptionDraft.description.trim(),
+        status: requiresExternalAuthorization ? 'incomplete' : 'active',
+        amount,
+        currency,
+        intervalType: subscriptionDraft.intervalType,
+        intervalCount: Math.max(1, Number.parseInt(subscriptionDraft.intervalCount, 10) || 1),
+        startDate,
+        nextRunAt: requiresExternalAuthorization ? null : startDate,
+        paymentMethod: getNativeSubscriptionPaymentMethod(provider),
+        paymentProvider: provider,
+        source: 'native_mobile_payments',
+      });
+      const url = getSubscriptionActivationUrl(subscription, provider);
+      if (url) {
+        setLinkReady({
+          title: 'Suscripción lista',
+          description: 'Envíale el link al cliente para que active la suscripción.',
+          url,
+          amount,
+          currency,
+        });
+      } else {
+        Alert.alert('Suscripción creada', `${subscriptionDraft.name.trim()} quedó guardada.`);
+        setView('select');
+      }
+    } catch (err) {
+      Alert.alert('No se guardó la suscripción', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  if (view === 'products') {
+    return (
+      <>
+        <PaymentsProductsView
+          currency={usableCurrency}
+          deletingProductId={deletingProductId}
+          editing={productFormMode}
+          form={productForm}
+          loading={loading}
+          products={products}
+          saving={savingProduct}
+          onBack={() => setView('select')}
+          onChangeForm={(patch) => setProductForm((current) => ({ ...current, ...patch }))}
+          onCreate={openCreateProduct}
+          onEdit={openEditProduct}
+          onCancelForm={closeProductForm}
+          onDelete={confirmDeleteProduct}
+          onRefresh={() => void loadBase({ refresh: true })}
+          onSave={() => void saveProduct()}
+        />
+        <SectionState loading={false} error={error} onRetry={() => void loadBase({ refresh: true })} />
+      </>
+    );
+  }
+
+  if (view === 'single') {
+    return (
+      <>
+        <SinglePaymentForm
+          capabilities={capabilities}
+          currency={usableCurrency}
+          draft={singleDraft}
+          products={products}
+          saving={savingPayment}
+          onBack={() => setView('select')}
+          onChange={(patch) => setSingleDraft((current) => ({ ...current, ...patch }))}
+          onPickContact={() => openContactSheet('single')}
+          onSubmit={() => void submitSinglePayment()}
+        />
+        <PaymentContactSheet
+          contacts={contactResults}
+          loading={contactsLoading}
+          open={contactSheetTarget === 'single'}
+          query={contactQuery}
+          onChangeQuery={setContactQuery}
+          onClose={closeContactSheet}
+          onSelect={selectPaymentContact}
+        />
+        <PaymentLinkReadySheet link={linkReady} onClose={() => setLinkReady(null)} />
+      </>
+    );
+  }
+
+  if (view === 'partial') {
+    return (
+      <>
+        <PartialPaymentForm
+          capabilities={capabilities}
+          currency={usableCurrency}
+          draft={partialDraft}
+          saving={savingPayment}
+          onBack={() => setView('select')}
+          onChange={(patch) => setPartialDraft((current) => ({ ...current, ...patch }))}
+          onPickContact={() => openContactSheet('partial')}
+          onSubmit={() => void submitPartialPayment()}
+        />
+        <PaymentContactSheet
+          contacts={contactResults}
+          loading={contactsLoading}
+          open={contactSheetTarget === 'partial'}
+          query={contactQuery}
+          onChangeQuery={setContactQuery}
+          onClose={closeContactSheet}
+          onSelect={selectPaymentContact}
+        />
+        <PaymentLinkReadySheet link={linkReady} onClose={() => setLinkReady(null)} />
+      </>
+    );
+  }
+
+  if (view === 'subscription') {
+    return (
+      <>
+        <SubscriptionPaymentForm
+          capabilities={capabilities}
+          currency={usableCurrency}
+          draft={subscriptionDraft}
+          saving={savingPayment}
+          onBack={() => setView('select')}
+          onChange={(patch) => setSubscriptionDraft((current) => ({ ...current, ...patch }))}
+          onPickContact={() => openContactSheet('subscription')}
+          onSubmit={() => void submitSubscription()}
+        />
+        <PaymentContactSheet
+          contacts={contactResults}
+          loading={contactsLoading}
+          open={contactSheetTarget === 'subscription'}
+          query={contactQuery}
+          onChangeQuery={setContactQuery}
+          onClose={closeContactSheet}
+          onSelect={selectPaymentContact}
+        />
+        <PaymentLinkReadySheet link={linkReady} onClose={() => setLinkReady(null)} />
+      </>
+    );
+  }
 
   return (
-    <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.sectionScroll}>
-      <View style={styles.actionGrid}>
-        {['Cobro unico', 'Pago parcial', 'Suscripcion', 'Productos'].map((label) => (
-          <View key={label} style={styles.actionTile}>
-            <Text style={styles.actionTileLabel}>{label}</Text>
-          </View>
-        ))}
-      </View>
-      <SectionState loading={loading} error={error} onRetry={load} />
+    <ScrollView
+      {...HIDDEN_SCROLL_INDICATOR_PROPS}
+      refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={() => void loadBase({ refresh: true })} />}
+      contentContainerStyle={styles.paymentsSelectScroll}
+    >
+      <Text style={styles.paymentsTitle}>Elige cómo quieres pagar</Text>
+      <SectionState loading={loading} error={error} onRetry={() => void loadBase({ refresh: true })} />
       {!loading && !error ? (
         <>
-          <SectionBlock title="Pagos recientes">
-            {transactions.slice(0, 6).map((transaction, index) => {
-              const amount = Number(transaction.amount ?? transaction.total ?? 0);
-              return (
-                <InfoRow
-                  key={transaction.id || transaction._id || `transaction-${index}`}
-                  title={transaction.concept || transaction.contactName || transaction.email || 'Pago'}
-                  subtitle={`${transaction.status || 'Sin estado'} - ${formatShortDate(transaction.paymentDate || transaction.createdAt)}`}
-                  value={formatCurrency(amount, transaction.currency || 'MXN')}
+          <PaymentChoiceCard
+            Icon={CreditCard}
+            title="Registrar pago único"
+            subtitle="Cobro único: envía una liga de pago o registra un pago manual."
+            onPress={() => setView('single')}
+          />
+          {capabilities.canUsePaymentPlans ? (
+            <PaymentChoiceCard
+              Icon={CalendarDays}
+              title="Planes de pago"
+              subtitle="Parcialidades automáticas con enganche y cobros recurrentes."
+              onPress={() => setView('partial')}
+            />
+          ) : null}
+          {capabilities.canUseSubscriptions ? (
+            <PaymentChoiceCard
+              Icon={Repeat2}
+              title="Suscripción"
+              subtitle="Cobros recurrentes con Stripe, Conekta, Mercado Pago o Rebill."
+              onPress={() => setView('subscription')}
+            />
+          ) : null}
+          <PaymentChoiceCard
+            Icon={Package}
+            title="Precios Guardados"
+            subtitle="Revisa, crea, modifica o elimina precios para cobrarlos desde el celular."
+            onPress={() => setView('products')}
+          />
+          <View style={styles.recentPaymentsSection}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: recentPaymentsOpen }}
+              onPress={() => setRecentPaymentsOpen((open) => !open)}
+              style={({ pressed }) => [styles.recentPaymentsToggle, pressed && styles.pressed]}
+            >
+              <View style={styles.recentPaymentsToggleCopy}>
+                <Text style={styles.recentPaymentsToggleTitle}>{recentPaymentsOpen ? 'Ocultar últimos pagos' : 'Mostrar últimos pagos'}</Text>
+                <Text style={styles.recentPaymentsToggleMeta}>
+                  {selectedRecentPayment
+                    ? `${formatCurrency(Number(selectedRecentPayment.amount ?? selectedRecentPayment.total ?? 0), selectedRecentPayment.currency || usableCurrency)} seleccionado`
+                    : `${selectedRecentPeriod.label} recientes`}
+                </Text>
+              </View>
+              <ChevronDown size={22} color={COLORS.muted} strokeWidth={2.5} />
+            </Pressable>
+            {recentPaymentsOpen ? (
+              <View style={styles.recentPaymentsPanel}>
+                <SegmentedOptions
+                  value={recentPaymentsPeriod}
+                  options={RECENT_PAYMENT_PERIODS.map((period) => ({ value: period.id, label: period.label }))}
+                  onChange={(value) => setRecentPaymentsPeriod(value as RecentPaymentsPeriod)}
                 />
-              );
-            })}
-            {!transactions.length ? <Text style={styles.caption}>No hay pagos recientes.</Text> : null}
-          </SectionBlock>
-          <SectionBlock title="Productos">
-            {products.slice(0, 8).map((product, index) => {
-              const price = product.prices?.[0];
-              const amount = Number(price?.amount ?? price?.price ?? 0);
-              return (
-                <InfoRow
-                  key={product.id || product._id || product.localId || `product-${index}`}
-                  title={product.name || 'Producto'}
-                  subtitle={product.description || price?.name || 'Precio base'}
-                  value={amount ? formatCurrency(amount, price?.currency || product.currency || 'MXN') : ''}
-                />
-              );
-            })}
-            {!products.length ? <Text style={styles.caption}>No hay productos para mostrar.</Text> : null}
-          </SectionBlock>
+                {recentLoading && !recentPayments.length ? (
+                  <View style={styles.inlineState}>
+                    <ActivityIndicator color={COLORS.accent} />
+                    <Text style={styles.caption}>Cargando...</Text>
+                  </View>
+                ) : recentPayments.length ? (
+                  recentPayments.slice(0, 24).map((payment, index) => {
+                    const paymentId = getTransactionId(payment) || `payment-${index}`;
+                    const selected = paymentId === selectedRecentPaymentId;
+                    const amount = Number(payment.amount ?? payment.total ?? 0);
+                    return (
+                      <Pressable
+                        key={paymentId}
+                        onPress={() => setSelectedRecentPaymentId(selected ? '' : paymentId)}
+                        style={({ pressed }) => [styles.recentPaymentItem, selected && styles.recentPaymentItemSelected, pressed && styles.pressed]}
+                      >
+                        <View style={styles.recentPaymentMain}>
+                          <Text style={styles.recentPaymentAmount}>{formatCurrency(amount, payment.currency || usableCurrency)}</Text>
+                          <Text numberOfLines={1} style={styles.recentPaymentContact}>{getPaymentContactLabel(payment)}</Text>
+                        </View>
+                        <View style={styles.recentPaymentMeta}>
+                          <Text style={styles.recentPaymentDate}>{formatPaymentDate(payment.date || payment.paymentDate || payment.createdAt, businessTimezone)}</Text>
+                          <Text numberOfLines={1} style={styles.recentPaymentStatus}>
+                            {getPaymentMethodLabel(payment.method || payment.paymentMethod)} · {getPaymentStatusLabel(payment.status)}
+                          </Text>
+                        </View>
+                        {selected ? <Check size={18} color={COLORS.accent} strokeWidth={2.8} /> : null}
+                      </Pressable>
+                    );
+                  })
+                ) : (
+                  <Text style={styles.recentPaymentsEmpty}>No hay pagos recibidos en este periodo.</Text>
+                )}
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.selectBottomSpacer} />
         </>
       ) : null}
     </ScrollView>
   );
+}
+
+function PaymentChoiceCard({
+  Icon,
+  title,
+  subtitle,
+  onPress,
+}: {
+  Icon: LucideIcon;
+  title: string;
+  subtitle: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.paymentChoiceCard, pressed && styles.pressed]}>
+      <View style={styles.paymentChoiceIcon}>
+        <Icon size={24} color={COLORS.accent} strokeWidth={2.5} />
+      </View>
+      <View style={styles.paymentChoiceCopy}>
+        <Text style={styles.paymentChoiceTitle}>{title}</Text>
+        <Text style={styles.paymentChoiceSubtitle}>{subtitle}</Text>
+      </View>
+      <ChevronRight size={20} color={COLORS.muted} strokeWidth={2.4} />
+    </Pressable>
+  );
+}
+
+function PaymentFormShell({
+  title,
+  subtitle,
+  Icon,
+  summary,
+  saving,
+  submitLabel,
+  children,
+  onBack,
+  onSubmit,
+}: {
+  title: string;
+  subtitle: string;
+  Icon: LucideIcon;
+  summary?: { label: string; detail: string; amount: string };
+  saving?: boolean;
+  submitLabel: string;
+  children: React.ReactNode;
+  onBack: () => void;
+  onSubmit: () => void;
+}) {
+  return (
+    <View style={styles.paymentFormRoot}>
+      <View style={styles.paymentFormHeader}>
+        <Pressable accessibilityRole="button" onPress={onBack} style={styles.paymentBackButton}>
+          <ChevronLeft size={20} color={COLORS.text} strokeWidth={2.5} />
+        </Pressable>
+        <View style={styles.paymentFormIcon}>
+          <Icon size={21} color={COLORS.accent} strokeWidth={2.5} />
+        </View>
+        <View style={styles.paymentFormHeaderCopy}>
+          <Text style={styles.paymentFormTitle}>{title}</Text>
+          <Text style={styles.paymentFormSubtitle}>{subtitle}</Text>
+        </View>
+      </View>
+      <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.paymentFormScroll} keyboardShouldPersistTaps="handled">
+        {summary ? (
+          <View style={styles.paymentSummaryBar}>
+            <View style={styles.paymentSummaryCopy}>
+              <Text style={styles.paymentSummaryLabel}>{summary.label}</Text>
+              <Text style={styles.paymentSummaryDetail}>{summary.detail}</Text>
+            </View>
+            <Text style={styles.paymentSummaryAmount}>{summary.amount}</Text>
+          </View>
+        ) : null}
+        {children}
+      </ScrollView>
+      <View style={styles.paymentFormFooter}>
+        <PrimaryButton label={submitLabel} busy={saving} onPress={onSubmit} />
+      </View>
+    </View>
+  );
+}
+
+function SinglePaymentForm({
+  capabilities,
+  currency,
+  draft,
+  products,
+  saving,
+  onBack,
+  onChange,
+  onPickContact,
+  onSubmit,
+}: {
+  capabilities: PaymentCapabilities;
+  currency: string;
+  draft: SinglePaymentDraft;
+  products: ProductItem[];
+  saving: boolean;
+  onBack: () => void;
+  onChange: (patch: Partial<SinglePaymentDraft>) => void;
+  onPickContact: () => void;
+  onSubmit: () => void;
+}) {
+  const selectedProduct = products.find((product) => getProductId(product) === draft.productId) || null;
+  const price = getPrimaryPrice(selectedProduct);
+  const amount = draft.chargeType === 'product' && price ? getPriceAmount(price) : Number(draft.amount || 0);
+  const paymentProviders = capabilities.linkProviders.map((provider) => ({ value: provider, label: PROVIDER_LABELS[provider] }));
+  const paymentModeOptions = [
+    ...(capabilities.highLevelConnected ? [{ value: 'highlevel_invoice', label: 'Invoice GHL' }] : []),
+    ...(paymentProviders.length ? [{ value: 'payment_link', label: 'Liga de pago' }] : []),
+    { value: 'manual', label: 'Manual' },
+  ];
+  const summaryDetail = draft.mode === 'manual'
+    ? getPaymentMethodLabel(draft.manualMethod)
+    : draft.mode === 'highlevel_invoice'
+      ? `HighLevel · ${HIGHLEVEL_INVOICE_SEND_METHODS.find((method) => method.id === draft.sendMethod)?.label || 'Email'}`
+      : draft.provider ? PROVIDER_LABELS[draft.provider] : 'Link de pago';
+
+  return (
+    <PaymentFormShell
+      Icon={CreditCard}
+      title="Registrar pago único"
+      subtitle="Envía una liga de pago o registra un pago manual."
+      summary={{ label: draft.mode === 'manual' ? 'Pago manual' : 'Link de pago', detail: summaryDetail, amount: formatCurrency(amount, currency) }}
+      saving={saving}
+      submitLabel={draft.mode === 'manual' ? 'Registrar pago' : 'Crear enlace de pago'}
+      onBack={onBack}
+      onSubmit={onSubmit}
+    >
+      <PaymentContactButton contact={draft.contact} onPress={onPickContact} />
+      <SegmentedOptions
+        value={draft.chargeType}
+        options={[
+          { value: 'direct', label: 'Monto directo' },
+          { value: 'product', label: 'Guardado' },
+        ]}
+        onChange={(value) => onChange({ chargeType: value as SinglePaymentDraft['chargeType'] })}
+      />
+      {draft.chargeType === 'product' ? (
+        <View style={styles.paymentFieldGroup}>
+          <Text style={styles.paymentFieldLabel}>Precio guardado</Text>
+          {products.length ? products.map((product) => {
+            const productId = getProductId(product);
+            const productPrice = getPrimaryPrice(product);
+            return (
+              <Pressable
+                key={productId || product.name}
+                onPress={() => onChange({
+                  productId,
+                  title: product.name || draft.title,
+                  description: product.description || draft.description,
+                  amount: String(getPriceAmount(productPrice) || draft.amount),
+                })}
+                style={({ pressed }) => [styles.paymentOptionRow, draft.productId === productId && styles.paymentOptionRowActive, pressed && styles.pressed]}
+              >
+                <Package size={18} color={COLORS.accent} strokeWidth={2.4} />
+                <View style={styles.paymentOptionCopy}>
+                  <Text style={styles.paymentOptionTitle}>{product.name || 'Producto'}</Text>
+                  <Text style={styles.paymentOptionSubtitle}>
+                    {productPrice ? `${productPrice.name || 'Precio base'} · ${formatCurrency(getPriceAmount(productPrice), productPrice.currency || currency)}` : 'Sin precio guardado'}
+                  </Text>
+                </View>
+                {draft.productId === productId ? <Check size={18} color={COLORS.accent} strokeWidth={2.8} /> : null}
+              </Pressable>
+            );
+          }) : (
+            <Text style={styles.paymentEmptyCopy}>No hay precios guardados. Puedes cobrar por monto directo.</Text>
+          )}
+        </View>
+      ) : (
+        <PaymentTextField
+          label={`Monto (${currency})`}
+          value={draft.amount}
+          keyboardType="decimal-pad"
+          placeholder="0.00"
+          onChangeText={(amountValue) => onChange({ amount: amountValue })}
+        />
+      )}
+      <PaymentTextField label="Título" value={draft.title} placeholder="Pago" onChangeText={(titleValue) => onChange({ title: titleValue })} />
+      <PaymentTextField label="Descripción" value={draft.description} placeholder="Concepto del cobro" onChangeText={(description) => onChange({ description })} multiline />
+      <SegmentedOptions
+        value={draft.mode}
+        options={paymentModeOptions}
+        onChange={(modeValue) => onChange({ mode: modeValue as SinglePaymentMode })}
+      />
+      {draft.mode === 'payment_link' ? (
+        paymentProviders.length ? (
+          <SegmentedOptions
+            value={draft.provider || paymentProviders[0]?.value || ''}
+            options={paymentProviders}
+            onChange={(provider) => onChange({ provider: provider as PaymentGatewayProvider })}
+          />
+        ) : (
+          <View style={styles.paymentNotice}>
+            <Text style={styles.paymentNoticeTitle}>Sin pasarela conectada</Text>
+            <Text style={styles.paymentNoticeCopy}>Registra este pago manualmente o conecta una pasarela en Ajustes.</Text>
+          </View>
+        )
+      ) : draft.mode === 'highlevel_invoice' ? (
+        <>
+          <SegmentedOptions
+            value={draft.sendMethod}
+            options={HIGHLEVEL_INVOICE_SEND_METHODS.map((method) => ({ value: method.id, label: method.label }))}
+            onChange={(sendMethod) => onChange({ sendMethod: sendMethod as HighLevelInvoiceSendMethod })}
+          />
+          <PaymentTextField label="Vence" value={draft.dueDate} placeholder="YYYY-MM-DD" onChangeText={(dueDate) => onChange({ dueDate })} />
+        </>
+      ) : (
+        <>
+          <SegmentedOptions
+            value={draft.manualMethod}
+            options={MANUAL_PAYMENT_METHODS.map((method) => ({ value: method.id, label: method.label }))}
+            onChange={(method) => onChange({ manualMethod: method as ManualPaymentMethod })}
+          />
+          <PaymentTextField label="Fecha de pago" value={draft.paymentDate} placeholder="YYYY-MM-DD" onChangeText={(paymentDate) => onChange({ paymentDate })} />
+          <PaymentTextField label="Referencia" value={draft.reference} placeholder="Opcional" onChangeText={(reference) => onChange({ reference })} />
+          <PaymentTextField label="Notas" value={draft.notes} placeholder="Notas internas" onChangeText={(notes) => onChange({ notes })} multiline />
+        </>
+      )}
+    </PaymentFormShell>
+  );
+}
+
+function PartialPaymentForm({
+  capabilities,
+  currency,
+  draft,
+  saving,
+  onBack,
+  onChange,
+  onPickContact,
+  onSubmit,
+}: {
+  capabilities: PaymentCapabilities;
+  currency: string;
+  draft: PartialPaymentDraft;
+  saving: boolean;
+  onBack: () => void;
+  onChange: (patch: Partial<PartialPaymentDraft>) => void;
+  onPickContact: () => void;
+  onSubmit: () => void;
+}) {
+  const total = Number(draft.totalAmount || 0);
+  const first = Math.max(0, Number(draft.firstPaymentAmount || 0));
+  const count = Math.max(1, Number.parseInt(draft.installmentCount, 10) || 1);
+  const remaining = Math.max(0, total - first);
+  const installment = count ? remaining / count : 0;
+  const providers = capabilities.planProviders.map((provider) => ({ value: provider, label: PLAN_PROVIDER_LABELS[provider] }));
+
+  return (
+    <PaymentFormShell
+      Icon={CalendarDays}
+      title="Planes de pago"
+      subtitle="Configura parcialidades desde el celular."
+      summary={{ label: 'Plan', detail: `${count} parcialidad${count === 1 ? '' : 'es'} · ${PAYMENT_PLAN_FREQUENCIES.find((item) => item.id === draft.frequency)?.label || 'Mensual'}`, amount: formatCurrency(total, currency) }}
+      saving={saving}
+      submitLabel="Crear plan de pagos"
+      onBack={onBack}
+      onSubmit={onSubmit}
+    >
+      <PaymentContactButton contact={draft.contact} onPress={onPickContact} />
+      {providers.length ? (
+        <SegmentedOptions
+          value={draft.provider || providers[0]?.value || ''}
+          options={providers}
+          onChange={(provider) => onChange({ provider: provider as PaymentPlanProvider })}
+        />
+      ) : (
+        <View style={styles.paymentNotice}>
+          <Text style={styles.paymentNoticeTitle}>Planes no disponibles</Text>
+          <Text style={styles.paymentNoticeCopy}>Tu cuenta necesita HighLevel, Stripe, Conekta o Rebill conectado para crear parcialidades.</Text>
+        </View>
+      )}
+      <PaymentTextField label={`Total (${currency})`} value={draft.totalAmount} keyboardType="decimal-pad" placeholder="0.00" onChangeText={(totalAmount) => onChange({ totalAmount })} />
+      <PaymentTextField label={`Primer pago (${currency})`} value={draft.firstPaymentAmount} keyboardType="decimal-pad" placeholder="0.00" onChangeText={(firstPaymentAmount) => onChange({ firstPaymentAmount })} />
+      <SegmentedOptions
+        value={draft.firstPaymentMethod}
+        options={[
+          { value: 'card', label: 'Tarjeta / link' },
+          { value: 'bank_transfer', label: 'Transferencia' },
+          { value: 'cash', label: 'Efectivo' },
+          { value: 'deposit', label: 'Depósito' },
+        ]}
+        onChange={(firstPaymentMethod) => onChange({ firstPaymentMethod: firstPaymentMethod as PartialPaymentDraft['firstPaymentMethod'] })}
+      />
+      <View style={styles.paymentFormGrid}>
+        <View style={styles.paymentFormGridItem}>
+          <PaymentTextField label="Pagos restantes" value={draft.installmentCount} keyboardType="number-pad" placeholder="2" onChangeText={(installmentCount) => onChange({ installmentCount })} />
+        </View>
+        <View style={styles.paymentFormGridItem}>
+          <PaymentTextField label="Monto aprox." value={formatCurrency(installment, currency)} editable={false} onChangeText={() => undefined} />
+        </View>
+      </View>
+      <SegmentedOptions
+        value={draft.frequency}
+        options={PAYMENT_PLAN_FREQUENCIES.map((item) => ({ value: item.id, label: item.label }))}
+        onChange={(frequency) => onChange({ frequency: frequency as PartialPaymentDraft['frequency'] })}
+      />
+      <PaymentTextField label="Concepto" value={draft.title} placeholder="Plan de parcialidades" onChangeText={(title) => onChange({ title })} />
+    </PaymentFormShell>
+  );
+}
+
+function SubscriptionPaymentForm({
+  capabilities,
+  currency,
+  draft,
+  saving,
+  onBack,
+  onChange,
+  onPickContact,
+  onSubmit,
+}: {
+  capabilities: PaymentCapabilities;
+  currency: string;
+  draft: SubscriptionDraft;
+  saving: boolean;
+  onBack: () => void;
+  onChange: (patch: Partial<SubscriptionDraft>) => void;
+  onPickContact: () => void;
+  onSubmit: () => void;
+}) {
+  const amount = Number(draft.amount || 0);
+  const providers = capabilities.subscriptionProviders.map((provider) => ({ value: provider, label: PROVIDER_LABELS[provider] }));
+  const interval = SUBSCRIPTION_INTERVALS.find((item) => item.id === draft.intervalType)?.label || 'Mensual';
+
+  return (
+    <PaymentFormShell
+      Icon={Repeat2}
+      title="Nueva suscripción"
+      subtitle="Configura el cobro recurrente desde el celular."
+      summary={{ label: 'Cobro recurrente', detail: `${interval} · ${draft.provider ? PROVIDER_LABELS[draft.provider] : 'Pasarela'}`, amount: formatCurrency(amount, currency) }}
+      saving={saving}
+      submitLabel="Crear enlace de pago"
+      onBack={onBack}
+      onSubmit={onSubmit}
+    >
+      <PaymentContactButton contact={draft.contact} onPress={onPickContact} />
+      {providers.length ? (
+        <SegmentedOptions
+          value={draft.provider || providers[0]?.value || ''}
+          options={providers}
+          onChange={(provider) => onChange({ provider: provider as PaymentGatewayProvider })}
+        />
+      ) : (
+        <View style={styles.paymentNotice}>
+          <Text style={styles.paymentNoticeTitle}>Sin pasarela conectada</Text>
+          <Text style={styles.paymentNoticeCopy}>Conecta Stripe, Conekta, Mercado Pago o Rebill para crear suscripciones.</Text>
+        </View>
+      )}
+      <PaymentTextField label="Nombre" value={draft.name} placeholder="Ej. Membresía mensual" onChangeText={(name) => onChange({ name })} />
+      <PaymentTextField label={`Monto (${currency})`} value={draft.amount} keyboardType="decimal-pad" placeholder="0.00" onChangeText={(amountValue) => onChange({ amount: amountValue })} />
+      <SegmentedOptions
+        value={draft.intervalType}
+        options={SUBSCRIPTION_INTERVALS.map((item) => ({ value: item.id, label: item.label }))}
+        onChange={(intervalType) => onChange({ intervalType: intervalType as SubscriptionDraft['intervalType'] })}
+      />
+      <View style={styles.paymentFormGrid}>
+        <View style={styles.paymentFormGridItem}>
+          <PaymentTextField label="Cada" value={draft.intervalCount} keyboardType="number-pad" placeholder="1" onChangeText={(intervalCount) => onChange({ intervalCount })} />
+        </View>
+        <View style={styles.paymentFormGridItem}>
+          <PaymentTextField label="Inicio" value={draft.startDate} placeholder="YYYY-MM-DD" onChangeText={(startDate) => onChange({ startDate })} />
+        </View>
+      </View>
+      <PaymentTextField label="Notas" value={draft.description} placeholder="Notas internas de esta suscripción." onChangeText={(description) => onChange({ description })} multiline />
+    </PaymentFormShell>
+  );
+}
+
+function PaymentsProductsView({
+  currency,
+  deletingProductId,
+  editing,
+  form,
+  loading,
+  products,
+  saving,
+  onBack,
+  onCancelForm,
+  onChangeForm,
+  onCreate,
+  onDelete,
+  onEdit,
+  onRefresh,
+  onSave,
+}: {
+  currency: string;
+  deletingProductId: string;
+  editing: ProductFormMode;
+  form: ProductFormState;
+  loading: boolean;
+  products: ProductItem[];
+  saving: boolean;
+  onBack: () => void;
+  onCancelForm: () => void;
+  onChangeForm: (patch: Partial<ProductFormState>) => void;
+  onCreate: () => void;
+  onDelete: (product: ProductItem) => void;
+  onEdit: (product: ProductItem) => void;
+  onRefresh: () => void;
+  onSave: () => void;
+}) {
+  return (
+    <View style={styles.paymentFormRoot}>
+      <View style={styles.productsHeader}>
+        <Pressable accessibilityRole="button" onPress={onBack} style={styles.paymentBackButton}>
+          <ChevronLeft size={20} color={COLORS.text} strokeWidth={2.5} />
+        </Pressable>
+        <View style={styles.productsHeaderCopy}>
+          <Text style={styles.paymentFormTitle}>Precios Guardados</Text>
+          <Text style={styles.paymentFormSubtitle}>{products.length === 1 ? '1 disponible' : `${products.length} disponibles`}</Text>
+        </View>
+        <Pressable accessibilityRole="button" onPress={onRefresh} style={styles.paymentIconButton}>
+          <RefreshCw size={18} color={COLORS.text} strokeWidth={2.5} />
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={onCreate} style={styles.productNewButton}>
+          <Plus size={17} color={COLORS.white} strokeWidth={2.6} />
+          <Text style={styles.productNewButtonText}>Nuevo</Text>
+        </Pressable>
+      </View>
+      <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.paymentFormScroll} keyboardShouldPersistTaps="handled">
+        {editing ? (
+          <View style={styles.productForm}>
+            <View style={styles.productFormHeader}>
+              <View style={styles.productFormHeaderCopy}>
+                <Text style={styles.productFormTitle}>{editing === 'edit' ? 'Editar producto' : 'Nuevo producto'}</Text>
+                <Text style={styles.productFormSubtitle}>Estos datos aparecerán al cobrar desde Guardados.</Text>
+              </View>
+              <Pressable accessibilityRole="button" onPress={onCancelForm} style={styles.sheetCloseButton}>
+                <X size={18} color={COLORS.text} strokeWidth={2.5} />
+              </Pressable>
+            </View>
+            <PaymentTextField label="Nombre del producto" value={form.name} placeholder="Ej. Consulta inicial" onChangeText={(name) => onChangeForm({ name })} />
+            <PaymentTextField label={`Precio (${currency})`} value={form.amount} keyboardType="decimal-pad" placeholder="0.00" onChangeText={(amount) => onChangeForm({ amount })} />
+            <PaymentTextField label="Nombre del precio" value={form.priceName} placeholder="Precio base" onChangeText={(priceName) => onChangeForm({ priceName })} />
+            <PaymentTextField label="Descripción" value={form.description} placeholder="Agrega una nota corta para reconocerlo." multiline onChangeText={(description) => onChangeForm({ description })} />
+            <View style={styles.productFormActions}>
+              <SecondaryButton label="Cancelar" onPress={onCancelForm} />
+              <Pressable disabled={saving} onPress={onSave} style={({ pressed }) => [styles.productSaveButton, pressed && styles.pressed, saving && styles.disabledButton]}>
+                {saving ? <ActivityIndicator color={COLORS.white} /> : <Save size={17} color={COLORS.white} strokeWidth={2.6} />}
+                <Text style={styles.productSaveButtonText}>Guardar</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+        {loading && !products.length ? (
+          <View style={styles.inlineState}>
+            <ActivityIndicator color={COLORS.accent} />
+            <Text style={styles.caption}>Cargando...</Text>
+          </View>
+        ) : products.length ? (
+          <View style={styles.productsList}>
+            {products.map((product, index) => {
+              const productId = getProductId(product) || `product-${index}`;
+              const price = getPrimaryPrice(product);
+              const amount = getPriceAmount(price);
+              const deleting = deletingProductId === productId;
+              return (
+                <View key={productId} style={styles.productItem}>
+                  <View style={styles.productItemIcon}>
+                    <Package size={20} color={COLORS.accent} strokeWidth={2.5} />
+                  </View>
+                  <View style={styles.productItemCopy}>
+                    <Text numberOfLines={1} style={styles.productItemTitle}>{product.name || 'Producto sin nombre'}</Text>
+                    <Text numberOfLines={1} style={styles.productItemSubtitle}>{product.description || 'Sin descripción'}</Text>
+                    <Text style={styles.productItemMeta}>{price ? `${price.name || 'Precio'} · ${formatCurrency(amount, price.currency || product.currency || currency)}` : 'Sin precio guardado'}</Text>
+                  </View>
+                  <Pressable accessibilityRole="button" onPress={() => onEdit(product)} style={styles.paymentIconButton}>
+                    <Pencil size={17} color={COLORS.text} strokeWidth={2.4} />
+                  </Pressable>
+                  <Pressable disabled={deleting} accessibilityRole="button" onPress={() => onDelete(product)} style={[styles.paymentIconButton, styles.productDeleteButton, deleting && styles.disabledButton]}>
+                    {deleting ? <ActivityIndicator color={COLORS.danger} /> : <Trash2 size={17} color={COLORS.danger} strokeWidth={2.4} />}
+                  </Pressable>
+                </View>
+              );
+            })}
+          </View>
+        ) : (
+          <View style={styles.productsEmpty}>
+            <Package size={30} color={COLORS.accent} strokeWidth={2.4} />
+            <Text style={styles.productsEmptyTitle}>Sin productos todavía</Text>
+            <Text style={styles.productsEmptyCopy}>Crea tu primer producto para cobrarlo rápido desde el celular.</Text>
+            <PrimaryButton label="Crear producto" onPress={onCreate} />
+          </View>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
+function PaymentContactButton({ contact, onPress }: { contact: ChatContact | null; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={({ pressed }) => [styles.paymentContactButton, pressed && styles.pressed]}>
+      <View style={styles.paymentContactIcon}>
+        <User size={19} color={COLORS.accent} strokeWidth={2.5} />
+      </View>
+      <View style={styles.paymentContactCopy}>
+        <Text style={styles.paymentContactLabel}>Cliente</Text>
+        <Text numberOfLines={1} style={styles.paymentContactValue}>
+          {contact ? getContactName(contact) : 'Buscar contacto'}
+        </Text>
+        {contact ? <Text numberOfLines={1} style={styles.paymentContactMeta}>{contact.email || contact.phone || 'Contacto guardado'}</Text> : null}
+      </View>
+      <ChevronRight size={18} color={COLORS.muted} strokeWidth={2.4} />
+    </Pressable>
+  );
+}
+
+function PaymentTextField({
+  label,
+  value,
+  placeholder,
+  keyboardType,
+  multiline,
+  editable = true,
+  onChangeText,
+}: {
+  label: string;
+  value: string;
+  placeholder?: string;
+  keyboardType?: 'default' | 'decimal-pad' | 'number-pad';
+  multiline?: boolean;
+  editable?: boolean;
+  onChangeText: (value: string) => void;
+}) {
+  return (
+    <View style={styles.paymentFieldGroup}>
+      <Text style={styles.paymentFieldLabel}>{label}</Text>
+      <TextInput
+        value={value}
+        editable={editable}
+        onChangeText={onChangeText}
+        keyboardType={keyboardType || 'default'}
+        placeholder={placeholder}
+        placeholderTextColor={COLORS.muted}
+        multiline={multiline}
+        textAlignVertical={multiline ? 'top' : 'center'}
+        style={[styles.paymentInput, multiline && styles.paymentTextarea, !editable && styles.paymentInputDisabled]}
+      />
+    </View>
+  );
+}
+
+function SegmentedOptions({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: Array<{ value: string; label: string; disabled?: boolean }>;
+  onChange: (value: string) => void;
+}) {
+  if (!options.length) return null;
+  return (
+    <ScrollView horizontal {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.paymentSegmentRow}>
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <Pressable
+            key={option.value}
+            disabled={option.disabled}
+            onPress={() => onChange(option.value)}
+            style={({ pressed }) => [styles.paymentSegment, selected && styles.paymentSegmentActive, option.disabled && styles.disabledButton, pressed && styles.pressed]}
+          >
+            <Text style={[styles.paymentSegmentText, selected && styles.paymentSegmentTextActive]}>{option.label}</Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+}
+
+function PaymentContactSheet({
+  contacts,
+  loading,
+  open,
+  query,
+  onChangeQuery,
+  onClose,
+  onSelect,
+}: {
+  contacts: ChatContact[];
+  loading: boolean;
+  open: boolean;
+  query: string;
+  onChangeQuery: (value: string) => void;
+  onClose: () => void;
+  onSelect: (contact: ChatContact) => void;
+}) {
+  return (
+    <BottomActionSheet open={open} title="Seleccionar cliente" subtitle="Busca por nombre, email o teléfono" onClose={onClose}>
+      <View style={styles.contactPickerBody}>
+        <View style={styles.sheetSearchBox}>
+          <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
+          <TextInput
+            value={query}
+            onChangeText={onChangeQuery}
+            placeholder="Buscar contacto"
+            placeholderTextColor={COLORS.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.sheetSearchInput}
+          />
+          {query ? (
+            <Pressable accessibilityRole="button" onPress={() => onChangeQuery('')} style={styles.clearSearchButton}>
+              <X size={17} color={COLORS.muted} strokeWidth={2.45} />
+            </Pressable>
+          ) : null}
+        </View>
+        {loading ? (
+          <View style={styles.sheetInlineState}>
+            <ActivityIndicator color={COLORS.accent} />
+            <Text style={styles.caption}>Buscando contactos...</Text>
+          </View>
+        ) : (
+          <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.contactPickerList} keyboardShouldPersistTaps="handled">
+            {contacts.length ? contacts.slice(0, 40).map((contact) => (
+              <ContactPickerRow key={contact.id} contact={contact} onPress={() => onSelect(contact)} />
+            )) : (
+              <Text style={styles.contactPickerEmpty}>{query.trim().length >= 2 ? 'No encontramos contactos guardados con esa búsqueda.' : 'Busca por nombre, email o teléfono.'}</Text>
+            )}
+          </ScrollView>
+        )}
+      </View>
+    </BottomActionSheet>
+  );
+}
+
+function PaymentLinkReadySheet({ link, onClose }: { link: PaymentLinkReady | null; onClose: () => void }) {
+  return (
+    <BottomActionSheet
+      open={Boolean(link)}
+      title={link?.title || 'Link listo'}
+      subtitle={link ? formatCurrency(link.amount, link.currency) : ''}
+      onClose={onClose}
+    >
+      {link ? (
+        <View style={styles.paymentLinkReadyBody}>
+          <View style={styles.paymentNotice}>
+            <Text style={styles.paymentNoticeTitle}>Autorización pendiente</Text>
+            <Text style={styles.paymentNoticeCopy}>{link.description}</Text>
+          </View>
+          <Text selectable numberOfLines={3} style={styles.paymentLinkText}>{link.url}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              Linking.openURL(link.url).catch(() => Alert.alert('No se pudo abrir', 'Copia o revisa el enlace manualmente.'));
+            }}
+            style={({ pressed }) => [styles.paymentOpenLinkButton, pressed && styles.pressed]}
+          >
+            <ExternalLink size={18} color={COLORS.white} strokeWidth={2.5} />
+            <Text style={styles.paymentOpenLinkText}>Abrir</Text>
+          </Pressable>
+          <SecondaryButton label="Listo" onPress={onClose} />
+        </View>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+function unwrapConfig(response: unknown) {
+  if (response && typeof response === 'object' && 'config' in response) {
+    const config = (response as { config?: unknown }).config;
+    return config && typeof config === 'object' ? config as Record<string, unknown> : {};
+  }
+  return response && typeof response === 'object' ? response as Record<string, unknown> : {};
+}
+
+function getEmptyPaymentCapabilities(loading = false): PaymentCapabilities {
+  return {
+    loading,
+    highLevelConnected: false,
+    hasConnectedPaymentGateway: false,
+    canUsePaymentPlans: false,
+    canUseSubscriptions: false,
+    linkProviders: [],
+    planProviders: [],
+    subscriptionProviders: [],
+  };
+}
+
+function getPaymentCapabilities(status: IntegrationsStatus | null): PaymentCapabilities {
+  const connected = (provider: PaymentGatewayProvider | 'highlevel') => Boolean((status?.[provider] as { connected?: boolean } | undefined)?.connected);
+  const linkProviders: PaymentGatewayProvider[] = [
+    ...(connected('stripe') ? ['stripe' as const] : []),
+    ...(connected('conekta') ? ['conekta' as const] : []),
+    ...(connected('mercadopago') ? ['mercadopago' as const] : []),
+    ...(connected('clip') ? ['clip' as const] : []),
+    ...(connected('rebill') ? ['rebill' as const] : []),
+  ];
+  const gatewayPlanProviders: PaymentGatewayProvider[] = [
+    ...(connected('stripe') ? ['stripe' as const] : []),
+    ...(connected('conekta') ? ['conekta' as const] : []),
+    ...(connected('rebill') ? ['rebill' as const] : []),
+  ];
+  const subscriptionProviders: PaymentGatewayProvider[] = [
+    ...(connected('stripe') ? ['stripe' as const] : []),
+    ...(connected('conekta') ? ['conekta' as const] : []),
+    ...(connected('mercadopago') ? ['mercadopago' as const] : []),
+    ...(connected('rebill') ? ['rebill' as const] : []),
+  ];
+  const highLevelConnected = connected('highlevel');
+  return {
+    loading: false,
+    highLevelConnected,
+    hasConnectedPaymentGateway: linkProviders.length > 0,
+    canUsePaymentPlans: highLevelConnected || gatewayPlanProviders.length > 0,
+    canUseSubscriptions: subscriptionProviders.length > 0,
+    linkProviders,
+    planProviders: [...(highLevelConnected ? ['highlevel' as const] : []), ...gatewayPlanProviders],
+    subscriptionProviders,
+  };
+}
+
+function getAvailableSinglePaymentMode(mode: SinglePaymentMode, capabilities: PaymentCapabilities): SinglePaymentMode {
+  if (mode === 'highlevel_invoice' && capabilities.highLevelConnected) return mode;
+  if (mode === 'payment_link' && capabilities.linkProviders.length > 0) return mode;
+  if (mode === 'manual') return mode;
+  if (capabilities.highLevelConnected) return 'highlevel_invoice';
+  if (capabilities.linkProviders.length > 0) return 'payment_link';
+  return 'manual';
+}
+
+function createEmptyProductForm(): ProductFormState {
+  return {
+    name: '',
+    description: '',
+    priceName: 'Precio base',
+    amount: '',
+  };
+}
+
+function createSinglePaymentDraft(timezone: string, contact: ChatContact | null = null): SinglePaymentDraft {
+  const today = dateOnlyInTimezone(new Date(), timezone);
+  return {
+    contact,
+    title: 'Pago',
+    description: '',
+    amount: '',
+    chargeType: 'direct',
+    productId: '',
+    mode: 'payment_link',
+    provider: '',
+    paymentDate: today,
+    dueDate: addDateOnlyDays(today, 7),
+    manualMethod: 'cash',
+    sendMethod: 'email',
+    reference: '',
+    notes: '',
+  };
+}
+
+function createPartialPaymentDraft(contact: ChatContact | null = null): PartialPaymentDraft {
+  return {
+    contact,
+    title: 'Plan de parcialidades',
+    totalAmount: '',
+    firstPaymentAmount: '',
+    firstPaymentMethod: 'card',
+    installmentCount: '2',
+    frequency: 'monthly',
+    provider: '',
+  };
+}
+
+function createSubscriptionDraft(timezone: string, contact: ChatContact | null = null): SubscriptionDraft {
+  return {
+    contact,
+    name: '',
+    amount: '',
+    intervalType: 'monthly',
+    intervalCount: '1',
+    startDate: dateOnlyInTimezone(new Date(), timezone),
+    description: '',
+    provider: '',
+  };
+}
+
+function getProductId(product?: ProductItem | null) {
+  return product?.localId || product?.id || product?._id || '';
+}
+
+function getPriceId(price?: ProductPrice | null) {
+  return price?.localId || price?.id || price?._id || '';
+}
+
+function getPrimaryPrice(product?: ProductItem | null) {
+  return product?.prices?.[0] || null;
+}
+
+function getPriceAmount(price?: ProductPrice | null) {
+  return Number(price?.amount ?? price?.price ?? 0) || 0;
+}
+
+function getTransactionId(transaction: TransactionItem) {
+  return transaction.id || transaction._id || '';
+}
+
+function getTransactionTime(transaction: TransactionItem) {
+  const value = transaction.date || transaction.paymentDate || transaction.createdAt || '';
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? time : 0;
+}
+
+function getPaymentContactLabel(transaction: TransactionItem) {
+  return transaction.contactName || transaction.email || transaction.phone || 'Cliente sin nombre';
+}
+
+function getPaymentResponseUrl(response?: PaymentLinkResponse | null) {
+  if (!response) return '';
+  return String(
+    response.paymentUrl ||
+    response.cardSetupLink ||
+    response.firstPaymentLink ||
+    response.payment?.paymentUrl ||
+    response.payment?.paymentUrl ||
+    ''
+  );
+}
+
+function getHighLevelInvoiceId(response: { invoice?: { id?: string; _id?: string } } | null) {
+  return String(response?.invoice?.id || response?.invoice?._id || '').trim();
+}
+
+function getHighLevelInvoiceUrl(response: { invoice?: { paymentLink?: string } } | null) {
+  return String(response?.invoice?.paymentLink || '').trim();
+}
+
+function getSubscriptionActivationUrl(subscription: { [key: string]: unknown } | null, provider: PaymentGatewayProvider) {
+  if (!subscription) return '';
+  if (provider === 'mercadopago') return String(subscription.mercadoPagoInitPoint || subscription.mercadoPagoSandboxInitPoint || subscription.subscriptionStartUrl || '');
+  if (provider === 'rebill') return String(subscription.rebillPaymentLinkUrl || subscription.rebillCheckoutUrl || subscription.subscriptionStartUrl || '');
+  if (provider === 'stripe') return String(subscription.stripeCheckoutUrl || subscription.subscriptionStartUrl || '');
+  if (provider === 'conekta') return String(subscription.conektaCheckoutUrl || subscription.subscriptionStartUrl || '');
+  return String(subscription.subscriptionStartUrl || '');
+}
+
+function getNativeSubscriptionPaymentMethod(provider: PaymentGatewayProvider) {
+  if (provider === 'mercadopago') return 'mercadopago_subscription';
+  if (provider === 'rebill') return 'rebill_subscription';
+  if (provider === 'conekta') return 'conekta_subscription';
+  if (provider === 'stripe') return 'stripe_saved_card';
+  return `${provider}_subscription`;
+}
+
+function buildNativeInvoicePayload({
+  contact,
+  title,
+  description,
+  amount,
+  currency,
+  dueDate,
+  lineItems,
+  source = 'native_mobile_payments',
+}: {
+  contact: ChatContact;
+  title: string;
+  description?: string;
+  amount: number;
+  currency: string;
+  dueDate: string;
+  lineItems?: Array<Record<string, unknown>>;
+  source?: string;
+}) {
+  const items = lineItems?.length ? lineItems : [{
+    name: title,
+    description: description || title,
+    amount,
+    qty: 1,
+    currency,
+  }];
+
+  return {
+    name: title,
+    title,
+    currency,
+    contactDetails: {
+      id: contact.id,
+      name: getContactName(contact),
+      email: contact.email || '',
+      phoneNo: contact.phone || '',
+    },
+    items,
+    dueDate,
+    metadata: {
+      source,
+      lineItems: items,
+    },
+  };
+}
+
+function getInstallmentDueDate(startDate: string, frequency: PartialPaymentDraft['frequency'], index: number) {
+  if (frequency === 'weekly') return addDateOnlyDays(startDate, 7 * index);
+  if (frequency === 'biweekly') return addDateOnlyDays(startDate, 14 * index);
+  if (frequency === 'yearly') return addDateOnlyMonths(startDate, 12 * index);
+  return addDateOnlyMonths(startDate, index);
 }
 
 function CalendarSection({ api }: { api: RistakApiClient }) {
@@ -3393,6 +5225,563 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     fontSize: 12,
     fontWeight: '800',
+  },
+  paymentsSelectScroll: {
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 118,
+    gap: 10,
+  },
+  paymentsTitle: {
+    color: COLORS.text,
+    fontSize: 31,
+    lineHeight: 36,
+    fontWeight: '900',
+    marginBottom: 6,
+  },
+  paymentChoiceCard: {
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    paddingVertical: 12,
+  },
+  paymentChoiceIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  paymentChoiceCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentChoiceTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  paymentChoiceSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 3,
+  },
+  recentPaymentsSection: {
+    marginTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  recentPaymentsToggle: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  recentPaymentsToggleCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  recentPaymentsToggleTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  recentPaymentsToggleMeta: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  recentPaymentsPanel: {
+    gap: 8,
+    paddingBottom: 12,
+  },
+  recentPaymentItem: {
+    minHeight: 62,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderRadius: 18,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(16,42,120,0.36)',
+  },
+  recentPaymentItemSelected: {
+    backgroundColor: COLORS.accentSoft,
+    borderWidth: 1,
+    borderColor: 'rgba(0,168,248,0.34)',
+  },
+  recentPaymentMain: {
+    flex: 1,
+    minWidth: 0,
+  },
+  recentPaymentAmount: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  recentPaymentContact: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  recentPaymentMeta: {
+    minWidth: 96,
+    alignItems: 'flex-end',
+  },
+  recentPaymentDate: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  recentPaymentStatus: {
+    color: COLORS.muted,
+    fontSize: 11,
+    marginTop: 2,
+    maxWidth: 126,
+  },
+  recentPaymentsEmpty: {
+    color: COLORS.muted,
+    fontSize: 13,
+    textAlign: 'center',
+    paddingVertical: 20,
+  },
+  selectBottomSpacer: {
+    height: 18,
+  },
+  paymentFormRoot: {
+    flex: 1,
+    minHeight: 0,
+  },
+  paymentFormHeader: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  paymentBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  paymentFormIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  paymentFormHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentFormTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  paymentFormSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  paymentFormScroll: {
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 112,
+    gap: 12,
+  },
+  paymentSummaryBar: {
+    minHeight: 66,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  paymentSummaryCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentSummaryLabel: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  paymentSummaryDetail: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 3,
+  },
+  paymentSummaryAmount: {
+    color: COLORS.accent,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  paymentFormFooter: {
+    position: 'absolute',
+    right: 0,
+    bottom: 72,
+    left: 0,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: 'rgba(6,18,58,0.96)',
+  },
+  paymentFieldGroup: {
+    gap: 6,
+  },
+  paymentFieldLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+    paddingHorizontal: 2,
+  },
+  paymentInput: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 13,
+    paddingVertical: 9,
+    fontSize: 15,
+  },
+  paymentTextarea: {
+    minHeight: 92,
+    lineHeight: 20,
+  },
+  paymentInputDisabled: {
+    color: COLORS.muted,
+    opacity: 0.86,
+  },
+  paymentSegmentRow: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingVertical: 1,
+  },
+  paymentSegment: {
+    minHeight: 38,
+    borderRadius: 19,
+    paddingHorizontal: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  paymentSegmentActive: {
+    backgroundColor: COLORS.accentSoft,
+    borderColor: 'rgba(0,168,248,0.36)',
+  },
+  paymentSegmentText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  paymentSegmentTextActive: {
+    color: COLORS.text,
+  },
+  paymentContactButton: {
+    minHeight: 70,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  paymentContactIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  paymentContactCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentContactLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  paymentContactValue: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  paymentContactMeta: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  paymentNotice: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(16,42,120,0.46)',
+    padding: 13,
+    gap: 4,
+  },
+  paymentNoticeTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  paymentNoticeCopy: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  paymentFormGrid: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  paymentFormGridItem: {
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentOptionRow: {
+    minHeight: 62,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(16,42,120,0.36)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  paymentOptionRowActive: {
+    backgroundColor: COLORS.accentSoft,
+    borderColor: 'rgba(0,168,248,0.34)',
+  },
+  paymentOptionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentOptionTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  paymentOptionSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  paymentEmptyCopy: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    padding: 8,
+  },
+  paymentLinkReadyBody: {
+    padding: 14,
+    gap: 12,
+  },
+  paymentLinkText: {
+    color: COLORS.meta,
+    fontSize: 12,
+    lineHeight: 17,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
+    padding: 12,
+  },
+  paymentOpenLinkButton: {
+    minHeight: 48,
+    borderRadius: 17,
+    backgroundColor: COLORS.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  paymentOpenLinkText: {
+    color: COLORS.white,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  productsHeader: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  productsHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentIconButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+  },
+  productNewButton: {
+    minHeight: 38,
+    borderRadius: 19,
+    backgroundColor: COLORS.accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+  },
+  productNewButtonText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  productForm: {
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 13,
+    gap: 12,
+  },
+  productFormHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  productFormHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  productFormTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  productFormSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  productFormActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 10,
+  },
+  productSaveButton: {
+    minHeight: 44,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 16,
+  },
+  productSaveButtonText: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  productsList: {
+    gap: 8,
+  },
+  productItem: {
+    minHeight: 74,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    paddingVertical: 8,
+  },
+  productItemIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  productItemCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  productItemTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  productItemSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  productItemMeta: {
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 3,
+  },
+  productDeleteButton: {
+    backgroundColor: 'rgba(255,93,108,0.1)',
+  },
+  productsEmpty: {
+    minHeight: 260,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 22,
+  },
+  productsEmptyTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  productsEmptyCopy: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: 'center',
   },
   centerScreen: {
     flex: 1,

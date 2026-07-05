@@ -39,6 +39,20 @@ no tiene formulario nativo completo, debe navegar a la seccion nativa
 correspondiente o dejar documentada la brecha en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`; no debe desaparecer del menu.
 
+La seccion nativa `Pagos` debe mantenerse alineada con `/movil/payments`, no con
+un dashboard resumido: selector de tipo de pago, pagos recientes por periodo,
+productos/precios guardados, cobro unico manual o por liga, planes de
+parcialidades y suscripciones deben usar componentes nativos propios y endpoints
+tipados. La moneda de creacion sale de `account_currency` y la zona para rangos
+y fechas sale de `account_timezone`; si no se puede leer la moneda de cuenta, la
+app no debe crear registros de dinero. Pago unico debe soportar invoice de
+HighLevel cuando la integracion este conectada, pago manual con record-payment
+de HighLevel cuando exista invoice, y fallback local solo cuando no exista
+HighLevel o no se haya podido crear invoice. Cuando una pasarela devuelve un
+checkout externo, el cliente nativo debe abrirlo con `Linking` o browser nativo y
+dejar la brecha documentada si aun no envia el link por WhatsApp/email/SMS desde
+el sheet.
+
 El avance por fases de esa paridad vive en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`. Antes de retomar la migracion nativa,
 lee ese checklist para saber que ya quedo, que sigue pendiente y que fuentes del

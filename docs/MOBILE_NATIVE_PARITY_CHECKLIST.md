@@ -49,6 +49,23 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Paridad completa de Chat.
 - [ ] Paridad completa de Citas.
 - [ ] Paridad completa de Pagos.
+  - Avance: la pantalla nativa de Pagos ya dejó de ser un resumen recortado.
+    Ahora replica el flujo principal de `/movil/payments`: selector de tipo de
+    pago, gating por `/api/integrations/status`, últimos pagos recibidos con
+    periodos Hoy/7 días/30 días/90 días, detalle seleccionable, productos /
+    precios guardados con crear/editar/eliminar, pago único manual, invoice de
+    HighLevel por email/WhatsApp-SMS/both, liga de pasarela, plan de
+    parcialidades y suscripción con contacto requerido. Los cobros usan
+    `account_currency` y `account_timezone` desde `/api/config`; si no se puede
+    leer la moneda de cuenta, los formularios no crean pagos. Los links externos
+    se abren con `Linking` desde un sheet nativo de "link listo". Si HighLevel
+    está conectado, el pago manual crea invoice y registra pago offline en GHL;
+    si no, guarda una transacción local.
+  - Brecha pendiente: el formulario nativo no copia todo el `RecordPaymentModal`
+    web de escritorio; implementa componentes nativos propios basados en la
+    estructura de `/movil`. Aun faltan opciones avanzadas de impuestos, MSI,
+    tarjetas guardadas, selector visual de fecha nativo y envío directo del link
+    por WhatsApp/email/SMS desde la pantalla de link listo.
 - [ ] Paridad completa de Analiticas.
 - [ ] Paridad completa de Ajustes.
 - [ ] Push/permisos/entitlements nativos listos para reemplazar `com.ristak.app`.

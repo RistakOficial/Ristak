@@ -5,14 +5,26 @@ import type {
   ConfigValue,
   ContactTag,
   ConversationAgentState,
+  CreateProductPayload,
+  CreateTransactionPayload,
+  HighLevelInvoiceResponse,
+  HighLevelRecordPaymentPayload,
+  HighLevelSendInvoiceResponse,
   DashboardMetrics,
+  IntegrationsStatus,
   JourneyEvent,
   LoginResponse,
+  PaymentGatewayProvider,
+  PaymentLinkPayload,
+  PaymentLinkResponse,
+  PaymentPlanPayload,
+  PaymentSubscription,
   ProductItem,
   RistakUser,
   RuntimeTenant,
   SaveMobilePushDevicePayload,
   SendTextResponse,
+  SubscriptionPayload,
   TransactionItem,
   VerifyResponse,
   WebPushPublicConfig,
@@ -301,13 +313,112 @@ export class RistakApiClient {
     });
   }
 
-  getTransactions(limit = 20) {
+  createProduct(payload: CreateProductPayload) {
+    return this.request<ProductItem>('/products', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateProduct(productId: string, payload: CreateProductPayload) {
+    return this.request<ProductItem>(`/products/${encodeURIComponent(productId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deleteProduct(productId: string) {
+    return this.request(`/products/${encodeURIComponent(productId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  getTransactions(limit = 20, options: { startDate?: string; endDate?: string; search?: string; sync?: boolean } = {}) {
     return this.request<TransactionItem[] | { transactions?: TransactionItem[] }>('/transactions', {
       params: {
         limit,
-        page: 1,
+        page: options.startDate || options.endDate ? undefined : 1,
+        startDate: options.startDate,
+        endDate: options.endDate,
+        q: options.search?.trim() || undefined,
+        sync: options.sync ? 'true' : undefined,
       },
     });
+  }
+
+  createTransaction(payload: CreateTransactionPayload) {
+    return this.request<TransactionItem>('/transactions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createHighLevelInvoice(payload: Record<string, unknown>) {
+    return this.request<HighLevelInvoiceResponse>('/highlevel/invoices', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  sendHighLevelInvoice(invoiceId: string, sendMethod: 'email' | 'sms' | 'both') {
+    return this.request<HighLevelSendInvoiceResponse>(`/highlevel/invoices/${encodeURIComponent(invoiceId)}/send`, {
+      method: 'POST',
+      body: JSON.stringify({ sendMethod }),
+    });
+  }
+
+  recordHighLevelInvoicePayment(invoiceId: string, payload: HighLevelRecordPaymentPayload) {
+    return this.request(`/highlevel/invoices/${encodeURIComponent(invoiceId)}/record-payment`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  syncHighLevelInvoice(invoiceId: string) {
+    return this.request(`/highlevel/invoices/${encodeURIComponent(invoiceId)}/sync`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+  }
+
+  createPaymentLink(provider: PaymentGatewayProvider, payload: PaymentLinkPayload) {
+    const providerPath: Record<PaymentGatewayProvider, string> = {
+      stripe: '/stripe/payment-links',
+      conekta: '/conekta/payment-links',
+      mercadopago: '/mercadopago/payment-links',
+      clip: '/clip/payment-links',
+      rebill: '/rebill/payment-links',
+    };
+    return this.request<PaymentLinkResponse>(providerPath[provider], {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createPaymentPlan(provider: PaymentGatewayProvider | 'highlevel', payload: PaymentPlanPayload) {
+    const providerPath: Record<PaymentGatewayProvider | 'highlevel', string> = {
+      highlevel: '/transactions/payment-flows/installments',
+      stripe: '/stripe/payment-plans',
+      conekta: '/conekta/payment-plans',
+      mercadopago: '/mercadopago/payment-plans',
+      clip: '/clip/payment-links',
+      rebill: '/rebill/payment-plans',
+    };
+    return this.request<PaymentLinkResponse>(providerPath[provider], {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createSubscription(payload: SubscriptionPayload) {
+    return this.request<PaymentSubscription>('/subscriptions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  getIntegrationsStatus() {
+    return this.request<IntegrationsStatus>('/integrations/status');
   }
 
   getDashboardMetrics(startDate: string, endDate: string) {

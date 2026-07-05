@@ -22,6 +22,13 @@ Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
   and notification taps open the matching chat by `contactId` or `/movil?contact=...`.
 - Conversation view from `/api/contacts/:id/journey`.
 - Text sending through `/api/whatsapp-api/messages/text`.
+- Payments native parity pass for `/movil/payments`: type selector, gateway
+  capability gating, recent received payments by period, product/price CRUD,
+  manual one-time payments, HighLevel invoice send, payment links, installment
+  plans, subscriptions, contact picker, and external link opening with React
+  Native `Linking`. Payment creation reads account currency/timezone from the
+  backend config and blocks instead of creating money records when the account
+  currency cannot be resolved.
 
 ## Commands
 

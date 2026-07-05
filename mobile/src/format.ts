@@ -2,6 +2,7 @@ import type { ChatContact, JourneyEvent, ChatMessage } from './types';
 
 const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City';
 const CHAT_SHORT_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
 export function cleanBaseUrl(value: string) {
   const trimmed = value.trim().replace(/\/+$/, '');
@@ -69,6 +70,11 @@ export function resolveBusinessTimezone(value?: string | null) {
   }
 }
 
+export function normalizeCurrencyCode(value?: string | null) {
+  const currency = String(value || '').trim().toUpperCase();
+  return /^[A-Z]{3}$/.test(currency) ? currency : '';
+}
+
 function getZonedDateParts(value: string | Date, timezone?: string | null) {
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return null;
@@ -87,8 +93,42 @@ function getZonedDateParts(value: string | Date, timezone?: string | null) {
   return { date, year, month, day, timezone: resolvedTimezone };
 }
 
+function getDateOnlyParts(value: string) {
+  if (!DATE_ONLY_PATTERN.test(value)) return null;
+  const [year, month, day] = value.split('-').map((part) => Number(part));
+  if (!year || !month || !day) return null;
+  return { year, month, day };
+}
+
 function dateOnlyUtcDay(parts: { year: number; month: number; day: number }) {
   return Date.UTC(parts.year, parts.month - 1, parts.day);
+}
+
+export function dateOnlyInTimezone(value: Date = new Date(), timezone?: string | null) {
+  const parts = getZonedDateParts(value, timezone);
+  if (!parts) return '';
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+export function addDateOnlyDays(dateOnly: string, days: number) {
+  const parts = getDateOnlyParts(dateOnly);
+  if (!parts) return dateOnly;
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+export function addDateOnlyMonths(dateOnly: string, months: number) {
+  const parts = getDateOnlyParts(dateOnly);
+  if (!parts) return dateOnly;
+  const date = new Date(Date.UTC(parts.year, parts.month - 1 + months, parts.day));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+export function getBusinessDateRange(days: number, timezone?: string | null) {
+  const endDate = dateOnlyInTimezone(new Date(), timezone);
+  const safeDays = Math.max(0, Math.floor(days));
+  const startDate = safeDays > 1 ? addDateOnlyDays(endDate, -(safeDays - 1)) : endDate;
+  return { startDate, endDate };
 }
 
 export function formatChatListDate(value?: string | null, timezone?: string | null, referenceDate: Date = new Date()) {
@@ -121,22 +161,59 @@ export function formatCurrency(value?: number, currency = 'MXN') {
   }).format(Number(value || 0));
 }
 
-export function getTodayRange(days = 30) {
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - Math.max(0, days - 1));
+export function formatPaymentDate(value?: string | null, timezone?: string | null) {
+  if (!value) return 'Sin fecha';
+  const resolvedTimezone = resolveBusinessTimezone(timezone);
 
-  const toDateOnly = (date: Date) => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
+  if (DATE_ONLY_PATTERN.test(value)) {
+    const parts = getDateOnlyParts(value);
+    if (!parts) return 'Sin fecha';
+    const month = CHAT_SHORT_MONTHS[parts.month - 1] || '';
+    return month ? `${parts.day} ${month}` : value;
+  }
 
-  return {
-    startDate: toDateOnly(start),
-    endDate: toDateOnly(end),
-  };
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Sin fecha';
+
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: resolvedTimezone,
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
+export function getPaymentMethodLabel(method?: string | null) {
+  const normalized = String(method || '').toLowerCase();
+  if (normalized === 'card') return 'Tarjeta';
+  if (normalized === 'transfer' || normalized === 'bank_transfer') return 'Transferencia';
+  if (normalized === 'cash') return 'Efectivo';
+  if (normalized === 'check') return 'Cheque';
+  if (normalized === 'paypal') return 'PayPal';
+  if (normalized.includes('stripe')) return 'Stripe';
+  if (normalized.includes('conekta')) return 'Conekta';
+  if (normalized.includes('mercadopago')) return 'Mercado Pago';
+  if (normalized.includes('clip')) return 'CLIP';
+  if (normalized.includes('rebill')) return 'Rebill';
+  if (normalized.includes('link')) return 'Link';
+  return method || 'Otro';
+}
+
+export function getPaymentStatusLabel(status?: string | null) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'paid') return 'Pagado';
+  if (normalized === 'partial') return 'Parcial';
+  if (normalized === 'refunded') return 'Reembolsado';
+  if (normalized === 'failed') return 'Fallido';
+  if (normalized === 'pending') return 'Pendiente';
+  if (normalized === 'sent') return 'Enviado';
+  if (normalized === 'draft') return 'Borrador';
+  return status || 'Sin estado';
+}
+
+export function getTodayRange(days = 30, timezone?: string | null) {
+  return getBusinessDateRange(days, timezone);
 }
 
 function readString(data: Record<string, unknown>, keys: string[]) {
