@@ -1014,24 +1014,17 @@ function getRebillHostedPaymentLink(metadata = {}) {
     : null
 }
 
-function shouldUseRebillHostedPaymentLink(row = {}, metadata = {}) {
+function shouldUseRebillHostedPaymentLink(row = {}) {
+  if (cleanString(row.payment_provider, 80).toLowerCase() !== 'rebill') return false
   if (CLOSED_PAYMENT_STATUSES.has(cleanString(row.status, 80).toLowerCase()) || row.paid_at) return false
-  if (normalizeBoolean(metadata.rebillHostedCheckout || metadata.rebillHostedPaymentLinkRequired, false)) return true
-  const rebillInstallments = metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object'
-    ? metadata.rebillInstallments
-    : null
-  return Boolean(rebillInstallments?.enabled)
+  return true
 }
 
 function getRebillHostedEnabledInstallments(metadata = {}) {
   const rebillInstallments = metadata.rebillInstallments && typeof metadata.rebillInstallments === 'object'
     ? metadata.rebillInstallments
     : null
-  if (!rebillInstallments?.enabled) {
-    return normalizeBoolean(metadata.rebillHostedCheckout || metadata.rebillHostedPaymentLinkRequired, false)
-      ? [1]
-      : []
-  }
+  if (!rebillInstallments?.enabled) return [1]
   const source = Array.isArray(rebillInstallments.enabledInstallments)
     ? rebillInstallments.enabledInstallments
     : buildRebillEnabledInstallments(rebillInstallments.maxInstallments || 12)
@@ -1098,7 +1091,19 @@ async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = 
   if (!shouldUseRebillHostedPaymentLink(row, metadata)) return { row, hostedPaymentLink: null }
 
   const existing = getRebillHostedPaymentLink(metadata)
-  if (existing?.url) return { row, hostedPaymentLink: existing }
+  if (existing?.url) {
+    if (cleanString(row.payment_url, 2000) !== existing.url) {
+      await db.run(
+        `UPDATE payments
+         SET payment_url = ?,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [existing.url, row.id]
+      ).catch(() => undefined)
+      return { row: await findPaymentById(row.id), hostedPaymentLink: existing }
+    }
+    return { row, hostedPaymentLink: existing }
+  }
 
   const currency = assertRebillCurrency(row.currency || config?.defaultCurrency)
   const enabledInstallments = getRebillHostedEnabledInstallments(metadata)
@@ -1169,10 +1174,11 @@ async function ensureRebillHostedPaymentLink(row = {}, config = null, baseUrl = 
   await db.run(
     `UPDATE payments
      SET payment_method = 'rebill_payment_link',
+         payment_url = ?,
          metadata_json = ?,
          updated_at = CURRENT_TIMESTAMP
      WHERE id = ?`,
-    [JSON.stringify(nextMetadata), row.id]
+    [hostedPaymentLink.url, JSON.stringify(nextMetadata), row.id]
   )
 
   return {
@@ -2094,6 +2100,10 @@ async function createRebillPlanPaymentRow({
   const now = new Date().toISOString()
   const paymentUrl = buildPaymentUrl(baseUrl, publicPaymentId)
   const linkAvailable = status !== 'scheduled' && REBILL_CHECKOUT_METHODS.has(cleanString(paymentMethod, 80).toLowerCase())
+  const initialMetadata = {
+    ...metadata,
+    ...(linkAvailable ? { rebillHostedCheckout: true } : {})
+  }
 
   await db.run(
     `INSERT INTO payments (
@@ -2117,14 +2127,22 @@ async function createRebillPlanPaymentRow({
       linkAvailable ? now : null,
       publicPaymentId,
       linkAvailable ? paymentUrl : '',
-      JSON.stringify(metadata)
+      JSON.stringify(initialMetadata)
     ]
   )
 
+  let row = await findPaymentById(id)
+  let finalPaymentUrl = linkAvailable ? paymentUrl : ''
+  if (linkAvailable && row) {
+    const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl, await getPublicPaymentSettings())
+    row = ensured.row || row
+    finalPaymentUrl = ensured.hostedPaymentLink?.url || finalPaymentUrl
+  }
+
   return {
-    payment: await findPaymentById(id),
+    payment: row,
     publicPaymentId,
-    paymentUrl: linkAvailable ? paymentUrl : ''
+    paymentUrl: finalPaymentUrl
   }
 }
 
@@ -2372,7 +2390,12 @@ async function releaseRebillPlanPaymentLink(paymentId, { baseUrl = '', notes = '
     [cleanString(notes, 500), cleanPaymentId]
   )
 
-  return findPaymentById(cleanPaymentId)
+  const updated = await findPaymentById(cleanPaymentId)
+  if (!updated) return null
+
+  const config = await getRebillClientConfig(updated.payment_mode || '')
+  const ensured = await ensureRebillHostedPaymentLink(updated, config, baseUrl, await getPublicPaymentSettings())
+  return ensured.row || updated
 }
 
 async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
@@ -2597,10 +2620,6 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
   }
   const rebillInstallments = normalizeRebillInstallmentOptions(input)
   const inputMetadata = input.metadata && typeof input.metadata === 'object' ? input.metadata : {}
-  const forceHostedCheckout = normalizeBoolean(
-    input.forceHostedCheckout ?? input.hostedCheckout ?? inputMetadata.rebillHostedCheckout ?? inputMetadata.rebillHostedPaymentLinkRequired,
-    false
-  )
   const metadata = {
     contactName: contact.name,
     contactEmail: contact.email,
@@ -2608,7 +2627,7 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
     source: cleanString(input.source || 'ristak', 120),
     lineItems: Array.isArray(input.lineItems) ? input.lineItems : [],
     ...inputMetadata,
-    ...(forceHostedCheckout ? { rebillHostedCheckout: true } : {}),
+    rebillHostedCheckout: true,
     ...(rebillInstallments ? { rebillInstallments } : {}),
     ...(tax ? { tax } : {})
   }
@@ -2643,27 +2662,25 @@ export async function createRebillPaymentLink(input = {}, { baseUrl, mode = '' }
   const row = await findPaymentById(id)
   let mappedRow = row
   let hostedPaymentLink = null
-  if (rebillInstallments?.enabled || forceHostedCheckout) {
-    try {
-      const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl, paymentSettings)
-      mappedRow = ensured.row || row
-      hostedPaymentLink = ensured.hostedPaymentLink || null
-    } catch (error) {
-      await db.run(
-        `UPDATE payments
-         SET metadata_json = ?,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [
-          JSON.stringify({
-            ...metadata,
-            rebillHostedPaymentLinkError: cleanString(error.message, 500)
-          }),
-          id
-        ]
-      ).catch(() => undefined)
-      throw error
-    }
+  try {
+    const ensured = await ensureRebillHostedPaymentLink(row, config, baseUrl, paymentSettings)
+    mappedRow = ensured.row || row
+    hostedPaymentLink = ensured.hostedPaymentLink || null
+  } catch (error) {
+    await db.run(
+      `UPDATE payments
+       SET metadata_json = ?,
+           updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?`,
+      [
+        JSON.stringify({
+          ...metadata,
+          rebillHostedPaymentLinkError: cleanString(error.message, 500)
+        }),
+        id
+      ]
+    ).catch(() => undefined)
+    throw error
   }
 
   return {
