@@ -855,12 +855,31 @@ avisos de cobro fallido desde `payments_settings.automations`.
   `payment_flow` caen en el dia objetivo, Ristak solo envia el recordatorio de la
   siguiente parcialidad abierta; los pagos unicos y pagos de otros flujos siguen
   evaluandose de forma independiente.
+- Los avisos de cobro fallido solo se disparan para fallos recientes: despues del
+  `failedPaymentDelayHours` configurado y dentro de una tolerancia maxima de 24h
+  adicionales. Esto evita revivir pagos historicos cuando se prende, repara o
+  despliega la cola de automatizaciones.
 - El comprobante posterior al pago incluye un enlace al checkout publico con
   `?receipt=1`; cuando el pago esta confirmado, esa pagina muestra el comprobante
   y activa la descarga/impresion del PDF.
 - Si falta contacto de correo, telefono, conexion del canal o URL publica de pago,
   el despacho se omite o queda fallido con razon explicita; no se inventan datos ni
   se manda un comprobante sin enlace descargable.
+
+### Recordatorios de citas
+
+Los mensajes automaticos de citas (`appointment_reminders`) se calculan en la
+zona horaria de la cuenta. Los recordatorios `before_appointment` se anclan al
+inicio de la cita y las confirmaciones `after_booking` se anclan a la fecha de
+reserva local en Ristak; citas sincronizadas desde Google/GHL no reciben
+confirmaciones de reserva como si el cliente hubiera agendado por Ristak.
+
+Cada par `reminder_id + appointment_id` se reclama en
+`appointment_reminder_sends` antes de enviar para evitar duplicados. Estados
+`sent`, `skipped` y `sending` bloquean nuevos envios. Si el intento termina en
+`error`, el cron puede reintentarlo despues de 15 minutos, siempre que la hora de
+envio siga dentro de la ventana util de 3 horas; si ya se paso esa ventana se
+marca como omitido en vez de mandar un WhatsApp tarde.
 
 ### Planes de pago locales
 
@@ -869,6 +888,12 @@ pago como `Pago N/M`, donde `N` es la posicion visible del pago y `M` es el tota
 actual del plan. Si el calendario se edita, por ejemplo de 3 a 6 pagos, Ristak
 actualiza tambien los `title`/`description` de pagos existentes de `1/3` a `1/6`
 sin cambiar importes, fechas ni estados ya registrados.
+
+Los cobros automaticos de planes con tarjeta guardada deben reclamar localmente
+la cuota o primer pago a `processing` antes de llamar a la pasarela. Stripe,
+Conekta y Rebill usan este claim atomico mas los locks del cron para evitar doble
+cargo ante solapes de deploy, ticks concurrentes o ejecuciones manuales. Mercado
+Pago no cobra cuotas locales desde el cron; genera/libera links programados.
 
 ### Moneda de cuenta
 

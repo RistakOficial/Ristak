@@ -55,7 +55,7 @@ async function snapshotAppConfig(keys = [], callback) {
   }
 }
 
-async function withYCloudMessageCapture(callback) {
+async function withYCloudMessageCapture(callback, captureOptions = {}) {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()
   const configKeys = [
@@ -78,12 +78,14 @@ async function withYCloudMessageCapture(callback) {
     await setAppConfig(keys.provider, 'ycloud')
     await setAppConfig(keys.lastError, '')
 
-    setYCloudFetchForTest(async (url, options = {}) => {
+    setYCloudFetchForTest(async (url, requestOptions = {}) => {
       const parsed = new URL(String(url))
       const path = parsed.pathname.replace(/^\/v2/, '')
-      const method = String(options.method || 'GET').toUpperCase()
+      const method = String(requestOptions.method || 'GET').toUpperCase()
       if (path === '/whatsapp/messages' && method === 'POST') {
-        const body = JSON.parse(options.body || '{}')
+        const body = JSON.parse(requestOptions.body || '{}')
+        const customResponse = await captureOptions.onMessage?.({ body, captures })
+        if (customResponse) return customResponse
         captures.push(body)
         return ycloudJsonResponse({
           id: `ycloud_appointment_msg_${captures.length}`,
@@ -287,6 +289,55 @@ test('recordatorios no mandan texto normal si la plantilla no está aprobada y Q
       assert.equal(overviewReminder?.failures?.errorCount, 1)
       assert.match(overviewReminder?.failures?.lastErrorMessage || '', /APPROVED/)
     })
+  })
+})
+
+test('recordatorios de citas reintentan errores después del enfriamiento sin spamear', async () => {
+  let failProvider = true
+
+  await withYCloudMessageCapture(async (captures) => {
+    await withReminderFixture({ ycloudStatus: 'APPROVED' }, async ({ appointmentId }) => {
+      const firstRun = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.equal(firstRun.sent, 0)
+      assert.equal(firstRun.errors, 1)
+      assert.equal(captures.length, 0)
+
+      const immediateRetry = await processDueAppointmentReminders({ batchSize: 1 })
+      assert.equal(immediateRetry.sent, 0)
+      assert.equal(immediateRetry.errors, 0)
+      assert.equal(captures.length, 0)
+
+      await db.run(
+        `UPDATE appointment_reminder_sends
+         SET sent_at = ?
+         WHERE appointment_id = ?`,
+        [DateTime.utc().minus({ minutes: 16 }).toISO(), appointmentId]
+      )
+
+      failProvider = false
+      const retryRun = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.equal(retryRun.sent, 1)
+      assert.equal(retryRun.errors, 0)
+      assert.equal(captures.length, 1)
+
+      const send = await db.get(
+        'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
+        [appointmentId]
+      )
+      assert.equal(send.status, 'sent')
+      assert.equal(send.sent_message_id, 'ycloud_appointment_msg_1')
+      assert.equal(send.error_message, null)
+    })
+  }, {
+    onMessage: async () => {
+      if (!failProvider) return null
+      return ycloudJsonResponse(
+        { error: { message: 'YCloud temporalmente no disponible' } },
+        { status: 500, statusText: 'Server Error' }
+      )
+    }
   })
 })
 

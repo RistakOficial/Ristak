@@ -20,6 +20,7 @@ import { sendEmailToContact } from './emailService.js'
 
 const HOUR_MS = 60 * 60 * 1000
 const DEFAULT_LANGUAGE = 'es_MX'
+const FAILED_PAYMENT_EXTRA_GRACE_HOURS = 24
 
 const CLOSED_PAYMENT_STATUSES = new Set([
   'paid',
@@ -879,6 +880,7 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
 async function getFailedCandidates(settings, now, limit, paymentIds = []) {
   const delayHours = Math.max(1, Number(settings.automations?.failedPaymentDelayHours || 2))
   const readyBefore = now.getTime() - (delayHours * HOUR_MS)
+  const oldestAllowedFailure = now.getTime() - ((delayHours + FAILED_PAYMENT_EXTRA_GRACE_HOURS) * HOUR_MS)
   const cleanPaymentIds = paymentIds.map((id) => cleanString(id, 200)).filter(Boolean)
   const paymentIdFilter = cleanPaymentIds.length
     ? `AND id IN (${cleanPaymentIds.map(() => '?').join(', ')})`
@@ -894,7 +896,7 @@ async function getFailedCandidates(settings, now, limit, paymentIds = []) {
 
   return rows.filter((row) => {
     const failedAtMs = parseDateMs(row.updated_at || row.date || row.created_at)
-    return failedAtMs !== null && failedAtMs <= readyBefore
+    return failedAtMs !== null && failedAtMs <= readyBefore && failedAtMs >= oldestAllowedFailure
   }).slice(0, limit)
 }
 

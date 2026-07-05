@@ -565,6 +565,54 @@ test('cola de automatizaciones respeta recordatorios y cobros fallidos encendido
   })
 })
 
+test('cola de automatizaciones no revive cobros fallidos historicos', async () => {
+  await withYCloudCapture(async (captures) => {
+    const now = new Date('2026-06-20T18:00:00.000Z')
+    const recentFailed = await createPaymentFixture({
+      status: 'failed',
+      updatedAt: '2026-06-20T10:00:00.000Z',
+      suffix: 'failedrecent'
+    })
+    const oldFailed = await createPaymentFixture({
+      status: 'failed',
+      updatedAt: '2026-06-18T10:00:00.000Z',
+      suffix: 'failedold'
+    })
+
+    try {
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: {
+          remindersEnabled: false,
+          reminderChannel: 'whatsapp',
+          failedPaymentEnabled: true,
+          failedPaymentChannel: 'whatsapp',
+          failedPaymentDelayHours: 2,
+          failedPaymentTemplateName: 'pago_fallido_reintento',
+          failedPaymentTemplateLanguage: 'es_MX'
+        }
+      })
+
+      const results = await processDuePaymentAutomations({
+        now,
+        limit: 10,
+        paymentIds: [recentFailed.paymentId, oldFailed.paymentId]
+      })
+
+      assert.equal(results.filter((result) => result.sent).length, 1)
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].externalId, `payment:failed:${recentFailed.paymentId}`)
+
+      const oldDispatch = await db.get(
+        'SELECT id FROM payment_automation_dispatches WHERE payment_id = ? AND automation_type = ?',
+        [oldFailed.paymentId, 'failed']
+      )
+      assert.equal(oldDispatch, null)
+    } finally {
+      await cleanupFixtures([recentFailed.paymentId, oldFailed.paymentId])
+    }
+  })
+})
+
 test('recordatorios de pago usan el dia del negocio, no el dia UTC del servidor', async () => {
   await withYCloudCapture(async (captures) => {
     await withAccountTimezoneForTest('America/Los_Angeles', async () => {

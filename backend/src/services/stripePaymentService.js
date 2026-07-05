@@ -5368,6 +5368,8 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
   const installmentDueSql = duePlanInstallmentCondition('i')
   const staleFirstPaymentSql = staleProcessingSql('f.updated_at')
   const staleInstallmentSql = staleProcessingSql('i.updated_at')
+  const staleFirstPaymentClaimSql = staleProcessingSql('updated_at')
+  const staleInstallmentClaimSql = staleProcessingSql('updated_at')
   const firstPaymentRows = await db.all(
     `SELECT
        f.id AS flow_id,
@@ -5436,18 +5438,22 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
 
     touchedFlowIds.add(row.flow_id)
     try {
+      // Igual que Conekta/Rebill: reclamamos localmente antes de cobrar para que
+      // solapes de cron/deploy/manual trigger no puedan intentar el mismo cargo.
+      const claim = await db.run(
+        `UPDATE payment_flows
+         SET first_payment_status = 'processing',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
+        [row.flow_id]
+      )
+      if (!(Number(claim?.changes || 0) > 0)) continue
+
       const savedMethod = await resolveStripeSavedMethod(row.contact_id, row.stripe_payment_method_id, config)
       if (!savedMethod) {
         throw new Error('No encontramos la tarjeta guardada para el primer pago programado.')
       }
-
-      await db.run(
-        `UPDATE payment_flows
-         SET first_payment_status = 'processing',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [row.flow_id]
-      )
 
       const charged = await chargeStripePaymentRowWithSavedMethod({
         stripe,
@@ -5501,18 +5507,22 @@ export async function processDueStripePaymentPlanCharges({ limit = 25 } = {}) {
     }
 
     try {
+      // Claim atómico antes de resolver/cobrar la tarjeta guardada. Esto mantiene a
+      // Stripe con la misma garantía anti-doble-cargo que los demás proveedores.
+      const claim = await db.run(
+        `UPDATE installment_payments
+         SET status = 'processing',
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+           AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentClaimSql}))`,
+        [row.installment_id]
+      )
+      if (!(Number(claim?.changes || 0) > 0)) continue
+
       const savedMethod = await resolveStripeSavedMethod(row.contact_id, row.stripe_payment_method_id, config)
       if (!savedMethod) {
         throw new Error('No encontramos la tarjeta guardada para este plan.')
       }
-
-      await db.run(
-        `UPDATE installment_payments
-         SET status = 'processing',
-             updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`,
-        [row.installment_id]
-      )
 
       const charged = await chargeStripePaymentRowWithSavedMethod({
         stripe,

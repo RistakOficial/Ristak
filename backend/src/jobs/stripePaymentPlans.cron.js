@@ -17,10 +17,9 @@ async function runStripePaymentPlans(source = 'interval') {
   try {
     await trackDeployDrainWork('cron:stripe-payment-plans', async () => {
       // (CRON-009 / PAY-008 / CRON-002) Lock distribuido: si hay varias instancias, solo una
-      // cobra parcialidades en este tick (defensivo; con 1 instancia es inofensivo). El reclamo
-      // no era atómico (CRON-002) y el cron no tenía lock (PAY-008); ahora la idempotencia de
-      // Stripe (llave por bucket diario) protege contra doble cargo y el lock evita trabajo
-      // y efectos duplicados entre réplicas.
+      // cobra parcialidades en este tick (defensivo; con 1 instancia es inofensivo). Ademas,
+      // cada pago gana un claim local a 'processing' antes de llamar a Stripe; la idempotencia
+      // de Stripe queda como segunda barrera contra doble cargo.
       const { ran } = await withCronLock('stripe-payment-plans', STRIPE_PAYMENT_PLANS_INTERVAL_MS, async () => {
         const results = await processDueStripePaymentPlanCharges()
         const charged = results.filter((result) => result.charged).length

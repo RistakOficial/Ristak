@@ -27,6 +27,9 @@ const SEEDED_CONFIG_KEY = 'appointment_reminders_seeded'
 // que ya pasó la hora del recordatorio), se marca como omitido en vez de
 // mandar un mensaje fuera de tiempo.
 const SEND_GRACE_MS = 3 * 60 * 60 * 1000
+// Un error de proveedor/configuración no debe bloquear para siempre el recordatorio:
+// si el usuario corrige WhatsApp/plantilla, el cron reintenta sin spamear cada minuto.
+const ERROR_RETRY_MS = 15 * 60 * 1000
 
 const MESSAGE_TYPES = new Set(['reminder', 'confirmation'])
 // Ancla de envío: 'before_appointment' = X antes del inicio de la cita (clásico);
@@ -96,6 +99,20 @@ function createSendId() {
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function parseStoredUtcDateTime(value) {
+  const text = cleanString(value)
+  if (!text) return null
+  const normalized = text.includes('T') ? text : text.replace(' ', 'T')
+  const parsed = DateTime.fromISO(normalized, { zone: 'utc' })
+  return parsed.isValid ? parsed : null
+}
+
+function shouldHoldErroredSend(row, now) {
+  const lastAttempt = parseStoredUtcDateTime(row.sent_at || row.created_at)
+  if (!lastAttempt) return true
+  return now.toMillis() - lastAttempt.toMillis() < ERROR_RETRY_MS
 }
 
 // Normaliza unidad/valor del offset según el ancla. Antes de la cita: minutos/horas/días,
@@ -765,7 +782,7 @@ async function recordSend({ reminder, appointment, status, sendAt, sentMessageId
     createSendId(), reminder.id, appointment.id, cleanString(appointment.contact_id) || null,
     status, reminder.messageType, reminder.aiEnabled ? 1 : 0,
     cleanString(sentMessageId) || null, cleanString(errorMessage) || null,
-    sendAt ? sendAt.toISO() : null, status === 'sent' ? nowIso() : null
+    sendAt ? sendAt.toISO() : null, ['sent', 'error', 'skipped'].includes(status) ? nowIso() : null
   ])
 }
 
@@ -785,21 +802,51 @@ async function claimSend({ reminder, appointment, sendAt }) {
     reminder.messageType, reminder.aiEnabled ? 1 : 0,
     sendAt ? sendAt.toISO() : null
   ])
-  return Number(res?.changes || 0) > 0
+  if (Number(res?.changes || 0) > 0) return true
+
+  // Si el intento anterior terminó en error y ya pasó el enfriamiento, reclamamos
+  // la misma fila de forma atómica para reintentar. Los estados sent/skipped/sending
+  // siguen siendo terminales para no duplicar mensajes.
+  const retryCutoff = DateTime.utc().minus({ milliseconds: ERROR_RETRY_MS }).toISO()
+  const retry = await db.run(`
+    UPDATE appointment_reminder_sends
+    SET status = 'sending',
+        contact_id = ?,
+        message_type = ?,
+        ai_enabled = ?,
+        sent_message_id = NULL,
+        error_message = NULL,
+        send_at = ?,
+        sent_at = NULL
+    WHERE reminder_id = ?
+      AND appointment_id = ?
+      AND status = 'error'
+      AND datetime(COALESCE(sent_at, created_at)) <= datetime(?)
+  `, [
+    cleanString(appointment.contact_id) || null,
+    reminder.messageType,
+    reminder.aiEnabled ? 1 : 0,
+    sendAt ? sendAt.toISO() : null,
+    reminder.id,
+    appointment.id,
+    retryCutoff
+  ])
+  return Number(retry?.changes || 0) > 0
 }
 
 // (NOTI-002/CRON-003) Marca el resultado final del envío sobre la fila ya reclamada.
 async function finalizeSend({ reminder, appointment, status, sentMessageId = '', errorMessage = '' }) {
+  const finishedAt = nowIso()
   await db.run(`
     UPDATE appointment_reminder_sends
     SET status = ?,
         sent_message_id = ?,
         error_message = ?,
-        sent_at = CASE WHEN ? = 'sent' THEN ? ELSE sent_at END
+        sent_at = CASE WHEN ? IN ('sent', 'error', 'skipped') THEN ? ELSE sent_at END
     WHERE reminder_id = ? AND appointment_id = ?
   `, [
     status, cleanString(sentMessageId) || null, cleanString(errorMessage) || null,
-    status, nowIso(), reminder.id, appointment.id
+    status, finishedAt, reminder.id, appointment.id
   ])
 }
 
@@ -866,11 +913,19 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
   const sendPlaceholders = appointmentIds.map(() => '?').join(', ')
   const sendRows = appointmentIds.length
     ? await db.all(
-        `SELECT reminder_id, appointment_id FROM appointment_reminder_sends WHERE appointment_id IN (${sendPlaceholders})`,
+        `SELECT reminder_id, appointment_id, status, sent_at, created_at
+         FROM appointment_reminder_sends
+         WHERE appointment_id IN (${sendPlaceholders})`,
         appointmentIds
       )
     : []
-  const alreadyHandled = new Set(sendRows.map(row => `${row.reminder_id}|${row.appointment_id}`))
+  const alreadyHandled = new Set()
+  for (const row of sendRows) {
+    const key = `${row.reminder_id}|${row.appointment_id}`
+    const status = cleanString(row.status).toLowerCase()
+    if (status === 'error' && !shouldHoldErroredSend(row, now)) continue
+    alreadyHandled.add(key)
+  }
 
   let sent = 0
   let errors = 0
