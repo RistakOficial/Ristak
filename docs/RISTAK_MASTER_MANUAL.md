@@ -1336,6 +1336,15 @@ cambios locales sin guardar, primero debe guardarse. Las inscripciones manuales
 desde contactos, acciones masivas, jobs programados y eventos reales siguen
 usando únicamente automatizaciones publicadas y su `published_flow`.
 
+Los disparadores de comentario de Facebook e Instagram se activan solo con
+eventos reales de comentario. La respuesta no se configura como un DM suelto:
+el editor usa la acción **Responder comentario**, y dentro de esa acción el
+usuario elige si responder públicamente en la publicación o mandar un mensaje
+privado al comentarista por Messenger/Instagram DM, usando el `comment_id` del
+evento segun el contrato de Meta. Las respuestas privadas a comentario cuentan
+como mensaje enviado para una espera posterior de respuesta; las respuestas
+publicas no abren una espera de DM.
+
 ## Jobs y crons
 
 Crons de sistema que pueden vivir activos:

@@ -27,6 +27,8 @@ const EXECUTABLE_NODE_TYPES = new Set([
   'channel-whatsapp',
   'channel-messenger',
   'channel-instagram',
+  'channel-comment-public-reply',
+  'channel-comment-dm-reply',
   'channel-email',
   'logic-wait',
   'logic-drip',
@@ -56,6 +58,8 @@ const SUPPORTED_TRIGGER_TYPES = new Set([
   'trigger-click-to-whatsapp',
   'trigger-instagram-message',
   'trigger-messenger-message',
+  'trigger-facebook-comment',
+  'trigger-instagram-comment',
   'trigger-email-message',
   'trigger-customer-replied',
   'trigger-contact-created',
@@ -203,6 +207,16 @@ function hasPath(edges, from, to) {
   return false
 }
 
+function isSentMessageSourceNode(node) {
+  const type = String(node?.type || '')
+  if (SENT_MESSAGE_NODE_TYPES.has(type)) return true
+  if (type === 'channel-comment-dm-reply') return true
+  if (type === 'channel-comment-public-reply') {
+    return String(node?.config?.replyType || '').toLowerCase() === 'private'
+  }
+  return false
+}
+
 function validateReplyMessageWaitSource({ node, nodes, edges, errors }) {
   const config = isPlainObject(node.config) ? node.config : {}
   const expectedAction = String(config.expectedAction || '')
@@ -218,7 +232,7 @@ function validateReplyMessageWaitSource({ node, nodes, edges, errors }) {
     return
   }
   const sourceNode = nodes.find((candidate) => candidate.id === sourceId)
-  if (!sourceNode || !SENT_MESSAGE_NODE_TYPES.has(sourceNode.type) || !hasPath(edges, sourceId, node.id)) {
+  if (!sourceNode || !isSentMessageSourceNode(sourceNode) || !hasPath(edges, sourceId, node.id)) {
     errors.push('El mensaje enviado seleccionado en Esperar ya no está antes de esa espera')
   }
 }
@@ -272,8 +286,8 @@ export function validateFlowForPublish(flow) {
     )
   }
 
-  // (AUTO-002) Rechazar disparadores sin evento real (comentarios FB/IG, clic en
-  // anuncio, Click-to-WhatsApp): la automatización nunca correría.
+  // (AUTO-002) Rechazar disparadores sin evento real: la automatización nunca
+  // correría. Los comentarios FB/IG y Click-to-WhatsApp ya tienen emisor real.
   const unsupportedTriggerTypes = new Set()
   triggers.forEach((trigger) => {
     const type = String(trigger?.type || '')

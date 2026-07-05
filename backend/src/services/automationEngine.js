@@ -3746,6 +3746,10 @@ function commentAttachmentAllowed(replyType, platform, blockType) {
   return COMMENT_MEDIA_BLOCKS.includes(blockType)
 }
 
+function commentReplyTypeFromConfig(config, fallback = 'public') {
+  return str(config?.replyType).toLowerCase() === 'private' ? 'private' : fallback
+}
+
 async function sendCommentReplyFromNode(node, ctx, replyType) {
   const config = node.config || {}
   const contactId = ctx.contact?.id
@@ -3877,12 +3881,14 @@ async function executeNode(node, ctx, enrollment) {
     }
 
     case 'channel-comment-public-reply': {
-      const sendResult = await sendCommentReplyFromNode(node, ctx, 'public')
+      const replyType = commentReplyTypeFromConfig(node.config, 'public')
+      const sendResult = await sendCommentReplyFromNode(node, ctx, replyType)
+      const isPrivate = replyType === 'private'
       return {
         handle: 'out',
         detail: sendResult.detail,
-        output: { estado: 'enviado', canal: 'comentario_publico', fecha_envio: nowIso() },
-        outputBaseId: 'responder_comentario_publico'
+        output: { estado: 'enviado', canal: isPrivate ? 'comentario_privado' : 'comentario_publico', fecha_envio: nowIso() },
+        outputBaseId: isPrivate ? 'responder_comentario_privado' : 'responder_comentario_publico'
       }
     }
 

@@ -280,6 +280,15 @@ function validateMessageBlocks(
   return errors
 }
 
+function validateCommentReply(config: Record<string, unknown>): string[] {
+  const errors = validateMessageBlocks(config)
+  const replyType = str(config.replyType) || 'public'
+  if (!['public', 'private'].includes(replyType)) {
+    errors.push('Elige si la respuesta al comentario será pública o privada')
+  }
+  return errors
+}
+
 export interface NodeDefinition {
   type: string
   kind: NodeKind
@@ -1493,16 +1502,17 @@ const CHANNEL_NODES: NodeDefinition[] = [
   }),
   {
     // Responder un comentario (FB/IG) a mitad de un flujo. Agnóstico de plataforma:
-    // usa el comentario del contacto en curso. Público = en el post; DM = privado.
+    // usa el comentario del contacto en curso. Público = en el post; privado =
+    // private reply por Messenger/Instagram DM desde ese comentario.
     type: 'channel-comment-public-reply',
     kind: 'action',
-    label: 'Responder comentario (público)',
-    brand: 'Facebook',
+    label: 'Responder comentario',
+    brand: 'Messenger / Instagram',
     category: 'action-content',
-    description: 'Responde en la publicación (visible para todos). Facebook admite texto + 1 imagen; Instagram solo texto.',
+    description: 'Responde el comentario recibido: público en la publicación o privado por Messenger/Instagram DM.',
     icon: MessageCircleReply,
     accent: 'green',
-    addButtonLabel: 'Agregar respuesta',
+    addButtonLabel: 'Responder comentario',
     allowedChannels: ['messenger', 'instagram'],
     configComponent: 'message',
     supportsMessageBlocks: true,
@@ -1510,22 +1520,42 @@ const CHANNEL_NODES: NodeDefinition[] = [
     supportsMultipleBranches: false,
     supportsVariables: true,
     supportsEmoji: true,
-    defaultConfig: () => ({ messageBlocks: [] }),
-    fields: [],
+    defaultConfig: () => ({ replyType: 'public', messageBlocks: [] }),
+    fields: [
+      {
+        key: 'replyType',
+        label: 'Tipo de respuesta',
+        type: 'select',
+        required: true,
+        help: 'Público responde en la publicación. Privado manda el primer mensaje por Messenger o Instagram DM usando el comentario como permiso de Meta.',
+        options: [
+          { value: 'public', label: 'Responder comentario público' },
+          { value: 'private', label: 'Responder por mensaje privado' }
+        ]
+      }
+    ],
     outputs: () => SINGLE_OUTPUT,
-    validate: validateMessageBlocks,
-    summary: (config) => ({ box: firstTextBlock(config) || undefined, empty: 'Agrega la respuesta pública' })
+    validate: validateCommentReply,
+    summary: (config) => {
+      const isPrivate = str(config.replyType) === 'private'
+      return {
+        text: isPrivate ? 'Mensaje privado al comentarista' : 'Respuesta pública en el comentario',
+        box: firstTextBlock(config) || undefined,
+        empty: isPrivate ? 'Agrega el mensaje privado' : 'Agrega la respuesta pública'
+      }
+    }
   },
   {
     type: 'channel-comment-dm-reply',
     kind: 'action',
-    label: 'Responder por privado (DM)',
+    label: 'Responder comentario',
     brand: 'Messenger',
     category: 'action-content',
-    description: 'Manda un DM privado a quien comentó. Admite texto, imagen, video, audio y archivo.',
+    description: 'Mensaje privado al comentarista. Se conserva para automatizaciones antiguas.',
     icon: MessageSquareText,
     accent: 'blue',
     addButtonLabel: 'Agregar mensaje',
+    hiddenFromPicker: true,
     allowedChannels: ['messenger', 'instagram'],
     configComponent: 'message',
     supportsMessageBlocks: true,
@@ -1533,7 +1563,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     supportsMultipleBranches: false,
     supportsVariables: true,
     supportsEmoji: true,
-    defaultConfig: () => ({ messageBlocks: [] }),
+    defaultConfig: () => ({ replyType: 'private', messageBlocks: [] }),
     fields: [],
     outputs: () => SINGLE_OUTPUT,
     validate: validateMessageBlocks,

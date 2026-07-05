@@ -65,6 +65,40 @@ test('publicar acepta un flujo lineal válido', () => {
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
+test('publicar acepta comentarios de Facebook/Instagram y respuestas a comentario', () => {
+  const publicReply = {
+    id: 'comment_public',
+    type: 'channel-comment-public-reply',
+    position: { x: 100, y: 0 },
+    config: {
+      replyType: 'public',
+      messageBlocks: [{ id: 'b1', type: 'text', compiledText: 'Gracias por comentar' }]
+    }
+  }
+  const privateReply = {
+    id: 'comment_private',
+    type: 'channel-comment-public-reply',
+    position: { x: 200, y: 0 },
+    config: {
+      replyType: 'private',
+      messageBlocks: [{ id: 'b2', type: 'text', compiledText: 'Te escribimos por privado' }]
+    }
+  }
+  const flow = {
+    nodes: [
+      startNode([
+        { id: 't1', type: 'trigger-facebook-comment', config: { allowedComments: 'all' } },
+        { id: 't2', type: 'trigger-instagram-comment', config: { allowedComments: 'first_only' } }
+      ]),
+      publicReply,
+      privateReply
+    ],
+    edges: [edge('e1', 'start', 'comment_public'), edge('e2', 'comment_public', 'comment_private')]
+  }
+
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
 test('publicar exige muestra real para webhooks entrantes', () => {
   const flow = {
     nodes: [
@@ -272,6 +306,35 @@ test('publicar exige mensaje enviado anterior en esperas por respuesta a mensaje
   flow.edges = [edge('e1', 'start', 'wait1'), edge('e2', 'wait1', 'msg1')]
   errors = validateFlowForPublish(flow)
   assert.ok(errors.some((message) => message.includes('ya no está antes')))
+})
+
+test('publicar solo permite esperar respuesta de comentario cuando el comentario se respondió por privado', () => {
+  const commentReply = {
+    id: 'comment_reply',
+    type: 'channel-comment-public-reply',
+    position: { x: 100, y: 0 },
+    config: {
+      replyType: 'public',
+      messageBlocks: [{ id: 'b1', type: 'text', compiledText: 'Gracias' }]
+    }
+  }
+  const waitNode = {
+    id: 'wait1',
+    type: 'logic-wait',
+    position: { x: 200, y: 0 },
+    config: { mode: 'action', expectedAction: 'reply_message', actionResource: 'comment_reply' }
+  }
+  const flow = {
+    nodes: [startNode(), commentReply, waitNode],
+    edges: [edge('e1', 'start', 'comment_reply'), edge('e2', 'comment_reply', 'wait1')]
+  }
+
+  let errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('mensaje enviado seleccionado')))
+
+  commentReply.config.replyType = 'private'
+  errors = validateFlowForPublish(flow)
+  assert.deepEqual(errors, [])
 })
 
 test('publicar detecta ciclos en el flujo', () => {

@@ -126,7 +126,9 @@ export function hasPath(edges: AutomationEdge[], from: string, to: string): bool
   return false
 }
 
-const SENT_MESSAGE_CHANNELS: Record<string, 'whatsapp' | 'messenger' | 'instagram'> = {
+type SentMessageChannel = 'whatsapp' | 'messenger' | 'instagram' | 'any'
+
+const SENT_MESSAGE_CHANNELS: Record<string, SentMessageChannel> = {
   'channel-whatsapp': 'whatsapp',
   'channel-messenger': 'messenger',
   'channel-instagram': 'instagram'
@@ -135,13 +137,14 @@ const SENT_MESSAGE_CHANNELS: Record<string, 'whatsapp' | 'messenger' | 'instagra
 const CHANNEL_LABELS: Record<string, string> = {
   whatsapp: 'WhatsApp',
   messenger: 'Messenger',
-  instagram: 'Instagram'
+  instagram: 'Instagram',
+  any: 'Messenger / Instagram'
 }
 
 export interface WaitMessageSourceOption {
   value: string
   label: string
-  channel: 'whatsapp' | 'messenger' | 'instagram'
+  channel: SentMessageChannel
 }
 
 function str(value: unknown): string {
@@ -151,6 +154,13 @@ function str(value: unknown): string {
 function shortText(value: string, max = 64): string {
   const compact = value.replace(/\s+/g, ' ').trim()
   return compact.length > max ? `${compact.slice(0, max - 1).trim()}...` : compact
+}
+
+function sentMessageChannelFor(node: AutomationNode): SentMessageChannel | null {
+  if (SENT_MESSAGE_CHANNELS[node.type]) return SENT_MESSAGE_CHANNELS[node.type]
+  if (node.type === 'channel-comment-dm-reply') return 'any'
+  if (node.type === 'channel-comment-public-reply' && str(node.config?.replyType) === 'private') return 'any'
+  return null
 }
 
 function distanceToTarget(edges: AutomationEdge[], from: string, target: string): number {
@@ -178,13 +188,13 @@ export function getWaitMessageSourceOptions(
 ): WaitMessageSourceOption[] {
   if (!targetNodeId) return []
   return nodes
-    .filter((node) => node.id !== targetNodeId && SENT_MESSAGE_CHANNELS[node.type] && hasPath(edges, node.id, targetNodeId))
+    .filter((node) => node.id !== targetNodeId && sentMessageChannelFor(node) && hasPath(edges, node.id, targetNodeId))
     .map((node) => {
       const definition = getNodeDefinition(node.type)
       const summary = definition?.summary(node.config || {})
       const title = str(node.config?.customTitle) || node.label || definition?.label || 'Mensaje enviado'
       const detail = shortText(str(summary?.box) || str(summary?.text))
-      const channel = SENT_MESSAGE_CHANNELS[node.type]
+      const channel = sentMessageChannelFor(node) || 'any'
       return {
         node,
         distance: distanceToTarget(edges, node.id, targetNodeId),
@@ -365,6 +375,18 @@ export function migrateLegacyFlow(nodes: AutomationNode[]): AutomationNode[] {
   nodes = nodes.map((node) =>
     node.type === 'channel-facebook-message' ? { ...node, type: 'channel-messenger' } : node
   )
+  // La acción legacy de DM separado se absorbió en "Responder comentario" con
+  // modo privado, para que el flujo refleje la API real de Meta.
+  nodes = nodes.map((node) =>
+    node.type === 'channel-comment-dm-reply'
+      ? {
+          ...node,
+          type: 'channel-comment-public-reply',
+          label: undefined,
+          config: { ...(node.config || {}), replyType: 'private' }
+        }
+      : node
+  )
 
   return nodes.map((node) => {
     let next = node
@@ -419,6 +441,10 @@ export function migrateLegacyFlow(nodes: AutomationNode[]): AutomationNode[] {
         ...next,
         config: { ...rest, messageBlocks: messageToBlocks(message as string), extraBranches: config.extraBranches || [] }
       }
+    }
+
+    if (node.type === 'channel-comment-public-reply' && !str(config.replyType)) {
+      return { ...next, config: { ...config, replyType: 'public' } }
     }
 
     // "Dividir" retirado → Acciones con ramas extra (conservan ids y conexiones)
