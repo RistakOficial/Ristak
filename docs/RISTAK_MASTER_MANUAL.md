@@ -378,6 +378,14 @@ desplegar, el globo debe mostrar los campos estructurados del correo, incluyendo
 cuando existan y el `Cuerpo` completo a partir de `message_text` o `html_body`
 sanitizado.
 
+Los mensajes de ubicacion de WhatsApp/API y QR deben renderizarse como tarjeta
+de mapa tanto en `/chat` desktop como en `/movil`. El frontend normaliza payloads
+con `location_latitude`/`location_longitude`, `location`, `locationMessage`,
+`whatsappMessage.location`, `whatsappInboundMessage.location`, `response.location`
+o `request.location`; la tarjeta muestra tiles de OpenStreetMap, pin, nombre o
+direccion y abre Google Maps con las coordenadas. Si el texto recibido solo dice
+`location` o `Ubicacion`, se oculta para no duplicar el contenido debajo del mapa.
+
 El chat movil permite responder un globo especifico y reaccionar a mensajes
 recibidos cuando el canal expone soporte nativo. La respuesta a un globo normal
 se activa deslizando la burbuja hacia la derecha, igual que el flujo de

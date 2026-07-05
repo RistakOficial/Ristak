@@ -1162,6 +1162,208 @@
   max-width: min(86%, 620px);
 }
 
+.messageLocationBubble {
+  width: min(390px, 76%);
+  max-width: min(390px, 76%);
+  padding: 4px;
+}
+
+.messageLocationBubble .messageText {
+  padding: 2px 7px 0;
+}
+
+.messageLocation {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--chat-border);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  color: inherit;
+  text-decoration: none;
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.messageLocation:hover {
+  border-color: var(--chat-border-strong);
+  background: color-mix(in srgb, var(--surface) 88%, var(--chat-soft));
+}
+
+.messageOutbound .messageLocation {
+  border-color: color-mix(in srgb, var(--accent) 20%, var(--chat-border));
+  background: color-mix(in srgb, var(--accent-soft) 22%, var(--surface));
+}
+
+.messageLocationMap {
+  --location-pin-color: var(--neg);
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.92 / 1;
+  overflow: hidden;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 48% 48%, color-mix(in srgb, var(--location-pin-color) 15%, transparent), transparent 18%),
+    linear-gradient(118deg, transparent 0 27%, color-mix(in srgb, var(--surface) 82%, transparent) 28% 34%, transparent 35% 100%),
+    linear-gradient(17deg, transparent 0 48%, color-mix(in srgb, var(--surface) 86%, transparent) 49% 56%, transparent 57% 100%),
+    color-mix(in srgb, var(--accent-soft) 62%, var(--surface) 38%);
+  isolation: isolate;
+}
+
+.messageLocationTileLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.messageLocationTile {
+  position: absolute;
+  width: 144px;
+  height: 144px;
+  object-fit: cover;
+  opacity: 0.94;
+  filter: saturate(0.96) contrast(1.02) brightness(1.03);
+  transform: translateZ(0);
+}
+
+.messageLocationMapOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-solid) 8%, transparent), transparent 38%),
+    radial-gradient(circle at 50% 46%, transparent 0 17%, color-mix(in srgb, var(--surface-solid) 18%, transparent) 18%, transparent 29%),
+    linear-gradient(0deg, color-mix(in srgb, var(--text) 16%, transparent), transparent 34%);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--surface) 62%, transparent),
+    inset 0 -28px 42px color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.messageLocationPin {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  top: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  color: var(--location-pin-color);
+  filter:
+    drop-shadow(0 2px 1px color-mix(in srgb, var(--surface-solid) 58%, transparent))
+    drop-shadow(0 12px 12px color-mix(in srgb, var(--text) 24%, transparent));
+  transform: translate(-50%, -82%);
+}
+
+.messageLocationPin::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 15px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+  filter: blur(2px);
+  transform: translateX(-50%);
+}
+
+.messageLocationPin svg {
+  position: relative;
+  z-index: 1;
+  width: 34px;
+  height: 34px;
+  stroke: color-mix(in srgb, var(--location-pin-color) 64%, var(--surface-solid) 36%);
+  stroke-width: 1.7;
+}
+
+.messageLocationAttribution {
+  position: absolute;
+  right: 7px;
+  bottom: 6px;
+  z-index: 2;
+  padding: 2px 5px;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-solid) 82%, transparent);
+  color: color-mix(in srgb, var(--text) 68%, transparent);
+  font-size: 8px;
+  font-weight: 720;
+  line-height: 1;
+  backdrop-filter: blur(8px);
+}
+
+.messageLocationDetails {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 9px 10px 10px;
+}
+
+.messageLocationTitleRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 10px;
+}
+
+.messageLocationDetails strong,
+.messageLocationDetails small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.messageLocationDetails strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--font-size-sm);
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.messageLocationDetails small {
+  color: var(--text-mute);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.messageLocationAction {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 3px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.messageLocationCoordinates {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  margin-top: 2px;
+  padding: 3px 6px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--accent-soft) 42%, transparent);
+  color: color-mix(in srgb, var(--text-mute) 92%, var(--text) 8%);
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .messageSystem {
   align-self: center;
   max-width: 86%;
@@ -3700,6 +3902,11 @@
 
   .messageBubble {
     max-width: 90%;
+  }
+
+  .messageLocationBubble {
+    width: min(390px, 90%);
+    max-width: min(390px, 90%);
   }
 
   .templatePanel {
