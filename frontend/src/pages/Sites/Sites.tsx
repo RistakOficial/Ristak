@@ -27508,35 +27508,28 @@ const SiteSettingsPanelContent: React.FC<{
           onBlur={() => { void onSaveSite() }}
         />
         <div className={styles.editorSettingsRoutePreview}>
-          <ExternalLink size={13} />
-          <span>{routePreview}</span>
-        </div>
-      </section>
-
-      {canUseOfficialRootPage && (
-        <section className={styles.editorSettingsSection}>
-          <div className={styles.editorSettingsSectionHeader}>
-            <span className={styles.editorSettingsSectionIcon}><Star size={15} fill={activePageIsOfficial ? 'currentColor' : 'none'} /></span>
-            <div>
-              <strong>Página oficial</strong>
-              <small>
-                {activePageIsOfficial
-                  ? `${rootUrl || 'La raíz del dominio'} ya abre esta página`
-                  : rootUrl
-                    ? `Haz que ${rootUrl} abra esta página`
-                    : 'Configura un dominio para usar la raíz'}
-              </small>
-            </div>
+          <span className={styles.editorSettingsRouteLink}>
+            <ExternalLink size={13} />
+            <span>{routePreview}</span>
+          </span>
+          {canUseOfficialRootPage && activePageIsOfficial && (
+            <span className={styles.editorSettingsOfficialRouteLabel}>
+              <Star size={12} fill="currentColor" />
+              Página oficial
+            </span>
+          )}
+          {canUseOfficialRootPage && !activePageIsOfficial && rootUrl && onMakeActivePageOfficial && (
             <button
               type="button"
-              disabled={disabled || activePageIsOfficial || !rootUrl || !onMakeActivePageOfficial}
+              className={styles.editorSettingsOfficialRouteLink}
+              disabled={disabled}
               onClick={onMakeActivePageOfficial}
             >
-              {activePageIsOfficial ? 'Oficial' : 'Hacer oficial'}
+              Hacer página oficial
             </button>
-          </div>
-        </section>
-      )}
+          )}
+        </div>
+      </section>
 
       <section className={styles.editorSettingsSection}>
         <div className={styles.editorSettingsFlatRow}>

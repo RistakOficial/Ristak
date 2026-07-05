@@ -14905,17 +14905,57 @@
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 7px;
+  justify-content: space-between;
+  gap: 10px;
   color: var(--color-text-secondary);
   font-size: 12px;
   font-weight: var(--font-weight-semibold, 600);
   line-height: 1.25;
 }
 
-.editorSettingsRoutePreview span {
+.editorSettingsRouteLink {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.editorSettingsRouteLink span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editorSettingsOfficialRouteLink {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: var(--font-weight-bold, 700);
+  padding: 0;
+}
+
+.editorSettingsOfficialRouteLink:hover:not(:disabled),
+.editorSettingsOfficialRouteLink:focus-visible {
+  outline: none;
+  text-decoration: underline;
+}
+
+.editorSettingsOfficialRouteLink:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.editorSettingsOfficialRouteLabel {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
   white-space: nowrap;
 }
 

@@ -1135,9 +1135,9 @@ ruta predeterminada del dominio puede apuntar a un sitio completo o a una pagina
 especifica (`siteId + pageId`): cuando apunta a una pagina, esa pagina abre en
 la raiz del dominio (`https://dominio/`) y su slug propio sigue resolviendo como
 ruta directa. Se puede configurar desde Dominios con el selector de pagina
-oficial, desde Ajustes del editor o con la estrella del menu de tres puntos de la
-pagina; las acciones del editor deben confirmar escribiendo la URL raiz del
-dominio.
+oficial, desde el enlace "Hacer pagina oficial" junto a Ruta publica en Ajustes
+del editor o con la estrella del menu de tres puntos de la pagina; las acciones
+del editor deben confirmar escribiendo la URL raiz del dominio.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
 una landing existente nacen con solo `PageView` al aterrizar la pagina (browser
