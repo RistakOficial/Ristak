@@ -379,20 +379,25 @@ correo.
 
 La recepcion IMAP se configura dentro de
 `app_config.email_smtp_config.inbound` (`enabled`, `host`, `port`, `security`,
-`username`, `mailbox`, cursor `lastSeenUid` y timestamps). Al conectar, Ristak
-valida SMTP y, salvo que el usuario desactive explicitamente la recepcion, tambien
-abre la bandeja IMAP antes de marcarla como conectada. La pantalla permite probar
-recepcion y buscar correos manualmente con `/api/email/inbound/test` y
-`/api/email/inbound/sync`.
+`username`, `mailbox`, `createContactsFromUnknownSenders`, cursor `lastSeenUid`
+y timestamps). Al conectar, Ristak valida SMTP y, salvo que el usuario desactive
+explicitamente la recepcion, tambien abre la bandeja IMAP antes de marcarla como
+conectada. La pantalla permite probar recepcion, buscar correos manualmente con
+`/api/email/inbound/test` y `/api/email/inbound/sync`, y guardar el ajuste de
+contactos nuevos con `/api/email/inbound/settings`.
 
 El job `email-inbound-sync` esta registrado como cron de integracion externa y
 solo arranca cuando el detector local confirma correo conectado, app password
 guardado e IMAP activo. El sync lee `INBOX` por UID, mantiene cursor incremental,
 importa una ventana reciente en la primera ejecucion para no volcar buzones
-historicos completos, crea el contacto si el remitente no existe con
-`source='email_inbound'`, guarda el correo en `email_messages` con
+historicos completos y primero busca un contacto existente por email normalizado.
+Si encuentra contacto, guarda el correo en `email_messages` con
 `direction='inbound'` y `provider='imap'`, y publica el evento live del chat para
-que aparezca en la bandeja, en el modal del contacto y en `/movil`.
+que aparezca en la bandeja, en el modal del contacto y en `/movil`. Si el
+remitente no existe y `createContactsFromUnknownSenders` esta apagado (default),
+Ristak no crea contacto ni guarda ese correo, aunque si avanza el cursor IMAP
+para no reprocesarlo indefinidamente. Si el ajuste esta encendido, crea el
+contacto con `source='email_inbound'` y guarda el correo en su historial.
 
 Los adjuntos manuales del chat soportan imagenes, videos, audios y documentos
 compatibles. Si un video o audio cabe como media directa, la UI pregunta si debe

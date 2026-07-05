@@ -5,6 +5,7 @@ import {
   getEmailSignature,
   getEmailStatus,
   saveEmailSignature,
+  saveInboundEmailSettings,
   sendEmailToContact,
   sendTestEmail,
   syncInboundEmailOnce,
@@ -83,6 +84,16 @@ export async function syncInboundEmailView(req, res) {
   } catch (error) {
     logger.error(`Error sincronizando correos recibidos: ${error.message}`)
     sendError(res, error, 'Error sincronizando correos recibidos')
+  }
+}
+
+export async function saveInboundEmailSettingsView(req, res) {
+  try {
+    const data = await saveInboundEmailSettings(req.body || {})
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error guardando ajustes de recepción de correo: ${error.message}`)
+    sendError(res, error, 'Error guardando los ajustes de recepción de correo')
   }
 }
 

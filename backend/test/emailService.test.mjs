@@ -7,6 +7,7 @@ import {
   detectEmailProvider,
   getEmailSignature,
   saveEmailSignature,
+  saveInboundEmailSettings,
   sendEmail,
   sendEmailToContact,
   setEmailImapClientFactoryForTest,
@@ -135,6 +136,7 @@ test('conecta correo con datos simples, prueba envío y guarda password cifrado'
       assert.equal(status.inbound.port, 993)
       assert.equal(status.inbound.security, 'ssl')
       assert.equal(status.inbound.mailbox, 'INBOX')
+      assert.equal(status.inbound.createContactsFromUnknownSenders, false)
       assert.equal(status.sender.fromEmail, 'ventas@clinicademo.com')
       assert.equal(status.sender.fromName, 'Clínica Demo')
       assert.ok(status.timestamps.lastVerifiedAt)
@@ -161,6 +163,11 @@ test('conecta correo con datos simples, prueba envío y guarda password cifrado'
       const encryptedPassword = await getAppConfig(EMAIL_PASSWORD_KEY)
       assert.notEqual(encryptedPassword, 'app-password-demo')
       assert.equal(decrypt(encryptedPassword), 'app-password-demo')
+
+      const updatedStatus = await saveInboundEmailSettings({ createContactsFromUnknownSenders: true })
+      assert.equal(updatedStatus.inbound.createContactsFromUnknownSenders, true)
+      const storedConfig = JSON.parse(await getAppConfig(EMAIL_CONFIG_KEY))
+      assert.equal(storedConfig.inbound.createContactsFromUnknownSenders, true)
     } finally {
       setEmailTransportFactoryForTest(null)
       setEmailMxResolverForTest(null)

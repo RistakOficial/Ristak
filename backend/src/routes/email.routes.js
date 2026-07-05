@@ -6,6 +6,7 @@ import {
   getEmailSignatureView,
   getEmailStatusView,
   saveEmailSignatureView,
+  saveInboundEmailSettingsView,
   sendEmailView,
   sendTestEmailView,
   syncInboundEmailView,
@@ -24,6 +25,7 @@ router.post('/send', sendEmailView)
 router.post('/test', sendTestEmailView)
 router.post('/inbound/test', testInboundEmailView)
 router.post('/inbound/sync', syncInboundEmailView)
+router.post('/inbound/settings', saveInboundEmailSettingsView)
 router.get('/signature', getEmailSignatureView)
 router.post('/signature', saveEmailSignatureView)
 router.post('/disconnect', disconnectEmailView)

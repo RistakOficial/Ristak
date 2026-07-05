@@ -23,6 +23,7 @@ export interface EmailStatus {
     security: EmailSmtpSecurity
     usernameMasked: string
     mailbox: string
+    createContactsFromUnknownSenders: boolean
     lastSeenUid?: number | null
     lastSyncAt?: string | null
     lastVerifiedAt?: string | null
@@ -62,6 +63,7 @@ export interface EmailConnectPayload {
     security?: EmailSmtpSecurity
     username?: string
     mailbox?: string
+    createContactsFromUnknownSenders?: boolean
   }
 }
 
@@ -126,6 +128,10 @@ export interface EmailInboundSyncResult {
   lastSyncAt?: string | null
 }
 
+export interface EmailInboundSettingsPayload {
+  createContactsFromUnknownSenders: boolean
+}
+
 export interface EmailSendPayload {
   contactId?: string
   to?: string
@@ -162,6 +168,7 @@ export const emailService = {
   sendTest: (to: string) => apiClient.post<EmailTestResult>('/email/test', { to }),
   testInbound: () => apiClient.post<EmailInboundTestResult>('/email/inbound/test'),
   syncInbound: () => apiClient.post<EmailInboundSyncResult>('/email/inbound/sync'),
+  saveInboundSettings: (payload: EmailInboundSettingsPayload) => apiClient.post<EmailStatus>('/email/inbound/settings', payload),
   getSignature: () => apiClient.get<EmailSignatureConfig>('/email/signature'),
   saveSignature: (payload: EmailSignatureConfig) => apiClient.post<EmailSignatureConfig>('/email/signature', payload),
   disconnect: () => apiClient.post<EmailStatus>('/email/disconnect')

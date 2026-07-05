@@ -15,7 +15,8 @@ import {
   SlidersHorizontal,
   Type,
   Unplug,
-  User
+  User,
+  UserPlus
 } from 'lucide-react'
 import { Badge, Button, CustomSelect, EmailRichTextEditor, PageHeader, Switch, sanitizeEmailRichHtmlForEditor } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -62,6 +63,7 @@ export const EmailSettings: React.FC = () => {
   const [testingInbound, setTestingInbound] = useState(false)
   const [syncingInbound, setSyncingInbound] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  const [savingInboundSettings, setSavingInboundSettings] = useState(false)
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [advancedDirty, setAdvancedDirty] = useState(false)
   const [inboundDirty, setInboundDirty] = useState(false)
@@ -85,6 +87,7 @@ export const EmailSettings: React.FC = () => {
   const [inboundSecurity, setInboundSecurity] = useState<EmailSmtpSecurity>('ssl')
   const [inboundUsername, setInboundUsername] = useState('')
   const [inboundMailbox, setInboundMailbox] = useState('INBOX')
+  const [createContactsFromUnknownSenders, setCreateContactsFromUnknownSenders] = useState(false)
 
   const [detection, setDetection] = useState<EmailProviderDetection | null>(null)
   const [detecting, setDetecting] = useState(false)
@@ -134,6 +137,7 @@ export const EmailSettings: React.FC = () => {
     setInboundSecurity(nextStatus.inbound?.security || 'ssl')
     setInboundUsername('')
     setInboundMailbox(nextStatus.inbound?.mailbox || 'INBOX')
+    setCreateContactsFromUnknownSenders(Boolean(nextStatus.inbound?.createContactsFromUnknownSenders))
     setPassword('')
     setTestTo(nextStatus.sender.fromEmail || '')
     setDetection(null)
@@ -251,6 +255,33 @@ export const EmailSettings: React.FC = () => {
     setInboundDirty(true)
   }
 
+  const saveInboundContactPolicy = async (checked: boolean) => {
+    if (savingInboundSettings) return
+    const previousValue = createContactsFromUnknownSenders
+    setCreateContactsFromUnknownSenders(checked)
+    setSavingInboundSettings(true)
+
+    try {
+      const nextStatus = await emailService.saveInboundSettings({
+        createContactsFromUnknownSenders: checked
+      })
+      setStatus(nextStatus)
+      applyStatusToForm(nextStatus)
+      showToast(
+        'success',
+        'Ajuste guardado',
+        checked
+          ? 'Los correos nuevos podrán crear contactos automáticamente'
+          : 'Los correos de desconocidos se ignorarán sin crear contacto'
+      )
+    } catch (error) {
+      setCreateContactsFromUnknownSenders(previousValue)
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Intenta nuevamente')
+    } finally {
+      setSavingInboundSettings(false)
+    }
+  }
+
   const connectEmail = async (event?: React.FormEvent) => {
     event?.preventDefault()
     if (!canSubmit || connecting) return
@@ -266,7 +297,10 @@ export const EmailSettings: React.FC = () => {
           }
         : undefined
       const inbound = !inboundEnabled
-        ? { enabled: false }
+        ? {
+            enabled: false,
+            createContactsFromUnknownSenders
+          }
         : usesManualInbound
           ? {
             enabled: true,
@@ -274,9 +308,13 @@ export const EmailSettings: React.FC = () => {
             port: Number(inboundPort),
             security: inboundSecurity,
             username: inboundUsername.trim() || fromEmailValue,
-            mailbox: inboundMailbox.trim() || 'INBOX'
+            mailbox: inboundMailbox.trim() || 'INBOX',
+            createContactsFromUnknownSenders
           }
-          : { enabled: true }
+          : {
+              enabled: true,
+              createContactsFromUnknownSenders
+            }
 
       const nextStatus = await emailService.connect({
         fromEmail: fromEmailValue,
@@ -497,6 +535,29 @@ export const EmailSettings: React.FC = () => {
     </div>
   )
 
+  const renderUnknownSenderPolicy = (onChange: (checked: boolean) => void, disabled = false) => (
+    <div className={styles.contactPolicyBlock}>
+      <div className={styles.inboundHeader}>
+        <div className={styles.inboundTitle}>
+          <span className={styles.inboundIcon}><UserPlus size={17} /></span>
+          <div>
+            <strong>Crear contactos con correos nuevos</strong>
+            <span>Apagado por defecto. Si llega un correo de alguien que no existe como contacto, Ristak no guarda el correo ni crea contacto.</span>
+          </div>
+        </div>
+        <label className={styles.switchRow}>
+          <Switch
+            checked={createContactsFromUnknownSenders}
+            onChange={onChange}
+            disabled={disabled}
+            aria-label="Crear contactos automáticamente con correos nuevos"
+          />
+          <span>{createContactsFromUnknownSenders ? 'Activa' : 'Apagada'}</span>
+        </label>
+      </div>
+    </div>
+  )
+
   const renderInboundFields = () => (
     <div className={styles.inboundBlock}>
       <div className={styles.inboundHeader}>
@@ -539,6 +600,8 @@ export const EmailSettings: React.FC = () => {
           <p className={styles.helperText}>
             Para Gmail, Workspace, Outlook, Yahoo, iCloud, Zoho, Titan y proveedores comunes no tienes que llenar servidor, puerto ni seguridad. Ristak lo detecta y lo prueba al conectar.
           </p>
+
+          {renderUnknownSenderPolicy(setCreateContactsFromUnknownSenders)}
 
           <div className={styles.advancedBlock}>
             <Button
@@ -854,6 +917,8 @@ export const EmailSettings: React.FC = () => {
               <dd>{formatDateTime(status.timestamps.lastTestAt)}</dd>
             </div>
           </dl>
+
+          {status.inbound?.enabled && renderUnknownSenderPolicy(saveInboundContactPolicy, savingInboundSettings)}
 
           <div className={styles.detailsBlock}>
             <Button

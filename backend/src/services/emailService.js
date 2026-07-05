@@ -28,6 +28,7 @@ const EMAIL_SUBJECT_LIMIT = 998
 const EMAIL_TEXT_LIMIT = 120000
 const EMAIL_HTML_LIMIT = 240000
 const EMAIL_INBOUND_DEFAULT_MAILBOX = 'INBOX'
+const EMAIL_INBOUND_CREATE_CONTACTS_DEFAULT = false
 const EMAIL_INBOUND_FIRST_SYNC_LOOKBACK = 50
 const EMAIL_INBOUND_FETCH_LIMIT = 50
 const EMAIL_INBOUND_SOURCE_LIMIT = 1024 * 1024
@@ -810,6 +811,10 @@ function normalizeMailbox(value) {
   return cleanString(value) || EMAIL_INBOUND_DEFAULT_MAILBOX
 }
 
+function normalizeInboundCreateContacts(value) {
+  return toBoolean(value, EMAIL_INBOUND_CREATE_CONTACTS_DEFAULT)
+}
+
 function normalizeInboundCandidate({
   inboundPayload = {},
   previous = null,
@@ -831,6 +836,11 @@ function normalizeInboundCandidate({
   const hasInboundPayload = inboundPayload && typeof inboundPayload === 'object' && Object.keys(inboundPayload).length > 0
   const hasExplicitInboundEnabled = Object.prototype.hasOwnProperty.call(inboundPayload || {}, 'enabled')
   const hasPreviousInboundPreference = Object.prototype.hasOwnProperty.call(previousInbound || {}, 'enabled')
+  const createContactsFromUnknownSenders = Object.prototype.hasOwnProperty.call(inboundPayload || {}, 'createContactsFromUnknownSenders')
+    ? normalizeInboundCreateContacts(inboundPayload.createContactsFromUnknownSenders)
+    : Object.prototype.hasOwnProperty.call(previousInbound || {}, 'createContactsFromUnknownSenders')
+      ? normalizeInboundCreateContacts(previousInbound.createContactsFromUnknownSenders)
+      : EMAIL_INBOUND_CREATE_CONTACTS_DEFAULT
   const enabled = hasExplicitInboundEnabled
     ? toBoolean(inboundPayload.enabled, true)
     : hasPreviousInboundPreference
@@ -840,7 +850,8 @@ function normalizeInboundCandidate({
   if (!enabled) {
     return {
       ...previousInbound,
-      enabled: false
+      enabled: false,
+      createContactsFromUnknownSenders
     }
   }
 
@@ -865,6 +876,7 @@ function normalizeInboundCandidate({
     username,
     usernameMasked: maskUsername(username),
     mailbox,
+    createContactsFromUnknownSenders,
     lastSeenUid: Number(previousInbound.lastSeenUid) > 0 ? Number(previousInbound.lastSeenUid) : null,
     lastSyncAt: previousInbound.lastSyncAt || null,
     lastVerifiedAt: previousInbound.lastVerifiedAt || null,
@@ -1004,19 +1016,30 @@ function splitContactName(name) {
   }
 }
 
-async function findOrCreateContactForInboundEmail({ email, name }) {
+async function findContactByEmail(email) {
   const cleanEmail = cleanString(email).toLowerCase()
   if (!EMAIL_PATTERN.test(cleanEmail)) return null
 
-  const existing = await db.get(
+  return db.get(
     `SELECT id, full_name, first_name, last_name, email, phone, source
      FROM contacts
-     WHERE LOWER(email) = LOWER(?)
+     WHERE LOWER(TRIM(email)) = ?
        AND deleted_at IS NULL
      LIMIT 1`,
     [cleanEmail]
   )
+}
+
+async function findOrCreateContactForInboundEmail({ email, name, createIfMissing = EMAIL_INBOUND_CREATE_CONTACTS_DEFAULT }) {
+  const cleanEmail = cleanString(email).toLowerCase()
+  if (!EMAIL_PATTERN.test(cleanEmail)) return null
+
+  const existing = await findContactByEmail(cleanEmail)
   if (existing?.id) return { contact: existing, created: false }
+
+  if (!createIfMissing) {
+    return { contact: null, created: false, skipped: true, reason: 'unknown_contact_auto_create_disabled' }
+  }
 
   const id = createRistakId('contact')
   const fullName = limitString(name, 180) || cleanEmail
@@ -1036,13 +1059,7 @@ async function findOrCreateContactForInboundEmail({ email, name }) {
       'email_inbound'
     ])
   } catch (error) {
-    const duplicate = await db.get(
-      `SELECT id, full_name, first_name, last_name, email, phone, source
-       FROM contacts
-       WHERE LOWER(email) = LOWER(?)
-       LIMIT 1`,
-      [cleanEmail]
-    ).catch(() => null)
+    const duplicate = await findContactByEmail(cleanEmail).catch(() => null)
     if (duplicate?.id) return { contact: duplicate, created: false }
     throw error
   }
@@ -1078,10 +1095,18 @@ async function saveInboundEmailFromImap({ imapMessage, parsed, config }) {
 
   const contactResult = await findOrCreateContactForInboundEmail({
     email: from.address,
-    name: from.name
+    name: from.name,
+    createIfMissing: normalizeInboundCreateContacts(config?.inbound?.createContactsFromUnknownSenders)
   })
   const contact = contactResult?.contact
-  if (!contact?.id) return { saved: 0, skipped: true, reason: 'missing_contact' }
+  if (!contact?.id) {
+    return {
+      saved: 0,
+      skipped: true,
+      reason: contactResult?.reason || 'missing_contact',
+      uid: Number(imapMessage.uid) || null
+    }
+  }
 
   const messageTimestamp = parseEmailDate(parsed, imapMessage.internalDate)
   const subject = limitString(parsed?.subject || '', EMAIL_SUBJECT_LIMIT)
@@ -1303,6 +1328,17 @@ export async function syncInboundEmailOnce({ reason = 'manual' } = {}) {
   }
 }
 
+export async function saveInboundEmailSettings(payload = {}) {
+  const config = await readStoredConfig()
+  if (!config?.connected) throw httpError(400, 'Conecta el correo antes de guardar estos ajustes')
+
+  await setInboundConfigPatch({
+    createContactsFromUnknownSenders: normalizeInboundCreateContacts(payload.createContactsFromUnknownSenders)
+  })
+
+  return getEmailStatus()
+}
+
 async function sendConnectionTestEmail(transporter, config, testTo) {
   const recipient = cleanString(testTo).toLowerCase() || config.fromEmail || config.username
   if (!EMAIL_PATTERN.test(recipient)) throw httpError(400, 'El correo de prueba no es válido')
@@ -1409,6 +1445,7 @@ export async function getEmailStatus() {
       security: normalizeImapSecurity(inbound?.security, inbound?.port),
       usernameMasked: maskUsername(inbound?.username),
       mailbox: inbound?.mailbox || EMAIL_INBOUND_DEFAULT_MAILBOX,
+      createContactsFromUnknownSenders: normalizeInboundCreateContacts(inbound?.createContactsFromUnknownSenders),
       lastSeenUid: Number(inbound?.lastSeenUid) || null,
       lastSyncAt: inbound?.lastSyncAt || null,
       lastVerifiedAt: inbound?.lastVerifiedAt || null,
