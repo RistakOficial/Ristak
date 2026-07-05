@@ -304,15 +304,17 @@ a, estado, transporte y cuerpo. No los conviertas a texto plano de WhatsApp ni
 los ocultes de la conversacion movil; el usuario debe poder abrir el detalle del
 correo desde el celular.
 
-En `/movil`, la accion de responder un globo debe enviar una respuesta nativa
-cuando el canal lo soporte: WhatsApp API/YCloud con `context.message_id`,
-WhatsApp QR/Baileys con `quoted`, Messenger/Instagram con `reply_to.mid`. La UI
-debe mostrar el quote dentro del globo enviado y debe bloquear respuestas con
-media/ubicacion hasta que esos canales tengan soporte nativo completo. Las
-reacciones se muestran como chips pegados al globo original: WhatsApp acepta
-emoji, Meta solo debe ofrecer/aceptar corazon (`love`) por contrato, y
-HighLevel/email/comentarios deben avisar que no hay reaccion nativa en vez de
-crear un mensaje falso.
+En `/movil`, responder un globo normal se activa con el mismo gesto de la
+conversacion: deslizar el globo hacia la derecha abre la barra/cajita de
+respuesta del composer y selecciona ese mensaje como quote. Al enviar, debe
+mandarse una respuesta nativa cuando el canal lo soporte: WhatsApp API/YCloud
+con `context.message_id`, WhatsApp QR/Baileys con `quoted`,
+Messenger/Instagram con `reply_to.mid`. La UI debe mostrar el quote dentro del
+globo enviado y debe bloquear respuestas con media/ubicacion hasta que esos
+canales tengan soporte nativo completo. Las reacciones se muestran como chips
+pegados al globo original: WhatsApp acepta emoji, Meta solo debe
+ofrecer/aceptar corazon (`love`) por contrato, y HighLevel/email/comentarios
+deben avisar que no hay reaccion nativa en vez de crear un mensaje falso.
 
 ## Variables de servidor
 
@@ -384,6 +386,10 @@ Para enviar fotos por WhatsApp, el backend debe estar publicado en HTTPS porque 
   "Responder en la publicacion". El swipe hacia la izquierda conserva la ficha de
   info del mensaje; no cruces ambos comportamientos ni uses ese gesto para mandar
   DM privado.
+- **Swipe de mensajes en el chat móvil:** deslizar un globo normal hacia la
+  derecha debe abrir la cajita de respuesta del composer para contestar ese
+  globo especifico. El mismo gesto no debe abrir el menu largo; el menu puede
+  quedar como fallback, pero el flujo primario debe ser el swipe.
 - **"No cambió nada" casi siempre es el build/deploy, no el código.** `/movil`
   corre un **build estático**: la web la sirve Render tras `push → workflow
   docker-image → deploy` (~2–3 min, ver `docs/DEPLOY-RENDER.md`), y la app nativa

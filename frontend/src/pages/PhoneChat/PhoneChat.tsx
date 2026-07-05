@@ -301,7 +301,7 @@ const MESSAGE_INFO_SWIPE_ACTION_WIDTH = 46
 const MESSAGE_INFO_SWIPE_OPEN_THRESHOLD = 38
 const MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD = 9
 const MESSAGE_INFO_SWIPE_RENDER_STEP = 2
-type MessageSwipeAction = 'info' | 'commentReply'
+type MessageSwipeAction = 'info' | 'reply' | 'commentReply'
 const MESSAGE_ACTION_LONG_PRESS_MS = 460
 const MESSAGE_ACTION_MOVE_TOLERANCE = 9
 const MAX_VOICE_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -1248,6 +1248,7 @@ interface MessageInfoSwipeGesture {
   lastRenderedOffset: number
   active: boolean
   action: MessageSwipeAction | null
+  messageReplyAvailable: boolean
   commentReplyAvailable: boolean
 }
 
@@ -3880,6 +3881,14 @@ function canStartCommentPublicReply(message: ChatMessage) {
     message.direction === 'inbound' &&
     !message.commentReplyMode &&
     message.commentId
+  )
+}
+
+function canStartMessageBubbleReply(message: ChatMessage) {
+  return Boolean(
+    message.direction !== 'system' &&
+    !message.isComment &&
+    !isMessageScheduled(message)
   )
 }
 
@@ -11020,11 +11029,26 @@ export const PhoneChat: React.FC = () => {
     (message.id.startsWith('scheduled-') ? message.id.slice('scheduled-'.length) : '')
   )
 
-  const handleReplyMessage = (message: ChatMessage) => {
+  const startMessageBubbleReply = useCallback((message: ChatMessage, { announce = false } = {}) => {
+    if (!canStartMessageBubbleReply(message)) return false
+
+    messageInfoSwipeGestureRef.current = null
+    setDraggingMessageInfoSwipe(null)
     setReplyingToMessageId(message.id)
+    setCommentReplyTarget(null)
+    setMessageInfoOpen(false)
     closeMessageActionMenu()
-    requestAnimationFrame(() => composerInputRef.current?.focus())
-    showToast('info', 'Respuesta lista', 'Escribe tu mensaje y mándalo cuando esté listo.')
+    actionSheetDismiss.requestClose()
+    setContactInfoOpen(false)
+    window.requestAnimationFrame(() => composerInputRef.current?.focus())
+    if (announce) {
+      showToast('info', 'Respuesta lista', 'Escribe tu mensaje y mándalo cuando esté listo.')
+    }
+    return true
+  }, [actionSheetDismiss, closeMessageActionMenu, showToast])
+
+  const handleReplyMessage = (message: ChatMessage) => {
+    startMessageBubbleReply(message, { announce: true })
   }
 
   const handleReactToMessage = async (message: ChatMessage, emoji: string) => {
@@ -11248,6 +11272,7 @@ export const PhoneChat: React.FC = () => {
       lastRenderedOffset: 0,
       active: false,
       action: null,
+      messageReplyAvailable: canStartMessageBubbleReply(message),
       commentReplyAvailable: canStartCommentPublicReply(message)
     }
   }
@@ -11269,9 +11294,11 @@ export const PhoneChat: React.FC = () => {
 
     if (!gesture.active) {
       if (horizontalDistance < MESSAGE_INFO_SWIPE_ACTIVATE_THRESHOLD || horizontalDistance <= verticalDistance) return
-      if (deltaX > 0 && !gesture.commentReplyAvailable) return
+      if (deltaX > 0 && !gesture.commentReplyAvailable && !gesture.messageReplyAvailable) return
       gesture.active = true
-      gesture.action = deltaX > 0 ? 'commentReply' : 'info'
+      gesture.action = deltaX > 0
+        ? (gesture.commentReplyAvailable ? 'commentReply' : 'reply')
+        : 'info'
       clearMessageActionPress()
     }
 
@@ -11299,6 +11326,8 @@ export const PhoneChat: React.FC = () => {
       if (message) {
         if (gesture.action === 'commentReply') {
           startCommentPublicReply(message)
+        } else if (gesture.action === 'reply') {
+          startMessageBubbleReply(message)
         } else {
           openMessageInfo(message)
         }
@@ -15757,7 +15786,7 @@ export const PhoneChat: React.FC = () => {
               const messageSwipeOffset = activeMessageSwipe?.offset || 0
               const messageSwipeAction = activeMessageSwipe?.action || 'info'
               const messageSwipeTransform = messageSwipeOffset > 0
-                ? `translate3d(${messageSwipeAction === 'commentReply' ? '' : '-'}${messageSwipeOffset}px, 0, 0)`
+                ? `translate3d(${messageSwipeAction === 'info' ? '-' : ''}${messageSwipeOffset}px, 0, 0)`
                 : undefined
               const canOpenMessageInfo = message.direction !== 'system'
               const scheduled = message.direction === 'outbound' && isMessageScheduled(message)
@@ -15771,7 +15800,7 @@ export const PhoneChat: React.FC = () => {
                   key={message.id}
                   className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
                 >
-                  <div className={`${styles.messageSwipeWrap} ${isEmailMessage ? styles.messageSwipeWrapEmail : ''} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''} ${messageSwipeAction === 'commentReply' ? styles.messageSwipeWrapActiveReply : ''}`}>
+                  <div className={`${styles.messageSwipeWrap} ${isEmailMessage ? styles.messageSwipeWrapEmail : ''} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''} ${messageSwipeAction !== 'info' ? styles.messageSwipeWrapActiveReply : ''}`}>
                     {scheduled && (
                       <span
                         className={styles.messageScheduleTimer}
@@ -15781,8 +15810,8 @@ export const PhoneChat: React.FC = () => {
                         {scheduledCountdown && <small>{scheduledCountdown}</small>}
                       </span>
                     )}
-                    <span className={`${styles.messageInfoSwipeCue} ${messageSwipeAction === 'commentReply' ? styles.messageInfoSwipeCueReply : ''}`} aria-hidden="true">
-                      {messageSwipeAction === 'commentReply' ? <Reply size={17} /> : <ReceiptText size={17} />}
+                    <span className={`${styles.messageInfoSwipeCue} ${messageSwipeAction !== 'info' ? styles.messageInfoSwipeCueReply : ''}`} aria-hidden="true">
+                      {messageSwipeAction !== 'info' ? <Reply size={17} /> : <ReceiptText size={17} />}
                     </span>
                     <div
                       className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isLocationMessage ? styles.messageLocationBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
