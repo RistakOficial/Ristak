@@ -29,6 +29,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - Chat movil original: `frontend/src/pages/PhoneChat/PhoneChat.tsx`.
 - Estilos de chat original: `frontend/src/pages/PhoneChat/PhoneChat.module.css`.
 - Navegacion movil original: `frontend/src/components/phone/phoneNavigation.ts`.
+- Pagos movil original: `frontend/src/pages/PhonePayments/PhonePayments.tsx`.
+- Estilos de pagos original: `frontend/src/pages/PhonePayments/PhonePayments.module.css`.
+- Formularios de cobro original: `frontend/src/components/common/RecordPaymentModal/`
+  y `frontend/src/components/phone/PhoneSubscriptionForm.tsx`.
 - Chips/filtros moviles: `frontend/src/components/phone/ui/PhoneFilterChips.tsx`
   y la configuracion en `PhoneChat.tsx`.
 - Iconos de canal: `frontend/src/components/phone/PhoneMessageChannelIcon.tsx`.
@@ -136,6 +140,31 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     Incluye marcar leido, archivar/restaurar y seleccionar. Faltan las demas
     acciones completas de `/movil`.
 - [ ] Sheets de configuracion movil relevantes.
+
+## Fase Pagos
+
+- [x] Primer viewport nativo sin header generico de usuario.
+- [x] Selector con las mismas opciones principales de `/movil/payments`:
+  `Registrar pago unico`, `Planes de pago`, `Suscripcion` y `Precios Guardados`.
+- [x] Panel desplegable de ultimos pagos con periodos `Hoy`, `7 dias`,
+  `30 dias` y `90 dias`, consumiendo `/api/transactions` con rango de negocio.
+- [x] Moneda visible tomada de `account_currency` y fecha/rangos desde
+  `/api/settings/timezone`.
+- [x] Vista nativa de `Precios Guardados` con cargar, refrescar, crear, editar y
+  eliminar productos via `/api/products`.
+- [x] Formulario nativo funcional para registrar pago unico manual via
+  `/api/transactions`.
+- [x] Primer formulario nativo de parcialidades contra
+  `/api/transactions/payment-flows/installments`.
+- [x] Primer formulario nativo de suscripcion contra `/api/subscriptions`.
+- [ ] Portar paridad completa de `RecordPaymentModal`: busqueda/seleccion de
+  productos, impuestos, links de pago, tarjetas guardadas, Stripe/Conekta/
+  Mercado Pago/CLIP, MSI, transferencias, estados de link listo, copia/compartir
+  y errores especificos de pasarela.
+- [ ] Portar paridad completa de `PhoneSubscriptionForm`: selector de proveedor
+  segun capacidades reales, autorizacion/copia de link, contactos bloqueados y
+  validaciones especificas por proveedor.
+- [ ] Validar visualmente contra `/movil/payments` en iPhone real.
 
 ## Validacion minima por fase
 

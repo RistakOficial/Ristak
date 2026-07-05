@@ -378,6 +378,22 @@ debe abrir una pantalla/sheet de destinatarios antes de enviar; si el envio
 multimedia todavia no esta conectado al composer/canal, esa brecha debe quedar
 en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
 
+La pagina nativa de Pagos vive en `mobile/src/App.tsx` (`PaymentsSection`) y debe
+mantener paridad visual con `frontend/src/pages/PhonePayments/PhonePayments.tsx`:
+primer viewport sin header generico de usuario, titulo `Elige como quieres
+pagar`, opciones `Registrar pago unico`, `Planes de pago`, `Suscripcion` y
+`Precios Guardados`, panel desplegable de ultimos pagos con periodos `Hoy`, `7
+dias`, `30 dias`, `90 dias`, y vista de productos con crear/editar/eliminar. La
+app nativa lee `account_currency` via `/api/config`, zona horaria via
+`/api/settings/timezone`, transacciones via `/api/transactions` con
+`startDate/endDate` y productos via `/api/products`; cualquier importe visible
+debe formatearse con la moneda del registro o de la cuenta, no con una moneda
+hardcodeada. El formulario nativo actual cubre registro manual de pago unico y
+creacion basica de parcialidades/suscripciones contra los endpoints existentes;
+si se porta el flujo completo de links, tarjetas guardadas, MSI, impuestos o
+pasarelas de `RecordPaymentModal`, esa brecha debe cerrarse tambien en
+`mobile/` y registrarse en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
+
 En la conversación móvil no uses rails/barras verticales pegadas al lado
 izquierdo como indicador visual de foco, comentario o chat no leído. Los estados
 de no leído/activo deben resolverse con fondo, tipografía y badge, no con una

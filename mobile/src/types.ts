@@ -109,6 +109,7 @@ export type ProductPrice = {
   amount?: number;
   price?: number;
   currency?: string;
+  type?: string;
 };
 
 export type ProductItem = {
@@ -118,23 +119,40 @@ export type ProductItem = {
   name?: string;
   description?: string;
   currency?: string;
+  productType?: string;
+  source?: string;
+  syncStatus?: string;
+  syncError?: string | null;
   prices?: ProductPrice[];
 };
 
 export type TransactionItem = {
   id?: string;
   _id?: string;
+  date?: string;
+  contactId?: string;
   contactName?: string;
   email?: string;
   phone?: string;
   concept?: string;
+  title?: string;
+  description?: string;
   amount?: number;
   total?: number;
   currency?: string;
   status?: string;
+  method?: string;
   paymentMethod?: string;
+  paymentMode?: string;
+  paymentProvider?: string;
+  reference?: string;
   createdAt?: string;
+  updatedAt?: string;
   paymentDate?: string;
+  paidAt?: string;
+  dueDate?: string;
+  publicPaymentId?: string;
+  paymentUrl?: string;
 };
 
 export type CalendarItem = {

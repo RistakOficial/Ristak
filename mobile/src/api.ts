@@ -17,6 +17,84 @@ type RequestOptions = RequestInit & {
   params?: Record<string, string | number | boolean | undefined>;
 };
 
+type TransactionQuery = {
+  limit?: number;
+  page?: number;
+  startDate?: string;
+  endDate?: string;
+  q?: string;
+  sync?: boolean;
+};
+
+type ProductPayload = {
+  name: string;
+  description?: string;
+  currency: string;
+  prices: Array<{
+    id?: string;
+    localId?: string;
+    name: string;
+    amount: number;
+    currency: string;
+    type?: string;
+  }>;
+};
+
+type TransactionPayload = {
+  id?: string;
+  amount: number;
+  currency: string;
+  method?: string;
+  paymentMethod?: string;
+  status?: string;
+  reference?: string;
+  title?: string;
+  description?: string;
+  date?: string;
+  contactId?: string;
+  contactName?: string;
+  email?: string;
+  phone?: string;
+  paymentMode?: string;
+  metadata?: Record<string, unknown>;
+};
+
+type InstallmentFlowPayload = {
+  contact: {
+    id: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+  };
+  totalAmount: number;
+  currency: string;
+  concept: string;
+  description?: string;
+  firstPayment?: Record<string, unknown>;
+  remainingAutomatic?: boolean;
+  remainingFrequency?: string;
+  remainingPayments?: Array<Record<string, unknown>>;
+  source?: string;
+};
+
+type SubscriptionPayload = {
+  contactId?: string | null;
+  contactName?: string;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  name: string;
+  description?: string;
+  status?: string;
+  amount: number;
+  currency: string;
+  intervalType: string;
+  intervalCount: number;
+  startDate: string;
+  nextRunAt?: string | null;
+  paymentMethod?: string;
+  paymentProvider?: string;
+};
+
 type ApiError = Error & {
   status?: number;
   body?: unknown;
@@ -163,12 +241,56 @@ export class RistakApiClient {
     });
   }
 
-  getTransactions(limit = 20) {
+  createProduct(payload: ProductPayload) {
+    return this.request<ProductItem>('/products', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  updateProduct(productId: string, payload: ProductPayload) {
+    return this.request<ProductItem>(`/products/${encodeURIComponent(productId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  deleteProduct(productId: string) {
+    return this.request(`/products/${encodeURIComponent(productId)}`, {
+      method: 'DELETE',
+    });
+  }
+
+  getTransactions(query: number | TransactionQuery = 20) {
+    const params = typeof query === 'number'
+      ? { limit: query, page: 1 }
+      : {
+          ...query,
+          page: query.page ?? 1,
+        };
     return this.request<TransactionItem[] | { transactions?: TransactionItem[] }>('/transactions', {
-      params: {
-        limit,
-        page: 1,
-      },
+      params,
+    });
+  }
+
+  createTransaction(payload: TransactionPayload) {
+    return this.request<TransactionItem>('/transactions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createInstallmentFlow(payload: InstallmentFlowPayload) {
+    return this.request('/transactions/payment-flows/installments', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createSubscription(payload: SubscriptionPayload) {
+    return this.request('/subscriptions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
   }
 
@@ -200,6 +322,10 @@ export class RistakApiClient {
         keys: keys.join(','),
       },
     });
+  }
+
+  getTimezone() {
+    return this.request<{ timezone?: string; source?: string }>('/settings/timezone');
   }
 
   getUserConfig(keys: string[]) {
