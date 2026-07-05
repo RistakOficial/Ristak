@@ -78,10 +78,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     almacenamiento backend si se decide que archivados sea multi-dispositivo.
 - [ ] Replicar chat fijo de `Asistente Personal AI`.
   - Avance: la bandeja nativa ya muestra la fila fija `Asistente Personal AI`
-    antes de `Archivados` y abre una pantalla nativa placeholder. La fila debe
-    mantenerse centrada verticalmente, con avatar/texto alineados y separador
-    inferior de ancho completo para esa fila fija. Falta conectar el
-    historial/proveedor real del asistente de `/movil`.
+    antes de `Archivados` y abre una pantalla nativa placeholder. La fila usa
+    la estructura de la fila original: avatar de 48px dentro de slot de 52px,
+    texto centrado, meta `Fijo` independiente y separador inferior de ancho
+    completo. Falta conectar el historial/proveedor real del asistente de
+    `/movil`.
 - [ ] Replicar estados de agente: prioridad humana, agente activo/inactivo,
   hub de agente y badges.
 - [x] Replicar swipe de fila: Mas, Archivar/Restaurar.
@@ -135,12 +136,18 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Administrador de filtros.
 - [ ] Mas acciones de chat.
   - Avance: `mobile/` ya usa bottom sheet desde swipe `Mas`, no `Alert.alert`.
-    Incluye marcar leido, archivar/restaurar y seleccionar. El sheet conserva el
+    Incluye agendar cita, registrar pagos, programar mensaje, agregar etiqueta,
+    silenciar/quitar silencio, controles del agente, marcar leido,
+    archivar/restaurar y seleccionar. `Agregar etiqueta` usa las APIs reales de
+    `/contact-tags` y `/contacts/bulk/tags`; `Programar mensaje` usa
+    `/whatsapp-api/messages/scheduled` con envio en 1 hora; las acciones del
+    agente usan `/conversational-agent/states/:contactId`. El sheet conserva el
     contacto hasta terminar el cierre para poder abrir/cerrar/reabrir sobre el
     mismo chat sin quedarse atorado. El fondo debe atenuarse con fade
     independiente mientras solo el panel se desliza; no debe aparecer un bloque
-    oscuro subiendo junto con el sheet. Faltan las demas acciones completas de
-    `/movil`.
+    oscuro subiendo junto con el sheet. Falta replicar formularios nativos
+    completos para crear cita/pago dentro del sheet y selector de fecha/hora
+    avanzado para programacion.
 - [ ] Sheets de configuracion movil relevantes.
 
 ## Validacion minima por fase

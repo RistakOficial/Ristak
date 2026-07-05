@@ -32,6 +32,13 @@ animacion `slide`: se ve como un bloque sombreado subiendo. El cierre debe
 mantener el contenido vivo hasta terminar la animacion para poder reabrir el
 mismo sheet/contacto sin que se trabe.
 
+El sheet nativo `Mas acciones` debe mantenerse como espejo operativo del sheet
+de `PhoneChat`: agendar cita, registrar pagos, programar mensaje, agregar
+etiqueta, silenciar/quitar silencio y controles del agente. Si una accion aun
+no tiene formulario nativo completo, debe navegar a la seccion nativa
+correspondiente o dejar documentada la brecha en
+`docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`; no debe desaparecer del menu.
+
 El avance por fases de esa paridad vive en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`. Antes de retomar la migracion nativa,
 lee ese checklist para saber que ya quedo, que sigue pendiente y que fuentes del

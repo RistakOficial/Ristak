@@ -3,6 +3,8 @@ import type {
   CalendarItem,
   ChatContact,
   ConfigValue,
+  ContactTag,
+  ConversationAgentState,
   DashboardMetrics,
   JourneyEvent,
   LoginResponse,
@@ -25,6 +27,21 @@ type ApiError = Error & {
 function withApiPrefix(path: string) {
   if (path.startsWith('/api')) return path;
   return `/api${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
+function getNativeContactChannel(contact: ChatContact) {
+  const probe = [
+    contact.lastMessageChannel,
+    contact.lastMessageTransport,
+    contact.source,
+    contact.whatsappAttributionPlatform,
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (probe.includes('instagram')) return 'instagram';
+  if (probe.includes('messenger')) return 'messenger';
+  if (probe.includes('email') || probe.includes('mail')) return 'email';
+  if (probe.includes('sms')) return 'sms';
+  return 'whatsapp';
 }
 
 export class RistakApiClient {
@@ -139,6 +156,43 @@ export class RistakApiClient {
     });
   }
 
+  getContactTags() {
+    return this.request<ContactTag[]>('/contact-tags');
+  }
+
+  createContactTag(name: string) {
+    return this.request<ContactTag>('/contact-tags', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+  }
+
+  addContactTag(contactId: string, tagId: string) {
+    return this.request<{ updated?: number; total?: number }>('/contacts/bulk/tags', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactIds: [contactId],
+        addTagIds: [tagId],
+        removeTagIds: [],
+      }),
+    });
+  }
+
+  getAgentStates(contactId: string) {
+    return this.request<ConversationAgentState[]>(`/conversational-agent/states/${encodeURIComponent(contactId)}`, {
+      params: {
+        includeAll: 1,
+      },
+    });
+  }
+
+  updateAgentState(contactId: string, action: 'activate' | 'pause' | 'take_over' | 'skip') {
+    return this.request<ConversationAgentState>(`/conversational-agent/states/${encodeURIComponent(contactId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ action }),
+    });
+  }
+
   sendText(contact: ChatContact, text: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/text', {
       method: 'POST',
@@ -150,6 +204,24 @@ export class RistakApiClient {
         externalId: `native-${Date.now()}`,
         phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
+      }),
+    });
+  }
+
+  scheduleText(contact: ChatContact, text: string, scheduledAt: string) {
+    return this.request('/whatsapp-api/messages/scheduled', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: contact.id,
+        channel: getNativeContactChannel(contact),
+        transport: 'native',
+        messageType: 'text',
+        text,
+        toPhone: contact.phone || undefined,
+        fromPhone: contact.lastBusinessPhone || undefined,
+        businessPhoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        scheduledAt,
+        externalId: `native-scheduled-${Date.now()}`,
       }),
     });
   }

@@ -25,6 +25,8 @@ import * as ImagePicker from 'expo-image-picker';
 import {
   Archive,
   BarChart3,
+  Bell,
+  BellOff,
   Bot,
   CalendarDays,
   Camera,
@@ -32,13 +34,18 @@ import {
   CheckCheck,
   ChevronLeft,
   CircleDollarSign,
+  Clock,
   Mail,
   MessageCircle,
   MoreHorizontal,
+  Pause,
+  Play,
   Send,
   Plus,
   Search,
   Settings,
+  Tag,
+  User,
   X,
   type LucideIcon,
 } from 'lucide-react-native';
@@ -68,6 +75,8 @@ import type {
   CalendarItem,
   ChatContact,
   ChatMessage,
+  ContactTag,
+  ConversationAgentState,
   DashboardMetrics,
   PhoneSection,
   ProductItem,
@@ -99,7 +108,8 @@ type SessionState = {
 
 type Screen = 'boot' | 'server' | 'login' | 'shell';
 type ChatFilterId = string;
-type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | null;
+type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
+type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
 type ChatFilterPreset = {
   id: ChatFilterId;
@@ -122,6 +132,7 @@ const DEFAULT_CHAT_FILTER_IDS = ['all', 'unread', 'appointments', 'customers', '
 const CHAT_FILTERS_MORE_VALUE = '__filters_more__';
 const CHAT_FILTERS_STORAGE_KEY = 'ristak.native.chat.visibleFilterIds.v1';
 const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
+const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
 const CHAT_SWIPE_ACTION_WIDTH = 184;
 const CHAT_SWIPE_MORE_WIDTH = 84;
 const CHAT_SWIPE_ARCHIVE_WIDTH = CHAT_SWIPE_ACTION_WIDTH - CHAT_SWIPE_MORE_WIDTH;
@@ -285,6 +296,7 @@ function PhoneShell({
       <ChatScreen
         api={api}
         footer={dock}
+        onNavigate={setActiveSection}
       />
     );
   }
@@ -535,15 +547,18 @@ function LoginScreen({
 function ChatScreen({
   api,
   footer,
+  onNavigate,
 }: {
   api: RistakApiClient;
   footer?: React.ReactNode;
+  onNavigate?: (section: PhoneSection) => void;
 }) {
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ChatFilterId>('all');
   const [visibleFilterIds, setVisibleFilterIds] = useState<ChatFilterId[]>(DEFAULT_CHAT_FILTER_IDS);
   const [filterManagerOpen, setFilterManagerOpen] = useState(false);
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>([]);
+  const [mutedChatIds, setMutedChatIds] = useState<string[]>([]);
   const [archivedViewOpen, setArchivedViewOpen] = useState(false);
   const [chatPrefsHydrated, setChatPrefsHydrated] = useState(false);
   const [openSwipeChatId, setOpenSwipeChatId] = useState<string | null>(null);
@@ -556,6 +571,15 @@ function ChatScreen({
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<ChatContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
+  const [chatTags, setChatTags] = useState<ContactTag[]>([]);
+  const [chatTagsLoading, setChatTagsLoading] = useState(false);
+  const [tagQuery, setTagQuery] = useState('');
+  const [tagBusy, setTagBusy] = useState(false);
+  const [scheduleText, setScheduleText] = useState('');
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [agentStatesByContactId, setAgentStatesByContactId] = useState<Record<string, ConversationAgentState[]>>({});
+  const [agentStateLoadingId, setAgentStateLoadingId] = useState<string | null>(null);
+  const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
   const [cameraAsset, setCameraAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [chats, setChats] = useState<ChatContact[]>([]);
   const [refreshing, setRefreshing] = useState(false);
@@ -591,11 +615,13 @@ function ChatScreen({
     void Promise.all([
       readJsonValue<string[]>(CHAT_FILTERS_STORAGE_KEY, DEFAULT_CHAT_FILTER_IDS),
       readJsonValue<string[]>(ARCHIVED_CHAT_IDS_STORAGE_KEY, []),
-    ]).then(([savedFilterIds, savedArchivedIds]) => {
+      readJsonValue<string[]>(MUTED_CHAT_IDS_STORAGE_KEY, []),
+    ]).then(([savedFilterIds, savedArchivedIds, savedMutedIds]) => {
       const availableIds = new Set(CHAT_FILTER_LIBRARY.map((preset) => preset.id));
       const next = savedFilterIds.filter((id, index, list) => availableIds.has(id) && list.indexOf(id) === index);
       setVisibleFilterIds(next.includes('all') ? next : ['all', ...next]);
       setArchivedChatIds(savedArchivedIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index));
+      setMutedChatIds(savedMutedIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index));
       setChatPrefsHydrated(true);
     });
   }, []);
@@ -609,6 +635,11 @@ function ChatScreen({
     if (!chatPrefsHydrated) return;
     void writeJsonValue(ARCHIVED_CHAT_IDS_STORAGE_KEY, archivedChatIds);
   }, [archivedChatIds, chatPrefsHydrated]);
+
+  useEffect(() => {
+    if (!chatPrefsHydrated) return;
+    void writeJsonValue(MUTED_CHAT_IDS_STORAGE_KEY, mutedChatIds);
+  }, [chatPrefsHydrated, mutedChatIds]);
 
   useEffect(() => {
     if (activeSheet !== 'newChat' && activeSheet !== 'cameraShare') {
@@ -668,6 +699,7 @@ function ChatScreen({
   );
   const visibleChatIdSet = useMemo(() => new Set(filteredChats.map((contact) => contact.id)), [filteredChats]);
   const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds]);
+  const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds]);
   const selectedChatContacts = useMemo(
     () => filteredChats.filter((contact) => selectedChatIdSet.has(contact.id)),
     [filteredChats, selectedChatIdSet],
@@ -805,6 +837,134 @@ function ChatScreen({
     setOpenSwipeChatId(null);
     setSheetContact(contact);
     openSheet('chatMore');
+    setAgentStateLoadingId(contact.id);
+    api.getAgentStates(contact.id)
+      .then((states) => {
+        setAgentStatesByContactId((current) => ({ ...current, [contact.id]: Array.isArray(states) ? states : [] }));
+      })
+      .catch(() => {
+        setAgentStatesByContactId((current) => ({ ...current, [contact.id]: [] }));
+      })
+      .finally(() => {
+        setAgentStateLoadingId((current) => (current === contact.id ? null : current));
+      });
+  };
+
+  const openTagSheet = (contact: ChatContact) => {
+    resetSheetState();
+    setOpenSwipeChatId(null);
+    setSheetContact(contact);
+    setTagQuery('');
+    setChatTagsLoading(true);
+    openSheet('tag');
+    api.getContactTags()
+      .then((tags) => setChatTags(Array.isArray(tags) ? tags : []))
+      .catch((err) => {
+        setChatTags([]);
+        Alert.alert('Etiquetas', err instanceof Error ? err.message : 'No se cargaron las etiquetas.');
+      })
+      .finally(() => setChatTagsLoading(false));
+  };
+
+  const openScheduleSheet = (contact: ChatContact) => {
+    resetSheetState();
+    setOpenSwipeChatId(null);
+    setSheetContact(contact);
+    setScheduleText('');
+    openSheet('schedule');
+  };
+
+  const navigateToContactTool = (contact: ChatContact, section: PhoneSection) => {
+    closeSheet();
+    onNavigate?.(section);
+    Alert.alert(
+      section === 'calendar' ? 'Agendar cita' : 'Registrar pagos',
+      `${section === 'calendar' ? 'Abriendo Citas' : 'Abriendo Pagos'} para continuar con ${getContactName(contact)}.`,
+    );
+  };
+
+  const toggleMuteChat = (contact: ChatContact) => {
+    setMutedChatIds((current) => (
+      current.includes(contact.id)
+        ? current.filter((id) => id !== contact.id)
+        : [contact.id, ...current]
+    ));
+    closeSheet();
+  };
+
+  const applyTagToContact = async (contact: ChatContact, tag: ContactTag) => {
+    if (tagBusy) return;
+    if ((contact.tags || []).includes(tag.id)) {
+      Alert.alert('Etiqueta', `${getContactName(contact)} ya tiene ${tag.name}.`);
+      return;
+    }
+
+    setTagBusy(true);
+    try {
+      await api.addContactTag(contact.id, tag.id);
+      const nextTags = Array.from(new Set([...(contact.tags || []), tag.id]));
+      setChats((current) => current.map((item) => (
+        item.id === contact.id ? { ...item, tags: nextTags } : item
+      )));
+      closeSheet();
+      Alert.alert('Etiqueta agregada', `${tag.name} quedó en ${getContactName(contact)}.`);
+    } catch (err) {
+      Alert.alert('Etiqueta', err instanceof Error ? err.message : 'No se pudo agregar la etiqueta.');
+    } finally {
+      setTagBusy(false);
+    }
+  };
+
+  const createAndApplyTag = async (contact: ChatContact) => {
+    const name = tagQuery.trim();
+    if (!name || tagBusy) return;
+    setTagBusy(true);
+    try {
+      const tag = await api.createContactTag(name);
+      setChatTags((current) => [tag, ...current.filter((item) => item.id !== tag.id)]);
+      await api.addContactTag(contact.id, tag.id);
+      const nextTags = Array.from(new Set([...(contact.tags || []), tag.id]));
+      setChats((current) => current.map((item) => (
+        item.id === contact.id ? { ...item, tags: nextTags } : item
+      )));
+      closeSheet();
+      Alert.alert('Etiqueta creada', `${tag.name} quedó en ${getContactName(contact)}.`);
+    } catch (err) {
+      Alert.alert('Etiqueta', err instanceof Error ? err.message : 'No se pudo crear la etiqueta.');
+    } finally {
+      setTagBusy(false);
+    }
+  };
+
+  const scheduleMessageForContact = async (contact: ChatContact) => {
+    const text = scheduleText.trim();
+    if (!text || scheduleBusy) return;
+    const scheduledAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    setScheduleBusy(true);
+    try {
+      await api.scheduleText(contact, text, scheduledAt);
+      closeSheet();
+      Alert.alert('Mensaje programado', `Se programó para enviarse en 1 hora a ${getContactName(contact)}.`);
+    } catch (err) {
+      Alert.alert('Programar mensaje', err instanceof Error ? err.message : 'No se pudo programar el mensaje.');
+    } finally {
+      setScheduleBusy(false);
+    }
+  };
+
+  const runAgentAction = async (contact: ChatContact, action: AgentAction) => {
+    if (agentBusyAction) return;
+    setAgentBusyAction(action);
+    try {
+      const state = await api.updateAgentState(contact.id, action);
+      setAgentStatesByContactId((current) => ({ ...current, [contact.id]: [state] }));
+      closeSheet();
+      Alert.alert('Agente conversacional', getAgentActionSuccess(action, getContactName(contact)));
+    } catch (err) {
+      Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudo actualizar el agente.');
+    } finally {
+      setAgentBusyAction(null);
+    }
   };
 
   const markChatAsRead = (contact: ChatContact) => {
@@ -969,6 +1129,11 @@ function ChatScreen({
       ? 'newChat'
       : null;
   const contactPickerClosing = !activeSheet && (closingSheet === 'newChat' || closingSheet === 'cameraShare');
+  const tagSheetOpen = activeSheet === 'tag' || closingSheet === 'tag';
+  const scheduleSheetOpen = activeSheet === 'schedule' || closingSheet === 'schedule';
+  const tagSheetClosing = activeSheet !== 'tag' && closingSheet === 'tag';
+  const scheduleSheetClosing = activeSheet !== 'schedule' && closingSheet === 'schedule';
+  const sheetAgentState = sheetContact ? selectPrimaryAgentState(agentStatesByContactId[sheetContact.id]) : null;
 
   return (
     <AppFrame>
@@ -1134,13 +1299,23 @@ function ChatScreen({
         open={chatMoreSheetOpen}
         closing={chatMoreSheetClosing}
         archived={sheetContact ? archivedChatIds.includes(sheetContact.id) : false}
+        agentBusyAction={agentBusyAction}
+        agentLoading={sheetContact ? agentStateLoadingId === sheetContact.id : false}
+        agentState={sheetAgentState}
+        muted={sheetContact ? mutedChatIdSet.has(sheetContact.id) : false}
         unread={sheetContact ? getUnreadCount(sheetContact) : 0}
+        onAgentAction={runAgentAction}
+        onAppointment={(contact) => navigateToContactTool(contact, 'calendar')}
         onArchiveToggle={(contact) => {
           if (archivedChatIds.includes(contact.id)) restoreChat(contact);
           else archiveChat(contact);
           closeSheet();
         }}
         onClose={closeSheet}
+        onPayment={(contact) => navigateToContactTool(contact, 'payments')}
+        onSchedule={openScheduleSheet}
+        onTag={openTagSheet}
+        onToggleMute={toggleMuteChat}
         onMarkRead={(contact) => {
           markChatAsRead(contact);
           closeSheet();
@@ -1149,6 +1324,29 @@ function ChatScreen({
           closeSheet();
           startChatSelection(contact);
         }}
+      />
+      <ContactTagSheet
+        busy={tagBusy}
+        closing={tagSheetClosing}
+        contact={sheetContact}
+        loading={chatTagsLoading}
+        open={tagSheetOpen}
+        query={tagQuery}
+        tags={chatTags}
+        onApply={applyTagToContact}
+        onChangeQuery={setTagQuery}
+        onClose={closeSheet}
+        onCreate={createAndApplyTag}
+      />
+      <ScheduleMessageSheet
+        busy={scheduleBusy}
+        closing={scheduleSheetClosing}
+        contact={sheetContact}
+        open={scheduleSheetOpen}
+        text={scheduleText}
+        onChangeText={setScheduleText}
+        onClose={closeSheet}
+        onSubmit={scheduleMessageForContact}
       />
       <ContactPickerSheet
         asset={contactPickerSheet === 'cameraShare' ? cameraAsset : null}
@@ -1695,19 +1893,31 @@ function SheetActionRow({
   Icon,
   title,
   subtitle,
+  busy,
   danger,
+  disabled,
   onPress,
 }: {
   Icon: LucideIcon;
   title: string;
   subtitle: string;
+  busy?: boolean;
   danger?: boolean;
+  disabled?: boolean;
   onPress: () => void;
 }) {
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.sheetActionRow, pressed && styles.pressed]}>
+    <Pressable
+      disabled={disabled || busy}
+      onPress={onPress}
+      style={({ pressed }) => [styles.sheetActionRow, (disabled || busy) && styles.disabledButton, pressed && styles.pressed]}
+    >
       <View style={[styles.sheetActionIcon, danger && styles.sheetActionIconDanger]}>
-        <Icon size={20} color={danger ? COLORS.danger : COLORS.accent} strokeWidth={2.6} />
+        {busy ? (
+          <ActivityIndicator color={danger ? COLORS.danger : COLORS.accent} />
+        ) : (
+          <Icon size={20} color={danger ? COLORS.danger : COLORS.accent} strokeWidth={2.6} />
+        )}
       </View>
       <View style={styles.sheetActionCopy}>
         <Text style={styles.sheetActionTitle}>{title}</Text>
@@ -1719,25 +1929,48 @@ function SheetActionRow({
 
 function ChatMoreSheet({
   archived,
+  agentBusyAction,
+  agentLoading,
+  agentState,
   closing,
   contact,
+  muted,
   open,
   unread,
+  onAgentAction,
+  onAppointment,
   onArchiveToggle,
   onClose,
   onMarkRead,
+  onPayment,
+  onSchedule,
   onSelect,
+  onTag,
+  onToggleMute,
 }: {
   archived: boolean;
+  agentBusyAction?: AgentAction | null;
+  agentLoading?: boolean;
+  agentState?: ConversationAgentState | null;
   closing?: boolean;
   contact: ChatContact | null;
+  muted: boolean;
   open: boolean;
   unread: number;
+  onAgentAction: (contact: ChatContact, action: AgentAction) => void;
+  onAppointment: (contact: ChatContact) => void;
   onArchiveToggle: (contact: ChatContact) => void;
   onClose: () => void;
   onMarkRead: (contact: ChatContact) => void;
+  onPayment: (contact: ChatContact) => void;
+  onSchedule: (contact: ChatContact) => void;
   onSelect: (contact: ChatContact) => void;
+  onTag: (contact: ChatContact) => void;
+  onToggleMute: (contact: ChatContact) => void;
 }) {
+  const inactiveAgent = isInactiveAgentStatus(agentState?.status);
+  const primaryAgentAction: AgentAction = inactiveAgent ? 'activate' : 'pause';
+  const agentActionBusy = Boolean(agentBusyAction);
   return (
     <BottomActionSheet
       closing={closing}
@@ -1747,7 +1980,69 @@ function ChatMoreSheet({
       onClose={onClose}
     >
       {contact ? (
-        <View style={styles.sheetActionList}>
+        <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
+          <SheetActionRow
+            Icon={CalendarDays}
+            title="Agendar cita"
+            subtitle="Crear una cita para este contacto."
+            onPress={() => onAppointment(contact)}
+          />
+          <SheetActionRow
+            Icon={CircleDollarSign}
+            title="Registrar pagos"
+            subtitle="Elegir pago único, plan o suscripción."
+            onPress={() => onPayment(contact)}
+          />
+          <SheetActionRow
+            Icon={Clock}
+            title="Programar mensaje"
+            subtitle="Escribe un mensaje para enviarlo en una hora."
+            onPress={() => onSchedule(contact)}
+          />
+          <SheetActionRow
+            Icon={Tag}
+            title="Agregar etiqueta"
+            subtitle="Clasificar este chat con una etiqueta."
+            onPress={() => onTag(contact)}
+          />
+          <SheetActionRow
+            Icon={muted ? Bell : BellOff}
+            title={muted ? 'Quitar silencio' : 'Silenciar'}
+            subtitle={muted ? 'Quita la marca de silencio de este chat.' : 'Marca este chat como silenciado.'}
+            onPress={() => onToggleMute(contact)}
+          />
+          <View style={styles.sheetSectionDivider}>
+            <Text style={styles.sheetSectionLabel}>Agente conversacional</Text>
+            {agentLoading ? <ActivityIndicator color={COLORS.accent} /> : null}
+          </View>
+          <SheetActionRow
+            Icon={inactiveAgent ? Play : Pause}
+            title={inactiveAgent ? 'Reactivar agente' : 'Pausar agente'}
+            subtitle={inactiveAgent ? 'El agente vuelve a atender este chat.' : 'Detiene el agente durante 24 horas.'}
+            busy={agentBusyAction === primaryAgentAction}
+            disabled={agentLoading || agentActionBusy}
+            onPress={() => onAgentAction(contact, primaryAgentAction)}
+          />
+          <SheetActionRow
+            Icon={User}
+            title="Tomar chat"
+            subtitle="El humano toma esta conversación."
+            busy={agentBusyAction === 'take_over'}
+            disabled={agentLoading || agentActionBusy}
+            onPress={() => onAgentAction(contact, 'take_over')}
+          />
+          <SheetActionRow
+            Icon={X}
+            title="Omitir agente"
+            subtitle="El agente no vuelve a tomar este chat hasta reactivarlo."
+            danger
+            busy={agentBusyAction === 'skip'}
+            disabled={agentLoading || agentActionBusy}
+            onPress={() => onAgentAction(contact, 'skip')}
+          />
+          <View style={styles.sheetSectionDivider}>
+            <Text style={styles.sheetSectionLabel}>Chat</Text>
+          </View>
           {unread > 0 ? (
             <SheetActionRow
               Icon={CheckCheck}
@@ -1767,6 +2062,146 @@ function ChatMoreSheet({
             title="Seleccionar"
             subtitle="Activa selección múltiple desde esta conversación."
             onPress={() => onSelect(contact)}
+          />
+        </ScrollView>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+function ContactTagSheet({
+  busy,
+  closing,
+  contact,
+  loading,
+  open,
+  query,
+  tags,
+  onApply,
+  onChangeQuery,
+  onClose,
+  onCreate,
+}: {
+  busy: boolean;
+  closing?: boolean;
+  contact: ChatContact | null;
+  loading: boolean;
+  open: boolean;
+  query: string;
+  tags: ContactTag[];
+  onApply: (contact: ChatContact, tag: ContactTag) => void;
+  onChangeQuery: (value: string) => void;
+  onClose: () => void;
+  onCreate: (contact: ChatContact) => void;
+}) {
+  const normalized = query.trim().toLowerCase();
+  const filteredTags = tags.filter((tag) => (
+    !normalized || tag.name.toLowerCase().includes(normalized)
+  ));
+  const exactTagExists = Boolean(normalized && tags.some((tag) => tag.name.toLowerCase() === normalized));
+
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open && Boolean(contact)}
+      title="Agregar etiqueta"
+      subtitle={contact ? getContactName(contact) : ''}
+      onClose={onClose}
+    >
+      {contact ? (
+        <View style={styles.contactPickerBody}>
+          <View style={styles.sheetSearchBox}>
+            <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
+            <TextInput
+              value={query}
+              onChangeText={onChangeQuery}
+              placeholder="Buscar o crear etiqueta"
+              placeholderTextColor={COLORS.muted}
+              autoCapitalize="sentences"
+              autoCorrect={false}
+              style={styles.sheetSearchInput}
+            />
+          </View>
+          {loading ? (
+            <View style={styles.sheetInlineState}>
+              <ActivityIndicator color={COLORS.accent} />
+              <Text style={styles.caption}>Cargando etiquetas...</Text>
+            </View>
+          ) : (
+            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled">
+              {filteredTags.map((tag) => (
+                <SheetActionRow
+                  key={tag.id}
+                  Icon={Tag}
+                  title={tag.name}
+                  subtitle={(contact.tags || []).includes(tag.id) ? 'Ya está agregada.' : 'Agregar a este chat.'}
+                  disabled={(contact.tags || []).includes(tag.id)}
+                  busy={busy}
+                  onPress={() => onApply(contact, tag)}
+                />
+              ))}
+              {normalized && !exactTagExists ? (
+                <SheetActionRow
+                  Icon={Plus}
+                  title={`Crear "${query.trim()}"`}
+                  subtitle="Crea la etiqueta y la agrega a este contacto."
+                  busy={busy}
+                  onPress={() => onCreate(contact)}
+                />
+              ) : null}
+              {!filteredTags.length && !normalized ? (
+                <Text style={styles.contactPickerEmpty}>No hay etiquetas para mostrar.</Text>
+              ) : null}
+            </ScrollView>
+          )}
+        </View>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+function ScheduleMessageSheet({
+  busy,
+  closing,
+  contact,
+  open,
+  text,
+  onChangeText,
+  onClose,
+  onSubmit,
+}: {
+  busy: boolean;
+  closing?: boolean;
+  contact: ChatContact | null;
+  open: boolean;
+  text: string;
+  onChangeText: (value: string) => void;
+  onClose: () => void;
+  onSubmit: (contact: ChatContact) => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open && Boolean(contact)}
+      title="Programar mensaje"
+      subtitle={contact ? `${getContactName(contact)} - En 1 hora` : ''}
+      onClose={onClose}
+    >
+      {contact ? (
+        <View style={styles.scheduleSheetBody}>
+          <TextInput
+            value={text}
+            onChangeText={onChangeText}
+            placeholder="Escribe el mensaje"
+            placeholderTextColor={COLORS.muted}
+            multiline
+            textAlignVertical="top"
+            style={styles.scheduleTextInput}
+          />
+          <PrimaryButton
+            label="Programar en 1 hora"
+            busy={busy}
+            onPress={() => onSubmit(contact)}
           />
         </View>
       ) : null}
@@ -1887,15 +2322,17 @@ function AssistantChatRow({ onPress }: { onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.aiChatRow, pressed && styles.pressed]}>
       <View pointerEvents="none" style={styles.aiChatDivider} />
-      <View style={styles.aiChatAvatar}>
-        <Bot size={27} color={COLORS.accent} strokeWidth={2.4} />
+      <View style={styles.aiChatAvatarSlot}>
+        <View style={styles.aiChatAvatar}>
+          <Bot size={23} color={COLORS.accent} strokeWidth={2.4} />
+        </View>
       </View>
       <View style={styles.aiChatBody}>
-        <View style={styles.rowHeader}>
-          <Text numberOfLines={1} style={styles.chatName}>{AI_AGENT_CHAT_DISPLAY_NAME}</Text>
-          <Text style={styles.aiChatPinned}>Fijo</Text>
-        </View>
-        <Text numberOfLines={1} style={styles.lastMessage}>{AI_AGENT_CHAT_SUBTITLE}</Text>
+        <Text numberOfLines={1} style={styles.aiChatName}>{AI_AGENT_CHAT_DISPLAY_NAME}</Text>
+        <Text numberOfLines={1} style={styles.aiChatSubtitle}>{AI_AGENT_CHAT_SUBTITLE}</Text>
+      </View>
+      <View style={styles.aiChatMeta}>
+        <Text style={styles.aiChatPinned}>Fijo</Text>
       </View>
     </Pressable>
   );
@@ -2011,6 +2448,22 @@ function chatMatchesFilter(contact: ChatContact, filter: ChatFilterId) {
   if (filter === 'advanced:activity:with_source') return Boolean(normalizeProbe(contact.source) || normalizeProbe(contact.attribution_session_source) || normalizeProbe(contact.whatsappAttributionPlatform));
   if (filter === 'advanced:activity:no_phone') return !contact.phone;
   return true;
+}
+
+function selectPrimaryAgentState(states?: ConversationAgentState[]) {
+  if (!Array.isArray(states) || !states.length) return null;
+  return states.find((state) => state.agentId) || states[0] || null;
+}
+
+function isInactiveAgentStatus(status?: string | null) {
+  return ['paused', 'human', 'skipped', 'completed', 'discarded'].includes(String(status || '').toLowerCase());
+}
+
+function getAgentActionSuccess(action: AgentAction, contactName: string) {
+  if (action === 'activate') return `El agente volvió a atender a ${contactName}.`;
+  if (action === 'pause') return `El agente quedó pausado por 24hrs en ${contactName}.`;
+  if (action === 'take_over') return `Tomaste la conversación de ${contactName}.`;
+  return `El agente quedó omitido en ${contactName}.`;
 }
 
 function ChannelBadgeIcon({ kind, size = 13 }: { kind: ChannelBadgeKind; size?: number }) {
@@ -3013,6 +3466,21 @@ const styles = StyleSheet.create({
   sheetActionList: {
     paddingHorizontal: 12,
     paddingTop: 8,
+    paddingBottom: 12,
+  },
+  sheetSectionDivider: {
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 6,
+    paddingTop: 10,
+  },
+  sheetSectionLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
   },
   sheetActionRow: {
     minHeight: 64,
@@ -3128,6 +3596,22 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
     paddingVertical: 28,
+  },
+  scheduleSheetBody: {
+    padding: 14,
+    gap: 12,
+  },
+  scheduleTextInput: {
+    minHeight: 118,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    lineHeight: 20,
   },
   primaryButton: {
     minHeight: 52,
@@ -3404,11 +3888,12 @@ const styles = StyleSheet.create({
   },
   aiChatRow: {
     position: 'relative',
-    minHeight: 74,
+    height: 74,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: 8,
     paddingHorizontal: 13,
+    paddingVertical: 8,
     backgroundColor: COLORS.bg,
   },
   aiChatDivider: {
@@ -3418,6 +3903,12 @@ const styles = StyleSheet.create({
     left: 0,
     height: StyleSheet.hairlineWidth,
     backgroundColor: COLORS.border,
+  },
+  aiChatAvatarSlot: {
+    width: 52,
+    height: 58,
+    alignItems: 'flex-start',
+    justifyContent: 'center',
   },
   aiChatAvatar: {
     width: 48,
@@ -3431,8 +3922,27 @@ const styles = StyleSheet.create({
   },
   aiChatBody: {
     flex: 1,
-    justifyContent: 'center',
     minWidth: 0,
+    justifyContent: 'center',
+    gap: 3,
+  },
+  aiChatName: {
+    color: COLORS.text,
+    fontSize: 16,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  aiChatSubtitle: {
+    color: COLORS.muted,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '500',
+  },
+  aiChatMeta: {
+    alignSelf: 'flex-start',
+    alignItems: 'flex-end',
+    paddingTop: 8,
+    minWidth: 38,
   },
   aiChatPinned: {
     color: COLORS.accent,

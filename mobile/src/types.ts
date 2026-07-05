@@ -55,6 +55,25 @@ export type ChatContact = {
   lastBusinessPhoneNumberId?: string;
   unreadCount?: number;
   messageCount?: number;
+  tags?: string[];
+};
+
+export type ContactTag = {
+  id: string;
+  name: string;
+  isSystem?: boolean;
+  usageCount?: number;
+};
+
+export type ConversationAgentState = {
+  id?: string;
+  contactId?: string;
+  agentId?: string | null;
+  agentName?: string | null;
+  status?: string | null;
+  signal?: string | null;
+  updatedAt?: string | null;
+  activatedAt?: string | null;
 };
 
 export type JourneyEvent = {
