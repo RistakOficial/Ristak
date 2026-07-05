@@ -187,7 +187,7 @@ test('suscripciones: Rebill crea plan y checkout hospedado para autorizar la sus
     await db.run(
       `INSERT INTO contacts (id, full_name, email, phone, source, created_at, updated_at)
        VALUES (?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [contactId, 'Cliente Rebill', `${contactId}@example.test`, '+5216567426612']
+      [contactId, 'Raul', `${contactId}@example.test`, '+5216567426612']
     )
 
     await withRebillConfig(async () => {
@@ -223,11 +223,15 @@ test('suscripciones: Rebill crea plan y checkout hospedado para autorizar la sus
         }
 
         if (parsed.pathname === '/v3/payment-links' && method === 'POST') {
-          assert.equal(body.type, 'plan')
+          assert.equal(body.type, undefined)
           assert.equal(body.plan, 'pln_rebill_test')
           assert.deepEqual(body.paymentMethods, [{ methods: ['card'], currency: 'MXN' }])
           assert.equal(body.showCoupon, false)
           assert.equal(body.metadata.rebillPlanId, 'pln_rebill_test')
+          assert.equal(body.prefilledFields.customer.email, `${contactId}@example.test`)
+          assert.equal(body.prefilledFields.customer.fullName, 'Raul Ristak')
+          assert.equal(body.prefilledFields.customer.phoneNumber, '6567426612')
+          assert.equal(body.prefilledFields.customer.countryCode, '+52')
           return jsonTextResponse({
             id: 'pl_rebill_subscription_test',
             url: 'https://pay.rebill.com/ristak/test_pl_rebill_subscription_test',
