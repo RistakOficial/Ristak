@@ -357,6 +357,16 @@ superficie final. El avatar nativo debe mantener iniciales/foto en relleno
 Ristak y reservar el color de red social para aro/badge, igual que
 `PhoneChat.module.css`.
 
+La lista de chats nativa tambien debe replicar los gestos principales de
+`PhoneChat`: deslizar una fila hacia la izquierda revela `Mas` y
+`Archivar`/`Restaurar`; mantener presionada una fila entra en seleccion
+multiple; durante seleccion se ocultan los chips de filtro, aparece un panel con
+conteo, `Seleccionar visibles`, cancelar y `Mas acciones`; y las acciones
+masivas minimas son marcar como leidos via `/contacts/chats/read` y
+archivar/restaurar la seleccion. Si `Mas` aun usa un menu nativo temporal en
+`mobile/`, el sheet completo de `/movil` debe quedar registrado como brecha en
+`docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
+
 En la conversación móvil no uses rails/barras verticales pegadas al lado
 izquierdo como indicador visual de foco, comentario o chat no leído. Los estados
 de no leído/activo deben resolverse con fondo, tipografía y badge, no con una

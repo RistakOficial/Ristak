@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   FlatList,
   Image,
   KeyboardAvoidingView,
   Modal,
+  PanResponder,
   Platform,
   Pressable,
   RefreshControl,
@@ -24,10 +26,13 @@ import {
   Bot,
   CalendarDays,
   Camera,
+  Check,
+  CheckCheck,
   ChevronLeft,
   CircleDollarSign,
   Mail,
   MessageCircle,
+  MoreHorizontal,
   Plus,
   Search,
   Settings,
@@ -113,6 +118,10 @@ const DEFAULT_CHAT_FILTER_IDS = ['all', 'unread', 'appointments', 'customers', '
 const CHAT_FILTERS_MORE_VALUE = '__filters_more__';
 const CHAT_FILTERS_STORAGE_KEY = 'ristak.native.chat.visibleFilterIds.v1';
 const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
+const CHAT_SWIPE_ACTION_WIDTH = 184;
+const CHAT_SWIPE_MORE_WIDTH = 84;
+const CHAT_SWIPE_ARCHIVE_WIDTH = CHAT_SWIPE_ACTION_WIDTH - CHAT_SWIPE_MORE_WIDTH;
+const CHAT_SWIPE_OPEN_THRESHOLD = 74;
 const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
   { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', locked: true },
   { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos' },
@@ -526,6 +535,10 @@ function ChatScreen({
   const [archivedChatIds, setArchivedChatIds] = useState<string[]>([]);
   const [archivedViewOpen, setArchivedViewOpen] = useState(false);
   const [chatPrefsHydrated, setChatPrefsHydrated] = useState(false);
+  const [openSwipeChatId, setOpenSwipeChatId] = useState<string | null>(null);
+  const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
+  const [selectionActionsOpen, setSelectionActionsOpen] = useState(false);
+  const [bulkActionBusy, setBulkActionBusy] = useState(false);
   const [chats, setChats] = useState<ChatContact[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -600,6 +613,15 @@ function ChatScreen({
     () => listBaseChats.filter((contact) => chatMatchesFilter(contact, archivedViewOpen ? 'all' : activeFilter)),
     [activeFilter, archivedViewOpen, listBaseChats],
   );
+  const visibleChatIdSet = useMemo(() => new Set(filteredChats.map((contact) => contact.id)), [filteredChats]);
+  const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds]);
+  const selectedChatContacts = useMemo(
+    () => filteredChats.filter((contact) => selectedChatIdSet.has(contact.id)),
+    [filteredChats, selectedChatIdSet],
+  );
+  const selectionActive = selectedChatIds.length > 0;
+  const selectedVisibleChatCount = selectedChatContacts.length;
+  const allVisibleChatsSelected = filteredChats.length > 0 && filteredChats.every((contact) => selectedChatIdSet.has(contact.id));
   const archivedChatCount = archivedChatIds.length;
   const filterPresetMap = useMemo(
     () => new Map(CHAT_FILTER_LIBRARY.map((preset) => [preset.id, preset])),
@@ -615,6 +637,9 @@ function ChatScreen({
       setFilterManagerOpen(true);
       return;
     }
+    setSelectedChatIds([]);
+    setSelectionActionsOpen(false);
+    setOpenSwipeChatId(null);
     setArchivedViewOpen(false);
     setActiveFilter(filterId);
   };
@@ -635,16 +660,31 @@ function ChatScreen({
     setArchivedChatIds((current) => (
       current.includes(contact.id) ? current : [contact.id, ...current]
     ));
+    setOpenSwipeChatId(null);
   };
 
   const restoreChat = (contact: ChatContact) => {
     setArchivedChatIds((current) => current.filter((id) => id !== contact.id));
+    setOpenSwipeChatId(null);
   };
 
-  const openChatActions = (contact: ChatContact) => {
+  const openChatMoreActions = (contact: ChatContact) => {
     const archived = archivedChatIds.includes(contact.id);
-    Alert.alert(getContactName(contact), archived ? 'Chat archivado' : 'Acciones del chat', [
+    const unread = getUnreadCount(contact);
+    setOpenSwipeChatId(null);
+    Alert.alert(getContactName(contact), 'Más acciones', [
       { text: 'Cancelar', style: 'cancel' },
+      ...(unread > 0 ? [{
+        text: 'Marcar como leído',
+        onPress: () => {
+          setChats((current) => current.map((item) => (
+            item.id === contact.id ? { ...item, unreadCount: 0 } : item
+          )));
+          void api.markChatRead(contact.id).catch((err) => {
+            Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo marcar como leído.');
+          });
+        },
+      }] : []),
       {
         text: archived ? 'Restaurar' : 'Archivar',
         onPress: () => {
@@ -652,8 +692,106 @@ function ChatScreen({
           else archiveChat(contact);
         },
       },
+      {
+        text: 'Seleccionar',
+        onPress: () => startChatSelection(contact),
+      },
     ]);
   };
+
+  const clearChatSelection = () => {
+    setSelectedChatIds([]);
+    setSelectionActionsOpen(false);
+  };
+
+  const startChatSelection = (contact: ChatContact) => {
+    setOpenSwipeChatId(null);
+    setSelectionActionsOpen(false);
+    setSelectedChatIds((current) => (
+      current.includes(contact.id) ? current : [...current, contact.id]
+    ));
+  };
+
+  const toggleChatSelection = (contact: ChatContact) => {
+    setOpenSwipeChatId(null);
+    setSelectedChatIds((current) => (
+      current.includes(contact.id)
+        ? current.filter((id) => id !== contact.id)
+        : [...current, contact.id]
+    ));
+  };
+
+  const toggleVisibleChatSelection = () => {
+    const visibleIds = filteredChats.map((contact) => contact.id);
+    setOpenSwipeChatId(null);
+    setSelectionActionsOpen(false);
+    setSelectedChatIds((current) => {
+      if (visibleIds.length && visibleIds.every((id) => current.includes(id))) {
+        return current.filter((id) => !visibleChatIdSet.has(id));
+      }
+      return Array.from(new Set([...current, ...visibleIds]));
+    });
+  };
+
+  const handleChatPress = (contact: ChatContact) => {
+    if (selectionActive) {
+      toggleChatSelection(contact);
+      return;
+    }
+    if (openSwipeChatId === contact.id) {
+      setOpenSwipeChatId(null);
+      return;
+    }
+    setSelected(contact);
+  };
+
+  const markSelectedChatsAsRead = async () => {
+    const contactIds = selectedChatContacts.map((contact) => contact.id);
+    if (!contactIds.length || bulkActionBusy) return;
+    setBulkActionBusy(true);
+    setChats((current) => current.map((contact) => (
+      contactIds.includes(contact.id) ? { ...contact, unreadCount: 0 } : contact
+    )));
+    try {
+      await api.markChatsRead(contactIds);
+      clearChatSelection();
+    } catch (err) {
+      Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudieron marcar como leídos.');
+    } finally {
+      setBulkActionBusy(false);
+    }
+  };
+
+  const archiveSelectedChats = () => {
+    const contactIds = selectedChatContacts.map((contact) => contact.id);
+    if (!contactIds.length) return;
+    setArchivedChatIds((current) => {
+      const selectedSet = new Set(contactIds);
+      if (archivedViewOpen) {
+        return current.filter((id) => !selectedSet.has(id));
+      }
+      return Array.from(new Set([...contactIds, ...current]));
+    });
+    clearChatSelection();
+  };
+
+  useEffect(() => {
+    setOpenSwipeChatId(null);
+    setSelectedChatIds([]);
+    setSelectionActionsOpen(false);
+  }, [activeFilter, archivedViewOpen, query]);
+
+  useEffect(() => {
+    if (!selectionActive) {
+      setSelectionActionsOpen(false);
+      return;
+    }
+    setOpenSwipeChatId(null);
+    setSelectedChatIds((current) => {
+      const next = current.filter((id) => visibleChatIdSet.has(id));
+      return next.length === current.length ? current : next;
+    });
+  }, [selectionActive, visibleChatIdSet]);
 
   if (selected) {
     return (
@@ -725,12 +863,14 @@ function ChatScreen({
             </Pressable>
           ) : null}
         </View>
-        <ChatFilterBar
-          active={activeFilter}
-          filters={visibleFilters}
-          unreadTotal={unreadTotal}
-          onChange={applyFilter}
-        />
+        {!selectionActive ? (
+          <ChatFilterBar
+            active={activeFilter}
+            filters={visibleFilters}
+            unreadTotal={unreadTotal}
+            onChange={applyFilter}
+          />
+        ) : null}
       </View>
       {loading ? (
         <View style={styles.centerState}>
@@ -749,7 +889,20 @@ function ChatScreen({
           refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
           contentContainerStyle={filteredChats.length ? styles.chatList : styles.emptyList}
           ListHeaderComponent={(
-            archivedChatCount > 0 && !query.trim() && (archivedViewOpen || activeFilter === 'all') ? (
+            selectionActive ? (
+              <ChatSelectionPanel
+                allVisibleSelected={allVisibleChatsSelected}
+                archiveLabel={archivedViewOpen ? 'Restaurar seleccionados' : 'Archivar seleccionados'}
+                busy={bulkActionBusy}
+                count={selectedVisibleChatCount}
+                menuOpen={selectionActionsOpen}
+                onArchiveSelected={archiveSelectedChats}
+                onClear={clearChatSelection}
+                onMarkRead={() => void markSelectedChatsAsRead()}
+                onToggleMenu={() => setSelectionActionsOpen((current) => !current)}
+                onToggleVisible={toggleVisibleChatSelection}
+              />
+            ) : archivedChatCount > 0 && !query.trim() && (archivedViewOpen || activeFilter === 'all') ? (
               <ArchiveRow
                 active={archivedViewOpen}
                 count={archivedChatCount}
@@ -761,8 +914,21 @@ function ChatScreen({
             <ChatRow
               contact={item}
               archived={archivedChatIds.includes(item.id)}
-              onPress={() => setSelected(item)}
-              onLongPress={() => openChatActions(item)}
+              selectionActive={selectionActive}
+              selected={selectedChatIdSet.has(item.id)}
+              swipeOpen={openSwipeChatId === item.id}
+              onArchiveToggle={() => {
+                if (archivedChatIds.includes(item.id)) restoreChat(item);
+                else archiveChat(item);
+              }}
+              onLongPress={() => startChatSelection(item)}
+              onMore={() => openChatMoreActions(item)}
+              onPress={() => handleChatPress(item)}
+              onSwipeClose={() => setOpenSwipeChatId(null)}
+              onSwipeOpen={() => setOpenSwipeChatId(item.id)}
+              onSwipeStart={() => {
+                if (openSwipeChatId && openSwipeChatId !== item.id) setOpenSwipeChatId(null);
+              }}
             />
           )}
           ListEmptyComponent={
@@ -1416,50 +1582,245 @@ function ChannelBadgeIcon({ kind, size = 13 }: { kind: ChannelBadgeKind; size?: 
   );
 }
 
+function ChatSelectionPanel({
+  allVisibleSelected,
+  archiveLabel,
+  busy,
+  count,
+  menuOpen,
+  onArchiveSelected,
+  onClear,
+  onMarkRead,
+  onToggleMenu,
+  onToggleVisible,
+}: {
+  allVisibleSelected: boolean;
+  archiveLabel: string;
+  busy: boolean;
+  count: number;
+  menuOpen: boolean;
+  onArchiveSelected: () => void;
+  onClear: () => void;
+  onMarkRead: () => void;
+  onToggleMenu: () => void;
+  onToggleVisible: () => void;
+}) {
+  return (
+    <View style={styles.chatSelectionPanel}>
+      <View style={styles.chatSelectionPanelTop}>
+        <Text numberOfLines={1} style={styles.chatSelectionCount}>
+          {count} seleccionado{count === 1 ? '' : 's'}
+        </Text>
+        <Pressable accessibilityRole="button" onPress={onClear} style={styles.chatSelectionClearButton}>
+          <X size={17} color={COLORS.text} strokeWidth={2.5} />
+        </Pressable>
+      </View>
+      <Pressable accessibilityRole="button" onPress={onToggleVisible} style={styles.chatSelectionSelectAll}>
+        <View style={[styles.chatSelectionMiniCheck, allVisibleSelected && styles.chatSelectionMiniCheckActive]}>
+          {allVisibleSelected ? <Check size={13} color={COLORS.white} strokeWidth={3} /> : null}
+        </View>
+        <Text numberOfLines={1} style={styles.chatSelectionSelectAllText}>
+          {allVisibleSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
+        </Text>
+      </Pressable>
+      <Pressable
+        accessibilityRole="button"
+        disabled={busy}
+        onPress={onToggleMenu}
+        style={[styles.chatSelectionMoreButton, busy && styles.disabledButton]}
+      >
+        <MoreHorizontal size={19} color={COLORS.white} strokeWidth={2.8} />
+        <Text style={styles.chatSelectionMoreButtonText}>Más acciones</Text>
+      </Pressable>
+      {menuOpen ? (
+        <View style={styles.chatSelectionActionsMenu}>
+          <Pressable disabled={busy} onPress={onMarkRead} style={({ pressed }) => [styles.chatSelectionActionRow, pressed && styles.pressed]}>
+            <View style={styles.chatSelectionActionIcon}>
+              <CheckCheck size={18} color={COLORS.accent} strokeWidth={2.7} />
+            </View>
+            <View style={styles.chatSelectionActionCopy}>
+              <Text style={styles.chatSelectionActionTitle}>Marcar como leídos</Text>
+              <Text style={styles.chatSelectionActionSubtitle}>Quita pendientes de los chats seleccionados.</Text>
+            </View>
+          </Pressable>
+          <Pressable disabled={busy} onPress={onArchiveSelected} style={({ pressed }) => [styles.chatSelectionActionRow, pressed && styles.pressed]}>
+            <View style={styles.chatSelectionActionIcon}>
+              <Archive size={18} color={COLORS.accent} strokeWidth={2.7} />
+            </View>
+            <View style={styles.chatSelectionActionCopy}>
+              <Text style={styles.chatSelectionActionTitle}>{archiveLabel}</Text>
+              <Text style={styles.chatSelectionActionSubtitle}>Mueve estos chats fuera o dentro de la bandeja principal.</Text>
+            </View>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function ChatRow({
   contact,
   archived,
+  selected,
+  selectionActive,
+  swipeOpen,
+  onArchiveToggle,
   onPress,
   onLongPress,
+  onMore,
+  onSwipeClose,
+  onSwipeOpen,
+  onSwipeStart,
 }: {
   contact: ChatContact;
   archived?: boolean;
+  selected: boolean;
+  selectionActive: boolean;
+  swipeOpen: boolean;
+  onArchiveToggle: () => void;
   onPress: () => void;
   onLongPress?: () => void;
+  onMore: () => void;
+  onSwipeClose: () => void;
+  onSwipeOpen: () => void;
+  onSwipeStart: () => void;
 }) {
   const avatar = getContactAvatar(contact);
   const unread = getUnreadCount(contact);
   const channelKind = getContactChannelKind(contact);
   const channelColor = CHANNEL_BADGE_COLORS[channelKind];
+  const translateX = useRef(new Animated.Value(0)).current;
+  const offsetRef = useRef(0);
+  const dragStartOffsetRef = useRef(0);
+
+  const animateSwipeTo = useCallback((toValue: number) => {
+    offsetRef.current = toValue;
+    Animated.spring(translateX, {
+      toValue,
+      useNativeDriver: true,
+      friction: 8,
+      tension: 76,
+    }).start();
+  }, [translateX]);
+
+  useEffect(() => {
+    animateSwipeTo(swipeOpen && !selectionActive ? -CHAT_SWIPE_ACTION_WIDTH : 0);
+  }, [animateSwipeTo, selectionActive, swipeOpen]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) => {
+      if (selectionActive) return false;
+      return Math.abs(gestureState.dx) > 8 && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) + 4;
+    },
+    onPanResponderGrant: () => {
+      onSwipeStart();
+      dragStartOffsetRef.current = offsetRef.current;
+    },
+    onPanResponderMove: (_, gestureState) => {
+      const nextOffset = Math.max(
+        -CHAT_SWIPE_ACTION_WIDTH,
+        Math.min(0, dragStartOffsetRef.current + gestureState.dx),
+      );
+      offsetRef.current = nextOffset;
+      translateX.setValue(nextOffset);
+    },
+    onPanResponderRelease: () => {
+      if (Math.abs(offsetRef.current) >= CHAT_SWIPE_OPEN_THRESHOLD) {
+        onSwipeOpen();
+        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
+        return;
+      }
+      onSwipeClose();
+      animateSwipeTo(0);
+    },
+    onPanResponderTerminate: () => {
+      if (swipeOpen) {
+        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
+        return;
+      }
+      onSwipeClose();
+      animateSwipeTo(0);
+    },
+  }), [animateSwipeTo, onSwipeClose, onSwipeOpen, onSwipeStart, selectionActive, swipeOpen, translateX]);
+
+  const handlePress = () => {
+    if (swipeOpen && !selectionActive) {
+      onSwipeClose();
+      return;
+    }
+    onPress();
+  };
 
   return (
-    <Pressable
-      style={({ pressed }) => [styles.chatRow, unread > 0 && styles.chatRowUnread, archived && styles.chatRowArchived, pressed && styles.pressed]}
-      onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={260}
-    >
-      <View style={[styles.avatar, { borderColor: channelColor }]}>
-        <View style={styles.avatarCircle}>
-          {avatar ? <Image source={{ uri: avatar }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
+    <View style={[styles.chatSwipeRow, selected && styles.chatSwipeRowSelected]} {...panResponder.panHandlers}>
+      {!selectionActive ? (
+        <View style={styles.chatSwipeActions}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              onSwipeClose();
+              onMore();
+            }}
+            style={({ pressed }) => [styles.chatSwipeAction, styles.chatSwipeMore, pressed && styles.pressed]}
+          >
+            <MoreHorizontal size={30} color={COLORS.bg} strokeWidth={2.7} />
+            <Text numberOfLines={1} style={[styles.chatSwipeActionText, styles.chatSwipeMoreText]}>Más</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              onSwipeClose();
+              onArchiveToggle();
+            }}
+            style={({ pressed }) => [styles.chatSwipeAction, styles.chatSwipeArchive, pressed && styles.pressed]}
+          >
+            <Archive size={30} color={COLORS.white} strokeWidth={2.7} />
+            <Text numberOfLines={1} style={styles.chatSwipeActionText}>{archived ? 'Restaurar' : 'Archivar'}</Text>
+          </Pressable>
         </View>
-        {channelKind !== 'unknown' ? (
-          <View style={[styles.avatarChannelBadge, { backgroundColor: channelColor }]}>
-            <ChannelBadgeIcon kind={channelKind} />
+      ) : null}
+      <Animated.View style={[styles.chatSwipeContent, { transform: [{ translateX }] }]}>
+        <Pressable
+          style={({ pressed }) => [
+            styles.chatRow,
+            selectionActive && styles.chatRowSelecting,
+            selected && styles.chatRowSelected,
+            unread > 0 && styles.chatRowUnread,
+            archived && styles.chatRowArchived,
+            pressed && styles.pressed,
+          ]}
+          onPress={handlePress}
+          onLongPress={selectionActive ? undefined : onLongPress}
+          delayLongPress={310}
+        >
+          {selectionActive ? (
+            <View style={[styles.chatSelectionCheck, selected && styles.chatSelectionCheckActive]}>
+              {selected ? <Check size={17} color={COLORS.white} strokeWidth={3} /> : null}
+            </View>
+          ) : null}
+          <View style={[styles.avatar, { borderColor: channelColor }]}>
+            <View style={styles.avatarCircle}>
+              {avatar ? <Image source={{ uri: avatar }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
+            </View>
+            {channelKind !== 'unknown' ? (
+              <View style={[styles.avatarChannelBadge, { backgroundColor: channelColor }]}>
+                <ChannelBadgeIcon kind={channelKind} />
+              </View>
+            ) : null}
           </View>
-        ) : null}
-      </View>
-      <View style={styles.chatRowBody}>
-        <View style={styles.rowHeader}>
-          <Text numberOfLines={1} style={[styles.chatName, unread > 0 && styles.chatNameUnread]}>{getContactName(contact)}</Text>
-          <Text style={[styles.rowTime, unread > 0 && styles.rowTimeUnread]}>{formatShortDate(contact.lastMessageDate)}</Text>
-        </View>
-        <View style={styles.rowFooter}>
-          <Text numberOfLines={1} style={[styles.lastMessage, unread > 0 && styles.lastMessageUnread]}>{getChatPreview(contact)}</Text>
-          {unread > 0 ? <View style={styles.unreadPill}><Text style={styles.unreadText}>{unread > 9 ? '9+' : unread}</Text></View> : null}
-        </View>
-      </View>
-    </Pressable>
+          <View style={styles.chatRowBody}>
+            <View style={styles.rowHeader}>
+              <Text numberOfLines={1} style={[styles.chatName, unread > 0 && styles.chatNameUnread]}>{getContactName(contact)}</Text>
+              <Text style={[styles.rowTime, unread > 0 && styles.rowTimeUnread]}>{formatShortDate(contact.lastMessageDate)}</Text>
+            </View>
+            <View style={styles.rowFooter}>
+              <Text numberOfLines={1} style={[styles.lastMessage, unread > 0 && styles.lastMessageUnread]}>{getChatPreview(contact)}</Text>
+              {unread > 0 ? <View style={styles.unreadPill}><Text style={styles.unreadText}>{unread > 9 ? '9+' : unread}</Text></View> : null}
+            </View>
+          </View>
+        </Pressable>
+      </Animated.View>
+    </View>
   );
 }
 
@@ -2212,6 +2573,132 @@ const styles = StyleSheet.create({
     lineHeight: 19,
     textAlign: 'center',
   },
+  chatSelectionPanel: {
+    gap: 9,
+    marginHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 10,
+    padding: 10,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(16,42,120,0.88)',
+    shadowColor: COLORS.primary,
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.1,
+    shadowRadius: 30,
+    elevation: 2,
+  },
+  chatSelectionPanelTop: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  chatSelectionCount: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  chatSelectionClearButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  chatSelectionSelectAll: {
+    alignSelf: 'flex-start',
+    minHeight: 36,
+    maxWidth: '100%',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 11,
+  },
+  chatSelectionSelectAllText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  chatSelectionMiniCheck: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(170,192,231,0.52)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.07)',
+  },
+  chatSelectionMiniCheckActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accent,
+  },
+  chatSelectionMoreButton: {
+    minHeight: 40,
+    borderRadius: 20,
+    backgroundColor: COLORS.accent,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  chatSelectionMoreButtonText: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  chatSelectionActionsMenu: {
+    overflow: 'hidden',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(6,18,58,0.58)',
+  },
+  chatSelectionActionRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  chatSelectionActionIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  chatSelectionActionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  chatSelectionActionTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  chatSelectionActionSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 2,
+  },
   archiveRow: {
     minHeight: 52,
     flexDirection: 'row',
@@ -2244,6 +2731,51 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
   },
+  chatSwipeRow: {
+    position: 'relative',
+    minHeight: 74,
+    overflow: 'hidden',
+    backgroundColor: COLORS.bg,
+  },
+  chatSwipeRowSelected: {
+    backgroundColor: COLORS.accentSoft,
+  },
+  chatSwipeActions: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: CHAT_SWIPE_ACTION_WIDTH,
+    minHeight: 74,
+    flexDirection: 'row',
+    zIndex: 0,
+  },
+  chatSwipeAction: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  chatSwipeMore: {
+    width: CHAT_SWIPE_MORE_WIDTH,
+    backgroundColor: 'rgba(243,248,255,0.72)',
+  },
+  chatSwipeArchive: {
+    width: CHAT_SWIPE_ARCHIVE_WIDTH,
+    backgroundColor: COLORS.accent,
+  },
+  chatSwipeActionText: {
+    color: COLORS.white,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  chatSwipeMoreText: {
+    color: COLORS.bg,
+  },
+  chatSwipeContent: {
+    position: 'relative',
+    zIndex: 1,
+    backgroundColor: COLORS.bg,
+  },
   chatRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2256,8 +2788,29 @@ const styles = StyleSheet.create({
   chatRowUnread: {
     backgroundColor: 'rgba(39,199,216,0.07)',
   },
+  chatRowSelecting: {
+    gap: 8,
+    paddingLeft: 9,
+  },
+  chatRowSelected: {
+    backgroundColor: COLORS.accentSoft,
+  },
   chatRowArchived: {
     opacity: 0.86,
+  },
+  chatSelectionCheck: {
+    width: 25,
+    height: 25,
+    borderRadius: 13,
+    borderWidth: 1,
+    borderColor: 'rgba(170,192,231,0.52)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.07)',
+  },
+  chatSelectionCheckActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accent,
   },
   avatar: {
     position: 'relative',

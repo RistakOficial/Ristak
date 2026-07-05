@@ -78,11 +78,19 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     almacenamiento backend si se decide que archivados sea multi-dispositivo.
 - [ ] Replicar estados de agente: prioridad humana, agente activo/inactivo,
   hub de agente y badges.
-- [ ] Replicar swipe de fila: Mas, Archivar/Restaurar.
-  - Avance: long press abre accion de archivar/restaurar como ruta temporal. El
-    gesto swipe con acciones `Mas` y `Archivar/Restaurar` sigue pendiente.
-- [ ] Replicar long press/seleccion multiple.
-- [ ] Replicar pull to refresh y copy visible.
+- [x] Replicar swipe de fila: Mas, Archivar/Restaurar.
+  - Avance: `mobile/` ya desplaza la fila a la izquierda con acciones `Mas` y
+    `Archivar/Restaurar`. `Mas` abre un menu nativo temporal con marcar leido,
+    archivar/restaurar y seleccionar; el sheet visual completo de `/movil`
+    queda pendiente en "Mas acciones de chat".
+- [x] Replicar long press/seleccion multiple.
+  - Avance: mantener presionada una fila entra en seleccion multiple, muestra
+    check circular, oculta filtros, permite seleccionar visibles, cancelar,
+    marcar como leidos via API y archivar/restaurar seleccionados.
+- [x] Replicar pull to refresh y copy visible.
+  - Avance: la lista nativa ya usa pull to refresh, textos de loading/error y
+    vacios equivalentes de primer pase. Aun falta el estado cache-refresh exacto
+    de `/movil` cuando se muestra cache y actualiza en segundo plano.
 - [ ] Replicar empty/loading/cache-refresh states.
 - [ ] Validar visualmente contra `/movil` en telefono.
 

@@ -124,6 +124,13 @@ export class RistakApiClient {
     });
   }
 
+  markChatsRead(contactIds: string[]) {
+    return this.request('/contacts/chats/read', {
+      method: 'POST',
+      body: JSON.stringify({ contactIds }),
+    });
+  }
+
   sendText(contact: ChatContact, text: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/text', {
       method: 'POST',
