@@ -110,12 +110,18 @@ export const globalSearch = async (req, res) => {
     const paymentCreatedSort = timestampSortExpression('p.created_at')
     const paymentPlanNextRunSort = timestampSortExpression('pp.next_run_at')
     const paymentPlanUpdatedSort = timestampSortExpression('pp.updated_at')
+    const automationUpdatedSort = timestampSortExpression('aut.updated_at')
+    const calendarUpdatedSort = timestampSortExpression('cal.updated_at')
+    const userUpdatedSort = timestampSortExpression('u.updated_at')
 
     const [
       contacts,
       appointments,
       payments,
       paymentPlans,
+      automations,
+      calendars,
+      users,
       campaigns,
       adsets,
       ads
@@ -179,8 +185,12 @@ export const globalSearch = async (req, res) => {
           p.currency,
           p.status,
           p.payment_method,
+          p.payment_mode,
+          p.payment_provider,
           p.reference,
+          p.title,
           p.description,
+          p.public_payment_id,
           p.date,
           c.full_name AS contact_name,
           c.first_name AS contact_first_name,
@@ -191,15 +201,34 @@ export const globalSearch = async (req, res) => {
         LEFT JOIN contacts c ON c.id = p.contact_id
         WHERE
           (${basicContactSearchClause.condition} OR
+          ${textFoldExpression('p.id')} LIKE ? OR
+          ${textFoldExpression('p.public_payment_id')} LIKE ? OR
+          ${textFoldExpression('p.title')} LIKE ? OR
           ${textFoldExpression('p.status')} LIKE ? OR
           ${textFoldExpression('p.payment_method')} LIKE ? OR
+          ${textFoldExpression('p.payment_provider')} LIKE ? OR
+          ${textFoldExpression('p.payment_mode')} LIKE ? OR
           ${textFoldExpression('p.reference')} LIKE ? OR
           ${textFoldExpression('p.description')} LIKE ? OR
           CAST(p.amount AS TEXT) LIKE ? OR
           CAST(p.date AS TEXT) LIKE ?)${hiddenOrExclude}
         ORDER BY ${paymentDateSort} DESC, ${paymentCreatedSort} DESC, p.id DESC
         LIMIT ?`,
-        [...basicContactSearchClause.params, foldedLike, foldedLike, foldedLike, foldedLike, like, like, CATEGORY_LIMIT]
+        [
+          ...basicContactSearchClause.params,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          foldedLike,
+          like,
+          like,
+          CATEGORY_LIMIT
+        ]
       )),
       runCategoryQuery('planes de pago', () => db.all(
         `SELECT
@@ -253,6 +282,69 @@ export const globalSearch = async (req, res) => {
           like,
           CATEGORY_LIMIT
         ]
+      )),
+      runCategoryQuery('automatizaciones', () => db.all(
+        `SELECT
+          aut.id,
+          aut.name,
+          aut.status,
+          aut.description,
+          aut.updated_at,
+          aut.published_at
+        FROM automations aut
+        WHERE
+          ${textFoldExpression('aut.id')} LIKE ? OR
+          ${textFoldExpression('aut.name')} LIKE ? OR
+          ${textFoldExpression('aut.status')} LIKE ? OR
+          ${textFoldExpression('aut.description')} LIKE ?
+        ORDER BY ${automationUpdatedSort} DESC, aut.id DESC
+        LIMIT ?`,
+        [foldedLike, foldedLike, foldedLike, foldedLike, CATEGORY_LIMIT]
+      )),
+      runCategoryQuery('calendarios', () => db.all(
+        `SELECT
+          cal.id,
+          cal.ghl_calendar_id,
+          cal.name,
+          cal.slug,
+          cal.calendar_type,
+          cal.event_title,
+          cal.source,
+          cal.is_active,
+          cal.updated_at
+        FROM calendars cal
+        WHERE
+          ${textFoldExpression('cal.id')} LIKE ? OR
+          ${textFoldExpression('cal.ghl_calendar_id')} LIKE ? OR
+          ${textFoldExpression('cal.name')} LIKE ? OR
+          ${textFoldExpression('cal.slug')} LIKE ? OR
+          ${textFoldExpression('cal.event_title')} LIKE ? OR
+          ${textFoldExpression('cal.source')} LIKE ?
+        ORDER BY cal.is_active DESC, ${calendarUpdatedSort} DESC, cal.name ASC
+        LIMIT ?`,
+        [foldedLike, foldedLike, foldedLike, foldedLike, foldedLike, foldedLike, CATEGORY_LIMIT]
+      )),
+      runCategoryQuery('usuarios', () => db.all(
+        `SELECT
+          u.id,
+          u.username,
+          u.email,
+          u.full_name,
+          u.role,
+          u.is_active,
+          u.updated_at
+        FROM users u
+        WHERE
+          COALESCE(u.is_active, 1) != 0 AND (
+            ${textFoldExpression('CAST(u.id AS TEXT)')} LIKE ? OR
+            ${textFoldExpression('u.username')} LIKE ? OR
+            ${textFoldExpression('u.email')} LIKE ? OR
+            ${textFoldExpression('u.full_name')} LIKE ? OR
+            ${textFoldExpression('u.role')} LIKE ?
+          )
+        ORDER BY ${userUpdatedSort} DESC, u.full_name ASC, u.username ASC
+        LIMIT ?`,
+        [foldedLike, foldedLike, foldedLike, foldedLike, foldedLike, CATEGORY_LIMIT]
       )),
       runCategoryQuery('campañas', () => db.all(
         `SELECT
@@ -360,9 +452,9 @@ export const globalSearch = async (req, res) => {
           return {
             type: 'payment',
             id: payment.id,
-            title: joinParts(formatMoney(payment.amount, payment.currency), contactName || 'Pago sin contacto'),
-            subtitle: joinParts(payment.description, payment.reference),
-            meta: joinParts(formatDate(payment.date, timezone), payment.status, payment.payment_method),
+            title: joinParts(payment.title || payment.public_payment_id || payment.reference || formatMoney(payment.amount, payment.currency), contactName || 'Pago sin contacto'),
+            subtitle: joinParts(formatMoney(payment.amount, payment.currency), payment.description, payment.reference),
+            meta: joinParts(formatDate(payment.date, timezone), payment.status, payment.payment_method, payment.payment_provider, payment.payment_mode),
             metadata: {
               contactId: payment.contact_id
             }
@@ -387,6 +479,49 @@ export const globalSearch = async (req, res) => {
             }
           }
         })
+      },
+      {
+        id: 'automations',
+        label: 'Automatizaciones',
+        items: automations.map((automation) => ({
+          type: 'automation',
+          id: automation.id,
+          title: automation.name || automation.id,
+          subtitle: joinParts('Automatización', automation.description),
+          meta: joinParts(automation.status, formatDate(automation.published_at || automation.updated_at, timezone)),
+          metadata: {
+            automationId: automation.id
+          }
+        }))
+      },
+      {
+        id: 'calendars',
+        label: 'Calendarios',
+        items: calendars.map((calendar) => ({
+          type: 'calendar',
+          id: calendar.id,
+          title: calendar.name || calendar.event_title || calendar.id,
+          subtitle: joinParts(calendar.event_title, calendar.slug, calendar.ghl_calendar_id),
+          meta: joinParts(calendar.is_active ? 'Activo' : 'Inactivo', calendar.calendar_type, calendar.source),
+          metadata: {
+            calendarId: calendar.id,
+            ghlCalendarId: calendar.ghl_calendar_id
+          }
+        }))
+      },
+      {
+        id: 'users',
+        label: 'Usuarios',
+        items: users.map((user) => ({
+          type: 'user',
+          id: String(user.id),
+          title: user.full_name || user.username || user.email || `Usuario ${user.id}`,
+          subtitle: joinParts(user.email, user.username),
+          meta: joinParts(user.role, user.is_active ? 'Activo' : 'Inactivo'),
+          metadata: {
+            userId: user.id
+          }
+        }))
       },
       {
         id: 'campaigns',

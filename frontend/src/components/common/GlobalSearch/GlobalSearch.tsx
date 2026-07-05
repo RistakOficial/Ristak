@@ -28,7 +28,10 @@ const ICONS: Record<GlobalSearchItemType, React.ComponentType<{ size?: number; c
   payment_plan: Repeat2,
   campaign: Megaphone,
   adset: Layers,
-  ad: MousePointerClick
+  ad: MousePointerClick,
+  automation: Repeat2,
+  calendar: Calendar,
+  user: User
 }
 
 const GLOBAL_SEARCH_CACHE_LIMIT = 30
@@ -52,6 +55,18 @@ const buildSearchParams = (item: GlobalSearchItem) => {
 
   if (item.type === 'payment_plan') {
     return { pathname: `/transactions/payment-plans/${encodeRouteId(item.id)}`, search: '' }
+  }
+
+  if (item.type === 'automation') {
+    return { pathname: `/automations/${encodeRouteId(item.id)}`, search: '' }
+  }
+
+  if (item.type === 'calendar') {
+    return { pathname: '/settings/calendars', search: '' }
+  }
+
+  if (item.type === 'user') {
+    return { pathname: '/settings/users-access', search: '' }
   }
 
   params.set('open', 'campaign')

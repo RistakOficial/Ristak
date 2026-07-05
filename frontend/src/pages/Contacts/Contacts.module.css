@@ -77,6 +77,12 @@
   gap: var(--spacing-xs);
   flex: 0 0 auto;
   min-width: 0;
+  width: fit-content;
+}
+
+.contactTableAdvancedFilters > button {
+  flex: 0 0 auto;
+  width: auto;
 }
 
 .filterButton {
@@ -497,6 +503,7 @@
 }
 
 .contactFilterDrawer {
+  --contact-filter-drawer-x: var(--spacing-sm);
   --z-index-dropdown: var(--z-index-modal-dropdown);
   --z-index-popover: var(--z-index-modal-popover);
   --z-index-tooltip: var(--z-index-modal-tooltip);
@@ -526,7 +533,7 @@
 .contactFilterDrawerHeader {
   justify-content: space-between;
   gap: var(--spacing-md);
-  padding: var(--spacing-md);
+  padding: var(--spacing-md) var(--contact-filter-drawer-x);
   border-bottom: 1px solid var(--color-border-subtle);
 }
 
@@ -553,7 +560,7 @@
 .contactFilterDrawerFooter {
   justify-content: space-between;
   gap: var(--spacing-md);
-  padding: var(--spacing-md);
+  padding: var(--spacing-md) var(--contact-filter-drawer-x);
   border-top: 1px solid var(--color-border-subtle);
   background: var(--surface-solid, var(--surface));
 }
@@ -575,7 +582,7 @@
 
 .contactFilterPicker {
   gap: var(--spacing-md);
-  padding: var(--spacing-md);
+  padding: var(--spacing-md) var(--contact-filter-drawer-x);
 }
 
 .contactFilterPickerHeader {
@@ -640,12 +647,14 @@
 }
 
 .contactFilterFieldButton.contactFilterFieldButton {
+  --app-button-padding-x: 0;
+  --app-button-padding-x-sm: 0;
   justify-content: flex-start;
   align-items: center;
   width: 100%;
   height: auto;
   min-height: 48px;
-  padding-inline: 0 var(--spacing-sm);
+  padding-inline: 0 !important;
   border-radius: var(--radius-sm);
   text-align: left;
 }
@@ -690,7 +699,7 @@
 
 .contactConditionsBuilder {
   gap: var(--spacing-lg);
-  padding: var(--spacing-md);
+  padding: var(--spacing-md) var(--contact-filter-drawer-x);
 }
 
 .contactConditionsTopbar {

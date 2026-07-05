@@ -21,6 +21,16 @@ const APPOINTMENT_CANCELED_STATUSES = new Set([
   'void',
   'voided'
 ])
+const APPOINTMENT_CANCELLED_ONLY_STATUSES = new Set([
+  'cancelled',
+  'canceled',
+  'invalid',
+  'failed',
+  'deleted',
+  'void',
+  'voided'
+])
+const APPOINTMENT_NO_SHOW_STATUSES = new Set(['no_show', 'no-show', 'noshow', 'missed'])
 const APPOINTMENT_ATTENDED_STATUSES = new Set(['showed', 'show', 'attended', 'completed', 'complete'])
 const FAILED_PAYMENT_STATUSES = [
   'failed',
@@ -36,6 +46,8 @@ const FAILED_PAYMENT_STATUSES = [
   'disputed'
 ]
 const PAYMENT_STATUS_OPTIONS = [...SUCCESS_PAYMENT_STATUSES, ...FAILED_PAYMENT_STATUSES]
+const PENDING_INSTALLMENT_STATUSES = new Set(['pending', 'scheduled', 'due'])
+const OVERDUE_INSTALLMENT_STATUSES = new Set(['pending', 'scheduled', 'due', 'failed'])
 
 const sqlList = values => [...values].map(value => `'${String(value).replace(/'/g, "''")}'`).join(', ')
 
@@ -144,12 +156,40 @@ export const contactListPrioritySortExpression = (contactAlias = 'c', paymentSta
   END`
 )
 
+const appointmentStatusExpression = (alias = 'a') => `LOWER(COALESCE(${alias}.appointment_status, ${alias}.status, ''))`
+const appointmentDateExpression = (alias = 'a') => `COALESCE(${alias}.start_time, ${alias}.date_added, ${alias}.created_at)`
+const appointmentActiveCondition = (alias = 'a') => `${appointmentStatusExpression(alias)} NOT IN (${sqlList(APPOINTMENT_CANCELED_STATUSES)})`
+const appointmentAttendedCondition = (alias = 'a') => `${appointmentStatusExpression(alias)} IN (${sqlList(APPOINTMENT_ATTENDED_STATUSES)})`
+const appointmentCancelledOnlyCondition = (alias = 'a') => `${appointmentStatusExpression(alias)} IN (${sqlList(APPOINTMENT_CANCELLED_ONLY_STATUSES)})`
+const appointmentNoShowCondition = (alias = 'a') => `${appointmentStatusExpression(alias)} IN (${sqlList(APPOINTMENT_NO_SHOW_STATUSES)})`
+const currentTimestampExpression = () => (isPostgresDatabase ? 'CURRENT_TIMESTAMP' : "datetime('now')")
+const timestampCompareExpression = (expression) => (isPostgresDatabase ? expression : `datetime(${expression})`)
+const appointmentHasDateCondition = (alias = 'a') => `NULLIF(TRIM(CAST(${appointmentDateExpression(alias)} AS TEXT)), '') IS NOT NULL`
+const futureAppointmentCondition = (alias = 'a') => (
+  `${appointmentActiveCondition(alias)}
+    AND ${appointmentHasDateCondition(alias)}
+    AND ${timestampCompareExpression(appointmentDateExpression(alias))} >= ${currentTimestampExpression()}`
+)
+const pastAppointmentCondition = (alias = 'a') => (
+  `${appointmentActiveCondition(alias)}
+    AND ${appointmentHasDateCondition(alias)}
+    AND ${timestampCompareExpression(appointmentDateExpression(alias))} < ${currentTimestampExpression()}`
+)
+
 const appointmentCountExpression = (contactAlias = 'c', condition = '') => (
   `(SELECT COUNT(*)
     FROM appointments a_count
     WHERE a_count.contact_id = ${contactAlias}.id
       ${condition ? `AND ${condition}` : ''})`
 )
+
+const appointmentDateAggregateExpression = (aggregate = 'MAX', contactAlias = 'c', condition = '') => {
+  const alias = 'a_date'
+  return `(SELECT ${aggregate}(${appointmentDateExpression(alias)})
+    FROM appointments ${alias}
+    WHERE ${alias}.contact_id = ${contactAlias}.id
+      ${condition ? `AND ${condition}` : ''})`
+}
 
 export function getContactListSortExpression(sortBy, contactAlias = 'c', paymentStatsAlias = 'ps') {
   const createdAtSortExpression = timestampSortExpression(`${contactAlias}.created_at`)
@@ -167,7 +207,9 @@ export function getContactListSortExpression(sortBy, contactAlias = 'c', payment
     last_purchase_date: timestampSortExpression(`${paymentStatsAlias}.last_purchase_date`),
     appointments_count: appointmentCountExpression(contactAlias),
     active_appointments_count: appointmentCountExpression(contactAlias, CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION),
-    attended_appointments_count: appointmentCountExpression(contactAlias, CONTACT_LIST_ATTENDED_APPOINTMENT_CONDITION)
+    attended_appointments_count: appointmentCountExpression(contactAlias, CONTACT_LIST_ATTENDED_APPOINTMENT_CONDITION),
+    next_appointment_date: timestampSortExpression(appointmentDateAggregateExpression('MIN', contactAlias, futureAppointmentCondition('a_date'))),
+    last_appointment_date: timestampSortExpression(appointmentDateAggregateExpression('MAX', contactAlias))
   }
 
   return sortableMap[String(sortBy || '')] || createdAtSortExpression
@@ -361,6 +403,19 @@ const buildTextMatchCondition = (expression, operator, value) => {
   return { condition: `${folded} LIKE ?`, params: [normalized] }
 }
 
+const buildAnyTextMatchCondition = (expressions = [], operator, value) => {
+  const conditions = expressions
+    .map(expression => buildTextMatchCondition(expression, operator, value))
+    .filter(Boolean)
+  if (!conditions.length) return null
+
+  const joiner = ['is_not', 'not_contains', 'empty'].includes(operator) ? ' AND ' : ' OR '
+  return {
+    condition: `(${conditions.map(item => item.condition).join(joiner)})`,
+    params: conditions.flatMap(item => item.params || [])
+  }
+}
+
 const buildNumberMatchCondition = (expression, operator, value, valueTo) => {
   if (operator === 'empty') return { condition: `COALESCE(${expression}, 0) = 0`, params: [] }
   if (operator === 'not_empty') return { condition: `COALESCE(${expression}, 0) != 0`, params: [] }
@@ -464,6 +519,9 @@ const paymentNumberExpression = (field, contactAlias = 'c') => {
   if (field === 'total_paid') {
     return `(SELECT COALESCE(SUM(p_num.amount), 0) FROM payments p_num WHERE p_num.contact_id = ${contactAlias}.id AND ${paymentSuccessPredicate('p_num')})`
   }
+  if (field === 'average_payment_amount') {
+    return `(SELECT COALESCE(AVG(p_num.amount), 0) FROM payments p_num WHERE p_num.contact_id = ${contactAlias}.id AND ${paymentSuccessPredicate('p_num')})`
+  }
   return ''
 }
 
@@ -471,6 +529,10 @@ const appointmentNumberExpression = (field, contactAlias = 'c') => {
   if (field === 'appointments_count') return appointmentCountExpression(contactAlias)
   if (field === 'active_appointments_count') return appointmentCountExpression(contactAlias, CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION)
   if (field === 'attended_appointments_count') return appointmentCountExpression(contactAlias, CONTACT_LIST_ATTENDED_APPOINTMENT_CONDITION)
+  if (field === 'future_appointments_count') return appointmentCountExpression(contactAlias, futureAppointmentCondition('a_count'))
+  if (field === 'past_appointments_count') return appointmentCountExpression(contactAlias, pastAppointmentCondition('a_count'))
+  if (field === 'cancelled_appointments_count') return appointmentCountExpression(contactAlias, appointmentCancelledOnlyCondition('a_count'))
+  if (field === 'no_show_appointments_count') return appointmentCountExpression(contactAlias, appointmentNoShowCondition('a_count'))
   return ''
 }
 
@@ -677,24 +739,47 @@ const buildCustomFieldCondition = (rule, contactAlias = 'c') => {
 const buildSessionFieldTextCondition = (rule, contactAlias = 'c') => {
   const sessionAlias = 's_adv'
   const fields = {
-    landing_page: `COALESCE(${sessionAlias}.page_url, ${sessionAlias}.landing_page, '')`,
+    landing_page: `${sessionAlias}.page_url`,
     page_url: `${sessionAlias}.page_url`,
     referrer_url: `${sessionAlias}.referrer_url`,
+    event_name: `${sessionAlias}.event_name`,
     utm_source: `${sessionAlias}.utm_source`,
     utm_medium: `COALESCE(${sessionAlias}.utm_medium, ${sessionAlias}.adset_name, '')`,
     utm_campaign: `COALESCE(${sessionAlias}.utm_campaign, ${sessionAlias}.campaign_name, '')`,
     utm_content: `COALESCE(${sessionAlias}.utm_content, ${sessionAlias}.ad_name, '')`,
     utm_term: `${sessionAlias}.utm_term`,
+    gclid: `${sessionAlias}.gclid`,
+    fbclid: `${sessionAlias}.fbclid`,
+    msclkid: `${sessionAlias}.msclkid`,
+    ttclid: `${sessionAlias}.ttclid`,
+    wbraid: `${sessionAlias}.wbraid`,
+    gbraid: `${sessionAlias}.gbraid`,
+    channel: `${sessionAlias}.channel`,
     source_platform: `${sessionAlias}.source_platform`,
     site_source_name: `${sessionAlias}.site_source_name`,
+    campaign_id: `${sessionAlias}.campaign_id`,
     campaign_name: `COALESCE(${sessionAlias}.campaign_name, ${sessionAlias}.utm_campaign, '')`,
+    adset_id: `${sessionAlias}.adset_id`,
     adset_name: `COALESCE(${sessionAlias}.adset_name, ${sessionAlias}.utm_medium, '')`,
     ad_name: `COALESCE(${sessionAlias}.ad_name, ${sessionAlias}.utm_content, '')`,
     ad_id: `${sessionAlias}.ad_id`,
+    creative_id: `${sessionAlias}.creative_id`,
+    ad_position: `${sessionAlias}.ad_position`,
+    network: `${sessionAlias}.network`,
+    match_type: `${sessionAlias}.match_type`,
+    keyword: `${sessionAlias}.keyword`,
+    search_query: `${sessionAlias}.search_query`,
     device_type: `${sessionAlias}.device_type`,
     browser: `${sessionAlias}.browser`,
     os: `${sessionAlias}.os`,
     placement: `${sessionAlias}.placement`,
+    tracking_source: `${sessionAlias}.tracking_source`,
+    site_id: `${sessionAlias}.site_id`,
+    site_name: `${sessionAlias}.site_name`,
+    site_type: `${sessionAlias}.site_type`,
+    form_site_id: `${sessionAlias}.form_site_id`,
+    form_site_name: `${sessionAlias}.form_site_name`,
+    conversion_type: `${sessionAlias}.conversion_type`,
     geo_city: `${sessionAlias}.geo_city`,
     geo_region: `${sessionAlias}.geo_region`,
     geo_country: `${sessionAlias}.geo_country`
@@ -714,6 +799,61 @@ const buildSessionFieldTextCondition = (rule, contactAlias = 'c') => {
         AND ${valueCondition.condition}
     )`,
     params: valueCondition.params
+  }
+}
+
+const buildSessionDateCondition = (rule, contactAlias = 'c') => {
+  const sessionAlias = 's_date'
+  const fields = {
+    session_started_at: `${sessionAlias}.started_at`,
+    session_created_at: `${sessionAlias}.created_at`
+  }
+  const expression = fields[rule.field]
+  if (!expression) return null
+
+  const dateCondition = buildDateMatchCondition(expression, rule.operator, rule.value, rule.valueTo, rule.timezone)
+  if (!dateCondition) return null
+
+  return {
+    condition: `EXISTS (
+      SELECT 1
+      FROM sessions ${sessionAlias}
+      WHERE ${sessionContactMatchCondition(sessionAlias, contactAlias)}
+        AND ${dateCondition.condition}
+    )`,
+    params: dateCondition.params
+  }
+}
+
+const buildMetaAdFieldCondition = (rule, contactAlias = 'c') => {
+  const alias = 'ma_adv'
+  const fields = {
+    campaign_name: `${alias}.campaign_name`,
+    campaign_id: `${alias}.campaign_id`,
+    adset_name: `${alias}.adset_name`,
+    adset_id: `${alias}.adset_id`,
+    ad_name: `${alias}.ad_name`,
+    ad_id: `${alias}.ad_id`,
+    attribution_ad_name: `${alias}.ad_name`,
+    attribution_ad_id: `${alias}.ad_id`,
+    creative_id: `${alias}.creative_id`,
+    creative_type: `${alias}.creative_type`
+  }
+  const expression = fields[rule.field]
+  if (!expression) return null
+
+  const textCondition = buildTextMatchCondition(expression, rule.operator, rule.value)
+  if (!textCondition) return null
+
+  return {
+    condition: `EXISTS (
+      SELECT 1
+      FROM meta_ads ${alias}
+      WHERE NULLIF(${contactAlias}.attribution_ad_id, '') IS NOT NULL
+        AND ${alias}.ad_id = ${contactAlias}.attribution_ad_id
+        AND ${textCondition.condition}
+    )`,
+    params: textCondition.params
   }
 }
 
@@ -798,10 +938,16 @@ const buildTrackingFiltersCondition = (trackingFilters = {}, contactAlias = 'c')
 const buildPaymentExistsRule = (rule, contactAlias = 'c') => {
   const alias = 'p_adv'
   const textFields = {
+    payment_id: `${alias}.id`,
+    public_payment_id: `${alias}.public_payment_id`,
+    payment_title: `${alias}.title`,
+    payment_description: `${alias}.description`,
+    payment_reference: `${alias}.reference`,
     payment_status: `${alias}.status`,
     payment_provider: `${alias}.payment_provider`,
     payment_mode: `${alias}.payment_mode`,
-    payment_method: `${alias}.payment_method`
+    payment_method: `${alias}.payment_method`,
+    payment_currency: `${alias}.currency`
   }
 
   if (textFields[rule.field]) {
@@ -831,8 +977,13 @@ const buildPaymentExistsRule = (rule, contactAlias = 'c') => {
     })
   }
 
-  if (rule.field === 'payment_date') {
-    const dateCondition = buildDateMatchCondition(`COALESCE(${alias}.paid_at, ${alias}.date, ${alias}.created_at)`, rule.operator, rule.value, rule.valueTo, rule.timezone)
+  const dateFields = {
+    payment_date: `COALESCE(${alias}.paid_at, ${alias}.date, ${alias}.created_at)`,
+    payment_created_at: `${alias}.created_at`
+  }
+
+  if (dateFields[rule.field]) {
+    const dateCondition = buildDateMatchCondition(dateFields[rule.field], rule.operator, rule.value, rule.valueTo, rule.timezone)
     if (!dateCondition) return null
     return buildExistsCondition({
       table: 'payments',
@@ -849,34 +1000,246 @@ const buildPaymentExistsRule = (rule, contactAlias = 'c') => {
 const buildAppointmentExistsRule = (rule, contactAlias = 'c') => {
   const alias = 'a_adv'
   const textFields = {
+    appointment_id: `${alias}.id`,
     appointment_status: `COALESCE(${alias}.appointment_status, ${alias}.status, '')`,
-    appointment_calendar: `${alias}.calendar_id`,
-    appointment_assigned_user: `${alias}.assigned_user_id`,
-    appointment_title: `${alias}.title`
+    appointment_title: `${alias}.title`,
+    appointment_notes: `${alias}.notes`,
+    appointment_address: `${alias}.address`,
+    appointment_google_event_id: `${alias}.google_event_id`,
+    appointment_google_sync_status: `${alias}.google_sync_status`
+  }
+
+  if (rule.field === 'appointment_calendar' || rule.field === 'appointment_assigned_user') {
+    const joins = rule.field === 'appointment_calendar'
+      ? `LEFT JOIN calendars cal_adv ON cal_adv.id = ${alias}.calendar_id OR cal_adv.ghl_calendar_id = ${alias}.calendar_id`
+      : `LEFT JOIN users u_adv ON CAST(u_adv.id AS TEXT) = CAST(${alias}.assigned_user_id AS TEXT)`
+    const expressions = rule.field === 'appointment_calendar'
+      ? [
+          `${alias}.calendar_id`,
+          `CAST(cal_adv.id AS TEXT)`,
+          'cal_adv.ghl_calendar_id',
+          'cal_adv.name',
+          'cal_adv.slug'
+        ]
+      : [
+          `CAST(${alias}.assigned_user_id AS TEXT)`,
+          `CAST(u_adv.id AS TEXT)`,
+          'u_adv.full_name',
+          'u_adv.username',
+          'u_adv.email'
+        ]
+    const textCondition = buildAnyTextMatchCondition(expressions, rule.operator, rule.value)
+    if (!textCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM appointments ${alias}
+        ${joins}
+        WHERE ${alias}.contact_id = ${contactAlias}.id
+          AND ${textCondition.condition}
+      )`,
+      params: textCondition.params
+    }
   }
 
   if (textFields[rule.field]) {
     const textCondition = buildTextMatchCondition(textFields[rule.field], rule.operator, rule.value)
     if (!textCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM appointments ${alias}
+        WHERE ${alias}.contact_id = ${contactAlias}.id
+          AND ${textCondition.condition}
+      )`,
+      params: textCondition.params
+    }
+  }
+
+  const dateFields = {
+    appointment_date: appointmentDateExpression(alias),
+    active_appointment_date: appointmentDateExpression(alias),
+    appointment_end_date: `${alias}.end_time`,
+    appointment_created_at: `COALESCE(${alias}.date_added, ${alias}.created_at)`,
+    appointment_updated_at: `COALESCE(${alias}.date_updated, ${alias}.created_at)`,
+    appointment_confirmation_until: `${alias}.confirmation_badge_until`
+  }
+
+  if (dateFields[rule.field]) {
+    const dateCondition = buildDateMatchCondition(dateFields[rule.field], rule.operator, rule.value, rule.valueTo, rule.timezone)
+    if (!dateCondition) return null
+    const rowCondition = rule.field === 'active_appointment_date'
+      ? `${appointmentActiveCondition(alias)} AND ${dateCondition.condition}`
+      : dateCondition.condition
     return buildExistsCondition({
       table: 'appointments',
       alias,
+      contactAlias,
+      rowCondition,
+      rowParams: dateCondition.params
+    })
+  }
+
+  return null
+}
+
+const buildPaymentPlanExistsRule = (rule, contactAlias = 'c') => {
+  const planAlias = 'pp_adv'
+  const flowAlias = 'pf_adv'
+  const installmentAlias = 'ip_adv'
+
+  const planTextFields = {
+    payment_plan_id: `COALESCE(${planAlias}.id, ${planAlias}.ghl_schedule_id, ${planAlias}.name, ${planAlias}.title, '')`,
+    payment_plan_status: `${planAlias}.status`
+  }
+  if (planTextFields[rule.field]) {
+    const textCondition = buildTextMatchCondition(planTextFields[rule.field], rule.operator, rule.value)
+    if (!textCondition) return null
+    return buildExistsCondition({
+      table: 'payment_plans',
+      alias: planAlias,
       contactAlias,
       rowCondition: textCondition.condition,
       rowParams: textCondition.params
     })
   }
 
-  if (rule.field === 'appointment_date') {
-    const dateCondition = buildDateMatchCondition(`COALESCE(${alias}.start_time, ${alias}.date_added, ${alias}.created_at)`, rule.operator, rule.value, rule.valueTo, rule.timezone)
+  const flowTextFields = {
+    payment_flow_state: `${flowAlias}.current_state`,
+    payment_flow_provider: `${flowAlias}.payment_provider`
+  }
+  if (flowTextFields[rule.field]) {
+    const textCondition = buildTextMatchCondition(flowTextFields[rule.field], rule.operator, rule.value)
+    if (!textCondition) return null
+    return buildExistsCondition({
+      table: 'payment_flows',
+      alias: flowAlias,
+      contactAlias,
+      rowCondition: textCondition.condition,
+      rowParams: textCondition.params
+    })
+  }
+
+  if (rule.field === 'payment_flow_total') {
+    const numberCondition = buildNumberMatchCondition(`${flowAlias}.total_amount`, rule.operator, rule.value, rule.valueTo)
+    if (!numberCondition) return null
+    return buildExistsCondition({
+      table: 'payment_flows',
+      alias: flowAlias,
+      contactAlias,
+      rowCondition: numberCondition.condition,
+      rowParams: numberCondition.params
+    })
+  }
+
+  if (rule.field === 'payment_flow_created_at') {
+    const dateCondition = buildDateMatchCondition(`${flowAlias}.created_at`, rule.operator, rule.value, rule.valueTo, rule.timezone)
     if (!dateCondition) return null
     return buildExistsCondition({
-      table: 'appointments',
-      alias,
+      table: 'payment_flows',
+      alias: flowAlias,
       contactAlias,
-      rowCondition: `${CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION} AND ${dateCondition.condition}`,
+      rowCondition: dateCondition.condition,
       rowParams: dateCondition.params
     })
+  }
+
+  const installmentTextFields = {
+    installment_status: `${installmentAlias}.status`,
+    installment_method: `${installmentAlias}.payment_method`
+  }
+  if (installmentTextFields[rule.field]) {
+    const textCondition = buildTextMatchCondition(installmentTextFields[rule.field], rule.operator, rule.value)
+    if (!textCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM payment_flows ${flowAlias}
+        JOIN installment_payments ${installmentAlias} ON ${installmentAlias}.flow_id = ${flowAlias}.id
+        WHERE ${flowAlias}.contact_id = ${contactAlias}.id
+          AND ${textCondition.condition}
+      )`,
+      params: textCondition.params
+    }
+  }
+
+  if (rule.field === 'installment_due_date') {
+    const dateCondition = buildDateMatchCondition(`${installmentAlias}.due_date`, rule.operator, rule.value, rule.valueTo, rule.timezone)
+    if (!dateCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM payment_flows ${flowAlias}
+        JOIN installment_payments ${installmentAlias} ON ${installmentAlias}.flow_id = ${flowAlias}.id
+        WHERE ${flowAlias}.contact_id = ${contactAlias}.id
+          AND ${dateCondition.condition}
+      )`,
+      params: dateCondition.params
+    }
+  }
+
+  if (rule.field === 'installment_amount') {
+    const numberCondition = buildNumberMatchCondition(`${installmentAlias}.amount`, rule.operator, rule.value, rule.valueTo)
+    if (!numberCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM payment_flows ${flowAlias}
+        JOIN installment_payments ${installmentAlias} ON ${installmentAlias}.flow_id = ${flowAlias}.id
+        WHERE ${flowAlias}.contact_id = ${contactAlias}.id
+          AND ${numberCondition.condition}
+      )`,
+      params: numberCondition.params
+    }
+  }
+
+  return null
+}
+
+const buildAutomationExistsRule = (rule, contactAlias = 'c') => {
+  const enrollmentAlias = 'ae_adv'
+  const automationAlias = 'aut_adv'
+  const textFields = {
+    automation_id: `COALESCE(${enrollmentAlias}.automation_id, ${automationAlias}.id, '')`,
+    automation_name: `${automationAlias}.name`,
+    automation_status: `${enrollmentAlias}.status`,
+    automation_current_step: `${enrollmentAlias}.current_node_id`,
+    automation_wait_kind: `${enrollmentAlias}.wait_kind`
+  }
+
+  if (textFields[rule.field]) {
+    const textCondition = buildTextMatchCondition(textFields[rule.field], rule.operator, rule.value)
+    if (!textCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM automation_enrollments ${enrollmentAlias}
+        LEFT JOIN automations ${automationAlias} ON ${automationAlias}.id = ${enrollmentAlias}.automation_id
+        WHERE ${enrollmentAlias}.contact_id = ${contactAlias}.id
+          AND ${textCondition.condition}
+      )`,
+      params: textCondition.params
+    }
+  }
+
+  const dateFields = {
+    automation_entered_at: `${enrollmentAlias}.entered_at`,
+    automation_updated_at: `${enrollmentAlias}.updated_at`,
+    automation_resume_at: `${enrollmentAlias}.resume_at`
+  }
+
+  if (dateFields[rule.field]) {
+    const dateCondition = buildDateMatchCondition(dateFields[rule.field], rule.operator, rule.value, rule.valueTo, rule.timezone)
+    if (!dateCondition) return null
+    return {
+      condition: `EXISTS (
+        SELECT 1
+        FROM automation_enrollments ${enrollmentAlias}
+        WHERE ${enrollmentAlias}.contact_id = ${contactAlias}.id
+          AND ${dateCondition.condition}
+      )`,
+      params: dateCondition.params
+    }
   }
 
   return null
@@ -930,18 +1293,56 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
     )
   }
 
+  if (field === 'next_appointment_date') {
+    return buildDateMatchCondition(
+      appointmentDateAggregateExpression('MIN', contactAlias, futureAppointmentCondition('a_date')),
+      operator,
+      normalizedRule.value,
+      normalizedRule.valueTo,
+      timezone
+    )
+  }
+
+  if (field === 'last_appointment_date') {
+    return buildDateMatchCondition(
+      appointmentDateAggregateExpression('MAX', contactAlias),
+      operator,
+      normalizedRule.value,
+      normalizedRule.valueTo,
+      timezone
+    )
+  }
+
   const booleanConditions = {
+    has_any_appointment: `EXISTS (SELECT 1 FROM appointments a_bool WHERE a_bool.contact_id = ${contactAlias}.id)`,
     has_payments: `EXISTS (SELECT 1 FROM payments p_bool WHERE p_bool.contact_id = ${contactAlias}.id AND ${paymentLivePredicate('p_bool')})`,
     has_successful_payment: existsCustomerPayment(contactAlias),
     has_failed_payment: `EXISTS (SELECT 1 FROM payments p_bool WHERE p_bool.contact_id = ${contactAlias}.id AND ${paymentFailedPredicate('p_bool')})`,
+    has_saved_payment_method: `(
+      EXISTS (SELECT 1 FROM stripe_payment_methods spm_bool WHERE spm_bool.contact_id = ${contactAlias}.id)
+      OR EXISTS (SELECT 1 FROM conekta_payment_sources cps_bool WHERE cps_bool.contact_id = ${contactAlias}.id)
+      OR EXISTS (SELECT 1 FROM rebill_payment_sources rps_bool WHERE rps_bool.contact_id = ${contactAlias}.id)
+    )`,
     has_active_appointment: existsActiveAppointment(contactAlias),
     has_attended_appointment: `(${existsAttendanceSignal(contactAlias)} OR ${existsAttendedAppointment(contactAlias)})`,
+    has_cancelled_appointment: `EXISTS (
+      SELECT 1
+      FROM appointments a_bool
+      WHERE a_bool.contact_id = ${contactAlias}.id
+        AND ${appointmentCancelledOnlyCondition('a_bool')}
+    )`,
+    has_no_show_appointment: `EXISTS (
+      SELECT 1
+      FROM appointments a_bool
+      WHERE a_bool.contact_id = ${contactAlias}.id
+        AND ${appointmentNoShowCondition('a_bool')}
+    )`,
     has_past_appointment: {
       condition: `EXISTS (
         SELECT 1
         FROM appointments a_bool
         WHERE a_bool.contact_id = ${contactAlias}.id
-          AND ${CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION}
+          AND ${appointmentActiveCondition('a_bool')}
           AND NULLIF(TRIM(CAST(COALESCE(a_bool.start_time, a_bool.date_added) AS TEXT)), '') IS NOT NULL
           AND COALESCE(a_bool.start_time, a_bool.date_added) < ?
       )`,
@@ -952,7 +1353,7 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
         SELECT 1
         FROM appointments a_bool
         WHERE a_bool.contact_id = ${contactAlias}.id
-          AND ${CONTACT_LIST_ACTIVE_APPOINTMENT_CONDITION}
+          AND ${appointmentActiveCondition('a_bool')}
           AND NULLIF(TRIM(CAST(COALESCE(a_bool.start_time, a_bool.date_added) AS TEXT)), '') IS NOT NULL
           AND COALESCE(a_bool.start_time, a_bool.date_added) >= ?
       )`,
@@ -971,6 +1372,26 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
       FROM automation_enrollments ae_bool
       WHERE ae_bool.contact_id = ${contactAlias}.id
         AND ae_bool.status IN ('active', 'waiting')
+    )`,
+    has_payment_plan: `(
+      EXISTS (SELECT 1 FROM payment_plans pp_bool WHERE pp_bool.contact_id = ${contactAlias}.id)
+      OR EXISTS (SELECT 1 FROM payment_flows pf_bool WHERE pf_bool.contact_id = ${contactAlias}.id)
+    )`,
+    has_pending_installment: `EXISTS (
+      SELECT 1
+      FROM payment_flows pf_bool
+      JOIN installment_payments ip_bool ON ip_bool.flow_id = pf_bool.id
+      WHERE pf_bool.contact_id = ${contactAlias}.id
+        AND LOWER(COALESCE(ip_bool.status, '')) IN (${sqlList(PENDING_INSTALLMENT_STATUSES)})
+    )`,
+    has_overdue_installment: `EXISTS (
+      SELECT 1
+      FROM payment_flows pf_bool
+      JOIN installment_payments ip_bool ON ip_bool.flow_id = pf_bool.id
+      WHERE pf_bool.contact_id = ${contactAlias}.id
+        AND LOWER(COALESCE(ip_bool.status, '')) IN (${sqlList(OVERDUE_INSTALLMENT_STATUSES)})
+        AND NULLIF(TRIM(CAST(ip_bool.due_date AS TEXT)), '') IS NOT NULL
+        AND ${timestampCompareExpression('ip_bool.due_date')} < ${currentTimestampExpression()}
     )`
   }
 
@@ -980,45 +1401,76 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
     'landing_page',
     'page_url',
     'referrer_url',
+    'event_name',
     'utm_source',
     'utm_medium',
     'utm_campaign',
     'utm_content',
     'utm_term',
+    'gclid',
+    'fbclid',
+    'msclkid',
+    'ttclid',
+    'wbraid',
+    'gbraid',
+    'channel',
     'source_platform',
     'site_source_name',
+    'campaign_id',
     'campaign_name',
+    'adset_id',
     'adset_name',
     'ad_name',
     'ad_id',
+    'creative_id',
+    'ad_position',
+    'network',
+    'match_type',
+    'keyword',
+    'search_query',
     'device_type',
     'browser',
     'os',
     'placement',
+    'tracking_source',
+    'site_id',
+    'site_name',
+    'site_type',
+    'form_site_id',
+    'form_site_name',
+    'conversion_type',
     'geo_city',
     'geo_region',
     'geo_country'
   ])
-  if (sessionFields.has(field)) return buildSessionFieldTextCondition(normalizedRule, contactAlias)
+  const metaAdFields = new Set(['campaign_name', 'campaign_id', 'adset_name', 'adset_id', 'ad_name', 'ad_id', 'creative_id', 'creative_type'])
+  if (sessionFields.has(field) || metaAdFields.has(field)) {
+    const sessionCondition = sessionFields.has(field) ? buildSessionFieldTextCondition(normalizedRule, contactAlias) : null
+    const metaCondition = metaAdFields.has(field) ? buildMetaAdFieldCondition(normalizedRule, contactAlias) : null
+    const conditions = [sessionCondition, metaCondition].filter(Boolean)
+    if (conditions.length === 1) return conditions[0]
+    if (conditions.length > 1) {
+      return {
+        condition: `(${conditions.map(item => item.condition).join(' OR ')})`,
+        params: conditions.flatMap(item => item.params || [])
+      }
+    }
+  }
+
+  const sessionDateCondition = buildSessionDateCondition(normalizedRule, contactAlias)
+  if (sessionDateCondition) return sessionDateCondition
 
   const paymentExists = buildPaymentExistsRule(normalizedRule, contactAlias)
   if (paymentExists) return paymentExists
 
+  const paymentPlanExists = buildPaymentPlanExistsRule(normalizedRule, contactAlias)
+  if (paymentPlanExists) return paymentPlanExists
+
   const appointmentExists = buildAppointmentExistsRule(normalizedRule, contactAlias)
   if (appointmentExists) return appointmentExists
 
-  if (field === 'automation_status') {
-    const alias = 'ae_adv'
-    const textCondition = buildTextMatchCondition(`${alias}.status`, operator, normalizedRule.value)
-    if (!textCondition) return null
-    return buildExistsCondition({
-      table: 'automation_enrollments',
-      alias,
-      contactAlias,
-      rowCondition: textCondition.condition,
-      rowParams: textCondition.params
-    })
-  }
+  const automationExists = buildAutomationExistsRule(normalizedRule, contactAlias)
+  if (automationExists) return automationExists
 
   return null
 }

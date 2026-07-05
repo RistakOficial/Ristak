@@ -150,6 +150,61 @@ test('buildContactListWhere parametriza la fecha actual en citas futuras', () =>
   assert.match(String(where.params.at(-1)), /^\d{4}-\d{2}-\d{2}T/)
 })
 
+test('buildContactListWhere conecta filtros avanzados con catalogos reales', () => {
+  const where = buildContactListWhere({
+    alias: 'c',
+    advancedFilters: {
+      groups: [{
+        mode: 'all',
+        rules: [
+          { field: 'automation_id', operator: 'is', value: 'auto_1' },
+          { field: 'payment_flow_state', operator: 'is', value: 'installment_plan_active' },
+          { field: 'installment_due_date', operator: 'before', value: '2026-07-10' },
+          { field: 'appointment_calendar', operator: 'is', value: 'cal_1' },
+          { field: 'campaign_id', operator: 'is', value: 'cmp_1' }
+        ]
+      }]
+    }
+  })
+
+  assert.match(where.whereClause, /FROM automation_enrollments ae_adv/)
+  assert.match(where.whereClause, /LEFT JOIN automations aut_adv/)
+  assert.match(where.whereClause, /FROM payment_flows pf_adv/)
+  assert.match(where.whereClause, /JOIN installment_payments ip_adv/)
+  assert.match(where.whereClause, /LEFT JOIN calendars cal_adv/)
+  assert.match(where.whereClause, /FROM sessions s_adv/)
+  assert.match(where.whereClause, /FROM meta_ads ma_adv/)
+  assert.ok(where.params.includes('auto_1'))
+  assert.ok(where.params.includes('installment_plan_active'))
+  assert.ok(where.params.includes('cal_1'))
+  assert.ok(where.params.includes('cmp_1'))
+})
+
+test('buildContactListWhere soporta condiciones booleanas nuevas de pagos y citas', () => {
+  const where = buildContactListWhere({
+    alias: 'c',
+    advancedFilters: {
+      groups: [{
+        mode: 'all',
+        rules: [
+          { field: 'has_saved_payment_method', operator: 'yes' },
+          { field: 'has_overdue_installment', operator: 'yes' },
+          { field: 'has_no_show_appointment', operator: 'no' },
+          { field: 'cancelled_appointments_count', operator: 'gt', value: '0' }
+        ]
+      }]
+    }
+  })
+
+  assert.match(where.whereClause, /FROM stripe_payment_methods spm_bool/)
+  assert.match(where.whereClause, /FROM conekta_payment_sources cps_bool/)
+  assert.match(where.whereClause, /FROM rebill_payment_sources rps_bool/)
+  assert.match(where.whereClause, /JOIN installment_payments ip_bool/)
+  assert.match(where.whereClause, /no_show|noshow/)
+  assert.match(where.whereClause, /COUNT\(\*\)/)
+  assert.ok(where.params.includes(0))
+})
+
 test('el filtro Clientes incluye pagos exitosos test sin meterlos al total pagado', () => {
   const where = buildContactListWhere({
     alias: 'c',
@@ -186,5 +241,6 @@ test('buildContactListWhere interpreta fechas calendario con timezone de negocio
 
 test('getContactListSortExpression solo expone ordenamientos permitidos', () => {
   assert.match(getContactListSortExpression('priority', 'c', 'ps'), /COALESCE\(ps\.customer_payments_count, ps\.purchases_count, 0\)/)
+  assert.match(getContactListSortExpression('next_appointment_date', 'c', 'ps'), /MIN\(COALESCE\(a_date\.start_time/)
   assert.match(getContactListSortExpression('unknown_sort', 'c', 'ps'), /c\.created_at/)
 })

@@ -64,7 +64,12 @@ const groupModeOptions = [
 const catalogTypeByFieldCatalog: Record<NonNullable<ContactAdvancedField['catalog']>, GlobalSearchItemType> = {
   campaigns: 'campaign',
   adsets: 'adset',
-  ads: 'ad'
+  ads: 'ad',
+  automations: 'automation',
+  calendars: 'calendar',
+  users: 'user',
+  payments: 'payment',
+  payment_plans: 'payment_plan'
 }
 
 const customFieldKey = (field: ContactCustomFieldDefinition) =>
@@ -115,7 +120,12 @@ const fieldFromChoice = (choice: ContactFilterFieldChoice): ContactAdvancedField
   placeholder: choice.placeholder
 })
 
-const isCatalogIdField = (fieldKey: string) => fieldKey.endsWith('_id') || fieldKey === 'attribution_ad_id'
+const isCatalogIdField = (fieldKey: string) => (
+  fieldKey.endsWith('_id') ||
+  fieldKey === 'attribution_ad_id' ||
+  fieldKey === 'appointment_calendar' ||
+  fieldKey === 'appointment_assigned_user'
+)
 
 const optionFromCatalogItem = (field: ContactAdvancedField, item: GlobalSearchItem): ContactAdvancedOption => ({
   value: isCatalogIdField(field.key) ? item.id : item.title || item.id,

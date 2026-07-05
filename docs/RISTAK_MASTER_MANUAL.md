@@ -297,20 +297,30 @@ Capacidades:
   tecnicos como "anidado". Cada campo debe renderizar el control congruente con
   su tipo: fechas con selector de fecha, cantidades/importes con valor numerico,
   campos booleanos como si/no, listas conocidas como dropdown y campañas,
-  conjuntos o anuncios como busqueda contra el catalogo global de Meta Ads.
+  conjuntos, anuncios, automatizaciones, calendarios, usuarios, pagos y planes
+  como busqueda contra catalogos reales.
 - Filtros avanzados combinables en la lista de contactos. El endpoint
   `/api/contacts` aplica del lado servidor los filtros rapidos (todos, leads,
   citados, asistencias, clientes), conserva compatibilidad con filtros legacy de
   tracking (paginas, fuentes, dispositivos, navegadores, sistemas,
   placements/anuncios) y aplica condiciones avanzadas por grupos AND/OR sobre
   etiquetas, campos personalizados, fechas de creacion/actualizacion, citas,
-  asistencias, pagos, atribucion, tracking y automatizaciones. Las fechas de
-  negocio se interpretan en la zona horaria de la cuenta y los pagos usan estados
-  live/exitosos/fallidos normalizados. La clasificacion CRM `Cliente` se activa
-  con cualquier pago exitoso del contacto, incluyendo `payment_mode = test`,
-  para poder probar checkouts sandbox de punta a punta. Las metricas financieras
-  de la lista (`total_paid`, LTV, conteos live y reportes de ingresos) siguen
-  excluyendo pagos test.
+  asistencia, calendarios, usuarios asignados, pagos, metodos guardados, planes
+  de pago, parcialidades, atribucion, UTM/tracking, anuncios Meta y
+  automatizaciones. Las citas pueden filtrarse por estado, fecha de cualquier
+  cita, cita activa, proxima cita, ultima cita, citas futuras/pasadas,
+  canceladas, inasistencias y confirmacion vigente. Los pagos pueden filtrarse
+  por pago especifico, importe, moneda, proveedor, metodo, modo, estado,
+  referencia, concepto y fecha; los planes/parcialidades por estado, proveedor,
+  total, fecha, parcialidad pendiente o parcialidad vencida. Las
+  automatizaciones pueden filtrarse por automatizacion especifica, nombre,
+  estado, paso actual, tipo de espera y fechas de entrada/actualizacion/reanudar.
+  Las fechas de negocio se interpretan en la zona horaria de la cuenta y los
+  pagos usan estados live/exitosos/fallidos normalizados. La clasificacion CRM
+  `Cliente` se activa con cualquier pago exitoso del contacto, incluyendo
+  `payment_mode = test`, para poder probar checkouts sandbox de punta a punta.
+  Las metricas financieras de la lista (`total_paid`, LTV, conteos live y
+  reportes de ingresos) siguen excluyendo pagos test.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
