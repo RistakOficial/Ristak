@@ -1101,15 +1101,21 @@ function hasPaymentPostAction(settings = {}) {
   return Boolean(cleanString(source.action))
 }
 
+const PAYMENT_POST_SUCCESS_MESSAGE_DEFAULT = 'Tu pago fue realizado correctamente. Gracias por tu compra.'
+
+function defaultPaymentPostActionForBlock(site, settings = {}) {
+  return {
+    action: shouldDefaultLandingBlockToNextPage(site, settings) ? 'next_page' : 'success_message',
+    message: PAYMENT_POST_SUCCESS_MESSAGE_DEFAULT,
+    pageId: '',
+    url: ''
+  }
+}
+
 function applyPaymentBlockCreateDefaults(site, settings = {}) {
   const next = isPlainObject(settings) ? { ...settings } : {}
-  if (shouldDefaultLandingBlockToNextPage(site, next) && !hasPaymentPostAction(next)) {
-    next.postPayment = {
-      action: 'next_page',
-      message: '',
-      pageId: '',
-      url: ''
-    }
+  if (!hasPaymentPostAction(next)) {
+    next.postPayment = defaultPaymentPostActionForBlock(site, next)
   }
   return next
 }
@@ -10960,11 +10966,14 @@ export async function updateBlock(siteId, blockId, input = {}) {
     ? validateBlockType(input.blockType || input.block_type)
     : existing.block_type
   const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
-  const nextSettings = input.settings === undefined
+  let nextSettings = input.settings === undefined
     ? parseJson(existing.settings_json, {})
     : isPlainObject(input.settings)
       ? input.settings
       : {}
+  if (blockType === 'payment') {
+    nextSettings = applyPaymentBlockCreateDefaults(site, nextSettings)
+  }
   await assertUniqueSystemFieldForInput(siteId, site, { settings: nextSettings }, blockType, blockId)
 
   await db.run(`
@@ -18978,8 +18987,12 @@ function normalizePaymentPostActionKind(value) {
 }
 
 function resolvePaymentPostAction(settings = {}, paymentGate = {}, block = {}, context = {}) {
-  const source = settings.postPayment && typeof settings.postPayment === 'object' ? settings.postPayment : {}
-  const action = normalizePaymentPostActionKind(source.action)
+  const source = settings.postPayment && typeof settings.postPayment === 'object'
+    ? settings.postPayment
+    : settings.post_payment && typeof settings.post_payment === 'object'
+      ? settings.post_payment
+      : {}
+  let action = normalizePaymentPostActionKind(source.action)
   const site = context.site
   const pages = Array.isArray(context.pages) ? context.pages : normalizeSitePages(site)
   const pageId = getBlockPageId(block, pages)
@@ -18992,13 +19005,19 @@ function resolvePaymentPostAction(settings = {}, paymentGate = {}, block = {}, c
     url = next ? buildPageHref(next.id, context) : ''
   } else if (action === 'specific_page') {
     const targetPageId = cleanString(source.pageId || source.targetPageId)
-    if (targetPageId) url = buildPageHref(targetPageId, context)
+    if (targetPageId && pages.some(page => page.id === targetPageId)) {
+      url = buildPageHref(targetPageId, context)
+    }
+  }
+
+  if (action !== 'success_message' && !url) {
+    action = 'success_message'
   }
 
   return {
     action,
     url,
-    message: cleanString(source.message || paymentGate.paidMessage || 'Pago confirmado. Gracias.', 300)
+    message: cleanString(source.message || paymentGate.paidMessage || PAYMENT_POST_SUCCESS_MESSAGE_DEFAULT, 300)
   }
 }
 

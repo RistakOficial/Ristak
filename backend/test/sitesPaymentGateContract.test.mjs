@@ -194,7 +194,8 @@ test('payment blocks created on the final funnel page keep success message by de
     })
 
     const block = findPaymentBlock(updated)
-    assert.equal(block?.settings?.postPayment, undefined)
+    assert.equal(block?.settings?.postPayment?.action, 'success_message')
+    assert.equal(block?.settings?.postPayment?.message, 'Tu pago fue realizado correctamente. Gracias por tu compra.')
 
     const html = await renderPublicSiteHtml(updated, {
       pageId: 'page-2',
@@ -207,6 +208,63 @@ test('payment blocks created on the final funnel page keep success message by de
   } finally {
     await deleteSite(site.id).catch(() => undefined)
   }
+})
+
+test('payment post action renders a specific page destination', async () => {
+  const site = paymentSite({
+    pageId: 'page-1',
+    postPayment: { action: 'specific_page', pageId: 'page-2' }
+  })
+  site.theme.pages = [
+    { id: 'page-1', title: 'Pago', sortOrder: 0 },
+    { id: 'page-2', title: 'Gracias', sortOrder: 1 }
+  ]
+
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /data-post-action="specific_page"/)
+  assert.match(html, /data-post-url="\?page=page-2"/)
+})
+
+test('payment post action renders a safe external redirect URL', async () => {
+  const html = await renderPublicSiteHtml(paymentSite({
+    postPayment: { action: 'redirect_url', url: 'https://example.com/gracias' }
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /data-post-action="redirect_url"/)
+  assert.match(html, /data-post-url="https:\/\/example\.com\/gracias"/)
+})
+
+test('payment post action falls back to success message when destination is missing or unsafe', async () => {
+  const missingPageHtml = await renderPublicSiteHtml(paymentSite({
+    postPayment: { action: 'specific_page', pageId: 'missing-page' }
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(missingPageHtml, /data-post-action="success_message"/)
+  assert.match(missingPageHtml, /data-post-url=""/)
+
+  const unsafeUrlHtml = await renderPublicSiteHtml(paymentSite({
+    postPayment: { action: 'redirect_url', url: 'javascript:alert(1)' }
+  }), {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(unsafeUrlHtml, /data-post-action="success_message"/)
+  assert.match(unsafeUrlHtml, /data-post-url=""/)
 })
 
 test('E3: pay button renders the configured icon on the published page', async () => {
