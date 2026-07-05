@@ -4411,9 +4411,14 @@ function extractMessageMedia(message = {}) {
       mediaUrl: '',
       mediaMimeType: '',
       mediaFilename: '',
-      mediaDurationMs: null
+      mediaDurationMs: null,
+      mediaIsVoice: false
     }
   }
+
+  const durationMs = Number(media.durationMs || media.duration_ms || media.durationMillis || media.duration_millis || 0)
+  const durationSeconds = Number(media.durationSeconds || media.duration_seconds || 0)
+  const ambiguousDuration = Number(media.duration || 0)
 
   return {
     mediaUrl: cleanString(
@@ -4437,7 +4442,14 @@ function extractMessageMedia(message = {}) {
     ),
     mediaMimeType: cleanString(media.mimeType || media.mime_type || media.mimetype || media.contentType || media.content_type),
     mediaFilename: cleanString(media.filename || media.fileName || media.file_name || media.originalFilename || media.original_filename || media.name),
-    mediaDurationMs: Number(media.durationMs || media.duration_ms || 0) || null
+    mediaDurationMs: durationMs > 0
+      ? Math.round(durationMs)
+      : durationSeconds > 0
+        ? Math.round(durationSeconds * 1000)
+        : ambiguousDuration > 0
+          ? Math.round(ambiguousDuration <= 3600 ? ambiguousDuration * 1000 : ambiguousDuration)
+          : null,
+    mediaIsVoice: Boolean(media.voice || media.isVoice || media.is_voice || media.ptt)
   }
 }
 
@@ -5744,6 +5756,8 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     mediaUrl: media.mediaUrl || '',
     mediaMimeType: media.mediaMimeType || '',
     mediaFilename: media.mediaFilename || '',
+    mediaDurationMs: media.mediaDurationMs || null,
+    mediaIsVoice: Boolean(media.mediaIsVoice),
     buttonId: buttonReply?.id || '',
     buttonPayload: buttonReply?.payload || '',
     buttonTitle: buttonReply?.title || '',
@@ -6057,6 +6071,9 @@ export async function captureQrChatMessage({
       text: result.messageText,
       messageType: result.messageType,
       mediaUrl: result.mediaUrl || result.media_url || '',
+      mediaFilename: result.mediaFilename || result.media_filename || '',
+      mediaDurationMs: result.mediaDurationMs || result.media_duration_ms || null,
+      voice: result.mediaIsVoice || result.media_is_voice || false,
       messageId: result.messageId,
       timestamp: result.messageTimestamp
     }).catch(error => {
@@ -6848,6 +6865,9 @@ export async function processYCloudWhatsAppWebhook({ payload, rawBody, signature
         text: result.messageText,
         messageType: result.messageType,
         mediaUrl: result.mediaUrl || result.media_url || '',
+        mediaFilename: result.mediaFilename || result.media_filename || '',
+        mediaDurationMs: result.mediaDurationMs || result.media_duration_ms || null,
+        voice: result.mediaIsVoice || result.media_is_voice || false,
         messageId: result.messageId,
         timestamp: result.messageTimestamp
       }).catch(error => {
@@ -7392,6 +7412,9 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
       text: result.messageText,
       messageType: result.messageType,
       mediaUrl: result.mediaUrl || result.media_url || '',
+      mediaFilename: result.mediaFilename || result.media_filename || '',
+      mediaDurationMs: result.mediaDurationMs || result.media_duration_ms || null,
+      voice: result.mediaIsVoice || result.media_is_voice || false,
       messageId: result.messageId,
       timestamp: result.messageTimestamp
     }).catch(error => {

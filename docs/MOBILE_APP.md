@@ -125,6 +125,12 @@ muestre como preview lateral, estilo WhatsApp. Si el mensaje trae caption real,
 se respeta ese texto como cuerpo de la notificacion y la imagen sigue viajando
 como attachment.
 
+Para notas de voz y documentos entrantes, la push tampoco debe quedarse en
+`Audio` o `Documento`: si hay duracion debe mostrar `🎤 Mensaje de voz (0:02)`,
+y si hay nombre de archivo debe mostrar `📄 <archivo.ext>` con conteo de paginas
+cuando el proveedor lo mande. Estos casos no usan `notificationImageUrl` porque
+no son previews laterales de imagen/video.
+
 En Android el small icon del sistema sigue siendo `ic_stat_ristak` porque
 Android exige un icono monocromatico de la app; las previews multimedia usan
 `notificationImageUrl` cuando existe media real. En iOS/APNs el payload incluye

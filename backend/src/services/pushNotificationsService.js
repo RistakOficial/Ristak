@@ -774,6 +774,192 @@ function getChatMessageType(message = {}) {
   return String(message.messageType || message.type || '').trim().toLowerCase()
 }
 
+function getFirstCleanChatValue(candidates = []) {
+  for (const candidate of candidates) {
+    const value = cleanNotificationText(candidate)
+    if (value) return value
+  }
+  return ''
+}
+
+function getChatMediaFilename(message = {}) {
+  const raw = getFirstCleanChatValue([
+    message.mediaFilename,
+    message.media_filename,
+    message.filename,
+    message.fileName,
+    message.file_name,
+    message.originalFilename,
+    message.original_filename,
+    message.document?.filename,
+    message.document?.fileName,
+    message.document?.file_name,
+    message.file?.filename,
+    message.file?.fileName,
+    message.media?.filename,
+    message.media?.fileName,
+    message.mediaUrl,
+    message.media_url,
+    message.attachmentUrl,
+    message.attachment_url,
+    message.documentUrl,
+    message.document_url
+  ])
+
+  if (!raw) return ''
+
+  let filename = raw
+  try {
+    const parsed = new URL(raw)
+    filename = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || '')
+  } catch {
+    filename = raw.split(/[\\/]/).pop()
+  }
+
+  return cleanNotificationText(filename).slice(0, 160)
+}
+
+function parseChatDurationMs(value, unit = 'ms') {
+  const raw = cleanNotificationText(value)
+  if (!raw) return 0
+
+  if (/^\d{1,2}(?::\d{1,2}){1,2}$/.test(raw)) {
+    const parts = raw.split(':').map(part => Number(part))
+    if (parts.every(Number.isFinite)) {
+      const seconds = parts.reduce((total, part) => total * 60 + part, 0)
+      return seconds > 0 ? seconds * 1000 : 0
+    }
+  }
+
+  const numeric = Number(raw)
+  if (!Number.isFinite(numeric) || numeric <= 0) return 0
+  if (unit === 'seconds') return Math.round(numeric * 1000)
+  if (unit === 'auto') return numeric <= 3600 ? Math.round(numeric * 1000) : Math.round(numeric)
+  return Math.round(numeric)
+}
+
+function getChatMediaDurationMs(message = {}) {
+  const millisecondCandidates = [
+    message.mediaDurationMs,
+    message.media_duration_ms,
+    message.durationMs,
+    message.duration_ms,
+    message.audioDurationMs,
+    message.audio_duration_ms,
+    message.voiceDurationMs,
+    message.voice_duration_ms,
+    message.audio?.durationMs,
+    message.audio?.duration_ms,
+    message.voice?.durationMs,
+    message.voice?.duration_ms,
+    message.media?.durationMs,
+    message.media?.duration_ms
+  ]
+  for (const candidate of millisecondCandidates) {
+    const durationMs = parseChatDurationMs(candidate, 'ms')
+    if (durationMs) return durationMs
+  }
+
+  const secondCandidates = [
+    message.durationSeconds,
+    message.duration_seconds,
+    message.audioDurationSeconds,
+    message.audio_duration_seconds,
+    message.voiceDurationSeconds,
+    message.voice_duration_seconds,
+    message.audio?.durationSeconds,
+    message.audio?.duration_seconds,
+    message.voice?.durationSeconds,
+    message.voice?.duration_seconds,
+    message.media?.durationSeconds,
+    message.media?.duration_seconds
+  ]
+  for (const candidate of secondCandidates) {
+    const durationMs = parseChatDurationMs(candidate, 'seconds')
+    if (durationMs) return durationMs
+  }
+
+  const ambiguousCandidates = [
+    message.duration,
+    message.audio?.duration,
+    message.voice?.duration,
+    message.media?.duration
+  ]
+  for (const candidate of ambiguousCandidates) {
+    const durationMs = parseChatDurationMs(candidate, 'auto')
+    if (durationMs) return durationMs
+  }
+
+  return 0
+}
+
+function formatChatMediaDuration(durationMs = 0) {
+  const numericDurationMs = Number(durationMs || 0)
+  if (!Number.isFinite(numericDurationMs) || numericDurationMs <= 0) return ''
+  const totalSeconds = Math.max(1, Math.round(numericDurationMs / 1000))
+
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = totalSeconds % 60
+  const paddedSeconds = String(seconds).padStart(2, '0')
+  if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${paddedSeconds}`
+  return `${minutes}:${paddedSeconds}`
+}
+
+function isChatAudioType(type = '') {
+  return ['audio', 'voice'].includes(String(type || '').trim().toLowerCase())
+}
+
+function buildChatVoiceBody(message = {}) {
+  const duration = formatChatMediaDuration(getChatMediaDurationMs(message))
+  return duration ? `🎤 Mensaje de voz (${duration})` : '🎤 Mensaje de voz'
+}
+
+function isChatDocumentType(type = '') {
+  return ['document', 'file'].includes(String(type || '').trim().toLowerCase())
+}
+
+function isLikelyDocumentFilename(value = '') {
+  return /\.[a-z0-9]{2,10}$/i.test(cleanNotificationText(value))
+}
+
+function getChatDocumentPageCount(message = {}) {
+  const candidates = [
+    message.pageCount,
+    message.page_count,
+    message.pages,
+    message.mediaPageCount,
+    message.media_page_count,
+    message.mediaPages,
+    message.media_pages,
+    message.documentPageCount,
+    message.document_page_count,
+    message.documentPages,
+    message.document_pages,
+    message.document?.pageCount,
+    message.document?.page_count,
+    message.document?.pages,
+    message.file?.pageCount,
+    message.file?.pages,
+    message.media?.pageCount,
+    message.media?.pages
+  ]
+
+  for (const candidate of candidates) {
+    const count = Number(cleanNotificationText(candidate))
+    if (Number.isFinite(count) && count > 0) return Math.floor(count)
+  }
+
+  return 0
+}
+
+function buildChatDocumentBody(message = {}, bodyText = '') {
+  const filename = getChatMediaFilename(message) || (isLikelyDocumentFilename(bodyText) ? bodyText : '')
+  const pageCount = getChatDocumentPageCount(message)
+  const pageLabel = pageCount ? ` (${pageCount} ${pageCount === 1 ? 'página' : 'páginas'})` : ''
+  return filename ? `📄 ${filename}${pageLabel}` : '📄 Documento'
+}
+
 function isGenericChatMediaText(value = '', type = '') {
   const normalized = cleanNotificationText(value)
     .normalize('NFD')
@@ -790,9 +976,10 @@ function isGenericChatMediaText(value = '', type = '') {
     picture: new Set(['foto', 'picture', 'imagen']),
     video: new Set(['video']),
     gif: new Set(['gif']),
-    audio: new Set(['audio']),
-    voice: new Set(['audio', 'mensaje de voz', 'voice message']),
+    audio: new Set(['audio', 'mensaje de voz', 'nota de voz', 'voice message']),
+    voice: new Set(['audio', 'mensaje de voz', 'nota de voz', 'voice message']),
     document: new Set(['documento', 'document', 'archivo', 'file']),
+    file: new Set(['documento', 'document', 'archivo', 'file']),
     sticker: new Set(['sticker', 'pegatina'])
   }
 
@@ -802,15 +989,23 @@ function isGenericChatMediaText(value = '', type = '') {
 function getChatMessageBody(message = {}) {
   const bodyText = cleanNotificationText(message.text)
   const type = getChatMessageType(message)
+  const bodyIsGeneric = isGenericChatMediaText(bodyText, type)
+  if (isChatDocumentType(type)) {
+    const documentBody = buildChatDocumentBody(message, bodyText)
+    if (!bodyText || bodyIsGeneric || isLikelyDocumentFilename(bodyText)) return documentBody.slice(0, 220)
+  }
+  if (isChatAudioType(type) && (!bodyText || bodyIsGeneric)) return buildChatVoiceBody(message)
+
   const typeLabels = {
     image: '📷 Envió una foto.',
     photo: '📷 Envió una foto.',
     picture: '📷 Envió una foto.',
     video: '🎥 Envió un video.',
     gif: 'GIF',
-    audio: 'Audio',
-    voice: 'Audio',
-    document: 'Documento',
+    audio: buildChatVoiceBody(message),
+    voice: buildChatVoiceBody(message),
+    document: buildChatDocumentBody(message, bodyText),
+    file: buildChatDocumentBody(message, bodyText),
     sticker: 'Sticker',
     location: 'Ubicación',
     contacts: 'Contacto',
@@ -820,7 +1015,7 @@ function getChatMessageBody(message = {}) {
     interactive: 'Respuesta'
   }
 
-  if (bodyText && !isGenericChatMediaText(bodyText, type)) return bodyText.slice(0, 220)
+  if (bodyText && !bodyIsGeneric) return bodyText.slice(0, 220)
 
   return typeLabels[type] || 'Mensaje'
 }
