@@ -27,6 +27,13 @@ import {
   resumeConektaRecurringSubscription,
   updateConektaRecurringSubscription
 } from './conektaPaymentService.js'
+import {
+  cancelRebillRecurringSubscription,
+  createRebillSubscriptionPlanLink,
+  pauseRebillRecurringSubscription,
+  resumeRebillRecurringSubscription,
+  updateRebillRecurringSubscription
+} from './rebillPaymentService.js'
 import { getSubscriptionAuditSummary, hardDeleteTestSubscription } from './paymentRecordSafetyService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
 import { createEntityId, createPublicPaymentId, createRistakId } from '../utils/idGenerator.js'
@@ -50,6 +57,7 @@ const PAST_DUE_STATUSES = new Set(['past_due', 'incomplete'])
 const PUBLIC_PAYMENT_LINK_METHODS = new Set(['stripe_link', 'stripe_payment_link', 'conekta_link', 'conekta_payment_link'])
 const UNSUPPORTED_CLIP_SUBSCRIPTION_METHODS = new Set(['clip', 'clip_link', 'clip_payment_link', 'clip_card'])
 const MERCADOPAGO_LEGACY_LINK_METHODS = new Set(['mercadopago_checkout', 'mercadopago_payment_link'])
+const REBILL_LEGACY_LINK_METHODS = new Set(['rebill', 'rebill_link', 'rebill_payment_link', 'rebill_checkout'])
 
 function makeId() {
   return createEntityId(SUBSCRIPTION_PREFIX)
@@ -117,6 +125,9 @@ function normalizeSubscriptionPaymentMethod(value, provider) {
   const normalizedProvider = cleanString(provider).toLowerCase()
   if (normalizedProvider === 'mercadopago' && MERCADOPAGO_LEGACY_LINK_METHODS.has(normalized)) {
     return 'mercadopago_subscription'
+  }
+  if (normalizedProvider === 'rebill' && REBILL_LEGACY_LINK_METHODS.has(normalized)) {
+    return 'rebill_subscription'
   }
   return normalized
 }
@@ -311,13 +322,17 @@ function rowToApi(row = {}) {
   const conektaCheckout = metadata?.conektaCheckout && typeof metadata.conektaCheckout === 'object'
     ? metadata.conektaCheckout
     : {}
+  const rebillCheckout = metadata?.rebillCheckout && typeof metadata.rebillCheckout === 'object'
+    ? metadata.rebillCheckout
+    : {}
   const startPayment = getSubscriptionStartPayment(metadata || {})
   const stripeCheckoutUrl = cleanString(stripeCheckout.url || stripeCheckout.checkoutUrl)
   const conektaCheckoutUrl = cleanString(conektaCheckout.url || conektaCheckout.checkoutUrl)
+  const rebillCheckoutUrl = cleanString(row.rebill_payment_link_url || rebillCheckout.url || rebillCheckout.paymentLinkUrl)
   const mercadoPagoSubscriptionUrl = (row.payment_mode === 'test'
     ? cleanString(row.mercadopago_sandbox_init_point || row.mercadopago_init_point)
     : cleanString(row.mercadopago_init_point || row.mercadopago_sandbox_init_point))
-  const subscriptionStartUrl = startPayment.paymentUrl || stripeCheckoutUrl || conektaCheckoutUrl || mercadoPagoSubscriptionUrl || null
+  const subscriptionStartUrl = startPayment.paymentUrl || stripeCheckoutUrl || conektaCheckoutUrl || mercadoPagoSubscriptionUrl || rebillCheckoutUrl || null
 
   return {
     id: row.id,
@@ -364,6 +379,15 @@ function rowToApi(row = {}) {
     conektaNextBillingAt: row.conekta_next_billing_at || null,
     conektaCheckoutId: cleanString(conektaCheckout.checkoutId || conektaCheckout.id) || null,
     conektaCheckoutUrl: conektaCheckoutUrl || null,
+    rebillSubscriptionId: row.rebill_subscription_id || null,
+    rebillPlanId: row.rebill_plan_id || null,
+    rebillPaymentLinkId: row.rebill_payment_link_id || null,
+    rebillPaymentLinkUrl: row.rebill_payment_link_url || null,
+    rebillCustomerId: row.rebill_customer_id || null,
+    rebillCardId: row.rebill_card_id || null,
+    rebillNextChargeAt: row.rebill_next_charge_at || null,
+    rebillLastChargeAt: row.rebill_last_charge_at || null,
+    rebillCheckoutUrl: rebillCheckoutUrl || null,
     subscriptionStartPaymentId: startPayment.paymentId || null,
     subscriptionStartPublicPaymentId: startPayment.publicPaymentId || null,
     subscriptionStartPaymentProvider: startPayment.provider || null,
@@ -462,6 +486,14 @@ async function buildSubscriptionRow(payload = {}, existing = {}) {
     conekta_subscription_id: nullableString(payload.conektaSubscriptionId ?? payload.conekta_subscription_id ?? existing.conekta_subscription_id),
     conekta_payment_source_id: nullableString(payload.conektaPaymentSourceId ?? payload.conekta_payment_source_id ?? payload.paymentMethodId ?? existing.conekta_payment_source_id),
     conekta_next_billing_at: nullableDate(payload.conektaNextBillingAt ?? payload.conekta_next_billing_at ?? existing.conekta_next_billing_at, accountTimezone),
+    rebill_subscription_id: nullableString(payload.rebillSubscriptionId ?? payload.rebill_subscription_id ?? existing.rebill_subscription_id),
+    rebill_plan_id: nullableString(payload.rebillPlanId ?? payload.rebill_plan_id ?? existing.rebill_plan_id),
+    rebill_payment_link_id: nullableString(payload.rebillPaymentLinkId ?? payload.rebill_payment_link_id ?? existing.rebill_payment_link_id),
+    rebill_payment_link_url: nullableString(payload.rebillPaymentLinkUrl ?? payload.rebill_payment_link_url ?? existing.rebill_payment_link_url),
+    rebill_customer_id: nullableString(payload.rebillCustomerId ?? payload.rebill_customer_id ?? existing.rebill_customer_id),
+    rebill_card_id: nullableString(payload.rebillCardId ?? payload.rebill_card_id ?? existing.rebill_card_id),
+    rebill_next_charge_at: nullableDate(payload.rebillNextChargeAt ?? payload.rebill_next_charge_at ?? existing.rebill_next_charge_at, accountTimezone),
+    rebill_last_charge_at: nullableDate(payload.rebillLastChargeAt ?? payload.rebill_last_charge_at ?? existing.rebill_last_charge_at, accountTimezone),
     metadata_json: jsonOrNull(payload.metadata ?? payload.metadata_json ?? existing.metadata_json),
     raw_json: jsonOrNull(payload.raw ?? payload.raw_json ?? existing.raw_json)
   }
@@ -573,6 +605,7 @@ function buildSubscriptionStartPaymentInput(row) {
 function getSubscriptionStartPaymentMethod(row = {}) {
   const provider = cleanString(row.payment_provider).toLowerCase()
   if (provider === 'mercadopago') return 'mercadopago_subscription'
+  if (provider === 'rebill') return 'rebill_subscription'
   if (provider === 'conekta') return 'conekta'
   return 'stripe'
 }
@@ -840,6 +873,100 @@ async function attachMercadoPagoSubscriptionIfNeeded(row, payload = {}) {
   }
 }
 
+function applyRebillSubscriptionToRow(row, rebillSubscription) {
+  if (!rebillSubscription) return row
+
+  return {
+    ...row,
+    status: rebillSubscription.status || row.status,
+    payment_method: 'rebill_subscription',
+    payment_provider: 'rebill',
+    payment_mode: rebillSubscription.paymentMode || row.payment_mode,
+    rebill_subscription_id: rebillSubscription.rebillSubscriptionId || row.rebill_subscription_id,
+    rebill_plan_id: rebillSubscription.rebillPlanId || row.rebill_plan_id,
+    rebill_payment_link_id: rebillSubscription.rebillPaymentLinkId || row.rebill_payment_link_id,
+    rebill_payment_link_url: rebillSubscription.rebillPaymentLinkUrl || row.rebill_payment_link_url,
+    rebill_customer_id: rebillSubscription.rebillCustomerId || row.rebill_customer_id,
+    rebill_card_id: rebillSubscription.rebillCardId || row.rebill_card_id,
+    rebill_next_charge_at: rebillSubscription.rebillNextChargeAt || row.rebill_next_charge_at,
+    rebill_last_charge_at: rebillSubscription.rebillLastChargeAt || row.rebill_last_charge_at,
+    next_run_at: rebillSubscription.nextRunAt || row.next_run_at,
+    current_period_start: rebillSubscription.currentPeriodStart || row.current_period_start,
+    current_period_end: rebillSubscription.currentPeriodEnd || row.current_period_end,
+    raw_json: mergeRawJson(row.raw_json, 'rebill', rebillSubscription.raw)
+  }
+}
+
+async function attachRebillSubscriptionIfNeeded(row, payload = {}) {
+  if (row.rebill_subscription_id) return row
+  if (row.rebill_payment_link_id || row.rebill_plan_id) return row
+  if (row.payment_provider !== 'rebill') return row
+  if (row.payment_method !== 'rebill_subscription') return row
+
+  const baseUrl = cleanString(payload.baseUrl || payload.base_url)
+  const currentMetadata = parseJson(row.metadata_json, {})
+  const startPayment = await createSubscriptionStartPaymentRecord(row, baseUrl)
+  const rebillSubscription = await createRebillSubscriptionPlanLink({
+    ristakSubscriptionId: row.id,
+    contactId: row.contact_id,
+    contactName: row.contact_name,
+    contactEmail: row.contact_email,
+    contactPhone: row.contact_phone,
+    name: row.name,
+    description: row.description,
+    amount: row.amount,
+    currency: row.currency,
+    intervalType: row.interval_type,
+    intervalCount: row.interval_count,
+    startDate: row.start_date,
+    cancelAt: row.cancel_at,
+    subscriptionStartPaymentId: startPayment.paymentId,
+    subscriptionStartPublicPaymentId: startPayment.publicPaymentId,
+    publicPaymentId: startPayment.publicPaymentId
+  }, {
+    baseUrl,
+    mode: row.payment_mode
+  })
+
+  const nextRow = applyRebillSubscriptionToRow(row, rebillSubscription)
+  const checkoutUrl = cleanString(nextRow.rebill_payment_link_url)
+
+  await db.run(
+    `UPDATE payments
+     SET status = CASE WHEN status = 'sent' THEN 'pending' ELSE status END,
+         payment_method = 'rebill_subscription',
+         payment_provider = 'rebill',
+         reference = COALESCE(?, reference),
+         updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+    [nextRow.rebill_payment_link_id || nextRow.rebill_plan_id || null, startPayment.paymentId]
+  ).catch(() => undefined)
+
+  return {
+    ...nextRow,
+    metadata_json: jsonOrNull({
+      ...currentMetadata,
+      rebillCheckout: {
+        planId: nextRow.rebill_plan_id || '',
+        paymentLinkId: nextRow.rebill_payment_link_id || '',
+        url: checkoutUrl,
+        status: 'pending_checkout',
+        createdAt: new Date().toISOString()
+      },
+      subscriptionStartPayment: {
+        ...startPayment,
+        paymentUrl: checkoutUrl || startPayment.paymentUrl,
+        publicPaymentUrl: startPayment.paymentUrl,
+        provider: 'rebill',
+        status: 'pending_checkout',
+        rebillPlanId: nextRow.rebill_plan_id || '',
+        rebillPaymentLinkId: nextRow.rebill_payment_link_id || '',
+        createdAt: startPayment.createdAt || new Date().toISOString()
+      }
+    })
+  }
+}
+
 function applyConektaSubscriptionToRow(row, conektaSubscription) {
   if (!conektaSubscription) return row
 
@@ -971,6 +1098,30 @@ async function syncConektaSubscriptionUpdateIfNeeded(row, existing = {}, payload
   return applyConektaSubscriptionToRow(row, conektaSubscription)
 }
 
+async function syncRebillSubscriptionUpdateIfNeeded(row, existing = {}, payload = {}) {
+  if (row.payment_method !== 'rebill_subscription') return row
+  if (!existing.rebill_subscription_id) return attachRebillSubscriptionIfNeeded(row, payload)
+
+  if (row.payment_provider !== 'rebill') {
+    const error = new Error('Esta suscripción ya está activa en Rebill. Cancélala antes de cambiarla a otro método.')
+    error.status = 422
+    throw error
+  }
+
+  const rebillSubscription = await updateRebillRecurringSubscription({
+    rebillSubscriptionId: existing.rebill_subscription_id,
+    name: row.name,
+    description: row.description,
+    amount: row.amount,
+    intervalType: row.interval_type,
+    intervalCount: row.interval_count,
+    nextRunAt: row.next_run_at,
+    mode: existing.payment_mode || row.payment_mode
+  })
+
+  return applyRebillSubscriptionToRow(row, rebillSubscription)
+}
+
 export async function listSubscriptions({ status, refresh = false } = {}) {
   if (refresh) {
     await syncPendingMercadoPagoSubscriptions().catch((error) => {
@@ -1028,6 +1179,7 @@ export async function createSubscription(payload = {}) {
   row = await attachStripeSubscriptionIfNeeded(row, payload)
   row = await attachMercadoPagoSubscriptionIfNeeded(row, payload)
   row = await attachConektaSubscriptionIfNeeded(row, payload)
+  row = await attachRebillSubscriptionIfNeeded(row, payload)
 
   // (PAY-003) El INSERT local va dentro de un try/catch: si falla DESPUÉS de haber
   // creado la suscripción en Stripe, cancelamos esa sub para no dejarla cobrando sin
@@ -1045,9 +1197,12 @@ export async function createSubscription(payload = {}) {
       mercadopago_sandbox_init_point, mercadopago_payer_id, mercadopago_card_id,
       mercadopago_payment_method_id, mercadopago_next_payment_date,
       conekta_customer_id, conekta_plan_id, conekta_subscription_id,
-      conekta_payment_source_id, conekta_next_billing_at, metadata_json, raw_json,
+      conekta_payment_source_id, conekta_next_billing_at,
+      rebill_subscription_id, rebill_plan_id, rebill_payment_link_id, rebill_payment_link_url,
+      rebill_customer_id, rebill_card_id, rebill_next_charge_at, rebill_last_charge_at,
+      metadata_json, raw_json,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
     [
       row.id,
       row.contact_id,
@@ -1089,6 +1244,14 @@ export async function createSubscription(payload = {}) {
       row.conekta_subscription_id,
       row.conekta_payment_source_id,
       row.conekta_next_billing_at,
+      row.rebill_subscription_id,
+      row.rebill_plan_id,
+      row.rebill_payment_link_id,
+      row.rebill_payment_link_url,
+      row.rebill_customer_id,
+      row.rebill_card_id,
+      row.rebill_next_charge_at,
+      row.rebill_last_charge_at,
       row.metadata_json,
       row.raw_json
     ]
@@ -1144,6 +1307,7 @@ export async function updateSubscription(subscriptionId, payload = {}) {
   row = await syncStripeSubscriptionUpdateIfNeeded(row, existing)
   row = await syncMercadoPagoSubscriptionUpdateIfNeeded(row, existing, payload)
   row = await syncConektaSubscriptionUpdateIfNeeded(row, existing, payload)
+  row = await syncRebillSubscriptionUpdateIfNeeded(row, existing, payload)
 
   await db.run(
     `UPDATE subscriptions
@@ -1186,6 +1350,14 @@ export async function updateSubscription(subscriptionId, payload = {}) {
          conekta_subscription_id = ?,
          conekta_payment_source_id = ?,
          conekta_next_billing_at = ?,
+         rebill_subscription_id = ?,
+         rebill_plan_id = ?,
+         rebill_payment_link_id = ?,
+         rebill_payment_link_url = ?,
+         rebill_customer_id = ?,
+         rebill_card_id = ?,
+         rebill_next_charge_at = ?,
+         rebill_last_charge_at = ?,
          metadata_json = ?,
          raw_json = ?,
          updated_at = CURRENT_TIMESTAMP
@@ -1230,6 +1402,14 @@ export async function updateSubscription(subscriptionId, payload = {}) {
       row.conekta_subscription_id,
       row.conekta_payment_source_id,
       row.conekta_next_billing_at,
+      row.rebill_subscription_id,
+      row.rebill_plan_id,
+      row.rebill_payment_link_id,
+      row.rebill_payment_link_url,
+      row.rebill_customer_id,
+      row.rebill_card_id,
+      row.rebill_next_charge_at,
+      row.rebill_last_charge_at,
       row.metadata_json,
       row.raw_json,
       subscriptionId
@@ -1261,6 +1441,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     if (existing.conekta_subscription_id) {
       await pauseConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
     }
+    if (existing.rebill_subscription_id) {
+      await pauseRebillRecurringSubscription(existing.rebill_subscription_id)
+    }
 
     await db.run(
       `UPDATE subscriptions
@@ -1277,6 +1460,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     }
     if (existing.conekta_subscription_id) {
       await resumeConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
+    }
+    if (existing.rebill_subscription_id) {
+      await resumeRebillRecurringSubscription(existing.rebill_subscription_id)
     }
 
     const accountTimezone = await getDefaultSubscriptionTimezone()
@@ -1304,6 +1490,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     if (existing.conekta_subscription_id) {
       await cancelConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
     }
+    if (existing.rebill_subscription_id) {
+      await cancelRebillRecurringSubscription(existing.rebill_subscription_id)
+    }
 
     await db.run(
       `UPDATE subscriptions
@@ -1330,7 +1519,7 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
 export async function deleteSubscription(subscriptionId) {
   const audit = await getSubscriptionAuditSummary(subscriptionId)
   const existing = await db.get(
-    `SELECT id, status, stripe_subscription_id, mercadopago_preapproval_id, mercadopago_preapproval_plan_id, conekta_customer_id, conekta_subscription_id
+    `SELECT id, status, stripe_subscription_id, mercadopago_preapproval_id, mercadopago_preapproval_plan_id, conekta_customer_id, conekta_subscription_id, rebill_subscription_id
      FROM subscriptions
      WHERE id = ? AND COALESCE(status, '') <> 'deleted'
      LIMIT 1`,
@@ -1366,6 +1555,13 @@ export async function deleteSubscription(subscriptionId) {
         logger.warn(`[Suscripciones] No se pudo cancelar la suscripción test en Conekta ${subscriptionId}; se eliminará localmente: ${error.message}`)
       }
     }
+    if (existing?.rebill_subscription_id && existing.status !== 'cancelled') {
+      try {
+        await cancelRebillRecurringSubscription(existing.rebill_subscription_id)
+      } catch (error) {
+        logger.warn(`[Suscripciones] No se pudo cancelar la suscripción test en Rebill ${subscriptionId}; se eliminará localmente: ${error.message}`)
+      }
+    }
 
     const result = await hardDeleteTestSubscription(subscriptionId)
     return result.deleted
@@ -1395,6 +1591,9 @@ export async function deleteSubscription(subscriptionId) {
   }
   if (existing?.conekta_subscription_id && existing.status !== 'cancelled') {
     await cancelConektaRecurringSubscription(existing.conekta_customer_id, existing.conekta_subscription_id)
+  }
+  if (existing?.rebill_subscription_id && existing.status !== 'cancelled') {
+    await cancelRebillRecurringSubscription(existing.rebill_subscription_id)
   }
 
   const result = await db.run(

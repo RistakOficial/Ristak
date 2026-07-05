@@ -1037,10 +1037,26 @@ Alcance:
   `5064 5100 0030 0020`; todas vencen `10/29`, usan CVV `123` salvo
   AmericanExpress con `1234`. Para probar MSI hay que usar tarjetas de credito;
   debito no debe prometer mensualidades.
-- Suscripciones Rebill (`instant-plan`) existen en la documentacion del proveedor,
-  pero no estan cableadas como flujo de suscripciones de Ristak en esta
-  superficie. No se deben presentar como listas hasta implementar UI/API,
-  conciliacion y cancelacion.
+- Suscripciones Rebill: la pantalla de Suscripciones y el flujo movil/PhoneChat
+  permiten crear suscripciones con Rebill cuando la pasarela esta conectada.
+  Ristak crea primero un Plan de Rebill (`POST /v3/plans`) y despues un Payment
+  Link hospedado tipo `plan` (`POST /v3/payment-links`) card-only, sin cupon, con
+  metadata local (`ristakSubscriptionId`, pago inicial y contacto). El cliente se
+  redirige al checkout hospedado de Rebill para autorizar la tarjeta. Ristak
+  guarda `subscriptions.rebill_plan_id`, `rebill_payment_link_id`,
+  `rebill_payment_link_url`, `rebill_subscription_id`, `rebill_customer_id` y
+  `rebill_card_id` para conciliacion posterior.
+- Las suscripciones Rebill solo aceptan frecuencia mensual o anual. Ristak bloquea
+  diario/semanal porque los planes de Rebill documentados usan `month` o `year`.
+  Si la suscripcion tiene fecha final, Ristak calcula `repetitions` para el Plan;
+  si no, queda abierta hasta que se pause o cancele.
+- Despues de autorizar el checkout hospedado, Rebill manda
+  `subscription.created`/`subscription.updated`; Ristak sincroniza el estado local,
+  IDs de proveedor, cliente, tarjeta y proximas fechas de cobro. Los cobros
+  recurrentes llegan como `payment.created`/`payment.updated`; si no existe una
+  fila local para ese cargo, Ristak la crea desde el webhook, la asocia a la
+  suscripcion y resuelve el contacto por metadata local, email o telefono mediante
+  el resolvedor de pagos existente.
 - Cron `rebill-payment-plans`: corre por el registry de crons de integracion y
   solo se activa si Rebill esta conectado en el modo de pago activo. Revisa
   primeros pagos y parcialidades vencidas segun la zona horaria de la cuenta. Si
@@ -1057,8 +1073,9 @@ Alcance:
   y el backend vuelve a consultar Rebill antes de marcar `payments.status='paid'`.
 - Configuracion > Pagos > Rebill valida la organizacion con
   `GET /v3/organizations/me` y, si la app tiene URL publica HTTPS, intenta crear o
-  actualizar automaticamente el webhook con eventos `payment.created` y
-  `payment.updated`. Si la URL publica no existe, queda en estado
+  actualizar automaticamente el webhook con eventos `payment.created`,
+  `payment.updated`, `subscription.created` y `subscription.updated`. Si la URL
+  publica no existe, queda en estado
   `pending_public_url` y la UI muestra un aviso simple; no expone botones para
   copiar URL o eventos porque la configuracion normal es automatica.
 - Variables de automatizacion: `payment.rebill_payment_id`,
@@ -1067,7 +1084,8 @@ Alcance:
 
 Persistencia:
 
-- `payments.payment_provider='rebill'` y `payments.payment_method='rebill_checkout'`.
+- `payments.payment_provider='rebill'` y `payments.payment_method='rebill_checkout'`
+  para cobros unicos; en suscripciones usa `rebill_subscription`.
 - Tarjetas guardadas Rebill en `rebill_payment_sources` (`contact_id`,
   `rebill_customer_id`, `rebill_card_id`, `brand`, `last4`, `mode`, `is_default`).
   Es metadata de fuente de pago; los datos sensibles permanecen en Rebill.
@@ -1081,6 +1099,11 @@ Persistencia:
 - IDs de proveedor en `payments.rebill_payment_id`,
   `payments.rebill_subscription_id`, `payments.rebill_customer_id` y
   `payments.rebill_card_id`.
+- IDs de suscripcion en `subscriptions.rebill_subscription_id`,
+  `subscriptions.rebill_plan_id`, `subscriptions.rebill_payment_link_id`,
+  `subscriptions.rebill_payment_link_url`, `subscriptions.rebill_customer_id`,
+  `subscriptions.rebill_card_id`, `subscriptions.rebill_next_charge_at` y
+  `subscriptions.rebill_last_charge_at`.
 - `installment_payments.rebill_payment_id` sincroniza la referencia del pago Rebill
   confirmado para que el espejo `payment_plans.schedule_json` refleje el estado
   real de cada parcialidad.

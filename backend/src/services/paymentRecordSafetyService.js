@@ -387,7 +387,7 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
   const subscription = await db.get(
     `SELECT id, contact_id, status, payment_method, payment_provider,
             stripe_subscription_id, mercadopago_preapproval_id, mercadopago_sandbox_init_point,
-            conekta_subscription_id, payment_mode, metadata_json, raw_json
+            conekta_subscription_id, rebill_subscription_id, rebill_plan_id, payment_mode, metadata_json, raw_json
      FROM subscriptions
      WHERE id = ?
      LIMIT 1`,
@@ -403,7 +403,9 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
     `%${subscription.id}%`,
     subscription.stripe_subscription_id ? `%${subscription.stripe_subscription_id}%` : '',
     subscription.mercadopago_preapproval_id ? `%${subscription.mercadopago_preapproval_id}%` : '',
-    subscription.conekta_subscription_id ? `%${subscription.conekta_subscription_id}%` : ''
+    subscription.conekta_subscription_id ? `%${subscription.conekta_subscription_id}%` : '',
+    subscription.rebill_subscription_id ? `%${subscription.rebill_subscription_id}%` : '',
+    subscription.rebill_plan_id ? `%${subscription.rebill_plan_id}%` : ''
   ].filter(Boolean)
 
   if (!patterns.length) {
@@ -418,12 +420,18 @@ export async function getSubscriptionAuditSummary(subscriptionId) {
     }
   }
 
-  const where = patterns.map(() => 'metadata_json LIKE ?').join(' OR ')
+  const where = [
+    patterns.map(() => 'metadata_json LIKE ?').join(' OR '),
+    subscription.rebill_subscription_id ? 'rebill_subscription_id = ?' : ''
+  ].filter(Boolean).join(' OR ')
   const payments = await db.all(
     `SELECT *
      FROM payments
      WHERE ${where}`,
-    patterns
+    [
+      ...patterns,
+      ...(subscription.rebill_subscription_id ? [subscription.rebill_subscription_id] : [])
+    ]
   )
   const linkedPayments = payments || []
   const protectedPayments = linkedPayments.filter(paymentHasLedgerActivity)

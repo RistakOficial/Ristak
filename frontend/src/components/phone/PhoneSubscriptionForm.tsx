@@ -39,18 +39,20 @@ interface SubscriptionDraft {
   startDate: string
 }
 
-type SubscriptionGatewayProvider = Exclude<PaymentGatewayProvider, 'clip' | 'rebill'>
+type SubscriptionGatewayProvider = Exclude<PaymentGatewayProvider, 'clip'>
 
 const PROVIDER_LABELS: Record<SubscriptionGatewayProvider, string> = {
   stripe: 'Stripe',
   conekta: 'Conekta',
-  mercadopago: 'Mercado Pago'
+  mercadopago: 'Mercado Pago',
+  rebill: 'Rebill'
 }
 
 const PROVIDER_DESCRIPTIONS: Record<SubscriptionGatewayProvider, string> = {
   stripe: 'Suscripciones con Stripe.',
   conekta: 'Domiciliación con tarjeta guardada.',
-  mercadopago: 'Autorización por enlace de Mercado Pago.'
+  mercadopago: 'Autorización por enlace de Mercado Pago.',
+  rebill: 'Autorización por checkout hospedado de Rebill.'
 }
 
 const INTERVAL_OPTIONS: Array<PhoneSelectOption & { value: SubscriptionInterval }> = [
@@ -118,17 +120,19 @@ function getMercadoPagoAuthorizationLink(subscription: PaymentSubscription) {
 }
 
 function isSubscriptionGatewayProvider(provider: PaymentGatewayProvider): provider is SubscriptionGatewayProvider {
-  return provider !== 'clip' && provider !== 'rebill'
+  return provider !== 'clip'
 }
 
 function getSubscriptionActivationLink(subscription: PaymentSubscription, provider: SubscriptionGatewayProvider) {
   if (provider === 'mercadopago') return getMercadoPagoAuthorizationLink(subscription)
+  if (provider === 'rebill') return subscription.rebillPaymentLinkUrl || subscription.rebillCheckoutUrl || subscription.subscriptionStartUrl || ''
   return ''
 }
 
 function getPaymentMethodForProvider(provider: SubscriptionGatewayProvider) {
   if (provider === 'mercadopago') return 'mercadopago_subscription'
   if (provider === 'conekta') return 'conekta_subscription'
+  if (provider === 'rebill') return 'rebill_subscription'
   return 'stripe_saved_card'
 }
 
@@ -195,6 +199,9 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
 
   useEffect(() => {
     if (knownProviderForDetails === 'conekta' && draft.intervalType === 'daily') {
+      setDraft((current) => ({ ...current, intervalType: 'monthly' }))
+    }
+    if (knownProviderForDetails === 'rebill' && !['monthly', 'yearly'].includes(draft.intervalType)) {
       setDraft((current) => ({ ...current, intervalType: 'monthly' }))
     }
   }, [draft.intervalType, knownProviderForDetails])
@@ -278,7 +285,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
 
   const validateDraft = (targetProvider?: SubscriptionGatewayProvider) => {
     if (!providerOptions.length) {
-      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta o Mercado Pago para crear suscripciones.')
+      showToast('warning', 'Pasarela no conectada', 'Conecta Stripe, Conekta, Mercado Pago o Rebill para crear suscripciones.')
       return false
     }
     if (!draft.name.trim()) {
@@ -298,8 +305,16 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
       showToast('warning', 'Falta el email', 'Mercado Pago necesita email para que el cliente autorice la suscripción.')
       return false
     }
+    if (targetProvider === 'rebill' && !resolvedContactEmail) {
+      showToast('warning', 'Falta el email', 'Rebill necesita email para que el cliente autorice la suscripción.')
+      return false
+    }
     if (targetProvider === 'conekta' && draft.intervalType === 'daily') {
       showToast('warning', 'Frecuencia no soportada', 'Conekta no acepta suscripciones diarias.')
+      return false
+    }
+    if (targetProvider === 'rebill' && !['monthly', 'yearly'].includes(draft.intervalType)) {
+      showToast('warning', 'Frecuencia no soportada', 'Rebill sólo acepta suscripciones mensuales o anuales.')
       return false
     }
 
@@ -319,13 +334,13 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         contactPhone: resolvedContactPhone || null,
         name: draft.name.trim(),
         description: draft.description.trim(),
-        status: targetProvider === 'mercadopago' ? 'incomplete' : 'active',
+        status: ['mercadopago', 'rebill'].includes(targetProvider) ? 'incomplete' : 'active',
         amount,
         currency,
         intervalType: draft.intervalType,
         intervalCount: Math.max(1, Number(draft.intervalCount) || 1),
         startDate: draft.startDate || getTodayInputValue(),
-        nextRunAt: targetProvider === 'mercadopago' ? null : draft.startDate || getTodayInputValue(),
+        nextRunAt: ['mercadopago', 'rebill'].includes(targetProvider) ? null : draft.startDate || getTodayInputValue(),
         paymentMethod,
         paymentProvider: targetProvider
       })

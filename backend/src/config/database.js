@@ -1253,6 +1253,17 @@ const SUBSCRIPTION_CONEKTA_COLUMNS = [
   ['conekta_next_billing_at', 'DATETIME']
 ]
 
+const SUBSCRIPTION_REBILL_COLUMNS = [
+  ['rebill_subscription_id', 'TEXT'],
+  ['rebill_plan_id', 'TEXT'],
+  ['rebill_payment_link_id', 'TEXT'],
+  ['rebill_payment_link_url', 'TEXT'],
+  ['rebill_customer_id', 'TEXT'],
+  ['rebill_card_id', 'TEXT'],
+  ['rebill_next_charge_at', 'DATETIME'],
+  ['rebill_last_charge_at', 'DATETIME']
+]
+
 const PAYMENT_CLIP_COLUMNS = [
   ['clip_payment_id', 'TEXT'],
   ['clip_receipt_no', 'TEXT']
@@ -2822,6 +2833,14 @@ async function initTables() {
         conekta_subscription_id TEXT UNIQUE,
         conekta_payment_source_id TEXT,
         conekta_next_billing_at DATETIME,
+        rebill_subscription_id TEXT UNIQUE,
+        rebill_plan_id TEXT,
+        rebill_payment_link_id TEXT,
+        rebill_payment_link_url TEXT,
+        rebill_customer_id TEXT,
+        rebill_card_id TEXT,
+        rebill_next_charge_at DATETIME,
+        rebill_last_charge_at DATETIME,
         metadata_json TEXT,
         raw_json TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -2836,9 +2855,13 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_stripe_customer ON subscriptions(stripe_customer_id)')
     await ensureTableColumns('subscriptions', SUBSCRIPTION_MERCADOPAGO_COLUMNS)
     await ensureTableColumns('subscriptions', SUBSCRIPTION_CONEKTA_COLUMNS)
+    await ensureTableColumns('subscriptions', SUBSCRIPTION_REBILL_COLUMNS)
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_conekta_subscription ON subscriptions(conekta_subscription_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_conekta_customer ON subscriptions(conekta_customer_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_rebill_subscription ON subscriptions(rebill_subscription_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_rebill_plan ON subscriptions(rebill_plan_id)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_rebill_customer ON subscriptions(rebill_customer_id)')
 
     // Tabla de citas
     await db.run(`
@@ -4415,6 +4438,7 @@ async function initTables() {
 
       await ensureTableColumns('subscriptions', SUBSCRIPTION_MERCADOPAGO_COLUMNS)
       await ensureTableColumns('subscriptions', SUBSCRIPTION_CONEKTA_COLUMNS)
+      await ensureTableColumns('subscriptions', SUBSCRIPTION_REBILL_COLUMNS)
 
       try {
         await db.run(`
@@ -4445,6 +4469,9 @@ async function initTables() {
         await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_mercadopago_preapproval ON subscriptions(mercadopago_preapproval_id)')
         await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_conekta_subscription ON subscriptions(conekta_subscription_id)')
         await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_conekta_customer ON subscriptions(conekta_customer_id)')
+        await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_rebill_subscription ON subscriptions(rebill_subscription_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_rebill_plan ON subscriptions(rebill_plan_id)')
+        await db.run('CREATE INDEX IF NOT EXISTS idx_subscriptions_rebill_customer ON subscriptions(rebill_customer_id)')
       } catch (err) {
         if (!err.message.includes('already exists') && !err.message.includes('no such column') && !err.message.includes('does not exist')) {
           throw err
