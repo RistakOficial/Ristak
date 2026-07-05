@@ -2,6 +2,37 @@ import type { ChatContact, JourneyEvent, ChatMessage } from './types';
 
 const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City';
 const CHAT_SHORT_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const CALENDAR_MONTHS = [
+  'enero',
+  'febrero',
+  'marzo',
+  'abril',
+  'mayo',
+  'junio',
+  'julio',
+  'agosto',
+  'septiembre',
+  'octubre',
+  'noviembre',
+  'diciembre',
+];
+const CALENDAR_SHORT_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const BUSINESS_DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+export type BusinessDateParts = {
+  date: Date;
+  year: number;
+  month: number;
+  day: number;
+  timezone: string;
+};
+
+export type CalendarMonthCell = {
+  dateOnly: string;
+  day: number;
+  isCurrentMonth: boolean;
+  isToday: boolean;
+};
 
 export function cleanBaseUrl(value: string) {
   const trimmed = value.trim().replace(/\/+$/, '');
@@ -87,8 +118,261 @@ function getZonedDateParts(value: string | Date, timezone?: string | null) {
   return { date, year, month, day, timezone: resolvedTimezone };
 }
 
+function getZonedDateTimeParts(value: string | Date, timezone?: string | null) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const resolvedTimezone = resolveBusinessTimezone(timezone);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: resolvedTimezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    hourCycle: 'h23',
+  }).formatToParts(date);
+  const partValue = (type: string) => Number(parts.find((part) => part.type === type)?.value || 0);
+  const year = partValue('year');
+  const month = partValue('month');
+  const day = partValue('day');
+  const hour = partValue('hour');
+  const minute = partValue('minute');
+  const second = partValue('second');
+  if (!year || !month || !day || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) return null;
+  return { date, year, month, day, hour, minute, second, timezone: resolvedTimezone };
+}
+
 function dateOnlyUtcDay(parts: { year: number; month: number; day: number }) {
   return Date.UTC(parts.year, parts.month - 1, parts.day);
+}
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+export function formatDateOnlyParts(parts: { year: number; month: number; day: number }) {
+  return `${parts.year}-${padDatePart(parts.month)}-${padDatePart(parts.day)}`;
+}
+
+export function parseDateOnly(value?: string | null) {
+  const match = String(value || '').match(BUSINESS_DATE_ONLY_PATTERN);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { year, month, day };
+}
+
+export function getBusinessDateParts(value: string | Date, timezone?: string | null) {
+  return getZonedDateParts(value, timezone);
+}
+
+export function getBusinessDateTimeParts(value: string | Date, timezone?: string | null) {
+  return getZonedDateTimeParts(value, timezone);
+}
+
+export function getBusinessDateOnly(value: string | Date, timezone?: string | null) {
+  const parts = getBusinessDateParts(value, timezone);
+  return parts ? formatDateOnlyParts(parts) : '';
+}
+
+export function todayDateOnlyInBusinessTimezone(timezone?: string | null, referenceDate: Date = new Date()) {
+  return getBusinessDateOnly(referenceDate, timezone);
+}
+
+export function dateOnlyToCalendarDate(value: string) {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return null;
+  return new Date(parsed.year, parsed.month - 1, parsed.day, 12, 0, 0, 0);
+}
+
+export function dateOnlyFromCalendarDate(date: Date) {
+  if (Number.isNaN(date.getTime())) return '';
+  return formatDateOnlyParts({
+    year: date.getFullYear(),
+    month: date.getMonth() + 1,
+    day: date.getDate(),
+  });
+}
+
+export function addBusinessDateOnlyDays(value: string, days: number) {
+  const date = dateOnlyToCalendarDate(value);
+  if (!date) return value;
+  date.setDate(date.getDate() + days);
+  return dateOnlyFromCalendarDate(date);
+}
+
+export function addBusinessDateOnlyMonths(value: string, months: number) {
+  const date = dateOnlyToCalendarDate(value);
+  if (!date) return value;
+  date.setMonth(date.getMonth() + months, 1);
+  return dateOnlyFromCalendarDate(date);
+}
+
+export function getBusinessMonthRange(value: string) {
+  const date = dateOnlyToCalendarDate(value) || new Date();
+  const monthStart = new Date(date.getFullYear(), date.getMonth(), 1, 12, 0, 0, 0);
+  const monthEnd = new Date(date.getFullYear(), date.getMonth() + 1, 0, 12, 0, 0, 0);
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(monthStart.getDate() - monthStart.getDay());
+  const gridEnd = new Date(monthEnd);
+  gridEnd.setDate(monthEnd.getDate() + (6 - monthEnd.getDay()));
+
+  return {
+    monthStart: dateOnlyFromCalendarDate(monthStart),
+    monthEnd: dateOnlyFromCalendarDate(monthEnd),
+    gridStart: dateOnlyFromCalendarDate(gridStart),
+    gridEnd: dateOnlyFromCalendarDate(gridEnd),
+  };
+}
+
+export function buildBusinessMonthCells(monthDateOnly: string, todayDateOnly: string) {
+  const date = dateOnlyToCalendarDate(monthDateOnly) || new Date();
+  const monthIndex = date.getMonth();
+  const range = getBusinessMonthRange(monthDateOnly);
+  const cells: CalendarMonthCell[] = [];
+  let cursor = range.gridStart;
+
+  while (true) {
+    const cursorDate = dateOnlyToCalendarDate(cursor);
+    if (!cursorDate) break;
+    cells.push({
+      dateOnly: cursor,
+      day: cursorDate.getDate(),
+      isCurrentMonth: cursorDate.getMonth() === monthIndex,
+      isToday: cursor === todayDateOnly,
+    });
+    if (cursor === range.gridEnd) break;
+    cursor = addBusinessDateOnlyDays(cursor, 1);
+  }
+
+  return cells;
+}
+
+export function formatBusinessMonthTitle(value: string) {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return 'Calendario';
+  return CALENDAR_MONTHS[parsed.month - 1] || 'Calendario';
+}
+
+export function formatBusinessShortMonthTitle(value: string) {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return '';
+  return CALENDAR_SHORT_MONTHS[parsed.month - 1] || '';
+}
+
+export function formatBusinessYear(value: string) {
+  const parsed = parseDateOnly(value);
+  return parsed ? String(parsed.year) : '';
+}
+
+export function formatBusinessDayHeader(value: string) {
+  const date = dateOnlyToCalendarDate(value);
+  if (!date) return '';
+  const weekday = new Intl.DateTimeFormat('es-MX', { weekday: 'long' }).format(date);
+  const month = CALENDAR_MONTHS[date.getMonth()] || '';
+  return `${weekday}, ${date.getDate()} de ${month}`;
+}
+
+export function formatCalendarEventTime(value?: string | null, timezone?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('es-MX', {
+    timeZone: resolveBusinessTimezone(timezone),
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(date);
+}
+
+export function formatCalendarEventTimeRange(
+  startValue?: string | null,
+  endValue?: string | null,
+  timezone?: string | null,
+) {
+  const start = formatCalendarEventTime(startValue, timezone);
+  const end = formatCalendarEventTime(endValue, timezone);
+  if (start && end && start !== end) return `${start} - ${end}`;
+  return start || end || '';
+}
+
+export function formatCompactBusinessDate(value: string) {
+  const parsed = parseDateOnly(value);
+  if (!parsed) return '';
+  const month = CALENDAR_SHORT_MONTHS[parsed.month - 1] || '';
+  return month ? `${String(parsed.day).padStart(2, '0')}-${month}` : '';
+}
+
+function parseTimeInput(value?: string | null) {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+  return { hour, minute };
+}
+
+function timezoneOffsetMs(utcDate: Date, timezone: string) {
+  const parts = getBusinessDateTimeParts(utcDate, timezone);
+  if (!parts) return 0;
+  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) - utcDate.getTime();
+}
+
+export function localBusinessDateTimeToUTCISOString(dateOnly: string, time: string, timezone?: string | null) {
+  const dateParts = parseDateOnly(dateOnly);
+  const timeParts = parseTimeInput(time);
+  if (!dateParts || !timeParts) return '';
+
+  const resolvedTimezone = resolveBusinessTimezone(timezone);
+  const localAsUtcMs = Date.UTC(
+    dateParts.year,
+    dateParts.month - 1,
+    dateParts.day,
+    timeParts.hour,
+    timeParts.minute,
+    0,
+    0,
+  );
+  let utcMs = localAsUtcMs - timezoneOffsetMs(new Date(localAsUtcMs), resolvedTimezone);
+  utcMs = localAsUtcMs - timezoneOffsetMs(new Date(utcMs), resolvedTimezone);
+  const result = new Date(utcMs);
+  return Number.isNaN(result.getTime()) ? '' : result.toISOString();
+}
+
+export function isoToBusinessDateTimeFields(value?: string | null, timezone?: string | null) {
+  const parts = value ? getBusinessDateTimeParts(value, timezone) : null;
+  if (!parts) return { dateOnly: '', time: '' };
+  return {
+    dateOnly: formatDateOnlyParts(parts),
+    time: `${padDatePart(parts.hour)}:${padDatePart(parts.minute)}`,
+  };
+}
+
+export function addMinutesToBusinessDateTime(dateOnly: string, time: string, minutes: number) {
+  const dateParts = parseDateOnly(dateOnly);
+  const timeParts = parseTimeInput(time);
+  if (!dateParts || !timeParts) return { dateOnly, time };
+  const next = new Date(Date.UTC(
+    dateParts.year,
+    dateParts.month - 1,
+    dateParts.day,
+    timeParts.hour,
+    timeParts.minute,
+    0,
+    0,
+  ) + Math.max(1, minutes) * 60000);
+  return {
+    dateOnly: formatDateOnlyParts({
+      year: next.getUTCFullYear(),
+      month: next.getUTCMonth() + 1,
+      day: next.getUTCDate(),
+    }),
+    time: `${padDatePart(next.getUTCHours())}:${padDatePart(next.getUTCMinutes())}`,
+  };
 }
 
 export function formatChatListDate(value?: string | null, timezone?: string | null, referenceDate: Date = new Date()) {

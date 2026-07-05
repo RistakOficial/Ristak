@@ -46,6 +46,18 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [x] Primer pase de lista de chats con API real, filtros basicos y filas planas.
 - [ ] Paridad completa de Chat.
 - [ ] Paridad completa de Citas.
+  - Avance: `mobile/` ya reemplaza el placeholder generico de Citas por una
+    pantalla nativa con header movil tipo `/movil`: pastilla de periodo con
+    anio, capsula `Hoy` / calendario / `+`, titulo grande del mes, grilla
+    mensual amplia, agenda del dia, pull to refresh y sheet de detalles. Los
+    eventos se agrupan con `account_timezone` y `calendarId`, no con la zona
+    horaria del telefono. El boton `+` busca contactos y abre un formulario
+    nativo que crea citas reales en `/api/calendars/appointments`; el detalle
+    permite editar y eliminar contra los endpoints reales. El formulario ya
+    cubre titulo, estado, fecha, hora, duracion, direccion, notas y conversion a
+    UTC con zona del negocio. Falta replicar validacion avanzada de slots/
+    bloqueos, invitados, usuarios Round Robin y el selector visual completo de
+    fecha/hora del modal original de `/movil`.
 - [ ] Paridad completa de Pagos.
 - [ ] Paridad completa de Analiticas.
 - [ ] Paridad completa de Ajustes.

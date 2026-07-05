@@ -12,6 +12,9 @@ Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
 - Native chat inbox parity pass for `/movil`: same high-level header, search,
   quick filter chips, unread emphasis, contact avatar ring/channel badge, and
   last-message preview rules.
+- Native appointments page parity pass for `/movil`: original mobile calendar
+  header, calendar selector sheet, month grid, agenda list, event details sheet,
+  create/edit/delete appointment flow, and business-timezone grouping.
 - Conversation view from `/api/contacts/:id/journey`.
 - Text sending through `/api/whatsapp-api/messages/text`.
 

@@ -20,6 +20,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import type { ImageStyle } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -32,10 +33,14 @@ import {
   Camera,
   Check,
   CheckCheck,
+  ChevronDown,
   ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   Clock,
+  FileText,
   Mail,
+  MapPin,
   MessageCircle,
   MoreHorizontal,
   Pause,
@@ -45,6 +50,7 @@ import {
   Search,
   Settings,
   Tag,
+  Trash2,
   User,
   X,
   type LucideIcon,
@@ -64,13 +70,31 @@ import { RistakApiClient, getUserDisplayName } from './api';
 import {
   buildMessagesFromJourney,
   cleanBaseUrl,
+  addBusinessDateOnlyDays,
+  addBusinessDateOnlyMonths,
+  buildBusinessMonthCells,
+  dateOnlyFromCalendarDate,
+  dateOnlyToCalendarDate,
+  addMinutesToBusinessDateTime,
+  formatBusinessDayHeader,
+  formatBusinessMonthTitle,
+  formatBusinessShortMonthTitle,
+  formatBusinessYear,
+  formatCalendarEventTime,
+  formatCalendarEventTimeRange,
   formatChatListDate,
   formatCurrency,
   formatShortDate,
+  getBusinessDateOnly,
+  getBusinessDateTimeParts,
+  getBusinessMonthRange,
   getContactAvatar,
   getContactName,
   getTodayRange,
+  isoToBusinessDateTimeFields,
+  localBusinessDateTimeToUTCISOString,
   resolveBusinessTimezone,
+  todayDateOnlyInBusinessTimezone,
 } from './format';
 import type {
   CalendarEventItem,
@@ -111,6 +135,9 @@ type SessionState = {
 type Screen = 'boot' | 'server' | 'login' | 'shell';
 type ChatFilterId = string;
 type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
+type CalendarViewMode = 'day' | 'week' | 'month' | 'year';
+type CalendarSheetMode = 'calendar' | 'contactPicker' | 'event' | 'appointmentForm' | null;
+type AppointmentFormMode = 'create' | 'edit';
 type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
 type ChatFilterPreset = {
@@ -120,6 +147,19 @@ type ChatFilterPreset = {
   section: string;
   locked?: boolean;
   separatorBefore?: boolean;
+};
+type AppointmentDraft = {
+  eventId?: string;
+  title: string;
+  appointmentStatus: string;
+  dateOnly: string;
+  startTime: string;
+  durationMinutes: number;
+  address: string;
+  notes: string;
+  contactId: string;
+  contact?: ChatContact | null;
+  calendarId: string;
 };
 
 const PHONE_NAV_ITEMS: Array<{ key: PhoneSection; label: string; Icon: LucideIcon }> = [
@@ -150,6 +190,17 @@ const CHAT_CHANNEL_BADGE_SIZE = 22;
 const CHAT_SHEET_OPEN_DURATION_MS = 260;
 const CHAT_SHEET_CLOSE_DURATION_MS = 280;
 const CHAT_SHEET_HIDDEN_TRANSLATE_Y = 860;
+const CALENDAR_SELECTED_ID_STORAGE_KEY = 'ristak.native.calendar.selectedCalendarId.v1';
+const CALENDAR_WEEKDAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
+const APPOINTMENT_STATUS_OPTIONS = [
+  { value: 'pending', label: 'Pendiente' },
+  { value: 'confirmed', label: 'Confirmada' },
+  { value: 'cancelled', label: 'Cancelada' },
+  { value: 'showed', label: 'Asistió' },
+  { value: 'noshow', label: 'No asistió' },
+  { value: 'rescheduled', label: 'Reprogramada' },
+];
+const APPOINTMENT_DURATION_OPTIONS = [30, 45, 60, 90, 120];
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
@@ -311,6 +362,15 @@ function PhoneShell({
     );
   }
 
+  if (activeSection === 'calendar') {
+    return (
+      <CalendarSection
+        api={api}
+        footer={dock}
+      />
+    );
+  }
+
   return (
     <AppFrame>
       <SectionHeader
@@ -320,7 +380,6 @@ function PhoneShell({
         onLogout={onLogout}
         onChangeServer={onChangeServer}
       />
-      {activeSection === 'calendar' ? <CalendarSection api={api} /> : null}
       {activeSection === 'payments' ? <PaymentsSection api={api} /> : null}
       {activeSection === 'analytics' ? <AnalyticsSection api={api} /> : null}
       {activeSection === 'settings' ? <SettingsSection api={api} /> : null}
@@ -1474,68 +1533,1363 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
   );
 }
 
-function CalendarSection({ api }: { api: RistakApiClient }) {
+function unwrapConfigValues(response: Awaited<ReturnType<RistakApiClient['getConfig']>>): Record<string, unknown> {
+  if (response && typeof response === 'object' && 'config' in response) {
+    return response.config && typeof response.config === 'object'
+      ? response.config as Record<string, unknown>
+      : {};
+  }
+  return response && typeof response === 'object' && !Array.isArray(response)
+    ? response as Record<string, unknown>
+    : {};
+}
+
+function getCalendarKey(calendar?: CalendarItem | null) {
+  return String(calendar?.id || calendar?._id || '').trim();
+}
+
+function getCalendarTitle(calendar?: CalendarItem | null) {
+  return String(calendar?.name || calendar?.title || 'Calendario').trim();
+}
+
+function getCalendarColor(calendar?: CalendarItem | null) {
+  const value = String(calendar?.eventColor || calendar?.event_color || calendar?.color || '').trim();
+  return value.startsWith('#') || value.startsWith('rgb') ? value : COLORS.accent;
+}
+
+function calendarIsActive(calendar: CalendarItem) {
+  if (calendar.isActive === false || calendar.active === false) return false;
+  return true;
+}
+
+function unwrapCalendars(response: Awaited<ReturnType<RistakApiClient['getCalendars']>>) {
+  const raw = Array.isArray(response)
+    ? response
+    : Array.isArray(response.calendars) ? response.calendars : [];
+  return raw.filter((calendar) => getCalendarKey(calendar));
+}
+
+function unwrapCalendarEvents(response: Awaited<ReturnType<RistakApiClient['getCalendarEvents']>>) {
+  return Array.isArray(response)
+    ? response
+    : Array.isArray(response.events) ? response.events : [];
+}
+
+function getEventKey(event: CalendarEventItem, index = 0) {
+  return String(event.id || event._id || `${getEventStart(event)}-${index}`);
+}
+
+function getEventId(event?: CalendarEventItem | null) {
+  return String(event?.id || event?._id || '').trim();
+}
+
+function getEventTitle(event: CalendarEventItem) {
+  return String(event.title || event.name || event.contactName || event.contact_name || 'Cita').trim();
+}
+
+function getEventStatus(event: CalendarEventItem) {
+  const raw = String(event.appointmentStatus || event.appointment_status || event.status || 'confirmed').toLowerCase();
+  const labels: Record<string, string> = {
+    confirmed: 'Confirmada',
+    pending: 'Pendiente',
+    cancelled: 'Cancelada',
+    canceled: 'Cancelada',
+    showed: 'Asistió',
+    noshow: 'No asistió',
+    no_show: 'No asistió',
+    rescheduled: 'Reprogramada',
+  };
+  return labels[raw] || raw || 'Programada';
+}
+
+function getEventStart(event: CalendarEventItem) {
+  return event.startTime || event.start_time || event.start || '';
+}
+
+function getEventEnd(event: CalendarEventItem) {
+  return event.endTime || event.end_time || event.end || getEventStart(event);
+}
+
+function getEventCalendarId(event: CalendarEventItem) {
+  return String(event.calendarId || event.calendar_id || '').trim();
+}
+
+function getEventContactId(event?: CalendarEventItem | null) {
+  return String(event?.contactId || event?.contact_id || '').trim();
+}
+
+function getEventTimezone(event?: CalendarEventItem | null) {
+  return String(event?.timeZone || event?.timezone || event?.time_zone || '').trim();
+}
+
+function getEventDetail(event: CalendarEventItem) {
+  return String(event.address || event.location || event.notes || event.description || '').trim();
+}
+
+function sortCalendarEvents(left: CalendarEventItem, right: CalendarEventItem) {
+  return getEventStart(left).localeCompare(getEventStart(right));
+}
+
+function getDefaultAppointmentStartTime(dateOnly: string, timezone: string) {
+  const nowParts = getBusinessDateTimeParts(new Date(), timezone);
+  if (!nowParts || formatBusinessYear(dateOnly) !== String(nowParts.year)) return '09:00';
+  const today = `${nowParts.year}-${String(nowParts.month).padStart(2, '0')}-${String(nowParts.day).padStart(2, '0')}`;
+  if (today !== dateOnly) return '09:00';
+  const nextHalfHour = Math.ceil((nowParts.hour * 60 + nowParts.minute + 15) / 30) * 30;
+  const clamped = Math.min(23 * 60, Math.max(8 * 60, nextHalfHour));
+  return `${String(Math.floor(clamped / 60)).padStart(2, '0')}:${String(clamped % 60).padStart(2, '0')}`;
+}
+
+function getBusinessRangeTimestamps(startDateOnly: string, endDateOnly: string, timezone: string) {
+  const startIso = localBusinessDateTimeToUTCISOString(startDateOnly, '00:00', timezone);
+  const endExclusiveIso = localBusinessDateTimeToUTCISOString(addBusinessDateOnlyDays(endDateOnly, 1), '00:00', timezone);
+  const startTime = startIso ? new Date(startIso).getTime() : Number.NaN;
+  const endTime = endExclusiveIso ? new Date(endExclusiveIso).getTime() - 1 : Number.NaN;
+  return { startTime, endTime };
+}
+
+function formatCalendarAgendaDate(dateOnly: string) {
+  const label = formatBusinessDayHeader(dateOnly);
+  const year = formatBusinessYear(dateOnly);
+  if (!label) return '';
+  const capitalized = `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
+  return year ? `${capitalized} de ${year}` : capitalized;
+}
+
+function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React.ReactNode }) {
+  const initialToday = useMemo(() => todayDateOnlyInBusinessTimezone(), []);
+  const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
+  const [calendarView, setCalendarView] = useState<CalendarViewMode>('month');
+  const [currentMonthDateOnly, setCurrentMonthDateOnly] = useState(initialToday);
+  const [selectedDateOnly, setSelectedDateOnly] = useState(initialToday);
   const [calendars, setCalendars] = useState<CalendarItem[]>([]);
+  const [selectedCalendarId, setSelectedCalendarId] = useState('');
+  const [calendarReady, setCalendarReady] = useState(false);
   const [events, setEvents] = useState<CalendarEventItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [activeSheet, setActiveSheet] = useState<CalendarSheetMode>(null);
+  const [closingSheet, setClosingSheet] = useState<CalendarSheetMode>(null);
+  const [selectedEvent, setSelectedEvent] = useState<CalendarEventItem | null>(null);
+  const [appointmentMode, setAppointmentMode] = useState<AppointmentFormMode>('create');
+  const [appointmentDraft, setAppointmentDraft] = useState<AppointmentDraft | null>(null);
+  const [appointmentBusy, setAppointmentBusy] = useState(false);
+  const [contactQuery, setContactQuery] = useState('');
+  const [contactResults, setContactResults] = useState<ChatContact[]>([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const load = useCallback(async () => {
-    const range = getTodayRange(30);
-    setLoading(true);
+  const activeCalendars = useMemo(() => calendars.filter(calendarIsActive), [calendars]);
+  const selectedCalendar = useMemo(() => {
+    return calendars.find((calendar) => getCalendarKey(calendar) === selectedCalendarId) || activeCalendars[0] || calendars[0] || null;
+  }, [activeCalendars, calendars, selectedCalendarId]);
+  const selectedCalendarKey = getCalendarKey(selectedCalendar);
+  const todayDateOnly = useMemo(() => todayDateOnlyInBusinessTimezone(businessTimezone), [businessTimezone]);
+  const monthCells = useMemo(
+    () => buildBusinessMonthCells(currentMonthDateOnly, todayDateOnly),
+    [currentMonthDateOnly, todayDateOnly],
+  );
+  const monthRange = useMemo(() => getBusinessMonthRange(currentMonthDateOnly), [currentMonthDateOnly]);
+  const eventRange = useMemo(() => {
+    if (calendarView === 'year') {
+      const yearDate = dateOnlyToCalendarDate(currentMonthDateOnly) || new Date();
+      const year = yearDate.getFullYear();
+      return {
+        startDate: `${year}-01-01`,
+        endDate: `${year}-12-31`,
+      };
+    }
+
+    if (calendarView === 'week') {
+      const selectedDate = dateOnlyToCalendarDate(selectedDateOnly) || new Date();
+      const start = new Date(selectedDate);
+      start.setDate(selectedDate.getDate() - selectedDate.getDay());
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      return {
+        startDate: dateOnlyFromCalendarDate(start),
+        endDate: dateOnlyFromCalendarDate(end),
+      };
+    }
+
+    if (calendarView === 'day') {
+      return {
+        startDate: selectedDateOnly,
+        endDate: selectedDateOnly,
+      };
+    }
+
+    return {
+      startDate: monthRange.gridStart,
+      endDate: monthRange.gridEnd,
+    };
+  }, [calendarView, currentMonthDateOnly, monthRange.gridEnd, monthRange.gridStart, selectedDateOnly]);
+  const eventRangeTimestamps = useMemo(
+    () => getBusinessRangeTimestamps(eventRange.startDate, eventRange.endDate, businessTimezone),
+    [businessTimezone, eventRange.endDate, eventRange.startDate],
+  );
+
+  const eventsByDate = useMemo(() => {
+    const grouped: Record<string, CalendarEventItem[]> = {};
+    events.forEach((event) => {
+      const dateOnly = getBusinessDateOnly(getEventStart(event), businessTimezone);
+      if (!dateOnly) return;
+      if (!grouped[dateOnly]) grouped[dateOnly] = [];
+      grouped[dateOnly].push(event);
+    });
+    Object.keys(grouped).forEach((dateOnly) => {
+      grouped[dateOnly].sort(sortCalendarEvents);
+    });
+    return grouped;
+  }, [businessTimezone, events]);
+
+  const selectedDayEvents = useMemo(
+    () => eventsByDate[selectedDateOnly] || [],
+    [eventsByDate, selectedDateOnly],
+  );
+
+  const weekEvents = useMemo(() => {
+    if (calendarView !== 'week') return [];
+    return events
+      .filter((event) => {
+        const dateOnly = getBusinessDateOnly(getEventStart(event), businessTimezone);
+        return dateOnly >= eventRange.startDate && dateOnly <= eventRange.endDate;
+      })
+      .slice()
+      .sort(sortCalendarEvents);
+  }, [businessTimezone, calendarView, eventRange.endDate, eventRange.startDate, events]);
+
+  const agendaEvents = calendarView === 'week' ? weekEvents : selectedDayEvents;
+
+  const nextUpcomingEvents = useMemo(() => {
+    return events
+      .filter((event) => getEventStart(event))
+      .slice()
+      .sort(sortCalendarEvents)
+      .slice(0, 6);
+  }, [events]);
+
+  const selectDate = useCallback((dateOnly: string) => {
+    setSelectedDateOnly(dateOnly);
+    setCurrentMonthDateOnly(dateOnly);
+    if (calendarView === 'year') setCalendarView('month');
+  }, [calendarView]);
+
+  const movePeriod = useCallback((direction: -1 | 1) => {
+    if (calendarView === 'month' || calendarView === 'year') {
+      const next = calendarView === 'year'
+        ? addBusinessDateOnlyMonths(currentMonthDateOnly, direction * 12)
+        : addBusinessDateOnlyMonths(currentMonthDateOnly, direction);
+      setCurrentMonthDateOnly(next);
+      setSelectedDateOnly((current) => {
+        const currentDate = dateOnlyToCalendarDate(current);
+        const nextDate = dateOnlyToCalendarDate(next);
+        if (!currentDate || !nextDate) return next;
+        const target = new Date(nextDate.getFullYear(), nextDate.getMonth(), Math.min(currentDate.getDate(), 28), 12, 0, 0, 0);
+        return `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
+      });
+      return;
+    }
+
+    const days = calendarView === 'week' ? 7 : 1;
+    const next = addBusinessDateOnlyDays(selectedDateOnly, direction * days);
+    setSelectedDateOnly(next);
+    setCurrentMonthDateOnly(next);
+  }, [calendarView, currentMonthDateOnly, selectedDateOnly]);
+
+  const openSheet = useCallback((sheet: Exclude<CalendarSheetMode, null>) => {
+    if (sheetCloseTimerRef.current) {
+      clearTimeout(sheetCloseTimerRef.current);
+      sheetCloseTimerRef.current = null;
+    }
+    setClosingSheet(null);
+    setActiveSheet(sheet);
+  }, []);
+
+  const closeSheet = useCallback(() => {
+    const sheet = activeSheet;
+    if (!sheet) return;
+    setActiveSheet(null);
+    setClosingSheet(sheet);
+    sheetCloseTimerRef.current = setTimeout(() => {
+      sheetCloseTimerRef.current = null;
+      setClosingSheet(null);
+      if (sheet === 'event') setSelectedEvent(null);
+      if (sheet === 'appointmentForm') setAppointmentDraft(null);
+    }, CHAT_SHEET_CLOSE_DURATION_MS);
+  }, [activeSheet]);
+
+  useEffect(() => {
+    return () => {
+      if (sheetCloseTimerRef.current) clearTimeout(sheetCloseTimerRef.current);
+    };
+  }, []);
+
+  const chooseCalendar = useCallback((calendar: CalendarItem) => {
+    const id = getCalendarKey(calendar);
+    setSelectedCalendarId(id);
+    void writeJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, id);
+    closeSheet();
+  }, [closeSheet]);
+
+  const loadCalendars = useCallback(async () => {
+    const [configResponse, savedCalendarId, calendarsResponse] = await Promise.all([
+      api.getConfig(['account_timezone', 'default_calendar_id']),
+      readJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, ''),
+      api.getCalendars(),
+    ]);
+    const configValues = unwrapConfigValues(configResponse);
+    const timezone = typeof configValues.account_timezone === 'string'
+      ? configValues.account_timezone
+      : '';
+    const defaultCalendarId = typeof configValues.default_calendar_id === 'string'
+      ? configValues.default_calendar_id
+      : '';
+    const nextTimezone = resolveBusinessTimezone(timezone);
+    const calendarList = unwrapCalendars(calendarsResponse);
+    const preferredId = [selectedCalendarId, savedCalendarId, defaultCalendarId]
+      .map((value) => String(value || '').trim())
+      .find((value) => value && calendarList.some((calendar) => getCalendarKey(calendar) === value && calendarIsActive(calendar)));
+    const fallbackCalendar = calendarList.find(calendarIsActive) || calendarList[0] || null;
+    const nextCalendarId = preferredId || getCalendarKey(fallbackCalendar);
+
+    setBusinessTimezone(nextTimezone);
+    setCalendars(calendarList);
+    setSelectedCalendarId(nextCalendarId);
+    setCalendarReady(true);
+    if (nextCalendarId) {
+      void writeJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, nextCalendarId);
+    }
+  }, [api, selectedCalendarId]);
+
+  const loadEvents = useCallback(async (silent = false) => {
+    if (!selectedCalendarKey) {
+      setEvents([]);
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
+    if (!silent) setLoading(true);
     setError('');
     try {
-      const [calendarsResponse, eventsResponse] = await Promise.all([
-        api.getCalendars(),
-        api.getCalendarEvents(range.startDate, range.endDate),
-      ]);
-      setCalendars(Array.isArray(calendarsResponse)
-        ? calendarsResponse
-        : Array.isArray(calendarsResponse.calendars) ? calendarsResponse.calendars : []);
-      setEvents(Array.isArray(eventsResponse)
-        ? eventsResponse
-        : Array.isArray(eventsResponse.events) ? eventsResponse.events : []);
+      if (!Number.isFinite(eventRangeTimestamps.startTime) || !Number.isFinite(eventRangeTimestamps.endTime)) {
+        throw new Error('Rango de calendario inválido.');
+      }
+      const response = await api.getCalendarEvents(eventRangeTimestamps.startTime, eventRangeTimestamps.endTime, selectedCalendarKey);
+      setEvents(unwrapCalendarEvents(response));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar las citas.');
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  }, [api]);
+  }, [api, eventRangeTimestamps.endTime, eventRangeTimestamps.startTime, selectedCalendarKey]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    loadCalendars()
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'No se pudieron cargar los calendarios.');
+          setLoading(false);
+          setRefreshing(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadCalendars]);
+
+  useEffect(() => {
+    if (!calendarReady) return;
+    void loadEvents(false);
+  }, [calendarReady, loadEvents]);
+
+  useEffect(() => {
+    if (activeSheet !== 'contactPicker') {
+      setContactsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const trimmed = contactQuery.trim();
+    setContactsLoading(true);
+    const timer = setTimeout(() => {
+      const request = trimmed.length >= 2
+        ? api.searchContacts(trimmed)
+        : api.getChats('', 0, 60);
+      request
+        .then((results) => {
+          if (!cancelled) setContactResults(Array.isArray(results) ? results : []);
+        })
+        .catch(() => {
+          if (!cancelled) setContactResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setContactsLoading(false);
+        });
+    }, trimmed ? 180 : 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [activeSheet, api, contactQuery]);
+
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    void Promise.resolve()
+      .then(() => loadCalendars())
+      .then(() => loadEvents(true))
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : 'No se pudo actualizar el calendario.');
+        setRefreshing(false);
+        setLoading(false);
+      });
+  }, [loadCalendars, loadEvents]);
+
+  const goToday = useCallback(() => {
+    const today = todayDateOnlyInBusinessTimezone(businessTimezone);
+    setSelectedDateOnly(today);
+    setCurrentMonthDateOnly(today);
+    setCalendarView('month');
+  }, [businessTimezone]);
+
+  const openCreateSheet = useCallback(() => {
+    setContactQuery('');
+    setContactResults([]);
+    openSheet('contactPicker');
+  }, [openSheet]);
+
+  const openCreateAppointmentForContact = useCallback((contact: ChatContact) => {
+    if (!selectedCalendarKey) {
+      Alert.alert('Selecciona calendario', 'Elige un calendario activo antes de agendar.');
+      return;
+    }
+    const title = getContactName(contact);
+    setAppointmentMode('create');
+    setAppointmentDraft({
+      title,
+      appointmentStatus: 'confirmed',
+      dateOnly: selectedDateOnly,
+      startTime: getDefaultAppointmentStartTime(selectedDateOnly, businessTimezone),
+      durationMinutes: 60,
+      address: '',
+      notes: '',
+      contactId: contact.id,
+      contact,
+      calendarId: selectedCalendarKey,
+    });
+    openSheet('appointmentForm');
+  }, [businessTimezone, openSheet, selectedCalendarKey, selectedDateOnly]);
+
+  const openEditAppointment = useCallback((event: CalendarEventItem) => {
+    const eventId = getEventId(event);
+    const start = getEventStart(event);
+    const end = getEventEnd(event);
+    const startFields = isoToBusinessDateTimeFields(start, businessTimezone);
+    const startMs = start ? new Date(start).getTime() : Number.NaN;
+    const endMs = end ? new Date(end).getTime() : Number.NaN;
+    const durationMinutes = Number.isFinite(startMs) && Number.isFinite(endMs)
+      ? Math.max(15, Math.round((endMs - startMs) / 60000))
+      : 60;
+
+    if (!eventId) {
+      Alert.alert('No se puede editar', 'Esta cita no tiene un ID válido del backend.');
+      return;
+    }
+
+    setAppointmentMode('edit');
+    setAppointmentDraft({
+      eventId,
+      title: getEventTitle(event),
+      appointmentStatus: String(event.appointmentStatus || event.appointment_status || event.status || 'confirmed'),
+      dateOnly: startFields.dateOnly || selectedDateOnly,
+      startTime: startFields.time || getDefaultAppointmentStartTime(selectedDateOnly, businessTimezone),
+      durationMinutes,
+      address: String(event.address || event.location || ''),
+      notes: String(event.notes || event.description || ''),
+      contactId: getEventContactId(event),
+      contact: null,
+      calendarId: getEventCalendarId(event) || selectedCalendarKey,
+    });
+    openSheet('appointmentForm');
+  }, [businessTimezone, openSheet, selectedCalendarKey, selectedDateOnly]);
+
+  const saveAppointmentDraft = useCallback(async (draft: AppointmentDraft) => {
+    if (appointmentBusy) return;
+    const calendarId = draft.calendarId || selectedCalendarKey;
+    if (!calendarId) {
+      Alert.alert('Selecciona calendario', 'Elige un calendario activo antes de guardar.');
+      return;
+    }
+    if (!draft.title.trim()) {
+      Alert.alert('Falta título', 'Escribe el nombre de la cita.');
+      return;
+    }
+    if (appointmentMode === 'create' && !draft.contactId) {
+      Alert.alert('Contacto requerido', 'Selecciona un contacto para crear la cita.');
+      return;
+    }
+
+    const endFields = addMinutesToBusinessDateTime(draft.dateOnly, draft.startTime, draft.durationMinutes);
+    const startIso = localBusinessDateTimeToUTCISOString(draft.dateOnly, draft.startTime, businessTimezone);
+    const endIso = localBusinessDateTimeToUTCISOString(endFields.dateOnly, endFields.time, businessTimezone);
+    if (!startIso || !endIso) {
+      Alert.alert('Horario inválido', 'Usa fecha YYYY-MM-DD y hora HH:mm.');
+      return;
+    }
+
+    const payload: Record<string, unknown> = {
+      title: draft.title.trim(),
+      appointmentStatus: draft.appointmentStatus,
+      startTime: startIso,
+      endTime: endIso,
+      notes: draft.notes.trim(),
+      address: draft.address.trim(),
+      timeZone: businessTimezone,
+    };
+    if (appointmentMode === 'create') {
+      payload.calendarId = calendarId;
+      payload.contactId = draft.contactId;
+    }
+
+    setAppointmentBusy(true);
+    try {
+      if (appointmentMode === 'edit') {
+        if (!draft.eventId) throw new Error('La cita no tiene ID.');
+        await api.updateAppointment(draft.eventId, payload);
+      } else {
+        await api.createAppointment(payload);
+      }
+      closeSheet();
+      setSelectedEvent(null);
+      await loadEvents(true);
+      Alert.alert(appointmentMode === 'edit' ? 'Cita actualizada' : 'Cita agendada', 'Los cambios ya están guardados.');
+    } catch (err) {
+      Alert.alert('No se pudo guardar', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setAppointmentBusy(false);
+    }
+  }, [api, appointmentBusy, appointmentMode, businessTimezone, closeSheet, loadEvents, selectedCalendarKey]);
+
+  const deleteAppointment = useCallback((event: CalendarEventItem) => {
+    const eventId = getEventId(event);
+    if (!eventId || appointmentBusy) return;
+    Alert.alert('Eliminar cita', 'Esta acción borra la cita del calendario.', [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: async () => {
+          setAppointmentBusy(true);
+          try {
+            await api.deleteCalendarEvent(eventId);
+            closeSheet();
+            setSelectedEvent(null);
+            await loadEvents(true);
+            Alert.alert('Cita eliminada', 'Ya no aparece en el calendario.');
+          } catch (err) {
+            Alert.alert('No se pudo eliminar', err instanceof Error ? err.message : 'Intenta otra vez.');
+          } finally {
+            setAppointmentBusy(false);
+          }
+        },
+      },
+    ]);
+  }, [api, appointmentBusy, closeSheet, loadEvents]);
+
+  const openEventDetails = useCallback((event: CalendarEventItem) => {
+    setSelectedEvent(event);
+    openSheet('event');
+  }, [openSheet]);
+
+  const calendarSheetOpen = activeSheet === 'calendar' || closingSheet === 'calendar';
+  const calendarSheetClosing = activeSheet !== 'calendar' && closingSheet === 'calendar';
+  const contactPickerOpen = activeSheet === 'contactPicker' || closingSheet === 'contactPicker';
+  const contactPickerClosing = activeSheet !== 'contactPicker' && closingSheet === 'contactPicker';
+  const eventSheetOpen = activeSheet === 'event' || closingSheet === 'event';
+  const eventSheetClosing = activeSheet !== 'event' && closingSheet === 'event';
+  const appointmentFormOpen = activeSheet === 'appointmentForm' || closingSheet === 'appointmentForm';
+  const appointmentFormClosing = activeSheet !== 'appointmentForm' && closingSheet === 'appointmentForm';
+  const displayMonthTitle = calendarView === 'year' ? formatBusinessYear(currentMonthDateOnly) : formatBusinessMonthTitle(currentMonthDateOnly);
+  const displayMonthSubtitle = calendarView === 'month'
+    ? formatBusinessYear(currentMonthDateOnly)
+    : formatBusinessDayHeader(selectedDateOnly);
 
   return (
-    <ScrollView contentContainerStyle={styles.sectionScroll}>
-      <SectionState loading={loading} error={error} onRetry={load} />
-      {!loading && !error ? (
-        <>
-          <SectionBlock title="Proximas citas">
-            {events.slice(0, 10).map((event, index) => (
-              <InfoRow
-                key={event.id || event._id || `event-${index}`}
-                title={event.title || event.contactName || 'Cita'}
-                subtitle={`${formatShortDate(event.start || event.startTime)} - ${event.status || 'programada'}`}
-                value=""
+    <AppFrame>
+      <View style={styles.calendarPage}>
+        <View style={styles.calendarHeader}>
+          <View style={styles.calendarToolbar}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setCalendarView(calendarView === 'year' ? 'month' : 'year')}
+              style={({ pressed }) => [styles.calendarPeriodChip, pressed && styles.pressed]}
+            >
+              <ChevronLeft size={20} color={COLORS.text} strokeWidth={2.8} />
+              <Text numberOfLines={1} style={styles.calendarPeriodText}>
+                {formatBusinessYear(currentMonthDateOnly)}
+              </Text>
+            </Pressable>
+            <View style={styles.calendarHeaderCapsule}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={goToday}
+                style={({ pressed }) => [styles.calendarCapsuleTodayButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.calendarTodayButtonText}>Hoy</Text>
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => openSheet('calendar')}
+                style={({ pressed }) => [styles.calendarCapsuleIconButton, pressed && styles.pressed]}
+              >
+                <CalendarDays size={25} color={COLORS.text} strokeWidth={2.35} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                onPress={openCreateSheet}
+                style={({ pressed }) => [styles.calendarCapsuleIconButton, pressed && styles.pressed]}
+              >
+                <Plus size={30} color={COLORS.text} strokeWidth={2.25} />
+              </Pressable>
+            </View>
+          </View>
+          <View style={styles.calendarTitleRow}>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => setCalendarView(calendarView === 'year' ? 'month' : 'year')}
+              style={styles.calendarTitleButton}
+            >
+              <Text numberOfLines={1} style={styles.calendarTitle}>{displayMonthTitle}</Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {loading && !calendarReady ? (
+          <View style={styles.calendarCenterState}>
+            <ActivityIndicator color={COLORS.accent} />
+            <Text style={styles.caption}>Cargando citas...</Text>
+          </View>
+        ) : (
+          <FlatList
+            data={calendarView === 'year' ? nextUpcomingEvents : agendaEvents}
+            keyExtractor={(item, index) => getEventKey(item, index)}
+            refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
+            contentContainerStyle={styles.calendarScrollBody}
+            ListHeaderComponent={(
+              <>
+                {calendarView === 'year' ? (
+                  <CalendarYearOverview
+                    currentMonthDateOnly={currentMonthDateOnly}
+                    eventsByDate={eventsByDate}
+                    selectedDateOnly={selectedDateOnly}
+                    todayDateOnly={todayDateOnly}
+                    onSelect={(dateOnly) => {
+                      setCalendarView('month');
+                      selectDate(dateOnly);
+                    }}
+                  />
+                ) : (
+                  <CalendarMonthGrid
+                    cells={monthCells}
+                    eventsByDate={eventsByDate}
+                    selectedDateOnly={selectedDateOnly}
+                    onSelectDate={selectDate}
+                  />
+                )}
+                <View style={styles.calendarAgendaHeader}>
+                  <View style={styles.calendarAgendaHeaderCopy}>
+                    <Text style={styles.calendarAgendaDate}>
+                      {calendarView === 'year' ? 'Próximas citas' : formatCalendarAgendaDate(selectedDateOnly)}
+                    </Text>
+                    <Text style={styles.calendarAgendaTitle}>
+                      {calendarView === 'year'
+                        ? `${nextUpcomingEvents.length} en este rango`
+                        : agendaEvents.length ? `${agendaEvents.length} cita${agendaEvents.length === 1 ? '' : 's'}` : 'Sin citas'}
+                    </Text>
+                  </View>
+                  {loading || refreshing ? <ActivityIndicator color={COLORS.text} /> : null}
+                </View>
+              </>
+            )}
+            renderItem={({ item }) => (
+              <CalendarEventCard
+                event={item}
+                timezone={businessTimezone}
+                calendarColor={getCalendarColor(selectedCalendar)}
+                onPress={() => openEventDetails(item)}
               />
+            )}
+            ListEmptyComponent={(
+              error ? (
+                <CalendarErrorState message={error} onRetry={refresh} />
+              ) : (
+                <CalendarEmptyState
+                  title={calendarView === 'year' ? 'No hay citas próximas' : 'No hay citas en este día'}
+                  subtitle={calendarView === 'year'
+                    ? 'Cambia de calendario o crea una cita nueva.'
+                    : 'Toca otro día del mes o agenda una cita para este contacto.'}
+                />
+              )
+            )}
+          />
+        )}
+
+        <CalendarPickerSheet
+          calendars={calendars}
+          closing={calendarSheetClosing}
+          open={calendarSheetOpen}
+          selectedCalendarId={selectedCalendarKey}
+          onClose={closeSheet}
+          onSelect={chooseCalendar}
+        />
+        <AppointmentContactPickerSheet
+          closing={contactPickerClosing}
+          contacts={contactResults}
+          loading={contactsLoading}
+          open={contactPickerOpen}
+          query={contactQuery}
+          selectedDateOnly={selectedDateOnly}
+          onChangeQuery={setContactQuery}
+          onClose={closeSheet}
+          onSelect={openCreateAppointmentForContact}
+        />
+        <CalendarEventDetailsSheet
+          busy={appointmentBusy}
+          calendarColor={getCalendarColor(selectedCalendar)}
+          closing={eventSheetClosing}
+          event={selectedEvent}
+          open={eventSheetOpen}
+          timezone={businessTimezone}
+          onClose={closeSheet}
+          onDelete={deleteAppointment}
+          onEdit={openEditAppointment}
+        />
+        <AppointmentFormSheet
+          busy={appointmentBusy}
+          calendar={selectedCalendar}
+          closing={appointmentFormClosing}
+          draft={appointmentDraft}
+          mode={appointmentMode}
+          open={appointmentFormOpen}
+          timezone={businessTimezone}
+          onChange={setAppointmentDraft}
+          onClose={closeSheet}
+          onSave={saveAppointmentDraft}
+        />
+      </View>
+      {footer}
+    </AppFrame>
+  );
+}
+
+function CalendarMonthGrid({
+  cells,
+  eventsByDate,
+  selectedDateOnly,
+  onSelectDate,
+}: {
+  cells: ReturnType<typeof buildBusinessMonthCells>;
+  eventsByDate: Record<string, CalendarEventItem[]>;
+  selectedDateOnly: string;
+  onSelectDate: (dateOnly: string) => void;
+}) {
+  return (
+    <View style={styles.calendarSurface}>
+      <View style={styles.calendarWeekdayRow}>
+        {CALENDAR_WEEKDAYS.map((day, index) => (
+          <Text key={`${day}-${index}`} style={styles.calendarWeekdayText}>{day}</Text>
+        ))}
+      </View>
+      <View style={styles.calendarMonthGrid}>
+        {cells.map((cell, index) => {
+          const selected = cell.dateOnly === selectedDateOnly;
+          const dayEvents = eventsByDate[cell.dateOnly] || [];
+          const weekend = index % 7 === 0 || index % 7 === 6;
+          return (
+            <Pressable
+              key={cell.dateOnly}
+              accessibilityRole="button"
+              onPress={() => onSelectDate(cell.dateOnly)}
+              style={({ pressed }) => [
+                styles.calendarDayCell,
+                !cell.isCurrentMonth && styles.calendarDayCellMuted,
+                weekend && styles.calendarDayCellWeekend,
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={[
+                styles.calendarDayNumberWrap,
+                cell.isToday && styles.calendarDayNumberToday,
+                selected && styles.calendarDayNumberSelected,
+              ]}>
+                <Text style={[
+                  styles.calendarDayNumber,
+                  !cell.isCurrentMonth && styles.calendarDayNumberMuted,
+                  weekend && styles.calendarDayNumberWeekend,
+                  cell.isToday && styles.calendarDayNumberTodayText,
+                  selected && styles.calendarDayNumberSelectedText,
+                ]}>
+                  {cell.day}
+                </Text>
+              </View>
+              <View style={styles.calendarDayMarkers}>
+                {dayEvents.slice(0, 3).map((event, index) => (
+                  <View key={`${getEventKey(event, index)}-dot`} style={styles.calendarDayMarker} />
+                ))}
+              </View>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function CalendarYearOverview({
+  currentMonthDateOnly,
+  eventsByDate,
+  selectedDateOnly,
+  todayDateOnly,
+  onSelect,
+}: {
+  currentMonthDateOnly: string;
+  eventsByDate: Record<string, CalendarEventItem[]>;
+  selectedDateOnly: string;
+  todayDateOnly: string;
+  onSelect: (dateOnly: string) => void;
+}) {
+  const yearDate = dateOnlyToCalendarDate(currentMonthDateOnly) || new Date();
+  const year = yearDate.getFullYear();
+
+  return (
+    <View style={styles.calendarYearGrid}>
+      {Array.from({ length: 12 }).map((_, monthIndex) => {
+        const dateOnly = `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`;
+        const range = getBusinessMonthRange(dateOnly);
+        const monthEvents = Object.entries(eventsByDate)
+          .filter(([key]) => key >= range.monthStart && key <= range.monthEnd)
+          .reduce((total, [, list]) => total + list.length, 0);
+        const selected = selectedDateOnly >= range.monthStart && selectedDateOnly <= range.monthEnd;
+        const today = todayDateOnly >= range.monthStart && todayDateOnly <= range.monthEnd;
+
+        return (
+          <Pressable
+            key={dateOnly}
+            accessibilityRole="button"
+            onPress={() => onSelect(dateOnly)}
+            style={({ pressed }) => [
+              styles.calendarYearMonth,
+              selected && styles.calendarYearMonthSelected,
+              pressed && styles.pressed,
+            ]}
+          >
+            <Text style={[
+              styles.calendarYearMonthTitle,
+              today && styles.calendarYearMonthToday,
+              selected && styles.calendarYearMonthTitleSelected,
+            ]}>
+              {formatBusinessShortMonthTitle(dateOnly)}
+            </Text>
+            <View style={styles.calendarYearMonthDots}>
+              {monthEvents ? <View style={styles.calendarYearMonthDot} /> : null}
+              {monthEvents > 1 ? <View style={styles.calendarYearMonthDotWide} /> : null}
+            </View>
+            <Text style={styles.calendarYearMonthCount}>{monthEvents || ''}</Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
+function CalendarEventCard({
+  calendarColor,
+  event,
+  timezone,
+  onPress,
+}: {
+  calendarColor: string;
+  event: CalendarEventItem;
+  timezone: string;
+  onPress: () => void;
+}) {
+  const detail = getEventDetail(event);
+  const startTime = formatCalendarEventTime(getEventStart(event), timezone);
+  const endTime = formatCalendarEventTime(getEventEnd(event), timezone);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.calendarEventCard, pressed && styles.pressed]}
+    >
+      <View style={[styles.calendarEventAccent, { backgroundColor: calendarColor }]} />
+      <View style={styles.calendarEventCopy}>
+        <Text numberOfLines={1} style={styles.calendarEventTitle}>{getEventTitle(event)}</Text>
+        <Text numberOfLines={1} style={styles.calendarEventMeta}>
+          {getEventStatus(event)}
+          {detail ? ` · ${detail}` : ''}
+        </Text>
+      </View>
+      <View style={styles.calendarEventTimeStack}>
+        <Text style={styles.calendarEventTimeStart}>{startTime}</Text>
+        <Text style={styles.calendarEventTimeEnd}>{endTime}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
+function CalendarEmptyState({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <View style={styles.calendarEmpty}>
+      <View style={styles.calendarEmptyIcon}>
+        <MessageCircle size={29} color={COLORS.accent} strokeWidth={2.3} />
+      </View>
+      <Text style={styles.calendarEmptyTitle}>{title}</Text>
+      <Text style={styles.calendarEmptyText}>{subtitle}</Text>
+    </View>
+  );
+}
+
+function CalendarErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <View style={styles.calendarEmpty}>
+      <Text style={styles.calendarErrorText}>{message}</Text>
+      <SecondaryButton label="Reintentar" onPress={onRetry} />
+    </View>
+  );
+}
+
+function CalendarPickerSheet({
+  calendars,
+  closing,
+  open,
+  selectedCalendarId,
+  onClose,
+  onSelect,
+}: {
+  calendars: CalendarItem[];
+  closing: boolean;
+  open: boolean;
+  selectedCalendarId: string;
+  onClose: () => void;
+  onSelect: (calendar: CalendarItem) => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open}
+      title="Calendarios"
+      subtitle="Elige el calendario activo para esta vista"
+      onClose={onClose}
+    >
+      <ScrollView contentContainerStyle={styles.calendarSheetList} showsVerticalScrollIndicator={false}>
+        {calendars.map((calendar) => {
+          const id = getCalendarKey(calendar);
+          const selected = id === selectedCalendarId;
+          return (
+            <Pressable
+              key={id}
+              accessibilityRole="button"
+              onPress={() => onSelect(calendar)}
+              style={({ pressed }) => [
+                styles.calendarSheetRow,
+                selected && styles.calendarSheetRowSelected,
+                pressed && styles.pressed,
+              ]}
+            >
+              <View style={[styles.calendarSheetDot, { backgroundColor: getCalendarColor(calendar) }]} />
+              <View style={styles.calendarSheetCopy}>
+                <Text numberOfLines={1} style={styles.calendarSheetTitle}>{getCalendarTitle(calendar)}</Text>
+                <Text numberOfLines={1} style={styles.calendarSheetSubtitle}>
+                  {calendarIsActive(calendar) ? 'Activo' : 'Inactivo'}
+                  {calendar.provider || calendar.source ? ` · ${calendar.provider || calendar.source}` : ''}
+                </Text>
+              </View>
+              {selected ? <Check size={21} color={COLORS.accent} strokeWidth={2.8} /> : null}
+            </Pressable>
+          );
+        })}
+        {!calendars.length ? (
+          <Text style={styles.contactPickerEmpty}>No hay calendarios conectados.</Text>
+        ) : null}
+      </ScrollView>
+    </BottomActionSheet>
+  );
+}
+
+function AppointmentContactPickerSheet({
+  closing,
+  contacts,
+  loading,
+  open,
+  query,
+  selectedDateOnly,
+  onChangeQuery,
+  onClose,
+  onSelect,
+}: {
+  closing: boolean;
+  contacts: ChatContact[];
+  loading: boolean;
+  open: boolean;
+  query: string;
+  selectedDateOnly: string;
+  onChangeQuery: (value: string) => void;
+  onClose: () => void;
+  onSelect: (contact: ChatContact) => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open}
+      title="Nueva cita"
+      subtitle={formatBusinessDayHeader(selectedDateOnly)}
+      onClose={onClose}
+    >
+      <View style={styles.contactPickerBody}>
+        <View style={styles.sheetSearchBox}>
+          <Search size={19} color={COLORS.muted} strokeWidth={2.35} />
+          <TextInput
+            value={query}
+            onChangeText={onChangeQuery}
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="Buscar contacto"
+            placeholderTextColor={COLORS.muted}
+            style={styles.sheetSearchInput}
+          />
+        </View>
+        {loading ? (
+          <View style={styles.sheetInlineState}>
+            <ActivityIndicator color={COLORS.accent} />
+            <Text style={styles.caption}>Buscando contactos...</Text>
+          </View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.contactPickerList} keyboardShouldPersistTaps="handled">
+            {contacts.map((contact) => (
+              <ContactPickerRow key={contact.id} contact={contact} onPress={() => onSelect(contact)} />
             ))}
-            {!events.length ? <Text style={styles.caption}>No hay citas en el rango.</Text> : null}
-          </SectionBlock>
-          <SectionBlock title="Calendarios">
-            {calendars.map((calendar, index) => (
-              <InfoRow
-                key={calendar.id || calendar._id || `calendar-${index}`}
-                title={calendar.name || calendar.title || 'Calendario'}
-                subtitle={calendar.id || calendar._id || ''}
-                value=""
+            {!contacts.length ? (
+              <View style={styles.sheetInlineState}>
+                <User size={26} color={COLORS.accent} strokeWidth={2.3} />
+                <Text style={styles.contactPickerEmpty}>Busca un contacto para agendar.</Text>
+              </View>
+            ) : null}
+          </ScrollView>
+        )}
+      </View>
+    </BottomActionSheet>
+  );
+}
+
+function CalendarEventDetailsSheet({
+  busy,
+  calendarColor,
+  closing,
+  event,
+  open,
+  timezone,
+  onClose,
+  onDelete,
+  onEdit,
+}: {
+  busy: boolean;
+  calendarColor: string;
+  closing: boolean;
+  event: CalendarEventItem | null;
+  open: boolean;
+  timezone: string;
+  onClose: () => void;
+  onDelete: (event: CalendarEventItem) => void;
+  onEdit: (event: CalendarEventItem) => void;
+}) {
+  if (!event) {
+    return (
+      <BottomActionSheet closing={closing} open={open} title="Cita" onClose={onClose}>
+        <View style={styles.sheetInlineState}>
+          <Text style={styles.caption}>No hay detalles para mostrar.</Text>
+        </View>
+      </BottomActionSheet>
+    );
+  }
+
+  const start = getEventStart(event);
+  const dateOnly = getBusinessDateOnly(start, timezone);
+  const detail = getEventDetail(event);
+
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open}
+      title={getEventTitle(event)}
+      subtitle={getEventStatus(event)}
+      onClose={onClose}
+    >
+      <View style={styles.eventDetailsBody}>
+        <View style={styles.eventDetailsHero}>
+          <View style={[styles.eventDetailsAccent, { backgroundColor: calendarColor }]} />
+          <View style={styles.eventDetailsCopy}>
+            <Text style={styles.eventDetailsDate}>{formatBusinessDayHeader(dateOnly)}</Text>
+            <Text style={styles.eventDetailsTime}>
+              {formatCalendarEventTimeRange(getEventStart(event), getEventEnd(event), timezone) || 'Sin hora'}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.sheetActionRow}>
+          <View style={styles.sheetActionIcon}>
+            <Clock size={18} color={COLORS.accent} strokeWidth={2.7} />
+          </View>
+          <View style={styles.sheetActionCopy}>
+            <Text style={styles.sheetActionTitle}>Estado</Text>
+            <Text style={styles.sheetActionSubtitle}>{getEventStatus(event)}</Text>
+          </View>
+        </View>
+        {detail ? (
+          <View style={styles.sheetActionRow}>
+            <View style={styles.sheetActionIcon}>
+              <CalendarDays size={18} color={COLORS.accent} strokeWidth={2.7} />
+            </View>
+            <View style={styles.sheetActionCopy}>
+              <Text style={styles.sheetActionTitle}>Detalle</Text>
+              <Text style={styles.sheetActionSubtitle}>{detail}</Text>
+            </View>
+          </View>
+        ) : null}
+        <View style={styles.sheetSectionDivider}>
+          <Text style={styles.sheetSectionLabel}>Acciones</Text>
+        </View>
+        <SheetActionRow
+          Icon={FileText}
+          title="Editar cita"
+          subtitle="Cambiar título, estado, horario, dirección o notas."
+          disabled={busy}
+          onPress={() => onEdit(event)}
+        />
+        <SheetActionRow
+          Icon={Trash2}
+          title="Eliminar cita"
+          subtitle="Borra esta cita del calendario."
+          danger
+          busy={busy}
+          onPress={() => onDelete(event)}
+        />
+      </View>
+    </BottomActionSheet>
+  );
+}
+
+function AppointmentFormSheet({
+  busy,
+  calendar,
+  closing,
+  draft,
+  mode,
+  open,
+  timezone,
+  onChange,
+  onClose,
+  onSave,
+}: {
+  busy: boolean;
+  calendar: CalendarItem | null;
+  closing: boolean;
+  draft: AppointmentDraft | null;
+  mode: AppointmentFormMode;
+  open: boolean;
+  timezone: string;
+  onChange: (draft: AppointmentDraft | null) => void;
+  onClose: () => void;
+  onSave: (draft: AppointmentDraft) => void;
+}) {
+  const updateDraft = useCallback((updates: Partial<AppointmentDraft>) => {
+    if (!draft) return;
+    onChange({ ...draft, ...updates });
+  }, [draft, onChange]);
+
+  const endFields = draft
+    ? addMinutesToBusinessDateTime(draft.dateOnly, draft.startTime, draft.durationMinutes)
+    : { dateOnly: '', time: '' };
+
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open}
+      title={mode === 'edit' ? 'Editar cita' : 'Nueva cita'}
+      subtitle={calendar ? getCalendarTitle(calendar) : 'Calendario'}
+      onClose={onClose}
+    >
+      {!draft ? (
+        <View style={styles.sheetInlineState}>
+          <Text style={styles.caption}>No hay cita para editar.</Text>
+        </View>
+      ) : (
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            contentContainerStyle={styles.appointmentFormBody}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            {mode === 'create' && draft.contact ? (
+              <View style={styles.appointmentContactCard}>
+                <View style={styles.appointmentContactIcon}>
+                  <User size={20} color={COLORS.accent} strokeWidth={2.6} />
+                </View>
+                <View style={styles.appointmentContactCopy}>
+                  <Text numberOfLines={1} style={styles.appointmentContactName}>{getContactName(draft.contact)}</Text>
+                  <Text numberOfLines={1} style={styles.appointmentContactMeta}>
+                    {draft.contact.phone || draft.contact.email || 'Contacto seleccionado'}
+                  </Text>
+                </View>
+              </View>
+            ) : null}
+
+            <AppointmentTextField
+              label="Título"
+              value={draft.title}
+              placeholder="Nombre de la cita"
+              onChangeText={(value) => updateDraft({ title: value })}
+            />
+
+            <View style={styles.appointmentFieldGrid}>
+              <AppointmentTextField
+                compact
+                label="Fecha"
+                value={draft.dateOnly}
+                placeholder="YYYY-MM-DD"
+                onChangeText={(value) => updateDraft({ dateOnly: value })}
               />
-            ))}
-            {!calendars.length ? <Text style={styles.caption}>No hay calendarios conectados.</Text> : null}
-          </SectionBlock>
-        </>
-      ) : null}
-    </ScrollView>
+              <AppointmentTextField
+                compact
+                label="Hora"
+                value={draft.startTime}
+                placeholder="HH:mm"
+                onChangeText={(value) => updateDraft({ startTime: value })}
+              />
+            </View>
+
+            <View style={styles.appointmentSection}>
+              <Text style={styles.appointmentFieldLabel}>Duración</Text>
+              <View style={styles.appointmentChipRow}>
+                {APPOINTMENT_DURATION_OPTIONS.map((minutes) => {
+                  const selected = draft.durationMinutes === minutes;
+                  return (
+                    <Pressable
+                      key={minutes}
+                      accessibilityRole="button"
+                      onPress={() => updateDraft({ durationMinutes: minutes })}
+                      style={({ pressed }) => [
+                        styles.appointmentChoiceChip,
+                        selected && styles.appointmentChoiceChipActive,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
+                        {minutes}m
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Text style={styles.appointmentHint}>
+                Termina {endFields.dateOnly !== draft.dateOnly ? `${endFields.dateOnly} ` : ''}{endFields.time} · {timezone}
+              </Text>
+            </View>
+
+            <View style={styles.appointmentSection}>
+              <Text style={styles.appointmentFieldLabel}>Estado</Text>
+              <View style={styles.appointmentChipRow}>
+                {APPOINTMENT_STATUS_OPTIONS.map((option) => {
+                  const selected = draft.appointmentStatus === option.value;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      accessibilityRole="button"
+                      onPress={() => updateDraft({ appointmentStatus: option.value })}
+                      style={({ pressed }) => [
+                        styles.appointmentChoiceChip,
+                        selected && styles.appointmentChoiceChipActive,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            <AppointmentTextField
+              label="Dirección"
+              value={draft.address}
+              placeholder="Ubicación o enlace"
+              icon={MapPin}
+              onChangeText={(value) => updateDraft({ address: value })}
+            />
+            <AppointmentTextField
+              multiline
+              label="Notas"
+              value={draft.notes}
+              placeholder="Notas internas de la cita"
+              icon={FileText}
+              onChangeText={(value) => updateDraft({ notes: value })}
+            />
+
+            <PrimaryButton
+              label={mode === 'edit' ? 'Guardar cambios' : 'Agendar cita'}
+              busy={busy}
+              onPress={() => onSave(draft)}
+            />
+          </ScrollView>
+        </KeyboardAvoidingView>
+      )}
+    </BottomActionSheet>
+  );
+}
+
+function AppointmentTextField({
+  compact,
+  icon: Icon,
+  label,
+  multiline,
+  placeholder,
+  value,
+  onChangeText,
+}: {
+  compact?: boolean;
+  icon?: LucideIcon;
+  label: string;
+  multiline?: boolean;
+  placeholder: string;
+  value: string;
+  onChangeText: (value: string) => void;
+}) {
+  return (
+    <View style={[styles.appointmentField, compact && styles.appointmentFieldCompact]}>
+      <Text style={styles.appointmentFieldLabel}>{label}</Text>
+      <View style={[styles.appointmentInputWrap, multiline && styles.appointmentInputWrapMultiline]}>
+        {Icon ? <Icon size={17} color={COLORS.muted} strokeWidth={2.4} /> : null}
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={COLORS.muted}
+          multiline={multiline}
+          textAlignVertical={multiline ? 'top' : 'center'}
+          autoCapitalize="sentences"
+          autoCorrect={false}
+          style={[styles.appointmentInput, multiline && styles.appointmentInputMultiline]}
+        />
+      </View>
+    </View>
   );
 }
 
@@ -2287,7 +3641,7 @@ function ContactPickerSheet({
     >
       <View style={styles.contactPickerBody}>
         {asset ? (
-          <Image source={{ uri: asset.uri }} style={styles.cameraPreview} />
+          <Image source={{ uri: asset.uri }} style={styles.cameraPreview as ImageStyle} />
         ) : null}
         <View style={styles.sheetSearchBox}>
           <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
@@ -2332,7 +3686,7 @@ function ContactPickerRow({ contact, onPress }: { contact: ChatContact; onPress:
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.contactPickerRow, pressed && styles.pressed]}>
       <View style={[styles.contactPickerAvatar, { borderColor: channelColor }]}>
-        {avatar ? <Image source={{ uri: avatar }} style={styles.contactPickerAvatarImage} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
+        {avatar ? <Image source={{ uri: avatar }} style={styles.contactPickerAvatarImage as ImageStyle} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
       </View>
       <View style={styles.contactPickerCopy}>
         <Text numberOfLines={1} style={styles.contactPickerName}>{getContactName(contact)}</Text>
@@ -2812,7 +4166,7 @@ function ChatRow({
           ) : null}
           <View style={[styles.avatar, { borderColor: channelColor }]}>
             <View style={styles.avatarCircle}>
-              {avatar ? <Image source={{ uri: avatar }} style={styles.avatarImage} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
+              {avatar ? <Image source={{ uri: avatar }} style={styles.avatarImage as ImageStyle} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
             </View>
             {channelKind !== 'unknown' ? (
               <View style={[styles.avatarChannelBadge, { backgroundColor: channelColor }]}>
@@ -3137,6 +4491,614 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     fontSize: 12,
     fontWeight: '800',
+  },
+  calendarPage: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+  calendarHeader: {
+    paddingTop: 20,
+    paddingHorizontal: 15,
+    paddingBottom: 0,
+    gap: 14,
+    backgroundColor: COLORS.bg,
+  },
+  calendarToolbar: {
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 14,
+  },
+  calendarPeriodChip: {
+    minHeight: 50,
+    minWidth: 118,
+    borderRadius: 25,
+    borderWidth: 1,
+    borderColor: 'rgba(183,207,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.055)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  calendarPeriodText: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  calendarHeaderCapsule: {
+    minHeight: 52,
+    flex: 1,
+    maxWidth: 214,
+    borderRadius: 26,
+    borderWidth: 1,
+    borderColor: 'rgba(183,207,255,0.18)',
+    backgroundColor: 'rgba(255,255,255,0.055)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 7,
+  },
+  calendarCapsuleIconButton: {
+    width: 45,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  calendarCapsuleTodayButton: {
+    minWidth: 72,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  calendarTitleRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  calendarTitleButton: {
+    flex: 1,
+    minWidth: 0,
+  },
+  calendarTitle: {
+    color: COLORS.text,
+    fontSize: 43,
+    lineHeight: 49,
+    fontWeight: '900',
+    textTransform: 'capitalize',
+  },
+  calendarSubtitle: {
+    color: COLORS.accent,
+    fontSize: 13,
+    fontWeight: '900',
+    marginTop: 1,
+  },
+  calendarPeriodControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingBottom: 2,
+  },
+  calendarNavButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  calendarTodayButton: {
+    minHeight: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    backgroundColor: COLORS.panelSoft,
+  },
+  calendarTodayButtonText: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: '900',
+  },
+  calendarSelector: {
+    minHeight: 42,
+    borderRadius: 21,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 13,
+  },
+  calendarSelectorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  calendarSelectorText: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  calendarCenterState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    padding: 24,
+  },
+  calendarScrollBody: {
+    paddingBottom: 138,
+  },
+  calendarSurface: {
+    paddingHorizontal: 18,
+    paddingTop: 0,
+    paddingBottom: 12,
+    backgroundColor: COLORS.bg,
+  },
+  calendarWeekdayRow: {
+    flexDirection: 'row',
+    minHeight: 27,
+    alignItems: 'center',
+  },
+  calendarWeekdayText: {
+    flex: 1,
+    color: COLORS.muted,
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  calendarMonthGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  calendarDayCell: {
+    width: '14.2857%',
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  calendarDayCellWeekend: {},
+  calendarDayCellMuted: {
+    opacity: 0.64,
+  },
+  calendarDayNumberWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  calendarDayNumberToday: {
+    borderWidth: 0,
+    borderColor: 'transparent',
+  },
+  calendarDayNumberSelected: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  calendarDayNumber: {
+    color: COLORS.text,
+    fontSize: 23,
+    fontWeight: '800',
+  },
+  calendarDayNumberMuted: {
+    color: COLORS.muted,
+  },
+  calendarDayNumberWeekend: {
+    color: COLORS.muted,
+  },
+  calendarDayNumberTodayText: {
+    color: COLORS.accent,
+  },
+  calendarDayNumberSelectedText: {
+    color: COLORS.white,
+  },
+  calendarDayMarkers: {
+    minHeight: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 3,
+  },
+  calendarDayMarker: {
+    width: 4,
+    height: 4,
+    borderRadius: 3,
+    backgroundColor: COLORS.accent,
+  },
+  calendarAgendaHeader: {
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  calendarAgendaHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  calendarAgendaDate: {
+    color: COLORS.muted,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  calendarAgendaTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: '900',
+    marginTop: 3,
+  },
+  calendarAgendaSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  calendarRefreshingPill: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: COLORS.panel,
+    overflow: 'hidden',
+  },
+  calendarEventCard: {
+    minHeight: 76,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 11,
+    marginHorizontal: 20,
+    marginTop: 11,
+    paddingHorizontal: 13,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(183,207,255,0.18)',
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+  },
+  calendarEventAccent: {
+    width: 5,
+    alignSelf: 'stretch',
+    borderRadius: 999,
+    marginVertical: 2,
+  },
+  calendarEventCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  calendarEventTitle: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: '900',
+  },
+  calendarEventMeta: {
+    color: COLORS.muted,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  calendarEventTimeStack: {
+    minWidth: 78,
+    alignItems: 'flex-end',
+    gap: 3,
+  },
+  calendarEventTimeStart: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  calendarEventTimeEnd: {
+    color: COLORS.muted,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  calendarEmpty: {
+    minHeight: 210,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 28,
+    gap: 8,
+  },
+  calendarEmptyIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panelSoft,
+  },
+  calendarEmptyTitle: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  calendarEmptyText: {
+    color: COLORS.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  calendarErrorText: {
+    color: COLORS.danger,
+    fontSize: 16,
+    lineHeight: 22,
+    textAlign: 'center',
+  },
+  calendarYearGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  calendarYearMonth: {
+    width: '33.3333%',
+    minHeight: 86,
+    borderRadius: 18,
+    padding: 11,
+    justifyContent: 'space-between',
+    backgroundColor: 'transparent',
+  },
+  calendarYearMonthSelected: {
+    backgroundColor: COLORS.accentSoft,
+  },
+  calendarYearMonthTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+    textTransform: 'capitalize',
+  },
+  calendarYearMonthToday: {
+    color: COLORS.accent,
+  },
+  calendarYearMonthTitleSelected: {
+    color: COLORS.text,
+  },
+  calendarYearMonthDots: {
+    minHeight: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  calendarYearMonthDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: COLORS.accent,
+  },
+  calendarYearMonthDotWide: {
+    width: 13,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: COLORS.accent,
+  },
+  calendarYearMonthCount: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  calendarSheetList: {
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 18,
+  },
+  calendarSheetRow: {
+    minHeight: 64,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    paddingHorizontal: 6,
+    paddingVertical: 9,
+  },
+  calendarSheetRowSelected: {
+    backgroundColor: COLORS.accentSoft,
+  },
+  calendarSheetDot: {
+    width: 13,
+    height: 13,
+    borderRadius: 7,
+  },
+  calendarSheetCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  calendarSheetTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  calendarSheetSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '700',
+  },
+  eventDetailsBody: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 18,
+  },
+  eventDetailsHero: {
+    minHeight: 78,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 13,
+    marginBottom: 8,
+  },
+  eventDetailsAccent: {
+    width: 5,
+    alignSelf: 'stretch',
+    borderRadius: 999,
+  },
+  eventDetailsCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 4,
+  },
+  eventDetailsDate: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+    textTransform: 'capitalize',
+  },
+  eventDetailsTime: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  appointmentFormBody: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 24,
+    gap: 14,
+  },
+  appointmentContactCard: {
+    minHeight: 62,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+  },
+  appointmentContactIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: COLORS.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  appointmentContactCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  appointmentContactName: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  appointmentContactMeta: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '700',
+  },
+  appointmentFieldGrid: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  appointmentField: {
+    gap: 7,
+  },
+  appointmentFieldCompact: {
+    flex: 1,
+    minWidth: 0,
+  },
+  appointmentFieldLabel: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  appointmentInputWrap: {
+    minHeight: 46,
+    borderRadius: 17,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  appointmentInputWrapMultiline: {
+    minHeight: 92,
+    alignItems: 'flex-start',
+    paddingTop: 12,
+  },
+  appointmentInput: {
+    flex: 1,
+    minHeight: 44,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '800',
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
+  appointmentInputMultiline: {
+    minHeight: 76,
+    lineHeight: 20,
+    paddingTop: 0,
+  },
+  appointmentSection: {
+    gap: 8,
+  },
+  appointmentChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  appointmentChoiceChip: {
+    minHeight: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(16,42,120,0.58)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  appointmentChoiceChipActive: {
+    borderColor: 'rgba(0,168,248,0.46)',
+    backgroundColor: COLORS.accentSoft,
+  },
+  appointmentChoiceText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  appointmentChoiceTextActive: {
+    color: COLORS.text,
+  },
+  appointmentHint: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '700',
   },
   centerScreen: {
     flex: 1,

@@ -257,12 +257,33 @@ export class RistakApiClient {
     return this.request<CalendarItem[] | { calendars?: CalendarItem[] }>('/calendars');
   }
 
-  getCalendarEvents(startDate: string, endDate: string) {
+  getCalendarEvents(startTime: number, endTime: number, calendarId?: string) {
     return this.request<CalendarEventItem[] | { events?: CalendarEventItem[] }>('/calendars/events', {
       params: {
-        startDate,
-        endDate,
+        startTime,
+        endTime,
+        calendarId,
       },
+    });
+  }
+
+  createAppointment(appointmentData: Record<string, unknown>) {
+    return this.request<CalendarEventItem>('/calendars/appointments', {
+      method: 'POST',
+      body: JSON.stringify(appointmentData),
+    });
+  }
+
+  updateAppointment(eventId: string, updateData: Record<string, unknown>) {
+    return this.request<CalendarEventItem>(`/calendars/appointments/${encodeURIComponent(eventId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(updateData),
+    });
+  }
+
+  deleteCalendarEvent(eventId: string) {
+    return this.request<{ success?: boolean }>(`/calendars/events/${encodeURIComponent(eventId)}`, {
+      method: 'DELETE',
     });
   }
 

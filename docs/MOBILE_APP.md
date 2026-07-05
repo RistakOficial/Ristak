@@ -341,6 +341,26 @@ a UTC usando la zona horaria de la cuenta; no debe depender de la zona horaria
 del navegador. Al guardar usa el mismo endpoint de citas que el formulario
 normal y respeta bloqueos nativos del calendario antes de crear la cita.
 
+## Pagina de Citas nativa
+
+La seccion `Citas` de `mobile/` debe recrear la pagina movil original de
+`frontend/src/pages/PhoneCalendar/PhoneCalendar.tsx`, no el placeholder generico
+de bloques. La pantalla nativa usa el header movil original: pastilla de periodo
+con chevron y anio, capsula de acciones `Hoy` / calendario / `+`, titulo grande
+del mes, grilla mensual amplia, agenda del dia y sheet de detalles de cita. El
+selector de calendario vive en el icono de calendario de la capsula, no como fila
+permanente debajo del titulo. Todas las agrupaciones de eventos se calculan con
+la zona horaria de la cuenta (`account_timezone`), no con la zona horaria del
+telefono.
+
+El boton `+` abre un bottom sheet nativo para buscar contactos y despues muestra
+el formulario de cita con titulo, calendario activo, fecha, hora, duracion,
+estado, direccion y notas. Guardar crea contra `/api/calendars/appointments`;
+editar y eliminar usan los endpoints reales de citas/eventos. La fecha y hora
+del formulario se interpretan en `account_timezone` y se mandan al backend como
+instantes UTC. Brecha pendiente: replicar validacion avanzada de slots/bloqueos,
+usuarios Round Robin e invitados del modal web original.
+
 ## Filtros de la bandeja del chat movil
 
 La bandeja de `/movil` no debe volver a mostrar el dropdown `Numero / Ver todos`
