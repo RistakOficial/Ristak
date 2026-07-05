@@ -1226,12 +1226,14 @@ export function ContactDetailsModal({
     () => toZonedDateTimeLocalInputValue(new Date(), timezone),
     [enrollModalOpen, timezone]
   )
+  const selectedContactPhones = useMemo(() => getContactPhoneEntries(selectedContact), [selectedContact])
   const availableWhatsAppPhones = useMemo<ContactChatPhoneOption[]>(() => {
     const statusPhones = whatsappStatus?.phoneNumbers || []
     return statusPhones.length > 0 ? statusPhones : whatsappPhoneNumbers
   }, [whatsappPhoneNumbers, whatsappStatus?.phoneNumbers])
   const whatsappPreferenceOptions = whatsappPhoneNumbers.length > 0 ? whatsappPhoneNumbers : availableWhatsAppPhones
   const preferredWhatsAppPhoneNumberId = getPreferredWhatsAppPhoneNumberId(selectedContact)
+  const selectedContactHasPhone = selectedContactPhones.length > 0
   const automaticWhatsAppRoutePhone = useMemo<ContactChatPhoneOption | null>(() => {
     const routedMessage = [...chatMessages]
       .reverse()
@@ -1302,7 +1304,13 @@ export function ContactDetailsModal({
     : 'Principal actual'
   const whatsappPreferenceDescription = preferredWhatsAppPhoneNumberId
     ? 'Siempre usa este remitente para este contacto.'
-    : 'Usa la conversación; si no hay historial, toma el principal.'
+    : automaticWhatsAppRoutePhone
+    ? 'Usa la conversación; si no hay historial, toma el principal.'
+    : 'Usa el remitente principal mientras no haya historial de WhatsApp.'
+  const automaticWhatsAppPreferenceOptionLabel = automaticWhatsAppRoutePhone
+    ? 'Automático: usar el número por donde llegó'
+    : 'Automático: usar remitente principal'
+  const showWhatsAppPreference = selectedContactHasPhone && whatsappPreferenceOptions.length > 0
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
   const detectedContactChannels = useMemo(
     () => getContactDetectedSocialChannels(selectedContact, chatMessages),
@@ -1397,7 +1405,6 @@ export function ContactDetailsModal({
   }, [hasEmailAccess, selectedChatChannel])
   const selectedChatChannelOption = chatChannelOptions.find((option) => option.value === chatChannelValue) || chatChannelOptions[0]
   const selectedChatRouteLabel = selectedChatChannelOption?.label || CONTACT_CHAT_CHANNEL_LABELS[selectedChatChannel]
-  const selectedContactPhones = useMemo(() => getContactPhoneEntries(selectedContact), [selectedContact])
   const chatMessageGroups = useMemo(() => {
     const items: ContactChatTimelineItem[] = [
       ...chatMessages.map((message) => ({
@@ -2211,7 +2218,7 @@ export function ContactDetailsModal({
                     </div>
                   </div>
 
-                  {whatsappPreferenceOptions.length > 0 && (
+                  {showWhatsAppPreference && (
                     <div className={styles.detailSection}>
                       <h5 className={styles.detailSectionTitle}>Respuesta por WhatsApp</h5>
                       <div className={styles.detailSectionContent}>
@@ -2223,7 +2230,7 @@ export function ContactDetailsModal({
                           onChange={(event) => updatePreferredWhatsAppPhoneNumber(event.target.value)}
                           disabled={savingWhatsAppPreference || !onUpdatePreferredWhatsAppPhoneNumber}
                         >
-                          <option value="">Automático: usar el número por donde llegó</option>
+                          <option value="">{automaticWhatsAppPreferenceOptionLabel}</option>
                           {whatsappPreferenceOptions.map((phone) => (
                             <option key={phone.id} value={phone.id}>
                               {getWhatsAppPhoneLabel(phone)}{phone.is_default_sender ? ' · Principal' : ''}

@@ -12373,6 +12373,24 @@ export const PhoneChat: React.FC = () => {
   const contactInfoPreferredPhoneId = (contactInfoData as ChatContact | null)?.preferredWhatsAppPhoneNumberId ||
     (contactInfoData as Record<string, unknown> | null)?.preferred_whatsapp_phone_number_id as string | undefined
   const contactInfoHasFixedOurPhone = Boolean(contactInfoPreferredPhoneId)
+  const contactInfoHasRecipientPhone = Boolean(
+    String(contactInfoData?.phone || '').trim() ||
+    [...(contactInfoData?.phones || []), ...(contactInfoData?.phoneNumbers || [])]
+      .some((entry) => String(entry?.phone || '').trim())
+  )
+  const contactInfoHasWhatsAppRoute = Boolean(
+    activeContact?.lastInboundBusinessPhoneNumberId ||
+    activeContact?.lastInboundBusinessPhone ||
+    activeContact?.lastBusinessPhoneNumberId ||
+    activeContact?.lastBusinessPhone ||
+    messages.some((message) => (
+      message.direction === 'inbound' &&
+      Boolean(message.businessPhoneNumberId || message.businessPhone)
+    ))
+  )
+  const contactInfoAutomaticOurNumberText = contactInfoHasWhatsAppRoute
+    ? 'Usar el número por donde llegó la conversación o el predeterminado.'
+    : 'Usar el remitente principal mientras no haya historial de WhatsApp.'
   const contactInfoOurPhone = businessPhones.find((phone) => phone.id === contactInfoPreferredPhoneId) ||
     (contactInfoData?.id === activeContact?.id ? selectedBusinessPhone : null) ||
     businessPhones.find((phone) => phone.is_default_sender) ||
@@ -16721,7 +16739,7 @@ export const PhoneChat: React.FC = () => {
             {contactInfoStageBadge && (
               <span className={styles.contactInfoBadge}>{contactInfoStageBadge.text}</span>
             )}
-            {businessPhones.length > 0 && (
+            {businessPhones.length > 0 && contactInfoHasRecipientPhone && (
               <button
                 type="button"
                 className={styles.contactInfoOurNumberPill}
@@ -22138,7 +22156,7 @@ export const PhoneChat: React.FC = () => {
       </Modal>
 
       <PhoneSheet
-        isOpen={ourNumberSheetOpen}
+        isOpen={Boolean(ourNumberSheetOpen && contactInfoHasRecipientPhone)}
         onClose={() => setOurNumberSheetOpen(false)}
         title="Contactar desde"
         subtitle={contactInfoData ? getContactName(contactInfoData) : undefined}
@@ -22154,7 +22172,7 @@ export const PhoneChat: React.FC = () => {
           >
             <span>
               <strong>Automático</strong>
-              <small>Usar el número por donde llegó la conversación o el predeterminado.</small>
+              <small>{contactInfoAutomaticOurNumberText}</small>
             </span>
             {changingOurNumberId === '__automatic__' ? <Loader2 size={18} className={styles.spinIcon} /> : !contactInfoPreferredPhoneId ? <Check size={18} /> : null}
           </button>

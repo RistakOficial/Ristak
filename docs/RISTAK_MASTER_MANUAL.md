@@ -566,10 +566,14 @@ fila de ese numero para conservar la validacion estricta. En numeros de
 WhatsApp API ligados con QR, el QR escaneado debe coincidir con el numero
 oficial esperado; si no coincide, se rechaza como `number_mismatch`.
 
-En la pagina de Chat desktop y en el chat movil bajo `/movil`, la informacion
-del contacto permite elegir el WhatsApp de respuesta del contacto. El modo
-automatico usa el numero por donde llego la conversacion o, si no hay historial,
-el principal actual; si el usuario elige un numero fijo, Ristak guarda
+En la ficha de contacto, la pagina de Chat desktop y el chat movil bajo
+`/movil`, la informacion del contacto permite elegir el WhatsApp de respuesta
+del contacto solo cuando el contacto tiene al menos un telefono guardado. Si el
+contacto llego por Messenger, Instagram o correo y no tiene telefono, la UI
+oculta esa preferencia porque no existe destinatario de WhatsApp. El modo
+automatico usa el numero por donde llego la conversacion cuando existe historial
+de WhatsApp; si no hay historial, usa el principal actual. Si el usuario elige un
+numero fijo, Ristak guarda
 `preferred_whatsapp_phone_number_id` en el contacto y el composer empieza a
 enviar desde ese remitente por default. El selector del composer puede seguir
 cambiando el envio puntual, incluyendo cada WhatsApp conectado como opcion

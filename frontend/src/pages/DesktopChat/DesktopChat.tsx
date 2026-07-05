@@ -2557,6 +2557,7 @@ export const DesktopChat: React.FC = () => {
     () => getContactPhoneEntries(activeInfoContact),
     [activeInfoContact]
   )
+  const activeInfoContactHasPhone = activeContactPhones.length > 0
   const businessPhones = useMemo(() => whatsappStatus?.phoneNumbers || [], [whatsappStatus?.phoneNumbers])
   const defaultComposerBusinessPhone = useMemo(() => getComposerBusinessPhone(whatsappStatus, activeContact), [activeContact, whatsappStatus])
   const selectedBusinessPhone = useMemo(() => (
@@ -2595,7 +2596,12 @@ export const DesktopChat: React.FC = () => {
     : 'Principal actual'
   const whatsappPreferenceDescription = preferredWhatsAppPhoneNumberId
     ? 'Número fijo para este contacto.'
-    : 'Automático: usa el número por donde llegó.'
+    : automaticWhatsAppRoutePhone
+    ? 'Automático: usa el número por donde llegó.'
+    : 'Automático: usa el remitente principal mientras no haya historial de WhatsApp.'
+  const automaticWhatsAppPreferenceOptionLabel = automaticWhatsAppRoutePhone
+    ? 'Automático: usar el número por donde llegó'
+    : 'Automático: usar remitente principal'
   const whatsappPreferenceRouteDisplay = whatsappPreferenceRoutePhone
     ? getBusinessPhoneDisplay(whatsappPreferenceRoutePhone)
     : 'Sin número configurado'
@@ -4668,7 +4674,9 @@ export const DesktopChat: React.FC = () => {
         nextPreferredId ? 'WhatsApp de respuesta actualizado' : 'Respuesta automática activada',
         nextPreferredId
           ? 'Este contacto quedará ligado a ese número para responder por WhatsApp.'
-          : 'Ristak volverá a usar el número por donde llegó la conversación.'
+          : automaticWhatsAppRoutePhone
+          ? 'Ristak volverá a usar el número por donde llegó la conversación.'
+          : 'Ristak usará el remitente principal mientras no haya historial de WhatsApp.'
       )
     } catch (error: any) {
       const rollbackPatch = {
@@ -4683,7 +4691,7 @@ export const DesktopChat: React.FC = () => {
     } finally {
       setSavingWhatsAppPreference(false)
     }
-  }, [activeContact, contactInfoData, savingWhatsAppPreference, showToast])
+  }, [activeContact, automaticWhatsAppRoutePhone, contactInfoData, savingWhatsAppPreference, showToast])
 
   const handleMakePrimaryPhone = useCallback(async (phone: string) => {
     const nextPhone = String(phone || '').trim()
@@ -7714,14 +7722,14 @@ export const DesktopChat: React.FC = () => {
                       />
                     </dd>
                   </div>
-                  {businessPhones.length > 0 ? (
+                  {businessPhones.length > 0 && activeInfoContactHasPhone ? (
                     <div>
                       <dt><FaWhatsapp aria-hidden="true" /> WhatsApp de respuesta</dt>
                       <dd>
                         <CustomSelect
                           value={preferredWhatsAppPhoneNumberId}
                           options={[
-                            { value: '', label: 'Automático: usar el número por donde llegó' },
+                            { value: '', label: automaticWhatsAppPreferenceOptionLabel },
                             ...businessPhones.map((phone) => ({
                               value: phone.id,
                               label: `${getBusinessPhoneDisplay(phone)}${phone.is_default_sender ? ' · Principal' : ''}`,
