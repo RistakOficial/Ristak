@@ -1061,6 +1061,13 @@ Alcance:
   `rebill_payment_link_id`,
   `rebill_payment_link_url`, `rebill_subscription_id`, `rebill_customer_id` y
   `rebill_card_id` para conciliacion posterior.
+- Suscripciones Rebill desde Sites: el bloque de pago de Sites puede crear una
+  suscripcion Rebill mensual o anual sin contacto previo. Antes de redirigir, el
+  checkout publicado pide correo y telefono, crea o liga el contacto local y pasa
+  esos datos como `prefilledFields.customer` al Payment Link hospedado. El Plan y
+  Payment Link de Rebill conservan la metadata `site_checkout_subscription` y el
+  objeto `paymentGate` para que webhooks, pagos iniciales y conciliacion posterior
+  sepan de que sitio, pagina y bloque salio la suscripcion.
 - Las suscripciones Rebill solo aceptan frecuencia mensual o anual. Ristak bloquea
   diario/semanal porque los planes de Rebill documentados usan `month` o `year`.
   Si la suscripcion tiene fecha final, Ristak calcula `repetitions` para el Plan;
@@ -1439,6 +1446,17 @@ y frontend (`frontend/src/pages/Sites/*`) lo importan; el `Dockerfile` copia
   registro queda pendiente/oculto y no genera error; solo un rechazo real de la
   pasarela se muestra como `failed`. El toggle "guardar tarjeta" se retiro
   (Stripe Link no es ocultable por codigo).
+- Tipo de cobro en Sites: el bloque de pago permite elegir `Pago unico` o
+  `Suscripcion` cuando la pasarela soporta recurrencia en checkout hospedado.
+  Stripe, Conekta, Mercado Pago y Rebill pueden crear el checkout de
+  autorizacion de suscripcion desde Sites; CLIP queda limitado a pago unico. En
+  suscripciones de Sites, el publicado siempre pide correo y telefono antes de
+  redirigir al checkout de la pasarela para crear o ligar el contacto local. El
+  pago inicial de autorizacion conserva metadata `site_checkout_subscription`,
+  `siteId`, `pageId`, `paymentBlockId`, pasarela, monto, moneda y frecuencia. La
+  reanudacion de un `publicPaymentId` pendiente valida tambien tipo de cobro y
+  frecuencia, no solo monto/pasarela, para evitar reutilizar una liga vieja de
+  pago unico como suscripcion o viceversa.
 - Diferencias permitidas entre superficies: SOLO auth, tracking/pixel, param
   preservation y `headerTrackingCode` (nunca corren en editor/preview por
   seguridad), y el chrome de edicion. NO se permite divergencia en CSS visual,

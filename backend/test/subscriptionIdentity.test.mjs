@@ -3,12 +3,18 @@ import assert from 'node:assert/strict'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
-import { db, setAppConfig } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
   createSubscription,
   listSubscriptions
 } from '../src/services/subscriptionsService.js'
 import { setRebillFetchForTest } from '../src/services/rebillPaymentService.js'
+import {
+  createBlock,
+  createSite,
+  deleteSite,
+  paySiteCheckout
+} from '../src/services/sitesService.js'
 
 function uniqueSuffix(label = 'subscription_identity') {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -82,6 +88,13 @@ function jsonTextResponse(payload, status = 200) {
       return text
     }
   }
+}
+
+const SITE_PUBLIC_DOMAIN_KEYS = {
+  domain: 'sites_public_domain',
+  verified: 'sites_public_domain_verified',
+  checkedAt: 'sites_public_domain_checked_at',
+  error: 'sites_public_domain_error'
 }
 
 test('suscripciones: dos filas del mismo contacto conservan identidad independiente', async () => {
@@ -279,6 +292,173 @@ test('suscripciones: Rebill crea plan y checkout hospedado para autorizar la sus
     })
   } finally {
     await cleanup({ contactId, subscriptionIds })
+  }
+})
+
+test('Sites: bloque de pago puede crear suscripción Rebill con contacto nuevo del visitante', async () => {
+  const suffix = uniqueSuffix('site_rebill_subscription')
+  const email = `${suffix}@example.test`
+  const phone = '+5216567426612'
+  let site
+  let contactId = ''
+  let expectedPaymentBlockId = ''
+  const previousDomainConfig = {
+    domain: await getAppConfig(SITE_PUBLIC_DOMAIN_KEYS.domain),
+    verified: await getAppConfig(SITE_PUBLIC_DOMAIN_KEYS.verified),
+    checkedAt: await getAppConfig(SITE_PUBLIC_DOMAIN_KEYS.checkedAt),
+    error: await getAppConfig(SITE_PUBLIC_DOMAIN_KEYS.error)
+  }
+  const subscriptionIds = []
+
+  try {
+    await setAppConfig(SITE_PUBLIC_DOMAIN_KEYS.domain, 'example.test')
+    await setAppConfig(SITE_PUBLIC_DOMAIN_KEYS.verified, '1')
+    await setAppConfig(SITE_PUBLIC_DOMAIN_KEYS.checkedAt, new Date().toISOString())
+    await setAppConfig(SITE_PUBLIC_DOMAIN_KEYS.error, '')
+
+    await withRebillConfig(async () => {
+      const calls = []
+      setRebillFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(url)
+        const method = options.method || 'GET'
+        const body = options.body ? JSON.parse(String(options.body)) : null
+        calls.push({ method, path: parsed.pathname, body })
+
+        if (parsed.pathname === '/v3/webhooks/search' && method === 'POST') {
+          return jsonTextResponse({ records: [] })
+        }
+
+        if (parsed.pathname === '/v3/webhooks' && method === 'POST') {
+          return jsonTextResponse({ id: 'wh_rebill_site_subscriptions', url: body.url, events: body.events, active: true }, 201)
+        }
+
+        if (parsed.pathname === '/v3/plans' && method === 'POST') {
+          assert.equal(body.frequency.period, 'month')
+          assert.equal(body.frequency.count, 1)
+          assert.equal(body.metadata.source, 'site_checkout_subscription')
+          assert.equal(body.metadata.paymentGate.billingType, 'subscription')
+          assert.equal(body.metadata.paymentGate.paymentBlockId, expectedPaymentBlockId)
+          return jsonTextResponse({
+            id: 'pln_rebill_site_subscription',
+            status: 'active',
+            frequency: body.frequency,
+            prices: body.prices,
+            metadata: body.metadata
+          }, 201)
+        }
+
+        if (parsed.pathname === '/v3/payment-links' && method === 'POST') {
+          assert.deepEqual(body.plan, { id: 'pln_rebill_site_subscription' })
+          assert.equal(body.prefilledFields.customer.email, email)
+          assert.equal(body.prefilledFields.customer.phoneNumber, '6567426612')
+          assert.equal(body.prefilledFields.customer.countryCode, '+52')
+          assert.equal(body.metadata.source, 'site_checkout_subscription')
+          return jsonTextResponse({
+            id: 'pl_rebill_site_subscription',
+            url: 'https://pay.rebill.com/ristak/site-subscription',
+            status: 'active',
+            type: 'plan',
+            metadata: body.metadata
+          }, 201)
+        }
+
+        return jsonTextResponse({ message: `Ruta Rebill no esperada: ${method} ${parsed.pathname}` }, 404)
+      })
+
+      site = await createSite({
+        name: 'Site Rebill Subscription',
+        slug: `site-rebill-subscription-${suffix}`,
+        siteType: 'landing_page',
+        status: 'published',
+        blankCanvas: true,
+        theme: {
+          pages: [{ id: 'page-sub', title: 'Suscripción', sortOrder: 0 }]
+        }
+      })
+
+      const siteWithPayment = await createBlock(site.id, {
+        blockType: 'payment',
+        label: 'Suscripción',
+        settings: {
+          pageId: 'page-sub',
+          paymentGate: {
+            enabled: true,
+            gateway: 'rebill',
+            billingType: 'subscription',
+            amount: 1200,
+            currency: 'MXN',
+            productName: 'Membresía Sites',
+            description: 'Acceso mensual',
+            buttonText: 'Suscribirme',
+            mode: 'test',
+            subscription: { intervalType: 'monthly', intervalCount: 1 }
+          }
+        }
+      })
+      const paymentBlock = siteWithPayment.blocks.find(block => block.blockType === 'payment')
+      assert.ok(paymentBlock)
+      expectedPaymentBlockId = paymentBlock.id
+
+      const req = {
+        headers: { host: 'example.test', 'user-agent': 'node-test' },
+        get(name) {
+          return this.headers[String(name || '').toLowerCase()] || ''
+        },
+        protocol: 'https',
+        hostname: 'example.test',
+        path: `/${site.slug}`,
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' }
+      }
+
+      const result = await paySiteCheckout(req, {
+        siteId: site.id,
+        blockId: paymentBlock.id,
+        pageId: 'page-sub',
+        payer: {
+          email,
+          phone,
+          name: 'Visitante Rebill'
+        },
+        pageUrl: 'https://example.test/site'
+      })
+
+      assert.equal(result.provider, 'rebill')
+      assert.equal(result.billingType, 'subscription')
+      assert.equal(result.paymentUrl, 'https://pay.rebill.com/ristak/site-subscription')
+      assert.match(result.publicPaymentId, /^rstk_pay_[A-Za-z0-9]{20}$/)
+      subscriptionIds.push(result.subscriptionId)
+
+      const contact = await db.get('SELECT id, email, phone, full_name FROM contacts WHERE email = ?', [email])
+      assert.equal(contact.email, email)
+      assert.equal(contact.full_name, 'Visitante Rebill')
+      contactId = contact.id
+
+      const subscription = await db.get('SELECT contact_id, source, payment_provider, payment_method, metadata_json FROM subscriptions WHERE id = ?', [result.subscriptionId])
+      assert.equal(subscription.contact_id, contact.id)
+      assert.equal(subscription.source, 'site_checkout_subscription')
+      assert.equal(subscription.payment_provider, 'rebill')
+      assert.equal(subscription.payment_method, 'rebill_subscription')
+      const metadata = JSON.parse(subscription.metadata_json)
+      assert.equal(metadata.paymentGate.siteId, site.id)
+      assert.equal(metadata.paymentGate.paymentBlockId, paymentBlock.id)
+
+      const startPayment = await db.get('SELECT contact_id, payment_url, metadata_json FROM payments WHERE public_payment_id = ?', [result.publicPaymentId])
+      assert.equal(startPayment.contact_id, contact.id)
+      assert.equal(startPayment.payment_url, 'https://pay.rebill.com/ristak/site-subscription')
+      const paymentMetadata = JSON.parse(startPayment.metadata_json)
+      assert.equal(paymentMetadata.paymentGate.source, 'site_checkout_subscription')
+      assert.ok(calls.some((call) => call.path === '/v3/plans'))
+      assert.ok(calls.some((call) => call.path === '/v3/payment-links'))
+    })
+  } finally {
+    if (site?.id) await deleteSite(site.id).catch(() => undefined)
+    await cleanup({ contactId, subscriptionIds })
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    await setAppConfig(SITE_PUBLIC_DOMAIN_KEYS.domain, previousDomainConfig.domain)
+    await setAppConfig(SITE_PUBLIC_DOMAIN_KEYS.verified, previousDomainConfig.verified)
+    await setAppConfig(SITE_PUBLIC_DOMAIN_KEYS.checkedAt, previousDomainConfig.checkedAt)
+    await setAppConfig(SITE_PUBLIC_DOMAIN_KEYS.error, previousDomainConfig.error)
   }
 })
 

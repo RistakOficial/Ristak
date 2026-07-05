@@ -2732,7 +2732,12 @@ export async function createRebillSubscriptionPlanLink(input = {}, { baseUrl = '
   const contactEmail = cleanString(input.contactEmail || input.email || input.contact_email, 180)
   const contactPhone = cleanString(input.contactPhone || input.phone || input.contact_phone, 80)
   const businessMetadata = buildRebillHostedBusinessMetadata(await getPublicPaymentSettings())
+  const inputMetadata = input.metadata && typeof input.metadata === 'object' && !Array.isArray(input.metadata)
+    ? input.metadata
+    : {}
+  const source = cleanString(input.source || inputMetadata.source || 'ristak_rebill_subscription_checkout', 120)
   const baseMetadata = {
+    ...inputMetadata,
     ristakSubscriptionId: subscriptionId,
     ristak_subscription_id: subscriptionId,
     ristakPaymentId: subscriptionStartPaymentId,
@@ -2746,7 +2751,7 @@ export async function createRebillSubscriptionPlanLink(input = {}, { baseUrl = '
     contactEmail,
     contactPhone,
     provider: 'rebill',
-    source: 'ristak_rebill_subscription_checkout',
+    source,
     ...businessMetadata
   }
 

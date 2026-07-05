@@ -5,6 +5,9 @@
 // No cambia flujos de negocio (cobro, tokens, webhooks): solo describe qué se ve.
 
 export const PAYMENT_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'])
+export const PAYMENT_GATE_BILLING_TYPES = new Set(['single', 'subscription'])
+export const SUBSCRIPTION_GATEWAYS = new Set(['stripe', 'conekta', 'mercadopago', 'rebill'])
+export const SUBSCRIPTION_INTERVAL_TYPES = new Set(['daily', 'weekly', 'monthly', 'yearly'])
 
 // Opciones de meses ofrecidas en el panel. El monto y la pasarela filtran cuáles
 // aplican realmente (ver msiEligibility / conektaInstallmentMonths).
@@ -19,6 +22,10 @@ export const MSI_LINK_GATEWAYS = new Set(['conekta', 'mercadopago', 'clip', 'reb
 // isPaymentGateEnabled (backend) e isPaymentGateConfigEnabled (frontend).
 export function isNormalizedPaymentGateEnabled(config = {}) {
   return Boolean(config && config.enabled && Number(config.amount) > 0 && PAYMENT_GATEWAYS.has(config.gateway))
+}
+
+export function supportsSiteSubscriptionGateway(gateway = '') {
+  return SUBSCRIPTION_GATEWAYS.has(String(gateway || '').trim().toLowerCase())
 }
 
 // Meses de Conekta que el runtime publicado realmente muestra: filtrados por el
