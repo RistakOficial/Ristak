@@ -16,6 +16,13 @@ const META_MESSENGER_MESSAGING_ENABLED_KEY = 'meta_messenger_messaging_enabled'
 const META_INSTAGRAM_MESSAGING_ENABLED_KEY = 'meta_instagram_messaging_enabled'
 const META_FACEBOOK_COMMENTS_ENABLED_KEY = 'meta_facebook_comments_enabled'
 const META_INSTAGRAM_COMMENTS_ENABLED_KEY = 'meta_instagram_comments_enabled'
+const META_SOCIAL_HISTORY_CONVERSATION_PAGE_LIMIT = 50
+const META_SOCIAL_HISTORY_MESSAGE_PAGE_LIMIT = 50
+const META_SOCIAL_HISTORY_MAX_CONVERSATIONS = 1000
+const META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION = 500
+const META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES = 50000
+const META_SOCIAL_HISTORY_MESSAGE_FIELDS = 'id,message,created_time,from,to,attachments,shares'
+const metaSocialHistorySyncing = new Set()
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -137,6 +144,68 @@ function extractAttachment(message = {}) {
     mediaUrl: cleanString(attachment.payload?.url),
     mediaMimeType: cleanString(attachment.payload?.mime_type || attachment.mime_type)
   }
+}
+
+function normalizeMetaGraphTimestamp(value) {
+  const cleanValue = cleanString(value)
+  if (cleanValue) {
+    const parsed = Date.parse(cleanValue)
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString()
+  }
+
+  const numeric = Number(value)
+  if (Number.isFinite(numeric)) {
+    return new Date(numeric > 9999999999 ? numeric : numeric * 1000).toISOString()
+  }
+
+  return new Date().toISOString()
+}
+
+function normalizeGraphCollection(value) {
+  if (Array.isArray(value)) return value
+  if (Array.isArray(value?.data)) return value.data
+  return []
+}
+
+function extractGraphMessageAttachment(message = {}) {
+  const attachment = normalizeGraphCollection(message.attachments)[0]
+  if (attachment) {
+    const image = attachment.image_data || attachment.image || {}
+    const video = attachment.video_data || attachment.video || {}
+    const audio = attachment.audio_data || attachment.audio || {}
+    const file = attachment.file_data || attachment.file || {}
+    const type = cleanString(attachment.type).toLowerCase() ||
+      (image.url ? 'image' : video.url ? 'video' : audio.url ? 'audio' : 'attachment')
+    const mediaUrl = cleanString(
+      attachment.payload?.url ||
+      image.url ||
+      image.preview_url ||
+      video.url ||
+      video.preview_url ||
+      audio.url ||
+      file.url ||
+      attachment.url
+    )
+
+    return {
+      messageType: type || 'attachment',
+      messageText: cleanString(attachment.name || attachment.title || attachment.description),
+      mediaUrl,
+      mediaMimeType: cleanString(attachment.mime_type || image.mime_type || video.mime_type || audio.mime_type || file.mime_type)
+    }
+  }
+
+  const share = normalizeGraphCollection(message.shares)[0]
+  if (share) {
+    return {
+      messageType: 'link',
+      messageText: cleanString(share.name || share.description || share.link),
+      mediaUrl: cleanString(share.link),
+      mediaMimeType: ''
+    }
+  }
+
+  return {}
 }
 
 function extractSocialMessage({ objectType, entry, messaging, config }) {
@@ -814,6 +883,434 @@ async function resolveMetaSocialGraphToken(platform, config, { forceRefresh = fa
 
   if (safe) return resolveMetaPageTokenSafe(config)
   return resolveMetaPageAccessToken({ config, forceRefresh })
+}
+
+function normalizeMetaSocialHistoryPlatform(platform = '') {
+  return isInstagramPlatform(platform) ? 'instagram' : 'messenger'
+}
+
+function clampPositiveInteger(value, fallback, max) {
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) return fallback
+  return Math.min(Math.floor(number), max)
+}
+
+function getMetaSocialHistoryBusinessId(platform, config = {}) {
+  return platform === 'instagram'
+    ? cleanString(config.instagram_account_id)
+    : cleanString(config.page_id)
+}
+
+function getMetaSocialHistoryConversationPath(platform, businessId) {
+  return platform === 'instagram'
+    ? '/me/conversations'
+    : `/${encodeURIComponent(businessId)}/conversations`
+}
+
+function getMetaSocialHistoryPlatformParam(platform) {
+  return platform === 'instagram' ? 'instagram' : 'messenger'
+}
+
+function getGraphNextAfter(data = {}) {
+  if (!data?.paging?.next) return ''
+  return cleanString(data?.paging?.cursors?.after)
+}
+
+function buildMetaSocialBusinessIdSet(platform, config = {}, businessId = '') {
+  return new Set([
+    cleanString(businessId),
+    cleanString(config.page_id),
+    cleanString(config.instagram_account_id)
+  ].filter(Boolean))
+}
+
+function getConversationParticipants(conversation = {}) {
+  return normalizeGraphCollection(conversation.participants)
+}
+
+function getMessageRecipients(message = {}) {
+  return normalizeGraphCollection(message.to)
+}
+
+function findParticipantById(participants = [], id = '') {
+  const cleanId = cleanString(id)
+  if (!cleanId) return null
+  return participants.find(participant => cleanString(participant?.id) === cleanId) || null
+}
+
+function findCustomerParticipant(participants = [], businessIds = new Set()) {
+  return participants.find(participant => {
+    const id = cleanString(participant?.id)
+    return id && !businessIds.has(id)
+  }) || null
+}
+
+function isNewerMetaTimestamp(candidate = '', current = '') {
+  const candidateMs = Date.parse(candidate)
+  const currentMs = Date.parse(current)
+  if (!Number.isFinite(candidateMs)) return false
+  if (!Number.isFinite(currentMs)) return true
+  return candidateMs > currentMs
+}
+
+function buildMetaSocialMessageFromGraphConversation({ platform, config, conversation, graphMessage, businessId }) {
+  const cleanPlatform = normalizeMetaSocialHistoryPlatform(platform)
+  const businessIds = buildMetaSocialBusinessIdSet(cleanPlatform, config, businessId)
+  const participants = getConversationParticipants(conversation)
+  const recipients = getMessageRecipients(graphMessage)
+  const recipientIds = recipients.map(recipient => cleanString(recipient?.id)).filter(Boolean)
+  const fromId = cleanString(graphMessage?.from?.id)
+  const fromIsBusiness = fromId && businessIds.has(fromId)
+  const direction = fromIsBusiness ? 'outbound' : 'inbound'
+  const fallbackCustomer = findCustomerParticipant(participants, businessIds)
+  const customerId = direction === 'inbound'
+    ? fromId
+    : recipientIds.find(id => id && !businessIds.has(id)) || cleanString(fallbackCustomer?.id)
+
+  if (!customerId || businessIds.has(customerId)) return null
+
+  const recipientId = direction === 'inbound'
+    ? recipientIds.find(id => businessIds.has(id)) || businessId
+    : businessId
+  const participant = findParticipantById(participants, customerId) ||
+    (direction === 'inbound'
+      ? graphMessage.from
+      : recipients.find(recipient => cleanString(recipient?.id) === customerId)) ||
+    fallbackCustomer ||
+    {}
+  const text = cleanString(graphMessage?.message)
+  const attachment = extractGraphMessageAttachment(graphMessage)
+  const messageTimestamp = normalizeMetaGraphTimestamp(graphMessage?.created_time)
+
+  return {
+    socialMessage: {
+      platform: cleanPlatform,
+      direction,
+      senderId: customerId,
+      recipientId,
+      pageId: cleanPlatform === 'messenger' ? cleanString(config.page_id || businessId) : cleanString(config.page_id),
+      instagramAccountId: cleanPlatform === 'instagram' ? cleanString(config.instagram_account_id || businessId) : cleanString(config.instagram_account_id),
+      metaMessageId: cleanString(graphMessage?.id),
+      messageType: attachment.messageType || (text ? 'text' : 'message'),
+      messageText: text || attachment.messageText || '',
+      mediaUrl: attachment.mediaUrl || '',
+      mediaMimeType: attachment.mediaMimeType || '',
+      postbackPayload: '',
+      referral: null,
+      messageTimestamp,
+      raw: {
+        provider: 'meta',
+        source: 'conversation_backfill',
+        conversationId: cleanString(conversation?.id),
+        message: graphMessage
+      }
+    },
+    participant
+  }
+}
+
+async function resolveMetaSocialHistoryProfile({ platform, senderId, participant, businessId, accessToken, baseUrl, profileCache }) {
+  const key = `${platform}:${senderId}`
+  if (profileCache.has(key)) return profileCache.get(key)
+
+  const graphProfile = await fetchMetaSenderProfile({
+    platform,
+    senderId,
+    businessId,
+    accessToken,
+    baseUrl
+  })
+  const profile = {
+    name: compactName(graphProfile.name) || compactName(participant?.name),
+    username: cleanString(graphProfile.username || participant?.username),
+    profilePictureUrl: cleanString(
+      graphProfile.profilePictureUrl ||
+      participant?.profile_pic ||
+      participant?.profile_picture_url
+    ),
+    raw: {
+      participant: participant || null,
+      graphProfile: graphProfile.raw || null
+    }
+  }
+  profileCache.set(key, profile)
+  return profile
+}
+
+async function fetchMetaSocialHistoryMessagesPage({ platform, conversationId, graphToken, baseUrl, after = '', limit }) {
+  return metaSocialGraphRequest(`/${encodeURIComponent(conversationId)}/messages`, {
+    token: graphToken,
+    baseUrl,
+    query: {
+      fields: META_SOCIAL_HISTORY_MESSAGE_FIELDS,
+      limit,
+      ...(after ? { after } : {})
+    }
+  })
+}
+
+async function syncMetaSocialConversationMessages({
+  platform,
+  config,
+  conversation,
+  businessId,
+  graphToken,
+  baseUrl,
+  maxMessagesPerConversation,
+  maxTotalMessages,
+  profileCache,
+  publishEvents,
+  stats
+}) {
+  const conversationId = cleanString(conversation?.id)
+  if (!conversationId) {
+    stats.skippedMessages += 1
+    return false
+  }
+
+  let after = ''
+  let pages = 0
+  let messagesInConversation = 0
+  const seenCursors = new Set()
+  let latestPublished = null
+
+  while (messagesInConversation < maxMessagesPerConversation && stats.messagesScanned < maxTotalMessages) {
+    const data = await fetchMetaSocialHistoryMessagesPage({
+      platform,
+      conversationId,
+      graphToken,
+      baseUrl,
+      after,
+      limit: Math.min(META_SOCIAL_HISTORY_MESSAGE_PAGE_LIMIT, maxMessagesPerConversation - messagesInConversation)
+    })
+    pages += 1
+    const messages = normalizeGraphCollection(data)
+    if (!messages.length) break
+
+    for (const graphMessage of messages) {
+      if (messagesInConversation >= maxMessagesPerConversation || stats.messagesScanned >= maxTotalMessages) break
+      messagesInConversation += 1
+      stats.messagesScanned += 1
+
+      const normalized = buildMetaSocialMessageFromGraphConversation({
+        platform,
+        config,
+        conversation,
+        graphMessage,
+        businessId
+      })
+      if (!normalized?.socialMessage) {
+        stats.skippedMessages += 1
+        continue
+      }
+
+      const { socialMessage, participant } = normalized
+      const messageId = getMetaSocialMessageLocalId(socialMessage)
+      const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
+      const profile = await resolveMetaSocialHistoryProfile({
+        platform: socialMessage.platform,
+        senderId: socialMessage.senderId,
+        participant,
+        businessId,
+        accessToken: graphToken,
+        baseUrl,
+        profileCache
+      })
+      const localContact = await upsertLocalSocialContact({ socialMessage, profile })
+      const socialContactId = await upsertMetaSocialContact({
+        contactId: localContact.id,
+        socialMessage,
+        profile,
+        incrementMessageCount: !existing
+      })
+      const savedMessage = await upsertMetaSocialMessage({
+        socialContactId,
+        contactId: localContact.id,
+        socialMessage,
+        config
+      })
+
+      if (savedMessage.isNew) {
+        stats.saved += 1
+      } else {
+        stats.updated += 1
+      }
+
+      if (
+        publishEvents &&
+        savedMessage.isNew &&
+        (!latestPublished || isNewerMetaTimestamp(socialMessage.messageTimestamp, latestPublished.messageTimestamp))
+      ) {
+        latestPublished = {
+          contactId: localContact.id,
+          contactName: localContact.contactName,
+          messageId: savedMessage.messageId,
+          platform: socialMessage.platform,
+          direction: socialMessage.direction,
+          messageType: socialMessage.messageType,
+          messageTimestamp: socialMessage.messageTimestamp
+        }
+      }
+    }
+
+    const nextAfter = getGraphNextAfter(data)
+    if (!nextAfter || seenCursors.has(nextAfter)) break
+    seenCursors.add(nextAfter)
+    after = nextAfter
+  }
+
+  if (latestPublished) {
+    publishChatMessageEvent({
+      contactId: latestPublished.contactId,
+      messageId: latestPublished.messageId,
+      channel: latestPublished.platform,
+      provider: 'meta',
+      transport: latestPublished.platform,
+      direction: latestPublished.direction,
+      messageType: latestPublished.messageType,
+      messageTimestamp: latestPublished.messageTimestamp,
+      isNew: true,
+      historyImport: true
+    })
+  }
+
+  stats.messagePages += pages
+  return stats.messagesScanned >= maxTotalMessages
+}
+
+export async function syncMetaSocialConversationHistory({
+  platform = 'messenger',
+  config = null,
+  reason = 'manual',
+  maxConversations = META_SOCIAL_HISTORY_MAX_CONVERSATIONS,
+  maxMessagesPerConversation = META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION,
+  maxTotalMessages = META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES,
+  publishEvents = true
+} = {}) {
+  const cleanPlatform = normalizeMetaSocialHistoryPlatform(platform)
+  const stats = {
+    provider: 'meta',
+    platform: cleanPlatform,
+    reason: cleanString(reason) || 'manual',
+    skipped: false,
+    skipReason: '',
+    conversations: 0,
+    conversationPages: 0,
+    messagePages: 0,
+    messagesScanned: 0,
+    saved: 0,
+    updated: 0,
+    skippedMessages: 0
+  }
+
+  const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
+  if (!enabled) {
+    return {
+      ...stats,
+      skipped: true,
+      skipReason: 'messaging-disabled'
+    }
+  }
+
+  const cfg = config || await getMetaConfig()
+  const businessId = getMetaSocialHistoryBusinessId(cleanPlatform, cfg || {})
+  if (!businessId) {
+    return {
+      ...stats,
+      skipped: true,
+      skipReason: cleanPlatform === 'instagram' ? 'missing-instagram-account' : 'missing-page'
+    }
+  }
+
+  const graphToken = await resolveMetaSocialGraphToken(cleanPlatform, cfg)
+  const baseUrl = getMetaSocialGraphBaseUrl(cleanPlatform)
+  const conversationLimit = clampPositiveInteger(maxConversations, META_SOCIAL_HISTORY_MAX_CONVERSATIONS, META_SOCIAL_HISTORY_MAX_CONVERSATIONS)
+  const messageLimit = clampPositiveInteger(maxMessagesPerConversation, META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION, META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION)
+  const totalMessageLimit = clampPositiveInteger(maxTotalMessages, META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES, META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES)
+  const profileCache = new Map()
+  const seenCursors = new Set()
+  let after = ''
+
+  while (stats.conversations < conversationLimit && stats.messagesScanned < totalMessageLimit) {
+    const data = await metaSocialGraphRequest(getMetaSocialHistoryConversationPath(cleanPlatform, businessId), {
+      token: graphToken,
+      baseUrl,
+      query: {
+        platform: getMetaSocialHistoryPlatformParam(cleanPlatform),
+        fields: 'id,participants,updated_time',
+        limit: Math.min(META_SOCIAL_HISTORY_CONVERSATION_PAGE_LIMIT, conversationLimit - stats.conversations),
+        ...(after ? { after } : {})
+      }
+    })
+    stats.conversationPages += 1
+    const conversations = normalizeGraphCollection(data)
+    if (!conversations.length) break
+
+    for (const conversation of conversations) {
+      if (stats.conversations >= conversationLimit || stats.messagesScanned >= totalMessageLimit) break
+      stats.conversations += 1
+      const reachedTotalLimit = await syncMetaSocialConversationMessages({
+        platform: cleanPlatform,
+        config: cfg,
+        conversation,
+        businessId,
+        graphToken,
+        baseUrl,
+        maxMessagesPerConversation: messageLimit,
+        maxTotalMessages: totalMessageLimit,
+        profileCache,
+        publishEvents,
+        stats
+      })
+      if (reachedTotalLimit) break
+    }
+
+    const nextAfter = getGraphNextAfter(data)
+    if (!nextAfter || seenCursors.has(nextAfter)) break
+    seenCursors.add(nextAfter)
+    after = nextAfter
+  }
+
+  return stats
+}
+
+export function syncMetaSocialConversationHistoryInBackground({ platforms = ['messenger', 'instagram'], reason = 'connection' } = {}) {
+  const cleanPlatforms = [...new Set((Array.isArray(platforms) ? platforms : [platforms]).map(normalizeMetaSocialHistoryPlatform))]
+  const started = []
+  const skipped = []
+
+  for (const platform of cleanPlatforms) {
+    if (metaSocialHistorySyncing.has(platform)) {
+      skipped.push({ platform, reason: 'already-running' })
+      continue
+    }
+
+    metaSocialHistorySyncing.add(platform)
+    started.push(platform)
+    syncMetaSocialConversationHistory({ platform, reason })
+      .then(result => {
+        if (result?.skipped) {
+          logger.info(`Meta social: historial ${platform} omitido (${result.skipReason || 'sin razon'})`)
+          return
+        }
+        logger.info(
+          `Meta social: historial ${platform} importado ` +
+          `(${result.saved} nuevos, ${result.updated} existentes, ${result.conversations} conversaciones, ${result.messagesScanned} mensajes leidos)`
+        )
+      })
+      .catch(error => {
+        logger.warn(`Meta social: no se pudo importar historial ${platform}: ${error.message}`)
+      })
+      .finally(() => {
+        metaSocialHistorySyncing.delete(platform)
+      })
+  }
+
+  return {
+    syncStarted: started.length > 0,
+    started,
+    skipped
+  }
 }
 
 // ─── Listado de publicaciones para el selector de disparadores/condiciones ───
@@ -1715,8 +2212,9 @@ async function rehostMetaAvatarUrl({ incomingUrl, currentUrl, platform, senderId
   }
 }
 
-async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
+async function upsertMetaSocialContact({ contactId, socialMessage, profile, incrementMessageCount = true }) {
   const socialContactId = hashId('meta_social_profile', `${socialMessage.platform}:${socialMessage.senderId}`)
+  const messageCountIncrement = incrementMessageCount ? 1 : 0
 
   // Rehospedar el avatar al Bunny (una vez por contacto) para que no caduque.
   const currentSocialRow = await db
@@ -1734,7 +2232,7 @@ async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
       id, contact_id, platform, sender_id, recipient_id, page_id, instagram_account_id,
       profile_name, username, profile_picture_url, raw_profile_json, meta_user_id,
       first_seen_at, last_seen_at, message_count, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     ON CONFLICT(platform, sender_id) DO UPDATE SET
       contact_id = COALESCE(excluded.contact_id, meta_social_contacts.contact_id),
       recipient_id = COALESCE(NULLIF(excluded.recipient_id, ''), meta_social_contacts.recipient_id),
@@ -1757,7 +2255,7 @@ async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
         WHEN excluded.last_seen_at > meta_social_contacts.last_seen_at THEN excluded.last_seen_at
         ELSE meta_social_contacts.last_seen_at
       END,
-      message_count = meta_social_contacts.message_count + 1,
+      message_count = meta_social_contacts.message_count + excluded.message_count,
       updated_at = CURRENT_TIMESTAMP
   `, [
     socialContactId,
@@ -1775,7 +2273,8 @@ async function upsertMetaSocialContact({ contactId, socialMessage, profile }) {
     // es authorId (senderId trae el prefijo sintético 'fb_comment:'/'ig_comment:').
     cleanString(socialMessage.authorId) || cleanString(socialMessage.senderId) || null,
     socialMessage.messageTimestamp,
-    socialMessage.messageTimestamp
+    socialMessage.messageTimestamp,
+    messageCountIncrement
   ])
 
   return socialContactId
@@ -1935,12 +2434,16 @@ export async function rehostMetaSocialMedia({ socialMessage, config, existingMed
   }
 }
 
-async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null }) {
-  const messageId = hashId(
+function getMetaSocialMessageLocalId(socialMessage = {}) {
+  return hashId(
     'meta_social_msg',
     socialMessage.metaMessageId ||
       `${socialMessage.platform}:${socialMessage.senderId}:${socialMessage.messageTimestamp}:${socialMessage.messageText}:${socialMessage.messageType}`
   )
+}
+
+async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null }) {
+  const messageId = getMetaSocialMessageLocalId(socialMessage)
   const existing = await db.get('SELECT id, media_url FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
 
   // Rehospeda la media temporal de Meta en nuestro storage para que el historial no

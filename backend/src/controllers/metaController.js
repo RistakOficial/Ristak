@@ -33,7 +33,12 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { parseContactCustomFields } from '../utils/contactCustomFields.js';
 import { API_URLS } from '../config/constants.js';
 import fetch from 'node-fetch';
-import { getMetaWebhookVerifyToken, ensureMetaPageMessagingSubscription, getMetaPageMessagingSubscription } from '../services/metaSocialMessagingService.js';
+import {
+  getMetaWebhookVerifyToken,
+  ensureMetaPageMessagingSubscription,
+  getMetaPageMessagingSubscription,
+  syncMetaSocialConversationHistoryInBackground
+} from '../services/metaSocialMessagingService.js';
 import { clearMetaIntegrationCredentials } from '../services/integrationCredentialsCleanupService.js';
 import { getVisitorIdentityExpression } from '../services/trackingService.js';
 import { signScopedToken, verifyScopedToken } from '../utils/auth.js';
@@ -93,6 +98,14 @@ function startMetaAdsSyncAfterConnection(reason = 'meta-connected') {
     syncStarted: true,
     historicalStartDate
   };
+}
+
+function startMetaSocialHistoryBackfillAfterConnection(reason = 'meta-connected', platforms = ['messenger', 'instagram']) {
+  const result = syncMetaSocialConversationHistoryInBackground({ platforms, reason });
+  if (result.syncStarted) {
+    logger.info(`Meta social: backfill de historial iniciado (${reason}): ${result.started.join(', ')}`);
+  }
+  return result;
 }
 
 // META-007: Caché en memoria del recálculo de atribución (DB + API HighLevel).
@@ -809,12 +822,14 @@ export const saveConfig = async (req, res) => {
     );
     await setAppConfig('meta_config_disconnected', '0');
     await syncRegisteredIntegrationCronsForProvider('meta', { reason: 'meta-connected' });
+    const socialHistoryBackfill = startMetaSocialHistoryBackfillAfterConnection('meta-config-saved');
 
     logger.info('Configuración de Meta guardada exitosamente');
 
     res.json({
       success: true,
-      message: 'Configuración de Meta guardada exitosamente'
+      message: 'Configuración de Meta guardada exitosamente',
+      socialHistoryBackfill
     });
 
   } catch (error) {
@@ -1406,17 +1421,24 @@ export const saveInstagramTokenConfig = async (req, res) => {
     }
 
     const updatedConfig = await saveMetaInstagramAccessToken(instagramAccessToken);
+    if (instagramAccessToken && !cleanString(metaConfig.instagram_access_token) && cleanString(updatedConfig?.instagram_account_id)) {
+      await setAppConfig('meta_instagram_messaging_enabled', '1');
+    }
     if (!instagramAccessToken) {
       await Promise.all([
         setAppConfig('meta_instagram_messaging_enabled', '0'),
         setAppConfig('meta_instagram_comments_enabled', '0')
       ]);
     }
+    const socialHistoryBackfill = instagramAccessToken
+      ? startMetaSocialHistoryBackfillAfterConnection('instagram-token-saved', ['instagram'])
+      : { syncStarted: false, started: [], skipped: [] };
 
     res.json({
       success: true,
       configured: Boolean(updatedConfig?.instagram_access_token),
-      instagramAccessToken: updatedConfig?.instagram_access_token || ''
+      instagramAccessToken: updatedConfig?.instagram_access_token || '',
+      socialHistoryBackfill
     });
   } catch (error) {
     logger.error(`Error en saveInstagramTokenConfig: ${error.message}`);
@@ -3388,6 +3410,7 @@ export const saveAndSyncMeta = async (req, res) => {
 
     // 5. Iniciar sincronización automática de anuncios sin bloquear el wizard.
     const adsSync = startMetaAdsSyncAfterConnection('wizard-complete');
+    const socialHistoryBackfill = startMetaSocialHistoryBackfillAfterConnection('wizard-complete');
 
     // 8. Sincronizar el snippet de Web Tracking con el Meta Pixel automáticamente.
     // El snippet se inyecta en el SITIO del cliente (su dominio de rastreo), no en
@@ -3451,7 +3474,8 @@ export const saveAndSyncMeta = async (req, res) => {
           : Boolean(existingMetaConfig?.instagram_access_token),
         tokenValid: validation.valid,
         syncStarted: adsSync.syncStarted,
-        adsSync
+        adsSync,
+        socialHistoryBackfill
       }
     });
 
@@ -3534,6 +3558,7 @@ export const syncFromHighLevel = async (req, res) => {
 
     // 5. Iniciar sincronización automática de anuncios sin bloquear la respuesta.
     const adsSync = startMetaAdsSyncAfterConnection('highlevel-import');
+    const socialHistoryBackfill = startMetaSocialHistoryBackfillAfterConnection('highlevel-import');
 
     res.json({
       success: true,
@@ -3543,6 +3568,7 @@ export const syncFromHighLevel = async (req, res) => {
         tokenValid: validation.valid,
         syncStarted: adsSync.syncStarted,
         adsSync,
+        socialHistoryBackfill,
         reconciliation
       }
     });

@@ -159,7 +159,7 @@ test('saving Meta token with pixel enables calendar and payment conversion event
   }
 })
 
-test('saving new Meta social profiles enables Page switches but leaves Instagram off until token is saved', async () => {
+test('saving new Meta social profiles enables Page switches and Instagram DM only with direct token', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
   let metaServer
 
@@ -237,6 +237,25 @@ test('saving new Meta social profiles enables Page switches but leaves Instagram
         for (const key of INSTAGRAM_SOCIAL_CHANNEL_CONFIG_KEYS) {
           assert.equal(await getAppConfig(key), '0', `${key} should stay off for changed Instagram profiles without token`)
         }
+
+        for (const key of SOCIAL_CHANNEL_CONFIG_KEYS) {
+          await setAppConfig(key, '0')
+        }
+
+        await saveMetaConfig(
+          '123456',
+          'meta-access-token',
+          null,
+          'page-3',
+          'ig-3',
+          'instagram-token'
+        )
+
+        for (const key of PAGE_SOCIAL_CHANNEL_CONFIG_KEYS) {
+          assert.equal(await getAppConfig(key), '1', `${key} should turn on for changed Page profiles`)
+        }
+        assert.equal(await getAppConfig('meta_instagram_messaging_enabled'), '1')
+        assert.equal(await getAppConfig('meta_instagram_comments_enabled'), '0')
       })
     })
   } finally {

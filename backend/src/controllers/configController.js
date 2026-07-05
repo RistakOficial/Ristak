@@ -2,9 +2,23 @@ import { getAppConfig, setAppConfig, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
 const SENSITIVE_CONFIG_KEY_PATTERN = /(private_key|secret|password|api_token|access_token|refresh_token|service_account|client_secret|webhook_secret)/i
+const META_SOCIAL_MESSAGING_PLATFORM_BY_KEY = {
+  meta_messenger_messaging_enabled: 'messenger',
+  meta_instagram_messaging_enabled: 'instagram'
+}
+
+function cleanString(value) {
+  if (value === null || value === undefined) return ''
+  return String(value).trim()
+}
 
 function isSensitiveConfigKey(key = '') {
   return SENSITIVE_CONFIG_KEY_PATTERN.test(String(key || ''))
+}
+
+function isEnabledConfigValue(value) {
+  const normalized = cleanString(value).toLowerCase()
+  return ['1', 'true', 'yes', 'on'].includes(normalized)
 }
 
 function getSafeConfigValue(key, value) {
@@ -77,6 +91,25 @@ async function setAppConfigStamped(k, v) {
   }
 }
 
+async function maybeStartMetaSocialHistoryBackfillForConfig(config = {}, reason = 'app-config-updated') {
+  const platforms = [...new Set(Object.entries(config)
+    .filter(([key, value]) => META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key] && isEnabledConfigValue(value))
+    .map(([key]) => META_SOCIAL_MESSAGING_PLATFORM_BY_KEY[key]))]
+  if (!platforms.length) return { syncStarted: false, started: [], skipped: [] }
+
+  try {
+    const { syncMetaSocialConversationHistoryInBackground } = await import('../services/metaSocialMessagingService.js')
+    const result = syncMetaSocialConversationHistoryInBackground({ platforms, reason })
+    if (result.syncStarted) {
+      logger.info(`Meta social: backfill de historial iniciado por configuración (${platforms.join(', ')})`)
+    }
+    return result
+  } catch (error) {
+    logger.warn(`Meta social: no se pudo iniciar backfill por configuración: ${error.message}`)
+    return { syncStarted: false, started: [], skipped: platforms.map(platform => ({ platform, reason: error.message })) }
+  }
+}
+
 export async function saveConfig(req, res) {
   try {
     const { key, value, config } = req.body
@@ -84,11 +117,13 @@ export async function saveConfig(req, res) {
     // Modo 1: Guardar una sola key
     if (key && value !== undefined) {
       await setAppConfigStamped(key, value)
+      const socialHistoryBackfill = await maybeStartMetaSocialHistoryBackfillForConfig({ [key]: value }, 'messaging-config-enabled')
       logger.info(`Configuración guardada: ${key} = ${getSafeLogValue(key, value)}`)
 
       return res.json({
         success: true,
-        message: 'Configuración guardada exitosamente'
+        message: 'Configuración guardada exitosamente',
+        socialHistoryBackfill
       })
     }
 
@@ -97,12 +132,14 @@ export async function saveConfig(req, res) {
       for (const [k, v] of Object.entries(config)) {
         await setAppConfigStamped(k, v)
       }
+      const socialHistoryBackfill = await maybeStartMetaSocialHistoryBackfillForConfig(config, 'messaging-config-enabled')
 
       logger.info(`${Object.keys(config).length} configuraciones guardadas`)
 
       return res.json({
         success: true,
-        message: 'Configuraciones guardadas exitosamente'
+        message: 'Configuraciones guardadas exitosamente',
+        socialHistoryBackfill
       })
     }
 

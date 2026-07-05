@@ -1106,9 +1106,10 @@ Ristak usa Meta en varias areas:
   terminar el wizard. Al terminarlo, Ristak arranca automaticamente la
   sincronizacion de anuncios de Meta en segundo plano y lleva al usuario a
   `Configuracion > Meta Ads > Redes sociales`. Las Page nuevas dejan encendidos
-  por default Messenger y comentarios de Facebook; Instagram DM y comentarios de
-  Instagram requieren ademas `meta_config.instagram_access_token` y se controlan
-  desde la columna de Instagram.
+  por default Messenger y comentarios de Facebook; Instagram DM requiere ademas
+  `meta_config.instagram_access_token` y queda encendido si la conexion nueva ya
+  trae cuenta de Instagram + token directo. Los comentarios de Instagram se
+  controlan aparte desde la columna de Instagram.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con Meta encendido por default: Sites/landings y paginas nuevas usan solo el
   `PageView` base al aterrizar (browser Pixel + CAPI server-side, sin `ViewContent`
@@ -1151,6 +1152,18 @@ Ristak usa Meta en varias areas:
   `instagram_business_basic` e `instagram_business_manage_messages`, app en Live
   para clientes reales, Advanced Access cuando aplique y token regenerado despues
   de aprobar los permisos.
+- Al conectar Meta con una Facebook Page, al guardar el Instagram API token o al
+  prender `meta_messenger_messaging_enabled` / `meta_instagram_messaging_enabled`,
+  Ristak inicia en segundo plano un backfill de conversaciones disponibles por
+  Graph Conversations API: Messenger usa `/{PAGE_ID}/conversations` con Page
+  token; Instagram usa `/me/conversations` por Instagram Graph con
+  `meta_config.instagram_access_token`. El backfill pagina conversaciones y
+  mensajes, deduplica por `meta_message_id`, guarda inbound/outbound en
+  `meta_social_messages` y fusiona el contacto por PSID/IGSID igual que los
+  webhooks. Es historial: no incrementa no leidos, no dispara push,
+  automatizaciones, confirmaciones ni agente conversacional. Meta puede no
+  devolver hilos de Requests inactivos por mas de 30 dias; Ristak importa todo lo
+  que la API expone y registra skip/fallos sin bloquear la conexion.
 - Los comentarios publicados por la propia Pagina de Facebook o cuenta de
   Instagram no se descartan como anti-loop. Si llegan por webhook y tienen
   `parent_id`, Ristak los enlaza al comentario padre ya guardado y los refleja en

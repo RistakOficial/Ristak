@@ -9,7 +9,8 @@ import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   processMetaSocialWebhook,
   sendMetaSocialReactionMessage,
-  sendMetaSocialTextMessage
+  sendMetaSocialTextMessage,
+  syncMetaSocialConversationHistory
 } from '../src/services/metaSocialMessagingService.js'
 
 function hashTestId(prefix, value) {
@@ -58,9 +59,67 @@ async function startMetaSendServer(calls) {
     req.on('end', () => {
       calls.push({ method: req.method, url: req.url, body, authorization: req.headers.authorization || '' })
 
-      if (req.method === 'GET' && req.url.startsWith('/page-send-test')) {
+      if (req.method === 'GET' && /^\/page-send-test(?:\?|$)/.test(req.url)) {
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({ access_token: 'page-token-send-test' }))
+        return
+      }
+
+      if (req.method === 'GET' && /^\/page-history-test(?:\?|$)/.test(req.url)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ access_token: 'page-token-history-test' }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/page-history-test/conversations')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          data: [
+            {
+              id: 'conversation-messenger-history',
+              updated_time: '2026-07-03T22:42:00+0000',
+              participants: {
+                data: [
+                  { id: 'page-history-test', name: 'Ristak Page' },
+                  { id: 'psid-history-test', name: 'Cliente Messenger Historial' }
+                ]
+              }
+            }
+          ]
+        }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/conversation-messenger-history/messages')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          data: [
+            {
+              id: 'mid-history-inbound',
+              message: 'Hola desde historial Messenger',
+              created_time: '2026-07-03T22:40:00+0000',
+              from: { id: 'psid-history-test', name: 'Cliente Messenger Historial' },
+              to: { data: [{ id: 'page-history-test', name: 'Ristak Page' }] }
+            },
+            {
+              id: 'mid-history-outbound',
+              message: 'Respuesta histórica Messenger',
+              created_time: '2026-07-03T22:41:00+0000',
+              from: { id: 'page-history-test', name: 'Ristak Page' },
+              to: { data: [{ id: 'psid-history-test', name: 'Cliente Messenger Historial' }] }
+            }
+          ]
+        }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/psid-history-test')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          id: 'psid-history-test',
+          name: 'Cliente Messenger Historial',
+          profile_pic: 'https://cdn.example.test/messenger-history.jpg'
+        }))
         return
       }
 
@@ -98,7 +157,38 @@ async function startMetaSendServer(calls) {
         return
       }
 
+      if (req.method === 'GET' && req.url.startsWith('/igsid-history-test')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          id: 'igsid-history-test',
+          name: 'Cliente Instagram Historial',
+          username: 'cliente.historial',
+          profile_pic: 'https://cdn.example.test/instagram-history.jpg'
+        }))
+        return
+      }
+
       if (req.method === 'GET' && req.url.startsWith('/me/conversations')) {
+        const requestUrl = new URL(req.url, 'http://127.0.0.1')
+        if (!requestUrl.searchParams.get('user_id')) {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({
+            data: [
+              {
+                id: 'conversation-instagram-history',
+                updated_time: '2026-07-03T23:02:00+0000',
+                participants: {
+                  data: [
+                    { id: 'ig-business-history-test', name: 'Ristak IG' },
+                    { id: 'igsid-history-test', name: 'Cliente Instagram Historial', username: 'cliente.historial' }
+                  ]
+                }
+              }
+            ]
+          }))
+          return
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           data: [
@@ -110,6 +200,29 @@ async function startMetaSendServer(calls) {
                   { id: 'igsid-fallback-test', name: 'Nombre Por Conversacion' }
                 ]
               }
+            }
+          ]
+        }))
+        return
+      }
+
+      if (req.method === 'GET' && req.url.startsWith('/conversation-instagram-history/messages')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({
+          data: [
+            {
+              id: 'ig-mid-history-inbound',
+              message: 'Hola desde historial Instagram',
+              created_time: '2026-07-03T23:00:00+0000',
+              from: { id: 'igsid-history-test', name: 'Cliente Instagram Historial', username: 'cliente.historial' },
+              to: { data: [{ id: 'ig-business-history-test', name: 'Ristak IG' }] }
+            },
+            {
+              id: 'ig-mid-history-outbound',
+              message: 'Respuesta histórica Instagram',
+              created_time: '2026-07-03T23:01:00+0000',
+              from: { id: 'ig-business-history-test', name: 'Ristak IG' },
+              to: { data: [{ id: 'igsid-history-test', name: 'Cliente Instagram Historial', username: 'cliente.historial' }] }
             }
           ]
         }))
@@ -234,6 +347,202 @@ async function cleanupSocialRows({ senderId, metaMessageId }) {
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_webhook_events WHERE raw_payload_json LIKE ?', [`%${metaMessageId}%`]).catch(() => undefined)
 }
+
+test('syncMetaSocialConversationHistory importa historial disponible de Messenger al chat', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const previousInstagramGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'INSTAGRAM_GRAPH')
+  const calls = []
+  let metaServer
+  const senderId = 'psid-history-test'
+  const contactId = hashTestId('meta_social_contact', `messenger:${senderId}`)
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+    Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-history-test',
+            encrypt('user-token-history-test'),
+            null,
+            'page-history-test',
+            null,
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_messenger_messaging_enabled', '1')
+
+          const result = await syncMetaSocialConversationHistory({
+            platform: 'messenger',
+            maxConversations: 5,
+            maxMessagesPerConversation: 5,
+            maxTotalMessages: 10,
+            publishEvents: false
+          })
+
+          assert.equal(result.skipped, false)
+          assert.equal(result.conversations, 1)
+          assert.equal(result.saved, 2)
+          assert.equal(result.messagesScanned, 2)
+
+          const rows = await db.all(`
+            SELECT meta_message_id, direction, sender_id, recipient_id, page_id, message_text, platform
+            FROM meta_social_messages
+            WHERE sender_id = ?
+            ORDER BY message_timestamp ASC
+          `, [senderId])
+          assert.equal(rows.length, 2)
+          assert.deepEqual(rows.map(row => row.meta_message_id), ['mid-history-inbound', 'mid-history-outbound'])
+          assert.deepEqual(rows.map(row => row.direction), ['inbound', 'outbound'])
+          assert.equal(rows[0].recipient_id, 'page-history-test')
+          assert.equal(rows[1].recipient_id, 'page-history-test')
+          assert.equal(rows[0].page_id, 'page-history-test')
+          assert.equal(rows[0].platform, 'messenger')
+
+          const profile = await db.get(
+            'SELECT contact_id, profile_name, profile_picture_url FROM meta_social_contacts WHERE platform = ? AND sender_id = ?',
+            ['messenger', senderId]
+          )
+          assert.equal(profile.contact_id, contactId)
+          assert.equal(profile.profile_name, 'Cliente Messenger Historial')
+          assert.equal(profile.profile_picture_url, 'https://cdn.example.test/messenger-history.jpg')
+
+          assert.equal(calls.some(call => call.url.startsWith('/page-history-test/conversations')), true)
+          const messagesCall = calls.find(call => call.url.startsWith('/conversation-messenger-history/messages'))
+          assert.equal(messagesCall?.authorization, 'Bearer page-token-history-test')
+        } finally {
+          await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousInstagramGraphDescriptor) Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', previousInstagramGraphDescriptor)
+  }
+})
+
+test('syncMetaSocialConversationHistory importa historial disponible de Instagram con Instagram Graph', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const previousInstagramGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'INSTAGRAM_GRAPH')
+  const calls = []
+  let metaServer
+  const senderId = 'igsid-history-test'
+  const contactId = hashTestId('meta_social_contact', `instagram:${senderId}`)
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+    Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_instagram_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, instagram_access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-history-test',
+            encrypt('user-token-history-test'),
+            encrypt('instagram-token-history-test'),
+            null,
+            'page-history-test',
+            'ig-business-history-test',
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_instagram_messaging_enabled', '1')
+
+          const result = await syncMetaSocialConversationHistory({
+            platform: 'instagram',
+            maxConversations: 5,
+            maxMessagesPerConversation: 5,
+            maxTotalMessages: 10,
+            publishEvents: false
+          })
+
+          assert.equal(result.skipped, false)
+          assert.equal(result.conversations, 1)
+          assert.equal(result.saved, 2)
+          assert.equal(result.messagesScanned, 2)
+
+          const rows = await db.all(`
+            SELECT meta_message_id, direction, sender_id, recipient_id, instagram_account_id, message_text, platform
+            FROM meta_social_messages
+            WHERE sender_id = ?
+            ORDER BY message_timestamp ASC
+          `, [senderId])
+          assert.equal(rows.length, 2)
+          assert.deepEqual(rows.map(row => row.meta_message_id), ['ig-mid-history-inbound', 'ig-mid-history-outbound'])
+          assert.deepEqual(rows.map(row => row.direction), ['inbound', 'outbound'])
+          assert.equal(rows[0].recipient_id, 'ig-business-history-test')
+          assert.equal(rows[1].recipient_id, 'ig-business-history-test')
+          assert.equal(rows[0].instagram_account_id, 'ig-business-history-test')
+          assert.equal(rows[0].platform, 'instagram')
+
+          const profile = await db.get(
+            'SELECT contact_id, profile_name, username, profile_picture_url FROM meta_social_contacts WHERE platform = ? AND sender_id = ?',
+            ['instagram', senderId]
+          )
+          assert.equal(profile.contact_id, contactId)
+          assert.equal(profile.profile_name, 'Cliente Instagram Historial')
+          assert.equal(profile.username, 'cliente.historial')
+          assert.equal(profile.profile_picture_url, 'https://cdn.example.test/instagram-history.jpg')
+
+          const conversationsCall = calls.find(call => call.url.startsWith('/me/conversations'))
+          assert.equal(conversationsCall?.authorization, 'Bearer instagram-token-history-test')
+          const messagesCall = calls.find(call => call.url.startsWith('/conversation-instagram-history/messages'))
+          assert.equal(messagesCall?.authorization, 'Bearer instagram-token-history-test')
+          assert.equal(calls.some(call => call.url.startsWith('/page-history-test?')), false)
+        } finally {
+          await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    if (previousInstagramGraphDescriptor) Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', previousInstagramGraphDescriptor)
+  }
+})
 
 test('processMetaSocialWebhook enriquece DMs de Instagram con Instagram Graph y token directo', async () => {
   const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')

@@ -54,12 +54,16 @@ async function syncMetaSocialChannelDefaults({
   previousPageId = '',
   nextPageId = '',
   previousInstagramAccountId = '',
-  nextInstagramAccountId = ''
+  nextInstagramAccountId = '',
+  previousInstagramAccessToken = '',
+  nextInstagramAccessToken = ''
 } = {}) {
   const oldPageId = normalizeMetaProfileId(previousPageId)
   const newPageId = normalizeMetaProfileId(nextPageId)
   const oldInstagramAccountId = normalizeMetaProfileId(previousInstagramAccountId)
   const newInstagramAccountId = normalizeMetaProfileId(nextInstagramAccountId)
+  const oldInstagramAccessToken = normalizeMetaProfileId(previousInstagramAccessToken)
+  const newInstagramAccessToken = normalizeMetaProfileId(nextInstagramAccessToken)
   const updates = new Map()
 
   if (newPageId && newPageId !== oldPageId) {
@@ -68,7 +72,9 @@ async function syncMetaSocialChannelDefaults({
     META_SOCIAL_CHANNEL_CONFIG_KEYS.page.forEach(key => updates.set(key, '0'))
   }
 
-  if (!newInstagramAccountId && oldInstagramAccountId) {
+  if (newInstagramAccountId && newInstagramAccessToken && (newInstagramAccountId !== oldInstagramAccountId || !oldInstagramAccessToken)) {
+    updates.set('meta_instagram_messaging_enabled', '1')
+  } else if (!newInstagramAccountId && oldInstagramAccountId) {
     META_SOCIAL_CHANNEL_CONFIG_KEYS.instagram.forEach(key => updates.set(key, '0'))
   }
 
@@ -785,7 +791,9 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
       previousPageId: existingMetaConfig?.page_id,
       nextPageId: pageId,
       previousInstagramAccountId: existingMetaConfig?.instagram_account_id,
-      nextInstagramAccountId: instagramAccountId
+      nextInstagramAccountId: instagramAccountId,
+      previousInstagramAccessToken: existingMetaConfig?.instagram_access_token,
+      nextInstagramAccessToken: encryptedInstagramAccessToken
     })
 
     const conversionEventsResult = await ensureMetaConversionEventsEnabledForConnectedPixel({
