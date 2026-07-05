@@ -8,6 +8,7 @@ import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   processMetaSocialWebhook,
+  sendMetaSocialReactionMessage,
   sendMetaSocialTextMessage
 } from '../src/services/metaSocialMessagingService.js'
 
@@ -672,6 +673,162 @@ test('sendMetaSocialTextMessage mantiene Messenger con Page token y messaging_ty
             messaging_type: 'RESPONSE',
             recipient: { id: 'psid-send-test' },
             message: { text: 'Hola' }
+          })
+        } finally {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('sendMetaSocialTextMessage envia reply_to para contestar un globo de Messenger', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const contactId = 'meta_send_reply_messenger_contact'
+  const metaContactId = 'meta_send_reply_messenger_profile'
+  const targetMessageId = 'mid-messenger-reply-target'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-send-reply-test',
+            encrypt('user-token-send-test'),
+            null,
+            'page-send-test',
+            'ig-business-send-test',
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_messenger_messaging_enabled', '1')
+          await seedMessengerContact({ contactId, metaContactId })
+          await db.run(`
+            INSERT INTO meta_social_messages (
+              id, platform, meta_message_id, meta_social_contact_id, contact_id,
+              sender_id, recipient_id, page_id, direction, status, message_type, message_text,
+              message_timestamp, raw_payload_json, updated_at
+            ) VALUES (?, 'messenger', ?, ?, ?, 'psid-send-test', 'page-send-test', 'page-send-test', 'inbound', 'received', 'text', 'Mensaje base', CURRENT_TIMESTAMP, '{}', CURRENT_TIMESTAMP)
+          `, ['meta_reply_target_local', targetMessageId, metaContactId, contactId])
+
+          await sendMetaSocialTextMessage({
+            contactId,
+            platform: 'messenger',
+            message: 'Contestando',
+            replyToMessageId: 'meta_reply_target_local'
+          })
+
+          assert.deepEqual(JSON.parse(calls.at(-1).body), {
+            messaging_type: 'RESPONSE',
+            recipient: { id: 'psid-send-test' },
+            message: {
+              text: 'Contestando',
+              reply_to: { mid: targetMessageId }
+            }
+          })
+        } finally {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('sendMetaSocialReactionMessage envia sender_action react para Messenger', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const contactId = 'meta_send_reaction_messenger_contact'
+  const metaContactId = 'meta_send_reaction_messenger_profile'
+  const targetMessageId = 'mid-messenger-reaction-target'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-send-reaction-test',
+            encrypt('user-token-send-test'),
+            null,
+            'page-send-test',
+            'ig-business-send-test',
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_messenger_messaging_enabled', '1')
+          await seedMessengerContact({ contactId, metaContactId })
+          await db.run(`
+            INSERT INTO meta_social_messages (
+              id, platform, meta_message_id, meta_social_contact_id, contact_id,
+              sender_id, recipient_id, page_id, direction, status, message_type, message_text,
+              message_timestamp, raw_payload_json, updated_at
+            ) VALUES (?, 'messenger', ?, ?, ?, 'psid-send-test', 'page-send-test', 'page-send-test', 'inbound', 'received', 'text', 'Mensaje base', CURRENT_TIMESTAMP, '{}', CURRENT_TIMESTAMP)
+          `, ['meta_reaction_target_local', targetMessageId, metaContactId, contactId])
+
+          await sendMetaSocialReactionMessage({
+            contactId,
+            platform: 'messenger',
+            emoji: '❤️',
+            targetMessageId: 'meta_reaction_target_local'
+          })
+
+          assert.deepEqual(JSON.parse(calls.at(-1).body), {
+            recipient: { id: 'psid-send-test' },
+            sender_action: 'react',
+            payload: {
+              message_id: targetMessageId,
+              reaction: 'love'
+            }
           })
         } finally {
           await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)

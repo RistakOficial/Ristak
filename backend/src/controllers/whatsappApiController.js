@@ -22,6 +22,7 @@ import {
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiInteractiveMessage,
   sendWhatsAppApiLocationMessage,
+  sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage,
   sendWhatsAppApiVideoMessage,
@@ -42,7 +43,7 @@ import {
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultWhatsAppApiMessageTemplates
 } from '../services/messageTemplatesService.js'
-import { sendMetaSocialTextMessage, sendMetaSocialCommentReply, listMetaSocialPosts } from '../services/metaSocialMessagingService.js'
+import { sendMetaSocialTextMessage, sendMetaSocialReactionMessage, sendMetaSocialCommentReply, listMetaSocialPosts } from '../services/metaSocialMessagingService.js'
 import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
@@ -406,7 +407,9 @@ export async function sendMetaSocialTextMessageView(req, res) {
       contactId: req.body?.contactId,
       platform: req.body?.platform,
       message: req.body?.message || req.body?.text,
-      externalId: req.body?.externalId
+      externalId: req.body?.externalId,
+      replyToMessageId: req.body?.replyToMessageId,
+      replyToProviderMessageId: req.body?.replyToProviderMessageId
     })
     notifyHumanTakeover({ contactId: req.body?.contactId })
     res.json({ success: true, data })
@@ -415,6 +418,27 @@ export async function sendMetaSocialTextMessageView(req, res) {
     res.status(error.statusCode || 400).json({
       success: false,
       error: error.message || 'No se pudo enviar el mensaje por Meta'
+    })
+  }
+}
+
+export async function sendMetaSocialReactionMessageView(req, res) {
+  try {
+    const data = await sendMetaSocialReactionMessage({
+      contactId: req.body?.contactId,
+      platform: req.body?.platform,
+      emoji: req.body?.emoji,
+      targetMessageId: req.body?.targetMessageId || req.body?.messageId,
+      targetProviderMessageId: req.body?.targetProviderMessageId || req.body?.providerMessageId,
+      externalId: req.body?.externalId
+    })
+    notifyHumanTakeover({ contactId: req.body?.contactId })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error reaccionando DM Meta: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo reaccionar al mensaje por Meta'
     })
   }
 }
@@ -575,6 +599,8 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
       userId: req.user?.userId,
       publicBaseUrl: getPublicBaseUrl(req),
       phoneNumberId: req.body?.phoneNumberId,
+      replyToMessageId: req.body?.replyToMessageId,
+      replyToProviderMessageId: req.body?.replyToProviderMessageId,
       skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
@@ -584,6 +610,31 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo enviar el mensaje por WhatsApp_API'
+    })
+  }
+}
+
+export async function sendWhatsAppApiReactionMessageView(req, res) {
+  try {
+    const data = await sendWhatsAppApiReactionMessage({
+      to: req.body?.to,
+      from: req.body?.from,
+      emoji: req.body?.emoji,
+      targetMessageId: req.body?.targetMessageId || req.body?.messageId,
+      targetProviderMessageId: req.body?.targetProviderMessageId || req.body?.providerMessageId,
+      externalId: req.body?.externalId,
+      transport: req.body?.transport,
+      contactId: req.body?.contactId,
+      phoneNumberId: req.body?.phoneNumberId,
+      skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
+    })
+    notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error reaccionando WhatsApp_API: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo reaccionar al mensaje por WhatsApp_API'
     })
   }
 }

@@ -292,6 +292,16 @@ a, estado, transporte y cuerpo. No los conviertas a texto plano de WhatsApp ni
 los ocultes de la conversacion movil; el usuario debe poder abrir el detalle del
 correo desde el celular.
 
+En `/movil`, la accion de responder un globo debe enviar una respuesta nativa
+cuando el canal lo soporte: WhatsApp API/YCloud con `context.message_id`,
+WhatsApp QR/Baileys con `quoted`, Messenger/Instagram con `reply_to.mid`. La UI
+debe mostrar el quote dentro del globo enviado y debe bloquear respuestas con
+media/ubicacion hasta que esos canales tengan soporte nativo completo. Las
+reacciones se muestran como chips pegados al globo original: WhatsApp acepta
+emoji, Meta solo debe ofrecer/aceptar corazon (`love`) por contrato, y
+HighLevel/email/comentarios deben avisar que no hay reaccion nativa en vez de
+crear un mensaje falso.
+
 ## Variables de servidor
 
 Web/PWA:

@@ -1192,6 +1192,50 @@ const parseJsonObject = (value) => {
   }
 }
 
+const getNestedObject = (value, path = []) => {
+  let current = value
+  for (const key of path) {
+    if (!current || typeof current !== 'object') return null
+    current = current[key]
+  }
+  return current && typeof current === 'object' ? current : null
+}
+
+const getWhatsAppReplyContextId = (context = null, rawPayload = null) => cleanString(
+  context?.id ||
+  context?.message_id ||
+  context?.messageId ||
+  context?.quotedMessageId ||
+  getNestedObject(rawPayload, ['context'])?.id ||
+  getNestedObject(rawPayload, ['context'])?.message_id ||
+  getNestedObject(rawPayload, ['reaction'])?.message_id ||
+  getNestedObject(rawPayload, ['reaction'])?.messageId ||
+  getNestedObject(rawPayload, ['qrRaw', 'reaction'])?.message_id ||
+  getNestedObject(rawPayload, ['qrRaw', 'context'])?.id
+)
+
+const getWhatsAppReactionEmoji = (rawPayload = null, context = null, fallbackText = '') => cleanString(
+  getNestedObject(rawPayload, ['reaction'])?.emoji ||
+  getNestedObject(rawPayload, ['reaction'])?.text ||
+  getNestedObject(rawPayload, ['qrRaw', 'reaction'])?.emoji ||
+  getNestedObject(rawPayload, ['qrRaw', 'reaction'])?.text ||
+  context?.reaction?.emoji ||
+  fallbackText
+)
+
+const getMetaReplyContextId = (rawPayload = null) => cleanString(
+  getNestedObject(rawPayload, ['context', 'reply_to'])?.mid ||
+  getNestedObject(rawPayload, ['response', 'message', 'reply_to'])?.mid ||
+  getNestedObject(rawPayload, ['message', 'reply_to'])?.mid ||
+  getNestedObject(rawPayload, ['reply_to'])?.mid
+)
+
+const getMetaReactionTargetId = (rawPayload = null) => cleanString(
+  getNestedObject(rawPayload, ['context'])?.target_message_id ||
+  getNestedObject(rawPayload, ['payload'])?.message_id ||
+  getNestedObject(rawPayload, ['reaction'])?.mid
+)
+
 const safeJsonStringify = (value, fallback = null) => {
   try {
     return JSON.stringify(value ?? null)
@@ -4996,6 +5040,7 @@ export const getContactJourney = async (req, res) => {
           msg.media_filename,
           msg.media_duration_ms,
           msg.raw_payload_json,
+          msg.context_json,
           COALESCE(msg.message_timestamp, msg.created_at) as journey_message_date,
           COALESCE(attr.id, '') as attribution_id,
           COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) as detected_ctwa_clid,
@@ -5035,6 +5080,12 @@ export const getContactJourney = async (req, res) => {
 
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
       const payloadLocation = getWhatsAppLocationFromPayload(msg.raw_payload_json, msg.message_type)
+      const rawPayload = parseJsonObject(msg.raw_payload_json)
+      const context = parseJsonObject(msg.context_json)
+      const replyContextId = getWhatsAppReplyContextId(context, rawPayload)
+      const reactionEmoji = cleanString(msg.message_type).toLowerCase() === 'reaction'
+        ? getWhatsAppReactionEmoji(rawPayload, context, msg.message_text)
+        : ''
       const media = {
         media_url: cleanString(msg.media_url) || payloadMedia.media_url,
         media_id: payloadMedia.media_id,
@@ -5069,6 +5120,10 @@ export const getContactJourney = async (req, res) => {
         attribution_record_id: msg.attribution_id || null,
         whatsapp_api_message_id: msg.whatsapp_api_message_id,
         whatsapp_message_id: msg.wamid || msg.ycloud_message_id,
+        provider_message_id: msg.wamid || msg.ycloud_message_id,
+        reply_to_provider_message_id: cleanString(msg.message_type).toLowerCase() === 'reaction' ? '' : replyContextId,
+        reaction_emoji: reactionEmoji,
+        reaction_target_provider_message_id: cleanString(msg.message_type).toLowerCase() === 'reaction' ? replyContextId : '',
         direction: msg.direction || 'inbound',
         status: msg.status || null,
         error_code: msg.error_code || null,
@@ -5110,6 +5165,7 @@ export const getContactJourney = async (req, res) => {
           msg.direction,
           msg.status,
           msg.postback_payload,
+          msg.raw_payload_json,
           msg.referral_json,
           msg.comment_id,
           msg.post_id,
@@ -5151,6 +5207,11 @@ export const getContactJourney = async (req, res) => {
 
       const platform = cleanString(msg.platform)
       const source = platform === 'instagram' ? 'Instagram DM' : 'Messenger'
+      const rawPayload = parseJsonObject(msg.raw_payload_json)
+      const replyContextId = getMetaReplyContextId(rawPayload)
+      const reactionTargetId = cleanString(msg.message_type).toLowerCase() === 'reaction'
+        ? getMetaReactionTargetId(rawPayload) || cleanString(msg.meta_message_id)
+        : ''
 
       journey.push({
         type: 'meta_message',
@@ -5173,6 +5234,10 @@ export const getContactJourney = async (req, res) => {
           attribution_source: 'meta_social',
           meta_social_message_id: msg.meta_social_message_id,
           meta_message_id: msg.meta_message_id,
+          provider_message_id: msg.meta_message_id,
+          reply_to_provider_message_id: cleanString(msg.message_type).toLowerCase() === 'reaction' ? '' : replyContextId,
+          reaction_emoji: cleanString(msg.message_type).toLowerCase() === 'reaction' ? cleanString(msg.message_text) : '',
+          reaction_target_provider_message_id: reactionTargetId,
           direction: msg.direction || 'inbound',
           status: msg.status || null,
           transport: platform === 'instagram' ? 'instagram' : 'messenger',

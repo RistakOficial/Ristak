@@ -19,6 +19,7 @@ import {
   sendWhatsAppQrDocumentMessage,
   sendWhatsAppQrImageMessage,
   sendWhatsAppQrLocationMessage,
+  sendWhatsAppQrReactionMessage,
   sendWhatsAppQrVideoMessage,
   sendWhatsAppQrTextMessage,
   startWhatsAppQrConnection,
@@ -4382,6 +4383,54 @@ function buildWhatsAppLocationText(location = {}) {
   return cleanString(location.name || location.address) || 'Ubicación'
 }
 
+async function resolveWhatsAppMessageReference({ messageId, providerMessageId, contactId } = {}) {
+  const cleanMessageId = cleanString(messageId)
+  const cleanProviderMessageId = cleanString(providerMessageId)
+  const cleanContactId = cleanString(contactId)
+  if (!cleanMessageId && !cleanProviderMessageId) return null
+
+  const row = await db.get(`
+    SELECT id, ycloud_message_id, meta_message_id, wamid, direction, message_type, message_text, context_json, raw_payload_json
+    FROM whatsapp_api_messages
+    WHERE (
+        (? != '' AND id = ?)
+        OR (? != '' AND ycloud_message_id = ?)
+        OR (? != '' AND meta_message_id = ?)
+        OR (? != '' AND wamid = ?)
+      )
+      AND (? = '' OR contact_id = ?)
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [
+    cleanMessageId, cleanMessageId,
+    cleanProviderMessageId, cleanProviderMessageId,
+    cleanProviderMessageId, cleanProviderMessageId,
+    cleanProviderMessageId, cleanProviderMessageId,
+    cleanContactId, cleanContactId
+  ]).catch(() => null)
+
+  const providerId = cleanString(row?.wamid || row?.ycloud_message_id || row?.meta_message_id || cleanProviderMessageId)
+  if (!providerId) return null
+  return {
+    localMessageId: cleanString(row?.id),
+    providerMessageId: providerId,
+    messageType: cleanString(row?.message_type),
+    text: cleanString(row?.message_text)
+  }
+}
+
+async function resolveWhatsAppReplyContext({ replyToMessageId, replyToProviderMessageId, contactId } = {}) {
+  const reference = await resolveWhatsAppMessageReference({
+    messageId: replyToMessageId,
+    providerMessageId: replyToProviderMessageId,
+    contactId
+  })
+  if (!reference?.providerMessageId) return null
+  return {
+    message_id: reference.providerMessageId
+  }
+}
+
 function extractButtonReply(message = {}) {
   const messageType = cleanString(message.type).toLowerCase()
   const interactiveType = cleanString(message.interactive?.type).toLowerCase()
@@ -6023,6 +6072,8 @@ export async function captureQrChatMessage({
       type: messageType,
       ...(messageText ? { text: { body: messageText } } : {}),
       ...(mediaNode ? { [mediaKey]: mediaNode } : {}),
+      ...(raw?.context ? { context: raw.context } : {}),
+      ...(raw?.reaction ? { reaction: raw.reaction } : {}),
       ...(cleanDirection === 'inbound' && profileName ? { profileName } : {}),
       transport: 'qr',
       sendTime: messageTimestamp,
@@ -7471,7 +7522,7 @@ export async function processMetaDirectWebhookRelay({ payload = {}, rawBody = ''
   }
 }
 
-async function sendTextViaMetaDirect({ to, text, from, externalId } = {}) {
+async function sendTextViaMetaDirect({ to, text, from, externalId, replyContext = null } = {}) {
   const config = await loadMetaDirectConfig({ includeSecrets: true })
   if (!config.connected) throw new Error('Meta directo no está conectado')
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
@@ -7487,9 +7538,57 @@ async function sendTextViaMetaDirect({ to, text, from, externalId } = {}) {
       to: toPhone,
       type: 'text',
       text: { body },
+      ...(replyContext?.message_id ? { context: replyContext } : {}),
       ...(externalId ? { biz_opaque_callback_data: externalId } : {})
     }
   })
+}
+
+async function sendReactionViaMetaDirect({ to, emoji, from, externalId, targetProviderMessageId } = {}) {
+  const config = await loadMetaDirectConfig({ includeSecrets: true })
+  if (!config.connected) throw new Error('Meta directo no está conectado')
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const reactionEmoji = cleanString(emoji)
+  const targetId = cleanString(targetProviderMessageId)
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!reactionEmoji) throw new Error('Falta la reacción')
+  if (!targetId) throw new Error('Falta el mensaje original para reaccionar')
+
+  const response = await metaDirectGraphRequest(`/${encodeURIComponent(config.phoneNumberId)}/messages`, {
+    method: 'POST',
+    token: config.systemUserToken,
+    body: {
+      messaging_product: 'whatsapp',
+      to: toPhone,
+      type: 'reaction',
+      reaction: {
+        message_id: targetId,
+        emoji: reactionEmoji
+      },
+      ...(externalId ? { biz_opaque_callback_data: externalId } : {})
+    }
+  })
+  const message = Array.isArray(response?.messages) ? response.messages[0] : null
+  const contact = Array.isArray(response?.contacts) ? response.contacts[0] : null
+  const messageId = cleanString(response?.id || response?.messageId || response?.message_id || message?.id)
+
+  return {
+    ...response,
+    id: messageId || cleanString(externalId),
+    wamid: cleanString(response?.wamid || response?.waMessageId || message?.id) || messageId || null,
+    status: cleanString(response?.status || message?.message_status) || 'sent',
+    from: normalizePhoneForStorage(config.displayPhoneNumber || from) || cleanString(config.displayPhoneNumber || from),
+    to: normalizePhoneForStorage(contact?.input || toPhone) || cleanString(contact?.input || toPhone),
+    type: 'reaction',
+    reaction: {
+      message_id: targetId,
+      emoji: reactionEmoji
+    },
+    context: {
+      id: targetId
+    },
+    transport: 'api'
+  }
 }
 
 async function sendLocationViaMetaDirect({ to, location, from, externalId } = {}) {
@@ -8395,6 +8494,8 @@ export async function sendWhatsAppApiInteractiveMessage({
   publicBaseUrl,
   extraVariables,
   phoneNumberId,
+  replyToMessageId = '',
+  replyToProviderMessageId = '',
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
@@ -8561,7 +8662,7 @@ function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
   }
 }
 
-async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
+async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, replyToMessageId = '', replyToProviderMessageId = '', fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
   try {
     const response = await sendWhatsAppQrTextMessage({
       phoneNumberId,
@@ -8569,6 +8670,8 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
       to: toPhone,
       text: body,
       externalId,
+      replyToMessageId,
+      replyToProviderMessageId,
       skipQrSendProtection
     })
 
@@ -8588,6 +8691,7 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
           to: response.to || toPhone,
           type: response.type || 'text',
           text: response.text || { body },
+          ...(response.context ? { context: response.context } : {}),
           transport: 'qr',
           createTime: response.createTime || nowIso()
         },
@@ -8965,6 +9069,8 @@ export async function sendWhatsAppApiTextMessage({
   publicBaseUrl,
   extraVariables,
   phoneNumberId,
+  replyToMessageId = '',
+  replyToProviderMessageId = '',
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
@@ -8983,8 +9089,14 @@ export async function sendWhatsAppApiTextMessage({
   if (!toPhone) throw new Error('Falta el número destino')
   if (!body) throw new Error('Falta el texto del mensaje')
 
+  const replyContext = await resolveWhatsAppReplyContext({
+    replyToMessageId,
+    replyToProviderMessageId,
+    contactId
+  })
+
   if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
-    return sendTextViaMetaDirect({ to: toPhone, text: body, from, externalId })
+    return sendTextViaMetaDirect({ to: toPhone, text: body, from, externalId, replyContext })
   }
 
   if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
@@ -9001,6 +9113,8 @@ export async function sendWhatsAppApiTextMessage({
       body,
       externalId,
       contactId,
+      replyToMessageId,
+      replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
       skipQrSendProtection
     })
   }
@@ -9021,6 +9135,8 @@ export async function sendWhatsAppApiTextMessage({
       body,
       externalId,
       contactId,
+      replyToMessageId,
+      replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
       fallbackReason: fallbackDecision.reason,
       skipQrSendProtection
     })
@@ -9037,6 +9153,7 @@ export async function sendWhatsAppApiTextMessage({
         to: toPhone,
         type: 'text',
         text: { body },
+        ...(replyContext ? { context: replyContext } : {}),
         ...(externalId ? { externalId } : {})
       }
     })
@@ -9056,6 +9173,8 @@ export async function sendWhatsAppApiTextMessage({
         body,
         externalId,
         contactId,
+        replyToMessageId,
+        replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
         fallbackReason: retryDecision.reason,
         originalError: error,
         skipQrSendProtection
@@ -9087,6 +9206,7 @@ export async function sendWhatsAppApiTextMessage({
       to: response.to || toPhone,
       type: response.type || 'text',
       text: response.text || { body },
+      ...(replyContext ? { context: replyContext } : {}),
       transport: 'api',
       createTime: response.createTime || nowIso()
     },
@@ -9098,6 +9218,198 @@ export async function sendWhatsAppApiTextMessage({
   if (fallbackSendResponse) return fallbackSendResponse
 
   return response
+}
+
+export async function sendWhatsAppApiReactionMessage({
+  to,
+  from,
+  emoji,
+  targetMessageId,
+  targetProviderMessageId,
+  externalId,
+  transport = 'api',
+  allowQrFallback = true,
+  contactId,
+  phoneNumberId,
+  skipQrSendProtection = false
+} = {}) {
+  const config = await loadConfig({ includeSecrets: true })
+  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const reactionEmoji = cleanString(emoji)
+  const target = await resolveWhatsAppMessageReference({
+    messageId: targetMessageId,
+    providerMessageId: targetProviderMessageId,
+    contactId
+  })
+  const targetProviderId = cleanString(target?.providerMessageId || targetProviderMessageId)
+
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!reactionEmoji) throw new Error('Falta la reacción')
+  if (!targetProviderId) throw new Error('No encontramos el mensaje original para reaccionar')
+
+  if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
+    const response = await sendReactionViaMetaDirect({
+      to: toPhone,
+      from: fromPhone,
+      emoji: reactionEmoji,
+      targetProviderMessageId: targetProviderId,
+      externalId
+    })
+    const persistedMessage = await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waapi_reaction_meta_event', `${fromPhone}|${toPhone}|${targetProviderId}|${reactionEmoji}`),
+        type: 'whatsapp.message.updated',
+        createTime: nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: 'reaction',
+        reaction: response.reaction || { message_id: targetProviderId, emoji: reactionEmoji },
+        context: response.context || { id: targetProviderId },
+        transport: 'api',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'api',
+      contactId
+    })
+    return { ...response, localMessageId: persistedMessage?.messageId || null }
+  }
+
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
+  if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
+
+  if (cleanTransport === 'qr') {
+    const response = await sendWhatsAppQrReactionMessage({
+      phoneNumberId,
+      from: fromPhone,
+      to: toPhone,
+      emoji: reactionEmoji,
+      targetMessageId,
+      targetProviderMessageId: targetProviderId,
+      externalId,
+      skipQrSendProtection
+    })
+    const persistedMessage = await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waqr_reaction_event', `${fromPhone}|${toPhone}|${targetProviderId}|${reactionEmoji}`),
+        type: 'whatsapp.qr.message.sent',
+        transport: 'qr',
+        createTime: response.createTime || nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: 'reaction',
+        reaction: response.reaction || { message_id: targetProviderId, emoji: reactionEmoji },
+        context: response.context || { id: targetProviderId },
+        transport: 'qr',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'qr',
+      contactId
+    })
+    return { ...decorateQrFallbackResponse(response, null), localMessageId: persistedMessage?.messageId || null }
+  }
+
+  const fallbackDecision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
+  })
+  if (allowQrFallback && fallbackDecision.shouldFallback) {
+    const response = await sendWhatsAppQrReactionMessage({
+      phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
+      from: fromPhone,
+      to: toPhone,
+      emoji: reactionEmoji,
+      targetMessageId,
+      targetProviderMessageId: targetProviderId,
+      externalId,
+      skipQrSendProtection
+    })
+    const persistedMessage = await upsertMessage({
+      payload: {
+        id: response.id || externalId || hashId('waqr_reaction_fallback_event', `${fromPhone}|${toPhone}|${targetProviderId}|${reactionEmoji}`),
+        type: 'whatsapp.qr.message.fallback_sent',
+        transport: 'qr',
+        fallbackReason: fallbackDecision.reason,
+        createTime: response.createTime || nowIso(),
+        whatsappMessage: response
+      },
+      message: {
+        ...response,
+        from: response.from || fromPhone,
+        to: response.to || toPhone,
+        type: 'reaction',
+        reaction: response.reaction || { message_id: targetProviderId, emoji: reactionEmoji },
+        context: response.context || { id: targetProviderId },
+        transport: 'qr',
+        createTime: response.createTime || nowIso()
+      },
+      direction: 'outbound',
+      transport: 'qr',
+      contactId
+    })
+    return {
+      ...decorateQrFallbackResponse(response, fallbackDecision.reason),
+      localMessageId: persistedMessage?.messageId || null
+    }
+  }
+  throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
+
+  const reactionPayload = {
+    message_id: targetProviderId,
+    emoji: reactionEmoji
+  }
+  const response = await ycloudRequest('/whatsapp/messages', {
+    apiKey: config.apiKey,
+    method: 'POST',
+    body: {
+      from: fromPhone,
+      to: toPhone,
+      type: 'reaction',
+      reaction: reactionPayload,
+      ...(externalId ? { externalId } : {})
+    }
+  })
+
+  const persistedMessage = await upsertMessage({
+    payload: {
+      id: response.id || externalId || hashId('waapi_reaction_event', `${fromPhone}|${toPhone}|${targetProviderId}|${reactionEmoji}`),
+      type: 'whatsapp.message.updated',
+      createTime: nowIso(),
+      whatsappMessage: response
+    },
+    message: {
+      ...response,
+      from: response.from || fromPhone,
+      to: response.to || toPhone,
+      type: response.type || 'reaction',
+      reaction: response.reaction || reactionPayload,
+      context: response.context || { id: targetProviderId },
+      transport: 'api',
+      createTime: response.createTime || nowIso()
+    },
+    direction: 'outbound',
+    transport: 'api',
+    contactId
+  })
+
+  return { ...response, localMessageId: persistedMessage?.messageId || null }
 }
 
 export async function sendWhatsAppApiLocationMessage({

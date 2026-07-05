@@ -26,11 +26,13 @@ import {
   sendWhatsAppApiImageMessageView,
   sendWhatsAppApiInteractiveMessageView,
   sendWhatsAppApiLocationMessageView,
+  sendWhatsAppApiReactionMessageView,
   sendWhatsAppApiTemplateMessageView,
   sendWhatsAppApiTextMessageView,
   sendWhatsAppApiVideoMessageView,
   sendMetaDirectTestMessageView,
   sendMetaSocialTextMessageView,
+  sendMetaSocialReactionMessageView,
   sendMetaSocialCommentReplyView,
   listMetaSocialPostsView,
   setWhatsAppActiveProviderView,
@@ -58,6 +60,7 @@ router.post('/meta/provider', setWhatsAppActiveProviderView)
 router.post('/meta/test', testMetaDirectConnectionView)
 router.post('/meta/messages/test', sendMetaDirectTestMessageView)
 router.post('/meta/social/messages/text', sendMetaSocialTextMessageView)
+router.post('/meta/social/messages/reaction', sendMetaSocialReactionMessageView)
 router.post('/meta/social/comments/reply', sendMetaSocialCommentReplyView)
 router.get('/meta/social/posts', listMetaSocialPostsView)
 router.post('/meta/sync-history', syncMetaDirectHistoryView)
@@ -80,6 +83,7 @@ router.get('/messages/scheduled', listScheduledChatMessagesView)
 router.post('/messages/scheduled', scheduleChatMessageView)
 router.delete('/messages/scheduled/:id', cancelScheduledChatMessageView)
 router.post('/messages/text', sendWhatsAppApiTextMessageView)
+router.post('/messages/reaction', sendWhatsAppApiReactionMessageView)
 router.post('/messages/location', sendWhatsAppApiLocationMessageView)
 router.post('/messages/interactive', sendWhatsAppApiInteractiveMessageView)
 router.post('/messages/image', sendWhatsAppApiImageMessageView)

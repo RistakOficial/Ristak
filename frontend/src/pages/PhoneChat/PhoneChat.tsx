@@ -211,6 +211,7 @@ const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // Precargamos un bloque razonable en segundo plano. El resto sigue por scroll, sin ráfagas enormes.
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 250
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
+const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
 const CHAT_CONVERSATION_TOP_LOAD_GAP_PX = 96
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'local-meta-', 'local-ghl-']
 const OPTIMISTIC_MESSAGE_MAX_AGE_MS = 10 * 60 * 1000
@@ -1367,6 +1368,7 @@ interface ChatMessage {
   text: string
   date: string
   direction: 'inbound' | 'outbound' | 'system'
+  providerMessageId?: string
   status?: string
   errorReason?: string
   scheduledAt?: string
@@ -1382,6 +1384,16 @@ interface ChatMessage {
   businessPhoneNumberId?: string
   transport?: 'api' | 'qr' | string
   routingReason?: string
+  replyToMessageId?: string
+  replyToProviderMessageId?: string
+  reactionEmoji?: string
+  reactionTargetMessageId?: string
+  reactionTargetProviderMessageId?: string
+  reactions?: Array<{
+    id: string
+    emoji: string
+    direction: 'inbound' | 'outbound' | 'system'
+  }>
   // Comentarios FB/IG: globo distinto + contexto de la publicación comentada.
   isComment?: boolean
   commentReplyMode?: 'public' | 'private'
@@ -3662,6 +3674,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
         ? event.data?.meta_social_message_id || event.data?.meta_message_id || `meta-message-${index}`
         : event.data?.whatsapp_api_message_id || event.data?.whatsapp_message_id || event.data?.attribution_record_id || `message-${index}`
     ),
+    providerMessageId: String(event.data?.provider_message_id || event.data?.whatsapp_message_id || event.data?.meta_message_id || '').trim() || undefined,
     text: text || (attachment || location ? '' : getMessageTypeLabel(messageType, isMetaMessage ? 'Mensaje de Meta' : 'Mensaje de WhatsApp')),
     date: event.date,
     direction,
@@ -3703,6 +3716,9 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     transport: String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api')),
     routingReason: String(event.data?.routing_reason || event.data?.routingReason || event.data?.fallbackReason || ''),
     messageType,
+    replyToProviderMessageId: String(event.data?.reply_to_provider_message_id || '').trim() || undefined,
+    reactionEmoji: String(event.data?.reaction_emoji || '').trim() || undefined,
+    reactionTargetProviderMessageId: String(event.data?.reaction_target_provider_message_id || '').trim() || undefined,
     isComment: messageType === 'comment' || messageType === 'comment_reply_public' || messageType === 'comment_reply_private',
     commentReplyMode: messageType === 'comment_reply_public' ? 'public' : messageType === 'comment_reply_private' ? 'private' : undefined,
     commentId: String(eventData.comment_id || eventData.commentId || '').trim() || undefined,
@@ -3751,7 +3767,38 @@ function mergeChatMessagesById(messages: ChatMessage[]) {
     merged.set(message.id, message)
   })
 
-  return Array.from(merged.values())
+  const mergedMessages = Array.from(merged.values())
+  const byLocalId = new Map(mergedMessages.map((message) => [message.id, message]))
+  const byProviderId = new Map(
+    mergedMessages
+      .map((message) => [getMessageProviderMessageId(message), message] as const)
+      .filter(([providerMessageId]) => Boolean(providerMessageId))
+  )
+  const visibleMessages: ChatMessage[] = []
+
+  mergedMessages.forEach((message) => {
+    if (String(message.messageType || '').toLowerCase() === 'reaction' && message.reactionEmoji) {
+      const target = (message.reactionTargetMessageId ? byLocalId.get(message.reactionTargetMessageId) : null) ||
+        (message.reactionTargetProviderMessageId ? byProviderId.get(message.reactionTargetProviderMessageId) : null)
+
+      if (target) {
+        const nextReactions = [
+          ...(target.reactions || []).filter((reaction) => reaction.id !== message.id),
+          { id: message.id, emoji: message.reactionEmoji, direction: message.direction }
+        ]
+        const updatedTarget = { ...target, reactions: nextReactions }
+        byLocalId.set(updatedTarget.id, updatedTarget)
+        const providerMessageId = getMessageProviderMessageId(updatedTarget)
+        if (providerMessageId) byProviderId.set(providerMessageId, updatedTarget)
+        return
+      }
+    }
+
+    visibleMessages.push(message)
+  })
+
+  return visibleMessages
+    .map((message) => byLocalId.get(message.id) || message)
     .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
 }
 
@@ -3796,6 +3843,35 @@ function getMessageActionText(message: ChatMessage) {
   if (text) return text
   if (message.location) return getLocationTitle(message.location)
   return getMessageAttachmentActionLabel(message) || 'Mensaje'
+}
+
+function getMessageProviderMessageId(message: ChatMessage) {
+  return String(message.providerMessageId || '').trim()
+}
+
+function getReplyTargetText(message: ChatMessage) {
+  const text = getMessageActionText(message)
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text
+}
+
+function buildMessageReferencePayload(message: ChatMessage | null | undefined) {
+  if (!message) return {}
+  return {
+    replyToMessageId: message.id,
+    replyToProviderMessageId: getMessageProviderMessageId(message)
+  }
+}
+
+function getMetaPlatformForMessage(message: ChatMessage): 'messenger' | 'instagram' | null {
+  const transport = String(message.transport || message.commentPlatform || '').toLowerCase()
+  if (transport === 'instagram' || transport === 'ig') return 'instagram'
+  if (transport === 'messenger' || transport === 'facebook' || transport === 'facebook_messenger') return 'messenger'
+  return null
+}
+
+function isHighLevelMessageTransport(message: ChatMessage) {
+  const transport = String(message.transport || '').toLowerCase()
+  return transport.startsWith('ghl_') || transport === 'sms_qr'
 }
 
 function canStartCommentPublicReply(message: ChatMessage) {
@@ -10951,6 +11027,84 @@ export const PhoneChat: React.FC = () => {
     showToast('info', 'Respuesta lista', 'Escribe tu mensaje y mándalo cuando esté listo.')
   }
 
+  const handleReactToMessage = async (message: ChatMessage, emoji: string) => {
+    if (!activeContact) return
+    if (message.direction !== 'inbound') {
+      closeMessageActionMenu()
+      showToast('info', 'Solo mensajes recibidos', 'Las APIs oficiales reaccionan a mensajes que te mandó el contacto.')
+      return
+    }
+    if (message.isComment || isHighLevelMessageTransport(message) || message.emailDetails) {
+      closeMessageActionMenu()
+      showToast('warning', 'Canal sin reacción nativa', 'Ese canal no expone una reacción real al globo desde su API.')
+      return
+    }
+
+    const metaPlatform = getMetaPlatformForMessage(message)
+    const providerMessageId = getMessageProviderMessageId(message)
+    if (!providerMessageId) {
+      closeMessageActionMenu()
+      showToast('warning', 'Falta ID del mensaje', 'Este mensaje no tiene el ID remoto necesario para reaccionar.')
+      return
+    }
+
+    const optimisticReactionId = `local-reaction-${Date.now()}`
+    closeMessageActionMenu()
+    setMessages((current) => current.map((item) => (
+      item.id === message.id
+        ? {
+            ...item,
+            reactions: [
+              ...(item.reactions || []).filter((reaction) => reaction.direction !== 'outbound'),
+              { id: optimisticReactionId, emoji, direction: 'outbound' as const }
+            ]
+          }
+        : item
+    )))
+
+    try {
+      if (metaPlatform) {
+        if (emoji !== '❤️') {
+          throw new Error('Meta solo permite reaccionar con corazón desde la API.')
+        }
+        await whatsappApiService.sendMetaSocialReaction({
+          contactId: activeContact.id,
+          platform: metaPlatform,
+          emoji,
+          targetMessageId: message.id,
+          targetProviderMessageId: providerMessageId,
+          externalId: optimisticReactionId
+        })
+      } else {
+        if (!activeContact.phone) throw new Error('Guarda el teléfono del contacto antes de reaccionar.')
+        const fromPhone = message.businessPhone || selectedBusinessPhoneValue
+        if (!fromPhone) throw new Error('Selecciona el número de WhatsApp del negocio.')
+        await whatsappApiService.sendReaction({
+          to: activeContact.phone,
+          from: fromPhone,
+          contactId: activeContact.id,
+          emoji,
+          targetMessageId: message.id,
+          targetProviderMessageId: providerMessageId,
+          externalId: optimisticReactionId,
+          transport: String(message.transport || '').toLowerCase() === 'qr' ? 'qr' : 'api',
+          phoneNumberId: message.businessPhoneNumberId || selectedBusinessPhone?.id || undefined,
+          messageOrigin: 'manual_chat'
+        })
+      }
+
+      await loadConversation(activeContact.id, { silent: true, useCache: false })
+      await loadChats({ silent: true, useCache: false })
+    } catch (error: any) {
+      setMessages((current) => current.map((item) => (
+        item.id === message.id
+          ? { ...item, reactions: (item.reactions || []).filter((reaction) => reaction.id !== optimisticReactionId) }
+          : item
+      )))
+      showToast('error', 'No se pudo reaccionar', getErrorMessage(error, 'Intenta reaccionar otra vez.'))
+    }
+  }
+
   const handleForwardMessage = () => {
     closeMessageActionMenu()
     showToast('info', 'Reenviar aún no está activo', 'Ya dejamos la opción lista para conectarla después.')
@@ -12482,6 +12636,13 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    const replyReferencePayload: { replyToMessageId?: string; replyToProviderMessageId?: string } = replyingToMessage ? buildMessageReferencePayload(replyingToMessage) : {}
+    const hasMessageReplyTarget = Boolean(replyingToMessage && (replyReferencePayload.replyToMessageId || replyReferencePayload.replyToProviderMessageId))
+    if (hasMessageReplyTarget && (voiceToSend || attachmentsToSend.length > 0 || locationToSend)) {
+      showToast('warning', 'Respuesta solo con texto', 'Para contestar un globo específico, manda texto. Para archivos o ubicación, cancela la respuesta primero.')
+      return
+    }
+
     if (sendingThroughMetaSocial && activeMetaSocialChannel && !sendAttachmentsThroughHighLevel) {
       const channelLabel = GHL_CHAT_CHANNEL_LABELS[activeMetaSocialChannel]
       const outgoingText = locationToSend ? buildLocationFallbackText(locationToSend) : text
@@ -12519,6 +12680,8 @@ export const PhoneChat: React.FC = () => {
         direction: 'outbound',
         status: 'enviando',
         transport: activeMetaSocialChannel,
+        replyToMessageId: hasMessageReplyTarget ? replyingToMessage?.id : undefined,
+        replyToProviderMessageId: hasMessageReplyTarget ? replyReferencePayload.replyToProviderMessageId : undefined,
         ...(locationToSend ? { location: locationToSend } : {})
       }
 
@@ -12541,7 +12704,8 @@ export const PhoneChat: React.FC = () => {
           contactId: activeContact.id,
           platform: activeMetaSocialChannel,
           message: outgoingText,
-          externalId: optimisticId
+          externalId: optimisticId,
+          ...(hasMessageReplyTarget ? replyReferencePayload : {})
         })
         const resultData = result.data || result
         const resultStatus = String(resultData.status || '').trim() || 'sent'
@@ -12578,6 +12742,11 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (sendingThroughHighLevel || sendAttachmentsThroughHighLevel) {
+      if (hasMessageReplyTarget) {
+        showToast('warning', 'HighLevel no cita globos', 'Ese canal no expone respuesta nativa al mensaje. Cancela la respuesta para mandar un mensaje normal.')
+        return
+      }
+
       const requestedChannel: HighLevelChatChannel = sendAttachmentsThroughHighLevel && activeMetaSocialChannel
         ? activeMetaSocialChannel
         : activeHighLevelChatChannel
@@ -12875,7 +13044,9 @@ export const PhoneChat: React.FC = () => {
           status: resolvedTransport === 'qr' ? 'enviando por QR' : 'enviando',
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
-          transport: resolvedTransport
+          transport: resolvedTransport,
+          replyToMessageId: hasMessageReplyTarget ? replyingToMessage?.id : undefined,
+          replyToProviderMessageId: hasMessageReplyTarget ? replyReferencePayload.replyToProviderMessageId : undefined
         }]
 
     setMessages((current) => [...current, ...optimisticMessages])
@@ -12904,7 +13075,8 @@ export const PhoneChat: React.FC = () => {
           externalId: optimisticId,
           transport: resolvedTransport,
           phoneNumberId: selectedBusinessPhone?.id || undefined,
-          messageOrigin: 'manual_chat'
+          messageOrigin: 'manual_chat',
+          ...(hasMessageReplyTarget ? replyReferencePayload : {})
         })
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
@@ -14371,6 +14543,45 @@ export const PhoneChat: React.FC = () => {
       })
   }
 
+  const getMessageReplyTarget = useCallback((message: ChatMessage) => {
+    if (!message.replyToMessageId && !message.replyToProviderMessageId) return null
+    return messages.find((candidate) => (
+      candidate.id === message.replyToMessageId ||
+      Boolean(message.replyToProviderMessageId && getMessageProviderMessageId(candidate) === message.replyToProviderMessageId)
+    )) || null
+  }, [messages])
+
+  const renderQuotedMessagePreview = (message: ChatMessage) => {
+    const target = getMessageReplyTarget(message)
+    if (!target && !message.replyToProviderMessageId && !message.replyToMessageId) return null
+    const previewText = target ? getReplyTargetText(target) : 'Mensaje'
+    const label = target?.direction === 'outbound' ? 'Tú' : getContactName(activeContact)
+
+    return (
+      <span className={styles.messageReplyContext}>
+        <span className={styles.messageReplyContextBar} aria-hidden="true" />
+        <span className={styles.messageReplyContextBody}>
+          <strong>{label}</strong>
+          <small>{previewText}</small>
+        </span>
+      </span>
+    )
+  }
+
+  const renderMessageReactions = (message: ChatMessage) => {
+    if (!message.reactions?.length) return null
+    const reactions = message.reactions.slice(-3)
+    return (
+      <span className={styles.messageReactions} aria-label="Reacciones">
+        {reactions.map((reaction) => (
+          <span key={reaction.id} className={styles.messageReaction}>
+            {reaction.emoji}
+          </span>
+        ))}
+      </span>
+    )
+  }
+
   const renderMessageMeta = (message: ChatMessage, className = styles.messageMeta, options?: { showTransport?: boolean }) => {
     const failed = message.direction === 'outbound' && isMessageFailed(message)
     const scheduled = message.direction === 'outbound' && !failed && isMessageScheduled(message)
@@ -15101,7 +15312,7 @@ export const PhoneChat: React.FC = () => {
   const renderReplyPreviewBar = () => {
     if (!replyingToMessage) return null
 
-    const replyText = getMessageActionText(replyingToMessage) || 'Mensaje'
+    const replyText = getReplyTargetText(replyingToMessage) || 'Mensaje'
 
     return (
       <div className={styles.replyPreviewBar} aria-label="Mensaje que vas a responder">
@@ -15129,6 +15340,7 @@ export const PhoneChat: React.FC = () => {
 
     return (
       <>
+        {renderQuotedMessagePreview(message)}
         {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
           <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
         )}
@@ -15246,6 +15458,19 @@ export const PhoneChat: React.FC = () => {
               </>
             ) : (
               <>
+                <span className={styles.messageReactionPicker} aria-label="Reaccionar al mensaje">
+                  {(getMetaPlatformForMessage(message) ? ['❤️'] : MESSAGE_REACTION_EMOJIS).map((emoji) => (
+                    <button
+                      key={emoji}
+                      type="button"
+                      className={styles.messageReactionButton}
+                      onClick={() => handleReactToMessage(message, emoji)}
+                      aria-label={`Reaccionar con ${emoji}`}
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </span>
                 <button type="button" onClick={() => handleReplyMessage(message)}>
                   <Reply size={18} />
                   Responder
@@ -15552,6 +15777,7 @@ export const PhoneChat: React.FC = () => {
                       onTouchEnd={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
                       onTouchCancel={canOpenMessageInfo ? handleMessageInfoTouchEnd : undefined}
                     >
+                    {renderQuotedMessagePreview(message)}
                     {message.isComment && (
                       <div className={styles.commentContext}>
                         <span className={styles.commentContextLabel}>
@@ -15630,6 +15856,7 @@ export const PhoneChat: React.FC = () => {
                       <small className={styles.messageRoutingNote}>{getMessageRoutingReason(message)}</small>
                     )}
                     {!isAudioMessage && renderMessageMeta(message)}
+                    {renderMessageReactions(message)}
                     {message.isComment && message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
                       <button
                         type="button"

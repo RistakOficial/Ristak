@@ -1025,11 +1025,25 @@ function describeBaileysMessageContent(content) {
       ...(location ? { location } : {})
     }
   }
+  if (unwrapped.reactionMessage) {
+    const reaction = unwrapped.reactionMessage
+    const emoji = cleanString(reaction.text || reaction.emoji)
+    const targetId = cleanString(reaction.key?.id || reaction.messageKey?.id)
+    return {
+      type: 'reaction',
+      text: emoji || 'Reacción',
+      reaction: {
+        emoji,
+        message_id: targetId
+      },
+      context: targetId ? { id: targetId } : null
+    }
+  }
   if (unwrapped.contactMessage || unwrapped.contactsArrayMessage) {
     return { type: 'contacts', text: cleanString(unwrapped.contactMessage?.displayName) }
   }
 
-  // Reacciones, eventos de protocolo, encuestas y demás no forman parte del historial de chat.
+  // Eventos de protocolo, encuestas y demás no forman parte del historial de chat.
   return null
 }
 
@@ -1221,7 +1235,13 @@ async function handleQrIncomingMessages(phone, upsert = {}) {
         profileName: cleanString(message.pushName),
         contactPhone,
         timestamp: getBaileysMessageTimestampIso(message),
-        raw: content.location ? { location: content.location } : null,
+        raw: {
+          key: message.key || null,
+          message: message.message || null,
+          ...(content.location ? { location: content.location } : {}),
+          ...(content.context ? { context: content.context } : {}),
+          ...(content.reaction ? { reaction: content.reaction } : {})
+        },
         // Solo se ejecuta si el número NO tiene WhatsApp API operativa (lo decide
         // captureQrChatMessage tras su guard). Con API activa la media la hospeda el
         // proveedor y no gastamos nuestro storage.
@@ -2759,7 +2779,105 @@ export async function disconnectWhatsAppQrConnection({ phoneNumberId } = {}) {
   return mapSessionForResponse(row)
 }
 
-async function sendProtectedQrMessage({ sock, phone, recipient, type, payload, skipQrSendProtection = false } = {}) {
+function parseJsonObject(value) {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function readNestedJsonObject(value, keys = []) {
+  let current = value
+  for (const key of keys) {
+    current = current && typeof current === 'object' ? current[key] : null
+  }
+  return parseJsonObject(current)
+}
+
+function getQrTargetMessageId(row = {}) {
+  return cleanString(row.wamid || row.ycloud_message_id || row.meta_message_id || row.id)
+}
+
+function buildMinimalQuotedBaileysMessage(row = {}, recipientJid = '') {
+  const messageId = getQrTargetMessageId(row)
+  if (!messageId) return null
+  const type = cleanString(row.message_type).toLowerCase()
+  const text = cleanString(row.message_text) || (type === 'image' ? 'Foto' : type === 'video' ? 'Video' : type === 'document' ? 'Documento' : type === 'location' ? 'Ubicación' : 'Mensaje')
+
+  return {
+    key: {
+      remoteJid: normalizeJid(recipientJid),
+      id: messageId,
+      fromMe: cleanString(row.direction).toLowerCase() === 'outbound'
+    },
+    message: {
+      conversation: text
+    }
+  }
+}
+
+function getStoredBaileysMessageFromRow(row = {}, recipientJid = '') {
+  const rawPayload = parseJsonObject(row.raw_payload_json)
+  const directRaw = parseJsonObject(rawPayload?.qrRaw) || parseJsonObject(rawPayload?.raw) || rawPayload?.qrRaw || rawPayload?.raw
+  const candidates = [
+    rawPayload,
+    directRaw,
+    rawPayload?.response,
+    directRaw?.response,
+    readNestedJsonObject(rawPayload, ['raw', 'response']),
+    readNestedJsonObject(rawPayload, ['qrRaw', 'response'])
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    if (candidate?.key?.id && candidate?.message) return candidate
+    if (candidate?.response?.key?.id && candidate?.response?.message) return candidate.response
+  }
+
+  return buildMinimalQuotedBaileysMessage(row, recipientJid)
+}
+
+async function resolveQrMessageReference({ messageId, providerMessageId, recipientJid } = {}) {
+  const cleanMessageId = cleanString(messageId)
+  const cleanProviderMessageId = cleanString(providerMessageId)
+  if (!cleanMessageId && !cleanProviderMessageId) return null
+
+  const row = await db.get(`
+    SELECT id, ycloud_message_id, meta_message_id, wamid, direction, message_type, message_text, raw_payload_json
+    FROM whatsapp_api_messages
+    WHERE (? != '' AND id = ?)
+       OR (? != '' AND ycloud_message_id = ?)
+       OR (? != '' AND meta_message_id = ?)
+       OR (? != '' AND wamid = ?)
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [
+    cleanMessageId, cleanMessageId,
+    cleanProviderMessageId, cleanProviderMessageId,
+    cleanProviderMessageId, cleanProviderMessageId,
+    cleanProviderMessageId, cleanProviderMessageId
+  ]).catch(() => null)
+
+  if (!row && cleanProviderMessageId) {
+    return {
+      key: {
+        remoteJid: normalizeJid(recipientJid),
+        id: cleanProviderMessageId,
+        fromMe: false
+      },
+      message: {
+        conversation: 'Mensaje'
+      }
+    }
+  }
+  if (!row) return null
+  return getStoredBaileysMessageFromRow(row, recipientJid)
+}
+
+async function sendProtectedQrMessage({ sock, phone, recipient, type, payload, options = {}, skipQrSendProtection = false } = {}) {
   if (!sock?.sendMessage) {
     throw new Error('La conexión QR no puede enviar mensajes en este momento')
   }
@@ -2775,10 +2893,10 @@ async function sendProtectedQrMessage({ sock, phone, recipient, type, payload, s
     })
   }
 
-  return sock.sendMessage(recipient.jid, payload)
+  return sock.sendMessage(recipient.jid, payload, options)
 }
 
-export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text, externalId, skipQrSendProtection = false } = {}) {
+export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text, externalId, replyToMessageId = '', replyToProviderMessageId = '', skipQrSendProtection = false } = {}) {
   const phone = await resolveQrPhone({ phoneNumberId, from })
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const body = cleanString(text)
@@ -2794,6 +2912,11 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
 
   const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de texto' })
   const recipient = await resolveRecipientJid(sock, toPhone)
+  const quoted = await resolveQrMessageReference({
+    messageId: replyToMessageId,
+    providerMessageId: replyToProviderMessageId,
+    recipientJid: recipient.jid
+  })
   rememberRistakQrOutboundAttempt({
     phoneId: phone.id,
     contactPhone: recipient.verifiedPhone || toPhone,
@@ -2806,6 +2929,7 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
     recipient,
     type: 'text',
     payload: { text: body },
+    options: quoted ? { quoted } : {},
     skipQrSendProtection
   })
   const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
@@ -2818,6 +2942,77 @@ export async function sendWhatsAppQrTextMessage({ phoneNumberId, from, to, text,
     recipientJid: sendResult.recipientJid,
     type: 'text',
     text: { body },
+    status: sendResult.status,
+    transport: 'qr',
+    createTime: nowIso(),
+    raw: sendResult.raw,
+    ...(quoted ? {
+      context: {
+        id: cleanString(quoted?.key?.id) || replyToProviderMessageId || replyToMessageId
+      }
+    } : {})
+  }
+}
+
+export async function sendWhatsAppQrReactionMessage({ phoneNumberId, from, to, emoji, targetMessageId = '', targetProviderMessageId = '', externalId, skipQrSendProtection = false } = {}) {
+  const phone = await resolveQrPhone({ phoneNumberId, from })
+  const toPhone = normalizePhoneForStorage(to) || cleanString(to)
+  const reactionEmoji = cleanString(emoji)
+
+  if (await markMissingAuthStateIfNeeded(phone)) {
+    throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
+  }
+  if (Number(phone.qr_send_enabled || 0) !== 1) {
+    throw new Error('Ese número no tiene el envío por QR activado')
+  }
+  if (!toPhone) throw new Error('Falta el número destino')
+  if (!reactionEmoji) throw new Error('Falta la reacción')
+
+  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'reacción de mensaje' })
+  const recipient = await resolveRecipientJid(sock, toPhone)
+  const quoted = await resolveQrMessageReference({
+    messageId: targetMessageId,
+    providerMessageId: targetProviderMessageId,
+    recipientJid: recipient.jid
+  })
+  const key = quoted?.key
+  if (!key?.id) throw new Error('No encontramos el mensaje original para reaccionar')
+
+  rememberRistakQrOutboundAttempt({
+    phoneId: phone.id,
+    contactPhone: recipient.verifiedPhone || toPhone,
+    type: 'reaction',
+    text: reactionEmoji
+  })
+  const response = await sendProtectedQrMessage({
+    sock,
+    phone,
+    recipient,
+    type: 'reaction',
+    payload: {
+      react: {
+        text: reactionEmoji,
+        key
+      }
+    },
+    skipQrSendProtection
+  })
+  const sendResult = await finalizeQrSendResponse({ response, recipient, externalId })
+
+  return {
+    id: sendResult.id,
+    wamid: sendResult.wamid,
+    from: phone.expectedPhone,
+    to: recipient.verifiedPhone || toPhone,
+    recipientJid: sendResult.recipientJid,
+    type: 'reaction',
+    reaction: {
+      emoji: reactionEmoji,
+      message_id: key.id
+    },
+    context: {
+      id: key.id
+    },
     status: sendResult.status,
     transport: 'qr',
     createTime: nowIso(),

@@ -34,6 +34,17 @@ function hashId(prefix, value) {
   return `${prefix}_${crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 32)}`
 }
 
+function parseJsonObject(value) {
+  if (!value) return null
+  if (typeof value === 'object') return value
+  try {
+    const parsed = JSON.parse(value)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 function compactName(...values) {
   return values
     .map(cleanString)
@@ -934,11 +945,64 @@ function getMetaSocialBusinessId(platform, config = {}, profile = {}) {
   return cleanString(profile.page_id) || cleanString(config.page_id)
 }
 
-async function sendMetaMessengerTextRequest({ businessId, recipientId, body, config }) {
+async function resolveMetaSocialMessageReference({ contactId, platform, messageId, providerMessageId } = {}) {
+  const cleanContactId = cleanString(contactId)
+  const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const cleanMessageId = cleanString(messageId)
+  const cleanProviderMessageId = cleanString(providerMessageId)
+  if (!cleanContactId || (!cleanMessageId && !cleanProviderMessageId)) return null
+
+  const row = await db.get(`
+    SELECT id, meta_message_id, message_type, message_text, raw_payload_json
+    FROM meta_social_messages
+    WHERE contact_id = ?
+      AND platform = ?
+      AND (
+        (? != '' AND id = ?)
+        OR (? != '' AND meta_message_id = ?)
+      )
+    ORDER BY updated_at DESC
+    LIMIT 1
+  `, [
+    cleanContactId,
+    cleanPlatform,
+    cleanMessageId, cleanMessageId,
+    cleanProviderMessageId, cleanProviderMessageId
+  ]).catch(() => null)
+
+  const rawPayload = parseJsonObject(row?.raw_payload_json)
+  const remoteId = cleanString(
+    row?.meta_message_id ||
+    rawPayload?.response?.message_id ||
+    rawPayload?.response?.recipient_id ||
+    cleanProviderMessageId
+  )
+  if (!remoteId) return null
+
+  return {
+    localMessageId: cleanString(row?.id),
+    providerMessageId: remoteId,
+    messageType: cleanString(row?.message_type),
+    text: cleanString(row?.message_text)
+  }
+}
+
+function normalizeMetaReactionValue(emoji) {
+  const value = cleanString(emoji)
+  if (!value) return ''
+  const normalized = value.toLowerCase()
+  if (normalized === 'love' || value === '❤️' || value === '❤') return 'love'
+  return ''
+}
+
+async function sendMetaMessengerTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId = '' }) {
   const sendPayload = {
     messaging_type: 'RESPONSE',
     recipient: { id: recipientId },
-    message: { text: body }
+    message: {
+      text: body,
+      ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})
+    }
   }
 
   try {
@@ -958,7 +1022,7 @@ async function sendMetaMessengerTextRequest({ businessId, recipientId, body, con
   }
 }
 
-async function sendMetaInstagramTextRequest({ businessId, recipientId, body, config }) {
+async function sendMetaInstagramTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId = '' }) {
   const instagramUserToken = resolveInstagramAccessToken(config)
   if (!instagramUserToken) {
     throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
@@ -970,12 +1034,63 @@ async function sendMetaInstagramTextRequest({ businessId, recipientId, body, con
     baseUrl: API_URLS.INSTAGRAM_GRAPH,
     body: {
       recipient: { id: recipientId },
-      message: { text: body }
+      message: {
+        text: body,
+        ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})
+      }
     }
   })
 }
 
-async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', commentId = '', postId = '', parentCommentId = '' }) {
+async function sendMetaMessengerReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId, config }) {
+  const sendPayload = {
+    recipient: { id: recipientId },
+    sender_action: 'react',
+    payload: {
+      message_id: targetProviderMessageId,
+      reaction
+    }
+  }
+
+  try {
+    return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config }),
+      body: sendPayload
+    })
+  } catch (error) {
+    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
+    if (!looksLikeTokenIssue) throw error
+    return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      body: sendPayload
+    })
+  }
+}
+
+async function sendMetaInstagramReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId, config }) {
+  const instagramUserToken = resolveInstagramAccessToken(config)
+  if (!instagramUserToken) {
+    throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
+  }
+
+  return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+    method: 'POST',
+    token: instagramUserToken,
+    baseUrl: API_URLS.INSTAGRAM_GRAPH,
+    body: {
+      recipient: { id: recipientId },
+      sender_action: 'react',
+      payload: {
+        message_id: targetProviderMessageId,
+        reaction
+      }
+    }
+  })
+}
+
+async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', commentId = '', postId = '', parentCommentId = '', context = null }) {
   const now = new Date().toISOString()
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
   const cleanMessageType = cleanString(messageType) || 'text'
@@ -995,7 +1110,8 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
   const rawPayload = safeJson({
     provider: 'meta',
     platform: cleanPlatform,
-    response
+    response,
+    ...(context ? { context } : {})
   })
 
   await db.run(`
@@ -1067,7 +1183,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
   }
 }
 
-export async function sendMetaSocialTextMessage({ contactId, platform, message, externalId } = {}) {
+export async function sendMetaSocialTextMessage({ contactId, platform, message, externalId, replyToMessageId = '', replyToProviderMessageId = '' } = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const body = cleanString(message)
@@ -1120,11 +1236,19 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     )
   }
 
+  const replyReference = await resolveMetaSocialMessageReference({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    messageId: replyToMessageId,
+    providerMessageId: replyToProviderMessageId
+  })
+  const replyProviderMessageId = cleanString(replyReference?.providerMessageId)
+
   let response
   try {
     response = cleanPlatform === 'instagram'
-      ? await sendMetaInstagramTextRequest({ businessId, recipientId, body, config })
-      : await sendMetaMessengerTextRequest({ businessId, recipientId, body, config })
+      ? await sendMetaInstagramTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId: replyProviderMessageId })
+      : await sendMetaMessengerTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId: replyProviderMessageId })
   } catch (error) {
     throw normalizeMetaSocialSendError(error, cleanPlatform)
   }
@@ -1136,7 +1260,106 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     messageId: response?.message_id || response?.id,
     text: body,
     response,
-    externalId
+    externalId,
+    context: replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : null
+  })
+
+  return {
+    ...sent,
+    id: sent.remoteMessageId || sent.localMessageId,
+    platform: cleanPlatform,
+    provider: 'meta',
+    data: sent
+  }
+}
+
+export async function sendMetaSocialReactionMessage({ contactId, platform, emoji, targetMessageId = '', targetProviderMessageId = '', externalId } = {}) {
+  const cleanContactId = cleanString(contactId)
+  const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const reaction = normalizeMetaReactionValue(emoji)
+
+  if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
+  if (!reaction) throw createMetaSocialMessageError('Meta solo permite reaccionar con corazón en este canal.', 400)
+
+  const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
+  if (!enabled) {
+    throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para reaccionar por este canal.`, 409)
+  }
+
+  const config = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer Meta para reaccionar DM: ${error.message}`)
+    return null
+  })
+  const hasRequiredToken = cleanPlatform === 'instagram'
+    ? Boolean(resolveInstagramAccessToken(config || {}))
+    : Boolean(cleanString(config?.access_token))
+  if (!hasRequiredToken) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.'
+        : 'Conecta Meta Ads para responder por Messenger.',
+      409
+    )
+  }
+
+  const profile = await db.get(
+    `SELECT id, sender_id, recipient_id, page_id, instagram_account_id
+     FROM meta_social_contacts
+     WHERE contact_id = ? AND platform = ?
+     ORDER BY updated_at DESC, last_seen_at DESC
+     LIMIT 1`,
+    [cleanContactId, cleanPlatform]
+  ).catch(() => null)
+
+  const recipientId = cleanString(profile?.sender_id)
+  if (!profile || !recipientId) {
+    throw createMetaSocialMessageError(`Este contacto no tiene ${getPlatformLabel(cleanPlatform)} enlazado.`, 404)
+  }
+
+  const businessId = getMetaSocialBusinessId(cleanPlatform, config, profile)
+  if (!businessId) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Falta seleccionar la cuenta de Instagram en Meta Ads.'
+        : 'Falta seleccionar la página de Facebook en Meta Ads.',
+      409
+    )
+  }
+
+  const target = await resolveMetaSocialMessageReference({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    messageId: targetMessageId,
+    providerMessageId: targetProviderMessageId
+  })
+  const targetProviderId = cleanString(target?.providerMessageId || targetProviderMessageId)
+  if (!targetProviderId) throw createMetaSocialMessageError('No encontramos el mensaje original para reaccionar.', 400)
+
+  let response
+  try {
+    response = cleanPlatform === 'instagram'
+      ? await sendMetaInstagramReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId: targetProviderId, config })
+      : await sendMetaMessengerReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId: targetProviderId, config })
+  } catch (error) {
+    throw normalizeMetaSocialSendError(error, cleanPlatform)
+  }
+
+  const responseMessageId = cleanString(response?.message_id || response?.id)
+  const localReactionId = cleanString(externalId) || hashId('meta_social_reaction', `${cleanPlatform}:${targetProviderId}:${reaction}:${Date.now()}`)
+
+  const sent = await saveMetaSocialOutboundMessage({
+    platform: cleanPlatform,
+    contactId: cleanContactId,
+    profile,
+    messageId: responseMessageId || localReactionId,
+    text: '❤️',
+    response,
+    externalId: localReactionId,
+    messageType: 'reaction',
+    context: {
+      reaction,
+      target_message_id: targetProviderId
+    }
   })
 
   return {

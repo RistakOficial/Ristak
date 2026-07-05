@@ -16,6 +16,7 @@ import {
   getWhatsAppApiConfigKeys,
   processYCloudWhatsAppWebhook,
   repairStoredYCloudHistoryMessageDirections,
+  sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTextMessage,
   setYCloudFetchForTest,
   syncYCloudContacts,
@@ -209,6 +210,115 @@ test('normaliza nombres reales de YCloud y descarta los genéricos', () => {
     }
   }, '+524433948272'), 'Ana López')
   assert.equal(extractWhatsAppProfileName({ displayName: 'Ana López' }, '+524433948272'), 'Ana López')
+})
+
+test('envio WhatsApp API manda contexto de respuesta y reaccion al globo original', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52977${suffix}`
+  const businessPhone = `+52633${suffix}`
+  const phoneNumberId = `phone_reply_reaction_${id}`
+  const contactId = `rstk_contact_reply_reaction_${id}`
+  const targetLocalId = `wa_target_reply_reaction_${id}`
+  const targetWamid = `wamid.reply.reaction.${id}`
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+  const requestBodies = []
+
+  await cleanup({ contactId, messageId: targetLocalId, phone })
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_reply_reaction_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_reply_reaction_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+        ) VALUES (?, 'ycloud', 'waba_reply_reaction_test', ?, ?, 'Reply Reaction Test', 1, 1, 0, 'disconnected', 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone])
+
+      await db.run(`
+        INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+        VALUES (?, ?, 'Reply Reaction Contact', 'Reply', 'WhatsApp', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [contactId, phone])
+
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, ycloud_message_id, wamid, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text', 'Mensaje original', 'received', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        targetLocalId,
+        `ycloud_${targetLocalId}`,
+        targetWamid,
+        contactId,
+        phone,
+        phone,
+        businessPhone,
+        businessPhone,
+        phoneNumberId
+      ])
+
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        const path = parsed.pathname.replace(/^\/v2/, '')
+        const method = String(options.method || 'GET').toUpperCase()
+        if (path === '/whatsapp/messages' && method === 'POST') {
+          const body = JSON.parse(String(options.body || '{}'))
+          requestBodies.push(body)
+          return ycloudJsonResponse({
+            id: `ycloud_sent_${requestBodies.length}`,
+            from: businessPhone,
+            to: phone,
+            status: 'sent',
+            type: body.type,
+            text: body.text,
+            reaction: body.reaction,
+            context: body.context,
+            createTime: '2024-05-07T08:09:10.000Z'
+          })
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: 'Respuesta con quote',
+        contactId,
+        phoneNumberId,
+        replyToMessageId: targetLocalId
+      })
+
+      await sendWhatsAppApiReactionMessage({
+        to: phone,
+        from: businessPhone,
+        emoji: '❤️',
+        contactId,
+        phoneNumberId,
+        targetMessageId: targetLocalId
+      })
+
+      assert.equal(requestBodies.length, 2)
+      assert.equal(requestBodies[0].type, 'text')
+      assert.deepEqual(requestBodies[0].context, { message_id: targetWamid })
+      assert.equal(requestBodies[1].type, 'reaction')
+      assert.deepEqual(requestBodies[1].reaction, { message_id: targetWamid, emoji: '❤️' })
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId: targetLocalId, phone })
+  }
 })
 
 test('webhook entrante de YCloud reemplaza WhatsApp_API por customerProfile.name', async () => {

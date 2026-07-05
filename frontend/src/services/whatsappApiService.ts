@@ -254,6 +254,21 @@ export interface WhatsAppApiTextSendPayload {
   externalId?: string
   transport?: 'api' | 'qr'
   phoneNumberId?: string
+  replyToMessageId?: string
+  replyToProviderMessageId?: string
+  messageOrigin?: 'manual_chat' | string
+}
+
+export interface WhatsAppApiReactionSendPayload {
+  to: string
+  from?: string
+  contactId?: string
+  emoji: string
+  targetMessageId?: string
+  targetProviderMessageId?: string
+  externalId?: string
+  transport?: 'api' | 'qr'
+  phoneNumberId?: string
   messageOrigin?: 'manual_chat' | string
 }
 
@@ -474,6 +489,17 @@ export interface MetaSocialTextSendPayload {
   platform: 'messenger' | 'instagram'
   message: string
   externalId?: string
+  replyToMessageId?: string
+  replyToProviderMessageId?: string
+}
+
+export interface MetaSocialReactionSendPayload {
+  contactId: string
+  platform: 'messenger' | 'instagram'
+  emoji: string
+  targetMessageId?: string
+  targetProviderMessageId?: string
+  externalId?: string
 }
 
 export interface MetaSocialCommentReplyPayload {
@@ -551,6 +577,7 @@ export const whatsappApiService = {
   testMetaDirect: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/test'),
   sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),
   sendMetaSocialText: (payload: MetaSocialTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/text', payload),
+  sendMetaSocialReaction: (payload: MetaSocialReactionSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/reaction', payload),
   sendMetaSocialCommentReply: (payload: MetaSocialCommentReplyPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/comments/reply', payload),
   listMetaSocialPosts: (params: MetaSocialPostsQuery) => {
     const qs = new URLSearchParams({ platform: params.platform })
@@ -593,6 +620,7 @@ export const whatsappApiService = {
     apiClient.delete<ScheduledChatMessage>(`/whatsapp-api/messages/scheduled/${encodeURIComponent(id)}`, contactId ? { contactId } : undefined)
   ),
   sendText: (payload: WhatsAppApiTextSendPayload) => postSendResponse('/whatsapp-api/messages/text', payload),
+  sendReaction: (payload: WhatsAppApiReactionSendPayload) => postSendResponse('/whatsapp-api/messages/reaction', payload),
   sendLocation: (payload: WhatsAppApiLocationSendPayload) => postSendResponse('/whatsapp-api/messages/location', payload),
   sendInteractive: (payload: WhatsAppApiInteractiveSendPayload) => postSendResponse('/whatsapp-api/messages/interactive', payload),
   sendImage: (payload: WhatsAppApiImageSendPayload) => postSendResponse('/whatsapp-api/messages/image', payload),

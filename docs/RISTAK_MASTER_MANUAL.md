@@ -347,6 +347,19 @@ desplegar, el globo debe mostrar los campos estructurados del correo, incluyendo
 cuando existan y el `Cuerpo` completo a partir de `message_text` o `html_body`
 sanitizado.
 
+El chat movil permite responder un globo especifico y reaccionar a mensajes
+recibidos cuando el canal expone soporte nativo. WhatsApp API/YCloud envia
+respuestas con `context.message_id` y reacciones con `type='reaction'`;
+WhatsApp QR/Baileys usa el mensaje citado (`quoted`) y `react.key`. Messenger e
+Instagram nativos usan `reply_to.mid` para respuestas y `sender_action='react'`
+para reacciones; en Meta la reaccion soportada por contrato es corazon
+(`love`). HighLevel, email y comentarios no deben simular quote/reaccion si la
+API del canal no lo soporta: la UI debe avisar al usuario y mandar un mensaje
+normal solo cuando cancele la respuesta seleccionada. El journey debe exponer
+`provider_message_id`, `reply_to_provider_message_id`,
+`reaction_emoji` y `reaction_target_provider_message_id` para que las burbujas
+de `/movil` pinten el quote y peguen el emoji al globo correcto.
+
 ### Correo electronico
 
 Configuracion > Integraciones > Correos conecta envio por SMTP y recepcion por
