@@ -155,7 +155,8 @@ async function withEmailCapture(callback) {
       await connectEmail({
         fromEmail: 'pagos@ristak.test',
         fromName: 'Ristak Pagos',
-        password: 'smtp-payment-secret'
+        password: 'smtp-payment-secret',
+        inbound: { enabled: false }
       })
       captures.length = 0
       return await callback(captures)

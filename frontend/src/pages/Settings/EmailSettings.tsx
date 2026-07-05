@@ -65,6 +65,7 @@ export const EmailSettings: React.FC = () => {
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [advancedDirty, setAdvancedDirty] = useState(false)
   const [inboundDirty, setInboundDirty] = useState(false)
+  const [manualInboundOpen, setManualInboundOpen] = useState(false)
   const [detailsOpen, setDetailsOpen] = useState(false)
 
   const [fromEmail, setFromEmail] = useState('')
@@ -104,11 +105,12 @@ export const EmailSettings: React.FC = () => {
     hasStoredCredentials &&
     status?.sender.fromEmail?.toLowerCase() === fromEmailValue
   )
-  const usesAdvancedSmtp = advancedOpen || advancedDirty
+  const usesAdvancedSmtp = advancedDirty
+  const usesManualInbound = inboundDirty
   const validPort = Number.isInteger(Number(port)) && Number(port) > 0 && Number(port) <= 65535
   const validInboundPort = Number.isInteger(Number(inboundPort)) && Number(inboundPort) > 0 && Number(inboundPort) <= 65535
   const advancedValid = !usesAdvancedSmtp || Boolean(host.trim() && validPort && (username.trim() || fromEmailValue))
-  const inboundValid = !inboundEnabled || Boolean(inboundHost.trim() && validInboundPort && (inboundUsername.trim() || fromEmailValue) && inboundMailbox.trim())
+  const inboundValid = !inboundEnabled || !usesManualInbound || Boolean(inboundHost.trim() && validInboundPort && (inboundUsername.trim() || fromEmailValue) && inboundMailbox.trim())
   const canSubmit = Boolean(
     EMAIL_PATTERN.test(fromEmailValue) &&
     fromName.trim() &&
@@ -126,7 +128,7 @@ export const EmailSettings: React.FC = () => {
     setPort(String(nextStatus.smtp.port || 587))
     setSecurity(nextStatus.smtp.security || 'starttls')
     setUsername('')
-    setInboundEnabled(nextStatus.connected ? Boolean(nextStatus.inbound?.enabled) : true)
+    setInboundEnabled(nextStatus.connected ? nextStatus.inbound?.enabled !== false : true)
     setInboundHost(nextStatus.inbound?.host || '')
     setInboundPort(String(nextStatus.inbound?.port || 993))
     setInboundSecurity(nextStatus.inbound?.security || 'ssl')
@@ -139,6 +141,7 @@ export const EmailSettings: React.FC = () => {
     setAdvancedDirty(false)
     setInboundDirty(false)
     setAdvancedOpen(false)
+    setManualInboundOpen(false)
     setDetailsOpen(false)
   }
 
@@ -262,8 +265,10 @@ export const EmailSettings: React.FC = () => {
             username: username.trim() || fromEmailValue
           }
         : undefined
-      const inbound = inboundEnabled
-        ? {
+      const inbound = !inboundEnabled
+        ? { enabled: false }
+        : usesManualInbound
+          ? {
             enabled: true,
             host: inboundHost.trim(),
             port: Number(inboundPort),
@@ -271,14 +276,7 @@ export const EmailSettings: React.FC = () => {
             username: inboundUsername.trim() || fromEmailValue,
             mailbox: inboundMailbox.trim() || 'INBOX'
           }
-        : {
-            enabled: false,
-            host: inboundHost.trim(),
-            port: Number(inboundPort) || 993,
-            security: inboundSecurity,
-            username: inboundUsername.trim() || fromEmailValue,
-            mailbox: inboundMailbox.trim() || 'INBOX'
-          }
+          : { enabled: true }
 
       const nextStatus = await emailService.connect({
         fromEmail: fromEmailValue,
@@ -307,9 +305,9 @@ export const EmailSettings: React.FC = () => {
       const result = await emailService.testInbound()
       const nextStatus = await emailService.getStatus()
       setStatus(nextStatus)
-      showToast('success', 'Recepción conectada', `IMAP abrió ${result.mailbox || 'INBOX'} correctamente`)
+      showToast('success', 'Recepción conectada', `Ristak abrió ${result.mailbox || 'INBOX'} correctamente`)
     } catch (error) {
-      showToast('error', 'No se pudo probar recepción', error instanceof Error ? error.message : 'Revisa la configuración IMAP')
+      showToast('error', 'No se pudo probar recepción', error instanceof Error ? error.message : 'Revisa los ajustes de recepción')
     } finally {
       setTestingInbound(false)
     }
@@ -417,7 +415,7 @@ export const EmailSettings: React.FC = () => {
           <CheckCircle2 size={18} />
           <div>
             <strong>{detection.provider.label}</strong>
-            <p>{detection.mx.found ? 'Dominio revisado y configuración lista.' : 'Dominio revisado; si no conecta, usa Avanzado.'}</p>
+            <p>{detection.mx.found ? 'Dominio revisado y configuración lista.' : 'Dominio revisado; si no conecta, usa ajustes manuales.'}</p>
           </div>
           <Badge variant={detection.provider.confidence === 'high' ? 'success' : 'warning'} className={styles.inlineBadge}>
             {detection.provider.detectedBy === 'mx' ? 'MX' : 'Dominio'}
@@ -437,7 +435,7 @@ export const EmailSettings: React.FC = () => {
     <div className={styles.advancedFields}>
       <div className={styles.formRow}>
         <label className={styles.fieldLabel}>
-          <span>Servidor SMTP</span>
+          <span>Servidor de envío</span>
           <div className={styles.inputWrap} data-ristak-unstyled>
             <Server size={17} />
             <input
@@ -481,7 +479,7 @@ export const EmailSettings: React.FC = () => {
           />
         </label>
         <label className={styles.fieldLabel}>
-          <span>Usuario SMTP</span>
+          <span>Usuario de envío</span>
           <div className={styles.inputWrap} data-ristak-unstyled>
             <User size={17} />
             <input
@@ -506,101 +504,138 @@ export const EmailSettings: React.FC = () => {
           <span className={styles.inboundIcon}><Inbox size={17} /></span>
           <div>
             <strong>Recepción de correos</strong>
-            <span>IMAP revisa INBOX y guarda cada correo recibido en el chat del contacto.</span>
+            <span>Activa por defecto. Ristak revisa la bandeja principal y guarda las respuestas en el chat del contacto.</span>
           </div>
         </div>
         <label className={styles.switchRow}>
           <Switch
             checked={inboundEnabled}
             onChange={(checked) => {
-              markInboundDirty()
               setInboundEnabled(checked)
             }}
-            aria-label="Activar recepción de correos por IMAP"
+            aria-label="Activar recepción de correos"
           />
           <span>{inboundEnabled ? 'Activa' : 'Desactivada'}</span>
         </label>
       </div>
 
       {inboundEnabled && (
-        <div className={styles.advancedFields}>
-          <div className={styles.formRow}>
-            <label className={styles.fieldLabel}>
-              <span>Servidor IMAP</span>
-              <div className={styles.inputWrap} data-ristak-unstyled>
-                <Server size={17} />
-                <input
-                  value={inboundHost}
-                  onChange={(event) => {
-                    markInboundDirty()
-                    setInboundHost(event.target.value)
-                  }}
-                  placeholder="imap.tudominio.com"
-                  autoComplete="off"
-                />
-              </div>
-            </label>
-            <label className={styles.fieldLabel}>
-              <span>Puerto IMAP</span>
-              <div className={styles.inputWrap} data-ristak-unstyled>
-                <input
-                  value={inboundPort}
-                  onChange={(event) => {
-                    markInboundDirty()
-                    setInboundPort(event.target.value.replace(/[^0-9]/g, ''))
-                  }}
-                  placeholder="993"
-                  inputMode="numeric"
-                  autoComplete="off"
-                />
-              </div>
-            </label>
-          </div>
-
-          <div className={styles.formRow}>
-            <label className={styles.fieldLabel}>
-              <span>Seguridad IMAP</span>
-              <CustomSelect
-                value={inboundSecurity}
-                options={SECURITY_OPTIONS}
-                onValueChange={(value) => {
-                  markInboundDirty()
-                  setInboundSecurity(value as EmailSmtpSecurity)
-                }}
-              />
-            </label>
-            <label className={styles.fieldLabel}>
-              <span>Usuario IMAP</span>
-              <div className={styles.inputWrap} data-ristak-unstyled>
-                <User size={17} />
-                <input
-                  value={inboundUsername}
-                  onChange={(event) => {
-                    markInboundDirty()
-                    setInboundUsername(event.target.value)
-                  }}
-                  placeholder={status?.inbound?.usernameMasked || fromEmailValue || 'usuario@dominio.com'}
-                  autoComplete="off"
-                />
-              </div>
-            </label>
-          </div>
-
-          <label className={styles.fieldLabel}>
-            <span>Bandeja</span>
-            <div className={styles.inputWrap} data-ristak-unstyled>
-              <Inbox size={17} />
-              <input
-                value={inboundMailbox}
-                onChange={(event) => {
-                  markInboundDirty()
-                  setInboundMailbox(event.target.value)
-                }}
-                placeholder="INBOX"
-                autoComplete="off"
-              />
+        <div className={styles.inboundBody}>
+          <div className={styles.autoConfigSummary}>
+            <div className={styles.autoConfigItem}>
+              <span>Servidor detectado</span>
+              <strong>{inboundHost || detection?.imap.host || 'Se detecta al conectar'}</strong>
             </div>
-          </label>
+            <div className={styles.autoConfigItem}>
+              <span>Bandeja</span>
+              <strong>{inboundMailbox || 'INBOX'}</strong>
+            </div>
+            <div className={styles.autoConfigItem}>
+              <span>Seguridad</span>
+              <strong>{getSecurityLabel(inboundSecurity || detection?.imap.security)}</strong>
+            </div>
+          </div>
+
+          <p className={styles.helperText}>
+            Para Gmail, Workspace, Outlook, Yahoo, iCloud, Zoho, Titan y proveedores comunes no tienes que llenar servidor, puerto ni seguridad. Ristak lo detecta y lo prueba al conectar.
+          </p>
+
+          <div className={styles.advancedBlock}>
+            <Button
+              type="button"
+              variant="ghost"
+              className={styles.advancedToggle}
+              onClick={() => setManualInboundOpen(value => !value)}
+            >
+              <SlidersHorizontal size={16} />
+              Ajustes manuales de recepción
+              <ChevronDown size={16} className={manualInboundOpen ? styles.chevronOpen : ''} />
+            </Button>
+            {manualInboundOpen && (
+              <div className={styles.advancedFields}>
+                <p className={styles.helperText}>
+                  Úsalo sólo si tu proveedor te dio datos IMAP personalizados. IMAP es la conexión que permite leer respuestas; normalmente usa puerto 993 con SSL/TLS.
+                </p>
+                <div className={styles.formRow}>
+                  <label className={styles.fieldLabel}>
+                    <span>Servidor de recepción</span>
+                    <div className={styles.inputWrap} data-ristak-unstyled>
+                      <Server size={17} />
+                      <input
+                        value={inboundHost}
+                        onChange={(event) => {
+                          markInboundDirty()
+                          setInboundHost(event.target.value)
+                        }}
+                        placeholder="imap.tudominio.com"
+                        autoComplete="off"
+                      />
+                    </div>
+                  </label>
+                  <label className={styles.fieldLabel}>
+                    <span>Puerto de recepción</span>
+                    <div className={styles.inputWrap} data-ristak-unstyled>
+                      <input
+                        value={inboundPort}
+                        onChange={(event) => {
+                          markInboundDirty()
+                          setInboundPort(event.target.value.replace(/[^0-9]/g, ''))
+                        }}
+                        placeholder="993"
+                        inputMode="numeric"
+                        autoComplete="off"
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                <div className={styles.formRow}>
+                  <label className={styles.fieldLabel}>
+                    <span>Seguridad de recepción</span>
+                    <CustomSelect
+                      value={inboundSecurity}
+                      options={SECURITY_OPTIONS}
+                      onValueChange={(value) => {
+                        markInboundDirty()
+                        setInboundSecurity(value as EmailSmtpSecurity)
+                      }}
+                    />
+                  </label>
+                  <label className={styles.fieldLabel}>
+                    <span>Usuario de recepción</span>
+                    <div className={styles.inputWrap} data-ristak-unstyled>
+                      <User size={17} />
+                      <input
+                        value={inboundUsername}
+                        onChange={(event) => {
+                          markInboundDirty()
+                          setInboundUsername(event.target.value)
+                        }}
+                        placeholder={status?.inbound?.usernameMasked || fromEmailValue || 'usuario@dominio.com'}
+                        autoComplete="off"
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                <label className={styles.fieldLabel}>
+                  <span>Bandeja</span>
+                  <div className={styles.inputWrap} data-ristak-unstyled>
+                    <Inbox size={17} />
+                    <input
+                      value={inboundMailbox}
+                      onChange={(event) => {
+                        markInboundDirty()
+                        setInboundMailbox(event.target.value)
+                      }}
+                      placeholder="INBOX"
+                      autoComplete="off"
+                    />
+                  </div>
+                </label>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -677,7 +712,7 @@ export const EmailSettings: React.FC = () => {
           onClick={() => setAdvancedOpen(value => !value)}
         >
           <SlidersHorizontal size={16} />
-          Configuración avanzada
+          Ajustes manuales de envío
           <ChevronDown size={16} className={advancedOpen ? styles.chevronOpen : ''} />
         </Button>
         {advancedOpen && renderAdvancedFields()}
@@ -724,7 +759,7 @@ export const EmailSettings: React.FC = () => {
           <span>3</span>
           <div>
             <strong>Prueba envío y recepción</strong>
-            <p>Ristak valida SMTP, abre IMAP y deja listo el sync de INBOX.</p>
+            <p>Ristak valida el envío, deja activa la recepción y empieza a revisar la bandeja principal.</p>
           </div>
         </li>
       </ol>
@@ -736,7 +771,7 @@ export const EmailSettings: React.FC = () => {
       <div className={styles.connectCopy}>
         <p className={styles.eyebrow}>Correo</p>
         <h3>Conecta envío y recepción</h3>
-        <span>Ristak detecta el proveedor y prepara SMTP + IMAP por debajo.</span>
+        <span>Ristak detecta el proveedor, prepara el envío y deja listas las respuestas sin que tengas que configurar puertos.</span>
       </div>
       {status?.lastError && <p className={styles.errorText}>{status.lastError}</p>}
       <div className={styles.connectContent}>
@@ -796,7 +831,7 @@ export const EmailSettings: React.FC = () => {
           <dl className={styles.summaryList}>
             <div>
               <dt>Proveedor</dt>
-              <dd>{status.providerLabel || 'SMTP del dominio'}</dd>
+              <dd>{status.providerLabel || 'Correo del dominio'}</dd>
             </div>
             <div>
               <dt>Respuestas a</dt>
@@ -804,14 +839,14 @@ export const EmailSettings: React.FC = () => {
             </div>
             <div>
               <dt>Recepción</dt>
-              <dd>{status.inbound?.enabled ? `${status.inbound.host}:${status.inbound.port}` : 'Desactivada'}</dd>
+              <dd>{status.inbound?.enabled ? `Activa en ${status.inbound.mailbox || 'INBOX'}` : 'Desactivada'}</dd>
             </div>
             <div>
               <dt>Última verificación</dt>
               <dd>{formatDateTime(status.timestamps.lastVerifiedAt)}</dd>
             </div>
             <div>
-              <dt>Último sync IMAP</dt>
+              <dt>Última revisión de entrada</dt>
               <dd>{formatDateTime(status.inbound?.lastSyncAt)}</dd>
             </div>
             <div>
@@ -828,7 +863,7 @@ export const EmailSettings: React.FC = () => {
               onClick={() => setDetailsOpen(value => !value)}
             >
               <SlidersHorizontal size={16} />
-              Detalles avanzados
+              Datos técnicos de conexión
               <ChevronDown size={16} className={detailsOpen ? styles.chevronOpen : ''} />
             </Button>
             {detailsOpen && (
@@ -848,15 +883,15 @@ export const EmailSettings: React.FC = () => {
                 {status.inbound?.enabled && (
                   <>
                     <div>
-                      <dt>Servidor IMAP</dt>
+                      <dt>Servidor de recepción</dt>
                       <dd>{status.inbound.host}:{status.inbound.port}</dd>
                     </div>
                     <div>
-                      <dt>Seguridad IMAP</dt>
+                      <dt>Seguridad de recepción</dt>
                       <dd>{getSecurityLabel(status.inbound.security)}</dd>
                     </div>
                     <div>
-                      <dt>Usuario IMAP</dt>
+                      <dt>Usuario de recepción</dt>
                       <dd>{status.inbound.usernameMasked || 'Sin usuario'}</dd>
                     </div>
                     <div>
@@ -885,7 +920,7 @@ export const EmailSettings: React.FC = () => {
           <div className={styles.testCopy}>
             <p className={styles.eyebrow}>Prueba</p>
             <h3>Probar correo</h3>
-            <span>Confirma envío SMTP y recepción IMAP sin salir de esta pantalla.</span>
+            <span>Confirma que el correo sale y que las respuestas pueden llegar al chat.</span>
           </div>
           <form className={styles.testForm} onSubmit={sendTest}>
             <div className={styles.inputWrap} data-ristak-unstyled>
@@ -906,7 +941,7 @@ export const EmailSettings: React.FC = () => {
           <div className={styles.testDivider} />
           <div className={styles.inboundTestBlock}>
             <div>
-              <strong>Recepción IMAP</strong>
+              <strong>Recepción de correos</strong>
               <span>Último correo recibido: {formatDateTime(status.inbound?.lastMessageAt)}</span>
             </div>
             <div className={styles.testActions}>
@@ -928,7 +963,7 @@ export const EmailSettings: React.FC = () => {
                 disabled={!status.inbound?.enabled}
               >
                 <RefreshCw size={16} />
-                Sincronizar ahora
+                Buscar correos ahora
               </Button>
             </div>
           </div>

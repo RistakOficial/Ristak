@@ -57,10 +57,10 @@ export interface EmailConnectPayload {
   }
   inbound?: {
     enabled: boolean
-    host: string
-    port: number
-    security: EmailSmtpSecurity
-    username: string
+    host?: string
+    port?: number
+    security?: EmailSmtpSecurity
+    username?: string
     mailbox?: string
   }
 }

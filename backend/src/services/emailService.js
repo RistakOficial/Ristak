@@ -817,11 +817,25 @@ function normalizeInboundCandidate({
   fromEmail,
   smtpUsername
 } = {}) {
-  const previousInbound = getStoredInboundConfig(previous)
+  const storedInbound = getStoredInboundConfig(previous)
+  const normalizedFromEmail = cleanString(fromEmail).toLowerCase()
+  const previousIdentities = [
+    previous?.fromEmail,
+    previous?.username,
+    storedInbound?.username
+  ].map(value => cleanString(value).toLowerCase()).filter(Boolean)
+  const canReusePreviousInbound = previous?.connected === true &&
+    normalizedFromEmail &&
+    previousIdentities.includes(normalizedFromEmail)
+  const previousInbound = canReusePreviousInbound ? storedInbound : {}
   const hasInboundPayload = inboundPayload && typeof inboundPayload === 'object' && Object.keys(inboundPayload).length > 0
-  const enabled = hasInboundPayload
-    ? toBoolean(inboundPayload.enabled, false)
-    : toBoolean(previousInbound.enabled, false)
+  const hasExplicitInboundEnabled = Object.prototype.hasOwnProperty.call(inboundPayload || {}, 'enabled')
+  const hasPreviousInboundPreference = Object.prototype.hasOwnProperty.call(previousInbound || {}, 'enabled')
+  const enabled = hasExplicitInboundEnabled
+    ? toBoolean(inboundPayload.enabled, true)
+    : hasPreviousInboundPreference
+      ? toBoolean(previousInbound.enabled, true)
+      : true
 
   if (!enabled) {
     return {

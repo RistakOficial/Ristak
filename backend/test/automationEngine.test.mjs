@@ -1035,7 +1035,8 @@ test('acción de correo en automatizaciones envía email al contacto y registra 
       await connectEmail({
         fromEmail: 'ventas@clinicademo.com',
         fromName: 'Clínica Demo',
-        password: 'app-password-demo'
+        password: 'app-password-demo',
+        inbound: { enabled: false }
       })
       await db.run(
         `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)

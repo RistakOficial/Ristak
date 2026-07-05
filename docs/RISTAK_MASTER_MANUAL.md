@@ -367,17 +367,23 @@ el quote y peguen el emoji al globo correcto.
 ### Correo electronico
 
 Configuracion > Integraciones > Correos conecta envio por SMTP y recepcion por
-IMAP. La configuracion vive en `app_config.email_smtp_config`; el app password se
-guarda cifrado en `app_config.email_smtp_password` y se reutiliza para SMTP e
-IMAP cuando el proveedor lo permite. No se agregan secrets ni env vars nuevas
-para recibir correo.
+IMAP desde un solo formulario. La recepcion queda activa por defecto: para Gmail,
+Workspace, Outlook, Yahoo, iCloud, Zoho, Titan y proveedores comunes Ristak
+detecta host, puerto, seguridad y bandeja sin pedirselo al usuario. Los ajustes
+manuales de recepcion solo deben mostrarse para proveedores personalizados que
+entregan datos IMAP propios. La configuracion vive en
+`app_config.email_smtp_config`; el app password se guarda cifrado en
+`app_config.email_smtp_password` y se reutiliza para SMTP e IMAP cuando el
+proveedor lo permite. No se agregan secrets ni env vars nuevas para recibir
+correo.
 
 La recepcion IMAP se configura dentro de
 `app_config.email_smtp_config.inbound` (`enabled`, `host`, `port`, `security`,
 `username`, `mailbox`, cursor `lastSeenUid` y timestamps). Al conectar, Ristak
-valida SMTP y, si la recepcion esta activa, tambien abre la bandeja IMAP antes de
-marcarla como conectada. La pantalla permite probar recepcion y sincronizar de
-forma manual con `/api/email/inbound/test` y `/api/email/inbound/sync`.
+valida SMTP y, salvo que el usuario desactive explicitamente la recepcion, tambien
+abre la bandeja IMAP antes de marcarla como conectada. La pantalla permite probar
+recepcion y buscar correos manualmente con `/api/email/inbound/test` y
+`/api/email/inbound/sync`.
 
 El job `email-inbound-sync` esta registrado como cron de integracion externa y
 solo arranca cuando el detector local confirma correo conectado, app password

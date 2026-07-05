@@ -9,6 +9,7 @@ import {
   saveEmailSignature,
   sendEmail,
   sendEmailToContact,
+  setEmailImapClientFactoryForTest,
   setEmailMxResolverForTest,
   setEmailTransportFactoryForTest
 } from '../src/services/emailService.js'
@@ -16,6 +17,21 @@ import {
 const EMAIL_CONFIG_KEY = 'email_smtp_config'
 const EMAIL_PASSWORD_KEY = 'email_smtp_password'
 const EMAIL_SIGNATURE_CONFIG_KEY = 'email_signature_config'
+
+function setHappyPathImapClientFactory(optionsLog = []) {
+  setEmailImapClientFactoryForTest((options) => {
+    optionsLog.push(options)
+    return {
+      connect: async () => true,
+      mailboxOpen: async (mailbox) => ({
+        path: mailbox,
+        exists: 0,
+        uidNext: 1
+      }),
+      logout: async () => true
+    }
+  })
+}
 
 async function snapshotAppConfig(keys = [], callback) {
   const uniqueKeys = [...new Set(keys)]
@@ -95,6 +111,8 @@ test('conecta correo con datos simples, prueba envío y guarda password cifrado'
         }
       }
     })
+    const imapOptions = []
+    setHappyPathImapClientFactory(imapOptions)
 
     try {
       const status = await connectEmail({
@@ -111,6 +129,12 @@ test('conecta correo con datos simples, prueba envío y guarda password cifrado'
       assert.equal(status.smtp.port, 587)
       assert.equal(status.smtp.security, 'starttls')
       assert.equal(status.smtp.hasPassword, true)
+      assert.equal(status.inbound.enabled, true)
+      assert.equal(status.inbound.connected, true)
+      assert.equal(status.inbound.host, 'imap.gmail.com')
+      assert.equal(status.inbound.port, 993)
+      assert.equal(status.inbound.security, 'ssl')
+      assert.equal(status.inbound.mailbox, 'INBOX')
       assert.equal(status.sender.fromEmail, 'ventas@clinicademo.com')
       assert.equal(status.sender.fromName, 'Clínica Demo')
       assert.ok(status.timestamps.lastVerifiedAt)
@@ -123,6 +147,12 @@ test('conecta correo con datos simples, prueba envío y guarda password cifrado'
       assert.equal(transportOptions[0].requireTLS, true)
       assert.equal(transportOptions[0].auth.user, 'ventas@clinicademo.com')
       assert.equal(transportOptions[0].auth.pass, 'app-password-demo')
+      assert.equal(imapOptions.length, 1)
+      assert.equal(imapOptions[0].host, 'imap.gmail.com')
+      assert.equal(imapOptions[0].port, 993)
+      assert.equal(imapOptions[0].secure, true)
+      assert.equal(imapOptions[0].auth.user, 'ventas@clinicademo.com')
+      assert.equal(imapOptions[0].auth.pass, 'app-password-demo')
 
       assert.equal(sentMessages.length, 1)
       assert.equal(sentMessages[0].to, 'ventas@clinicademo.com')
@@ -134,6 +164,46 @@ test('conecta correo con datos simples, prueba envío y guarda password cifrado'
     } finally {
       setEmailTransportFactoryForTest(null)
       setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
+    }
+  })
+})
+
+test('respeta cuando la recepcion de correos se desactiva explicitamente', async () => {
+  await initializeMasterKey()
+
+  await snapshotAppConfig([EMAIL_CONFIG_KEY, EMAIL_PASSWORD_KEY], async () => {
+    const imapOptions = []
+
+    setEmailMxResolverForTest(async () => [
+      { exchange: 'aspmx.l.google.com.', priority: 1 }
+    ])
+    setEmailTransportFactoryForTest(() => ({
+      verify: async () => true,
+      sendMail: async (message) => ({
+        messageId: 'test-message-id',
+        accepted: [message.to],
+        rejected: []
+      })
+    }))
+    setHappyPathImapClientFactory(imapOptions)
+
+    try {
+      const status = await connectEmail({
+        fromEmail: 'ventas@clinicademo.com',
+        fromName: 'Clínica Demo',
+        password: 'app-password-demo',
+        inbound: { enabled: false }
+      })
+
+      assert.equal(status.connected, true)
+      assert.equal(status.inbound.enabled, false)
+      assert.equal(status.inbound.connected, false)
+      assert.equal(imapOptions.length, 0)
+    } finally {
+      setEmailTransportFactoryForTest(null)
+      setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
     }
   })
 })
@@ -179,6 +249,7 @@ test('agrega la firma guardada al enviar correos', async () => {
         }
       }
     }))
+    setHappyPathImapClientFactory()
 
     try {
       await connectEmail({
@@ -220,6 +291,7 @@ test('agrega la firma guardada al enviar correos', async () => {
     } finally {
       setEmailTransportFactoryForTest(null)
       setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
     }
   })
 })
@@ -246,6 +318,7 @@ test('sendEmailToContact envía correo y guarda el mensaje en el historial del c
         }
       }
     }))
+    setHappyPathImapClientFactory()
 
     try {
       await db.run(
@@ -281,6 +354,7 @@ test('sendEmailToContact envía correo y guarda el mensaje en el historial del c
     } finally {
       setEmailTransportFactoryForTest(null)
       setEmailMxResolverForTest(null)
+      setEmailImapClientFactoryForTest(null)
       await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId])
       await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
     }
