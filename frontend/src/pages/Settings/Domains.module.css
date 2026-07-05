@@ -262,10 +262,102 @@
   border-top: 1px solid var(--border);
 }
 
+.emptyState {
+  min-width: 0;
+}
+
+.emptyState :global([data-ristak-card-content]) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.emptyState h3 {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.emptyState p {
+  margin: 5px 0 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.domainList {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.domainRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+
+.domainInfo {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.domainInfo span {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-mute);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.domainInfo svg {
+  flex: 0 0 auto;
+}
+
+.rowActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dialogBody {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.dialogFooter {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
 @media (max-width: 920px) {
   .domainGrid,
   .fieldGrid,
-  .routePanel {
+  .routePanel,
+  .domainRow,
+  .emptyState :global([data-ristak-card-content]) {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -278,7 +370,8 @@
     justify-self: start;
   }
 
-  .actions {
+  .actions,
+  .rowActions {
     justify-content: flex-start;
   }
 }

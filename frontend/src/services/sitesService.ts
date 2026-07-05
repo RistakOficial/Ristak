@@ -759,6 +759,18 @@ export interface SitesDomainConfig {
     status: SiteStatus
     path: string
   } | null
+  publicDomains?: PublicSiteDomain[]
+}
+
+export interface PublicSiteDomain {
+  id: string
+  domain: string
+  renderDomainVerified: boolean
+  renderDomainCheckedAt: string | null
+  renderDomainError: string | null
+  defaultRoute: SitesDomainConfig['defaultRoute']
+  createdAt: string | null
+  updatedAt: string | null
 }
 
 export type ImportedFieldDestinationType = 'standard' | 'custom' | 'new_custom' | 'ignored'
@@ -1220,6 +1232,29 @@ export const sitesService = {
 
   verifyDomain(domain: string) {
     return apiClient.post<SitesDomainConfig>('/sites/domain/verify', { domain })
+  },
+
+  createPublicDomain(input: { domain: string; siteId?: string | null; pageId?: string | null }) {
+    return apiClient.post<SitesDomainConfig>('/sites/domains/public', {
+      domain: input.domain,
+      siteId: input.siteId || '',
+      pageId: input.pageId || ''
+    })
+  },
+
+  verifyPublicDomain(domainId: string) {
+    return apiClient.post<SitesDomainConfig>(`/sites/domains/public/${encodeURIComponent(domainId)}/verify`)
+  },
+
+  setPublicDomainDefaultRoute(domainId: string, siteId?: string | null, pageId?: string | null) {
+    return apiClient.post<SitesDomainConfig>(`/sites/domains/public/${encodeURIComponent(domainId)}/default-route`, {
+      siteId: siteId || '',
+      pageId: pageId || ''
+    })
+  },
+
+  removePublicDomain(domainId: string) {
+    return apiClient.delete<SitesDomainConfig>(`/sites/domains/public/${encodeURIComponent(domainId)}`)
   },
 
   removeDomain() {

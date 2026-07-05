@@ -10884,6 +10884,13 @@ export async function deleteSite(siteId) {
       setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
     ])
   }
+  await db.run(`
+    UPDATE public_site_domains
+    SET default_route_site_id = NULL,
+        default_route_page_id = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE default_route_site_id = ?
+  `, [siteId])
   return true
 }
 
@@ -11192,12 +11199,146 @@ async function getSitesPublicDomainConfig() {
   ])
   const domain = normalizeDomain(rawDomain)
 
+  if (!domain) {
+    const primaryDomain = await getPrimaryPublicDomain().catch(() => null)
+    if (primaryDomain?.domain) {
+      return {
+        domain: primaryDomain.domain,
+        renderDomainVerified: primaryDomain.renderDomainVerified,
+        renderDomainCheckedAt: primaryDomain.renderDomainCheckedAt,
+        renderDomainError: primaryDomain.renderDomainError
+      }
+    }
+  }
+
   return {
     domain,
     renderDomainVerified: Boolean(domain && cleanString(verified) === '1'),
     renderDomainCheckedAt: cleanString(checkedAt) || null,
     renderDomainError: cleanString(error) || null
   }
+}
+
+function mapPublicDomainRow(row) {
+  if (!row) return null
+
+  return {
+    id: row.id,
+    domain: normalizeDomain(row.domain),
+    renderDomainVerified: Boolean(Number(row.render_domain_verified || 0)),
+    renderDomainCheckedAt: row.render_domain_checked_at || null,
+    renderDomainError: row.render_domain_error || null,
+    defaultRouteSiteId: cleanString(row.default_route_site_id),
+    defaultRoutePageId: cleanString(row.default_route_page_id),
+    createdAt: row.created_at || null,
+    updatedAt: row.updated_at || null
+  }
+}
+
+function domainConfigFromPublicDomain(domainRecord) {
+  if (!domainRecord) return null
+
+  return {
+    domain: domainRecord.domain,
+    renderDomainVerified: domainRecord.renderDomainVerified,
+    renderDomainCheckedAt: domainRecord.renderDomainCheckedAt,
+    renderDomainError: domainRecord.renderDomainError,
+    defaultRouteSiteId: domainRecord.defaultRouteSiteId,
+    defaultRoutePageId: domainRecord.defaultRoutePageId,
+    id: domainRecord.id
+  }
+}
+
+async function listPublicDomainRows() {
+  return db.all(`
+    SELECT *
+    FROM public_site_domains
+    ORDER BY created_at ASC, domain ASC
+  `)
+}
+
+async function getPublicDomainById(domainIdValue) {
+  const domainId = cleanString(domainIdValue)
+  if (!domainId) return null
+
+  const row = await db.get('SELECT * FROM public_site_domains WHERE id = ? LIMIT 1', [domainId])
+  return mapPublicDomainRow(row)
+}
+
+async function findPublicDomainByDomain(domainValue) {
+  const domain = normalizeDomain(domainValue)
+  if (!domain) return null
+
+  const rows = await listPublicDomainRows()
+  return rows
+    .map(mapPublicDomainRow)
+    .find(record => record?.domain && matchesPublicDomain(record.domain, domain)) || null
+}
+
+async function findPublicDomainByHost(hostValue) {
+  const host = normalizeDomain(hostValue)
+  if (!host) return null
+
+  const rows = await listPublicDomainRows()
+  return rows
+    .map(mapPublicDomainRow)
+    .find(record => record?.domain && matchesPublicDomain(host, record.domain)) || null
+}
+
+async function getPrimaryPublicDomain() {
+  const rows = await listPublicDomainRows()
+  return mapPublicDomainRow(rows[0])
+}
+
+async function getCurrentLegacyPublicDomainRecord() {
+  const config = await getSitesPublicDomainConfig()
+  if (!config.domain) return null
+
+  const managedRecord = await findPublicDomainByDomain(config.domain)
+  if (managedRecord) return managedRecord
+
+  return {
+    id: '',
+    domain: config.domain,
+    renderDomainVerified: config.renderDomainVerified,
+    renderDomainCheckedAt: config.renderDomainCheckedAt,
+    renderDomainError: config.renderDomainError,
+    defaultRouteSiteId: cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY)),
+    defaultRoutePageId: cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY)),
+    createdAt: null,
+    updatedAt: null,
+    legacy: true
+  }
+}
+
+async function syncLegacyPublicDomainConfigFromRecord(domainRecord) {
+  if (!domainRecord?.domain) {
+    await Promise.all([
+      setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain, null),
+      setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, null),
+      setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt, null),
+      setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, null),
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+    ])
+    return
+  }
+
+  await Promise.all([
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain, domainRecord.domain),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, domainRecord.renderDomainVerified ? '1' : '0'),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt, domainRecord.renderDomainCheckedAt || null),
+    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, domainRecord.renderDomainError || null),
+    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, domainRecord.defaultRouteSiteId || null),
+    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, domainRecord.defaultRoutePageId || null)
+  ])
+}
+
+async function syncLegacyPublicDomainConfigAfterMutation(preferredRecord = null) {
+  const current = await getSitesPublicDomainConfig()
+  const currentManaged = current.domain ? await findPublicDomainByDomain(current.domain) : null
+  const nextRecord = preferredRecord || currentManaged || await getPrimaryPublicDomain()
+  await syncLegacyPublicDomainConfigFromRecord(nextRecord)
 }
 
 async function getSitesAppDomainConfig() {
@@ -11236,6 +11377,51 @@ async function saveSitesPublicDomainVerification(domain, result) {
   return config
 }
 
+async function saveManagedPublicDomainVerification(domainRecord, result, input = {}) {
+  const domain = normalizeDomain(input.domain || domainRecord?.domain)
+  const checkedAt = new Date().toISOString()
+  const existing = domainRecord || await findPublicDomainByDomain(domain)
+  const id = existing?.id || createRistakId('site_domain')
+  const defaultRouteSiteId = Object.prototype.hasOwnProperty.call(input, 'siteId')
+    ? cleanString(input.siteId)
+    : cleanString(existing?.defaultRouteSiteId)
+  const defaultRoutePageId = Object.prototype.hasOwnProperty.call(input, 'pageId')
+    ? cleanString(input.pageId)
+    : cleanString(existing?.defaultRoutePageId)
+
+  await db.run(`
+    INSERT INTO public_site_domains (
+      id,
+      domain,
+      render_domain_verified,
+      render_domain_checked_at,
+      render_domain_error,
+      default_route_site_id,
+      default_route_page_id,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ON CONFLICT(id) DO UPDATE SET
+      domain = excluded.domain,
+      render_domain_verified = excluded.render_domain_verified,
+      render_domain_checked_at = excluded.render_domain_checked_at,
+      render_domain_error = excluded.render_domain_error,
+      default_route_site_id = excluded.default_route_site_id,
+      default_route_page_id = excluded.default_route_page_id,
+      updated_at = CURRENT_TIMESTAMP
+  `, [
+    id,
+    domain,
+    result.verified ? 1 : 0,
+    checkedAt,
+    result.verified ? null : result.error || 'Dominio no conectado a esta app',
+    defaultRouteSiteId || null,
+    defaultRoutePageId || null
+  ])
+
+  return getPublicDomainById(id)
+}
+
 async function saveSitesAppDomainVerification(domain, result) {
   const checkedAt = new Date().toISOString()
   const config = {
@@ -11259,34 +11445,136 @@ export async function getSitesPublicDomain() {
   return getSitesPublicDomainConfig()
 }
 
-async function getConfiguredDefaultPublicRoute({ clearMissing = false } = {}) {
-  const siteId = cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY))
+async function getConfiguredDefaultPublicRoute({ clearMissing = false, domainRecord = null } = {}) {
+  const useDomainRecord = Boolean(domainRecord?.id)
+  const siteId = useDomainRecord
+    ? cleanString(domainRecord.defaultRouteSiteId)
+    : cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY))
   if (!siteId) return null
 
   const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
   if (!site && clearMissing) {
-    await Promise.all([
-      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
-      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
-    ])
+    if (useDomainRecord) {
+      await db.run(`
+        UPDATE public_site_domains
+        SET default_route_site_id = NULL,
+            default_route_page_id = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [domainRecord.id])
+    } else {
+      await Promise.all([
+        setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
+        setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+      ])
+    }
   }
   if (!site) return null
 
-  const configuredPageId = cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY))
+  const configuredPageId = useDomainRecord
+    ? cleanString(domainRecord.defaultRoutePageId)
+    : cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY))
   if (!configuredPageId) return { site, pageId: '' }
 
   if (site.siteType !== 'landing_page' || isImportedHtmlSite(site)) {
-    if (clearMissing) await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+    if (clearMissing) {
+      if (useDomainRecord) {
+        await db.run(`
+          UPDATE public_site_domains
+          SET default_route_page_id = NULL,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [domainRecord.id])
+      } else {
+        await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+      }
+    }
     return { site, pageId: '' }
   }
 
   const pageExists = normalizeSitePages(site).some(page => page.id === configuredPageId)
   if (!pageExists) {
-    if (clearMissing) await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+    if (clearMissing) {
+      if (useDomainRecord) {
+        await db.run(`
+          UPDATE public_site_domains
+          SET default_route_page_id = NULL,
+              updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?
+        `, [domainRecord.id])
+      } else {
+        await setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
+      }
+    }
     return { site, pageId: '' }
   }
 
   return { site, pageId: configuredPageId }
+}
+
+async function hydratePublicDomainRecord(domainRecord, { clearMissing = false } = {}) {
+  if (!domainRecord?.id) return null
+
+  const configuredDefaultRoute = await getConfiguredDefaultPublicRoute({
+    clearMissing,
+    domainRecord
+  })
+  const freshRecord = clearMissing ? await getPublicDomainById(domainRecord.id) : domainRecord
+  const record = freshRecord || domainRecord
+
+  return {
+    id: record.id,
+    domain: record.domain,
+    renderDomainVerified: record.renderDomainVerified,
+    renderDomainCheckedAt: record.renderDomainCheckedAt,
+    renderDomainError: record.renderDomainError,
+    defaultRoute: buildPublicDefaultRoute(configuredDefaultRoute?.site, configuredDefaultRoute?.pageId),
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt
+  }
+}
+
+async function ensureLegacyPublicDomainAsManaged() {
+  const legacyConfig = await getSitesPublicDomainConfig()
+  if (!legacyConfig.domain) return null
+
+  const existing = await findPublicDomainByDomain(legacyConfig.domain)
+  if (existing) return existing
+
+  const defaultRouteSiteId = cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY))
+  const defaultRoutePageId = cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY))
+  const id = createRistakId('site_domain')
+
+  await db.run(`
+    INSERT INTO public_site_domains (
+      id,
+      domain,
+      render_domain_verified,
+      render_domain_checked_at,
+      render_domain_error,
+      default_route_site_id,
+      default_route_page_id,
+      created_at,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    id,
+    legacyConfig.domain,
+    legacyConfig.renderDomainVerified ? 1 : 0,
+    legacyConfig.renderDomainCheckedAt || null,
+    legacyConfig.renderDomainError || null,
+    defaultRouteSiteId || null,
+    defaultRoutePageId || null
+  ])
+
+  return getPublicDomainById(id)
+}
+
+export async function listSitesPublicDomains({ clearMissing = false } = {}) {
+  const rows = await listPublicDomainRows()
+  const records = rows.map(mapPublicDomainRow).filter(Boolean)
+  const hydrated = await Promise.all(records.map(record => hydratePublicDomainRecord(record, { clearMissing })))
+  return hydrated.filter(Boolean)
 }
 
 export async function getSitesDomainSettings({
@@ -11301,8 +11589,28 @@ export async function getSitesDomainSettings({
     publicConfig || getSitesPublicDomainConfig(),
     appConfig || getSitesAppDomainConfig()
   ])
+  await ensureLegacyPublicDomainAsManaged()
+  const publicDomains = await listSitesPublicDomains({ clearMissing: true })
+  if (!publicDomainConfig.domain && publicDomains[0]) {
+    await syncLegacyPublicDomainConfigFromRecord({
+      id: publicDomains[0].id,
+      domain: publicDomains[0].domain,
+      renderDomainVerified: publicDomains[0].renderDomainVerified,
+      renderDomainCheckedAt: publicDomains[0].renderDomainCheckedAt,
+      renderDomainError: publicDomains[0].renderDomainError,
+      defaultRouteSiteId: publicDomains[0].defaultRoute?.siteId || '',
+      defaultRoutePageId: publicDomains[0].defaultRoute?.pageId || ''
+    })
+    publicDomainConfig.domain = publicDomains[0].domain
+    publicDomainConfig.renderDomainVerified = publicDomains[0].renderDomainVerified
+    publicDomainConfig.renderDomainCheckedAt = publicDomains[0].renderDomainCheckedAt
+    publicDomainConfig.renderDomainError = publicDomains[0].renderDomainError
+  }
+  const currentDomainRecord = publicDomainConfig.domain
+    ? await findPublicDomainByDomain(publicDomainConfig.domain)
+    : null
   const configuredDefaultRoute = defaultRouteSite === undefined
-    ? await getConfiguredDefaultPublicRoute({ clearMissing: true })
+    ? await getConfiguredDefaultPublicRoute({ clearMissing: true, domainRecord: currentDomainRecord })
     : { site: defaultRouteSite, pageId: cleanString(defaultRoutePageId) }
   const nextVerification = verification ?? publicDomainConfig.verification
   const nextAppVerification = appVerification ?? appDomainConfig.verification
@@ -11318,7 +11626,8 @@ export async function getSitesDomainSettings({
     appDomainCheckedAt: appDomainConfig.renderDomainCheckedAt,
     appDomainError: appDomainConfig.renderDomainError,
     ...(nextAppVerification ? { appVerification: nextAppVerification } : {}),
-    defaultRoute: buildPublicDefaultRoute(configuredDefaultRoute?.site, configuredDefaultRoute?.pageId)
+    defaultRoute: buildPublicDefaultRoute(configuredDefaultRoute?.site, configuredDefaultRoute?.pageId),
+    publicDomains
   }
 }
 
@@ -11336,27 +11645,21 @@ export async function getVerifiedAppBaseUrl() {
  * vuelven a servirse solo desde el host por defecto de la app.
  */
 export async function removeSitesPublicDomain() {
-  await Promise.all([
-    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.domain, null),
-    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.verified, null),
-    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.checkedAt, null),
-    setAppConfig(SITES_PUBLIC_DOMAIN_CONFIG_KEYS.error, null),
-    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
-    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
-  ])
+  const currentRecord = await getCurrentLegacyPublicDomainRecord()
+  if (currentRecord?.id) {
+    await db.run('DELETE FROM public_site_domains WHERE id = ?', [currentRecord.id])
+    await syncLegacyPublicDomainConfigAfterMutation()
+    return getSitesPublicDomainConfig()
+  }
+
+  await syncLegacyPublicDomainConfigFromRecord(null)
   return getSitesPublicDomainConfig()
 }
 
-export async function setSitesPublicDefaultRoute(siteIdValue, pageIdValue = '') {
+async function resolvePublicDefaultRouteTarget(siteIdValue, pageIdValue = '') {
   const siteId = cleanString(siteIdValue)
   const pageId = cleanString(pageIdValue)
-  if (!siteId) {
-    await Promise.all([
-      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, null),
-      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, null)
-    ])
-    return getSitesDomainSettings({ defaultRouteSite: null })
-  }
+  if (!siteId) return { site: null, pageId: '' }
 
   const site = await getSite(siteId, { includeBlocks: false, includeSubmissions: false })
   if (!site) {
@@ -11378,11 +11681,57 @@ export async function setSitesPublicDefaultRoute(siteIdValue, pageIdValue = '') 
     }
   }
 
+  return { site, pageId }
+}
+
+export async function setSitesPublicDefaultRoute(siteIdValue, pageIdValue = '') {
+  const { site, pageId } = await resolvePublicDefaultRouteTarget(siteIdValue, pageIdValue)
+
   await Promise.all([
-    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, site.id),
+    setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, site?.id || null),
     setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, pageId || null)
   ])
+
+  const currentRecord = await getCurrentLegacyPublicDomainRecord()
+  if (currentRecord?.id) {
+    await db.run(`
+      UPDATE public_site_domains
+      SET default_route_site_id = ?,
+          default_route_page_id = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [site?.id || null, pageId || null, currentRecord.id])
+  }
+
   return getSitesDomainSettings({ defaultRouteSite: site, defaultRoutePageId: pageId })
+}
+
+export async function setSitesPublicDomainDefaultRoute(domainIdValue, siteIdValue, pageIdValue = '') {
+  const domainRecord = await getPublicDomainById(domainIdValue)
+  if (!domainRecord) {
+    const error = new Error('Dominio no encontrado')
+    error.status = 404
+    throw error
+  }
+
+  const { site, pageId } = await resolvePublicDefaultRouteTarget(siteIdValue, pageIdValue)
+  await db.run(`
+    UPDATE public_site_domains
+    SET default_route_site_id = ?,
+        default_route_page_id = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [site?.id || null, pageId || null, domainRecord.id])
+
+  const currentConfig = await getSitesPublicDomainConfig()
+  if (matchesPublicDomain(currentConfig.domain, domainRecord.domain)) {
+    await Promise.all([
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_CONFIG_KEY, site?.id || null),
+      setAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY, pageId || null)
+    ])
+  }
+
+  return getSitesDomainSettings()
 }
 
 export async function removeSitesAppDomain() {
@@ -11427,20 +11776,138 @@ export async function refreshSitesPublicDomain(input = {}) {
 
   const result = await verifyPublicDomainConnection(domain)
   const shouldPersist = result.verified || domain === current.domain || !hasDomainCandidate
-  const nextConfig = shouldPersist
-    ? await saveSitesPublicDomainVerification(domain, result)
-    : {
-        ...current,
+  let nextConfig
+  if (shouldPersist) {
+    nextConfig = await saveSitesPublicDomainVerification(domain, result)
+    const managedRecord = await findPublicDomainByDomain(domain)
+    if (managedRecord || result.verified) {
+      const defaultRoute = await getConfiguredDefaultPublicRoute({ clearMissing: true, domainRecord: managedRecord })
+      await saveManagedPublicDomainVerification(managedRecord, result, {
         domain,
-        renderDomainVerified: false,
-        renderDomainCheckedAt: new Date().toISOString(),
-        renderDomainError: result.error
-      }
+        siteId: defaultRoute?.site?.id || '',
+        pageId: defaultRoute?.pageId || ''
+      })
+    }
+  } else {
+    nextConfig = {
+      ...current,
+      domain,
+      renderDomainVerified: false,
+      renderDomainCheckedAt: new Date().toISOString(),
+      renderDomainError: result.error
+    }
+  }
 
   return {
     ...nextConfig,
     verification: result
   }
+}
+
+export async function createSitesPublicDomain(input = {}) {
+  const domain = normalizeDomain(input.domain)
+  const checkedAt = new Date().toISOString()
+  const currentConfig = await getSitesPublicDomainConfig()
+
+  if (cleanString(input.domain) && !domain) {
+    return {
+      settings: await getSitesDomainSettings(),
+      verification: { verified: false, error: 'Dominio inválido' },
+      candidate: {
+        domain: cleanString(input.domain),
+        renderDomainVerified: false,
+        renderDomainCheckedAt: checkedAt,
+        renderDomainError: 'Dominio inválido'
+      }
+    }
+  }
+
+  if (!domain) {
+    return {
+      settings: await getSitesDomainSettings(),
+      verification: { verified: false, error: 'Configura un dominio primero' },
+      candidate: {
+        domain: '',
+        renderDomainVerified: false,
+        renderDomainCheckedAt: checkedAt,
+        renderDomainError: 'Configura un dominio primero'
+      }
+    }
+  }
+
+  const existing = await findPublicDomainByDomain(domain)
+  const verification = await verifyPublicDomainConnection(domain)
+  if (!verification.verified) {
+    return {
+      settings: await getSitesDomainSettings({ verification }),
+      verification,
+      candidate: {
+        id: existing?.id || '',
+        domain,
+        renderDomainVerified: false,
+        renderDomainCheckedAt: checkedAt,
+        renderDomainError: verification.error || 'Dominio no conectado a esta app'
+      }
+    }
+  }
+
+  const { site, pageId } = await resolvePublicDefaultRouteTarget(
+    input.siteId || input.site_id || '',
+    input.pageId || input.page_id || ''
+  )
+  const saved = await saveManagedPublicDomainVerification(existing, verification, {
+    domain,
+    siteId: site?.id || '',
+    pageId
+  })
+  if (!currentConfig.domain || matchesPublicDomain(currentConfig.domain, saved.domain)) {
+    await syncLegacyPublicDomainConfigFromRecord(saved)
+  }
+
+  return {
+    settings: await getSitesDomainSettings({ verification }),
+    verification,
+    domain: await hydratePublicDomainRecord(saved, { clearMissing: true })
+  }
+}
+
+export async function refreshSitesPublicDomainById(domainIdValue) {
+  const domainRecord = await getPublicDomainById(domainIdValue)
+  if (!domainRecord) {
+    const error = new Error('Dominio no encontrado')
+    error.status = 404
+    throw error
+  }
+
+  const verification = await verifyPublicDomainConnection(domainRecord.domain)
+  const saved = await saveManagedPublicDomainVerification(domainRecord, verification)
+  const currentConfig = await getSitesPublicDomainConfig()
+  if (matchesPublicDomain(currentConfig.domain, saved.domain)) {
+    await syncLegacyPublicDomainConfigFromRecord(saved)
+  }
+
+  return {
+    settings: await getSitesDomainSettings({ verification }),
+    verification,
+    domain: await hydratePublicDomainRecord(saved, { clearMissing: true })
+  }
+}
+
+export async function removeSitesPublicDomainById(domainIdValue) {
+  const domainRecord = await getPublicDomainById(domainIdValue)
+  if (!domainRecord) {
+    const error = new Error('Dominio no encontrado')
+    error.status = 404
+    throw error
+  }
+
+  await db.run('DELETE FROM public_site_domains WHERE id = ?', [domainRecord.id])
+  const currentConfig = await getSitesPublicDomainConfig()
+  if (matchesPublicDomain(currentConfig.domain, domainRecord.domain)) {
+    await syncLegacyPublicDomainConfigAfterMutation()
+  }
+
+  return getSitesDomainSettings()
 }
 
 export async function refreshSitesAppDomain(input = {}) {
@@ -11822,8 +12289,11 @@ async function findDefaultPublishedSite() {
   return mapSite(row)
 }
 
-async function findRootPublicSite() {
-  const configuredDefault = await getConfiguredDefaultPublicRoute({ clearMissing: true })
+async function findRootPublicSite(domainConfig = null) {
+  const configuredDefault = await getConfiguredDefaultPublicRoute({
+    clearMissing: true,
+    domainRecord: domainConfig?.id ? domainConfig : null
+  })
   if (configuredDefault?.site) return configuredDefault
   const site = await findDefaultPublishedSite()
   return site ? { site, pageId: '' } : null
@@ -11847,6 +12317,39 @@ export async function resolveConnectedPublicDomainForHost(hostValue, { forceRefr
   const host = normalizeDomain(hostValue)
   if (!host) {
     return { ok: false, status: 404, reason: 'invalid_host', message: 'Dominio inválido' }
+  }
+
+  const managedDomain = await findPublicDomainByHost(host)
+  if (managedDomain) {
+    if (shouldRefreshDomainCheck(domainConfigFromPublicDomain(managedDomain), forceRefresh)) {
+      const verification = await verifyPublicDomainConnection(managedDomain.domain)
+      const nextRecord = await saveManagedPublicDomainVerification(managedDomain, verification)
+      managedDomain.renderDomainVerified = nextRecord.renderDomainVerified
+      managedDomain.renderDomainCheckedAt = nextRecord.renderDomainCheckedAt
+      managedDomain.renderDomainError = nextRecord.renderDomainError
+
+      const currentConfig = await getSitesPublicDomainConfig()
+      if (matchesPublicDomain(currentConfig.domain, managedDomain.domain)) {
+        await syncLegacyPublicDomainConfigFromRecord(nextRecord)
+      }
+    }
+
+    if (!managedDomain.renderDomainVerified) {
+      return {
+        ok: false,
+        status: 404,
+        reason: 'domain_unverified',
+        message: managedDomain.renderDomainError || 'Dominio no conectado a esta app',
+        domainConfig: domainConfigFromPublicDomain(managedDomain)
+      }
+    }
+
+    return {
+      ok: true,
+      domain: managedDomain.domain,
+      domainConfig: domainConfigFromPublicDomain(managedDomain),
+      host
+    }
   }
 
   const config = await getSitesPublicDomainConfig()
@@ -12006,7 +12509,7 @@ export async function resolvePublicSiteForHost(hostValue, { forceRefresh = false
   let pagePath = routeSegments.slice(1)
 
   if (!site && !routeSegments.length) {
-    const rootRoute = await findRootPublicSite()
+    const rootRoute = await findRootPublicSite(domainResolution.domainConfig)
     site = rootRoute?.site || null
     pageId = rootRoute?.pageId || ''
     pagePath = []

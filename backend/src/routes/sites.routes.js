@@ -5,6 +5,7 @@ import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import {
   createBlockHandler,
   createSiteFolderHandler,
+  createSitesPublicDomainHandler,
   importSiteHtmlHandler,
   createSiteHandler,
   createSiteWithAIHtmlHandler,
@@ -25,6 +26,7 @@ import {
   previewCalendarHandler,
   previewSiteHandler,
   removeSitesAppDomainHandler,
+  removeSitesPublicDomainByIdHandler,
   removeSitesDomainHandler,
   previewSiteSessionHandler,
   publicSiteContactPrefillHandler,
@@ -34,6 +36,7 @@ import {
   sitePaymentCheckoutPrepareHandler,
   reorderBlocksHandler,
   restoreBlocksHandler,
+  setSitesPublicDomainDefaultRouteHandler,
   setSitesDefaultRouteHandler,
   sitesFontCssHandler,
   sitesFontFileHandler,
@@ -45,6 +48,7 @@ import {
   updateImportedSiteHtmlWithAIHandler,
   updateImportedSiteMappingHandler,
   updateSiteHandler,
+  verifySitesPublicDomainByIdHandler,
   verifySitesAppDomainHandler,
   verifySitesDomainHandler,
   verifySiteDomainHandler
@@ -76,6 +80,10 @@ router.get('/domain', getSitesDomainHandler)
 router.post('/domain/verify', verifySitesDomainHandler)
 router.post('/domain/default-route', setSitesDefaultRouteHandler)
 router.delete('/domain', removeSitesDomainHandler)
+router.post('/domains/public', createSitesPublicDomainHandler)
+router.post('/domains/public/:domainId/verify', verifySitesPublicDomainByIdHandler)
+router.post('/domains/public/:domainId/default-route', setSitesPublicDomainDefaultRouteHandler)
+router.delete('/domains/public/:domainId', removeSitesPublicDomainByIdHandler)
 router.post('/domain/app/verify', verifySitesAppDomainHandler)
 router.delete('/domain/app', removeSitesAppDomainHandler)
 router.post('/analytics/summary', getSitesAnalyticsSummaryHandler)

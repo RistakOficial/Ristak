@@ -260,8 +260,9 @@ Familias de tablas relevantes:
   `subscriptions`, metodos Stripe/Conekta, productos y precios.
 - Citas/calendarios: `appointments`, `calendars`, `blocked_slots`,
   attendance signals, reminders, confirmation windows.
-- Sites/tracking: `public_sites`, `public_site_blocks`, submissions, imports,
-  assets, folders, `sessions`, video playback sessions/events, identity matches.
+- Sites/tracking: `public_sites`, `public_site_domains`, `public_site_blocks`,
+  submissions, imports, assets, folders, `sessions`, video playback
+  sessions/events, identity matches.
 - Automations: `automations`, folders, enrollments, drip entries, schedule runs,
   contact jobs, assets.
 - IA: agent runs/steps/pending actions/idempotency, memories, conversational
@@ -1370,13 +1371,22 @@ ruta legacy del sitio
 `/<site-slug>` se conserva por compatibilidad y abre la landing como antes. La
 opcion "Cambiar ruta" en el menu de tres puntos de cada pagina abre el editor de
 ruta de esa pagina especifica, separado de "Cambiar nombre". La
-ruta predeterminada del dominio puede apuntar a un sitio completo o a una pagina
-especifica (`siteId + pageId`): cuando apunta a una pagina, esa pagina abre en
-la raiz del dominio (`https://dominio/`) y su slug propio sigue resolviendo como
-ruta directa. Se puede configurar desde Dominios con el selector de pagina
-oficial, desde el enlace "Hacer pagina oficial" junto a Ruta publica en Ajustes
-del editor o con la estrella del menu de tres puntos de la pagina; las acciones
-del editor deben confirmar escribiendo la URL raiz del dominio.
+ruta predeterminada de cada dominio puede apuntar a un sitio completo o a una
+pagina especifica (`siteId + pageId`): cuando apunta a una pagina, esa pagina
+abre en la raiz de ese dominio (`https://dominio/`) y su slug propio sigue
+resolviendo como ruta directa.
+Configuracion > Dominios separa la lista de dominios publicos de la configuracion
+de cada dominio: el usuario agrega dominios con "Agregar dominio", el modal
+valida que el dominio responda a esta instalacion de Ristak en Render antes de
+guardarlo, y luego permite elegir de forma opcional la pagina o formulario que
+abrira en la raiz de ese dominio. La base usa `public_site_domains` para permitir
+multiples dominios publicos con root independiente; el dominio legacy en
+`app_config.sites_public_domain` se mantiene como compatibilidad/primario para
+links existentes y se migra a la tabla al leer settings. Se puede configurar
+desde Dominios con el selector de pagina oficial, desde el enlace "Hacer pagina
+oficial" junto a Ruta publica en Ajustes del editor o con la estrella del menu
+de tres puntos de la pagina; las acciones del editor deben confirmar escribiendo
+la URL raiz del dominio.
 Cuando Meta ya tiene dataset/pixel y token guardado, los sitios nuevos activan
 Meta CAPI por default. Las landings nuevas y las paginas nuevas creadas dentro de
 una landing existente nacen con solo `PageView` al aterrizar la pagina (browser

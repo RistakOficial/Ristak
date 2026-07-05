@@ -7,6 +7,7 @@ import {
   createMetaPageEventFromRequest,
   createSite,
   createSiteWithAIHtml,
+  createSitesPublicDomain,
   createSubmissionFromRequest,
   deleteBlock,
   deleteSite,
@@ -29,7 +30,9 @@ import {
   listSites,
   refreshSitesAppDomain,
   refreshSitesPublicDomain,
+  refreshSitesPublicDomainById,
   removeSitesAppDomain,
+  removeSitesPublicDomainById,
   removeSitesPublicDomain,
   renderDomainErrorHtml,
   renderPublicSiteHtml,
@@ -39,6 +42,7 @@ import {
   resolvePublicPrefillContact,
   resolvePublicSiteForHost,
   restoreBlocks,
+  setSitesPublicDomainDefaultRoute,
   setSitesPublicDefaultRoute,
   shouldBlockCrmOnPublicCalendarFallbackHost,
   updateBlock,
@@ -731,6 +735,51 @@ export async function verifySitesDomainHandler(req, res) {
   } catch (error) {
     logger.error(`Error verificando dominio público de Sites: ${error.message}`)
     sendError(res, error, 'Error verificando dominio')
+  }
+}
+
+export async function createSitesPublicDomainHandler(req, res) {
+  try {
+    const result = await createSitesPublicDomain(req.body || {})
+    const status = result.verification?.verified ? 201 : 200
+    res.status(status).json({ success: true, data: result.settings, meta: result })
+  } catch (error) {
+    logger.error(`Error agregando dominio público de Sites: ${error.message}`)
+    sendError(res, error, 'Error agregando dominio')
+  }
+}
+
+export async function verifySitesPublicDomainByIdHandler(req, res) {
+  try {
+    const result = await refreshSitesPublicDomainById(req.params.domainId)
+    res.json({ success: true, data: result.settings, meta: result })
+  } catch (error) {
+    logger.error(`Error verificando dominio público de Sites: ${error.message}`)
+    sendError(res, error, 'Error verificando dominio')
+  }
+}
+
+export async function setSitesPublicDomainDefaultRouteHandler(req, res) {
+  try {
+    const result = await setSitesPublicDomainDefaultRoute(
+      req.params.domainId,
+      req.body?.siteId || req.body?.site_id || '',
+      req.body?.pageId || req.body?.page_id || ''
+    )
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error configurando ruta predeterminada del dominio de Sites: ${error.message}`)
+    sendError(res, error, 'Error configurando ruta predeterminada')
+  }
+}
+
+export async function removeSitesPublicDomainByIdHandler(req, res) {
+  try {
+    const result = await removeSitesPublicDomainById(req.params.domainId)
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error eliminando dominio público de Sites: ${error.message}`)
+    sendError(res, error, 'Error eliminando dominio')
   }
 }
 

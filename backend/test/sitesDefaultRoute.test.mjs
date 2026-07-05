@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { getAppConfig, setAppConfig } from '../src/config/database.js'
+import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
   createSite,
   deleteSite,
@@ -39,6 +39,7 @@ async function restoreDomainConfig(config) {
     setAppConfig(DOMAIN_KEYS.defaultRoute, config.defaultRoute),
     setAppConfig(DOMAIN_KEYS.defaultRoutePage, config.defaultRoutePage)
   ])
+  await db.run("DELETE FROM public_site_domains WHERE domain IN ('example.test', 'alpha.example.test', 'beta.example.test')")
 }
 
 async function configureVerifiedPublicDomain(domain = 'example.test') {
@@ -175,6 +176,90 @@ test('deleting the configured default route clears domain settings', async () =>
     assert.equal(await getAppConfig(DOMAIN_KEYS.defaultRoutePage), null)
   } finally {
     if (site) await deleteSite(site.id).catch(() => undefined)
+    await restoreDomainConfig(previousConfig)
+  }
+})
+
+test('different verified domains can use different root routes', async () => {
+  const previousConfig = await snapshotDomainConfig()
+  const suffix = Date.now()
+  let alphaSite
+  let betaSite
+
+  try {
+    await restoreDomainConfig(previousConfig)
+    await Promise.all([
+      setAppConfig(DOMAIN_KEYS.domain, ''),
+      setAppConfig(DOMAIN_KEYS.verified, ''),
+      setAppConfig(DOMAIN_KEYS.checkedAt, ''),
+      setAppConfig(DOMAIN_KEYS.error, ''),
+      setAppConfig(DOMAIN_KEYS.defaultRoute, ''),
+      setAppConfig(DOMAIN_KEYS.defaultRoutePage, '')
+    ])
+
+    alphaSite = await createSite({
+      name: 'Landing dominio alpha',
+      slug: `landing-alpha-${suffix}`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true
+    })
+    betaSite = await createSite({
+      name: 'Landing dominio beta',
+      slug: `landing-beta-${suffix}`,
+      siteType: 'landing_page',
+      status: 'published',
+      blankCanvas: true,
+      theme: {
+        pageMode: 'website',
+        pages: [
+          { id: 'page-home', title: 'Inicio', slug: 'inicio', sortOrder: 0 },
+          { id: 'page-offer', title: 'Oferta', slug: 'oferta', sortOrder: 1 }
+        ]
+      }
+    })
+
+    await db.run(`
+      INSERT INTO public_site_domains (
+        id,
+        domain,
+        render_domain_verified,
+        render_domain_checked_at,
+        render_domain_error,
+        default_route_site_id,
+        default_route_page_id
+      ) VALUES
+        (?, ?, 1, ?, NULL, ?, NULL),
+        (?, ?, 1, ?, NULL, ?, ?)
+    `, [
+      `domain-alpha-${suffix}`,
+      'alpha.example.test',
+      new Date().toISOString(),
+      alphaSite.id,
+      `domain-beta-${suffix}`,
+      'beta.example.test',
+      new Date().toISOString(),
+      betaSite.id,
+      'page-offer'
+    ])
+
+    const alphaRoot = await resolvePublicSiteForHost('alpha.example.test', { path: '/' })
+    assert.equal(alphaRoot.ok, true)
+    assert.equal(alphaRoot.site.id, alphaSite.id)
+    assert.equal(alphaRoot.pageId, '')
+
+    const betaRoot = await resolvePublicSiteForHost('beta.example.test', { path: '/' })
+    assert.equal(betaRoot.ok, true)
+    assert.equal(betaRoot.site.id, betaSite.id)
+    assert.equal(betaRoot.pageId, 'page-offer')
+
+    const betaDirectPage = await resolvePublicSiteForHost('beta.example.test', { path: '/oferta' })
+    assert.equal(betaDirectPage.ok, true)
+    assert.equal(betaDirectPage.site.id, betaSite.id)
+    assert.equal(betaDirectPage.pageId, 'page-offer')
+  } finally {
+    if (betaSite) await deleteSite(betaSite.id).catch(() => undefined)
+    if (alphaSite) await deleteSite(alphaSite.id).catch(() => undefined)
     await restoreDomainConfig(previousConfig)
   }
 })
