@@ -34,6 +34,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import automationsService, {
   AUTOMATION_REVIEW_LABEL,
+  AUTOMATION_ENROLLMENT_CHANGED_EVENT,
   automationsCache,
   defaultFlowSettings,
   type Automation,
@@ -76,6 +77,7 @@ import {
 import { AutomationLibrary } from '../AutomationLibrary'
 import { FlowSettingsPanel } from './FlowSettingsPanel'
 import { EnrollmentRecordsModal, type RecordsTab } from './EnrollmentRecordsModal'
+import { NodeEnrollmentsModal } from './NodeEnrollmentsModal'
 import { AutomationTestRunModal } from './AutomationTestRunModal'
 import { createEditorState, editorReducer } from './editorState'
 import { validateAutomationFlow } from './automationValidation'
@@ -261,6 +263,7 @@ export const AutomationEditor: React.FC = () => {
   const [recordsTab, setRecordsTab] = useState<RecordsTab | null>(null)
   const [testRunOpen, setTestRunOpen] = useState(false)
   const [nodeStats, setNodeStats] = useState<Record<string, number>>({})
+  const [enrollmentsNode, setEnrollmentsNode] = useState<AutomationNode | null>(null)
   const [fitSignal, setFitSignal] = useState(0)
   const flowSettingsRef = useRef(flowSettings)
   flowSettingsRef.current = flowSettings
@@ -370,25 +373,47 @@ export const AutomationEditor: React.FC = () => {
     []
   )
 
-  // Contactos activos por nodo (badges del canvas): se refresca cada 15s
+  const refreshEnrollmentStats = useCallback(async () => {
+    const current = automationRef.current
+    if (!current) return
+    try {
+      const stats = await automationsService.getEnrollmentStats(current.id)
+      setNodeStats(stats.byNode || {})
+    } catch {
+      // El contador es informativo; los errores completos viven en el modal de registros.
+    }
+  }, [])
+
+  // Contactos activos por nodo (badges del canvas): carga inmediata, refresh por
+  // cambios locales y polling corto para inscripciones disparadas fuera del editor.
   useEffect(() => {
     if (!automation) return
     let cancelled = false
     const load = () => {
-      void automationsService
-        .getEnrollmentStats(automation.id)
-        .then((stats) => {
-          if (!cancelled) setNodeStats(stats.byNode || {})
-        })
-        .catch(() => undefined)
+      if (cancelled) return
+      void refreshEnrollmentStats()
     }
     load()
-    const interval = window.setInterval(load, 15000)
+    const interval = window.setInterval(load, 5000)
+    const handleFocus = () => load()
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') load()
+    }
+    const handleEnrollmentChanged = (event: Event) => {
+      const detail = (event as CustomEvent<{ automationId?: string }>).detail
+      if (!detail?.automationId || detail.automationId === automationRef.current?.id) load()
+    }
+    window.addEventListener('focus', handleFocus)
+    document.addEventListener('visibilitychange', handleVisibility)
+    window.addEventListener(AUTOMATION_ENROLLMENT_CHANGED_EVENT, handleEnrollmentChanged)
     return () => {
       cancelled = true
       window.clearInterval(interval)
+      window.removeEventListener('focus', handleFocus)
+      document.removeEventListener('visibilitychange', handleVisibility)
+      window.removeEventListener(AUTOMATION_ENROLLMENT_CHANGED_EVENT, handleEnrollmentChanged)
     }
-  }, [automation])
+  }, [automation, refreshEnrollmentStats])
 
   // Variables congruentes con los disparadores del flujo (citas, pagos...).
   // Contacto, personalizados, variables internas y enlaces de disparo siempre presentes.
@@ -973,6 +998,11 @@ export const AutomationEditor: React.FC = () => {
           const fresh = stateRef.current.present.nodes.find((candidate) => candidate.id === node.id)
           openConfigForNode(fresh ? { ...fresh, config: merged } : { ...node, config: merged })
         }
+      },
+      onOpenNodeEnrollments: (node: AutomationNode) => {
+        setPicker(null)
+        setConfig(null)
+        setEnrollmentsNode(node)
       },
       onConnect: (sourceNodeId: string, sourceHandle: string, targetNodeId: string) => {
         const current = stateRef.current.present
@@ -1998,6 +2028,15 @@ export const AutomationEditor: React.FC = () => {
         open={recordsTab !== null}
         initialTab={recordsTab || 'enrollments'}
         onClose={() => setRecordsTab(null)}
+      />
+
+      <NodeEnrollmentsModal
+        automationId={automation.id}
+        node={enrollmentsNode}
+        nodes={nodes}
+        open={Boolean(enrollmentsNode)}
+        onClose={() => setEnrollmentsNode(null)}
+        onChanged={() => void refreshEnrollmentStats()}
       />
 
       <AutomationTestRunModal

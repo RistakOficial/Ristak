@@ -1,9 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
 import { db, setAppConfig } from '../src/config/database.js'
 import {
+  controlAutomationEnrollment,
   createAutomation,
+  enrollContactInAutomation,
   getAutomation,
+  getEnrollmentStats,
   listAttributionAdsets,
   listAttributionAds,
   listAttributionCampaigns,
@@ -131,6 +135,57 @@ function makeTagActionFlow(tagId) {
   }
 }
 
+function makeWaitThenTagFlow(tagId) {
+  return {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        category: 'trigger',
+        label: 'Cuando...',
+        position: { x: 120, y: 220 },
+        config: {
+          triggers: [{ id: 'trig_control_test', type: 'trigger-contact-created', config: {} }]
+        }
+      },
+      {
+        id: 'node_wait',
+        type: 'logic-wait',
+        label: 'Esperar',
+        position: { x: 520, y: 220 },
+        config: { mode: 'duration', amount: 1, unit: 'days' }
+      },
+      {
+        id: 'node_add_tag',
+        type: 'action-add-contact-tag',
+        label: 'Añadir etiqueta',
+        position: { x: 920, y: 220 },
+        config: { tag: tagId }
+      }
+    ],
+    edges: [
+      {
+        id: 'edge_start_wait',
+        sourceNodeId: 'start',
+        sourceHandle: 'out',
+        targetNodeId: 'node_wait',
+        targetHandle: 'in',
+        animated: true
+      },
+      {
+        id: 'edge_wait_tag',
+        sourceNodeId: 'node_wait',
+        sourceHandle: 'out',
+        targetNodeId: 'node_add_tag',
+        targetHandle: 'in',
+        animated: true
+      }
+    ],
+    viewport: { x: 0, y: 0, zoom: 1 },
+    settings: { allowReentry: true, preventDuplicateActiveEnrollment: true }
+  }
+}
+
 test('updateAutomation separa borrador guardado de flujo publicado', async () => {
   const automation = await createAutomation({
     name: `Publicación con borrador ${Date.now()}`,
@@ -249,6 +304,94 @@ test('testAutomationRun usa el flujo guardado aunque tenga cambios sin publicar'
     }
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contact_tags WHERE id IN (?, ?)', [liveTagId, draftTagId]).catch(() => undefined)
+  }
+})
+
+test('controlAutomationEnrollment pausa, reanuda y conserva el conteo por nodo', async () => {
+  const suffix = randomUUID()
+  const tagId = `tag_control_pause_${suffix}`
+  const contactId = `contact_control_pause_${suffix}`
+  let automation
+
+  await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [tagId, 'Control pausa'])
+  await db.run(
+    `INSERT INTO contacts (id, full_name, first_name, phone, email, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, 'Contacto Control Pausa', 'Contacto', `+521555${suffix.slice(0, 8)}`, `control-pause-${suffix}@example.com`]
+  )
+
+  try {
+    automation = await createAutomation({
+      name: `Control pausa ${suffix}`,
+      flow: makeWaitThenTagFlow(tagId)
+    })
+    await updateAutomation(automation.id, { status: 'published' })
+
+    const enrollmentResult = await enrollContactInAutomation(automation.id, { contactId, mode: 'now' })
+    const enrollmentId = enrollmentResult.enrollment.id
+
+    const waiting = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollmentId])
+    assert.equal(waiting.status, 'waiting')
+    assert.equal(waiting.current_node_id, 'node_wait')
+
+    const paused = await controlAutomationEnrollment(automation.id, enrollmentId, { action: 'pause' })
+    assert.equal(paused.status, 'paused')
+
+    const stats = await getEnrollmentStats(automation.id)
+    assert.equal(stats.byNode.node_wait, 1)
+
+    const resumed = await controlAutomationEnrollment(automation.id, enrollmentId, { action: 'resume' })
+    assert.equal(resumed.status, 'waiting')
+    assert.equal(resumed.currentNodeId, 'node_wait')
+  } finally {
+    if (automation?.id) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+      await db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId]).catch(() => undefined)
+  }
+})
+
+test('controlAutomationEnrollment mueve una inscripción a un paso específico y ejecuta el motor real', async () => {
+  const suffix = randomUUID()
+  const tagId = `tag_control_move_${suffix}`
+  const contactId = `contact_control_move_${suffix}`
+  let automation
+
+  await db.run('INSERT INTO contact_tags (id, name) VALUES (?, ?)', [tagId, 'Control mover'])
+  await db.run(
+    `INSERT INTO contacts (id, full_name, first_name, phone, email, source, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [contactId, 'Contacto Control Mover', 'Contacto', `+521556${suffix.slice(0, 8)}`, `control-move-${suffix}@example.com`]
+  )
+
+  try {
+    automation = await createAutomation({
+      name: `Control mover ${suffix}`,
+      flow: makeWaitThenTagFlow(tagId)
+    })
+    await updateAutomation(automation.id, { status: 'published' })
+
+    const enrollmentResult = await enrollContactInAutomation(automation.id, { contactId, mode: 'now' })
+    const enrollmentId = enrollmentResult.enrollment.id
+
+    const moved = await controlAutomationEnrollment(automation.id, enrollmentId, {
+      action: 'move_to_node',
+      targetNodeId: 'node_add_tag'
+    })
+    assert.equal(moved.status, 'completed')
+
+    const contact = await db.get('SELECT tags FROM contacts WHERE id = ?', [contactId])
+    const tags = JSON.parse(contact.tags || '[]')
+    assert.ok(tags.includes(tagId))
+  } finally {
+    if (automation?.id) {
+      await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automation.id]).catch(() => undefined)
+      await db.run('DELETE FROM automations WHERE id = ?', [automation.id]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contact_tags WHERE id = ?', [tagId]).catch(() => undefined)
   }
 })
 

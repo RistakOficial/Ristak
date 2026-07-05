@@ -1554,6 +1554,15 @@ automatizaciones legacy sin esos flags conservan el comportamiento anterior:
 campanita + push, sin correo. Si correo o push no están configurados, el paso
 registra el canal como omitido y continúa; no debe bloquear todo el flujo.
 
+Los nodos del canvas muestran un badge con el numero de contactos activos,
+en espera o pausados dentro de ese paso. El badge se refresca al cargar el
+editor, al volver a enfocar la pestaña, cada pocos segundos y cuando la propia
+app mete o mueve contactos en automatizaciones. Al hacer clic en el badge se
+abre un modal de control por paso: desde ahi se puede sacar al contacto del
+flujo, pausarlo, reanudarlo, reintentarlo, empujarlo al siguiente paso o moverlo
+a un paso especifico del flujo publicado. Las acciones que ejecutan pasos usan
+el motor real de automatizaciones; no son solo cambios visuales de estado.
+
 Los disparadores de comentario de Facebook e Instagram se activan solo con
 eventos reales de comentario. La respuesta no se configura como un DM suelto:
 el editor usa la acción **Responder comentario**, y dentro de esa acción el

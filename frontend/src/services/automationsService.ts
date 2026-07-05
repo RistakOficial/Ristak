@@ -153,9 +153,11 @@ export interface AutomationEnrollment {
   id: string
   contactId: string | null
   contactName: string
-  status: 'active' | 'completed' | 'exited' | 'goal_met' | string
+  status: 'active' | 'waiting' | 'paused' | 'completed' | 'exited' | 'goal_met' | string
   currentNodeId: string | null
   log: EnrollmentLogEntry[]
+  resumeAt?: string | null
+  waitKind?: string | null
   enteredAt: string
   updatedAt: string
 }
@@ -188,6 +190,19 @@ export interface ContactAutomationEnrollmentResult {
   mode: 'now' | 'scheduled'
   enrollment?: ContactAutomationActivityItem
   job?: ContactAutomationActivityItem
+}
+
+export type AutomationEnrollmentControlAction =
+  | 'exit'
+  | 'pause'
+  | 'resume'
+  | 'retry'
+  | 'advance'
+  | 'move_to_node'
+
+export interface AutomationEnrollmentControlInput {
+  action: AutomationEnrollmentControlAction
+  targetNodeId?: string
 }
 
 export interface AutomationTestRunResult {
@@ -238,6 +253,21 @@ export interface AutomationWebhookActionTestResult {
   stop: boolean
   output: Record<string, unknown>
   testedAt: string
+}
+
+export const AUTOMATION_ENROLLMENT_CHANGED_EVENT = 'ristak-automation-enrollment-changed'
+
+function notifyAutomationEnrollmentChanged(automationId: string, enrollment?: { id?: string | null; currentNodeId?: string | null }) {
+  if (typeof window === 'undefined') return
+  window.dispatchEvent(
+    new CustomEvent(AUTOMATION_ENROLLMENT_CHANGED_EVENT, {
+      detail: {
+        automationId,
+        enrollmentId: enrollment?.id || null,
+        nodeId: enrollment?.currentNodeId || null
+      }
+    })
+  )
 }
 
 export const AUTOMATION_STATUS_LABELS: Record<AutomationStatus, string> = {
@@ -389,14 +419,31 @@ export const automationsService = {
     automationId: string,
     input: { contactId: string; mode: 'now' | 'scheduled'; scheduledAt?: string }
   ): Promise<ContactAutomationEnrollmentResult> {
-    return apiClient.post<ContactAutomationEnrollmentResult>(`/automations/${automationId}/enroll-contact`, input)
+    const result = await apiClient.post<ContactAutomationEnrollmentResult>(`/automations/${automationId}/enroll-contact`, input)
+    notifyAutomationEnrollmentChanged(automationId, result.enrollment)
+    return result
+  },
+
+  async controlEnrollment(
+    automationId: string,
+    enrollmentId: string,
+    input: AutomationEnrollmentControlInput
+  ): Promise<AutomationEnrollment> {
+    const enrollment = await apiClient.post<AutomationEnrollment>(
+      `/automations/${automationId}/enrollments/${enrollmentId}/control`,
+      input
+    )
+    notifyAutomationEnrollmentChanged(automationId, enrollment)
+    return enrollment
   },
 
   async testAutomation(
     automationId: string,
     input: { contactId?: string; contact?: AutomationTestContactInput }
   ): Promise<AutomationTestRunResult> {
-    return apiClient.post<AutomationTestRunResult>(`/automations/${automationId}/test-run`, input)
+    const result = await apiClient.post<AutomationTestRunResult>(`/automations/${automationId}/test-run`, input)
+    notifyAutomationEnrollmentChanged(automationId, result.enrollment)
+    return result
   },
 
   async testWebhookAction(input: AutomationWebhookActionTestInput): Promise<AutomationWebhookActionTestResult> {

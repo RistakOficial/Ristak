@@ -15,6 +15,7 @@ import {
   getEnrollmentsHandler,
   getContactAutomationActivityHandler,
   enrollContactInAutomationHandler,
+  controlEnrollmentHandler,
   getEnrollmentStatsHandler,
   getCampaignsCatalogHandler,
   getAdsetsCatalogHandler,
@@ -59,6 +60,7 @@ router.post('/', createAutomationHandler)
 router.get('/contacts/:contactId/activity', getContactAutomationActivityHandler)
 router.post('/test-webhook-action', testWebhookActionHandler)
 router.get('/:automationId/enrollments', getEnrollmentsHandler)
+router.post('/:automationId/enrollments/:enrollmentId/control', controlEnrollmentHandler)
 router.get('/:automationId/stats', getEnrollmentStatsHandler)
 router.get('/:automationId', getAutomationHandler)
 router.put('/:automationId', updateAutomationHandler)

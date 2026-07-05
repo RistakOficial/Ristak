@@ -1371,7 +1371,7 @@ const buildAdvancedRuleCondition = (rule, contactAlias = 'c', timezone) => {
       SELECT 1
       FROM automation_enrollments ae_bool
       WHERE ae_bool.contact_id = ${contactAlias}.id
-        AND ae_bool.status IN ('active', 'waiting')
+        AND ae_bool.status IN ('active', 'waiting', 'paused')
     )`,
     has_payment_plan: `(
       EXISTS (SELECT 1 FROM payment_plans pp_bool WHERE pp_bool.contact_id = ${contactAlias}.id)

@@ -37,6 +37,7 @@ const WAIT_KIND_DRIP = 'drip'
 const WAIT_KIND_RETRY = 'retry'
 const RETRY_MAX_ATTEMPTS = 3
 const RETRY_BACKOFF_MS = [60000, 300000, 900000] // 1 min, 5 min, 15 min
+const ACTIVE_ENROLLMENT_STATUS_SQL = "'active', 'waiting', 'paused'"
 // (AUTO-008) Tope global de profundidad de cascada: una acción (p. ej. poner una
 // etiqueta) puede disparar otra automatización cuya acción dispara otra, y así en
 // cadena. Sin tope, un par de automatizaciones que se etiquetan mutuamente con
@@ -4486,7 +4487,7 @@ async function loadContactMetrics(contactId, row = {}) {
     db.all(`
       SELECT DISTINCT automation_id
       FROM automation_enrollments
-      WHERE contact_id = ? AND status IN ('active', 'waiting')
+      WHERE contact_id = ? AND status IN (${ACTIVE_ENROLLMENT_STATUS_SQL})
     `, [contactId]).catch(() => [])
   ])
 
@@ -4621,9 +4622,114 @@ function mapEnrollmentResult(enrollment) {
     status: enrollment.status || 'active',
     currentNodeId: enrollment.currentNodeId || null,
     log: enrollment.log || [],
+    resumeAt: enrollment.resumeAt || null,
+    waitKind: enrollment.waitKind || null,
     enteredAt: enrollment.enteredAt || null,
     updatedAt: enrollment.updatedAt || null
   }
+}
+
+function mapEnrollmentRow(row) {
+  return {
+    id: row.id,
+    automationId: row.automation_id,
+    contactId: row.contact_id || null,
+    contactName: row.contact_name || 'Contacto',
+    status: row.status || 'active',
+    currentNodeId: row.current_node_id || 'start',
+    log: parseJson(row.log, []),
+    resumeAt: row.resume_at || null,
+    waitKind: row.wait_kind || null,
+    context: parseJson(row.context, {}),
+    enteredAt: row.entered_at || null,
+    updatedAt: row.updated_at || null
+  }
+}
+
+async function getEnrollmentControlRow(automationId, enrollmentId) {
+  const cleanAutomationId = cleanString(automationId)
+  const cleanEnrollmentId = cleanString(enrollmentId)
+  if (!cleanAutomationId) throw engineError(400, 'Selecciona una automatización')
+  if (!cleanEnrollmentId) throw engineError(400, 'Selecciona una inscripción')
+
+  const row = await db.get(
+    `SELECT * FROM automation_enrollments WHERE id = ? AND automation_id = ?`,
+    [cleanEnrollmentId, cleanAutomationId]
+  )
+  if (!row) throw engineError(404, 'Inscripción no encontrada')
+  return mapEnrollmentRow(row)
+}
+
+async function reloadEnrollmentResult(enrollmentId) {
+  const row = await db.get('SELECT * FROM automation_enrollments WHERE id = ?', [enrollmentId])
+  if (!row) throw engineError(404, 'Inscripción no encontrada')
+  return mapEnrollmentResult(mapEnrollmentRow(row))
+}
+
+async function getAutomationForEnrollmentControl(automationId, { requirePublished = false } = {}) {
+  const automation = await getAutomationEnrollmentRow(automationId)
+  if (!automation) throw engineError(404, 'Automatización no encontrada')
+  if (automation.status === 'archived') throw engineError(400, 'No puedes modificar inscripciones de una automatización archivada')
+  if (requirePublished && automation.status !== 'published') {
+    throw engineError(400, 'La automatización debe estar publicada para mover, avanzar o reintentar contactos')
+  }
+
+  return {
+    id: automation.id,
+    name: automation.name,
+    status: automation.status,
+    flow: parseJson(automation.published_flow || automation.flow, { nodes: [], edges: [] })
+  }
+}
+
+function clearManualControlContext(context = {}) {
+  const {
+    __retryAttempts,
+    __retryNodeId,
+    __pausedStatus,
+    __pausedResumeAt,
+    __pausedWaitKind,
+    waitExpectedAction,
+    waitActionResource,
+    waitActionResourceName,
+    waitActionChannel,
+    waitButtons,
+    ...rest
+  } = context || {}
+  return rest
+}
+
+function clearPauseContext(context = {}) {
+  const {
+    __pausedStatus,
+    __pausedResumeAt,
+    __pausedWaitKind,
+    ...rest
+  } = context || {}
+  return rest
+}
+
+async function buildEnrollmentControlContext(automation, enrollment) {
+  if (!enrollment.contactId) {
+    throw engineError(400, 'Esta inscripción no tiene contacto asociado')
+  }
+  const contact = await loadContact(enrollment.contactId)
+  return {
+    ...(enrollment.context || {}),
+    contact,
+    automationName: automation.name,
+    manualControl: true,
+    manualControlSource: 'automation-editor'
+  }
+}
+
+function ensureTargetNode(flow, nodeId) {
+  const cleanNodeId = cleanString(nodeId)
+  if (!cleanNodeId) throw engineError(400, 'Selecciona el paso destino')
+  const node = getNode(flow, cleanNodeId)
+  if (!node) throw engineError(404, 'El paso destino ya no existe en el flujo')
+  if (node.type === 'start') throw engineError(400, 'Elige un paso de la secuencia, no el disparador inicial')
+  return node
 }
 
 export async function enrollContactManually({
@@ -4651,7 +4757,7 @@ export async function enrollContactManually({
   if (settings.preventDuplicateActiveEnrollment !== false) {
     const active = await db.get(
       `SELECT id FROM automation_enrollments
-       WHERE automation_id = ? AND contact_id = ? AND status IN ('active','waiting')`,
+       WHERE automation_id = ? AND contact_id = ? AND status IN (${ACTIVE_ENROLLMENT_STATUS_SQL})`,
       [automation.id, contact.id]
     )
     if (active) throw engineError(409, 'Este contacto ya está activo en esa automatización')
@@ -4702,6 +4808,132 @@ export async function enrollContactManually({
     enteredAt: row?.entered_at || null,
     updatedAt: row?.updated_at || null
   })
+}
+
+export async function controlAutomationEnrollment({
+  automationId,
+  enrollmentId,
+  action,
+  targetNodeId
+} = {}) {
+  const command = cleanString(action).toLowerCase()
+  const enrollment = await getEnrollmentControlRow(automationId, enrollmentId)
+
+  if (command === 'exit') {
+    enrollment.status = 'exited'
+    enrollment.resumeAt = null
+    enrollment.waitKind = null
+    enrollment.context = clearManualControlContext(enrollment.context)
+    addLog(enrollment, {
+      nodeId: enrollment.currentNodeId || 'flow',
+      label: 'Flujo',
+      status: 'exited',
+      detail: 'Sacado manualmente desde Automatizaciones'
+    })
+    await saveEnrollment(enrollment)
+    return reloadEnrollmentResult(enrollment.id)
+  }
+
+  if (command === 'pause') {
+    if (!['active', 'waiting'].includes(enrollment.status)) {
+      throw engineError(400, 'Solo puedes pausar contactos activos o en espera')
+    }
+    enrollment.context = {
+      ...(enrollment.context || {}),
+      __pausedStatus: enrollment.status,
+      __pausedResumeAt: enrollment.resumeAt || null,
+      __pausedWaitKind: enrollment.waitKind || null
+    }
+    enrollment.status = 'paused'
+    addLog(enrollment, {
+      nodeId: enrollment.currentNodeId || 'flow',
+      label: 'Flujo',
+      status: 'paused',
+      detail: 'Pausado manualmente desde Automatizaciones'
+    })
+    await saveEnrollment(enrollment)
+    return reloadEnrollmentResult(enrollment.id)
+  }
+
+  if (command === 'resume') {
+    if (enrollment.status !== 'paused') {
+      throw engineError(400, 'Solo puedes reanudar contactos pausados')
+    }
+    const pausedStatus = cleanString(enrollment.context?.__pausedStatus)
+    const nextStatus = pausedStatus === 'waiting' || enrollment.resumeAt || enrollment.waitKind ? 'waiting' : 'active'
+    enrollment.status = nextStatus
+    enrollment.context = clearPauseContext(enrollment.context)
+    addLog(enrollment, {
+      nodeId: enrollment.currentNodeId || 'flow',
+      label: 'Flujo',
+      status: 'active',
+      detail: nextStatus === 'waiting'
+        ? 'Reanudado manualmente; conserva su espera pendiente'
+        : 'Reanudado manualmente desde Automatizaciones'
+    })
+
+    if (nextStatus === 'active' && enrollment.currentNodeId) {
+      const automation = await getAutomationForEnrollmentControl(automationId, { requirePublished: true })
+      const ctx = await buildEnrollmentControlContext(automation, enrollment)
+      await runFrom(automation.flow, enrollment, enrollment.currentNodeId, ctx)
+      return reloadEnrollmentResult(enrollment.id)
+    }
+
+    await saveEnrollment(enrollment)
+    return reloadEnrollmentResult(enrollment.id)
+  }
+
+  if (['advance', 'move_to_node', 'retry'].includes(command)) {
+    const automation = await getAutomationForEnrollmentControl(automationId, { requirePublished: true })
+    const flow = automation.flow
+    const retryNodeId = cleanString(enrollment.context?.__retryNodeId) || enrollment.currentNodeId
+    enrollment.status = 'active'
+    enrollment.resumeAt = null
+    enrollment.waitKind = null
+    enrollment.context = clearManualControlContext(enrollment.context)
+    const ctx = await buildEnrollmentControlContext(automation, enrollment)
+
+    if (command === 'advance') {
+      const currentNodeId = enrollment.currentNodeId
+      const edge = edgesFrom(flow, currentNodeId, 'out')[0] || edgesFrom(flow, currentNodeId)[0]
+      addLog(enrollment, {
+        nodeId: currentNodeId || 'flow',
+        label: 'Flujo',
+        status: 'ok',
+        detail: 'Empujado manualmente al siguiente paso'
+      })
+      if (!edge) {
+        enrollment.status = 'completed'
+        addLog(enrollment, {
+          nodeId: currentNodeId || 'flow',
+          label: 'Flujo',
+          status: 'ok',
+          detail: 'Fin del flujo'
+        })
+        await saveEnrollment(enrollment)
+        return reloadEnrollmentResult(enrollment.id)
+      }
+      await runFrom(flow, enrollment, edge.targetNodeId, ctx)
+      return reloadEnrollmentResult(enrollment.id)
+    }
+
+    const node = command === 'retry'
+      ? ensureTargetNode(flow, retryNodeId)
+      : ensureTargetNode(flow, targetNodeId)
+
+    addLog(enrollment, {
+      nodeId: node.id,
+      label: nodeLabel(node),
+      status: 'ok',
+      detail: command === 'retry'
+        ? 'Reintentado manualmente desde Automatizaciones'
+        : `Movido manualmente a "${nodeLabel(node)}"`
+    })
+    await runFrom(flow, enrollment, node.id, ctx)
+    return reloadEnrollmentResult(enrollment.id)
+  }
+
+  throw engineError(400, 'Acción de inscripción no soportada')
 }
 
 async function resumeWaitingTriggerLinkClicks(automations, baseCtx) {
@@ -4949,7 +5181,7 @@ async function enrollMatching(automations, eventType, baseCtx) {
     const settings = flow.settings || {}
     if (contact.id && settings.preventDuplicateActiveEnrollment !== false) {
       const active = await db.get(
-        `SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? AND status IN ('active','waiting')`,
+        `SELECT id FROM automation_enrollments WHERE automation_id = ? AND contact_id = ? AND status IN (${ACTIVE_ENROLLMENT_STATUS_SQL})`,
         [automation.id, contact.id]
       )
       if (active) continue

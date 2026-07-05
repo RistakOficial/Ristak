@@ -1,6 +1,6 @@
 import { db } from '../config/database.js'
 import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
-import { enrollContactManually, testWebhookAction } from './automationEngine.js'
+import { controlAutomationEnrollment as controlEngineEnrollment, enrollContactManually, testWebhookAction } from './automationEngine.js'
 import { findContactByPhoneCandidates, recordContactPhoneNumber } from './contactIdentityService.js'
 import { getWhatsAppApiTemplates } from './whatsappApiService.js'
 import { syncLocalMessageTemplateSnapshots } from './messageTemplatesService.js'
@@ -1209,6 +1209,8 @@ export async function listEnrollments(automationId) {
     status: row.status || 'active',
     currentNodeId: row.current_node_id || null,
     log: parseLog(row.log),
+    resumeAt: row.resume_at || null,
+    waitKind: row.wait_kind || null,
     enteredAt: row.entered_at,
     updatedAt: row.updated_at
   }))
@@ -1239,7 +1241,7 @@ export async function listContactAutomationActivity(contactId) {
 
   const enrollmentItems = enrollmentRows.map(mapContactEnrollmentRow)
   const jobItems = jobRows.map(mapContactEnrollmentJobRow)
-  const activeStatuses = new Set(['active', 'waiting'])
+  const activeStatuses = new Set(['active', 'waiting', 'paused'])
   const active = [
     ...jobItems.filter((item) => ['scheduled', 'processing'].includes(item.status)),
     ...enrollmentItems.filter((item) => activeStatuses.has(item.status))
@@ -1299,6 +1301,15 @@ export async function enrollContactInAutomation(automationId, input = {}) {
   }
 }
 
+export async function controlAutomationEnrollment(automationId, enrollmentId, input = {}) {
+  return controlEngineEnrollment({
+    automationId,
+    enrollmentId,
+    action: input.action,
+    targetNodeId: input.targetNodeId
+  })
+}
+
 export async function testAutomationRun(automationId, input = {}) {
   const automation = await getSavedAutomationForTestRun(automationId)
   const contact = await resolveTestAutomationContact(input)
@@ -1329,7 +1340,7 @@ export async function getEnrollmentStats(automationId) {
   const rows = await db.all(
     `SELECT current_node_id, COUNT(*) AS total
      FROM automation_enrollments
-     WHERE automation_id = ? AND status IN ('active', 'waiting')
+     WHERE automation_id = ? AND status IN ('active', 'waiting', 'paused')
      GROUP BY current_node_id`,
     [automationId]
   )

@@ -78,6 +78,7 @@ export interface CanvasActions {
   /** Alt + arrastrar: duplica el paso y devuelve la copia para arrastrarla */
   onDuplicateNodeForDrag: (node: AutomationNode) => AutomationNode | null
   onOpenConfig: (node: AutomationNode, anchor: { x: number; y: number }) => void
+  onOpenNodeEnrollments: (node: AutomationNode) => void
   onPatchConfig: (node: AutomationNode, patch: Record<string, unknown>, openConfig?: boolean) => void
   onRequestPicker: (request: PickerRequest) => void
   onAddTrigger: (node: AutomationNode, anchor: { x: number; y: number }) => void
@@ -923,6 +924,7 @@ export const AutomationCanvas: React.FC<AutomationCanvasProps> = ({
                   y: target.position.y * zoom + y
                 })
               }}
+              onOpenContacts={actions.onOpenNodeEnrollments}
               onPatchConfig={actions.onPatchConfig}
               onDuplicate={actions.onDuplicateNode}
               onDelete={actions.onDeleteNode}

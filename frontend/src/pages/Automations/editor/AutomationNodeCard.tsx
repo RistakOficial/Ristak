@@ -37,6 +37,7 @@ interface AutomationNodeCardProps {
   onPointerDownCard: (event: React.PointerEvent, node: AutomationNode) => void
   onSelect: (node: AutomationNode, event?: React.PointerEvent) => void
   onOpenConfig: (node: AutomationNode) => void
+  onOpenContacts: (node: AutomationNode) => void
   /** Parche directo de configuración desde la tarjeta (+ mensaje, + rama…) */
   onPatchConfig: (node: AutomationNode, patch: Record<string, unknown>, openConfig?: boolean) => void
   onDuplicate: (node: AutomationNode) => void
@@ -66,6 +67,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   onPointerDownCard,
   onSelect,
   onOpenConfig,
+  onOpenContacts,
   onPatchConfig,
   onDuplicate,
   onDelete,
@@ -203,13 +205,20 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
     >
       {/* Contactos activos en este paso */}
       {activeContacts > 0 && (
-        <span
+        <button
+          type="button"
+          data-automation-interactive="true"
           className={styles.nodeContactsBadge}
           title={`${activeContacts} contacto${activeContacts > 1 ? 's' : ''} en este paso ahora`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpenContacts(node)
+          }}
         >
           <UserRound size={11} />
           {activeContacts}
-        </span>
+        </button>
       )}
 
       {/* Conector de entrada */}

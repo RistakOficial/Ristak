@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { UserRound } from 'lucide-react'
-import { Badge, Loading, Modal, TabList } from '@/components/common'
+import { Badge, Loading, Modal, TabList, type BadgeVariant } from '@/components/common'
 import automationsService, { type AutomationEnrollment } from '@/services/automationsService'
 import type { AutomationNode } from '@/services/automationsService'
 import { getNodeDefinition } from './nodeRegistry'
@@ -22,9 +22,10 @@ interface EnrollmentRecordsModalProps {
   onClose: () => void
 }
 
-const STATUS_LABELS: Record<string, { label: string; variant: 'success' | 'neutral' | 'warning' | 'default' }> = {
+const STATUS_LABELS: Record<string, { label: string; variant: BadgeVariant }> = {
   active: { label: 'Activo', variant: 'success' },
   waiting: { label: 'Esperando', variant: 'warning' },
+  paused: { label: 'Pausado', variant: 'info' },
   completed: { label: 'Completado', variant: 'neutral' },
   exited: { label: 'Salió', variant: 'warning' },
   goal_met: { label: 'Objetivo cumplido', variant: 'success' }

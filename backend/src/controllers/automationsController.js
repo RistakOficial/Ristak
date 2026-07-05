@@ -15,6 +15,7 @@ import {
   listEnrollments,
   listContactAutomationActivity,
   enrollContactInAutomation,
+  controlAutomationEnrollment,
   getEnrollmentStats,
   listAttributionCampaigns,
   listAttributionAdsets,
@@ -219,6 +220,20 @@ export async function enrollContactInAutomationHandler(req, res) {
   } catch (error) {
     logger.error(`Error agregando contacto a automatización: ${error.message}`)
     sendError(res, error, 'Error agregando contacto a automatización')
+  }
+}
+
+export async function controlEnrollmentHandler(req, res) {
+  try {
+    const result = await controlAutomationEnrollment(
+      req.params.automationId,
+      req.params.enrollmentId,
+      req.body || {}
+    )
+    res.json({ success: true, data: result })
+  } catch (error) {
+    logger.error(`Error controlando inscripción de automatización: ${error.message}`)
+    sendError(res, error, 'Error controlando la inscripción')
   }
 }
 
