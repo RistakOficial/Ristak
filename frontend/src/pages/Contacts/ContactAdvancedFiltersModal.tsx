@@ -955,7 +955,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
         className={styles.contactFilterDrawer}
         role="dialog"
         aria-modal="true"
-        data-modal="true"
+        data-floating-modal-root="true"
         aria-label="Filtros avanzados"
       >
         <header className={styles.contactFilterDrawerHeader}>

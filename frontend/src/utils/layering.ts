@@ -2,7 +2,7 @@ export type FloatingLayer = 'dropdown' | 'popover' | 'tooltip'
 
 export const isInsideModalLayer = (element?: Element | null): boolean => {
   if (!element) return false
-  return Boolean(element.closest('[data-modal], [data-overlay], [data-phone-modal-root="true"]'))
+  return Boolean(element.closest('[data-modal], [data-overlay], [data-floating-modal-root="true"], [data-phone-modal-root="true"]'))
 }
 
 export const getFloatingLayerZIndex = (
