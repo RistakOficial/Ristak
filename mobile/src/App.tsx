@@ -30,6 +30,7 @@ import * as SystemUI from 'expo-system-ui';
 import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import {
   RecordingPresets,
@@ -374,8 +375,9 @@ const MONTH_SWIPE_MAX_OFFSET_RATIO = 0.92;
 const TIMELINE_HOUR_HEIGHT = 54;
 const TIMELINE_TOTAL_MINUTES = 24 * 60;
 const TIMELINE_GRID_HEIGHT = TIMELINE_HOUR_HEIGHT * 24;
-const TIMELINE_LONG_PRESS_DELAY_MS = 650;
+const TIMELINE_LONG_PRESS_DELAY_MS = 380;
 const TIMELINE_PENDING_MOVE_CANCEL_PX = 12;
+const TIMELINE_PENDING_VERTICAL_CANCEL_PX = 30;
 const TIMELINE_TAP_MOVE_TOLERANCE_PX = 10;
 const TIMELINE_TOUCH_ANCHOR_OFFSET_PX = 18;
 const APPOINTMENT_STATUS_OPTIONS = [
@@ -3051,10 +3053,9 @@ function getBusinessRangeTimestamps(startDateOnly: string, endDateOnly: string, 
 
 function formatCalendarAgendaDate(dateOnly: string) {
   const label = formatBusinessDayHeader(dateOnly);
-  const year = formatBusinessYear(dateOnly);
   if (!label) return '';
   const capitalized = `${label.charAt(0).toUpperCase()}${label.slice(1)}`;
-  return year ? `${capitalized} de ${year}` : capitalized;
+  return capitalized;
 }
 
 function getDateOnlyYear(dateOnly: string) {
@@ -3141,6 +3142,12 @@ function formatTimelineHour(hour: number) {
   if (hour === 0) return '12 a.m.';
   if (hour === 12) return '12 p.m.';
   return hour > 12 ? `${hour - 12} p.m.` : `${hour} a.m.`;
+}
+
+function triggerTimelineSelectionHaptic() {
+  void Haptics.selectionAsync().catch(() => {
+    Vibration.vibrate(12);
+  });
 }
 
 function formatDateOnlyDayNumber(dateOnly: string) {
@@ -3775,6 +3782,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
         timelinePendingTouchRef.current = null;
         setSelectedDateOnly(dateOnly);
         setCurrentMonthDateOnly(dateOnly);
+        triggerTimelineSelectionHaptic();
         setTimelineSelectionValue({ dateOnly, startMinutes, endMinutes: startMinutes });
       }, TIMELINE_LONG_PRESS_DELAY_MS),
     };
@@ -3786,10 +3794,10 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     if (pending) {
       const dx = event.nativeEvent.pageX - pending.x;
       const dy = event.nativeEvent.pageY - pending.y;
-      if (Math.abs(dx) > TIMELINE_PENDING_MOVE_CANCEL_PX || Math.abs(dy) > TIMELINE_PENDING_MOVE_CANCEL_PX) {
-        if (Math.abs(dx) > Math.abs(dy) * 1.35) {
-          timelineSwipeRef.current = { dateOnly, x: pending.x, y: pending.y, dx, dy };
-        }
+      const horizontalSwipe = Math.abs(dx) > TIMELINE_PENDING_MOVE_CANCEL_PX && Math.abs(dx) > Math.abs(dy) * 1.2;
+      const verticalScroll = Math.abs(dy) > TIMELINE_PENDING_VERTICAL_CANCEL_PX && Math.abs(dy) > Math.abs(dx) * 1.15;
+      if (horizontalSwipe || verticalScroll) {
+        if (horizontalSwipe) timelineSwipeRef.current = { dateOnly, x: pending.x, y: pending.y, dx, dy };
         clearTimelinePendingTouch();
       }
       return;
@@ -4103,7 +4111,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
               onPress={handleNavigateUp}
               style={({ pressed }) => [styles.calendarPeriodChip, pressed && styles.pressed]}
             >
-              <ChevronLeft size={17} color={COLORS.text} strokeWidth={2.8} />
+              <ChevronLeft size={15} color={COLORS.text} strokeWidth={2.8} />
               <Text numberOfLines={1} style={styles.calendarPeriodText}>
                 {periodChipLabel}
               </Text>
@@ -4121,14 +4129,14 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
                 onPress={() => openSheet('calendar')}
                 style={({ pressed }) => [styles.calendarCapsuleIconButton, pressed && styles.pressed]}
               >
-                <CalendarDays size={22} color={COLORS.text} strokeWidth={2.35} />
+                <CalendarDays size={19} color={COLORS.text} strokeWidth={2.35} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 onPress={openCreateSheet}
                 style={({ pressed }) => [styles.calendarCapsuleIconButton, pressed && styles.pressed]}
               >
-                <Plus size={25} color={COLORS.text} strokeWidth={2.25} />
+                <Plus size={22} color={COLORS.text} strokeWidth={2.25} />
               </Pressable>
             </View>
           </View>
@@ -4139,6 +4147,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
               style={[
                 styles.calendarTitleButton,
                 calendarView === 'month' && monthSwipeWidth > 0 && styles.calendarTitleSwipeViewport,
+                calendarView === 'month' && monthSwipeWidth > 0 && { width: headerTitleSwipeWidth, maxWidth: headerTitleSwipeWidth },
               ]}
             >
               {calendarView === 'month' && monthSwipeWidth > 0 ? (
@@ -4175,6 +4184,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
             data={listData}
             keyExtractor={(item, index) => getEventKey(item, index)}
             refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
+            scrollEnabled={!timelineSelection}
             contentContainerStyle={styles.calendarScrollBody}
             ListHeaderComponent={(
               <>
@@ -13430,72 +13440,72 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.bg,
   },
   calendarHeader: {
-    paddingTop: 20,
+    paddingTop: 16,
     paddingHorizontal: 15,
     paddingBottom: 0,
-    gap: 14,
+    gap: 8,
     backgroundColor: COLORS.bg,
   },
   calendarToolbar: {
-    minHeight: 56,
+    minHeight: 46,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 14,
+    gap: 10,
   },
   calendarPeriodChip: {
-    minHeight: 50,
-    minWidth: 118,
-    borderRadius: 25,
+    minHeight: 42,
+    minWidth: 104,
+    borderRadius: 21,
     borderWidth: 1,
     borderColor: 'rgba(183,207,255,0.18)',
     backgroundColor: 'rgba(255,255,255,0.055)',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
+    gap: 7,
+    paddingHorizontal: 10,
   },
   calendarPeriodText: {
     color: COLORS.text,
-    fontSize: 22,
+    fontSize: 18,
     fontWeight: '900',
   },
   calendarHeaderCapsule: {
-    minHeight: 52,
+    minHeight: 42,
     flex: 1,
-    maxWidth: 214,
-    borderRadius: 26,
+    maxWidth: 188,
+    borderRadius: 21,
     borderWidth: 1,
     borderColor: 'rgba(183,207,255,0.18)',
     backgroundColor: 'rgba(255,255,255,0.055)',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 7,
+    paddingHorizontal: 5,
   },
   calendarCapsuleIconButton: {
-    width: 45,
-    height: 44,
-    borderRadius: 22,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
   },
   calendarCapsuleTodayButton: {
-    minWidth: 72,
-    height: 44,
-    borderRadius: 22,
+    minWidth: 62,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'transparent',
   },
   calendarTitleRow: {
-    minHeight: 58,
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginTop: 2,
+    marginTop: 0,
   },
   calendarTitleButton: {
     flex: 1,
@@ -13503,8 +13513,8 @@ const styles = StyleSheet.create({
   },
   calendarTitle: {
     color: COLORS.text,
-    fontSize: 43,
-    lineHeight: 49,
+    fontSize: 39,
+    lineHeight: 43,
     fontWeight: '900',
     textTransform: 'capitalize',
   },
@@ -13599,7 +13609,7 @@ const styles = StyleSheet.create({
   },
   calendarTodayButtonText: {
     color: COLORS.text,
-    fontSize: 19,
+    fontSize: 16,
     fontWeight: '900',
   },
   calendarSelector: {
@@ -13636,30 +13646,36 @@ const styles = StyleSheet.create({
     paddingBottom: 138,
   },
   calendarSurface: {
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingTop: 0,
-    paddingBottom: 12,
+    paddingBottom: 0,
     backgroundColor: COLORS.bg,
   },
   calendarWeekdayRow: {
     flexDirection: 'row',
-    minHeight: 27,
+    minHeight: 40,
     alignItems: 'center',
+    paddingHorizontal: 8,
+    borderRadius: 22,
+    backgroundColor: COLORS.panelSoft,
   },
   calendarWeekdayText: {
     flex: 1,
     color: COLORS.muted,
-    fontSize: 16,
+    fontSize: 12,
     fontWeight: '900',
     textAlign: 'center',
   },
   calendarMonthGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
+    paddingTop: 8,
+    paddingBottom: 0,
+    backgroundColor: 'transparent',
   },
   calendarDayCell: {
     width: '14.2857%',
-    minHeight: 48,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
@@ -13669,9 +13685,9 @@ const styles = StyleSheet.create({
     opacity: 0.64,
   },
   calendarDayNumberWrap: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -13685,7 +13701,7 @@ const styles = StyleSheet.create({
   },
   calendarDayNumber: {
     color: COLORS.text,
-    fontSize: 23,
+    fontSize: 21,
     fontWeight: '800',
   },
   calendarDayNumberMuted: {
@@ -13714,15 +13730,15 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
   },
   calendarAgendaHeader: {
-    minHeight: 72,
+    minHeight: 46,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 12,
     paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: COLORS.border,
+    paddingTop: 0,
+    paddingBottom: 4,
+    borderTopWidth: 0,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
   },
@@ -13732,14 +13748,14 @@ const styles = StyleSheet.create({
   },
   calendarAgendaDate: {
     color: COLORS.muted,
-    fontSize: 16,
-    fontWeight: '900',
+    fontSize: 12,
+    fontWeight: '800',
   },
   calendarAgendaTitle: {
     color: COLORS.text,
-    fontSize: 22,
+    fontSize: 16,
     fontWeight: '900',
-    marginTop: 3,
+    marginTop: 1,
   },
   calendarAgendaSubtitle: {
     color: COLORS.muted,
@@ -13758,21 +13774,21 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   calendarEventCard: {
-    minHeight: 76,
+    minHeight: 56,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 11,
+    gap: 9,
     marginHorizontal: 20,
-    marginTop: 11,
-    paddingHorizontal: 13,
-    paddingVertical: 10,
+    marginTop: 7,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
     borderWidth: 1,
     borderColor: 'rgba(183,207,255,0.18)',
-    borderRadius: 16,
+    borderRadius: 14,
     backgroundColor: 'rgba(255,255,255,0.03)',
   },
   calendarEventAccent: {
-    width: 5,
+    width: 4,
     alignSelf: 'stretch',
     borderRadius: 999,
     marginVertical: 2,
@@ -13780,32 +13796,32 @@ const styles = StyleSheet.create({
   calendarEventCopy: {
     flex: 1,
     minWidth: 0,
-    gap: 4,
+    gap: 2,
   },
   calendarEventTitle: {
     color: COLORS.text,
-    fontSize: 21,
+    fontSize: 16,
     fontWeight: '900',
   },
   calendarEventMeta: {
     color: COLORS.muted,
-    fontSize: 15,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: '700',
   },
   calendarEventTimeStack: {
-    minWidth: 78,
+    minWidth: 62,
     alignItems: 'flex-end',
-    gap: 3,
+    gap: 1,
   },
   calendarEventTimeStart: {
     color: COLORS.text,
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '900',
   },
   calendarEventTimeEnd: {
     color: COLORS.muted,
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 13,
+    fontWeight: '700',
   },
   calendarEmpty: {
     minHeight: 210,
@@ -14002,20 +14018,20 @@ const styles = StyleSheet.create({
   },
   appointmentFormBody: {
     paddingHorizontal: 14,
-    paddingTop: 10,
-    paddingBottom: 24,
-    gap: 14,
+    paddingTop: 8,
+    paddingBottom: 22,
+    gap: 12,
   },
   appointmentContactCard: {
-    minHeight: 62,
-    borderRadius: 20,
+    minHeight: 58,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.panelSoft,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    padding: 12,
+    padding: 11,
   },
   appointmentContactIcon: {
     width: 38,
@@ -14042,7 +14058,7 @@ const styles = StyleSheet.create({
   },
   appointmentFieldGrid: {
     flexDirection: 'row',
-    gap: 10,
+    gap: 12,
   },
   appointmentField: {
     gap: 7,
@@ -14053,13 +14069,13 @@ const styles = StyleSheet.create({
   },
   appointmentFieldLabel: {
     color: COLORS.muted,
-    fontSize: 11,
-    fontWeight: '900',
-    textTransform: 'uppercase',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'none',
   },
   appointmentInputWrap: {
-    minHeight: 46,
-    borderRadius: 17,
+    minHeight: 44,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.panelSoft,
@@ -14069,16 +14085,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   appointmentInputWrapMultiline: {
-    minHeight: 92,
+    minHeight: 86,
     alignItems: 'flex-start',
     paddingTop: 12,
   },
   appointmentInput: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 42,
     color: COLORS.text,
     fontSize: 15,
-    fontWeight: '800',
+    fontWeight: '700',
     paddingHorizontal: 0,
     paddingVertical: 0,
   },
@@ -14096,8 +14112,8 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   appointmentChoiceChip: {
-    minHeight: 36,
-    borderRadius: 18,
+    minHeight: 34,
+    borderRadius: 17,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: 'rgba(16,42,120,0.58)',
@@ -14112,7 +14128,7 @@ const styles = StyleSheet.create({
   appointmentChoiceText: {
     color: COLORS.muted,
     fontSize: 12,
-    fontWeight: '900',
+    fontWeight: '800',
   },
   appointmentChoiceTextActive: {
     color: COLORS.text,
@@ -14473,14 +14489,14 @@ const styles = StyleSheet.create({
     color: COLORS.bg,
   },
   actionSheet: {
-    maxHeight: '84%',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
+    maxHeight: '88%',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.panel,
     overflow: 'hidden',
-    paddingBottom: 20,
+    paddingBottom: 16,
   },
   actionSheetHandle: {
     alignSelf: 'center',
@@ -14488,16 +14504,16 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 999,
     backgroundColor: 'rgba(170,192,231,0.38)',
-    marginTop: 9,
-    marginBottom: 4,
+    marginTop: 8,
+    marginBottom: 3,
   },
   actionSheetHeader: {
-    minHeight: 62,
+    minHeight: 58,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 14,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
   },
@@ -14507,7 +14523,7 @@ const styles = StyleSheet.create({
   },
   actionSheetTitle: {
     color: COLORS.text,
-    fontSize: 20,
+    fontSize: 19,
     fontWeight: '900',
   },
   actionSheetSubtitle: {
@@ -15832,7 +15848,7 @@ const styles = StyleSheet.create({
   appointmentSegmentedTab: {
     flex: 1,
     minWidth: 0,
-    borderRadius: 18,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
@@ -15841,8 +15857,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.09)',
   },
   appointmentSegmentedTabs: {
-    minHeight: 44,
-    borderRadius: 22,
+    minHeight: 40,
+    borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: 'rgba(255,255,255,0.035)',
@@ -15913,15 +15929,16 @@ const styles = StyleSheet.create({
   },
   calendarTimelineEvent: {
     position: 'absolute',
-    left: 5,
-    right: 5,
+    left: 7,
+    right: 8,
+    minHeight: 36,
     borderRadius: 12,
-    borderLeftWidth: 4,
+    borderLeftWidth: 5,
     borderWidth: 1,
     borderColor: 'rgba(183,207,255,0.18)',
     backgroundColor: COLORS.panelSoft,
-    paddingHorizontal: 7,
-    paddingVertical: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
     overflow: 'hidden',
   },
   calendarTimelineEventLayer: {
@@ -15934,13 +15951,15 @@ const styles = StyleSheet.create({
   calendarTimelineEventTime: {
     color: COLORS.muted,
     fontSize: 10,
-    fontWeight: '800',
+    lineHeight: 13,
+    fontWeight: '700',
     marginTop: 2,
   },
   calendarTimelineEventTitle: {
     color: COLORS.text,
     fontSize: 12,
-    fontWeight: '900',
+    lineHeight: 14,
+    fontWeight: '800',
   },
   calendarTimelineGrid: {
     flex: 1,
@@ -15985,8 +16004,8 @@ const styles = StyleSheet.create({
   },
   calendarTimelinePanel: {
     paddingHorizontal: 12,
-    paddingTop: 6,
-    paddingBottom: 18,
+    paddingTop: 2,
+    paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
   },

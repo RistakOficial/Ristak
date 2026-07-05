@@ -433,8 +433,16 @@ el formulario de cita con titulo, calendario activo, fecha, hora, duracion,
 estado, direccion y notas. Guardar crea contra `/api/calendars/appointments`;
 editar y eliminar usan los endpoints reales de citas/eventos. La fecha y hora
 del formulario se interpretan en `account_timezone` y se mandan al backend como
-instantes UTC. Brecha pendiente: replicar validacion avanzada de slots/bloqueos,
-usuarios Round Robin e invitados del modal web original.
+instantes UTC. En la vista Hoy/Semana, tocar o mantener presionado un horario del
+timeline debe abrir la creacion de cita en ese rango, manteniendo tolerancia a
+micro-movimientos verticales del dedo. La grilla mensual y el titulo del mes se
+desplazan sincronizados; la agenda no repite el anio debajo del mes porque el
+anio ya vive en la pastilla superior. La grilla mensual debe quedar libre sobre
+el fondo de la pantalla; solo la fila Domingo-Sabado debe llevar capsula visual.
+Al aparecer la seleccion del timeline, la app dispara haptic y bloquea el scroll
+del listado hasta soltar el dedo para que el rango se estire verticalmente sin
+mezclarse con el desplazamiento. Brecha pendiente: replicar validacion avanzada
+de slots/bloqueos, usuarios Round Robin e invitados del modal web original.
 
 ## Filtros de la bandeja del chat movil
 

@@ -82,9 +82,25 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     nativo que crea citas reales en `/api/calendars/appointments`; el detalle
     permite editar y eliminar contra los endpoints reales. El formulario ya
     cubre titulo, estado, fecha, hora, duracion, direccion, notas y conversion a
-    UTC con zona del negocio. Falta replicar validacion avanzada de slots/
-    bloqueos, invitados, usuarios Round Robin y el selector visual completo de
-    fecha/hora del modal original de `/movil`.
+    UTC con zona del negocio.
+  - Corregido 2026-07-05: la vista Hoy/Semana ya abre seleccion de horario con
+    long-press/tap sobre el timeline, sin cancelar el gesto por micro-movimiento
+    vertical; las tarjetas de eventos usan texto mas compacto; la agenda deja de
+    repetir el anio debajo del mes; la fila de dias vive en una sola banda
+    horizontal; el separador de fecha queda mas pegado al calendario; el titulo
+    del mes se desplaza con el mismo `Animated.Value` que la grilla mensual; y el
+    formulario nativo se compacto para parecerse mas al `AppointmentModal` movil
+    original.
+  - Corregido 2026-07-05, segunda pasada: la grilla mensual ya no vive dentro de
+    un contenedor visual completo; solo la fila de dias de la semana mantiene una
+    capsula. Las capsulas superiores de anio/Hoy/calendario/+ son mas compactas,
+    la separacion entre calendario y resumen del dia queda al minimo, las tarjetas
+    de citas del resumen son mas bajas, y la seleccion por long-press del timeline
+    dispara haptic y bloquea el scroll mientras se estira el rango hacia arriba o
+    hacia abajo.
+  - Brechas pendientes: replicar validacion avanzada de slots/bloqueos,
+    invitados, usuarios Round Robin y el selector visual completo de fecha/hora
+    del modal original de `/movil`.
 - [ ] Paridad completa de Pagos.
   - Avance: la pantalla nativa de Pagos ya dejó de ser un resumen recortado.
     Ahora replica el flujo principal de `/movil/payments`: selector de tipo de
