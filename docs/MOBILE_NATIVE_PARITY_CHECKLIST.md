@@ -111,6 +111,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     vuelve al orden visual del original movil con contacto, estado, selector
     fecha/hora, fecha, hora, duracion, resumen, zona horaria, direccion, notas y
     CTA `Crear cita`.
+  - Corregido 2026-07-05, quinta pasada: la fila de dias de la semana del mes
+    ya no vive dentro de una capsula; queda libre sobre la grilla como en el
+    calendario movil original. Cuando el dia seleccionado no tiene citas, la
+    lista inferior ahora muestra el estado vacio con icono de calendario y copy
+    `No hay citas este dia`.
   - Brechas pendientes: replicar validacion avanzada de slots/bloqueos,
     invitados, usuarios Round Robin y el selector visual completo de fecha/hora
     del modal original de `/movil`.

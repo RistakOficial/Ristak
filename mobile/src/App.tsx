@@ -362,8 +362,8 @@ const VIDEO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const CALENDAR_SELECTED_ID_STORAGE_KEY = 'ristak.native.calendar.selectedCalendarId.v1';
 const CALENDAR_EVENTS_CACHE_STORAGE_KEY = 'ristak.native.calendar.eventsCache.v1';
 const CALENDAR_WEEKDAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
-const CALENDAR_WEEKDAY_ROW_HEIGHT = 36;
-const CALENDAR_MONTH_GRID_TOP_PADDING = 6;
+const CALENDAR_WEEKDAY_ROW_HEIGHT = 28;
+const CALENDAR_MONTH_GRID_TOP_PADDING = 2;
 const CALENDAR_MONTH_DAY_CELL_HEIGHT = 39;
 const CALENDAR_VIEW_OPTIONS: Array<{ view: Exclude<CalendarViewMode, 'years'>; label: string }> = [
   { view: 'day', label: 'Día' },
@@ -4329,6 +4329,10 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
                   title="No hay citas próximas"
                   subtitle="Cambia de calendario o crea una cita nueva."
                 />
+              ) : calendarView === 'month' ? (
+                <CalendarEmptyState
+                  title="No hay citas este día"
+                />
               ) : null
             )}
           />
@@ -4876,14 +4880,14 @@ function CalendarEventCard({
   );
 }
 
-function CalendarEmptyState({ title, subtitle }: { title: string; subtitle: string }) {
+function CalendarEmptyState({ title, subtitle }: { title: string; subtitle?: string }) {
   return (
     <View style={styles.calendarEmpty}>
       <View style={styles.calendarEmptyIcon}>
-        <MessageCircle size={29} color={COLORS.accent} strokeWidth={2.3} />
+        <CalendarDays size={29} color={COLORS.accent} strokeWidth={2.3} />
       </View>
       <Text style={styles.calendarEmptyTitle}>{title}</Text>
-      <Text style={styles.calendarEmptyText}>{subtitle}</Text>
+      {subtitle ? <Text style={styles.calendarEmptyText}>{subtitle}</Text> : null}
     </View>
   );
 }
@@ -13738,9 +13742,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     height: CALENDAR_WEEKDAY_ROW_HEIGHT,
     alignItems: 'center',
-    paddingHorizontal: 8,
-    borderRadius: 22,
-    backgroundColor: COLORS.panelSoft,
+    paddingHorizontal: 0,
+    backgroundColor: 'transparent',
   },
   calendarWeekdayText: {
     flex: 1,
