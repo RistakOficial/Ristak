@@ -742,6 +742,10 @@ function ChatScreen({
       setOpenSwipeChatId(null);
       return;
     }
+    if (openSwipeChatId) {
+      setOpenSwipeChatId(null);
+      return;
+    }
     setSelected(contact);
   };
 
@@ -886,7 +890,11 @@ function ChatScreen({
         <FlatList
           data={filteredChats}
           keyExtractor={(item) => item.id}
+          extraData={`${openSwipeChatId || ''}|${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${selectionActive ? 'selecting' : 'normal'}`}
           refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
+          onScrollBeginDrag={() => {
+            if (openSwipeChatId) setOpenSwipeChatId(null);
+          }}
           contentContainerStyle={filteredChats.length ? styles.chatList : styles.emptyList}
           ListHeaderComponent={(
             selectionActive ? (
@@ -1757,8 +1765,13 @@ function ChatRow({
         <View style={styles.chatSwipeActions}>
           <Pressable
             accessibilityRole="button"
+            accessibilityLabel="Cerrar acciones del chat"
+            onPress={onSwipeClose}
+            style={styles.chatSwipeClosePlate}
+          />
+          <Pressable
+            accessibilityRole="button"
             onPress={() => {
-              onSwipeClose();
               onMore();
             }}
             style={({ pressed }) => [styles.chatSwipeAction, styles.chatSwipeMore, pressed && styles.pressed]}
@@ -1769,7 +1782,6 @@ function ChatRow({
           <Pressable
             accessibilityRole="button"
             onPress={() => {
-              onSwipeClose();
               onArchiveToggle();
             }}
             style={({ pressed }) => [styles.chatSwipeAction, styles.chatSwipeArchive, pressed && styles.pressed]}
@@ -1779,7 +1791,10 @@ function ChatRow({
           </Pressable>
         </View>
       ) : null}
-      <Animated.View style={[styles.chatSwipeContent, { transform: [{ translateX }] }]}>
+      <Animated.View
+        pointerEvents={swipeOpen && !selectionActive ? 'none' : 'auto'}
+        style={[styles.chatSwipeContent, { transform: [{ translateX }] }]}
+      >
         <Pressable
           style={({ pressed }) => [
             styles.chatRow,
@@ -2745,15 +2760,21 @@ const styles = StyleSheet.create({
     top: 0,
     right: 0,
     bottom: 0,
-    width: CHAT_SWIPE_ACTION_WIDTH,
+    left: 0,
     minHeight: 74,
     flexDirection: 'row',
+    justifyContent: 'flex-end',
     zIndex: 0,
+  },
+  chatSwipeClosePlate: {
+    flex: 1,
+    minWidth: 0,
   },
   chatSwipeAction: {
     alignItems: 'center',
     justifyContent: 'center',
     gap: 3,
+    minHeight: 74,
   },
   chatSwipeMore: {
     width: CHAT_SWIPE_MORE_WIDTH,
@@ -2774,9 +2795,11 @@ const styles = StyleSheet.create({
   chatSwipeContent: {
     position: 'relative',
     zIndex: 1,
+    width: '100%',
     backgroundColor: COLORS.bg,
   },
   chatRow: {
+    width: '100%',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 9,

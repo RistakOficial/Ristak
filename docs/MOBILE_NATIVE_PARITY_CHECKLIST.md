@@ -82,7 +82,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   - Avance: `mobile/` ya desplaza la fila a la izquierda con acciones `Mas` y
     `Archivar/Restaurar`. `Mas` abre un menu nativo temporal con marcar leido,
     archivar/restaurar y seleccionar; el sheet visual completo de `/movil`
-    queda pendiente en "Mas acciones de chat".
+    queda pendiente en "Mas acciones de chat". El swipe debe mantener la fila
+    abierta despues de soltar, mostrar las acciones con alto/ancho alineados a la
+    fila, permitir tocar `Mas`/`Archivar` sin que la fila animada tape los
+    botones y cerrarse al tocar otra fila o empezar scroll.
 - [x] Replicar long press/seleccion multiple.
   - Avance: mantener presionada una fila entra en seleccion multiple, muestra
     check circular, oculta filtros, permite seleccionar visibles, cancelar,
