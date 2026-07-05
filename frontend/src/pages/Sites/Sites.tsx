@@ -42,7 +42,6 @@ import {
   Copy,
   CornerDownRight,
   DollarSign,
-  FlaskConical,
   Eye,
   EyeOff,
   ExternalLink,
@@ -180,7 +179,6 @@ import {
   type SiteType
 } from '@/services/sitesService'
 import { aiAgentService } from '@/services/aiAgentService'
-import { paymentSettingsService } from '@/services/paymentSettingsService'
 import { campaignsService, type ConnectedSocialProfile } from '@/services/campaignsService'
 import { calendarsService, type Calendar as CalendarType } from '@/services/calendarsService'
 import mediaService, {
@@ -4173,35 +4171,6 @@ const normalizePaymentPostAction = (value: unknown): PaymentPostAction => {
 
 const getPaymentPostActionFromSettings = (settings: Record<string, unknown> = {}): PaymentPostAction =>
   normalizePaymentPostAction((settings as { postPayment?: unknown }).postPayment)
-
-// Modo global de pagos (test/live), cacheado a nivel módulo para el banner del panel.
-let cachedGlobalPaymentMode: 'test' | 'live' | null = null
-const useGlobalPaymentMode = (): 'test' | 'live' | null => {
-  const [mode, setMode] = useState<'test' | 'live' | null>(cachedGlobalPaymentMode)
-  useEffect(() => {
-    if (cachedGlobalPaymentMode) { setMode(cachedGlobalPaymentMode); return }
-    let active = true
-    paymentSettingsService.getSettings()
-      .then(settings => {
-        cachedGlobalPaymentMode = settings.paymentMode === 'test' ? 'test' : 'live'
-        if (active) setMode(cachedGlobalPaymentMode)
-      })
-      .catch(() => {})
-    return () => { active = false }
-  }, [])
-  return mode
-}
-
-const PaymentBlockTestBanner: React.FC = () => {
-  const globalMode = useGlobalPaymentMode()
-  if (globalMode !== 'test') return null
-  return (
-    <div className={styles.paymentTestBanner}>
-      <FlaskConical size={15} />
-      <span>Esta página está en modo test. Los pagos realizados aquí no serán cobros reales.</span>
-    </div>
-  )
-}
 
 const defaultPaymentGateConfig = (currencyFallback = 'MXN'): CommonPaymentGateConfig => normalizePaymentGateConfig({
   enabled: true,
@@ -37223,8 +37192,6 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
   ) : null
   const paymentEditControls = block.blockType === 'payment' ? (
     <>
-      <PaymentBlockTestBanner />
-
       <AccordionSection id="edit-payment-gate" title="Cobro" defaultGroupOpen>
         <PaymentGateControls
           value={getPaymentGateFromSettings(settings, paymentCurrencyFallback)}
