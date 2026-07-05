@@ -9,6 +9,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
+import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
@@ -898,6 +899,11 @@ async function activateSubscriptionStartIfNeeded(payment, nextStatus) {
         subscription.id
       ]
     )
+    const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [subscription.id]).catch(() => null)
+    publishSubscriptionChangedEvent(updated || {
+      ...subscription,
+      status: subscription.status === 'active' ? subscription.status : 'active'
+    }, { previousStatus: subscription.status })
     return
   }
 
@@ -908,6 +914,8 @@ async function activateSubscriptionStartIfNeeded(payment, nextStatus) {
      WHERE id = ?`,
     [JSON.stringify(updatedMetadata), subscription.id]
   )
+  const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [subscription.id]).catch(() => null)
+  publishSubscriptionChangedEvent(updated || subscription, { previousStatus: subscription.status })
 }
 
 async function syncClipPaymentPlanFromLocalPayment(payment) {

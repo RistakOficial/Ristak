@@ -9,6 +9,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
+import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
@@ -1541,7 +1542,12 @@ async function updateSubscriptionFromRebillSubscription(payload = {}, fallback =
     ]
   )
 
-  return db.get('SELECT * FROM subscriptions WHERE id = ?', [subscriptionRow.id])
+  const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [subscriptionRow.id])
+  publishSubscriptionChangedEvent(updated || {
+    ...subscriptionRow,
+    status: mapped.status || subscriptionRow.status || 'incomplete'
+  }, { previousStatus: subscriptionRow.status })
+  return updated
 }
 
 async function findRebillSubscriptionForPayment(rebillMetadata = {}, paymentMetadata = {}) {

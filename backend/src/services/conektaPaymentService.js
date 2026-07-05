@@ -12,6 +12,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
+import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
@@ -1343,6 +1344,20 @@ async function syncConektaSubscriptionPaymentFromWebhook(subscription = {}, subs
         })
       }
 
+      const updatedPayment = await findPaymentById(startPaymentRow.id).catch(() => null)
+      publishPaymentChangedEvent(updatedPayment || {
+        id: startPaymentRow.id,
+        contact_id: subscriptionRow.contact_id || null,
+        status: 'paid',
+        payment_method: 'conekta_subscription',
+        payment_provider: 'conekta',
+        metadata_json: JSON.stringify({
+          source: 'conekta_subscription_webhook',
+          ristakSubscriptionId: subscriptionRow.id,
+          conektaSubscriptionId: cleanString(subscription.id)
+        })
+      })
+
       return { paymentId: startPaymentRow.id, created: false, updatedStartPayment: true }
     }
   }
@@ -1393,6 +1408,16 @@ async function syncConektaSubscriptionPaymentFromWebhook(subscription = {}, subs
       logger.warn(`No se pudieron actualizar stats del contacto por suscripción Conekta ${subscriptionRow.id}: ${error.message}`)
     })
   }
+
+  const inserted = await findPaymentById(paymentId).catch(() => null)
+  publishPaymentChangedEvent(inserted || {
+    id: paymentId,
+    contact_id: subscriptionRow.contact_id || null,
+    status: 'paid',
+    payment_method: 'conekta_subscription',
+    payment_provider: 'conekta',
+    metadata_json: JSON.stringify(paymentMetadata)
+  })
 
   return { paymentId, created: true }
 }
@@ -1484,6 +1509,11 @@ export async function reconcileConektaSubscriptionFromWebhook(event = {}) {
 
   const refreshed = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
   const paymentSync = await syncConektaSubscriptionPaymentFromWebhook(subscription, refreshed || existing, event)
+  publishSubscriptionChangedEvent(refreshed || {
+    ...existing,
+    status: nextStatus,
+    conekta_subscription_id: conektaSubscriptionId || existing.conekta_subscription_id
+  }, { previousStatus: existing.status })
 
   if (changed) {
     logger.info(`[Conekta webhook] Suscripción ${existing.id} reconciliada: ${existing.status} -> ${nextStatus} (${conektaSubscriptionId})`)
@@ -2327,6 +2357,12 @@ export async function createPublicConektaSubscription(publicPaymentId, input = {
   )
 
   const refreshed = await findPaymentById(row.id)
+  const updatedSubscription = await db.get('SELECT * FROM subscriptions WHERE id = ?', [subscription.id]).catch(() => null)
+  publishSubscriptionChangedEvent(updatedSubscription || {
+    ...subscription,
+    status: conektaSubscription.status || 'active',
+    payment_provider: 'conekta'
+  }, { previousStatus: subscription.status })
   if (refreshed?.contact_id) {
     triggerMetaPaymentPurchaseEvent(refreshed.contact_id, { ...refreshed, status: 'paid' })
       .catch((error) => {

@@ -15,6 +15,7 @@ import { resolvePushNotificationTargetForEvent, isContactHiddenFromNotifications
 // (Presencia) No notificar a quien ya tiene el chat abierto; marcarle leído.
 import { getViewingUserIds } from './presenceService.js'
 import { markChatContactReadForUser } from './chatReadStateService.js'
+import { publishPaymentChangedEvent } from './paymentLiveEventsService.js'
 
 const ENV_VAPID_PUBLIC_KEY = process.env.WEB_PUSH_PUBLIC_KEY || process.env.VAPID_PUBLIC_KEY || ''
 const ENV_VAPID_PRIVATE_KEY = process.env.WEB_PUSH_PRIVATE_KEY || process.env.VAPID_PRIVATE_KEY || ''
@@ -2248,6 +2249,8 @@ export function buildPaymentNotificationPayload(payment = {}) {
 }
 
 export async function sendPaymentNotification(payment = {}) {
+  publishPaymentChangedEvent(payment)
+
   if (!(await hasAnyPushTransport())) return { sent: 0, skipped: true, reason: 'not_configured' }
 
   // (MOB-006) El on/off de pagos se resuelve POR usuario destinatario en el dispatcher.

@@ -111,6 +111,7 @@ Rutas protegidas por auth y/o feature flags:
 - `/api/transactions`: pagos/transacciones.
 - `/api/products`: productos y precios.
 - `/api/subscriptions`: suscripciones.
+- `/api/payment-events`: stream interno SSE para refrescar pantallas de pagos.
 - `/api/stripe`, `/api/conekta`, `/api/mercadopago`, `/api/clip`, `/api/rebill`: pasarelas.
 - `/api/highlevel`: conexion, sync, invoices, productos, calendarios y conversaciones.
 - `/api/meta`: Meta Ads, pixel, CAPI, social messaging y campaign builder.
@@ -727,6 +728,12 @@ Ristak soporta:
 El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
+
+Cuando un webhook, retorno de pasarela o accion interna cambia un pago o una
+suscripcion, el backend emite un evento por `/api/payment-events/stream`. Las
+pantallas de Transacciones, Planes de pago y Suscripciones escuchan ese stream y
+recargan solo la vista abierta. No se usa polling periodico para mantener esas
+tablas vivas; la actualizacion depende del evento que dispara el cambio real.
 
 Un pago exitoso en modo `test` puede clasificar al contacto como `Cliente` dentro
 del CRM y del filtro de Contactos para validar flujos sandbox. Ese mismo pago no

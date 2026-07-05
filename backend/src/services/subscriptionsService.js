@@ -44,6 +44,7 @@ import {
   normalizeDateOnlyInTimezone,
   normalizeToUtcIso
 } from '../utils/dateUtils.js'
+import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 
 const SUBSCRIPTION_PREFIX = 'rstk_sub'
 const DEFAULT_CURRENCY = 'MXN'
@@ -1282,7 +1283,9 @@ export async function createSubscription(payload = {}) {
     await syncStripeSubscriptionInvoicePayment(row.stripe_initial_invoice, 'paid')
   }
 
-  return getSubscription(row.id)
+  const created = await getSubscription(row.id)
+  publishSubscriptionChangedEvent(created)
+  return created
 }
 
 export async function updateSubscription(subscriptionId, payload = {}) {
@@ -1416,7 +1419,9 @@ export async function updateSubscription(subscriptionId, payload = {}) {
     ]
   )
 
-  return getSubscription(subscriptionId)
+  const updated = await getSubscription(subscriptionId)
+  publishSubscriptionChangedEvent(updated, { previousStatus: existing.status })
+  return updated
 }
 
 export async function actionSubscription(subscriptionId, action, payload = {}) {
@@ -1513,7 +1518,9 @@ export async function actionSubscription(subscriptionId, action, payload = {}) {
     throw new Error('Acción de suscripción no soportada.')
   }
 
-  return getSubscription(subscriptionId)
+  const updated = await getSubscription(subscriptionId)
+  publishSubscriptionChangedEvent(updated, { previousStatus: existing.status })
+  return updated
 }
 
 export async function deleteSubscription(subscriptionId) {
@@ -1564,6 +1571,9 @@ export async function deleteSubscription(subscriptionId) {
     }
 
     const result = await hardDeleteTestSubscription(subscriptionId)
+    if (result.deleted) {
+      publishSubscriptionChangedEvent({ ...existing, id: subscriptionId, status: 'deleted' }, { previousStatus: existing?.status })
+    }
     return result.deleted
   }
 
@@ -1603,5 +1613,9 @@ export async function deleteSubscription(subscriptionId) {
     [subscriptionId]
   )
 
-  return result.changes > 0
+  const deleted = result.changes > 0
+  if (deleted) {
+    publishSubscriptionChangedEvent({ ...existing, id: subscriptionId, status: 'deleted' }, { previousStatus: existing?.status })
+  }
+  return deleted
 }

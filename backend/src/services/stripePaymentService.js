@@ -12,6 +12,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
+import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
   buildMetaPublicPurchasePixelEvent,
@@ -1087,6 +1088,24 @@ async function findPaymentByPublicId(publicPaymentId) {
      LEFT JOIN contacts c ON c.id = p.contact_id
      WHERE p.public_payment_id = ?`,
     [publicPaymentId]
+  )
+}
+
+async function findPaymentById(paymentId) {
+  const cleanPaymentId = cleanString(paymentId, 180)
+  if (!cleanPaymentId) return null
+
+  return db.get(
+    `SELECT
+      p.*,
+      c.full_name AS contact_name,
+      c.email AS contact_email,
+      c.phone AS contact_phone,
+      c.stripe_customer_id AS contact_stripe_customer_id
+     FROM payments p
+     LEFT JOIN contacts c ON c.id = p.contact_id
+     WHERE p.id = ?`,
+    [cleanPaymentId]
   )
 }
 
@@ -2359,7 +2378,12 @@ async function activateStripeSubscriptionFromStartPayment(paymentRow = {}, saved
     ]
   )
 
-  return db.get('SELECT * FROM subscriptions WHERE id = ?', [subscription.id])
+  const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [subscription.id])
+  publishSubscriptionChangedEvent(updated || {
+    ...subscription,
+    status: stripeSubscription.status || 'active'
+  }, { previousStatus: subscription.status })
+  return updated
 }
 
 function getInvoiceLinePeriod(invoice = {}) {
@@ -2440,6 +2464,17 @@ async function insertSubscriptionPaymentFromInvoice(invoice, subscriptionRow, ne
     })
   }
 
+  const inserted = await findPaymentById(paymentId).catch(() => null)
+  publishPaymentChangedEvent(inserted || {
+    id: paymentId,
+    contact_id: subscriptionRow.contact_id || null,
+    status: 'paid',
+    payment_method: 'stripe_subscription',
+    payment_provider: 'stripe',
+    stripe_payment_intent_id: paymentIntentId || null,
+    metadata_json: JSON.stringify(metadata)
+  })
+
   return paymentId
 }
 
@@ -2497,6 +2532,13 @@ async function updateSubscriptionFromInvoice(invoice, nextStatus) {
     stripe_subscription_id: stripeSubscriptionId || existing.stripe_subscription_id
   }, nextStatus)
 
+  const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
+  publishSubscriptionChangedEvent(updated || {
+    ...existing,
+    status,
+    stripe_subscription_id: stripeSubscriptionId || existing.stripe_subscription_id
+  }, { previousStatus: existing.status })
+
   return status
 }
 
@@ -2526,7 +2568,7 @@ async function updateSubscriptionFromStripeCheckoutSession(session, { stripe, re
   }
 
   const existing = await db.get(
-    `SELECT id, cancel_at, metadata_json
+    `SELECT id, status, cancel_at, metadata_json
      FROM subscriptions
      WHERE ${filters.join(' OR ')}
      LIMIT 1`,
@@ -2601,7 +2643,20 @@ async function updateSubscriptionFromStripeCheckoutSession(session, { stripe, re
         subscriptionStartPayment.paymentId
       ]
     )
+    const updatedPayment = await findPaymentById(subscriptionStartPayment.paymentId).catch(() => null)
+    publishPaymentChangedEvent(updatedPayment || {
+      id: subscriptionStartPayment.paymentId,
+      status: nextStatus === 'active' ? 'paid' : 'pending',
+      payment_method: 'stripe_subscription',
+      payment_provider: 'stripe'
+    })
   }
+
+  const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
+  publishSubscriptionChangedEvent(updated || {
+    ...existing,
+    status: nextStatus
+  }, { previousStatus: existing.status })
 
   return nextStatus
 }
@@ -2625,7 +2680,7 @@ async function updateSubscriptionFromStripeSubscription(subscription) {
   }
 
   const existing = await db.get(
-    `SELECT id
+    `SELECT id, status
      FROM subscriptions
      WHERE ${filters.join(' OR ')}
      LIMIT 1`,
@@ -2655,6 +2710,13 @@ async function updateSubscriptionFromStripeSubscription(subscription) {
       existing.id
     ]
   )
+
+  const updated = await db.get('SELECT * FROM subscriptions WHERE id = ?', [existing.id])
+  publishSubscriptionChangedEvent(updated || {
+    ...existing,
+    status: nextStatus,
+    stripe_subscription_id: stripeSubscriptionId || ''
+  }, { previousStatus: existing.status })
 
   return nextStatus
 }

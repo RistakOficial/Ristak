@@ -77,6 +77,7 @@ import pushRoutes from './routes/push.routes.js'
 import licenseRoutes from './routes/license.routes.js'
 import mdpProgramRoutes from './routes/mdpProgram.routes.js'
 import chatEventsRoutes from './routes/chatEvents.routes.js'
+import paymentEventsRoutes from './routes/paymentEvents.routes.js'
 import { publicSiteHostMiddleware } from './controllers/sitesController.js'
 import { getHealthInfo, requestPortalUserRefresh } from './services/licenseService.js'
 import { requireFeature } from './middleware/licenseMiddleware.js'
@@ -327,6 +328,7 @@ app.use('/api/push', pushRoutes)
 app.use('/api/license', licenseRoutes)
 app.use('/api/mdp-program', requireAuth, requireFeature('mdp_program'), mdpProgramRoutes)
 app.use('/api/chat-events', chatEventsRoutes)
+app.use('/api/payment-events', requireAuth, requireFeature('payments'), paymentEventsRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api/user-config', userConfigRoutes) // (MOB-006) preferencias de notificaciones por usuario
 app.use('/api', costsRoutes)

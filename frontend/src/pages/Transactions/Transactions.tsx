@@ -50,6 +50,7 @@ import {
   todayDateOnlyInTimezone
 } from '@/utils/timezone'
 import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
+import { subscribeToPaymentLiveEvents, type PaymentLiveEvent } from '@/services/paymentLiveEventsService'
 import { highLevelService } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
@@ -562,6 +563,11 @@ const renderDateHeader = (subtitle: string) => (
   </>
 )
 
+const paymentLiveEventTargetsScope = (event: PaymentLiveEvent, scope: 'transactions' | 'payment_plans') => {
+  const scopes = event.scopes || []
+  return scopes.length === 0 || scopes.includes(scope)
+}
+
 interface PaymentPlanScheduleOptions {
   scheduleMode: 'recurring' | 'one_time'
   startDate: string
@@ -732,6 +738,18 @@ export const Transactions: React.FC = () => {
   const paymentPlansUnavailableRedirectedRef = useRef(false)
   const transactionsRequestRef = useRef(0)
   const paymentPlansRequestRef = useRef(0)
+  const paymentLiveRefreshTimerRef = useRef<number | null>(null)
+  const paymentLiveRefreshInFlightRef = useRef(false)
+  const paymentLiveRefreshQueuedRef = useRef(false)
+  const paymentLiveRefreshRef = useRef<{
+    activeTab: PaymentsTableTab
+    refreshTransactions: () => Promise<void>
+    refreshPaymentPlans: () => Promise<void>
+  }>({
+    activeTab: routeState.tab,
+    refreshTransactions: async () => undefined,
+    refreshPaymentPlans: async () => undefined
+  })
 
   const navigateTransactionsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
     navigate({ pathname, search: location.search }, options)
@@ -984,6 +1002,69 @@ export const Transactions: React.FC = () => {
       }
     }
   }
+
+  paymentLiveRefreshRef.current = {
+    activeTab: paymentTableTab,
+    refreshTransactions: () => fetchData(false),
+    refreshPaymentPlans: fetchPaymentPlans
+  }
+
+  useEffect(() => {
+    const clearScheduledRefresh = () => {
+      if (paymentLiveRefreshTimerRef.current === null) return
+      window.clearTimeout(paymentLiveRefreshTimerRef.current)
+      paymentLiveRefreshTimerRef.current = null
+    }
+
+    const runRefresh = async () => {
+      paymentLiveRefreshTimerRef.current = null
+
+      if (paymentLiveRefreshInFlightRef.current) {
+        paymentLiveRefreshQueuedRef.current = true
+        return
+      }
+
+      paymentLiveRefreshInFlightRef.current = true
+      try {
+        const { activeTab, refreshPaymentPlans, refreshTransactions } = paymentLiveRefreshRef.current
+        if (activeTab === 'payment-plans') {
+          await refreshPaymentPlans()
+        } else {
+          await refreshTransactions()
+        }
+      } finally {
+        paymentLiveRefreshInFlightRef.current = false
+        if (paymentLiveRefreshQueuedRef.current) {
+          paymentLiveRefreshQueuedRef.current = false
+          paymentLiveRefreshTimerRef.current = window.setTimeout(() => {
+            void runRefresh()
+          }, 400)
+        }
+      }
+    }
+
+    const scheduleRefresh = (event: PaymentLiveEvent) => {
+      const activeScope = paymentLiveRefreshRef.current.activeTab === 'payment-plans'
+        ? 'payment_plans'
+        : 'transactions'
+
+      if (!paymentLiveEventTargetsScope(event, activeScope)) return
+
+      clearScheduledRefresh()
+      paymentLiveRefreshTimerRef.current = window.setTimeout(() => {
+        void runRefresh()
+      }, 400)
+    }
+
+    const unsubscribe = subscribeToPaymentLiveEvents({
+      onEvent: scheduleRefresh
+    })
+
+    return () => {
+      unsubscribe()
+      clearScheduledRefresh()
+    }
+  }, [])
 
   const handleSync = async () => {
     setSyncing(true)

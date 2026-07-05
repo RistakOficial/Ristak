@@ -16,6 +16,7 @@ import { registerGigstackPaymentForTransactionInBackground } from './gigstackInv
 import { dispatchProductPostWebhooksForPaymentInBackground } from './productPostWebhookService.js'
 import { resolvePaymentContactForGatewayPayment } from './paymentContactLinkService.js'
 import { sendPaymentNotification } from './pushNotificationsService.js'
+import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 // (PAY2-003) Encolar el comprobante automático tras un pago de Mercado Pago (igual que Conekta).
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
@@ -3183,8 +3184,20 @@ async function updateSubscriptionFromMercadoPagoPreapproval(preapproval = {}) {
       status: startPaymentStatus === 'paid' ? 'paid' : 'pending',
       previousStatus: previousStartPayment?.status || ''
     })
+    const updatedPayment = await findPaymentById(startPayment.paymentId).catch(() => null)
+    publishPaymentChangedEvent(updatedPayment || {
+      id: startPayment.paymentId,
+      status: startPaymentStatus === 'paid' ? 'paid' : 'pending',
+      previousStatus: previousStartPayment?.status || '',
+      payment_method: 'mercadopago_subscription',
+      payment_provider: 'mercadopago'
+    })
   }
 
+  publishSubscriptionChangedEvent(updated || {
+    ...existing,
+    status: mapped.status
+  }, { previousStatus: existing.status })
   return updated
 }
 
@@ -3277,6 +3290,16 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
         })
       }
 
+      const updatedPayment = await findPaymentById(startPaymentRow.id).catch(() => null)
+      publishPaymentChangedEvent(updatedPayment || {
+        id: startPaymentRow.id,
+        contact_id: subscriptionRow.contact_id || null,
+        status: nextStatus,
+        payment_method: 'mercadopago_subscription',
+        payment_provider: 'mercadopago',
+        metadata_json: JSON.stringify(metadata)
+      })
+
       return startPaymentRow.id
     }
   }
@@ -3308,6 +3331,15 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
         existing.id
       ]
     )
+    const updatedPayment = await findPaymentById(existing.id).catch(() => null)
+    publishPaymentChangedEvent(updatedPayment || {
+      id: existing.id,
+      contact_id: subscriptionRow.contact_id || null,
+      status: nextStatus,
+      payment_method: 'mercadopago_subscription',
+      payment_provider: 'mercadopago',
+      metadata_json: JSON.stringify(metadata)
+    })
     return existing.id
   }
 
@@ -3353,6 +3385,16 @@ async function insertSubscriptionPaymentFromMercadoPagoAuthorizedPayment(authori
         logger.warn(`No se pudo encolar comprobante por suscripción Mercado Pago ${localPaymentId}: ${error.message}`)
       })
   }
+
+  const inserted = await findPaymentById(localPaymentId).catch(() => null)
+  publishPaymentChangedEvent(inserted || {
+    id: localPaymentId,
+    contact_id: subscriptionRow.contact_id || null,
+    status: nextStatus,
+    payment_method: 'mercadopago_subscription',
+    payment_provider: 'mercadopago',
+    metadata_json: JSON.stringify(metadata)
+  })
 
   return localPaymentId
 }

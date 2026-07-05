@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   CalendarClock,
@@ -50,6 +50,7 @@ import type { Contact } from '@/types'
 import { formatCurrency } from '@/utils/format'
 import { toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { getIntegrationsStatus } from '@/services/integrationsService'
+import { subscribeToPaymentLiveEvents, type PaymentLiveEvent } from '@/services/paymentLiveEventsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
 import {
@@ -543,6 +544,11 @@ function matchesStatusFilter(subscription: PaymentSubscription, filter: string) 
   return status === filter
 }
 
+function paymentLiveEventTargetsSubscriptions(event: PaymentLiveEvent) {
+  const scopes = event.scopes || []
+  return scopes.length === 0 || scopes.includes('subscriptions')
+}
+
 function buildContactFromSubscription(subscription: PaymentSubscription): Contact | null {
   if (!subscription.contactId) return null
 
@@ -591,6 +597,10 @@ export const PaymentSubscriptions: React.FC = () => {
   const [loadingSavedCards, setLoadingSavedCards] = useState(false)
   const [selectedStripePaymentMethodId, setSelectedStripePaymentMethodId] = useState('')
   const [selectedConektaPaymentSourceId, setSelectedConektaPaymentSourceId] = useState('')
+  const liveRefreshTimerRef = useRef<number | null>(null)
+  const liveRefreshInFlightRef = useRef(false)
+  const liveRefreshQueuedRef = useRef(false)
+  const loadSubscriptionsRef = useRef<(options?: { refresh?: boolean }) => Promise<void>>(async () => undefined)
 
   const loadSubscriptions = async ({ refresh = false } = {}) => {
     if (refresh) setRefreshing(true)
@@ -607,6 +617,56 @@ export const PaymentSubscriptions: React.FC = () => {
       setRefreshing(false)
     }
   }
+
+  loadSubscriptionsRef.current = loadSubscriptions
+
+  useEffect(() => {
+    const clearScheduledRefresh = () => {
+      if (liveRefreshTimerRef.current === null) return
+      window.clearTimeout(liveRefreshTimerRef.current)
+      liveRefreshTimerRef.current = null
+    }
+
+    const runRefresh = async () => {
+      liveRefreshTimerRef.current = null
+
+      if (liveRefreshInFlightRef.current) {
+        liveRefreshQueuedRef.current = true
+        return
+      }
+
+      liveRefreshInFlightRef.current = true
+      try {
+        await loadSubscriptionsRef.current({ refresh: true })
+      } finally {
+        liveRefreshInFlightRef.current = false
+        if (liveRefreshQueuedRef.current) {
+          liveRefreshQueuedRef.current = false
+          liveRefreshTimerRef.current = window.setTimeout(() => {
+            void runRefresh()
+          }, 400)
+        }
+      }
+    }
+
+    const scheduleRefresh = (event: PaymentLiveEvent) => {
+      if (!paymentLiveEventTargetsSubscriptions(event)) return
+
+      clearScheduledRefresh()
+      liveRefreshTimerRef.current = window.setTimeout(() => {
+        void runRefresh()
+      }, 400)
+    }
+
+    const unsubscribe = subscribeToPaymentLiveEvents({
+      onEvent: scheduleRefresh
+    })
+
+    return () => {
+      unsubscribe()
+      clearScheduledRefresh()
+    }
+  }, [])
 
   useEffect(() => {
     void loadSubscriptions()
