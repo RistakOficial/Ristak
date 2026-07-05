@@ -4,6 +4,12 @@ Ristak ya puede compilarse como app nativa iOS/Android con Capacitor. La app usa
 
 En iOS el contenedor nativo está configurado como app de iPhone/iPad enfocada en `/movil`. Al abrir desde Xcode o desde el icono del celular, primero resuelve la empresa contra el portal central, guarda la URL pública de la instalación del cliente y después arranca el login/chat móvil contra ese Render.
 
+El bundle iOS principal debe declarar español como region de desarrollo y
+localizacion soportada (`CFBundleDevelopmentRegion=es` y
+`CFBundleLocalizations=[es]`) para que controles nativos como la camara de
+Capacitor muestren acciones del sistema en español en vez de `Retake` /
+`Use Photo`.
+
 Orientación: iPhone usa portrait; iPad usa landscape para que la lista de chats y la conversación se vean completas. En web/PWA, si una tablet abre el chat en portrait, la pantalla muestra un aviso para girarla.
 
 Zoom: las rutas moviles (`/movil/*` y legacy `/phone/*`) bloquean zoom accidental
@@ -41,6 +47,12 @@ de `env(safe-area-inset-*)` puro, porque Android WebView puede reportarlo en
 cero aunque `StatusBar.overlaysWebView` este activo.
 No vuelvas a meter `scrollTo(0,0)` por frame desde `visualViewport.scroll`: eso
 mete lag al scroll del chat y pelea con el dedo del usuario.
+
+El selector de destinatarios que aparece al tomar foto/video desde la bandeja de
+`/movil` tambien debe participar en este contrato: su composer debe estar marcado
+con `data-phone-chat-composer="true"` y el footer debe subir con `--phone-kb`
+cuando el teclado iOS abre, sin desplazar la ventana completa ni inventar una
+altura fija de teclado.
 
 Formularios moviles y login: fuera del composer del chat, el guardian global
 `keyboardFocusScroll` debe seguir activo aunque el bridge nativo haya marcado

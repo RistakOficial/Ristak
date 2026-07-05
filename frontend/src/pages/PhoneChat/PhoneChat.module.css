@@ -2682,6 +2682,11 @@
   -webkit-overflow-scrolling: touch;
 }
 
+:global(html[data-phone-chat-keyboard="true"]) .phoneChatPage[data-phone-chat-device="phone"] .cameraShareList {
+  padding-bottom: calc(var(--phone-kb, 0px) + 132px);
+  scroll-padding-bottom: calc(var(--phone-kb, 0px) + 132px);
+}
+
 .cameraShareContact {
   display: grid;
   grid-template-columns: 54px minmax(0, 1fr);
@@ -2767,11 +2772,19 @@
 }
 
 .cameraShareFooter {
+  position: relative;
+  z-index: 2;
   display: grid;
   gap: 6px;
   min-width: 0;
   background: color-mix(in srgb, var(--phone-chat-bg) 92%, transparent);
   box-shadow: 0 -12px 30px rgba(var(--phone-chat-primary-rgb), 0.08);
+}
+
+.phoneChatPage[data-phone-chat-device="phone"] .cameraShareFooter {
+  transform: translate3d(0, calc(-1 * var(--phone-kb, 0px)), 0);
+  transition: transform var(--phone-kb-dur, 0ms) var(--phone-kb-ease, linear);
+  will-change: transform;
 }
 
 .cameraShareSelectedStrip {

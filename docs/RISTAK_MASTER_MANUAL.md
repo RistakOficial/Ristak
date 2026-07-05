@@ -398,7 +398,9 @@ de una conversacion, la captura de foto o video abre un selector de destinatario
 Ese selector debe permitir elegir uno o varios contactos, escribir un caption,
 mostrar una mini-preview del media tomado y conservar los badges del canal del
 contacto (WhatsApp, Messenger, Instagram, email o SMS) para que el humano sepa
-por donde esta hablando antes de enviar.
+por donde esta hablando antes de enviar. Cuando el teclado iOS se abre sobre ese
+selector, el composer inferior debe subir usando la altura nativa `--phone-kb`
+para que el caption y el boton de envio sigan visibles.
 
 La lista de chats se carga por lotes de 50 conversaciones. Al abrir una
 conversacion, el frontend pide solo los ultimos 50 mensajes combinados del hilo

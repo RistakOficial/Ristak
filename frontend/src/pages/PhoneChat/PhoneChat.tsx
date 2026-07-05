@@ -14362,7 +14362,11 @@ export const PhoneChat: React.FC = () => {
               ))}
             </div>
           )}
-          <div className={`${styles.composer} ${cameraShareCaption.trim() || cameraShareSelectedContacts.length > 0 ? styles.composerHasContent : ''} ${styles.cameraShareComposer}`} data-chat-composer="true">
+          <div
+            className={`${styles.composer} ${cameraShareCaption.trim() || cameraShareSelectedContacts.length > 0 ? styles.composerHasContent : ''} ${styles.cameraShareComposer}`}
+            data-chat-composer="true"
+            data-phone-chat-composer="true"
+          >
             <figure className={styles.cameraShareComposerThumb} aria-label={isVideo ? 'Vista previa del video' : 'Vista previa de la foto'}>
               {isVideo ? (
                 <>
