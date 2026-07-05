@@ -1426,12 +1426,17 @@ usando únicamente automatizaciones publicadas y su `published_flow`.
 Los disparadores de comentario de Facebook e Instagram se activan solo con
 eventos reales de comentario. La respuesta no se configura como un DM suelto:
 el editor usa la acción **Responder comentario**, y dentro de esa acción el
-usuario elige si responder públicamente en la publicación o mandar un mensaje
-privado al comentarista; para Facebook ese privado viaja por Messenger y para
-Instagram por Instagram DM, usando el `comment_id` del evento segun el contrato
-de Meta. Las respuestas privadas a comentario cuentan
-como mensaje enviado para una espera posterior de respuesta; las respuestas
-publicas no abren una espera de DM.
+usuario debe elegir una accion especifica: responder comentario publico en
+Facebook, responder comentario publico en Instagram, enviar mensaje privado por
+Messenger o enviar mensaje privado por Instagram DM. La accion debe coincidir
+con la plataforma del disparador; si una automatizacion mezcla comentarios de
+Facebook e Instagram, se deben separar los flujos para evitar que el sistema
+adivine la red social. Por contrato de Meta, Instagram publico solo acepta texto
+en `/{ig-comment-id}/replies`, Facebook publico acepta texto y una imagen, y las
+respuestas privadas usan el `comment_id` para mandar un unico mensaje inicial al
+comentarista por Messenger o Instagram DM. Las respuestas privadas a comentario
+cuentan como mensaje enviado para una espera posterior de respuesta; las
+respuestas publicas no abren una espera de DM.
 
 ## Jobs y crons
 

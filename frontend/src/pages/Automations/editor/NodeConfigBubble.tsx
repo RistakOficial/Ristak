@@ -4,7 +4,13 @@ import { cn } from '@/utils/cn'
 import type { AutomationWebhookActionTestResult } from '@/services/automationsService'
 import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
 import { CustomSelect } from './config/configPrimitives'
-import { validateNodeConfig, type ConfigField, type NodeDefinition } from './nodeRegistry'
+import {
+  sanitizeCommentReplyMessageBlocks,
+  validateNodeConfig,
+  type ConfigField,
+  type MessageBlock,
+  type NodeDefinition
+} from './nodeRegistry'
 import { genId, type WaitMessageSourceOption } from './flowUtils'
 import {
   CatalogSelect,
@@ -28,7 +34,6 @@ import { TriggerFiltersEditor } from './config/TriggerFiltersEditor'
 import { SchedulerConfigEditor } from './config/SchedulerConfigEditor'
 import type { TriggerFilter } from './crmFields'
 import { MessageComposer, VariableTextInput } from './composer/MessageComposer'
-import type { MessageBlock } from './nodeRegistry'
 import styles from './AutomationEditor.module.css'
 
 type ConfigValue = Record<string, unknown>
@@ -130,8 +135,13 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
     onClose()
   }
 
+  const withCommentReplySanitizer = (next: ConfigValue): ConfigValue => {
+    if (definition.type !== 'channel-comment-public-reply') return next
+    return { ...next, messageBlocks: sanitizeCommentReplyMessageBlocks(next) }
+  }
+
   const setValue = (key: string, value: unknown) => {
-    onChange({ ...config, [key]: value })
+    onChange(withCommentReplySanitizer({ ...config, [key]: value }))
   }
 
   useEffect(() => {
@@ -856,8 +866,12 @@ export const NodeConfigBubble: React.FC<NodeConfigBubbleProps> = ({
             {definition.fields.map(renderField)}
             <MessageBlocksEditor
               value={config.messageBlocks}
-              onChange={(messageBlocks: MessageBlock[]) => onChange({ ...config, messageBlocks })}
+              onChange={(messageBlocks: MessageBlock[]) =>
+                onChange(withCommentReplySanitizer({ ...config, messageBlocks }))
+              }
               supportsQuickReplies={Boolean(definition.supportsQuickReplies)}
+              supportsButtons={definition.supportsMessageButtons !== false}
+              allowedBlockTypes={definition.messageBlockTypes?.(config)}
             />
           </>
         )}

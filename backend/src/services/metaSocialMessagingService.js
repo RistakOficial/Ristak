@@ -66,6 +66,11 @@ function getPlatformLabel(platform) {
   return 'Messenger'
 }
 
+function getCommentPlatformLabel(platform) {
+  if (platform === 'instagram') return 'Instagram'
+  return 'Facebook'
+}
+
 function isEnabledConfigValue(value) {
   const normalized = cleanString(value).toLowerCase()
   return ['1', 'true', 'yes', 'on'].includes(normalized)
@@ -1987,7 +1992,7 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
 
   const enabled = await isMetaSocialCommentsEnabled(cleanPlatform)
   if (!enabled) {
-    throw createMetaSocialMessageError(`Activa los comentarios de ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder.`, 409)
+    throw createMetaSocialMessageError(`Activa los comentarios de ${getCommentPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder.`, 409)
   }
 
   const config = await getMetaConfig().catch(error => {

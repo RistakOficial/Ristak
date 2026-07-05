@@ -75,6 +75,38 @@ const SUPPORTED_TRIGGER_TYPES = new Set([
   'trigger-link-clicked'
 ])
 const CHANNEL_CONFIG_KEYS = ['channel', 'replyChannel', 'conversationChannel', 'actionChannel']
+const COMMENT_TRIGGER_TYPES = new Set(['trigger-facebook-comment', 'trigger-instagram-comment'])
+const COMMENT_REPLY_MEDIA_BLOCKS = new Set(['image', 'video', 'audio', 'file'])
+const COMMENT_REPLY_TARGETS = {
+  facebook_public_comment: {
+    label: 'responder comentario público en Facebook',
+    eventPlatform: 'facebook',
+    delivery: 'public',
+    apiChannel: 'messenger',
+    allowedBlockTypes: new Set(['text', 'image'])
+  },
+  instagram_public_comment: {
+    label: 'responder comentario público en Instagram',
+    eventPlatform: 'instagram',
+    delivery: 'public',
+    apiChannel: 'instagram',
+    allowedBlockTypes: new Set(['text'])
+  },
+  messenger_private_message: {
+    label: 'enviar mensaje privado por Messenger',
+    eventPlatform: 'facebook',
+    delivery: 'private',
+    apiChannel: 'messenger',
+    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'file'])
+  },
+  instagram_private_message: {
+    label: 'enviar mensaje privado por Instagram DM',
+    eventPlatform: 'instagram',
+    delivery: 'private',
+    apiChannel: 'instagram',
+    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'file'])
+  }
+}
 
 function asArray(value) {
   return Array.isArray(value) ? value : []
@@ -206,12 +238,111 @@ function hasPath(edges, from, to) {
   return false
 }
 
+function commentTriggerPlatform(trigger) {
+  if (trigger?.type === 'trigger-instagram-comment') return 'instagram'
+  if (trigger?.type === 'trigger-facebook-comment') return 'facebook'
+  return ''
+}
+
+function replyTypeFromCommentTarget(target, config = {}) {
+  if (target) return target.delivery
+  return String(config.replyType || '').toLowerCase() === 'private' ? 'private' : 'public'
+}
+
+function resolveCommentReplyTarget(config = {}, triggerPlatforms = []) {
+  const explicitTarget = COMMENT_REPLY_TARGETS[String(config.commentReplyTarget || '')]
+  if (explicitTarget) return explicitTarget
+  if (triggerPlatforms.length !== 1) return null
+  const replyType = String(config.replyType || '').toLowerCase() === 'private' ? 'private' : 'public'
+  const platform = triggerPlatforms[0]
+  if (platform === 'instagram') {
+    return COMMENT_REPLY_TARGETS[replyType === 'private' ? 'instagram_private_message' : 'instagram_public_comment']
+  }
+  return COMMENT_REPLY_TARGETS[replyType === 'private' ? 'messenger_private_message' : 'facebook_public_comment']
+}
+
+function messageBlockHasContent(block) {
+  if (!isPlainObject(block)) return false
+  if (block.type === 'text') {
+    return Boolean(String(block.compiledText || block.text || block.message || '').trim())
+  }
+  if (COMMENT_REPLY_MEDIA_BLOCKS.has(block.type)) {
+    return Boolean(String(block.url || '').trim())
+  }
+  return false
+}
+
+function validateCommentReplyNode({ node, triggers, errors }) {
+  const baseConfig = isPlainObject(node.config) ? node.config : {}
+  const config = node.type === 'channel-comment-dm-reply' && !baseConfig.replyType
+    ? { ...baseConfig, replyType: 'private' }
+    : baseConfig
+  const commentTriggers = triggers.filter((trigger) => COMMENT_TRIGGER_TYPES.has(String(trigger?.type || '')))
+  const nonCommentTriggers = triggers.filter((trigger) => !COMMENT_TRIGGER_TYPES.has(String(trigger?.type || '')))
+  const triggerPlatforms = [...new Set(commentTriggers.map(commentTriggerPlatform).filter(Boolean))]
+  const target = resolveCommentReplyTarget(config, triggerPlatforms)
+
+  if (commentTriggers.length === 0) {
+    errors.push('La acción Responder comentario necesita un disparador de comentario de Facebook o Instagram')
+    return
+  }
+  if (nonCommentTriggers.length > 0) {
+    errors.push('La acción Responder comentario no puede compartir flujo con disparadores que no sean comentarios')
+  }
+  if (!target) {
+    errors.push('Elige una acción específica para responder el comentario: Facebook, Instagram, Messenger o Instagram DM')
+    return
+  }
+  if (triggerPlatforms.length !== 1) {
+    errors.push('Separa Facebook e Instagram en automatizaciones distintas para responder comentarios sin ambigüedad')
+    return
+  }
+  if (target.eventPlatform !== triggerPlatforms[0]) {
+    errors.push(`La acción "${target.label}" no coincide con el disparador de comentario de ${triggerPlatforms[0] === 'instagram' ? 'Instagram' : 'Facebook'}`)
+  }
+
+  const blocks = asArray(config.messageBlocks)
+  const contentBlocks = blocks.filter(messageBlockHasContent)
+  if (contentBlocks.length === 0) {
+    errors.push('Agrega contenido a la respuesta del comentario')
+  }
+  if (target.delivery === 'private' && contentBlocks.length > 1) {
+    errors.push('Meta solo permite un mensaje privado inicial por comentario; deja un solo bloque con contenido')
+  }
+  blocks.forEach((block, index) => {
+    if (!isPlainObject(block)) return
+    const type = String(block.type || '')
+    const buttons = [
+      ...asArray(block.buttons),
+      ...asArray(block.quickReplies)
+    ]
+    if (buttons.length > 0) {
+      errors.push(`La respuesta a comentario no puede usar botones en el bloque ${index + 1}`)
+    }
+    if (!target.allowedBlockTypes.has(type)) {
+      if (target.label.includes('Instagram') && COMMENT_REPLY_MEDIA_BLOCKS.has(type)) {
+        errors.push('Instagram no permite adjuntos en respuestas públicas a comentarios; usa solo texto')
+      } else if (target.label.includes('Facebook') && COMMENT_REPLY_MEDIA_BLOCKS.has(type)) {
+        errors.push('Facebook solo permite imagen como adjunto en una respuesta pública a comentario')
+      } else if (type === 'delay') {
+        errors.push('Las respuestas a comentarios no usan retrasos internos; usa un paso Esperar antes de responder')
+      } else {
+        errors.push(`El bloque ${index + 1} no se puede enviar al ${target.label}`)
+      }
+    }
+    if (COMMENT_REPLY_MEDIA_BLOCKS.has(type) && !String(block.url || '').trim()) {
+      errors.push(`El adjunto del bloque ${index + 1} necesita una URL`)
+    }
+  })
+}
+
 function isSentMessageSourceNode(node) {
   const type = String(node?.type || '')
   if (SENT_MESSAGE_NODE_TYPES.has(type)) return true
   if (type === 'channel-comment-dm-reply') return true
   if (type === 'channel-comment-public-reply') {
-    return String(node?.config?.replyType || '').toLowerCase() === 'private'
+    const target = resolveCommentReplyTarget(isPlainObject(node?.config) ? node.config : {})
+    return replyTypeFromCommentTarget(target, node?.config) === 'private'
   }
   return false
 }
@@ -335,6 +466,10 @@ export function validateFlowForPublish(flow) {
       if (intervalAmount <= 0) errors.push('El paso Goteo necesita un intervalo mayor a cero')
       if (!DRIP_INTERVAL_UNITS.has(intervalUnit)) errors.push('El paso Goteo debe usar minutos, horas o días')
     })
+
+  nodes
+    .filter((node) => node.type === 'channel-comment-public-reply' || node.type === 'channel-comment-dm-reply')
+    .forEach((node) => validateCommentReplyNode({ node, triggers, errors }))
 
   // Canales no soportados (SMS, Email…) en cualquier configuración
   const invalidChannels = new Set()

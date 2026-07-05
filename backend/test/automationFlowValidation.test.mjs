@@ -65,38 +65,117 @@ test('publicar acepta un flujo lineal válido', () => {
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
-test('publicar acepta comentarios de Facebook/Instagram y respuestas a comentario', () => {
+test('publicar acepta respuesta pública de Facebook con imagen', () => {
   const publicReply = {
     id: 'comment_public',
     type: 'channel-comment-public-reply',
     position: { x: 100, y: 0 },
     config: {
-      replyType: 'public',
-      messageBlocks: [{ id: 'b1', type: 'text', compiledText: 'Gracias por comentar' }]
-    }
-  }
-  const privateReply = {
-    id: 'comment_private',
-    type: 'channel-comment-public-reply',
-    position: { x: 200, y: 0 },
-    config: {
-      replyType: 'private',
-      messageBlocks: [{ id: 'b2', type: 'text', compiledText: 'Te escribimos por privado' }]
+      commentReplyTarget: 'facebook_public_comment',
+      messageBlocks: [{ id: 'b1', type: 'image', url: 'https://example.com/image.jpg', caption: 'Gracias' }]
     }
   }
   const flow = {
     nodes: [
       startNode([
-        { id: 't1', type: 'trigger-facebook-comment', config: { allowedComments: 'all' } },
-        { id: 't2', type: 'trigger-instagram-comment', config: { allowedComments: 'first_only' } }
+        { id: 't1', type: 'trigger-facebook-comment', config: { allowedComments: 'all' } }
       ]),
-      publicReply,
-      privateReply
+      publicReply
     ],
-    edges: [edge('e1', 'start', 'comment_public'), edge('e2', 'comment_public', 'comment_private')]
+    edges: [edge('e1', 'start', 'comment_public')]
   }
 
   assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
+test('publicar acepta mensaje privado por Instagram DM desde comentario de Instagram', () => {
+  const privateReply = {
+    id: 'comment_private',
+    type: 'channel-comment-public-reply',
+    position: { x: 100, y: 0 },
+    config: {
+      commentReplyTarget: 'instagram_private_message',
+      messageBlocks: [{ id: 'b1', type: 'text', compiledText: 'Te escribimos por privado' }]
+    }
+  }
+  const flow = {
+    nodes: [
+      startNode([{ id: 't1', type: 'trigger-instagram-comment', config: { allowedComments: 'first_only' } }]),
+      privateReply
+    ],
+    edges: [edge('e1', 'start', 'comment_private')]
+  }
+
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
+test('publicar rechaza respuesta de comentario que no coincide con la plataforma del disparador', () => {
+  const reply = {
+    id: 'comment_private',
+    type: 'channel-comment-public-reply',
+    position: { x: 100, y: 0 },
+    config: {
+      commentReplyTarget: 'messenger_private_message',
+      messageBlocks: [{ id: 'b1', type: 'text', compiledText: 'Te escribimos por privado' }]
+    }
+  }
+  const flow = {
+    nodes: [
+      startNode([{ id: 't1', type: 'trigger-instagram-comment', config: {} }]),
+      reply
+    ],
+    edges: [edge('e1', 'start', 'comment_private')]
+  }
+
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('no coincide')))
+})
+
+test('publicar rechaza adjuntos en comentario público de Instagram', () => {
+  const reply = {
+    id: 'comment_public',
+    type: 'channel-comment-public-reply',
+    position: { x: 100, y: 0 },
+    config: {
+      commentReplyTarget: 'instagram_public_comment',
+      messageBlocks: [{ id: 'b1', type: 'image', url: 'https://example.com/image.jpg' }]
+    }
+  }
+  const flow = {
+    nodes: [
+      startNode([{ id: 't1', type: 'trigger-instagram-comment', config: {} }]),
+      reply
+    ],
+    edges: [edge('e1', 'start', 'comment_public')]
+  }
+
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('Instagram no permite adjuntos')))
+})
+
+test('publicar rechaza private reply con varios mensajes iniciales', () => {
+  const reply = {
+    id: 'comment_private',
+    type: 'channel-comment-public-reply',
+    position: { x: 100, y: 0 },
+    config: {
+      commentReplyTarget: 'messenger_private_message',
+      messageBlocks: [
+        { id: 'b1', type: 'text', compiledText: 'Primero' },
+        { id: 'b2', type: 'text', compiledText: 'Segundo' }
+      ]
+    }
+  }
+  const flow = {
+    nodes: [
+      startNode([{ id: 't1', type: 'trigger-facebook-comment', config: {} }]),
+      reply
+    ],
+    edges: [edge('e1', 'start', 'comment_private')]
+  }
+
+  const errors = validateFlowForPublish(flow)
+  assert.ok(errors.some((message) => message.includes('un mensaje privado inicial')))
 })
 
 test('publicar exige muestra real para webhooks entrantes', () => {
@@ -314,7 +393,7 @@ test('publicar solo permite esperar respuesta de comentario cuando el comentario
     type: 'channel-comment-public-reply',
     position: { x: 100, y: 0 },
     config: {
-      replyType: 'public',
+      commentReplyTarget: 'facebook_public_comment',
       messageBlocks: [{ id: 'b1', type: 'text', compiledText: 'Gracias' }]
     }
   }
@@ -325,14 +404,14 @@ test('publicar solo permite esperar respuesta de comentario cuando el comentario
     config: { mode: 'action', expectedAction: 'reply_message', actionResource: 'comment_reply' }
   }
   const flow = {
-    nodes: [startNode(), commentReply, waitNode],
+    nodes: [startNode([{ id: 't1', type: 'trigger-facebook-comment', config: {} }]), commentReply, waitNode],
     edges: [edge('e1', 'start', 'comment_reply'), edge('e2', 'comment_reply', 'wait1')]
   }
 
   let errors = validateFlowForPublish(flow)
   assert.ok(errors.some((message) => message.includes('mensaje enviado seleccionado')))
 
-  commentReply.config.replyType = 'private'
+  commentReply.config.commentReplyTarget = 'messenger_private_message'
   errors = validateFlowForPublish(flow)
   assert.deepEqual(errors, [])
 })

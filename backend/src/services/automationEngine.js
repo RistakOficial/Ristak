@@ -3737,36 +3737,94 @@ function evaluateGoalMet(config, ctx) {
   }
 }
 
-// Nodo de acción: responder un comentario (público en el post o mensaje privado) a
-// mitad de un flujo. Usa ctx.commentId/ctx.platform del disparo de comentario;
-// si no vienen (flujo disparado por otra cosa), el servicio resuelve el último
-// comentario entrante del contacto.
+// Nodo de acción: responder un comentario a mitad de un flujo. Usa el
+// ctx.commentId/ctx.platform del disparo de comentario y exige que la acción
+// declarada coincida con esa plataforma.
 // Qué adjuntos acepta Meta al responder un comentario, por tipo de respuesta y
 // plataforma (verificado en la doc oficial): público FB = 1 imagen; público IG =
 // solo texto; DM (Messenger/Instagram) = imagen/video/audio/archivo.
 const COMMENT_MEDIA_BLOCKS = ['image', 'video', 'audio', 'file']
-function commentAttachmentAllowed(replyType, platform, blockType) {
-  if (replyType === 'public') return platform !== 'instagram' && blockType === 'image'
-  return COMMENT_MEDIA_BLOCKS.includes(blockType)
+const COMMENT_REPLY_TARGETS = {
+  facebook_public_comment: {
+    value: 'facebook_public_comment',
+    label: 'responder comentario público en Facebook',
+    eventPlatform: 'facebook',
+    apiPlatform: 'messenger',
+    replyType: 'public',
+    allowedBlockTypes: new Set(['text', 'image'])
+  },
+  instagram_public_comment: {
+    value: 'instagram_public_comment',
+    label: 'responder comentario público en Instagram',
+    eventPlatform: 'instagram',
+    apiPlatform: 'instagram',
+    replyType: 'public',
+    allowedBlockTypes: new Set(['text'])
+  },
+  messenger_private_message: {
+    value: 'messenger_private_message',
+    label: 'enviar mensaje privado por Messenger',
+    eventPlatform: 'facebook',
+    apiPlatform: 'messenger',
+    replyType: 'private',
+    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'file'])
+  },
+  instagram_private_message: {
+    value: 'instagram_private_message',
+    label: 'enviar mensaje privado por Instagram DM',
+    eventPlatform: 'instagram',
+    apiPlatform: 'instagram',
+    replyType: 'private',
+    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'file'])
+  }
 }
 
-function commentReplyTypeFromConfig(config, fallback = 'public') {
-  return str(config?.replyType).toLowerCase() === 'private' ? 'private' : fallback
+function commentReplyTargetFromConfig(config, eventPlatform, fallbackReplyType = 'public') {
+  const explicit = COMMENT_REPLY_TARGETS[str(config?.commentReplyTarget)]
+  if (explicit) return explicit
+  const replyType = str(config?.replyType).toLowerCase() === 'private' ? 'private' : fallbackReplyType
+  if (eventPlatform === 'instagram') {
+    return COMMENT_REPLY_TARGETS[replyType === 'private' ? 'instagram_private_message' : 'instagram_public_comment']
+  }
+  return COMMENT_REPLY_TARGETS[replyType === 'private' ? 'messenger_private_message' : 'facebook_public_comment']
 }
 
-async function sendCommentReplyFromNode(node, ctx, replyType) {
+function commentContentBlock(block, ctx) {
+  if (block.type === 'text') {
+    const text = renderTemplate(str(block.compiledText || block.text || block.message), ctx, { preserveUnknown: true }).trim()
+    return text ? { kind: 'text', text, block } : null
+  }
+  if (COMMENT_MEDIA_BLOCKS.includes(block.type)) {
+    const url = str(block.url)
+    return url ? { kind: 'media', type: block.type, url, block } : null
+  }
+  return null
+}
+
+async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public') {
   const config = node.config || {}
   const contactId = ctx.contact?.id
   if (!contactId) throw new Error('Falta el contacto para responder el comentario')
+  if (!str(ctx.platform)) {
+    throw new Error('La acción Responder comentario necesita venir de un disparador de comentario de Facebook o Instagram')
+  }
 
-  // La UI y los eventos dicen Facebook; la API privada/publica de Meta usa el
-  // transporte Messenger para comentarios de Facebook.
-  const platform = str(ctx.platform) === 'instagram' ? 'instagram' : 'messenger'
+  const eventPlatform = normalizeCommentEventPlatform(ctx.platform)
+  const target = commentReplyTargetFromConfig(config, eventPlatform, fallbackReplyType)
+  if (target.eventPlatform !== eventPlatform) {
+    throw new Error(`La acción está configurada para ${target.label}, pero el comentario recibido fue de ${eventPlatform === 'instagram' ? 'Instagram' : 'Facebook'}`)
+  }
+  const platform = target.apiPlatform
+  const replyType = target.replyType
   const rawBlocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
   // Compatibilidad con configs viejas de texto plano.
   const blocks = rawBlocks.length
     ? rawBlocks
     : (str(config.message || config.text) ? [{ type: 'text', compiledText: config.message || config.text }] : [])
+  const contentBlocks = blocks.map((block) => commentContentBlock(block, ctx)).filter(Boolean)
+  if (replyType === 'private' && contentBlocks.length > 1) {
+    throw new Error('Meta solo permite un mensaje privado inicial por comentario; deja un solo bloque con contenido')
+  }
 
   const { sendMetaSocialCommentReply } = await import('./metaSocialMessagingService.js')
   const baseExternal = `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}`
@@ -3774,32 +3832,29 @@ async function sendCommentReplyFromNode(node, ctx, replyType) {
   let sent = 0
   let index = 0
   const skipped = []
-  for (const block of blocks) {
+  for (const content of contentBlocks) {
     index += 1
-    if (block.type === 'text') {
-      const text = renderTemplate(str(block.compiledText || block.text || block.message), ctx, { preserveUnknown: true }).trim()
-      if (!text) continue
+    const block = content.block
+    if (content.kind === 'text') {
       await sendMetaSocialCommentReply({
-        contactId, platform, message: text, replyType,
+        contactId, platform, message: content.text, replyType,
         commentId: str(ctx.commentId), postId: str(ctx.postId),
         externalId: `${baseExternal}:${index}`
       })
       sent += 1
-    } else if (COMMENT_MEDIA_BLOCKS.includes(block.type)) {
-      const url = str(block.url)
-      if (!url) continue
-      if (!commentAttachmentAllowed(replyType, platform, block.type)) {
-        skipped.push(block.type)
+    } else if (content.kind === 'media') {
+      if (!target.allowedBlockTypes.has(content.type)) {
+        skipped.push(content.type)
         continue
       }
       // El pie de foto solo se combina con la imagen en respuestas públicas de FB;
       // en DM el texto va en su propio bloque.
-      const caption = replyType === 'public' && block.caption
+      const caption = target.value === 'facebook_public_comment' && block.caption
         ? renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim()
         : ''
       await sendMetaSocialCommentReply({
         contactId, platform, replyType, message: caption,
-        attachment: { type: block.type, url },
+        attachment: { type: content.type, url: content.url },
         commentId: str(ctx.commentId), postId: str(ctx.postId),
         externalId: `${baseExternal}:${index}`
       })
@@ -3812,7 +3867,7 @@ async function sendCommentReplyFromNode(node, ctx, replyType) {
   const note = skipped.length
     ? ` (adjuntos no soportados aquí: ${[...new Set(skipped)].join(', ')})`
     : ''
-  return { detail: `Respuesta ${kind} al comentario enviada${note}` }
+  return { detail: `Respuesta ${kind} al comentario enviada (${target.label})${note}`, target }
 }
 
 /**
@@ -3887,13 +3942,16 @@ async function executeNode(node, ctx, enrollment) {
     }
 
     case 'channel-comment-public-reply': {
-      const replyType = commentReplyTypeFromConfig(node.config, 'public')
-      const sendResult = await sendCommentReplyFromNode(node, ctx, replyType)
-      const isPrivate = replyType === 'private'
+      const sendResult = await sendCommentReplyFromNode(node, ctx, 'public')
+      const isPrivate = sendResult.target?.replyType === 'private'
       return {
         handle: 'out',
         detail: sendResult.detail,
-        output: { estado: 'enviado', canal: isPrivate ? 'comentario_privado' : 'comentario_publico', fecha_envio: nowIso() },
+        output: {
+          estado: 'enviado',
+          canal: isPrivate ? sendResult.target.apiPlatform : 'comentario_publico',
+          fecha_envio: nowIso()
+        },
         outputBaseId: isPrivate ? 'responder_comentario_privado' : 'responder_comentario_publico'
       }
     }

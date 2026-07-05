@@ -182,6 +182,88 @@ export interface MessageBlock {
 
 export const MEDIA_BLOCK_TYPES: MessageBlockType[] = ['image', 'video', 'audio', 'file']
 
+export type CommentReplyTarget =
+  | 'facebook_public_comment'
+  | 'instagram_public_comment'
+  | 'messenger_private_message'
+  | 'instagram_private_message'
+
+export interface CommentReplyTargetDefinition {
+  value: CommentReplyTarget
+  label: string
+  summary: string
+  empty: string
+  eventPlatform: 'facebook' | 'instagram'
+  delivery: 'public' | 'private'
+  apiChannel: 'messenger' | 'instagram'
+  allowedBlockTypes: MessageBlockType[]
+}
+
+export const COMMENT_REPLY_TARGETS: CommentReplyTargetDefinition[] = [
+  {
+    value: 'facebook_public_comment',
+    label: 'Responder comentario público en Facebook',
+    summary: 'Respuesta pública en Facebook',
+    empty: 'Agrega la respuesta pública de Facebook',
+    eventPlatform: 'facebook',
+    delivery: 'public',
+    apiChannel: 'messenger',
+    allowedBlockTypes: ['text', 'image']
+  },
+  {
+    value: 'instagram_public_comment',
+    label: 'Responder comentario público en Instagram',
+    summary: 'Respuesta pública en Instagram',
+    empty: 'Agrega el texto del comentario de Instagram',
+    eventPlatform: 'instagram',
+    delivery: 'public',
+    apiChannel: 'instagram',
+    allowedBlockTypes: ['text']
+  },
+  {
+    value: 'messenger_private_message',
+    label: 'Enviar mensaje privado por Messenger',
+    summary: 'Mensaje privado por Messenger',
+    empty: 'Agrega el mensaje privado de Messenger',
+    eventPlatform: 'facebook',
+    delivery: 'private',
+    apiChannel: 'messenger',
+    allowedBlockTypes: ['text', 'image', 'video', 'audio', 'file']
+  },
+  {
+    value: 'instagram_private_message',
+    label: 'Enviar mensaje privado por Instagram DM',
+    summary: 'Mensaje privado por Instagram DM',
+    empty: 'Agrega el mensaje privado de Instagram',
+    eventPlatform: 'instagram',
+    delivery: 'private',
+    apiChannel: 'instagram',
+    allowedBlockTypes: ['text', 'image', 'video', 'audio', 'file']
+  }
+]
+
+export const COMMENT_REPLY_TARGET_OPTIONS: ConfigFieldOption[] = COMMENT_REPLY_TARGETS.map((target) => ({
+  value: target.value,
+  label: target.label
+}))
+
+const COMMENT_REPLY_TARGET_BY_VALUE = new Map(COMMENT_REPLY_TARGETS.map((target) => [target.value, target]))
+
+export function getCommentReplyTargetDefinition(value: unknown): CommentReplyTargetDefinition | null {
+  return COMMENT_REPLY_TARGET_BY_VALUE.get(str(value) as CommentReplyTarget) || null
+}
+
+export function getCommentReplyAllowedBlockTypes(config: Record<string, unknown>): MessageBlockType[] {
+  return getCommentReplyTargetDefinition(config.commentReplyTarget)?.allowedBlockTypes || []
+}
+
+export function sanitizeCommentReplyMessageBlocks(config: Record<string, unknown>): MessageBlock[] {
+  const allowed = new Set(getCommentReplyAllowedBlockTypes(config))
+  return asMessageBlocks(config.messageBlocks)
+    .filter((block) => allowed.size === 0 || allowed.has(block.type))
+    .map((block) => ({ ...block, buttons: [], quickReplies: [] }))
+}
+
 /** Máximo de salidas/ramas por nodo (incluye botones y quick replies) */
 export const MAX_BRANCHES = 10
 export const MAX_BUTTONS_PER_MESSAGE = 3
@@ -282,9 +364,38 @@ function validateMessageBlocks(
 
 function validateCommentReply(config: Record<string, unknown>): string[] {
   const errors = validateMessageBlocks(config)
-  const replyType = str(config.replyType) || 'public'
-  if (!['public', 'private'].includes(replyType)) {
-    errors.push('Elige si la respuesta al comentario será pública o privada')
+  const target = getCommentReplyTargetDefinition(config.commentReplyTarget)
+  if (!target) {
+    errors.push('Elige exactamente cómo responder el comentario')
+    return errors
+  }
+
+  const allowedTypes = new Set(target.allowedBlockTypes)
+  const contentBlocks = asMessageBlocks(config.messageBlocks).filter((block) => {
+    if (block.type === 'text') return Boolean(str(block.compiledText).trim())
+    if (MEDIA_BLOCK_TYPES.includes(block.type)) return Boolean(str(block.url).trim())
+    return false
+  })
+  asMessageBlocks(config.messageBlocks).forEach((block, index) => {
+    const buttons = [...(block.buttons || []), ...(block.quickReplies || [])]
+    if (buttons.length > 0) {
+      errors.push(`La respuesta a comentario no puede usar botones en el bloque ${index + 1}`)
+    }
+    if (!allowedTypes.has(block.type)) {
+      if (target.value === 'instagram_public_comment' && MEDIA_BLOCK_TYPES.includes(block.type)) {
+        errors.push('Instagram no permite adjuntos en respuestas públicas a comentarios; usa solo texto')
+      } else if (target.value === 'facebook_public_comment' && MEDIA_BLOCK_TYPES.includes(block.type)) {
+        errors.push('Facebook solo permite imagen como adjunto en una respuesta pública a comentario')
+      } else if (block.type === 'delay') {
+        errors.push('Las respuestas a comentarios no usan retrasos internos; controla el tiempo con un paso Esperar antes')
+      } else {
+        errors.push(`El bloque ${index + 1} no se puede enviar con "${target.label}"`)
+      }
+    }
+  })
+
+  if (target.delivery === 'private' && contentBlocks.length > 1) {
+    errors.push('Meta solo permite un mensaje privado inicial por comentario; deja un solo bloque con contenido')
   }
   return errors
 }
@@ -314,6 +425,10 @@ export interface NodeDefinition {
   supportsMessageBlocks?: boolean
   /** Quick replies disponibles (Messenger / Instagram Direct) */
   supportsQuickReplies?: boolean
+  /** Botones dentro de globos de texto */
+  supportsMessageButtons?: boolean
+  /** Tipos de bloques disponibles para el editor de mensajes */
+  messageBlockTypes?: (config: Record<string, unknown>) => MessageBlockType[]
   supportsVariables?: boolean
   supportsEmoji?: boolean
   defaultConfig: () => Record<string, unknown>
@@ -1501,15 +1616,14 @@ const CHANNEL_NODES: NodeDefinition[] = [
     senderLabel: 'Cuenta de Instagram (opcional)'
   }),
   {
-    // Responder un comentario (Facebook/IG) a mitad de un flujo. Agnóstico de
-    // plataforma: usa el comentario del contacto en curso. Público = en el post;
-    // privado = private reply por Messenger/Instagram DM desde ese comentario.
+    // Responder un comentario a mitad de un flujo. La acción es explícita por
+    // plataforma para no mezclar comentarios públicos con private replies.
     type: 'channel-comment-public-reply',
     kind: 'action',
     label: 'Responder comentario',
     brand: 'Facebook / Instagram',
     category: 'action-content',
-    description: 'Responde el comentario recibido: público en Facebook/Instagram o privado por Messenger/Instagram DM.',
+    description: 'Elige si respondes público en Facebook/Instagram o privado por Messenger/Instagram DM.',
     icon: MessageCircleReply,
     accent: 'green',
     addButtonLabel: 'Responder comentario',
@@ -1517,31 +1631,30 @@ const CHANNEL_NODES: NodeDefinition[] = [
     configComponent: 'message',
     supportsMessageBlocks: true,
     supportsQuickReplies: false,
+    supportsMessageButtons: false,
     supportsMultipleBranches: false,
     supportsVariables: true,
     supportsEmoji: true,
-    defaultConfig: () => ({ replyType: 'public', messageBlocks: [] }),
+    messageBlockTypes: getCommentReplyAllowedBlockTypes,
+    defaultConfig: () => ({ commentReplyTarget: '', replyType: '', messageBlocks: [] }),
     fields: [
       {
-        key: 'replyType',
-        label: 'Tipo de respuesta',
+        key: 'commentReplyTarget',
+        label: 'Acción de comentario',
         type: 'select',
         required: true,
-        help: 'Público responde en Facebook o Instagram. Privado manda el primer mensaje por Messenger o Instagram DM usando el comentario como permiso de Meta.',
-        options: [
-          { value: 'public', label: 'Responder comentario público' },
-          { value: 'private', label: 'Responder por mensaje privado' }
-        ]
+        help: 'Debe coincidir con el disparador: Facebook usa Facebook público o Messenger; Instagram usa Instagram público o Instagram DM.',
+        options: COMMENT_REPLY_TARGET_OPTIONS
       }
     ],
     outputs: () => SINGLE_OUTPUT,
     validate: validateCommentReply,
     summary: (config) => {
-      const isPrivate = str(config.replyType) === 'private'
+      const target = getCommentReplyTargetDefinition(config.commentReplyTarget)
       return {
-        text: isPrivate ? 'Mensaje privado al comentarista' : 'Respuesta pública en el comentario',
+        text: target?.summary,
         box: firstTextBlock(config) || undefined,
-        empty: isPrivate ? 'Agrega el mensaje privado' : 'Agrega la respuesta pública'
+        empty: target?.empty || 'Elige cómo responder'
       }
     }
   },
@@ -1560,10 +1673,12 @@ const CHANNEL_NODES: NodeDefinition[] = [
     configComponent: 'message',
     supportsMessageBlocks: true,
     supportsQuickReplies: false,
+    supportsMessageButtons: false,
     supportsMultipleBranches: false,
     supportsVariables: true,
     supportsEmoji: true,
-    defaultConfig: () => ({ replyType: 'private', messageBlocks: [] }),
+    messageBlockTypes: getCommentReplyAllowedBlockTypes,
+    defaultConfig: () => ({ commentReplyTarget: '', replyType: 'private', messageBlocks: [] }),
     fields: [],
     outputs: () => SINGLE_OUTPUT,
     validate: validateMessageBlocks,

@@ -4,7 +4,13 @@ import type {
   AutomationTriggerEntry
 } from '@/services/automationsService'
 import { createRistakId } from '@/utils/idGenerator'
-import { getNodeDefinition, START_NODE_TYPE, type NodeOutputHandle } from './nodeRegistry'
+import {
+  getCommentReplyTargetDefinition,
+  getNodeDefinition,
+  START_NODE_TYPE,
+  type CommentReplyTarget,
+  type NodeOutputHandle
+} from './nodeRegistry'
 import { migrateSimpleCondition } from './crmFields'
 
 export const NODE_WIDTH = 300
@@ -159,7 +165,11 @@ function shortText(value: string, max = 64): string {
 function sentMessageChannelFor(node: AutomationNode): SentMessageChannel | null {
   if (SENT_MESSAGE_CHANNELS[node.type]) return SENT_MESSAGE_CHANNELS[node.type]
   if (node.type === 'channel-comment-dm-reply') return 'any'
-  if (node.type === 'channel-comment-public-reply' && str(node.config?.replyType) === 'private') return 'any'
+  if (node.type === 'channel-comment-public-reply') {
+    const target = getCommentReplyTargetDefinition(node.config?.commentReplyTarget)
+    if (target?.delivery === 'private') return target.apiChannel
+    if (!target && str(node.config?.replyType) === 'private') return 'any'
+  }
   return null
 }
 
@@ -365,6 +375,34 @@ function messageToBlocks(message: string): Array<Record<string, unknown>> {
     : []
 }
 
+function commentTriggerPlatforms(nodes: AutomationNode[]): Array<'facebook' | 'instagram'> {
+  const start = nodes.find((node) => isStartNode(node))
+  const triggers = getStartTriggers(start || ({} as AutomationNode))
+  const platforms = new Set<'facebook' | 'instagram'>()
+  triggers.forEach((trigger) => {
+    if (trigger.type === 'trigger-facebook-comment') platforms.add('facebook')
+    if (trigger.type === 'trigger-instagram-comment') platforms.add('instagram')
+  })
+  return [...platforms]
+}
+
+function legacyCommentReplyTarget(
+  nodes: AutomationNode[],
+  config: Record<string, unknown>,
+  fallbackReplyType: 'public' | 'private' = 'public'
+): CommentReplyTarget | '' {
+  if (getCommentReplyTargetDefinition(config.commentReplyTarget)) {
+    return str(config.commentReplyTarget) as CommentReplyTarget
+  }
+  const [platform] = commentTriggerPlatforms(nodes)
+  if (!platform || commentTriggerPlatforms(nodes).length !== 1) return ''
+  const replyType = str(config.replyType).toLowerCase() === 'private' ? 'private' : fallbackReplyType
+  if (platform === 'instagram') {
+    return replyType === 'private' ? 'instagram_private_message' : 'instagram_public_comment'
+  }
+  return replyType === 'private' ? 'messenger_private_message' : 'facebook_public_comment'
+}
+
 /**
  * Convierte nodos guardados por versiones anteriores del editor al modelo
  * actual: If/Else → Condición, Telegram/Canal → WhatsApp, esperas con el
@@ -383,7 +421,11 @@ export function migrateLegacyFlow(nodes: AutomationNode[]): AutomationNode[] {
           ...node,
           type: 'channel-comment-public-reply',
           label: undefined,
-          config: { ...(node.config || {}), replyType: 'private' }
+          config: {
+            ...(node.config || {}),
+            replyType: 'private',
+            commentReplyTarget: legacyCommentReplyTarget(nodes, node.config || {}, 'private')
+          }
         }
       : node
   )
@@ -443,8 +485,21 @@ export function migrateLegacyFlow(nodes: AutomationNode[]): AutomationNode[] {
       }
     }
 
-    if (node.type === 'channel-comment-public-reply' && !str(config.replyType)) {
-      return { ...next, config: { ...config, replyType: 'public' } }
+    if (node.type === 'channel-comment-public-reply') {
+      const replyType = str(config.replyType) || (
+        str(config.commentReplyTarget).includes('private') ? 'private' : 'public'
+      )
+      if (!str(config.commentReplyTarget)) {
+        return {
+          ...next,
+          config: {
+            ...config,
+            replyType,
+            commentReplyTarget: legacyCommentReplyTarget(nodes, { ...config, replyType }, replyType === 'private' ? 'private' : 'public')
+          }
+        }
+      }
+      if (!str(config.replyType)) return { ...next, config: { ...config, replyType } }
     }
 
     // "Dividir" retirado → Acciones con ramas extra (conservan ids y conexiones)

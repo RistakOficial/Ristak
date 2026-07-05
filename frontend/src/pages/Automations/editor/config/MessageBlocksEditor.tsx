@@ -50,7 +50,9 @@ interface MessageBlocksEditorProps {
   value: unknown
   onChange: (blocks: MessageBlock[]) => void
   supportsQuickReplies?: boolean
+  supportsButtons?: boolean
   buttonLabelMaxLength?: number
+  allowedBlockTypes?: MessageBlockType[]
   afterBlocks?: React.ReactNode
   /** 'chat' = globos normales; 'template' = secuencia de plantillas + retrasos */
   variant?: 'chat' | 'template'
@@ -222,11 +224,17 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
   value,
   onChange,
   supportsQuickReplies = false,
+  supportsButtons = true,
   buttonLabelMaxLength = 40,
+  allowedBlockTypes,
   afterBlocks,
   variant = 'chat'
 }) => {
   const blocks = asMessageBlocks(value)
+  const allowedBlockTypeSet = allowedBlockTypes ? new Set(allowedBlockTypes) : null
+  const availableContentBlocks = (variant === 'template' ? TEMPLATE_BLOCKS : CONTENT_BLOCKS).filter(
+    (option) => !allowedBlockTypeSet || allowedBlockTypeSet.has(option.type)
+  )
 
   const updateBlock = (index: number, patch: Partial<MessageBlock>) => {
     onChange(blocks.map((block, blockIndex) => (blockIndex === index ? { ...block, ...patch } : block)))
@@ -379,20 +387,22 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
                 showEmoji
                 aria-label="Texto del mensaje"
               />
-              {renderButtons(block, index, 'buttons')}
-              <button
-                type="button"
-                className={styles.addButtonInBubble}
-                disabled={buttons.length >= MAX_BUTTONS_PER_MESSAGE}
-                onClick={() =>
-                  updateBlock(index, {
-                    buttons: [...buttons, { id: genId('btn'), label: '', action: 'branch' }]
-                  })
-                }
-              >
-                <Plus size={11} />
-                Añadir botón{buttons.length >= MAX_BUTTONS_PER_MESSAGE ? ' (máx. 3)' : ''}
-              </button>
+              {supportsButtons && renderButtons(block, index, 'buttons')}
+              {supportsButtons && (
+                <button
+                  type="button"
+                  className={styles.addButtonInBubble}
+                  disabled={buttons.length >= MAX_BUTTONS_PER_MESSAGE}
+                  onClick={() =>
+                    updateBlock(index, {
+                      buttons: [...buttons, { id: genId('btn'), label: '', action: 'branch' }]
+                    })
+                  }
+                >
+                  <Plus size={11} />
+                  Añadir botón{buttons.length >= MAX_BUTTONS_PER_MESSAGE ? ' (máx. 3)' : ''}
+                </button>
+              )}
             </div>
             </SortableBlock>
           )
@@ -538,12 +548,12 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
       {/* --------------------- Respuestas rápidas (pill) -------------------- */}
       {supportsQuickReplies && (
         <div className={styles.quickRepliesArea}>
-          {blocks.map((block, index) =>
+          {supportsButtons && blocks.map((block, index) =>
             block.type === 'text' && (block.quickReplies || []).length > 0 ? (
               <React.Fragment key={block.id}>{renderButtons(block, index, 'quickReplies')}</React.Fragment>
             ) : null
           )}
-          {(() => {
+          {supportsButtons && (() => {
             const lastTextIndex = blocks.map((block) => block.type).lastIndexOf('text')
             if (lastTextIndex === -1) return null
             const list = blocks[lastTextIndex].quickReplies || []
@@ -569,7 +579,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
       <div className={styles.contentBlocksTitle}>
         {variant === 'template' ? 'Encadena plantillas y tiempos de espera:' : 'Añade uno de los bloques de contenido:'}
       </div>
-      {(variant === 'template' ? TEMPLATE_BLOCKS : CONTENT_BLOCKS).map((option) => (
+      {availableContentBlocks.map((option) => (
         <button
           key={option.type}
           type="button"
