@@ -1041,10 +1041,12 @@ Alcance:
 - Suscripciones Rebill: la pantalla de Suscripciones y el flujo movil/PhoneChat
   permiten crear suscripciones con Rebill cuando la pasarela esta conectada.
   Ristak crea primero un Plan de Rebill (`POST /v3/plans`) y despues un Payment
-  Link hospedado tipo `plan` (`POST /v3/payment-links`) card-only, sin cupon, con
-  metadata local (`ristakSubscriptionId`, pago inicial y contacto). El cliente se
-  redirige al checkout hospedado de Rebill para autorizar la tarjeta. Ristak
-  guarda `subscriptions.rebill_plan_id`, `rebill_payment_link_id`,
+  Link hospedado (`POST /v3/payment-links`) card-only, sin cupon, con el campo
+  `plan` apuntando al ID remoto; no se manda `type` porque Rebill lo infiere a
+  partir de `plan`. El link conserva metadata local (`ristakSubscriptionId`, pago
+  inicial y contacto). El cliente se redirige al checkout hospedado de Rebill para
+  autorizar la tarjeta. Ristak guarda `subscriptions.rebill_plan_id`,
+  `rebill_payment_link_id`,
   `rebill_payment_link_url`, `rebill_subscription_id`, `rebill_customer_id` y
   `rebill_card_id` para conciliacion posterior.
 - Las suscripciones Rebill solo aceptan frecuencia mensual o anual. Ristak bloquea

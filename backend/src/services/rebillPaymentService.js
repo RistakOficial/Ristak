@@ -505,6 +505,77 @@ function mapConfig(raw = {}, { includeSecrets = false, mode: modeOverride = '' }
   }
 }
 
+function collectRebillApiErrorMessages(value, messages = []) {
+  if (!value || messages.length >= 8) return messages
+
+  if (typeof value === 'string') {
+    const clean = cleanString(value, 300)
+    if (clean) messages.push(clean)
+    return messages
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectRebillApiErrorMessages(item, messages)
+    return messages
+  }
+
+  if (typeof value !== 'object') return messages
+
+  const field = cleanString(value.field || value.path || value.property || value.param, 120)
+  const message = cleanString(
+    value.message ||
+    value.rawMessage ||
+    value.detail ||
+    value.reason ||
+    value.description ||
+    value.code ||
+    value.type,
+    300
+  )
+  if (field && message) {
+    messages.push(`${field}: ${message}`)
+  } else if (message) {
+    messages.push(message)
+  }
+
+  for (const key of ['errors', 'details', 'validation', 'issues', 'children']) {
+    collectRebillApiErrorMessages(value[key], messages)
+  }
+
+  return messages
+}
+
+function extractRebillApiErrorMessage(payload = {}) {
+  const errorPayload = payload?.error && typeof payload.error === 'object' ? payload.error : {}
+  const directMessages = [
+    payload?.message,
+    errorPayload.rawMessage,
+    errorPayload.message,
+    payload?.error_message,
+    payload?.detail,
+    errorPayload.type,
+    typeof payload?.error === 'string' ? payload.error : ''
+  ]
+
+  const messages = [
+    ...directMessages.map((value) => cleanString(value, 300)).filter(Boolean),
+    ...collectRebillApiErrorMessages(payload?.errors),
+    ...collectRebillApiErrorMessages(payload?.details),
+    ...collectRebillApiErrorMessages(payload?.validation)
+  ]
+
+  return cleanString(Array.from(new Set(messages)).join(' | '), 500)
+}
+
+function summarizeRebillApiErrorPayload(payload = {}) {
+  if (!payload || typeof payload !== 'object') return cleanString(payload, 500)
+  return Object.fromEntries(
+    ['message', 'error', 'errors', 'details', 'validation', 'code', 'type', 'statusCode']
+      .filter((key) => payload[key] !== undefined)
+      .map((key) => [key, payload[key]])
+  )
+}
+
 export async function getRebillPaymentConfig({ includeSecrets = false, mode: modeOverride = '' } = {}) {
   const raw = await readRawConfig()
   const mode = modeOverride || await getPaymentGatewayMode()
@@ -537,17 +608,15 @@ async function rebillApiRequest(path, { method = 'GET', body = null, apiKey = ''
 
   if (!response.ok) {
     const errorPayload = payload.error && typeof payload.error === 'object' ? payload.error : {}
-    const message = cleanString(
-      payload.message ||
-      errorPayload.rawMessage ||
-      errorPayload.message ||
-      payload.error_message ||
-      payload.detail ||
-      errorPayload.type ||
-      payload.error,
-      500
-    ) ||
+    const message = extractRebillApiErrorMessage(payload) ||
       'Rebill no pudo completar la solicitud.'
+    if (Number(response.status) !== 404) {
+      logger.warn(`[Rebill API] ${method} ${path} falló con HTTP ${response.status}: ${message}`, {
+        status: response.status || 502,
+        rebillType: cleanString(errorPayload.type || payload.type, 120),
+        response: summarizeRebillApiErrorPayload(payload)
+      })
+    }
     const error = new Error(message)
     error.status = response.status || 502
     error.payload = payload
@@ -984,6 +1053,23 @@ function isValidRebillPaymentLinkFullName(value = '') {
   return parts.length >= 2 && parts.every((part) => part.length >= 2)
 }
 
+function normalizeRebillPaymentLinkNamePart(value = '', fallback = '') {
+  const clean = cleanString(value, 80).replace(/\d+/g, ' ').replace(/[._-]+/g, ' ').replace(/\s+/g, ' ').trim()
+  return clean.length >= 2 ? clean : fallback
+}
+
+function buildRebillPaymentLinkFullName(fullName = '', email = '') {
+  const normalized = cleanString(fullName, 160).replace(/\s+/g, ' ').trim()
+  if (isValidRebillPaymentLinkFullName(normalized)) return normalized
+
+  const parts = normalized.split(/\s+/).filter(Boolean)
+  const emailName = cleanString(String(email || '').split('@')[0], 80)
+  const firstName = normalizeRebillPaymentLinkNamePart(parts[0], normalizeRebillPaymentLinkNamePart(emailName, 'Cliente'))
+  const lastName = normalizeRebillPaymentLinkNamePart(parts.slice(1).join(' '), 'Ristak')
+  const safeFullName = `${firstName} ${lastName}`.replace(/\s+/g, ' ').trim()
+  return isValidRebillPaymentLinkFullName(safeFullName) ? safeFullName : 'Cliente Ristak'
+}
+
 function buildRebillPaymentLinkPrefilledFields(row = {}, metadata = {}) {
   const customer = {}
   const email = cleanString(row.contact_email || metadata.contactEmail || metadata.email, 180).toLowerCase()
@@ -993,8 +1079,7 @@ function buildRebillPaymentLinkPrefilledFields(row = {}, metadata = {}) {
   if (isValidRebillPaymentLinkFullName(rawFullName)) {
     customer.fullName = rawFullName
   } else if (email) {
-    const derived = deriveRebillCustomerName(rawFullName, email)
-    customer.fullName = `${derived.firstName} ${derived.lastName}`.trim()
+    customer.fullName = buildRebillPaymentLinkFullName(rawFullName, email)
   }
 
   const phone = getRebillPhoneInformation(row.contact_phone || metadata.contactPhone || metadata.phone)
@@ -2686,7 +2771,6 @@ export async function createRebillSubscriptionPlanLink(input = {}, { baseUrl = '
     config,
     idempotencyKey: `ristak:rebill-subscription-link:${subscriptionId}`,
     body: {
-      type: 'plan',
       plan: rebillPlanId,
       title: toRebillLocalizedText(title, 'Suscripción Ristak', 140),
       description: toRebillLocalizedText(description, title, 300),
