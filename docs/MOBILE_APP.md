@@ -103,7 +103,9 @@ inicio":
   `frontend/android/app/src/main/res/mipmap-night-*/ic_launcher*.png` y los
   fondos adaptive en `frontend/android/app/src/main/res/values*/ic_launcher_background.xml`.
   Las notificaciones Android usan `@drawable/ic_stat_ristak` como small icon
-  del sistema y el backend FCM debe mandar `icon: 'ic_stat_ristak'`.
+  del sistema. El backend FCM no debe mandar un bloque visual `notification`
+  para Android: debe mandar data-only para que `RistakFirebaseMessagingService`
+  pinte el avatar, logo y previews con el renderer nativo propio.
 - Web/PWA general: `frontend/public/ristak-icon-192.png`,
   `frontend/public/ristak-icon-512.png`, `frontend/public/apple-touch-icon.png`
   y las variantes transparentes `frontend/public/ristak-app-mark-*.webp` usadas
@@ -155,13 +157,26 @@ exista soporte nativo verificado. iOS requiere
 `NSLocationWhenInUseUsageDescription` en `frontend/ios/App/App/Info.plist`.
 
 En Android el small icon del sistema sigue siendo `ic_stat_ristak` porque
-Android exige un icono monocromatico de la app; las previews multimedia usan
-`notificationImageUrl` cuando existe media real. En iOS/APNs el payload incluye
-`mutable-content` cuando existe `contactAvatarUrl`/`senderAvatarUrl` o media
-real. La extension `RistakNotificationService` usa Communication Notifications
-con `INSendMessageIntent` para que el avatar sea la identidad del remitente, y
-solo adjunta `notificationImageUrl` / `notificationAttachmentUrl` como media
-del mensaje. La app principal debe tener el entitlement
+Android exige un icono monocromatico de la app. El payload FCM de Android debe
+ser data-only: `title`, `body`, `contactAvatarUrl`/`senderAvatarUrl`,
+`notificationImageUrl`/`notificationAttachmentUrl`, `threadId`, `messageId`,
+`url` y `androidChannelId` viajan en `message.data`. El servicio nativo
+`frontend/android/app/src/main/java/com/ristak/app/RistakFirebaseMessagingService.java`
+reemplaza el `MessagingService` generico de Capacitor, conserva el registro de
+token llamando a `PushNotificationsPlugin.onNewToken(...)` y renderiza las push
+con `MessagingStyle`, `largeIcon` circular del avatar cuando existe y AppIcon de
+Ristak cuando no hay avatar. Si llega media real, la muestra con
+`BigPictureStyle` y mantiene el avatar/logo como large icon. No vuelvas a usar
+`message.notification` ni `android.notification.image` para Android porque el
+sistema/Firebase toma el control visual y se pierden avatar, logo correcto y
+estilo de conversación.
+
+En iOS/APNs el payload incluye `mutable-content` cuando existe
+`contactAvatarUrl`/`senderAvatarUrl` o media real. La extension
+`RistakNotificationService` usa Communication Notifications con
+`INSendMessageIntent` para que el avatar sea la identidad del remitente, y solo
+adjunta `notificationImageUrl` / `notificationAttachmentUrl` como media del
+mensaje. La app principal debe tener el entitlement
 `com.apple.developer.usernotifications.communication` y los perfiles de firma
 deben incluir esa capability. Si el avatar no existe, la descarga falla, hay
 varios contactos o la alerta es general, iOS muestra el AppIcon instalado de

@@ -34,7 +34,6 @@ const APNS_PRIVATE_KEY_FILE = process.env.APNS_PRIVATE_KEY_FILE || ''
 const APNS_ENV = String(process.env.APNS_ENV || process.env.NODE_ENV || 'production').toLowerCase()
 const DEFAULT_NOTIFICATION_TITLE = 'Notificación nueva'
 const DEFAULT_NOTIFICATION_BODY = 'Tienes una notificación nueva.'
-const FALLBACK_MOBILE_NOTIFICATION_ICON = 'ic_stat_ristak'
 const ANDROID_CHANNELS = {
   alerts: 'ristak_alerts',
   sound: 'ristak_sound',
@@ -469,8 +468,12 @@ function getNotificationData(payload = {}) {
   const contactAvatarUrl = getNotificationContactAvatarUrl(payload)
   const notificationImageUrl = getNotificationImageUrl(payload)
   const contactName = getNotificationContactName(payload)
+  const title = getNotificationTitle(payload)
+  const body = getNotificationBody(payload)
   return Object.fromEntries(
     Object.entries({
+      title,
+      body,
       url: payload.url || '/movil',
       category: payload.category || 'ristak',
       tag: payload.tag || 'ristak',
@@ -1560,15 +1563,37 @@ async function sendNotificationRows(rows = [], payload = {}) {
   return sent
 }
 
+export function buildFcmMessageBody(row, payload = {}, experience = {}) {
+  const notificationTitle = getNotificationTitle(payload)
+  const notificationBody = getNotificationBody(payload)
+  const channelId = getAndroidChannelId(experience)
+  const data = {
+    ...getNotificationData(payload),
+    title: notificationTitle,
+    body: notificationBody,
+    channelId,
+    androidChannelId: channelId,
+    soundEnabled: String(experience.soundEnabled !== false),
+    vibrationEnabled: String(experience.vibrationEnabled !== false)
+  }
+
+  return {
+    message: {
+      token: row.token,
+      data,
+      android: {
+        priority: 'HIGH',
+        collapse_key: getNotificationThreadId(payload)
+      }
+    }
+  }
+}
+
 async function sendFcmNotification(row, payload = {}, experience = {}) {
   if (!fcmConfigured) {
     throw new Error('Faltan credenciales FCM para notificaciones Android')
   }
 
-  const notificationTitle = getNotificationTitle(payload)
-  const notificationBody = getNotificationBody(payload)
-  const notificationImageUrl = getNotificationImageUrl(payload)
-  const channelId = getAndroidChannelId(experience)
   const accessToken = await getFcmAccessToken()
   const response = await fetch(`https://fcm.googleapis.com/v1/projects/${encodeURIComponent(FCM_PROJECT_ID)}/messages:send`, {
     method: 'POST',
@@ -1576,32 +1601,7 @@ async function sendFcmNotification(row, payload = {}, experience = {}) {
       authorization: `Bearer ${accessToken}`,
       'content-type': 'application/json'
     },
-    body: JSON.stringify({
-      message: {
-        token: row.token,
-        notification: {
-          title: notificationTitle,
-          body: notificationBody,
-          ...(notificationImageUrl ? { image: notificationImageUrl } : {})
-        },
-        data: getNotificationData(payload),
-        android: {
-          priority: 'HIGH',
-          notification: {
-            channel_id: channelId,
-            click_action: 'OPEN_RISTAK',
-            icon: FALLBACK_MOBILE_NOTIFICATION_ICON,
-            ...(notificationImageUrl ? { image: notificationImageUrl } : {}),
-            tag: payload.tag || undefined,
-            notification_priority: 'PRIORITY_HIGH',
-            default_sound: Boolean(experience.soundEnabled),
-            default_vibrate_timings: Boolean(experience.vibrationEnabled),
-            default_light_settings: true,
-            visibility: 'PUBLIC'
-          }
-        }
-      }
-    })
+    body: JSON.stringify(buildFcmMessageBody(row, payload, experience))
   })
 
   const data = await response.json().catch(() => ({}))

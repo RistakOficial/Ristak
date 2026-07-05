@@ -1417,7 +1417,12 @@ En Android, el binario necesita `frontend/android/app/google-services.json` fuer
 de Git y el envio puede resolverse por FCM local o por Ristak Installer central.
 Si el portal central reporta Android configurado, la instalacion cliente debe
 delegar al Installer los tokens Android cuando no tenga FCM local, igual que con
-iOS/APNs central.
+iOS/APNs central. Las push Android deben enviarse como FCM data-only para que
+`RistakFirebaseMessagingService` dibuje la notificacion nativa con el small icon
+`ic_stat_ristak`, el avatar circular del contacto como large icon, el AppIcon de
+Ristak cuando no hay avatar y `notificationImageUrl` solo como preview multimedia
+real. No debe mandarse `message.notification` para Android porque Firebase
+renderiza una notificacion generica y se pierde el look alineado a iOS.
 
 ## Licenciamiento y distribucion
 

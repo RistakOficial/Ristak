@@ -5,4 +5,12 @@
     <string name="package_name">com.ristak.app</string>
     <string name="custom_url_scheme">com.ristak.app</string>
     <string name="default_notification_channel_id">ristak_alerts</string>
+    <string name="notification_channel_alerts_name">Alertas con sonido y vibración</string>
+    <string name="notification_channel_alerts_description">Mensajes, citas, pagos y avisos importantes</string>
+    <string name="notification_channel_sound_name">Alertas con sonido</string>
+    <string name="notification_channel_sound_description">Notificaciones de Ristak con sonido y sin vibración</string>
+    <string name="notification_channel_vibration_name">Alertas con vibración</string>
+    <string name="notification_channel_vibration_description">Notificaciones de Ristak con vibración y sin sonido</string>
+    <string name="notification_channel_silent_name">Alertas silenciosas</string>
+    <string name="notification_channel_silent_description">Notificaciones de Ristak sin sonido ni vibración</string>
 </resources>

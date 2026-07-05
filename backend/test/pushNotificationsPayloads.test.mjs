@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 
 import { db } from '../src/config/database.js'
 import {
+  buildFcmMessageBody,
   buildPaymentNotificationPayload,
   normalizeNotificationPayload,
   sendChatMessageNotification,
@@ -425,4 +426,39 @@ test('push general o de multiples contactos no usa imagen aunque llegue imageUrl
   } finally {
     setAppNotificationPayloadSenderForTest(null)
   }
+})
+
+test('payload FCM Android viaja data-only para que la app renderice avatar y media nativa', () => {
+  const requestBody = buildFcmMessageBody(
+    { token: 'android-token-rich' },
+    {
+      title: 'Paciente Demo',
+      body: '📷 Envió una foto.',
+      url: '/movil?contact=con_1',
+      category: 'chat',
+      tag: 'chat-message-1',
+      threadId: 'chat-con_1',
+      contactId: 'con_1',
+      contactName: 'Paciente Demo',
+      contactAvatarUrl: 'https://cdn.example.test/avatars/con_1.jpg',
+      notificationImageUrl: 'https://cdn.example.test/messages/photo_1.jpg',
+      notificationAttachmentUrl: 'https://cdn.example.test/messages/photo_1.jpg'
+    },
+    { soundEnabled: false, vibrationEnabled: true }
+  )
+
+  assert.equal(requestBody.message.token, 'android-token-rich')
+  assert.equal(requestBody.message.notification, undefined)
+  assert.equal(requestBody.message.android.notification, undefined)
+  assert.equal(requestBody.message.android.priority, 'HIGH')
+  assert.equal(requestBody.message.data.title, 'Paciente Demo')
+  assert.equal(requestBody.message.data.body, '📷 Envió una foto.')
+  assert.equal(requestBody.message.data.channelId, 'ristak_vibrate')
+  assert.equal(requestBody.message.data.androidChannelId, 'ristak_vibrate')
+  assert.equal(requestBody.message.data.contactAvatarUrl, 'https://cdn.example.test/avatars/con_1.jpg')
+  assert.equal(requestBody.message.data.senderAvatarUrl, 'https://cdn.example.test/avatars/con_1.jpg')
+  assert.equal(requestBody.message.data.notificationImageUrl, 'https://cdn.example.test/messages/photo_1.jpg')
+  assert.equal(requestBody.message.data.notificationAttachmentUrl, 'https://cdn.example.test/messages/photo_1.jpg')
+  assert.equal(requestBody.message.data.soundEnabled, 'false')
+  assert.equal(requestBody.message.data.vibrationEnabled, 'true')
 })
