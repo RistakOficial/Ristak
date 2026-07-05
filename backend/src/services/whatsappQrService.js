@@ -82,6 +82,7 @@ let baileysRuntime = null
 let reconnectDelayOverrideForTest = null
 let whatsappWebVersionCache = null
 let whatsappWebVersionPromise = null
+const connectionOpenListeners = new Set()
 
 // Cache de mensajes enviados para responder reintentos de descifrado
 // (getMessage de Baileys). Sin esto, cuando el receptor no puede descifrar un
@@ -1597,6 +1598,23 @@ export function resetWhatsAppQrServiceForTest() {
   qrSendAckWaiters.clear()
   qrRecentMessageAcks.clear()
   qrRecentRistakOutboundAttempts.clear()
+  connectionOpenListeners.clear()
+}
+
+export function onWhatsAppQrConnectionOpen(listener) {
+  if (typeof listener !== 'function') return () => {}
+  connectionOpenListeners.add(listener)
+  return () => connectionOpenListeners.delete(listener)
+}
+
+function notifyWhatsAppQrConnectionOpen(payload = {}) {
+  for (const listener of connectionOpenListeners) {
+    Promise.resolve()
+      .then(() => listener(payload))
+      .catch(error => {
+        logger.warn(`[WhatsApp QR] Listener de conexión abierta falló: ${error.message}`)
+      })
+  }
 }
 
 export async function shutdownWhatsAppQrService({ reason = 'shutdown' } = {}) {
@@ -2497,6 +2515,12 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         qrCodeDataUrl: null,
         lastError: null,
         lastConnectedAt: nowIso()
+      })
+      notifyWhatsAppQrConnectionOpen({
+        phoneNumberId: activePhone.id,
+        expectedPhone,
+        connectedPhone,
+        phone: activePhone
       })
       resolveCurrentOpen(sock)
       return
