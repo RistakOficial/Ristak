@@ -10,10 +10,16 @@ import type {
   LoginResponse,
   ProductItem,
   RistakUser,
+  RuntimeTenant,
+  SaveMobilePushDevicePayload,
   SendTextResponse,
   TransactionItem,
   VerifyResponse,
+  WebPushPublicConfig,
 } from './types';
+import { cleanBaseUrl } from './format';
+
+const DEFAULT_INSTALLER_API_BASE_URL = 'https://www.ristak.com';
 
 type RequestOptions = RequestInit & {
   params?: Record<string, string | number | boolean | undefined>;
@@ -22,11 +28,39 @@ type RequestOptions = RequestInit & {
 type ApiError = Error & {
   status?: number;
   body?: unknown;
+  code?: string;
 };
+
+type InstallerTenantResponse = {
+  success?: boolean;
+  tenant?: {
+    client_id?: string;
+    installation_id?: string;
+    name?: string;
+    email?: string;
+    app_url?: string;
+  };
+  message?: string;
+};
+
+function getErrorMessage(payload: unknown, fallback: string) {
+  if (!payload || typeof payload !== 'object') return fallback;
+  const object = payload as { error?: unknown; message?: unknown };
+  return String(object.error || object.message || fallback);
+}
 
 function withApiPrefix(path: string) {
   if (path.startsWith('/api')) return path;
   return `/api${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
+function getInstallerApiBaseUrl() {
+  return cleanBaseUrl(process.env.EXPO_PUBLIC_INSTALLER_API_URL || DEFAULT_INSTALLER_API_BASE_URL);
+}
+
+function buildInstallerUrl(path: string) {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+  return `${getInstallerApiBaseUrl()}${normalizedPath}`;
 }
 
 function getNativeContactChannel(contact: ChatContact) {
@@ -83,12 +117,13 @@ export class RistakApiClient {
     }
 
     if (!response.ok) {
-      const message = payload && typeof payload === 'object'
-        ? String((payload as { error?: unknown; message?: unknown }).error || (payload as { message?: unknown }).message || response.statusText)
-        : response.statusText;
+      const message = getErrorMessage(payload, response.statusText);
       const error = new Error(message || `HTTP ${response.status}`) as ApiError;
       error.status = response.status;
       error.body = payload;
+      if (payload && typeof payload === 'object') {
+        error.code = String((payload as { code?: unknown }).code || '');
+      }
       throw error;
     }
 
@@ -129,6 +164,10 @@ export class RistakApiClient {
         q: query.trim(),
       },
     });
+  }
+
+  getContact(contactId: string) {
+    return this.request<ChatContact>(`/contacts/${encodeURIComponent(contactId)}`);
   }
 
   getConversation(contactId: string, limit = 50) {
@@ -208,6 +247,33 @@ export class RistakApiClient {
     });
   }
 
+  sendMedia(contact: ChatContact, media: {
+    kind: 'image' | 'video';
+    dataUrl: string;
+    caption?: string;
+    mimeType?: string;
+    fileName?: string;
+  }) {
+    const isVideo = media.kind === 'video';
+    return this.request<SendTextResponse>(`/whatsapp-api/messages/${isVideo ? 'video' : 'image'}`, {
+      method: 'POST',
+      body: JSON.stringify({
+        to: contact.phone || '',
+        from: contact.lastBusinessPhone || undefined,
+        contactId: contact.id,
+        caption: media.caption || '',
+        externalId: `native-media-${media.kind}-${Date.now()}`,
+        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        messageOrigin: 'native_mobile_chat',
+        mimeType: media.mimeType || undefined,
+        fileName: media.fileName || undefined,
+        ...(isVideo
+          ? { videoDataUrl: media.dataUrl }
+          : { imageDataUrl: media.dataUrl }),
+      }),
+    });
+  }
+
   scheduleText(contact: ChatContact, text: string, scheduledAt: string) {
     return this.request('/whatsapp-api/messages/scheduled', {
       method: 'POST',
@@ -281,6 +347,77 @@ export class RistakApiClient {
       },
     });
   }
+
+  getPushPublicConfig() {
+    return this.request<WebPushPublicConfig>('/push/public-key');
+  }
+
+  saveMobilePushDevice(payload: SaveMobilePushDevicePayload) {
+    return this.request<{ id?: string; enabled?: boolean; calendarIds?: string[] }>('/push/mobile-devices', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+}
+
+export async function resolveMobileTenant(identifier: string): Promise<RuntimeTenant> {
+  const cleanIdentifier = identifier.trim();
+  if (cleanIdentifier.length < 3) {
+    throw new Error('Escribe tu correo de Ristak.');
+  }
+
+  const response = await fetch(buildInstallerUrl('/api/mobile/resolve'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identifier: cleanIdentifier }),
+  });
+
+  let payload: InstallerTenantResponse = {};
+  try {
+    payload = await response.json();
+  } catch {
+    payload = {};
+  }
+
+  const appUrl = cleanBaseUrl(payload.tenant?.app_url || '');
+  if (!response.ok || !payload.success || !appUrl) {
+    throw new Error(payload.message || 'No encontre una app activa para ese correo.');
+  }
+
+  return {
+    clientId: payload.tenant?.client_id || '',
+    installationId: payload.tenant?.installation_id || '',
+    name: payload.tenant?.name || '',
+    email: payload.tenant?.email || '',
+    appUrl,
+  };
+}
+
+export async function loginWithResolvedTenant(identifier: string, password: string) {
+  const cleanIdentifier = identifier.trim();
+  if (!cleanIdentifier || !password) {
+    throw new Error('Escribe tu correo y contrasena.');
+  }
+
+  const tenant = await resolveMobileTenant(cleanIdentifier);
+  const response = await new RistakApiClient(tenant.appUrl).login(cleanIdentifier, password);
+
+  if (response.token && response.user) {
+    return {
+      baseUrl: tenant.appUrl,
+      token: response.token,
+      user: response.user,
+      tenant,
+    };
+  }
+
+  if (response.code === 'license_blocked') {
+    const error = new Error(response.message || 'Tu licencia de Ristak no esta activa.') as ApiError;
+    error.code = response.code;
+    throw error;
+  }
+
+  throw new Error(response.message || 'Correo o contrasena incorrectos.');
 }
 
 export function getUserDisplayName(user?: RistakUser | null) {

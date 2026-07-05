@@ -8,13 +8,23 @@ export type RistakUser = {
 export type LoginResponse = {
   success?: boolean;
   token?: string;
+  apiToken?: string;
   user?: RistakUser;
+  code?: string;
   message?: string;
 };
 
 export type VerifyResponse = {
   success?: boolean;
   user?: RistakUser;
+};
+
+export type RuntimeTenant = {
+  clientId: string;
+  installationId: string;
+  name: string;
+  email: string;
+  appUrl: string;
 };
 
 export type ChatContact = {
@@ -177,3 +187,21 @@ export type CalendarEventItem = {
 };
 
 export type ConfigValue = string | number | boolean | string[] | Record<string, unknown> | null;
+
+export type WebPushPublicConfig = {
+  configured: boolean;
+  publicKey: string;
+  nativeConfigured?: boolean;
+  androidConfigured?: boolean;
+  iosConfigured?: boolean;
+};
+
+export type SaveMobilePushDevicePayload = {
+  token: string;
+  platform: 'ios' | 'android';
+  calendarIds?: string[];
+  appVersion?: string;
+  appBuild?: string;
+  deviceModel?: string;
+  osVersion?: string;
+};

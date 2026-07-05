@@ -20,6 +20,8 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as SystemUI from 'expo-system-ui';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -46,6 +48,7 @@ import {
   Settings,
   Tag,
   User,
+  Video,
   X,
   type LucideIcon,
 } from 'lucide-react-native';
@@ -60,10 +63,15 @@ import {
   writeAuthToken,
   writeJsonValue,
 } from './storage';
-import { RistakApiClient, getUserDisplayName } from './api';
+import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant } from './api';
+import {
+  configureNativeNotificationListeners,
+  getNativePushPermissionStatus,
+  subscribeToNativePushNotifications,
+  type NativePushPermissionStatus,
+} from './notifications';
 import {
   buildMessagesFromJourney,
-  cleanBaseUrl,
   formatChatListDate,
   formatCurrency,
   formatShortDate,
@@ -108,10 +116,11 @@ type SessionState = {
   user: RistakUser | null;
 };
 
-type Screen = 'boot' | 'server' | 'login' | 'shell';
+type Screen = 'boot' | 'login' | 'shell';
 type ChatFilterId = string;
 type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
 type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
+type CameraMediaKind = 'image' | 'video';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
 type ChatFilterPreset = {
   id: ChatFilterId;
@@ -138,14 +147,70 @@ const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
 const CHAT_SWIPE_ACTION_WIDTH = 184;
 const CHAT_SWIPE_MORE_WIDTH = 84;
 const CHAT_SWIPE_ARCHIVE_WIDTH = CHAT_SWIPE_ACTION_WIDTH - CHAT_SWIPE_MORE_WIDTH;
-const CHAT_SWIPE_GESTURE_START_DISTANCE = 3;
-const CHAT_SWIPE_OPEN_TRIGGER_DISTANCE = 2;
-const CHAT_SWIPE_CLOSE_TRIGGER_DISTANCE = 2;
-const CHAT_SWIPE_OPEN_DURATION_MS = 250;
-const CHAT_SWIPE_CLOSE_DURATION_MS = 180;
+const CHAT_SWIPE_GESTURE_START_DISTANCE = 4;
+const CHAT_SWIPE_INTENT_DISTANCE = 7;
+const CHAT_SWIPE_OPEN_DURATION_MS = 520;
+const CHAT_SWIPE_CLOSE_DURATION_MS = 480;
 const CHAT_ROW_MIN_HEIGHT = 86;
 const CHAT_AVATAR_SIZE = 58;
 const CHAT_AVATAR_INNER_SIZE = 50;
+const CAMERA_VIDEO_MAX_DURATION_SECONDS = 60;
+const CAMERA_MEDIA_MAX_BYTES = 25 * 1024 * 1024;
+const HIDDEN_SCROLL_INDICATOR_PROPS = {
+  showsHorizontalScrollIndicator: false,
+  showsVerticalScrollIndicator: false,
+} as const;
+
+function triggerChatSelectionHaptic() {
+  void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+}
+
+function getCameraAssetKind(asset?: ImagePicker.ImagePickerAsset | null): CameraMediaKind {
+  return asset?.type === 'video' || asset?.type === 'pairedVideo' ? 'video' : 'image';
+}
+
+function getCameraAssetNoun(asset?: ImagePicker.ImagePickerAsset | null) {
+  return getCameraAssetKind(asset) === 'video' ? 'video' : 'foto';
+}
+
+function getCameraAssetMimeType(asset: ImagePicker.ImagePickerAsset) {
+  if (asset.mimeType) return asset.mimeType;
+  const cleanPath = (asset.fileName || asset.uri || '').split('?')[0].toLowerCase();
+  const extension = cleanPath.includes('.') ? cleanPath.split('.').pop() : '';
+
+  if (getCameraAssetKind(asset) === 'video') {
+    if (extension === 'mov') return 'video/quicktime';
+    if (extension === 'webm') return 'video/webm';
+    return 'video/mp4';
+  }
+
+  if (extension === 'png') return 'image/png';
+  if (extension === 'heic') return 'image/heic';
+  if (extension === 'heif') return 'image/heif';
+  if (extension === 'webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+function formatCameraAssetDuration(asset?: ImagePicker.ImagePickerAsset | null) {
+  const durationMs = Number(asset?.duration || 0);
+  if (!durationMs) return '';
+  const totalSeconds = Math.max(1, Math.round(durationMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+async function buildCameraAssetDataUrl(asset: ImagePicker.ImagePickerAsset) {
+  const mimeType = getCameraAssetMimeType(asset);
+  const base64 = asset.base64 || await FileSystem.readAsStringAsync(asset.uri, {
+    encoding: FileSystem.EncodingType.Base64,
+  });
+  return {
+    dataUrl: `data:${mimeType};base64,${base64}`,
+    mimeType,
+  };
+}
+
 const CHAT_CHANNEL_BADGE_SIZE = 22;
 const CHAT_SHEET_OPEN_DURATION_MS = 260;
 const CHAT_SHEET_CLOSE_DURATION_MS = 280;
@@ -195,7 +260,8 @@ export default function RistakNativeApp() {
     ]);
 
     if (!storedBaseUrl) {
-      setScreen('server');
+      setSession({ baseUrl: '', token: '', user: null });
+      setScreen('login');
       return;
     }
 
@@ -226,21 +292,11 @@ export default function RistakNativeApp() {
     void bootstrap();
   }, [bootstrap]);
 
-  const handleServerReady = async (baseUrl: string) => {
-    await writeApiBaseUrl(baseUrl);
-    await clearAuthToken();
-    setSession({ baseUrl, token: '', user: null });
-    setScreen('login');
-  };
-
   const handleLogin = async (email: string, password: string) => {
-    const client = new RistakApiClient(session.baseUrl);
-    const response = await client.login(email, password);
-    if (!response.token || !response.user) {
-      throw new Error(response.message || 'No se pudo iniciar sesion.');
-    }
+    const response = await loginWithResolvedTenant(email, password);
+    await writeApiBaseUrl(response.baseUrl);
     await writeAuthToken(response.token);
-    setSession({ baseUrl: session.baseUrl, token: response.token, user: response.user });
+    setSession({ baseUrl: response.baseUrl, token: response.token, user: response.user });
     setScreen('shell');
   };
 
@@ -253,23 +309,17 @@ export default function RistakNativeApp() {
   const resetServer = async () => {
     await clearRuntimeState();
     setSession({ baseUrl: '', token: '', user: null });
-    setScreen('server');
+    setScreen('login');
   };
 
   if (screen === 'boot') {
     return <BootScreen />;
   }
 
-  if (screen === 'server') {
-    return <ServerScreen onReady={handleServerReady} />;
-  }
-
   if (screen === 'login') {
     return (
       <LoginScreen
-        baseUrl={session.baseUrl}
         onLogin={handleLogin}
-        onChangeServer={resetServer}
       />
     );
   }
@@ -299,13 +349,46 @@ function PhoneShell({
   onChangeServer: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
+  const [notificationContactId, setNotificationContactId] = useState('');
+  const autoRegisteredPushKeyRef = useRef('');
+  const clearNotificationContactId = useCallback(() => setNotificationContactId(''), []);
   const dock = <PhoneDock active={activeSection} onSelect={setActiveSection} />;
+
+  useEffect(() => configureNativeNotificationListeners((intent) => {
+    if (!intent.contactId) return;
+    setNotificationContactId(intent.contactId);
+    setActiveSection('chat');
+  }), []);
+
+  useEffect(() => {
+    const userId = String(user?.id || user?.email || '').trim();
+    if (!baseUrl || !userId) return undefined;
+
+    const registrationKey = `${baseUrl}:${userId}`;
+    if (autoRegisteredPushKeyRef.current === registrationKey) return undefined;
+    autoRegisteredPushKeyRef.current = registrationKey;
+
+    let cancelled = false;
+    const registerIfAllowedOrPending = async () => {
+      const permission = await getNativePushPermissionStatus();
+      if (cancelled || (permission !== 'granted' && permission !== 'prompt')) return;
+      await subscribeToNativePushNotifications(api).catch(() => undefined);
+    };
+
+    void registerIfAllowedOrPending();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, baseUrl, user?.email, user?.id]);
 
   if (activeSection === 'chat') {
     return (
       <ChatScreen
         api={api}
         footer={dock}
+        notificationContactId={notificationContactId}
+        onNotificationHandled={clearNotificationContactId}
         onNavigate={setActiveSection}
       />
     );
@@ -434,65 +517,10 @@ function BootScreen() {
   );
 }
 
-function ServerScreen({ onReady }: { onReady: (baseUrl: string) => Promise<void> }) {
-  const [url, setUrl] = useState('');
-  const [error, setError] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    const clean = cleanBaseUrl(url);
-    if (!clean) {
-      setError('Pega una URL valida, por ejemplo https://mi-negocio.onrender.com');
-      return;
-    }
-    setSaving(true);
-    setError('');
-    try {
-      await onReady(clean);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <AppFrame>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.authWrap}>
-        <ScrollView contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
-          <View style={styles.authPanel}>
-            <View style={styles.logoMark}>
-              <Text style={styles.logoText}>R</Text>
-            </View>
-            <Text style={styles.title}>Conecta tu Ristak</Text>
-            <Text style={styles.bodyText}>
-              Escribe la URL publica de la instalacion que quieres usar en este celular.
-            </Text>
-            <TextInput
-              value={url}
-              onChangeText={setUrl}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              placeholder="https://tu-app.onrender.com"
-              placeholderTextColor={COLORS.muted}
-              style={styles.input}
-            />
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            <PrimaryButton label="Continuar" busy={saving} onPress={save} />
-          </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
-    </AppFrame>
-  );
-}
-
 function LoginScreen({
-  baseUrl,
   onLogin,
-  onChangeServer,
 }: {
-  baseUrl: string;
   onLogin: (email: string, password: string) => Promise<void>;
-  onChangeServer: () => Promise<void>;
 }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -519,11 +547,16 @@ function LoginScreen({
   return (
     <AppFrame>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.authWrap}>
-        <ScrollView contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
+        <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
           <View style={styles.authPanel}>
-            <Text style={styles.kicker}>Ristak Native</Text>
+            <View style={styles.logoMark}>
+              <Text style={styles.logoText}>R</Text>
+            </View>
+            <Text style={styles.kicker}>Ristak</Text>
             <Text style={styles.title}>Iniciar sesion</Text>
-            <Text style={styles.caption}>{baseUrl}</Text>
+            <Text style={styles.bodyText}>
+              Entra con el correo y la contrasena de tu cuenta.
+            </Text>
             <TextInput
               value={email}
               onChangeText={setEmail}
@@ -544,9 +577,6 @@ function LoginScreen({
             />
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
             <PrimaryButton label="Entrar" busy={busy} onPress={submit} />
-            <Pressable onPress={onChangeServer} style={styles.textButton}>
-              <Text style={styles.textButtonLabel}>Cambiar instalacion</Text>
-            </Pressable>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -557,10 +587,14 @@ function LoginScreen({
 function ChatScreen({
   api,
   footer,
+  notificationContactId,
+  onNotificationHandled,
   onNavigate,
 }: {
   api: RistakApiClient;
   footer?: React.ReactNode;
+  notificationContactId?: string;
+  onNotificationHandled?: () => void;
   onNavigate?: (section: PhoneSection) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -591,6 +625,7 @@ function ChatScreen({
   const [agentStateLoadingId, setAgentStateLoadingId] = useState<string | null>(null);
   const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
   const [cameraAsset, setCameraAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [cameraSending, setCameraSending] = useState(false);
   const [chats, setChats] = useState<ChatContact[]>([]);
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
   const [refreshing, setRefreshing] = useState(false);
@@ -766,10 +801,56 @@ function ChatScreen({
       return true;
     });
   }, [chats, contactResults, normalizedContactQuery]);
-  const showAssistantRow = !archivedViewOpen && !selectionActive && activeFilter === 'all' && (
+
+  useEffect(() => {
+    const contactId = String(notificationContactId || '').trim();
+    if (!contactId) return;
+
+    let cancelled = false;
+    onNotificationHandled?.();
+    const openNotificationContact = async () => {
+      setAssistantOpen(false);
+      setSelectedChatIds([]);
+      setSelectionActionsOpen(false);
+      setOpenSwipeChatId(null);
+      setArchivedViewOpen(false);
+      setActiveFilter('all');
+      setQuery('');
+      setActiveSheet(null);
+      setClosingSheet(null);
+      setSheetContact(null);
+
+      const existingContact = chats.find((contact) => contact.id === contactId);
+      if (existingContact) {
+        if (!cancelled) setSelected(existingContact);
+        return;
+      }
+
+      const fetchedContact = await api.getContact(contactId);
+      if (cancelled) return;
+      setChats((current) => (
+        current.some((contact) => contact.id === fetchedContact.id)
+          ? current
+          : [fetchedContact, ...current]
+      ));
+      setSelected(fetchedContact);
+    };
+
+    void openNotificationContact()
+      .catch((err) => {
+        if (!cancelled) {
+          Alert.alert('Notificación', err instanceof Error ? err.message : 'No pude abrir este chat.');
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, chats, notificationContactId, onNotificationHandled]);
+  const showAssistantRow = !archivedViewOpen && activeFilter === 'all' && (
     !query.trim() || AI_AGENT_CHAT_SEARCH_TEXT.includes(query.trim().toLowerCase())
   );
-  const showArchiveRow = !selectionActive && !query.trim() && (archivedViewOpen || activeFilter === 'all');
+  const showArchiveRow = !query.trim() && (archivedViewOpen || activeFilter === 'all');
   const chatListHasRows = selectionActive || showAssistantRow || showArchiveRow || filteredChats.length > 0;
 
   const applyFilter = (filterId: ChatFilterId) => {
@@ -1011,12 +1092,16 @@ function ChatScreen({
   const openCamera = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Cámara', 'Necesito permiso de cámara para tomar fotos desde la app.');
+      Alert.alert('Cámara', 'Necesito permiso de cámara para tomar fotos o grabar video desde la app.');
       return;
     }
     const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
+      mediaTypes: ['images', 'videos'],
+      allowsEditing: false,
+      base64: true,
       quality: 0.86,
+      videoMaxDuration: CAMERA_VIDEO_MAX_DURATION_SECONDS,
+      videoQuality: ImagePicker.UIImagePickerControllerQualityType.Medium,
     });
     if (result.canceled || !result.assets?.[0]) return;
     openCameraShareSheet(result.assets[0]);
@@ -1030,12 +1115,55 @@ function ChatScreen({
     setSelected(contact);
   };
 
-  const chooseCameraRecipient = (contact: ChatContact) => {
+  const chooseCameraRecipient = async (contact: ChatContact) => {
+    if (!cameraAsset || cameraSending) return;
+    if (!contact.phone) {
+      Alert.alert('Enviar multimedia', 'Este contacto no tiene teléfono principal para enviar por WhatsApp.');
+      return;
+    }
+
+    const assetSize = Number(cameraAsset.fileSize || 0);
+    const assetNoun = getCameraAssetNoun(cameraAsset);
+    if (assetSize > CAMERA_MEDIA_MAX_BYTES) {
+      Alert.alert(
+        'Archivo muy grande',
+        `Este ${assetNoun} supera el límite de WhatsApp para envío directo. Graba uno más corto o con menos resolución.`,
+      );
+      return;
+    }
+
     setSheetContact(contact);
-    Alert.alert(
-      'Foto lista',
-      `La foto quedó lista para enviar a ${getContactName(contact)}. El envío multimedia completo sigue pendiente de conectar al composer nativo.`,
-    );
+    setCameraSending(true);
+    try {
+      const kind = getCameraAssetKind(cameraAsset);
+      const { dataUrl, mimeType } = await buildCameraAssetDataUrl(cameraAsset);
+      await api.sendMedia(contact, {
+        kind,
+        dataUrl,
+        mimeType,
+        fileName: cameraAsset.fileName || undefined,
+      });
+      const preview = kind === 'video' ? 'Tú: video' : 'Tú: foto';
+      const nowIso = new Date().toISOString();
+      setChats((current) => {
+        const nextContact: ChatContact = {
+          ...contact,
+          lastMessageDate: nowIso,
+          lastMessageDirection: 'outbound',
+          lastMessageText: preview,
+          lastMessageType: kind,
+          unreadCount: 0,
+        };
+        return [nextContact, ...current.filter((item) => item.id !== contact.id)];
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      closeSheet();
+      void loadChats(true);
+    } catch (err) {
+      Alert.alert('No se envió', err instanceof Error ? err.message : `No se pudo enviar el ${assetNoun}.`);
+    } finally {
+      setCameraSending(false);
+    }
   };
 
   const clearChatSelection = () => {
@@ -1044,6 +1172,7 @@ function ChatScreen({
   };
 
   const startChatSelection = (contact: ChatContact) => {
+    triggerChatSelectionHaptic();
     setOpenSwipeChatId(null);
     setSelectionActionsOpen(false);
     setSelectedChatIds((current) => (
@@ -1160,6 +1289,8 @@ function ChatScreen({
     : activeSheet === 'newChat' || closingSheet === 'newChat'
       ? 'newChat'
       : null;
+  const contactPickerAsset = contactPickerSheet === 'cameraShare' ? cameraAsset : null;
+  const contactPickerAssetNoun = getCameraAssetNoun(contactPickerAsset);
   const contactPickerClosing = !activeSheet && (closingSheet === 'newChat' || closingSheet === 'cameraShare');
   const tagSheetOpen = activeSheet === 'tag' || closingSheet === 'tag';
   const scheduleSheetOpen = activeSheet === 'schedule' || closingSheet === 'schedule';
@@ -1220,14 +1351,12 @@ function ChatScreen({
             </Pressable>
           ) : null}
         </View>
-        {!selectionActive ? (
-          <ChatFilterBar
-            active={activeFilter}
-            filters={visibleFilters}
-            unreadTotal={unreadTotal}
-            onChange={applyFilter}
-          />
-        ) : null}
+        <ChatFilterBar
+          active={activeFilter}
+          filters={visibleFilters}
+          unreadTotal={unreadTotal}
+          onChange={applyFilter}
+        />
       </View>
       {loading ? (
         <View style={styles.centerState}>
@@ -1241,6 +1370,8 @@ function ChatScreen({
         </View>
       ) : (
         <FlatList
+          {...HIDDEN_SCROLL_INDICATOR_PROPS}
+          style={styles.chatListSurface}
           data={filteredChats}
           keyExtractor={(item) => item.id}
           extraData={`${openSwipeChatId || ''}|${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${businessTimezone}|${selectionActive ? 'selecting' : 'normal'}`}
@@ -1250,31 +1381,29 @@ function ChatScreen({
           }}
           contentContainerStyle={chatListHasRows ? styles.chatList : styles.emptyList}
           ListHeaderComponent={(
-            selectionActive ? (
-              <ChatSelectionPanel
-                allVisibleSelected={allVisibleChatsSelected}
-                archiveLabel={archivedViewOpen ? 'Restaurar seleccionados' : 'Archivar seleccionados'}
-                busy={bulkActionBusy}
-                count={selectedVisibleChatCount}
-                menuOpen={selectionActionsOpen}
-                onArchiveSelected={archiveSelectedChats}
-                onClear={clearChatSelection}
-                onMarkRead={() => void markSelectedChatsAsRead()}
-                onToggleMenu={() => setSelectionActionsOpen((current) => !current)}
-                onToggleVisible={toggleVisibleChatSelection}
-              />
-            ) : (
-              <>
-                {showAssistantRow ? <AssistantChatRow onPress={() => setAssistantOpen(true)} /> : null}
-                {showArchiveRow ? (
-                  <ArchiveRow
-                    active={archivedViewOpen}
-                    count={archivedChatCount}
-                    onPress={() => setArchivedViewOpen((current) => !current)}
-                  />
-                ) : null}
-              </>
-            )
+            <>
+              {showAssistantRow ? <AssistantChatRow onPress={() => setAssistantOpen(true)} /> : null}
+              {selectionActive ? (
+                <ChatSelectionPanel
+                  allVisibleSelected={allVisibleChatsSelected}
+                  archiveLabel={archivedViewOpen ? 'Restaurar seleccionados' : 'Archivar seleccionados'}
+                  busy={bulkActionBusy}
+                  count={selectedVisibleChatCount}
+                  menuOpen={selectionActionsOpen}
+                  onArchiveSelected={archiveSelectedChats}
+                  onClear={clearChatSelection}
+                  onMarkRead={() => void markSelectedChatsAsRead()}
+                  onToggleMenu={() => setSelectionActionsOpen((current) => !current)}
+                  onToggleVisible={toggleVisibleChatSelection}
+                />
+              ) : showArchiveRow ? (
+                <ArchiveRow
+                  active={archivedViewOpen}
+                  count={archivedChatCount}
+                  onPress={() => setArchivedViewOpen((current) => !current)}
+                />
+              ) : null}
+            </>
           )}
           renderItem={({ item }) => (
             <ChatRow
@@ -1299,16 +1428,18 @@ function ChatScreen({
             />
           )}
           ListEmptyComponent={
-            <View style={styles.emptyChats}>
-              <View style={styles.emptyChatsIcon}>
-                <MessageCircle size={28} color={COLORS.accent} strokeWidth={2.4} />
+            <View style={styles.emptyChatsFill}>
+              <View style={styles.emptyChats}>
+                <View style={styles.emptyChatsIcon}>
+                  <MessageCircle size={28} color={COLORS.accent} strokeWidth={2.4} />
+                </View>
+                <Text style={styles.emptyChatsTitle}>
+                  {chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}
+                </Text>
+                <Text style={styles.emptyChatsCopy}>
+                  {chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
+                </Text>
               </View>
-              <Text style={styles.emptyChatsTitle}>
-                {chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}
-              </Text>
-              <Text style={styles.emptyChatsCopy}>
-                {chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
-              </Text>
             </View>
           }
         />
@@ -1382,15 +1513,16 @@ function ChatScreen({
         onSubmit={scheduleMessageForContact}
       />
       <ContactPickerSheet
-        asset={contactPickerSheet === 'cameraShare' ? cameraAsset : null}
+        asset={contactPickerAsset}
         contacts={contactSheetOptions}
         closing={contactPickerClosing}
         loading={contactsLoading}
         open={Boolean(contactPickerSheet)}
         query={contactQuery}
-        title={contactPickerSheet === 'cameraShare' ? 'Enviar foto' : 'Nuevo chat'}
+        sending={contactPickerSheet === 'cameraShare' ? cameraSending : false}
+        title={contactPickerSheet === 'cameraShare' ? `Enviar ${contactPickerAssetNoun}` : 'Nuevo chat'}
         onChangeQuery={setContactQuery}
-        onClose={closeSheet}
+        onClose={cameraSending ? () => undefined : closeSheet}
         onSelect={contactPickerSheet === 'cameraShare' ? chooseCameraRecipient : openContactFromSheet}
       />
       {footer}
@@ -1428,7 +1560,7 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
   }, [load]);
 
   return (
-    <ScrollView contentContainerStyle={styles.sectionScroll}>
+    <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.sectionScroll}>
       <View style={styles.actionGrid}>
         {['Cobro unico', 'Pago parcial', 'Suscripcion', 'Productos'].map((label) => (
           <View key={label} style={styles.actionTile}>
@@ -1507,7 +1639,7 @@ function CalendarSection({ api }: { api: RistakApiClient }) {
   }, [load]);
 
   return (
-    <ScrollView contentContainerStyle={styles.sectionScroll}>
+    <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.sectionScroll}>
       <SectionState loading={loading} error={error} onRetry={load} />
       {!loading && !error ? (
         <>
@@ -1569,7 +1701,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
   ];
 
   return (
-    <ScrollView contentContainerStyle={styles.sectionScroll}>
+    <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.sectionScroll}>
       <View style={styles.segmentWrap}>
         <Text style={styles.segmentActive}>30 dias</Text>
         <Text style={styles.segmentLabel}>Embudo</Text>
@@ -1600,6 +1732,8 @@ function SettingsSection({ api }: { api: RistakApiClient }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [config, setConfig] = useState<Record<string, unknown>>({});
+  const [pushPermission, setPushPermission] = useState<NativePushPermissionStatus>('unsupported');
+  const [pushBusy, setPushBusy] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1618,6 +1752,7 @@ function SettingsSection({ api }: { api: RistakApiClient }) {
           'payment_push_notifications_enabled',
           'push_notification_sound_enabled',
           'push_notification_vibration_enabled',
+          'calendar_push_notification_calendar_ids',
         ]),
       ]);
       const appConfigValues = appConfig && typeof appConfig === 'object' && 'config' in appConfig
@@ -1638,6 +1773,32 @@ function SettingsSection({ api }: { api: RistakApiClient }) {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    void getNativePushPermissionStatus().then(setPushPermission);
+  }, []);
+
+  const requestNativePush = async () => {
+    if (pushBusy) return;
+    setPushBusy(true);
+    try {
+      const calendarIds = Array.isArray(config.calendar_push_notification_calendar_ids)
+        ? config.calendar_push_notification_calendar_ids.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+      const result = await subscribeToNativePushNotifications(api, { calendarIds });
+      const permission = await getNativePushPermissionStatus();
+      setPushPermission(permission);
+      if (result.status === 'subscribed') {
+        Alert.alert('Alertas activadas', 'Este celular ya puede recibir notificaciones de Ristak.');
+        return;
+      }
+      Alert.alert(result.status === 'not_configured' ? 'Falta preparar alertas' : 'No se activaron', result.reason);
+    } catch (err) {
+      Alert.alert('No se activaron las alertas', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
+
   const rows = [
     ['Agente IA en chat', config.mobile_chat_ai_agent_enabled],
     ['Mostrar archivados', config.mobile_chat_show_archived],
@@ -1648,10 +1809,11 @@ function SettingsSection({ api }: { api: RistakApiClient }) {
     ['Push de pagos', config.payment_push_notifications_enabled],
     ['Sonido', config.push_notification_sound_enabled],
     ['Vibracion', config.push_notification_vibration_enabled],
+    ['Permiso del celular', formatPushPermission(pushPermission)],
   ];
 
   return (
-    <ScrollView contentContainerStyle={styles.sectionScroll}>
+    <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.sectionScroll}>
       <SectionState loading={loading} error={error} onRetry={load} />
       {!loading && !error ? (
         <SectionBlock title="Preferencias moviles">
@@ -1663,6 +1825,11 @@ function SettingsSection({ api }: { api: RistakApiClient }) {
               value={formatConfigValue(value)}
             />
           ))}
+          <PrimaryButton
+            label={pushBusy ? 'Activando alertas...' : 'Activar notificaciones'}
+            busy={pushBusy}
+            onPress={() => void requestNativePush()}
+          />
         </SectionBlock>
       ) : null}
     </ScrollView>
@@ -1726,6 +1893,13 @@ function formatConfigValue(value: unknown) {
   return String(value);
 }
 
+function formatPushPermission(value: NativePushPermissionStatus) {
+  if (value === 'granted') return 'Permitido';
+  if (value === 'denied') return 'Bloqueado';
+  if (value === 'prompt') return 'Pendiente';
+  return 'No disponible';
+}
+
 function ChatFilterBar({
   active,
   filters,
@@ -1748,10 +1922,10 @@ function ChatFilterBar({
 
   return (
     <ScrollView
+      {...HIDDEN_SCROLL_INDICATOR_PROPS}
       ref={scrollRef}
       horizontal
       contentInsetAdjustmentBehavior="never"
-      showsHorizontalScrollIndicator={false}
       style={styles.filterChipScroll}
       contentContainerStyle={styles.filterChipRow}
     >
@@ -1830,7 +2004,7 @@ function FilterManagerSheet({
               <X size={18} color={COLORS.text} strokeWidth={2.5} />
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={styles.filterSheetBody}>
+          <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.filterSheetBody}>
             {sections.map(([section, presets]) => (
               <View key={section} style={styles.filterManagerSection}>
                 <Text style={styles.filterManagerSectionTitle}>{section}</Text>
@@ -2025,7 +2199,7 @@ function ChatMoreSheet({
       onClose={onClose}
     >
       {contact ? (
-        <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
+        <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.sheetActionList}>
           <SheetActionRow
             Icon={CalendarDays}
             title="Agendar cita"
@@ -2173,7 +2347,7 @@ function ContactTagSheet({
               <Text style={styles.caption}>Cargando etiquetas...</Text>
             </View>
           ) : (
-            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled">
+            <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled">
               {filteredTags.map((tag) => (
                 <SheetActionRow
                   key={tag.id}
@@ -2261,6 +2435,7 @@ function ContactPickerSheet({
   loading,
   open,
   query,
+  sending = false,
   title,
   onChangeQuery,
   onClose,
@@ -2272,22 +2447,38 @@ function ContactPickerSheet({
   loading: boolean;
   open: boolean;
   query: string;
+  sending?: boolean;
   title: string;
   onChangeQuery: (value: string) => void;
   onClose: () => void;
-  onSelect: (contact: ChatContact) => void;
+  onSelect: (contact: ChatContact) => void | Promise<void>;
 }) {
+  const assetKind = getCameraAssetKind(asset);
+  const assetNoun = getCameraAssetNoun(asset);
+  const videoDuration = formatCameraAssetDuration(asset);
+
   return (
     <BottomActionSheet
       closing={closing}
       open={open}
       title={title}
-      subtitle={asset ? 'Elige a quién enviar la foto' : 'Busca por nombre, número o correo'}
+      subtitle={asset ? `Elige a quién enviar ${assetKind === 'video' ? 'el' : 'la'} ${assetNoun}` : 'Busca por nombre, número o correo'}
       onClose={onClose}
     >
       <View style={styles.contactPickerBody}>
-        {asset ? (
+        {asset && assetKind === 'image' ? (
           <Image source={{ uri: asset.uri }} style={styles.cameraPreview} />
+        ) : null}
+        {asset && assetKind === 'video' ? (
+          <View style={styles.cameraVideoPreview}>
+            <View style={styles.cameraVideoIcon}>
+              <Video size={30} color={COLORS.accent} strokeWidth={2.5} />
+            </View>
+            <View style={styles.cameraVideoCopy}>
+              <Text style={styles.cameraVideoTitle}>Video listo</Text>
+              <Text style={styles.cameraVideoMeta}>{videoDuration ? `${videoDuration} · listo para enviar` : 'Listo para enviar'}</Text>
+            </View>
+          </View>
         ) : null}
         <View style={styles.sheetSearchBox}>
           <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
@@ -2306,15 +2497,20 @@ function ContactPickerSheet({
             </Pressable>
           ) : null}
         </View>
-        {loading ? (
+        {sending ? (
+          <View style={styles.sheetInlineState}>
+            <ActivityIndicator color={COLORS.accent} />
+            <Text style={styles.caption}>Enviando {assetNoun}...</Text>
+          </View>
+        ) : loading ? (
           <View style={styles.sheetInlineState}>
             <ActivityIndicator color={COLORS.accent} />
             <Text style={styles.caption}>Buscando contactos...</Text>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.contactPickerList} keyboardShouldPersistTaps="handled">
+          <ScrollView {...HIDDEN_SCROLL_INDICATOR_PROPS} contentContainerStyle={styles.contactPickerList} keyboardShouldPersistTaps="handled">
             {contacts.length ? contacts.slice(0, 40).map((contact) => (
-              <ContactPickerRow key={contact.id} contact={contact} onPress={() => onSelect(contact)} />
+              <ContactPickerRow key={contact.id} contact={contact} disabled={sending} onPress={() => { void onSelect(contact); }} />
             )) : (
               <Text style={styles.contactPickerEmpty}>No hay contactos para mostrar.</Text>
             )}
@@ -2325,12 +2521,12 @@ function ContactPickerSheet({
   );
 }
 
-function ContactPickerRow({ contact, onPress }: { contact: ChatContact; onPress: () => void }) {
+function ContactPickerRow({ contact, disabled = false, onPress }: { contact: ChatContact; disabled?: boolean; onPress: () => void }) {
   const avatar = getContactAvatar(contact);
   const channelKind = getContactChannelKind(contact);
   const channelColor = CHANNEL_BADGE_COLORS[channelKind];
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.contactPickerRow, pressed && styles.pressed]}>
+    <Pressable disabled={disabled} onPress={onPress} style={({ pressed }) => [styles.contactPickerRow, pressed && styles.pressed, disabled && styles.disabledButton]}>
       <View style={[styles.contactPickerAvatar, { borderColor: channelColor }]}>
         {avatar ? <Image source={{ uri: avatar }} style={styles.contactPickerAvatarImage} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
       </View>
@@ -2369,7 +2565,7 @@ function AssistantChatRow({ onPress }: { onPress: () => void }) {
       <View pointerEvents="none" style={styles.aiChatDivider} />
       <View style={styles.aiChatAvatarSlot}>
         <View style={styles.aiChatAvatar}>
-          <Bot size={23} color={COLORS.accent} strokeWidth={2.4} />
+          <Image source={require('../assets/icon.png')} style={styles.aiChatLogoImage} />
         </View>
       </View>
       <View style={styles.aiChatBody}>
@@ -2595,27 +2791,27 @@ function ChatSelectionPanel({
         <Text numberOfLines={1} style={styles.chatSelectionCount}>
           {count} seleccionado{count === 1 ? '' : 's'}
         </Text>
+        <Pressable accessibilityRole="button" onPress={onToggleVisible} style={styles.chatSelectionSelectAll}>
+          <View style={[styles.chatSelectionMiniCheck, allVisibleSelected && styles.chatSelectionMiniCheckActive]}>
+            {allVisibleSelected ? <Check size={11} color={COLORS.white} strokeWidth={3} /> : null}
+          </View>
+          <Text numberOfLines={1} style={styles.chatSelectionSelectAllText}>
+            {allVisibleSelected ? 'Quitar' : 'Visibles'}
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={onToggleMenu}
+          style={[styles.chatSelectionMoreButton, busy && styles.disabledButton]}
+        >
+          <MoreHorizontal size={17} color={COLORS.white} strokeWidth={2.8} />
+          <Text style={styles.chatSelectionMoreButtonText}>Más</Text>
+        </Pressable>
         <Pressable accessibilityRole="button" onPress={onClear} style={styles.chatSelectionClearButton}>
-          <X size={17} color={COLORS.text} strokeWidth={2.5} />
+          <X size={16} color={COLORS.text} strokeWidth={2.5} />
         </Pressable>
       </View>
-      <Pressable accessibilityRole="button" onPress={onToggleVisible} style={styles.chatSelectionSelectAll}>
-        <View style={[styles.chatSelectionMiniCheck, allVisibleSelected && styles.chatSelectionMiniCheckActive]}>
-          {allVisibleSelected ? <Check size={13} color={COLORS.white} strokeWidth={3} /> : null}
-        </View>
-        <Text numberOfLines={1} style={styles.chatSelectionSelectAllText}>
-          {allVisibleSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
-        </Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        disabled={busy}
-        onPress={onToggleMenu}
-        style={[styles.chatSelectionMoreButton, busy && styles.disabledButton]}
-      >
-        <MoreHorizontal size={19} color={COLORS.white} strokeWidth={2.8} />
-        <Text style={styles.chatSelectionMoreButtonText}>Más acciones</Text>
-      </Pressable>
       {menuOpen ? (
         <View style={styles.chatSelectionActionsMenu}>
           <Pressable disabled={busy} onPress={onMarkRead} style={({ pressed }) => [styles.chatSelectionActionRow, pressed && styles.pressed]}>
@@ -2678,20 +2874,64 @@ function ChatRow({
   const translateX = useRef(new Animated.Value(0)).current;
   const offsetRef = useRef(0);
   const dragStartOffsetRef = useRef(0);
+  const swipeTargetRef = useRef(0);
+  const draggingRef = useRef(false);
+  const dragStartedOpenRef = useRef(false);
+  const dragIntentRef = useRef<'opening' | 'closing' | null>(null);
+  const suppressNextPressRef = useRef(false);
+  const suppressPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (suppressPressTimerRef.current) {
+      clearTimeout(suppressPressTimerRef.current);
+      suppressPressTimerRef.current = null;
+    }
+  }, []);
 
   const animateSwipeTo = useCallback((toValue: number) => {
-    offsetRef.current = toValue;
+    swipeTargetRef.current = toValue;
+    translateX.stopAnimation();
     Animated.timing(translateX, {
       toValue,
       useNativeDriver: true,
       duration: toValue < 0 ? CHAT_SWIPE_OPEN_DURATION_MS : CHAT_SWIPE_CLOSE_DURATION_MS,
-      easing: Easing.out(Easing.cubic),
-    }).start();
+      easing: Easing.bezier(0.22, 1, 0.36, 1),
+    }).start(({ finished }) => {
+      if (finished) offsetRef.current = toValue;
+    });
   }, [translateX]);
 
   useEffect(() => {
-    animateSwipeTo(swipeOpen && !selectionActive ? -CHAT_SWIPE_ACTION_WIDTH : 0);
+    if (draggingRef.current) return;
+    const nextTarget = swipeOpen && !selectionActive ? -CHAT_SWIPE_ACTION_WIDTH : 0;
+    if (swipeTargetRef.current === nextTarget) return;
+    animateSwipeTo(nextTarget);
   }, [animateSwipeTo, selectionActive, swipeOpen]);
+
+  const settleSwipe = useCallback((toValue: number) => {
+    if (swipeTargetRef.current !== toValue) {
+      animateSwipeTo(toValue);
+    }
+    if (toValue < 0) {
+      onSwipeOpen();
+      return;
+    }
+    onSwipeClose();
+  }, [animateSwipeTo, onSwipeClose, onSwipeOpen]);
+
+  const settleSwipeFromIntent = useCallback(() => {
+    const intent = dragIntentRef.current;
+    dragIntentRef.current = null;
+    if (intent === 'opening') {
+      settleSwipe(-CHAT_SWIPE_ACTION_WIDTH);
+      return;
+    }
+    if (intent === 'closing') {
+      settleSwipe(0);
+      return;
+    }
+    settleSwipe(dragStartedOpenRef.current ? -CHAT_SWIPE_ACTION_WIDTH : 0);
+  }, [settleSwipe]);
 
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, gestureState) => {
@@ -2700,61 +2940,76 @@ function ChatRow({
         && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) + 2;
     },
     onPanResponderGrant: () => {
+      draggingRef.current = true;
       onSwipeStart();
+      const expectedOffset = swipeOpen && !selectionActive ? -CHAT_SWIPE_ACTION_WIDTH : 0;
+      offsetRef.current = expectedOffset;
+      dragStartOffsetRef.current = expectedOffset;
+      swipeTargetRef.current = expectedOffset;
+      dragStartedOpenRef.current = expectedOffset <= -CHAT_SWIPE_ACTION_WIDTH + 1;
+      dragIntentRef.current = null;
       translateX.stopAnimation((value) => {
         const currentOffset = Math.max(-CHAT_SWIPE_ACTION_WIDTH, Math.min(0, Number(value) || 0));
         offsetRef.current = currentOffset;
         dragStartOffsetRef.current = currentOffset;
+        swipeTargetRef.current = currentOffset;
+        dragStartedOpenRef.current = currentOffset <= -CHAT_SWIPE_ACTION_WIDTH + 1;
+        dragIntentRef.current = null;
       });
     },
     onPanResponderMove: (_, gestureState) => {
-      const nextOffset = Math.max(
-        -CHAT_SWIPE_ACTION_WIDTH,
-        Math.min(0, dragStartOffsetRef.current + gestureState.dx),
-      );
-      offsetRef.current = nextOffset;
-      translateX.setValue(nextOffset);
+      if (dragIntentRef.current) return;
+      const startedOpen = dragStartedOpenRef.current;
+      if (!startedOpen && gestureState.dx <= -CHAT_SWIPE_INTENT_DISTANCE) {
+        dragIntentRef.current = 'opening';
+        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
+        return;
+      }
+      if (startedOpen && gestureState.dx >= CHAT_SWIPE_INTENT_DISTANCE) {
+        dragIntentRef.current = 'closing';
+        animateSwipeTo(0);
+        return;
+      }
+      const holdOffset = startedOpen ? -CHAT_SWIPE_ACTION_WIDTH : 0;
+      offsetRef.current = holdOffset;
+      swipeTargetRef.current = holdOffset;
+      translateX.setValue(holdOffset);
     },
-    onPanResponderRelease: (_, gestureState) => {
-      const startedOpen = dragStartOffsetRef.current <= -CHAT_SWIPE_ACTION_WIDTH + 1;
-      const movedLeft = gestureState.dx <= -CHAT_SWIPE_OPEN_TRIGGER_DISTANCE || gestureState.vx < -0.03;
-      const movedRight = gestureState.dx >= CHAT_SWIPE_CLOSE_TRIGGER_DISTANCE || gestureState.vx > 0.03;
-      if (startedOpen) {
-        if (movedRight) {
-          onSwipeClose();
-          animateSwipeTo(0);
-          return;
-        }
-        onSwipeOpen();
-        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
-        return;
-      }
-      if (movedLeft || offsetRef.current <= -CHAT_SWIPE_OPEN_TRIGGER_DISTANCE) {
-        onSwipeOpen();
-        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
-        return;
-      }
-      onSwipeClose();
-      animateSwipeTo(0);
+    onPanResponderRelease: () => {
+      draggingRef.current = false;
+      settleSwipeFromIntent();
     },
     onPanResponderTerminationRequest: () => false,
     onPanResponderTerminate: () => {
-      if (offsetRef.current <= -CHAT_SWIPE_ACTION_WIDTH / 2) {
-        onSwipeOpen();
-        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
-        return;
-      }
-      onSwipeClose();
-      animateSwipeTo(0);
+      draggingRef.current = false;
+      settleSwipeFromIntent();
     },
-  }), [animateSwipeTo, onSwipeClose, onSwipeOpen, onSwipeStart, selectionActive, swipeOpen, translateX]);
+  }), [animateSwipeTo, onSwipeStart, selectionActive, settleSwipeFromIntent, swipeOpen, translateX]);
 
   const handlePress = () => {
+    if (suppressNextPressRef.current) {
+      suppressNextPressRef.current = false;
+      if (suppressPressTimerRef.current) {
+        clearTimeout(suppressPressTimerRef.current);
+        suppressPressTimerRef.current = null;
+      }
+      return;
+    }
     if (swipeOpen && !selectionActive) {
       onSwipeClose();
       return;
     }
     onPress();
+  };
+
+  const handleLongPress = () => {
+    suppressNextPressRef.current = true;
+    if (suppressPressTimerRef.current) clearTimeout(suppressPressTimerRef.current);
+    suppressPressTimerRef.current = setTimeout(() => {
+      suppressNextPressRef.current = false;
+      suppressPressTimerRef.current = null;
+    }, 650);
+    onLongPress?.();
   };
 
   return (
@@ -2799,10 +3054,10 @@ function ChatRow({
             selected && styles.chatRowSelected,
             unread > 0 && styles.chatRowUnread,
             archived && styles.chatRowArchived,
-            pressed && styles.pressed,
+            pressed && !draggingRef.current && styles.pressed,
           ]}
           onPress={handlePress}
-          onLongPress={selectionActive ? undefined : onLongPress}
+          onLongPress={selectionActive ? undefined : handleLongPress}
           delayLongPress={310}
         >
           {selectionActive ? (
@@ -2924,6 +3179,7 @@ function ConversationScreen({
           </View>
         ) : (
           <FlatList
+            {...HIDDEN_SCROLL_INDICATOR_PROPS}
             ref={listRef}
             data={messages}
             keyExtractor={(item) => item.id}
@@ -3596,6 +3852,40 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     backgroundColor: COLORS.bg,
   },
+  cameraVideoPreview: {
+    minHeight: 108,
+    borderRadius: 20,
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 14,
+    padding: 14,
+  },
+  cameraVideoIcon: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: COLORS.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cameraVideoCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cameraVideoTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  cameraVideoMeta: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 4,
+    fontWeight: '700',
+  },
   sheetSearchBox: {
     minHeight: 42,
     borderRadius: 21,
@@ -3759,16 +4049,28 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 24,
   },
+  chatListSurface: {
+    flex: 1,
+    alignSelf: 'stretch',
+    backgroundColor: COLORS.bg,
+    marginBottom: -72,
+  },
   chatList: {
     paddingTop: 2,
-    paddingBottom: 126,
+    paddingBottom: 118,
   },
   emptyList: {
     flexGrow: 1,
+    backgroundColor: COLORS.bg,
+    paddingBottom: 118,
+  },
+  emptyChatsFill: {
+    flexGrow: 1,
+    minHeight: 460,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 24,
-    paddingBottom: 112,
+    paddingHorizontal: 24,
+    paddingBottom: 92,
   },
   emptyChats: {
     alignItems: 'center',
@@ -3797,39 +4099,33 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   chatSelectionPanel: {
-    gap: 9,
-    marginHorizontal: 12,
-    marginTop: 8,
-    marginBottom: 10,
-    padding: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(16,42,120,0.88)',
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.1,
-    shadowRadius: 30,
-    elevation: 2,
+    gap: 6,
+    minHeight: 46,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    backgroundColor: 'rgba(16,42,120,0.62)',
   },
   chatSelectionPanelTop: {
-    minHeight: 36,
+    minHeight: 32,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 10,
+    gap: 6,
   },
   chatSelectionCount: {
     flex: 1,
     minWidth: 0,
     color: COLORS.text,
-    fontSize: 15,
+    fontSize: 13,
     fontWeight: '900',
   },
   chatSelectionClearButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -3837,27 +4133,26 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.06)',
   },
   chatSelectionSelectAll: {
-    alignSelf: 'flex-start',
-    minHeight: 36,
-    maxWidth: '100%',
-    borderRadius: 18,
+    minHeight: 32,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: 'rgba(255,255,255,0.06)',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 7,
-    paddingHorizontal: 11,
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
   },
   chatSelectionSelectAllText: {
     color: COLORS.text,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
   },
   chatSelectionMiniCheck: {
-    width: 20,
-    height: 20,
-    borderRadius: 10,
+    width: 17,
+    height: 17,
+    borderRadius: 9,
     borderWidth: 1,
     borderColor: 'rgba(170,192,231,0.52)',
     alignItems: 'center',
@@ -3869,40 +4164,44 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
   },
   chatSelectionMoreButton: {
-    minHeight: 40,
-    borderRadius: 20,
+    minHeight: 32,
+    minWidth: 72,
+    borderRadius: 16,
     backgroundColor: COLORS.accent,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 5,
+    paddingHorizontal: 10,
   },
   chatSelectionMoreButtonText: {
     color: COLORS.white,
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '900',
   },
   chatSelectionActionsMenu: {
+    marginTop: 4,
+    marginBottom: 4,
     overflow: 'hidden',
-    borderRadius: 18,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: 'rgba(6,18,58,0.58)',
   },
   chatSelectionActionRow: {
-    minHeight: 58,
+    minHeight: 48,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
   },
   chatSelectionActionIcon: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.accentSoft,
@@ -3913,21 +4212,20 @@ const styles = StyleSheet.create({
   },
   chatSelectionActionTitle: {
     color: COLORS.text,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '900',
   },
   chatSelectionActionSubtitle: {
     color: COLORS.muted,
-    fontSize: 12,
-    lineHeight: 16,
+    fontSize: 11,
+    lineHeight: 14,
     marginTop: 2,
   },
   archiveRow: {
-    minHeight: 52,
+    minHeight: 46,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 13,
+    paddingHorizontal: 28,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
   },
@@ -3935,33 +4233,35 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accentSoft,
   },
   archiveRowIcon: {
-    width: 48,
-    height: 44,
-    alignItems: 'center',
+    width: 64,
+    height: 34,
+    alignItems: 'flex-start',
     justifyContent: 'center',
   },
   archiveRowTitle: {
     flex: 1,
     color: COLORS.muted,
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
+    textAlign: 'left',
   },
   archiveRowTitleActive: {
     color: COLORS.text,
   },
   archiveRowCount: {
+    width: 64,
     color: COLORS.muted,
     fontSize: 15,
     fontWeight: '800',
+    textAlign: 'right',
   },
   aiChatRow: {
     position: 'relative',
-    height: 74,
+    minHeight: CHAT_ROW_MIN_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    gap: 12,
+    paddingHorizontal: 14,
     backgroundColor: COLORS.bg,
   },
   aiChatDivider: {
@@ -3973,26 +4273,32 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.border,
   },
   aiChatAvatarSlot: {
-    width: 52,
-    height: 58,
+    width: CHAT_AVATAR_SIZE,
+    height: CHAT_AVATAR_SIZE,
     alignItems: 'flex-start',
     justifyContent: 'center',
   },
   aiChatAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1,
+    width: CHAT_AVATAR_SIZE,
+    height: CHAT_AVATAR_SIZE,
+    borderRadius: CHAT_AVATAR_SIZE / 2,
+    borderWidth: 2,
     borderColor: 'rgba(39,199,216,0.38)',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: 'rgba(39,199,216,0.12)',
+    overflow: 'hidden',
+  },
+  aiChatLogoImage: {
+    width: CHAT_AVATAR_SIZE - 8,
+    height: CHAT_AVATAR_SIZE - 8,
+    borderRadius: (CHAT_AVATAR_SIZE - 8) / 2,
   },
   aiChatBody: {
     flex: 1,
     minWidth: 0,
     justifyContent: 'center',
-    gap: 3,
+    gap: 4,
   },
   aiChatName: {
     color: COLORS.text,
@@ -4007,9 +4313,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   aiChatMeta: {
-    alignSelf: 'flex-start',
+    alignSelf: 'center',
     alignItems: 'flex-end',
-    paddingTop: 8,
+    justifyContent: 'flex-start',
+    height: 42,
+    paddingTop: 1,
     minWidth: 38,
   },
   aiChatPinned: {

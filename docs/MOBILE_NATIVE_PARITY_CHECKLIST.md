@@ -40,8 +40,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 ## Estado general
 
 - [x] Crear app React Native/Expo en `mobile/`.
-- [x] Separar bundle nativo temporal `com.ristak.native`.
-- [x] Login por URL de instalacion + email/password.
+- [x] Separar bundle nativo temporal para pruebas visuales; para validar push iOS
+      real la build instalada usa `com.ristak.app` y
+      `com.ristak.app.NotificationService`.
+- [x] Login por correo + contrasena con resolucion automatica de tenant, igual que `/movil/login`.
 - [x] Shell inicial con Chat, Citas, Pagos, Analiticas y Ajustes.
 - [x] Primer pase de lista de chats con API real, filtros basicos y filas planas.
 - [ ] Paridad completa de Chat.
@@ -50,6 +52,19 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Paridad completa de Analiticas.
 - [ ] Paridad completa de Ajustes.
 - [ ] Push/permisos/entitlements nativos listos para reemplazar `com.ristak.app`.
+  - Avance: `mobile/` ya registra token APNs/FCM nativo con
+    `expo-notifications` en `/api/push/mobile-devices`, crea canales Android,
+    atiende taps de push para abrir el chat por `contactId`/`url`, y el backend
+    genera avatar PNG de iniciales cuando el contacto no tiene foto publica. En
+    iOS local se porto `RistakNotificationService` a `mobile/ios/` para usar
+    Communication Notifications con `contactAvatarUrl`. Las credenciales APNs se
+    mantienen en Ristak Installer como broker central; el cliente no debe cargar
+    `.p8` salvo modo standalone real. Falta decidir si
+    `mobile/ios` se trackea en Git o se convierte en config plugin estable; hoy
+    `mobile/ios` esta ignorado por `mobile/.gitignore` y la extension vive en
+    el proyecto local instalado al iPhone. Falta generar/tracked `mobile/android`
+    y portar el renderer `RistakFirebaseMessagingService` para paridad Android
+    data-only completa.
 
 ## Fase Chat
 
@@ -137,10 +152,13 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     via `/contacts/search`, mezcla resultados con chats recientes y abre la
     conversacion seleccionada. Falta crear contacto nuevo si no existe y replicar
     todos los estados del sheet original.
-- [ ] Selector de destinatarios despues de foto/video.
+- [x] Selector de destinatarios despues de foto/video para WhatsApp.
   - Avance: el boton de camara ya pide permiso, abre camara nativa con
-    `expo-image-picker`, muestra preview y selector de destinatario. Falta
-    conectar el envio multimedia real por canal/composer.
+    `expo-image-picker`, permite tomar foto o grabar video, muestra preview,
+    bloquea doble envio, convierte el archivo local a data URL con
+    `expo-file-system` y envia por `/whatsapp-api/messages/image` o
+    `/whatsapp-api/messages/video` al contacto seleccionado. Pendiente extender
+    esta accion a canales no WhatsApp si el contacto no tiene telefono.
 - [ ] Menu global de agente.
 - [ ] Administrador de filtros.
 - [ ] Mas acciones de chat.
@@ -165,6 +183,6 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - `git diff --check`.
 - Instalar Release en iPhone fisico cuando cambie UI principal:
   `npx expo run:ios --device "iPhone Pro de Raúl" --configuration Release`.
-- Lanzar `com.ristak.native` sin Metro para confirmar bundle embebido.
+- Lanzar la build instalada sin Metro para confirmar bundle embebido.
 - Comparar contra `/movil` abierto localmente o contra el codigo fuente original
   si no hay screenshot disponible.

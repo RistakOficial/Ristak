@@ -2,6 +2,7 @@ import {
   disableMobilePushDevice,
   disablePushSubscription,
   getPublicPushConfig,
+  renderNotificationInitialsAvatarPng,
   saveMobilePushDevice,
   savePushSubscription
 } from '../services/pushNotificationsService.js'
@@ -21,6 +22,23 @@ export async function getPushPublicKey(req, res) {
       success: false,
       error: 'No se pudo leer la configuración de notificaciones'
     })
+  }
+}
+
+export async function getPushContactAvatar(req, res) {
+  try {
+    const png = await renderNotificationInitialsAvatarPng({
+      contactId: req.params?.contactId,
+      initials: req.query?.i,
+      colorIndex: req.query?.c,
+      signature: req.query?.s
+    })
+    res.setHeader('Content-Type', 'image/png')
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable')
+    res.send(png)
+  } catch (error) {
+    logger.warn(`[Push Controller] Avatar de notificación rechazado: ${error.message}`)
+    res.status(404).send('Not found')
   }
 }
 

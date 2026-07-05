@@ -15,16 +15,25 @@
       "android"
     ],
     "ios": {
-      "bundleIdentifier": "com.ristak.native",
+      "bundleIdentifier": "com.ristak.app",
       "supportsTablet": true,
+      "entitlements": {
+        "aps-environment": "$(APS_ENVIRONMENT)",
+        "com.apple.developer.usernotifications.communication": true
+      },
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Ristak usa la cámara para tomar fotos y enviarlas desde el chat móvil.",
+        "NSMicrophoneUsageDescription": "Ristak usa el micrófono para grabar videos desde el chat móvil.",
         "NSPhotoLibraryUsageDescription": "Ristak puede acceder a fotos para compartir contenido desde el chat móvil."
       }
     },
     "android": {
-      "package": "com.ristak.native",
+      "package": "com.ristak.app",
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#07111f",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -38,7 +47,8 @@
     },
     "plugins": [
       "expo-secure-store",
-      "expo-image-picker"
+      "expo-image-picker",
+      "expo-notifications"
     ]
   }
 }
