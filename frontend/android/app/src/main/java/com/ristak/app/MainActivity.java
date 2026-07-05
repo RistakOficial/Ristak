@@ -66,10 +66,10 @@ public class MainActivity extends BridgeActivity {
 
     @SuppressWarnings("deprecation")
     private void publishSystemInsets(WindowInsets insets) {
-        int nextTop = Math.max(0, insets.getSystemWindowInsetTop());
-        int nextRight = Math.max(0, insets.getSystemWindowInsetRight());
-        int nextBottom = Math.max(0, insets.getSystemWindowInsetBottom());
-        int nextLeft = Math.max(0, insets.getSystemWindowInsetLeft());
+        int nextTop = toCssPixels(insets.getSystemWindowInsetTop());
+        int nextRight = toCssPixels(insets.getSystemWindowInsetRight());
+        int nextBottom = toCssPixels(insets.getSystemWindowInsetBottom());
+        int nextLeft = toCssPixels(insets.getSystemWindowInsetLeft());
 
         if (
             safeAreaTop == nextTop &&
@@ -85,6 +85,14 @@ public class MainActivity extends BridgeActivity {
         safeAreaBottom = nextBottom;
         safeAreaLeft = nextLeft;
         syncSystemInsetsToWebView();
+    }
+
+    private int toCssPixels(int physicalPixels) {
+        float density = getResources().getDisplayMetrics().density;
+        if (density <= 0) {
+            density = 1;
+        }
+        return Math.max(0, Math.round(physicalPixels / density));
     }
 
     private void syncSystemInsetsToWebView() {

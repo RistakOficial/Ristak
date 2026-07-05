@@ -44,7 +44,10 @@ desde `MainActivity.java` hacia el WebView como
 `--phone-native-safe-area-top/right/bottom/left`; `PhoneChat.module.css` debe
 consumir esos valores mediante las variables `--phone-chat-safe-*` y no depender
 de `env(safe-area-inset-*)` puro, porque Android WebView puede reportarlo en
-cero aunque `StatusBar.overlaysWebView` este activo.
+cero aunque `StatusBar.overlaysWebView` este activo. Esos insets nativos llegan
+en pixeles fisicos de Android y deben convertirse a pixeles CSS antes de
+publicarse; si se pasan crudos, el header superior de `/movil` queda inflado en
+pantallas con densidad alta y desperdicia espacio util.
 No vuelvas a meter `scrollTo(0,0)` por frame desde `visualViewport.scroll`: eso
 mete lag al scroll del chat y pelea con el dedo del usuario.
 
