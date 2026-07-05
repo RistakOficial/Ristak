@@ -282,6 +282,12 @@ Tokens principales:
   `frontend/src/components/phone/ui/` deben heredar `--phone-chat-accent` y
   `--phone-chat-primary`.
 
+El dock inferior nativo en `mobile/src/App.tsx` debe mantenerse en paridad con
+`frontend/src/components/phone/PhoneEcosystemNav.*`: mismos items, orden,
+sin texto visible bajo los iconos, gesto horizontal entre secciones, indicador
+animado que persigue la coordenada real del dedo, badge de Chats y espacio
+inferior reservado para que las listas no queden cortadas detras del panel.
+
 Regla de criterio: el verde se reserva para marca WhatsApp
 (`--phone-channel-whatsapp`, `PhoneMessageChannelIcon`, iconos/canal WhatsApp) o
 para estados semánticos de éxito. Botones, tabs, badges, loaders, inputs,

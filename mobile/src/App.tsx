@@ -19,6 +19,7 @@ import {
   Text,
   TextInput,
   View,
+  Vibration,
 } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import * as ImagePicker from 'expo-image-picker';
@@ -182,6 +183,10 @@ const CHANNEL_BADGE_COLORS: Record<ChannelBadgeKind, string> = {
   sms: '#0ea5e9',
   unknown: '#27c7d8',
 };
+const PHONE_DOCK_HORIZONTAL_PADDING = 8;
+const PHONE_DOCK_SWIPE_START_DISTANCE = 6;
+const PHONE_DOCK_CLICK_SUPPRESS_MS = 140;
+const PHONE_DOCK_RESERVED_SPACE = 132;
 
 export default function RistakNativeApp() {
   const [screen, setScreen] = useState<Screen>('boot');
@@ -299,13 +304,21 @@ function PhoneShell({
   onChangeServer: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
-  const dock = <PhoneDock active={activeSection} onSelect={setActiveSection} />;
+  const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
+  const dock = (
+    <PhoneDock
+      active={activeSection}
+      badges={{ chat: chatUnreadTotal }}
+      onSelect={setActiveSection}
+    />
+  );
 
   if (activeSection === 'chat') {
     return (
       <ChatScreen
         api={api}
         footer={dock}
+        onUnreadTotalChange={setChatUnreadTotal}
         onNavigate={setActiveSection}
       />
     );
@@ -329,41 +342,199 @@ function PhoneShell({
   );
 }
 
-function PhoneDock({ active, onSelect }: { active: PhoneSection; onSelect: (section: PhoneSection) => void }) {
-  const activeIndex = PHONE_NAV_ITEMS.findIndex((item) => item.key === active);
+function PhoneDock({
+  active,
+  badges = {},
+  onSelect,
+}: {
+  active: PhoneSection;
+  badges?: Partial<Record<PhoneSection, number>>;
+  onSelect: (section: PhoneSection) => void;
+}) {
+  const activeIndex = Math.max(0, PHONE_NAV_ITEMS.findIndex((item) => item.key === active));
+  const [dockWidth, setDockWidth] = useState(0);
+  const [visualIndex, setVisualIndex] = useState(activeIndex);
+  const [swiping, setSwiping] = useState(false);
+  const dockRef = useRef<View>(null);
+  const indicatorX = useRef(new Animated.Value(0)).current;
+  const dragStartXRef = useRef(0);
+  const dockPageXRef = useRef(0);
+  const visualIndexRef = useRef(activeIndex);
+  const swipingRef = useRef(false);
+  const suppressPressRef = useRef(false);
+  const suppressPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tabWidth = dockWidth > 0
+    ? (dockWidth - (PHONE_DOCK_HORIZONTAL_PADDING * 2)) / PHONE_NAV_ITEMS.length
+    : 0;
+
+  const clearSuppressPressTimer = useCallback(() => {
+    if (suppressPressTimerRef.current) {
+      clearTimeout(suppressPressTimerRef.current);
+      suppressPressTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => clearSuppressPressTimer, [clearSuppressPressTimer]);
+
+  const animateIndicatorTo = useCallback((index: number) => {
+    if (!tabWidth) return;
+    Animated.timing(indicatorX, {
+      toValue: index * tabWidth,
+      duration: 360,
+      easing: Easing.bezier(0.2, 0.88, 0.2, 1),
+      useNativeDriver: true,
+    }).start();
+  }, [indicatorX, tabWidth]);
+
+  useEffect(() => {
+    visualIndexRef.current = activeIndex;
+    setVisualIndex(activeIndex);
+    if (swipingRef.current) return;
+    animateIndicatorTo(activeIndex);
+  }, [activeIndex, animateIndicatorTo]);
+
+  useEffect(() => {
+    if (!tabWidth || swipingRef.current) return;
+    indicatorX.setValue(activeIndex * tabWidth);
+  }, [activeIndex, indicatorX, tabWidth]);
+
+  const resolveDockIndex = useCallback((locationX: number) => {
+    if (!tabWidth || !dockWidth) return activeIndex;
+    const minCenter = PHONE_DOCK_HORIZONTAL_PADDING + (tabWidth / 2);
+    const maxCenter = dockWidth - PHONE_DOCK_HORIZONTAL_PADDING - (tabWidth / 2);
+    const clampedCenter = Math.max(minCenter, Math.min(locationX, maxCenter));
+    return Math.max(0, Math.min(
+      PHONE_NAV_ITEMS.length - 1,
+      Math.round((clampedCenter - minCenter) / tabWidth),
+    ));
+  }, [activeIndex, dockWidth, tabWidth]);
+
+  const updateDragIndicator = useCallback((locationX: number) => {
+    if (!tabWidth || !dockWidth) return;
+    const minCenter = PHONE_DOCK_HORIZONTAL_PADDING + (tabWidth / 2);
+    const maxCenter = dockWidth - PHONE_DOCK_HORIZONTAL_PADDING - (tabWidth / 2);
+    const clampedCenter = Math.max(minCenter, Math.min(locationX, maxCenter));
+    const nextIndex = resolveDockIndex(locationX);
+    indicatorX.setValue(clampedCenter - minCenter);
+    if (nextIndex !== visualIndexRef.current) {
+      Vibration.vibrate(8);
+      visualIndexRef.current = nextIndex;
+      setVisualIndex(nextIndex);
+    }
+  }, [dockWidth, indicatorX, resolveDockIndex, tabWidth]);
+
+  const suppressNextPress = useCallback(() => {
+    suppressPressRef.current = true;
+    clearSuppressPressTimer();
+    suppressPressTimerRef.current = setTimeout(() => {
+      suppressPressRef.current = false;
+      suppressPressTimerRef.current = null;
+    }, PHONE_DOCK_CLICK_SUPPRESS_MS);
+  }, [clearSuppressPressTimer]);
+
+  const finishSwipe = useCallback((nextIndex: number) => {
+    swipingRef.current = false;
+    setSwiping(false);
+    suppressNextPress();
+    const nextItem = PHONE_NAV_ITEMS[nextIndex];
+    if (nextItem && nextItem.key !== active) {
+      onSelect(nextItem.key);
+      return;
+    }
+    visualIndexRef.current = activeIndex;
+    setVisualIndex(activeIndex);
+    animateIndicatorTo(activeIndex);
+  }, [active, activeIndex, animateIndicatorTo, onSelect, suppressNextPress]);
+
+  const panResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) => (
+      Math.abs(gestureState.dx) >= PHONE_DOCK_SWIPE_START_DISTANCE
+      && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.25
+    ),
+    onPanResponderGrant: (event) => {
+      indicatorX.stopAnimation();
+      swipingRef.current = true;
+      setSwiping(true);
+      const locationX = Number(event.nativeEvent.locationX) || 0;
+      const pageX = Number(event.nativeEvent.pageX);
+      dockPageXRef.current = Number.isFinite(pageX) ? pageX - locationX : dockPageXRef.current;
+      dockRef.current?.measureInWindow((x) => {
+        dockPageXRef.current = x;
+      });
+      dragStartXRef.current = locationX;
+      visualIndexRef.current = visualIndex;
+      updateDragIndicator(dragStartXRef.current);
+    },
+    onPanResponderMove: (_, gestureState) => {
+      const absoluteLocationX = Number(gestureState.moveX) - dockPageXRef.current;
+      updateDragIndicator(Number.isFinite(absoluteLocationX)
+        ? absoluteLocationX
+        : dragStartXRef.current + gestureState.dx);
+    },
+    onPanResponderRelease: () => finishSwipe(visualIndexRef.current),
+    onPanResponderTerminationRequest: () => true,
+    onPanResponderTerminate: () => finishSwipe(activeIndex),
+  }), [activeIndex, finishSwipe, indicatorX, updateDragIndicator, visualIndex]);
+
+  const handlePress = (section: PhoneSection, index: number) => {
+    if (suppressPressRef.current) {
+      suppressPressRef.current = false;
+      clearSuppressPressTimer();
+      return;
+    }
+    visualIndexRef.current = index;
+    setVisualIndex(index);
+    animateIndicatorTo(index);
+    if (section !== active) onSelect(section);
+  };
 
   return (
     <View style={styles.phoneDockWrap} pointerEvents="box-none">
-      <View style={styles.phoneDock}>
-        <View
+      <View
+        ref={dockRef}
+        {...panResponder.panHandlers}
+        onLayout={(event) => setDockWidth(event.nativeEvent.layout.width)}
+        style={[styles.phoneDock, swiping && styles.phoneDockSwiping]}
+      >
+        <Animated.View
           pointerEvents="none"
           style={[
             styles.phoneDockIndicator,
-            { left: `${Math.max(0, activeIndex) * 20}%` },
+            {
+              opacity: tabWidth ? 1 : 0,
+              width: tabWidth || 0,
+              transform: [{ translateX: indicatorX }],
+            },
           ]}
         />
-        {PHONE_NAV_ITEMS.map((item) => {
-          const selected = item.key === active;
+        {PHONE_NAV_ITEMS.map((item, index) => {
+          const selected = index === visualIndex;
+          const badgeCount = Math.max(0, Number(badges[item.key] || 0));
           const DockIcon = item.Icon;
           return (
             <Pressable
               key={item.key}
               accessibilityRole="tab"
-              accessibilityState={{ selected }}
-              onPress={() => onSelect(item.key)}
+              accessibilityState={{ selected: item.key === active }}
+              onPress={() => handlePress(item.key, index)}
               style={({ pressed }) => [
                 styles.phoneDockItem,
+                selected && styles.phoneDockItemActive,
                 pressed && styles.pressed,
               ]}
             >
-              <DockIcon
-                size={18}
-                color={selected ? COLORS.accent : COLORS.muted}
-                strokeWidth={selected ? 2.55 : 2.25}
-              />
-              <Text numberOfLines={1} style={[styles.phoneDockLabel, selected && styles.phoneDockLabelActive]}>
-                {item.label}
-              </Text>
+              <View style={[styles.phoneDockIconWrap, selected && styles.phoneDockIconWrapActive]}>
+                <DockIcon
+                  size={item.key === 'chat' ? 26 : 24}
+                  color={selected ? COLORS.accent : COLORS.muted}
+                  strokeWidth={selected ? 2.35 : 2.05}
+                />
+                {badgeCount > 0 ? (
+                  <View style={styles.phoneDockBadge}>
+                    <Text style={styles.phoneDockBadgeText}>{badgeCount > 99 ? '99+' : String(badgeCount)}</Text>
+                  </View>
+                ) : null}
+              </View>
             </Pressable>
           );
         })}
@@ -557,10 +728,12 @@ function LoginScreen({
 function ChatScreen({
   api,
   footer,
+  onUnreadTotalChange,
   onNavigate,
 }: {
   api: RistakApiClient;
   footer?: React.ReactNode;
+  onUnreadTotalChange?: (count: number) => void;
   onNavigate?: (section: PhoneSection) => void;
 }) {
   const [query, setQuery] = useState('');
@@ -717,6 +890,10 @@ function ChatScreen({
     ), 0),
     [archivedChatIds, chats],
   );
+
+  useEffect(() => {
+    onUnreadTotalChange?.(unreadTotal);
+  }, [onUnreadTotalChange, unreadTotal]);
 
   const listBaseChats = useMemo(
     () => chats.filter((contact) => (
@@ -2991,29 +3168,42 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 10,
     right: 10,
-    bottom: 8,
+    bottom: 10,
     zIndex: 10,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 14 },
+    shadowOpacity: 0.26,
+    shadowRadius: 26,
+    elevation: 12,
   },
   phoneDock: {
-    minHeight: 64,
-    borderRadius: 32,
+    minHeight: 62,
+    borderRadius: 31,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(10, 31, 92, 0.94)',
+    borderColor: 'rgba(199,226,255,0.19)',
+    backgroundColor: 'rgba(10, 31, 92, 0.91)',
     flexDirection: 'row',
-    paddingHorizontal: 8,
-    paddingVertical: 7,
-    overflow: 'hidden',
+    paddingHorizontal: PHONE_DOCK_HORIZONTAL_PADDING,
+    paddingVertical: 6,
+    overflow: 'visible',
+  },
+  phoneDockSwiping: {
+    shadowOpacity: 0.34,
   },
   phoneDockIndicator: {
     position: 'absolute',
-    top: 7,
-    bottom: 7,
-    width: '20%',
+    top: 6,
+    bottom: 6,
+    left: PHONE_DOCK_HORIZONTAL_PADDING,
     borderRadius: 999,
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: 'rgba(0,168,248,0.18)',
     borderWidth: 1,
-    borderColor: 'rgba(0,168,248,0.34)',
+    borderColor: 'rgba(0,168,248,0.42)',
+    shadowColor: COLORS.accent,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 18,
+    elevation: 2,
   },
   phoneDockItem: {
     flex: 1,
@@ -3022,7 +3212,19 @@ const styles = StyleSheet.create({
     borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 1,
+    zIndex: 1,
+  },
+  phoneDockItemActive: {
+    transform: [{ translateY: -1 }],
+  },
+  phoneDockIconWrap: {
+    minWidth: 34,
+    minHeight: 34,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  phoneDockIconWrapActive: {
+    transform: [{ translateY: -1 }],
   },
   phoneDockIcon: {
     color: COLORS.muted,
@@ -3032,18 +3234,30 @@ const styles = StyleSheet.create({
   phoneDockIconActive: {
     color: COLORS.accent,
   },
-  phoneDockLabel: {
-    color: COLORS.muted,
-    fontSize: 10,
-    fontWeight: '800',
+  phoneDockBadge: {
+    position: 'absolute',
+    top: -7,
+    right: -11,
+    minWidth: 19,
+    height: 19,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+    borderWidth: 2,
+    borderColor: COLORS.panel,
   },
-  phoneDockLabelActive: {
-    color: COLORS.text,
+  phoneDockBadgeText: {
+    color: COLORS.bg,
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: '900',
   },
   sectionScroll: {
     paddingHorizontal: 16,
     paddingTop: 4,
-    paddingBottom: 112,
+    paddingBottom: PHONE_DOCK_RESERVED_SPACE,
     gap: 14,
   },
   sectionBlock: {
@@ -3761,14 +3975,14 @@ const styles = StyleSheet.create({
   },
   chatList: {
     paddingTop: 2,
-    paddingBottom: 126,
+    paddingBottom: PHONE_DOCK_RESERVED_SPACE,
   },
   emptyList: {
     flexGrow: 1,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
-    paddingBottom: 112,
+    paddingBottom: PHONE_DOCK_RESERVED_SPACE,
   },
   emptyChats: {
     alignItems: 'center',

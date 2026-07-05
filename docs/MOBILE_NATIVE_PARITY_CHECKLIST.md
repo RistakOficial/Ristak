@@ -44,6 +44,15 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [x] Login por URL de instalacion + email/password.
 - [x] Shell inicial con Chat, Citas, Pagos, Analiticas y Ajustes.
 - [x] Primer pase de lista de chats con API real, filtros basicos y filas planas.
+- [x] Dock inferior nativo.
+  - Avance: `mobile/` ya replica la navegacion inferior de `/movil` con
+    Ajustes, Chats, Citas, Pagos y Analiticas como iconos sin texto visible,
+    indicador animado que persigue la coordenada real del dedo durante el swipe
+    horizontal entre tabs, supresion del tap fantasma despues de arrastrar, badge
+    de no leidos en Chats y espacio inferior reservado para que las listas no se
+    corten detras del panel. Si cambia
+    `frontend/src/components/phone/PhoneEcosystemNav.*`, revisar tambien
+    `mobile/src/App.tsx`.
 - [ ] Paridad completa de Chat.
 - [ ] Paridad completa de Citas.
 - [ ] Paridad completa de Pagos.
