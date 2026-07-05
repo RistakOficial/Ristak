@@ -396,13 +396,19 @@ forzar scroll al ultimo mensaje.
 En el chat movil bajo `/movil`, los filtros de la bandeja viven en la fila de
 chips bajo el buscador. No debe existir un dropdown aparte de `Numero / Ver
 todos` ni una preferencia de ajustes para juntar/separar numeros. El chip `+`
-administra los filtros predeterminados visibles, incluyendo filtros rapidos,
-comentarios, cada WhatsApp conectado y los filtros avanzados equivalentes a
-desktop (canal, origen, red social, etapa y actividad). El filtro por numero
-sigue mandando `businessPhoneNumberId`/`businessPhone` a `/contacts/chats`; solo
-cambia la superficie desde donde el usuario lo controla. `Comentarios` debe ir
-separado visualmente de `Interesados` con la misma linea divisoria que usa la
-bandeja desktop.
+administra los filtros visibles: `Agregar` manda el filtro a la fila rapida y lo
+guarda en `app_config.mobile_chat_filter_chip_ids`; `Quitar` lo saca de esa fila.
+La biblioteca incluye filtros rapidos, comentarios, cada WhatsApp conectado y
+los filtros avanzados equivalentes a desktop (canal, origen, red social, etapa y
+actividad). El filtro por numero simple sigue mandando
+`businessPhoneNumberId`/`businessPhone` a `/contacts/chats`; solo cambia la
+superficie desde donde el usuario lo controla. `Comentarios` debe ir separado
+visualmente de `Interesados` con la misma linea divisoria que usa la bandeja
+desktop. Los filtros condicionales guardados viven en
+`app_config.mobile_chat_custom_filter_presets`, aparecen como chips normales,
+pueden combinar reglas con modo todas/cualquiera, soportan numero de WhatsApp,
+segmento, canal, origen, red social, etapa, actividad, etiquetas y campos
+personalizados, y pueden editarse o eliminarse desde el mismo panel.
 
 Las fotos de perfil de contactos WhatsApp se guardan en
 `whatsapp_api_contacts.profile_picture_url`, no en el perfil del numero de

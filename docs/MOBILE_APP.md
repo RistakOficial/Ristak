@@ -200,18 +200,29 @@ numero activo.
 
 La bandeja de `/movil` no debe volver a mostrar el dropdown `Numero / Ver todos`
 ni el ajuste separado de "Números de WhatsApp". La fuente visible para filtrar la
-lista son los chips bajo el buscador. El chip `+` abre el administrador de filtros
-predeterminados y guarda en `app_config.mobile_chat_filter_chip_ids` que chips
-quedan visibles para ese entorno.
+lista son los chips bajo el buscador. El chip `+` abre una biblioteca de filtros:
+tocar `Agregar` manda ese filtro a la fila principal de rapidos y lo guarda de
+inmediato en `app_config.mobile_chat_filter_chip_ids`; tocar `Quitar` lo elimina
+de esa fila. `Todos` queda fijo.
 
-Ese administrador debe incluir los filtros rapidos del chat movil, la entrada de
+Esa biblioteca debe incluir los filtros rapidos del chat movil, la entrada de
 `Comentarios`, cada WhatsApp conectado cuando hay mas de un numero y las familias
 avanzadas equivalentes a desktop: canal, origen, red social, etapa y actividad.
-Los filtros por numero siguen usando `mobile_chat_selected_whatsapp_phone_id` y
-mandando `businessPhoneNumberId`/`businessPhone` a `/contacts/chats`; solo cambio
-la superficie de control. El chip `Comentarios` va separado de `Interesados` con
-una linea divisoria, igual que la bandeja desktop separa comentarios de filtros
-normales.
+Los filtros por numero simples siguen usando `mobile_chat_selected_whatsapp_phone_id`
+y mandando `businessPhoneNumberId`/`businessPhone` a `/contacts/chats`; solo
+cambio la superficie de control. El chip `Comentarios` va separado de
+`Interesados` con una linea divisoria, igual que la bandeja desktop separa
+comentarios de filtros normales.
+
+El administrador tambien permite crear filtros condicionales guardados. Esos
+presets viven en `app_config.mobile_chat_custom_filter_presets`, aparecen como
+chips normales al guardarlos y pueden editarse o eliminarse desde el mismo panel.
+Cada filtro condicional define si deben coincidir todas las reglas o cualquiera
+de ellas, y puede combinar segmento del chat, numero de WhatsApp, canal, origen,
+red social, etapa, actividad, etiquetas y campos personalizados. Las condiciones
+usan operadores compatibles con Contactos/Automatizaciones cuando aplican:
+contiene, no contiene, es igual, no es igual, vacio/no vacio, si/no y
+comparaciones numericas para campos numericos.
 
 Los avatares de contacto son parte de la identidad de Ristak: si el contacto
 tiene foto real de la red social, se respeta esa foto; si no tiene foto, el

@@ -94,6 +94,17 @@ import {
 import { PhoneAnalytics } from '@/pages/PhoneAnalytics'
 import { PhoneCalendar, type PhoneCalendarCreateRequest } from '@/pages/PhoneCalendar'
 import { PhoneSettings } from '@/pages/PhoneSettings'
+import {
+  getContactAdvancedOperators,
+  getDefaultOperatorForContactAdvancedField,
+  operatorNeedsContactAdvancedValue,
+  operatorUsesContactAdvancedRange,
+  type ContactAdvancedField,
+  type ContactAdvancedFieldGroup,
+  type ContactAdvancedFieldType,
+  type ContactAdvancedOperator,
+  type ContactAdvancedOption
+} from '@/pages/Contacts/contactAdvancedFilters'
 import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useUserConfig, useBottomSheetDismiss, usePaymentGatewayCapabilities, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks' // MOB-006 useUserConfig
 import { aiAgentService, type AIAgentAttachment, type AIAgentAttachmentKind, type AIAgentMessage, type AIAgentViewContext } from '@/services/aiAgentService'
 import {
@@ -144,6 +155,7 @@ import { calendarsService, type Calendar, type CalendarEvent } from '@/services/
 import { subscribeToChatLiveEvents, reportViewing } from '@/services/chatLiveEventsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
+import { customFieldsService, type CustomFieldDefinition } from '@/services/customFieldsService'
 import { highLevelService, type HighLevelChatChannel } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import {
@@ -383,6 +395,8 @@ type WideSidebarMode = 'chats' | 'newChat' | 'appointment'
 type ChatMoreMode = 'default' | 'agentControls'
 type AgentMenuSection = 'menu' | 'agents' | 'agent_detail' | 'create_agent' | 'provider_key' | 'ready_human'
 type ChatFilter = 'all' | 'agent' | 'unread' | 'appointments' | 'customers' | 'leads'
+type PhoneChatFilterManagerMode = 'list' | 'editor'
+type PhoneChatCustomFilterMatchMode = 'all' | 'any'
 type AIAgentHubStatusFilter = 'active' | 'completed' | 'paused' | 'skipped' | 'unassigned'
 type TemplateMode = 'choice' | 'send' | 'create'
 type TemplatePickIntent = 'send' | 'schedule'
@@ -400,6 +414,30 @@ interface AdvancedChatFilters {
   social: AdvancedSocialFilter
   stage: AdvancedStageFilter
   activity: AdvancedActivityFilter
+}
+interface PhoneChatCustomFilterRule {
+  id: string
+  field: string
+  operator: ContactAdvancedOperator
+  value?: string | string[] | number | boolean | null
+  valueTo?: string | number | null
+}
+interface PhoneChatCustomFilterPreset {
+  id: string
+  label: string
+  match: PhoneChatCustomFilterMatchMode
+  rules: PhoneChatCustomFilterRule[]
+  createdAt?: string
+  updatedAt?: string
+}
+interface PhoneChatCustomFilterDraft {
+  id: string
+  label: string
+  match: PhoneChatCustomFilterMatchMode
+  rules: PhoneChatCustomFilterRule[]
+}
+interface PhoneChatConditionField extends ContactAdvancedField {
+  section: string
 }
 type PhotoPickDestination = 'chat' | 'cameraShare'
 type AddDraftAttachmentOptions = { showReadyToast?: boolean }
@@ -466,6 +504,36 @@ const PHONE_CHAT_FILTERS_MORE_VALUE = '__filters_more__'
 const PHONE_CHAT_COMMENTS_FILTER_ID = 'comments'
 const PHONE_CHAT_PHONE_FILTER_PREFIX = 'phone:'
 const PHONE_CHAT_ADVANCED_FILTER_PREFIX = 'advanced:'
+const PHONE_CHAT_CUSTOM_FILTER_PREFIX = 'custom:'
+const PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY = 'mobile_chat_custom_filter_presets'
+const PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD = 'chat_segment'
+const PHONE_CHAT_CONDITION_OPERATORS = new Set<ContactAdvancedOperator>([
+  'is',
+  'is_not',
+  'contains',
+  'not_contains',
+  'starts_with',
+  'ends_with',
+  'empty',
+  'not_empty',
+  'eq',
+  'neq',
+  'gt',
+  'lt',
+  'gte',
+  'lte',
+  'between',
+  'before',
+  'after',
+  'on',
+  'last_days',
+  'older_days',
+  'yes',
+  'no',
+  'any',
+  'all',
+  'none'
+])
 const CHANNEL_FILTER_OPTIONS: Array<{ value: AdvancedChannelFilter; label: string }> = [
   { value: 'all', label: 'Todos los canales' },
   { value: 'whatsapp', label: 'WhatsApp' },
@@ -511,11 +579,12 @@ interface PhoneChatFilterPreset {
   label: string
   description: string
   section: string
-  kind: 'quick' | 'comments' | 'phone' | 'advanced'
+  kind: 'quick' | 'comments' | 'phone' | 'advanced' | 'custom'
   quickFilter?: Exclude<ChatFilter, 'agent'>
   phoneId?: string
   advancedGroup?: AdvancedFilterGroupId
   advancedValue?: string
+  customFilterId?: string
   separatorBefore?: boolean
   locked?: boolean
 }
@@ -526,6 +595,137 @@ function makePhoneChatPhoneFilterId(phoneId: string) {
 
 function makePhoneChatAdvancedFilterId(group: AdvancedFilterGroupId, value: string) {
   return `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}${group}:${value}`
+}
+
+function makePhoneChatCustomFilterPresetId(filterId: string) {
+  return `${PHONE_CHAT_CUSTOM_FILTER_PREFIX}${filterId}`
+}
+
+function makePhoneChatCustomFilterId() {
+  const randomPart = Math.random().toString(36).slice(2, 10)
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `filter_${crypto.randomUUID()}`
+  }
+  return `filter_${randomPart}`
+}
+
+function makePhoneChatCustomFilterRuleId() {
+  return `rule_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function normalizePhoneChatCustomFilterRule(value: unknown, index = 0): PhoneChatCustomFilterRule | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const raw = value as Partial<PhoneChatCustomFilterRule>
+  const field = String(raw.field || '').trim()
+  if (!field) return null
+  const operator = PHONE_CHAT_CONDITION_OPERATORS.has(raw.operator as ContactAdvancedOperator)
+    ? raw.operator as ContactAdvancedOperator
+    : 'contains'
+
+  return {
+    id: String(raw.id || `rule_${index}_${Math.random().toString(36).slice(2, 7)}`),
+    field,
+    operator,
+    value: raw.value ?? '',
+    valueTo: raw.valueTo ?? ''
+  }
+}
+
+function normalizePhoneChatCustomFilterPresets(value: unknown): PhoneChatCustomFilterPreset[] {
+  if (!Array.isArray(value)) return []
+
+  return value
+    .map((item, index) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null
+      const raw = item as Partial<PhoneChatCustomFilterPreset>
+      const id = String(raw.id || '').trim() || `filter_${index}`
+      const label = String(raw.label || '').trim()
+      const rules = Array.isArray(raw.rules)
+        ? raw.rules
+            .map((rule, ruleIndex) => normalizePhoneChatCustomFilterRule(rule, ruleIndex))
+            .filter((rule): rule is PhoneChatCustomFilterRule => Boolean(rule))
+        : []
+
+      if (!label || rules.length === 0) return null
+
+      return {
+        id,
+        label,
+        match: raw.match === 'any' ? 'any' : 'all',
+        rules
+      }
+    })
+    .filter((preset): preset is PhoneChatCustomFilterPreset => Boolean(preset))
+}
+
+function createPhoneChatConditionRule(field: PhoneChatConditionField | undefined): PhoneChatCustomFilterRule {
+  const targetField = field || {
+    key: PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD,
+    label: 'Segmento del chat',
+    type: 'select',
+    section: 'Chat'
+  } satisfies PhoneChatConditionField
+
+  return {
+    id: makePhoneChatCustomFilterRuleId(),
+    field: targetField.key,
+    operator: getDefaultOperatorForContactAdvancedField(targetField),
+    value: '',
+    valueTo: ''
+  }
+}
+
+function createPhoneChatCustomFilterDraft(field?: PhoneChatConditionField): PhoneChatCustomFilterDraft {
+  return {
+    id: '',
+    label: '',
+    match: 'all',
+    rules: [createPhoneChatConditionRule(field)]
+  }
+}
+
+function getCustomFieldDefinitionKey(field: Partial<CustomFieldDefinition> | null | undefined) {
+  return String(field?.definitionId || field?.key || field?.fieldKey || field?.name || field?.label || '').trim()
+}
+
+function getCustomFieldDefinitionLabel(field: Partial<CustomFieldDefinition> | null | undefined) {
+  return String(field?.label || field?.name || field?.fieldKey || field?.key || field?.definitionId || 'Campo personalizado').trim()
+}
+
+function getCustomFieldOptionValue(option: unknown) {
+  if (!option || typeof option !== 'object' || Array.isArray(option)) return String(option || '').trim()
+  const raw = option as { value?: unknown; label?: unknown; name?: unknown }
+  return String(raw.value || raw.label || raw.name || '').trim()
+}
+
+function getCustomFieldOptionLabel(option: unknown) {
+  if (!option || typeof option !== 'object' || Array.isArray(option)) return String(option || '').trim()
+  const raw = option as { label?: unknown; name?: unknown; value?: unknown }
+  return String(raw.label || raw.name || raw.value || '').trim()
+}
+
+function getCustomFieldSelectOptions(field: Partial<CustomFieldDefinition>): ContactAdvancedOption[] {
+  if (!Array.isArray(field.options)) return []
+  return field.options
+    .map((option) => ({
+      value: getCustomFieldOptionValue(option),
+      label: getCustomFieldOptionLabel(option)
+    }))
+    .filter((option) => option.value && option.label)
+}
+
+function mapCustomFieldDataTypeToAdvancedType(field: Partial<CustomFieldDefinition>): ContactAdvancedFieldType {
+  const dataType = String(field.dataType || '').toLowerCase()
+  if (dataType === 'number' || dataType === 'currency') return 'number'
+  if (dataType === 'checkbox' || dataType === 'boolean') return 'boolean'
+  if (getCustomFieldSelectOptions(field).length > 0) return 'select'
+  return 'text'
+}
+
+function getConditionRuleScalarValue(value: PhoneChatCustomFilterRule['value']) {
+  if (Array.isArray(value)) return value[0] || ''
+  if (value === null || value === undefined) return ''
+  return String(value)
 }
 
 const DEFAULT_PHONE_AGENT_REPLY_DELIVERY: AgentReplyDeliveryConfig = {
@@ -1361,6 +1561,264 @@ function contactMatchesPhoneAdvancedFilters(contact: ChatContact, filters: Advan
 
 function countAdvancedChatFilters(filters: AdvancedChatFilters) {
   return Object.values(filters).filter((value) => value !== 'all').length
+}
+
+interface PhoneChatConditionEvalContext {
+  fieldsByKey: Map<string, PhoneChatConditionField>
+  businessPhones: WhatsAppApiStatus['phoneNumbers']
+  contactTagsById: Map<string, ContactTag>
+}
+
+function conditionValueToText(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  if (Array.isArray(value)) return value.map(conditionValueToText).filter(Boolean).join(' ')
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).map(conditionValueToText).filter(Boolean).join(' ')
+  }
+  return String(value)
+}
+
+function conditionValueToArray(value: unknown): string[] {
+  if (value === null || value === undefined) return []
+  if (Array.isArray(value)) return value.flatMap(conditionValueToArray)
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap(conditionValueToArray)
+  const text = String(value).trim()
+  return text ? [text] : []
+}
+
+function isConditionValueEmpty(value: unknown): boolean {
+  if (value === null || value === undefined) return true
+  if (Array.isArray(value)) return value.length === 0 || value.every(isConditionValueEmpty)
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).every(isConditionValueEmpty)
+  return String(value).trim() === ''
+}
+
+function normalizeConditionComparable(value: unknown) {
+  return normalizeSearchText(conditionValueToText(value))
+}
+
+function normalizeConditionOptions(value: unknown) {
+  return conditionValueToArray(value).map(normalizeSearchText).filter(Boolean)
+}
+
+function conditionTextMatches(value: unknown, operator: ContactAdvancedOperator, expectedValue: unknown) {
+  const actual = normalizeConditionComparable(value)
+  const expected = normalizeConditionComparable(expectedValue)
+
+  if (operator === 'empty') return isConditionValueEmpty(value)
+  if (operator === 'not_empty') return !isConditionValueEmpty(value)
+  if (!expected) return false
+
+  if (operator === 'is' || operator === 'eq') return actual === expected
+  if (operator === 'is_not' || operator === 'neq') return actual !== expected
+  if (operator === 'not_contains') return !actual.includes(expected)
+  if (operator === 'starts_with') return actual.startsWith(expected)
+  if (operator === 'ends_with') return actual.endsWith(expected)
+  return actual.includes(expected)
+}
+
+function conditionNumberMatches(value: unknown, operator: ContactAdvancedOperator, expectedValue: unknown, expectedValueTo: unknown) {
+  if (operator === 'empty') return isConditionValueEmpty(value)
+  if (operator === 'not_empty') return !isConditionValueEmpty(value)
+
+  const actual = Number(conditionValueToArray(value)[0] ?? value)
+  const expected = Number(expectedValue)
+  const expectedTo = Number(expectedValueTo)
+  if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false
+
+  if (operator === 'neq' || operator === 'is_not') return actual !== expected
+  if (operator === 'gt') return actual > expected
+  if (operator === 'gte') return actual >= expected
+  if (operator === 'lt') return actual < expected
+  if (operator === 'lte') return actual <= expected
+  if (operator === 'between') return Number.isFinite(expectedTo) && actual >= Math.min(expected, expectedTo) && actual <= Math.max(expected, expectedTo)
+  return actual === expected
+}
+
+function conditionBooleanMatches(value: unknown, operator: ContactAdvancedOperator) {
+  const text = normalizeConditionComparable(value)
+  const actual = value === true || text === 'true' || text === 'si' || text === 'sí' || text === 'yes' || text === '1'
+  if (operator === 'no') return !actual
+  if (operator === 'empty') return isConditionValueEmpty(value)
+  if (operator === 'not_empty') return !isConditionValueEmpty(value)
+  return actual
+}
+
+function conditionArrayMatches(actualValues: string[], operator: ContactAdvancedOperator, expectedValue: unknown) {
+  const actual = new Set(actualValues.map(normalizeSearchText).filter(Boolean))
+  const expected = normalizeConditionOptions(expectedValue)
+  if (operator === 'empty') return actual.size === 0
+  if (operator === 'not_empty') return actual.size > 0
+  if (expected.length === 0) return false
+
+  const hasAny = expected.some((value) => actual.has(value))
+  const hasAll = expected.every((value) => actual.has(value))
+
+  if (operator === 'all') return hasAll
+  if (operator === 'none' || operator === 'not_contains' || operator === 'is_not' || operator === 'neq') return !hasAny
+  return hasAny
+}
+
+function getPhoneChatConditionSegmentValues(contact: ChatContact) {
+  const values: string[] = []
+  const hasCustomerSignal = contact.status === 'customer' || Number(contact.purchases || 0) > 0
+  const hasAppointmentSignal = contact.status === 'appointment' || Boolean(contact.hasAppointments || contact.nextAppointmentDate)
+  if (hasCustomerSignal) values.push('customers')
+  if (hasAppointmentSignal) values.push('appointments')
+  if (!hasCustomerSignal && !hasAppointmentSignal && contact.status === 'lead') values.push('leads')
+  if (Number(contact.unreadCount || 0) > 0) values.push('unread')
+  if (contactHasCommentActivity(contact)) values.push('comments')
+  return values
+}
+
+function getPhoneChatConditionActivityValues(contact: ChatContact) {
+  const values: string[] = []
+  const hasPayments = Number(contact.ltv || 0) > 0 || Number(contact.purchases || 0) > 0 || contactHasSuccessfulPayment(contact)
+  if (hasPayments) values.push('payments')
+  if (contact.hasAppointments || contact.nextAppointmentDate) values.push('appointments')
+  if (phoneContactHasSource(contact)) values.push('with_source')
+  if (!contact.phone) values.push('no_phone')
+  return values
+}
+
+function getContactTagConditionValues(contact: ChatContact, context: PhoneChatConditionEvalContext) {
+  return (contact.tags || []).flatMap((tagValue) => {
+    const clean = String(tagValue || '').trim()
+    if (!clean) return []
+    const tag = context.contactTagsById.get(clean)
+    return tag?.name ? [clean, tag.name] : [clean]
+  })
+}
+
+function findContactCustomFieldValue(contact: ChatContact, identity: string) {
+  const target = normalizeSearchText(identity)
+  if (!target) return ''
+
+  const field = (contact.customFields || []).find((item) => {
+    const candidates = [
+      item.definitionId,
+      item.key,
+      item.fieldKey,
+      item.id,
+      item.label,
+      item.name
+    ].map((value) => normalizeSearchText(value || ''))
+    return candidates.includes(target)
+  })
+
+  return field?.value ?? ''
+}
+
+function contactBusinessPhoneMatchesCondition(
+  contact: ChatContact,
+  rule: PhoneChatCustomFilterRule,
+  context: PhoneChatConditionEvalContext
+) {
+  const ids = [
+    contact.lastBusinessPhoneNumberId,
+    contact.lastInboundBusinessPhoneNumberId,
+    contact.firstInboundBusinessPhoneNumberId
+  ].map((value) => String(value || '').trim()).filter(Boolean)
+  const phoneValues = [
+    contact.lastBusinessPhone,
+    contact.lastInboundBusinessPhone,
+    contact.firstInboundBusinessPhone
+  ].map((value) => String(value || '').trim()).filter(Boolean)
+
+  if (rule.operator === 'empty') return ids.length === 0 && phoneValues.length === 0
+  if (rule.operator === 'not_empty') return ids.length > 0 || phoneValues.length > 0
+
+  const expected = getConditionRuleScalarValue(rule.value)
+  if (!expected) return false
+  const expectedPhone = context.businessPhones.find((phone) => phone.id === expected)
+  const expectedPhoneValue = getBusinessPhoneValue(expectedPhone) || expected
+  const matches = ids.includes(expected) || phoneValues.some((value) => phoneLooksSame(value, expectedPhoneValue))
+
+  if (rule.operator === 'is_not' || rule.operator === 'not_contains' || rule.operator === 'neq' || rule.operator === 'none') {
+    return !matches
+  }
+  return matches
+}
+
+function getPhoneChatConditionValue(contact: ChatContact, fieldKey: string, context: PhoneChatConditionEvalContext): unknown {
+  if (fieldKey.startsWith('custom:')) return findContactCustomFieldValue(contact, fieldKey.slice('custom:'.length))
+
+  switch (fieldKey) {
+    case 'chat_segment':
+      return getPhoneChatConditionSegmentValues(contact)
+    case 'business_phone':
+      return [
+        contact.lastBusinessPhoneNumberId,
+        contact.lastBusinessPhone,
+        contact.lastInboundBusinessPhoneNumberId,
+        contact.lastInboundBusinessPhone,
+        contact.firstInboundBusinessPhoneNumberId,
+        contact.firstInboundBusinessPhone
+      ].filter(Boolean)
+    case 'channel':
+      return getPhoneContactChannelKind(contact)
+    case 'origin':
+      return getPhoneContactOriginKind(contact)
+    case 'social':
+      return getPhoneContactSocialKind(contact)
+    case 'activity':
+      return getPhoneChatConditionActivityValues(contact)
+    case 'status':
+      return contact.status
+    case 'full_name':
+      return getContactName(contact)
+    case 'email':
+      return contact.email || ''
+    case 'phone':
+      return [contact.phone, ...(contact.phones || []).map((phone) => phone.phone), ...(contact.phoneNumbers || []).map((phone) => phone.phone)].filter(Boolean)
+    case 'source':
+      return contact.source || ''
+    case 'unread':
+      return Number(contact.unreadCount || 0) > 0
+    case 'tags':
+      return getContactTagConditionValues(contact, context)
+    default:
+      return ''
+  }
+}
+
+function contactMatchesPhoneChatCustomRule(
+  contact: ChatContact,
+  rule: PhoneChatCustomFilterRule,
+  context: PhoneChatConditionEvalContext
+) {
+  const field = context.fieldsByKey.get(rule.field)
+  if (!field) return false
+  if (field.key === 'business_phone') return contactBusinessPhoneMatchesCondition(contact, rule, context)
+
+  const value = getPhoneChatConditionValue(contact, field.key, context)
+  if (field.type === 'tags') return conditionArrayMatches(conditionValueToArray(value), rule.operator, rule.value)
+  if (Array.isArray(value)) return conditionArrayMatches(conditionValueToArray(value), rule.operator, rule.value)
+  if (field.type === 'number') return conditionNumberMatches(value, rule.operator, rule.value, rule.valueTo)
+  if (field.type === 'boolean') return conditionBooleanMatches(value, rule.operator)
+  return conditionTextMatches(value, rule.operator, rule.value)
+}
+
+function contactMatchesPhoneChatCustomFilter(
+  contact: ChatContact,
+  preset: PhoneChatCustomFilterPreset,
+  context: PhoneChatConditionEvalContext
+) {
+  const rules = preset.rules.filter((rule) => context.fieldsByKey.has(rule.field))
+  if (rules.length === 0) return false
+  if (preset.match === 'any') {
+    return rules.some((rule) => contactMatchesPhoneChatCustomRule(contact, rule, context))
+  }
+  return rules.every((rule) => contactMatchesPhoneChatCustomRule(contact, rule, context))
+}
+
+function isPhoneChatConditionRuleComplete(rule: PhoneChatCustomFilterRule, field?: PhoneChatConditionField) {
+  if (!field) return false
+  if (!operatorNeedsContactAdvancedValue(rule.operator)) return true
+  if (operatorUsesContactAdvancedRange(rule.operator)) {
+    return Boolean(getConditionRuleScalarValue(rule.value)) && Boolean(rule.valueTo)
+  }
+  return Boolean(getConditionRuleScalarValue(rule.value))
 }
 
 // Perfil social del contacto + contacto ENLAZADO (misma persona en el mismo
@@ -4356,6 +4814,7 @@ export const PhoneChat: React.FC = () => {
   const [pushCalendarIds] = useUserConfig<string[]>('calendar_push_notification_calendar_ids', []) // MOB-006
   const [selectedChatPhoneId, setSelectedChatPhoneId] = useAppConfig<string>('mobile_chat_selected_whatsapp_phone_id', 'all')
   const [visibleChatFilterIds, setVisibleChatFilterIds] = useAppConfig<string[]>('mobile_chat_filter_chip_ids', DEFAULT_PHONE_CHAT_FILTER_CHIPS)
+  const [customChatFilters, setCustomChatFilters] = useAppConfig<PhoneChatCustomFilterPreset[]>(PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY, [])
   const [selectedHighLevelChatChannel, setSelectedHighLevelChatChannel] = useAppConfig<HighLevelChatChannel>('mobile_chat_highlevel_channel', 'whatsapp_api')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
   const aiAvailability = useAIAgentAvailability()
@@ -4413,6 +4872,10 @@ export const PhoneChat: React.FC = () => {
   const [chatFilter, setChatFilter] = useState<ChatFilter>('all')
   const [advancedChatFilters, setAdvancedChatFilters] = useState<AdvancedChatFilters>(DEFAULT_ADVANCED_CHAT_FILTERS)
   const [visibleFilterDraftIds, setVisibleFilterDraftIds] = useState<string[]>([])
+  const [activeCustomChatFilterId, setActiveCustomChatFilterId] = useState('')
+  const [filterManagerMode, setFilterManagerMode] = useState<PhoneChatFilterManagerMode>('list')
+  const [editingCustomChatFilterId, setEditingCustomChatFilterId] = useState('')
+  const [customFilterDraft, setCustomFilterDraft] = useState<PhoneChatCustomFilterDraft>(() => createPhoneChatCustomFilterDraft())
   const [commentsView, setCommentsView] = useState(false)
   const [commentsPlatform, setCommentsPlatform] = useState<'all' | 'facebook' | 'instagram'>('all')
   // La barra SIEMPRE manda privado. Responder PÚBLICO a un comentario es una
@@ -4556,6 +5019,8 @@ export const PhoneChat: React.FC = () => {
   const [chatTags, setChatTags] = useState<ContactTag[]>([])
   const [chatTagsLoading, setChatTagsLoading] = useState(false)
   const [chatTagSearch, setChatTagSearch] = useState('')
+  const [chatCustomFieldDefinitions, setChatCustomFieldDefinitions] = useState<CustomFieldDefinition[]>([])
+  const [chatCustomFieldsLoading, setChatCustomFieldsLoading] = useState(false)
   const [applyingTagId, setApplyingTagId] = useState<string | null>(null)
   const [creatingContactTag, setCreatingContactTag] = useState(false)
   const [activeSettingsSection, setActiveSettingsSection] = useState<ChatSettingsSection>(null)
@@ -5310,6 +5775,105 @@ export const PhoneChat: React.FC = () => {
   const selectedChatPhoneFilterActive = Boolean(chatPhoneFilterEnabled && selectedChatPhoneId !== 'all' && selectedChatPhone)
   const effectiveSelectedChatPhoneId = selectedChatPhoneFilterActive ? selectedChatPhoneId : 'all'
   const effectiveSelectedChatPhone = selectedChatPhoneFilterActive ? selectedChatPhone : null
+  const normalizedCustomChatFilters = useMemo(
+    () => normalizePhoneChatCustomFilterPresets(customChatFilters),
+    [customChatFilters]
+  )
+  const customChatFilterMap = useMemo(() => (
+    new Map(normalizedCustomChatFilters.map((filter) => [filter.id, filter]))
+  ), [normalizedCustomChatFilters])
+  const chatTagMap = useMemo(() => (
+    new Map(chatTags.map((tag) => [tag.id, tag]))
+  ), [chatTags])
+  const phoneChatConditionFieldGroups = useMemo<Array<ContactAdvancedFieldGroup & { fields: PhoneChatConditionField[] }>>(() => {
+    const phoneOptions: ContactAdvancedOption[] = businessPhones.map((phone, index) => ({
+      value: phone.id,
+      label: getBusinessPhoneLabel(phone) || `Número ${index + 1}`
+    }))
+    const activeCustomFields = chatCustomFieldDefinitions.reduce<PhoneChatConditionField[]>((fields, field) => {
+      if (field.archived) return fields
+      const identity = getCustomFieldDefinitionKey(field)
+      if (!identity) return fields
+      const options = getCustomFieldSelectOptions(field)
+      fields.push({
+        key: `custom:${identity}`,
+        label: getCustomFieldDefinitionLabel(field),
+        type: mapCustomFieldDataTypeToAdvancedType(field),
+        options: options.length > 0 ? options : undefined,
+        section: 'Etiquetas y campos'
+      })
+      return fields
+    }, [])
+
+    return [
+      {
+        label: 'Chat',
+        fields: [
+          {
+            key: 'chat_segment',
+            label: 'Segmento del chat',
+            type: 'select',
+            options: [
+              { value: 'customers', label: customersLabel },
+              { value: 'leads', label: leadsLabel },
+              { value: 'appointments', label: 'Agendados' },
+              { value: 'unread', label: 'No leídos' },
+              { value: 'comments', label: 'Comentarios' }
+            ],
+            section: 'Chat'
+          },
+          { key: 'business_phone', label: 'Número de WhatsApp', type: 'select', options: phoneOptions, section: 'Chat' },
+          { key: 'channel', label: 'Canal', type: 'select', options: CHANNEL_FILTER_OPTIONS.filter((option) => option.value !== 'all'), section: 'Chat' },
+          { key: 'origin', label: 'Origen', type: 'select', options: ORIGIN_FILTER_OPTIONS.filter((option) => option.value !== 'all'), section: 'Chat' },
+          { key: 'social', label: 'Red social', type: 'select', options: SOCIAL_FILTER_OPTIONS.filter((option) => option.value !== 'all'), section: 'Chat' },
+          { key: 'activity', label: 'Actividad', type: 'select', options: ACTIVITY_FILTER_OPTIONS.filter((option) => option.value !== 'all'), section: 'Chat' }
+        ]
+      },
+      {
+        label: 'Contacto',
+        fields: [
+          { key: 'full_name', label: 'Nombre', type: 'text', section: 'Contacto' },
+          { key: 'phone', label: 'Teléfono', type: 'text', section: 'Contacto' },
+          { key: 'email', label: 'Email', type: 'text', section: 'Contacto' },
+          {
+            key: 'status',
+            label: 'Etapa comercial',
+            type: 'select',
+            options: [
+              { value: 'lead', label: leadLabel },
+              { value: 'appointment', label: 'Con cita' },
+              { value: 'customer', label: customerLabel }
+            ],
+            section: 'Contacto'
+          },
+          { key: 'source', label: 'Fuente', type: 'text', section: 'Contacto' },
+          { key: 'unread', label: 'Tiene mensajes no leídos', type: 'boolean', section: 'Contacto' }
+        ]
+      },
+      {
+        label: 'Etiquetas y campos',
+        fields: [
+          { key: 'tags', label: 'Etiquetas', type: 'tags', section: 'Etiquetas y campos' },
+          ...activeCustomFields
+        ]
+      }
+    ]
+  }, [businessPhones, chatCustomFieldDefinitions, customerLabel, customersLabel, leadLabel, leadsLabel])
+  const phoneChatConditionFields = useMemo(
+    () => phoneChatConditionFieldGroups.flatMap((group) => group.fields),
+    [phoneChatConditionFieldGroups]
+  )
+  const phoneChatConditionFieldMap = useMemo(() => (
+    new Map(phoneChatConditionFields.map((field) => [field.key, field]))
+  ), [phoneChatConditionFields])
+  const defaultPhoneChatConditionField = useMemo(() => (
+    phoneChatConditionFieldMap.get(PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD) || phoneChatConditionFields[0]
+  ), [phoneChatConditionFieldMap, phoneChatConditionFields])
+  const phoneChatConditionEvalContext = useMemo<PhoneChatConditionEvalContext>(() => ({
+    fieldsByKey: phoneChatConditionFieldMap,
+    businessPhones,
+    contactTagsById: chatTagMap
+  }), [businessPhones, chatTagMap, phoneChatConditionFieldMap])
   const availableChatFilterPresets = useMemo<PhoneChatFilterPreset[]>(() => {
     const quickPresets: PhoneChatFilterPreset[] = [
       {
@@ -5406,8 +5970,17 @@ export const PhoneChat: React.FC = () => {
         }))
     ))
 
-    return [...quickPresets, ...commentsPreset, ...phonePresets, ...advancedPresets]
-  }, [businessPhones, chatPhoneFilterEnabled, commentsFeatureEnabled, customersLabel, leadsLabel])
+    const customPresets: PhoneChatFilterPreset[] = normalizedCustomChatFilters.map((filter) => ({
+      id: makePhoneChatCustomFilterPresetId(filter.id),
+      label: filter.label,
+      description: `${filter.rules.length} condición${filter.rules.length === 1 ? '' : 'es'} · ${filter.match === 'all' ? 'todas' : 'cualquiera'}`,
+      section: 'Condicionales',
+      kind: 'custom',
+      customFilterId: filter.id
+    }))
+
+    return [...quickPresets, ...commentsPreset, ...phonePresets, ...advancedPresets, ...customPresets]
+  }, [businessPhones, chatPhoneFilterEnabled, commentsFeatureEnabled, customersLabel, leadsLabel, normalizedCustomChatFilters])
   const availableChatFilterPresetMap = useMemo(() => (
     new Map(availableChatFilterPresets.map((preset) => [preset.id, preset]))
   ), [availableChatFilterPresets])
@@ -5431,9 +6004,17 @@ export const PhoneChat: React.FC = () => {
     const active = entries.find(([, value]) => value !== 'all')
     return active ? makePhoneChatAdvancedFilterId(active[0], active[1]) : ''
   }, [advancedChatFilters])
+  const activeCustomChatFilter = useMemo(() => (
+    activeCustomChatFilterId ? customChatFilterMap.get(activeCustomChatFilterId) || null : null
+  ), [activeCustomChatFilterId, customChatFilterMap])
+  const activeCustomChatFilterPresetId = activeCustomChatFilter
+    ? makePhoneChatCustomFilterPresetId(activeCustomChatFilter.id)
+    : ''
   const activeChatFilterPresetId = commentsView
     ? PHONE_CHAT_COMMENTS_FILTER_ID
-    : selectedChatPhoneFilterActive
+    : activeCustomChatFilterPresetId
+      ? activeCustomChatFilterPresetId
+      : selectedChatPhoneFilterActive
       ? makePhoneChatPhoneFilterId(effectiveSelectedChatPhoneId)
       : activeAdvancedChatFilterPresetId || chatFilter
   const selectedBusinessPhone = useMemo(() => {
@@ -5880,7 +6461,11 @@ export const PhoneChat: React.FC = () => {
       ? phoneFilteredChats.filter((contact) => contactMatchesPhoneAdvancedFilters(contact, advancedChatFilters))
       : phoneFilteredChats
 
-    const chipFilteredChats = advancedFilteredChats.filter((contact) => {
+    const customFilteredChats = activeCustomChatFilter
+      ? advancedFilteredChats.filter((contact) => contactMatchesPhoneChatCustomFilter(contact, activeCustomChatFilter, phoneChatConditionEvalContext))
+      : advancedFilteredChats
+
+    const chipFilteredChats = customFilteredChats.filter((contact) => {
       const isComment = isCommentContact(contact)
       // LENTE de Comentarios: muestra a CUALQUIER contacto que haya comentado,
       // aunque también tenga chat privado. Al abrirlo aquí solo se ven sus
@@ -5912,6 +6497,7 @@ export const PhoneChat: React.FC = () => {
   }, [
     agentActiveChatIdSet,
     activeAdvancedChatFilterCount,
+    activeCustomChatFilter,
     advancedChatFilters,
     archivedChatIdSet,
     chatFilter,
@@ -5925,6 +6511,7 @@ export const PhoneChat: React.FC = () => {
     isCustomerContact,
     isLeadContact,
     listBaseChats,
+    phoneChatConditionEvalContext,
     selectedChatPhoneFilterActive
   ])
   const selectableChatRows = useMemo(() => {
@@ -6951,10 +7538,29 @@ export const PhoneChat: React.FC = () => {
     setter(value).catch(() => showToast('error', 'No se guardó la configuración', 'Intenta otra vez.'))
   }, [showToast])
 
+  const loadChatFilterCatalogs = useCallback(async (forceRefresh = false) => {
+    setChatTagsLoading(true)
+    setChatCustomFieldsLoading(true)
+    try {
+      const [tags, customFieldsCatalog] = await Promise.all([
+        contactTagsService.getTags({ includeSystem: true, forceRefresh }),
+        customFieldsService.listCatalog()
+      ])
+      setChatTags(tags)
+      setChatCustomFieldDefinitions(Array.isArray(customFieldsCatalog.fields) ? customFieldsCatalog.fields : [])
+    } catch (error: any) {
+      showToast('error', 'No se cargaron los filtros', getErrorMessage(error, 'Intenta otra vez.'))
+    } finally {
+      setChatTagsLoading(false)
+      setChatCustomFieldsLoading(false)
+    }
+  }, [showToast])
+
   const resetChatPresetFilters = useCallback((options: { keepPhone?: boolean } = {}) => {
     setCommentsView(false)
     setCommentsPlatform('all')
     setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+    setActiveCustomChatFilterId('')
     if (!options.keepPhone && selectedChatPhoneId !== 'all') {
       saveConfigPreference(setSelectedChatPhoneId, 'all')
     }
@@ -6962,8 +7568,12 @@ export const PhoneChat: React.FC = () => {
 
   const openChatFilterManager = useCallback(() => {
     setVisibleFilterDraftIds(normalizedVisibleChatFilterIds)
+    setFilterManagerMode('list')
+    setEditingCustomChatFilterId('')
+    setCustomFilterDraft(createPhoneChatCustomFilterDraft(defaultPhoneChatConditionField))
     setSheet('filters')
-  }, [normalizedVisibleChatFilterIds])
+    void loadChatFilterCatalogs()
+  }, [defaultPhoneChatConditionField, loadChatFilterCatalogs, normalizedVisibleChatFilterIds])
 
   const applyChatFilterPreset = useCallback((presetId: string) => {
     if (presetId === PHONE_CHAT_FILTERS_MORE_VALUE) {
@@ -6980,6 +7590,7 @@ export const PhoneChat: React.FC = () => {
     if (preset.kind === 'comments') {
       if (selectedChatPhoneId !== 'all') saveConfigPreference(setSelectedChatPhoneId, 'all')
       setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+      setActiveCustomChatFilterId('')
       setChatFilter('all')
       setCommentsPlatform('all')
       setCommentsView(true)
@@ -6990,6 +7601,13 @@ export const PhoneChat: React.FC = () => {
       resetChatPresetFilters({ keepPhone: true })
       setChatFilter('all')
       saveConfigPreference(setSelectedChatPhoneId, preset.phoneId)
+      return
+    }
+
+    if (preset.kind === 'custom' && preset.customFilterId) {
+      resetChatPresetFilters()
+      setChatFilter('all')
+      setActiveCustomChatFilterId(preset.customFilterId)
       return
     }
 
@@ -7043,6 +7661,7 @@ export const PhoneChat: React.FC = () => {
         setCommentsView(false)
         setCommentsPlatform('all')
         setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+        setActiveCustomChatFilterId('')
         setChatFilter('all')
         if (selectedChatPhoneId !== 'all') await setSelectedChatPhoneId('all')
       }
@@ -7061,6 +7680,259 @@ export const PhoneChat: React.FC = () => {
     setVisibleChatFilterIds,
     showToast,
     visibleFilterDraftIds
+  ])
+
+  const addFilterPresetToQuickList = useCallback(async (preset: PhoneChatFilterPreset) => {
+    const source = normalizedVisibleChatFilterIds.length > 0 ? normalizedVisibleChatFilterIds : DEFAULT_PHONE_CHAT_FILTER_CHIPS
+    const next = source.includes(preset.id) ? source : [...source, preset.id]
+
+    try {
+      await setVisibleChatFilterIds(next)
+      setVisibleFilterDraftIds(next)
+      applyChatFilterPreset(preset.id)
+      showToast('success', 'Filtro agregado', `${preset.label} ya está en tus filtros rápidos.`)
+    } catch {
+      showToast('error', 'No se agregó el filtro', 'Intenta otra vez.')
+    }
+  }, [applyChatFilterPreset, normalizedVisibleChatFilterIds, setVisibleChatFilterIds, showToast])
+
+  const removeFilterPresetFromQuickList = useCallback(async (preset: PhoneChatFilterPreset) => {
+    if (preset.locked) return
+    const next = normalizedVisibleChatFilterIds.filter((id) => id !== preset.id)
+    if (!next.includes('all')) next.unshift('all')
+
+    try {
+      await setVisibleChatFilterIds(next)
+      setVisibleFilterDraftIds(next)
+      if (activeChatFilterPresetId === preset.id) {
+        setCommentsView(false)
+        setCommentsPlatform('all')
+        setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+        setActiveCustomChatFilterId('')
+        setChatFilter('all')
+        if (selectedChatPhoneId !== 'all') await setSelectedChatPhoneId('all')
+      }
+      showToast('success', 'Filtro quitado', `${preset.label} ya no aparece en rápidos.`)
+    } catch {
+      showToast('error', 'No se quitó el filtro', 'Intenta otra vez.')
+    }
+  }, [
+    activeChatFilterPresetId,
+    normalizedVisibleChatFilterIds,
+    selectedChatPhoneId,
+    setSelectedChatPhoneId,
+    setVisibleChatFilterIds,
+    showToast
+  ])
+
+  const resetVisibleChatFiltersToDefaults = useCallback(async () => {
+    const availableIds = new Set(availableChatFilterPresets.map((preset) => preset.id))
+    const next = DEFAULT_PHONE_CHAT_FILTER_CHIPS.filter((id) => availableIds.has(id))
+    if (!next.includes('all')) next.unshift('all')
+
+    try {
+      await setVisibleChatFilterIds(next)
+      setVisibleFilterDraftIds(next)
+      if (activeChatFilterPresetId !== 'all' && !next.includes(activeChatFilterPresetId)) {
+        setCommentsView(false)
+        setCommentsPlatform('all')
+        setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+        setActiveCustomChatFilterId('')
+        setChatFilter('all')
+        if (selectedChatPhoneId !== 'all') await setSelectedChatPhoneId('all')
+      }
+      showToast('success', 'Filtros restaurados', 'Volvimos a los filtros rápidos base.')
+    } catch {
+      showToast('error', 'No se restauraron', 'Intenta otra vez.')
+    }
+  }, [
+    activeChatFilterPresetId,
+    availableChatFilterPresets,
+    selectedChatPhoneId,
+    setSelectedChatPhoneId,
+    setVisibleChatFilterIds,
+    showToast
+  ])
+
+  const startCreateCustomChatFilter = useCallback(() => {
+    setEditingCustomChatFilterId('')
+    setCustomFilterDraft(createPhoneChatCustomFilterDraft(defaultPhoneChatConditionField))
+    setFilterManagerMode('editor')
+    void loadChatFilterCatalogs()
+  }, [defaultPhoneChatConditionField, loadChatFilterCatalogs])
+
+  const startEditCustomChatFilter = useCallback((filter: PhoneChatCustomFilterPreset) => {
+    setEditingCustomChatFilterId(filter.id)
+    setCustomFilterDraft({
+      id: filter.id,
+      label: filter.label,
+      match: filter.match,
+      rules: filter.rules.length > 0 ? filter.rules : [createPhoneChatConditionRule(defaultPhoneChatConditionField)]
+    })
+    setFilterManagerMode('editor')
+    void loadChatFilterCatalogs()
+  }, [defaultPhoneChatConditionField, loadChatFilterCatalogs])
+
+  const patchCustomFilterRule = useCallback((ruleId: string, patch: Partial<PhoneChatCustomFilterRule>) => {
+    setCustomFilterDraft((current) => ({
+      ...current,
+      rules: current.rules.map((rule) => rule.id === ruleId ? { ...rule, ...patch } : rule)
+    }))
+  }, [])
+
+  const setCustomFilterRuleField = useCallback((ruleId: string, fieldKey: string) => {
+    const field = phoneChatConditionFieldMap.get(fieldKey) || defaultPhoneChatConditionField
+    setCustomFilterDraft((current) => ({
+      ...current,
+      rules: current.rules.map((rule) => rule.id === ruleId
+        ? {
+            ...rule,
+            field: field?.key || PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD,
+            operator: getDefaultOperatorForContactAdvancedField(field),
+            value: '',
+            valueTo: ''
+          }
+        : rule
+      )
+    }))
+  }, [defaultPhoneChatConditionField, phoneChatConditionFieldMap])
+
+  const setCustomFilterRuleOperator = useCallback((ruleId: string, operator: ContactAdvancedOperator) => {
+    setCustomFilterDraft((current) => ({
+      ...current,
+      rules: current.rules.map((rule) => rule.id === ruleId
+        ? {
+            ...rule,
+            operator,
+            value: operatorNeedsContactAdvancedValue(operator) ? rule.value ?? '' : '',
+            valueTo: operatorUsesContactAdvancedRange(operator) ? rule.valueTo ?? '' : ''
+          }
+        : rule
+      )
+    }))
+  }, [])
+
+  const addCustomFilterRule = useCallback(() => {
+    setCustomFilterDraft((current) => ({
+      ...current,
+      rules: [...current.rules, createPhoneChatConditionRule(defaultPhoneChatConditionField)]
+    }))
+  }, [defaultPhoneChatConditionField])
+
+  const removeCustomFilterRule = useCallback((ruleId: string) => {
+    setCustomFilterDraft((current) => {
+      const nextRules = current.rules.filter((rule) => rule.id !== ruleId)
+      return {
+        ...current,
+        rules: nextRules.length > 0 ? nextRules : [createPhoneChatConditionRule(defaultPhoneChatConditionField)]
+      }
+    })
+  }, [defaultPhoneChatConditionField])
+
+  const saveCustomChatFilter = useCallback(async () => {
+    const label = customFilterDraft.label.trim()
+    if (!label) {
+      showToast('warning', 'Ponle nombre al filtro', 'Así lo vas a reconocer en los chips rápidos.')
+      return
+    }
+
+    const completeRules = customFilterDraft.rules
+      .filter((rule) => isPhoneChatConditionRuleComplete(rule, phoneChatConditionFieldMap.get(rule.field)))
+      .map((rule) => ({
+        ...rule,
+        value: operatorNeedsContactAdvancedValue(rule.operator) ? rule.value ?? '' : '',
+        valueTo: operatorUsesContactAdvancedRange(rule.operator) ? rule.valueTo ?? '' : ''
+      }))
+
+    if (completeRules.length === 0) {
+      showToast('warning', 'Faltan condiciones', 'Agrega al menos una condición completa.')
+      return
+    }
+
+    const filterId = editingCustomChatFilterId || customFilterDraft.id || makePhoneChatCustomFilterId()
+    const nextFilter: PhoneChatCustomFilterPreset = {
+      id: filterId,
+      label,
+      match: customFilterDraft.match,
+      rules: completeRules
+    }
+    const nextFilters = normalizedCustomChatFilters.some((filter) => filter.id === filterId)
+      ? normalizedCustomChatFilters.map((filter) => filter.id === filterId ? nextFilter : filter)
+      : [nextFilter, ...normalizedCustomChatFilters]
+    const chipId = makePhoneChatCustomFilterPresetId(filterId)
+    const nextVisibleIds = normalizedVisibleChatFilterIds.includes(chipId)
+      ? normalizedVisibleChatFilterIds
+      : [...normalizedVisibleChatFilterIds, chipId]
+
+    try {
+      await setCustomChatFilters(nextFilters)
+      await setVisibleChatFilterIds(nextVisibleIds)
+      setVisibleFilterDraftIds(nextVisibleIds)
+      setCommentsView(false)
+      setCommentsPlatform('all')
+      setAdvancedChatFilters(DEFAULT_ADVANCED_CHAT_FILTERS)
+      setChatFilter('all')
+      if (selectedChatPhoneId !== 'all') await setSelectedChatPhoneId('all')
+      setActiveCustomChatFilterId(filterId)
+      setFilterManagerMode('list')
+      setEditingCustomChatFilterId('')
+      setCustomFilterDraft(createPhoneChatCustomFilterDraft(defaultPhoneChatConditionField))
+      showToast('success', 'Filtro guardado', `${label} quedó en tus filtros rápidos.`)
+      actionSheetDismiss.requestClose()
+    } catch {
+      showToast('error', 'No se guardó el filtro', 'Intenta otra vez.')
+    }
+  }, [
+    actionSheetDismiss,
+    customFilterDraft,
+    defaultPhoneChatConditionField,
+    editingCustomChatFilterId,
+    normalizedCustomChatFilters,
+    normalizedVisibleChatFilterIds,
+    phoneChatConditionFieldMap,
+    selectedChatPhoneId,
+    setCustomChatFilters,
+    setSelectedChatPhoneId,
+    setVisibleChatFilterIds,
+    showToast
+  ])
+
+  const deleteCustomChatFilter = useCallback((filter: PhoneChatCustomFilterPreset) => {
+    showConfirm(
+      `Eliminar "${filter.label}"`,
+      'Se borra el filtro guardado y desaparece de tus filtros rápidos del chat móvil.',
+      async () => {
+        const nextFilters = normalizedCustomChatFilters.filter((item) => item.id !== filter.id)
+        const chipId = makePhoneChatCustomFilterPresetId(filter.id)
+        const nextVisibleIds = normalizedVisibleChatFilterIds.filter((id) => id !== chipId)
+        if (!nextVisibleIds.includes('all')) nextVisibleIds.unshift('all')
+
+        try {
+          await setCustomChatFilters(nextFilters)
+          await setVisibleChatFilterIds(nextVisibleIds)
+          setVisibleFilterDraftIds(nextVisibleIds)
+          if (activeCustomChatFilterId === filter.id) {
+            setActiveCustomChatFilterId('')
+            setChatFilter('all')
+          }
+          setFilterManagerMode('list')
+          setEditingCustomChatFilterId('')
+          showToast('success', 'Filtro eliminado', 'Ya no aparece en rápidos.')
+        } catch {
+          showToast('error', 'No se eliminó el filtro', 'Intenta otra vez.')
+        }
+      },
+      'Eliminar',
+      'Cancelar'
+    )
+  }, [
+    activeCustomChatFilterId,
+    normalizedCustomChatFilters,
+    normalizedVisibleChatFilterIds,
+    setCustomChatFilters,
+    setVisibleChatFilterIds,
+    showConfirm,
+    showToast
   ])
 
   useEffect(() => {
@@ -16416,9 +17288,182 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const renderCustomFilterRuleValueInput = (rule: PhoneChatCustomFilterRule) => {
+    const field = phoneChatConditionFieldMap.get(rule.field)
+    if (!field || !operatorNeedsContactAdvancedValue(rule.operator)) {
+      return <div className={styles.filterEditorEmptyValue}>Sin valor adicional</div>
+    }
+
+    const value = getConditionRuleScalarValue(rule.value)
+    const rangeValue = rule.valueTo === null || rule.valueTo === undefined ? '' : String(rule.valueTo)
+
+    if (field.type === 'tags') {
+      const tagOptions = [
+        { value: '', label: chatTagsLoading ? 'Cargando etiquetas' : 'Selecciona etiqueta' },
+        ...chatTags.map((tag) => ({ value: tag.id, label: tag.name }))
+      ]
+      return (
+        <PhoneSelect
+          value={value}
+          onChange={(nextValue) => patchCustomFilterRule(rule.id, { value: nextValue })}
+          options={tagOptions}
+          title="Etiqueta"
+          disabled={chatTagsLoading || chatTags.length === 0}
+        />
+      )
+    }
+
+    if (field.options?.length) {
+      return (
+        <PhoneSelect
+          value={value}
+          onChange={(nextValue) => patchCustomFilterRule(rule.id, { value: nextValue })}
+          options={[{ value: '', label: 'Selecciona' }, ...field.options]}
+          title={field.label}
+        />
+      )
+    }
+
+    if (operatorUsesContactAdvancedRange(rule.operator)) {
+      return (
+        <div className={styles.filterEditorValuePair}>
+          <PhoneTextField
+            value={value}
+            onChange={(nextValue) => patchCustomFilterRule(rule.id, { value: nextValue })}
+            placeholder="Desde"
+            type={field.type === 'number' ? 'number' : 'text'}
+          />
+          <PhoneTextField
+            value={rangeValue}
+            onChange={(nextValue) => patchCustomFilterRule(rule.id, { valueTo: nextValue })}
+            placeholder="Hasta"
+            type={field.type === 'number' ? 'number' : 'text'}
+          />
+        </div>
+      )
+    }
+
+    return (
+      <PhoneTextField
+        value={value}
+        onChange={(nextValue) => patchCustomFilterRule(rule.id, { value: nextValue })}
+        placeholder={field.type === 'number' ? '0' : 'Valor'}
+        type={field.type === 'number' ? 'number' : 'text'}
+      />
+    )
+  }
+
+  const renderCustomFilterEditor = () => {
+    const fieldOptions = phoneChatConditionFields.map((field) => ({
+      value: field.key,
+      label: field.label,
+      description: field.section
+    }))
+    const isEditing = Boolean(editingCustomChatFilterId)
+
+    return (
+      <div className={styles.filterEditorStack} data-phone-chat-scrollable="true">
+        <div className={styles.filterEditorTopbar}>
+          <button type="button" onClick={() => setFilterManagerMode('list')}>
+            <ChevronLeft size={17} />
+            Filtros
+          </button>
+          <strong>{isEditing ? 'Editar condicional' : 'Nuevo condicional'}</strong>
+        </div>
+
+        <PhoneTextField
+          label="Nombre"
+          value={customFilterDraft.label}
+          onChange={(label) => setCustomFilterDraft((current) => ({ ...current, label }))}
+          placeholder="Ej. Clientes de mi WhatsApp"
+          maxLength={40}
+          autoFocus
+        />
+
+        <div className={styles.filterEditorMatch}>
+          <span>Coincidir</span>
+          <div role="group" aria-label="Modo de coincidencia">
+            <button
+              type="button"
+              className={customFilterDraft.match === 'all' ? styles.filterEditorMatchActive : ''}
+              onClick={() => setCustomFilterDraft((current) => ({ ...current, match: 'all' }))}
+            >
+              Todas
+            </button>
+            <button
+              type="button"
+              className={customFilterDraft.match === 'any' ? styles.filterEditorMatchActive : ''}
+              onClick={() => setCustomFilterDraft((current) => ({ ...current, match: 'any' }))}
+            >
+              Cualquiera
+            </button>
+          </div>
+        </div>
+
+        {(chatTagsLoading || chatCustomFieldsLoading) && (
+          <div className={styles.filterEditorLoading}>
+            <Loader2 size={16} className={styles.spinIcon} />
+            Cargando catálogo
+          </div>
+        )}
+
+        <div className={styles.filterEditorRules}>
+          {customFilterDraft.rules.map((rule, index) => {
+            const field = phoneChatConditionFieldMap.get(rule.field) || defaultPhoneChatConditionField
+            const operatorOptions = getContactAdvancedOperators(field)
+
+            return (
+              <section key={rule.id} className={styles.filterEditorRule}>
+                <div className={styles.filterEditorRuleHeader}>
+                  <strong>Condición {index + 1}</strong>
+                  <button type="button" onClick={() => removeCustomFilterRule(rule.id)} aria-label="Eliminar condición">
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+                <div className={styles.filterEditorControls}>
+                  <PhoneSelect
+                    value={field?.key || rule.field}
+                    onChange={(nextValue) => setCustomFilterRuleField(rule.id, nextValue)}
+                    options={fieldOptions}
+                    title="Campo"
+                  />
+                  <PhoneSelect
+                    value={rule.operator}
+                    onChange={(nextValue) => setCustomFilterRuleOperator(rule.id, nextValue as ContactAdvancedOperator)}
+                    options={operatorOptions}
+                    title="Condición"
+                  />
+                  <div className={styles.filterEditorValue}>
+                    {renderCustomFilterRuleValueInput(rule)}
+                  </div>
+                </div>
+              </section>
+            )
+          })}
+        </div>
+
+        <button type="button" className={styles.filterEditorAddButton} onClick={addCustomFilterRule}>
+          <Plus size={16} />
+          Agregar condición
+        </button>
+
+        <div className={styles.filterEditorFooter}>
+          <button type="button" onClick={() => setFilterManagerMode('list')}>
+            Cancelar
+          </button>
+          <button type="button" className={styles.filterEditorSaveButton} onClick={() => { void saveCustomChatFilter() }}>
+            <Check size={17} />
+            Guardar filtro
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   const renderFilterManagerSheet = () => {
-    const draftIds = visibleFilterDraftIds.length > 0 ? visibleFilterDraftIds : normalizedVisibleChatFilterIds
-    const draftSet = new Set(draftIds)
+    if (filterManagerMode === 'editor') return renderCustomFilterEditor()
+
+    const visibleSet = new Set(normalizedVisibleChatFilterIds)
     const groupedPresets = availableChatFilterPresets.reduce<Array<{ section: string; presets: PhoneChatFilterPreset[] }>>((groups, preset) => {
       const existing = groups.find((group) => group.section === preset.section)
       if (existing) {
@@ -16428,68 +17473,100 @@ export const PhoneChat: React.FC = () => {
       }
       return groups
     }, [])
-    const selectedCount = draftIds.filter((id) => availableChatFilterPresetMap.has(id)).length
+    const selectedCount = normalizedVisibleChatFilterIds.filter((id) => availableChatFilterPresetMap.has(id)).length
 
     return (
       <div className={styles.filterManagerStack} data-phone-chat-scrollable="true">
         <section className={styles.filterManagerSummary}>
           <span>
             <strong>{selectedCount} filtro{selectedCount === 1 ? '' : 's'} visible{selectedCount === 1 ? '' : 's'}</strong>
-            <small>Los chips marcados aparecerán en la barra del chat móvil.</small>
+            <small>Agrega filtros a rápidos o crea uno condicional.</small>
           </span>
-          <button type="button" onClick={() => setVisibleFilterDraftIds(DEFAULT_PHONE_CHAT_FILTER_CHIPS)}>
+          <button type="button" onClick={() => { void resetVisibleChatFiltersToDefaults() }}>
             Restaurar
           </button>
         </section>
+
+        <button type="button" className={styles.filterManagerCreateButton} onClick={startCreateCustomChatFilter}>
+          <Plus size={17} />
+          Crear filtro condicional
+        </button>
 
         {groupedPresets.map((group) => (
           <section key={group.section} className={styles.filterManagerGroup}>
             <h3>{group.section}</h3>
             <div className={styles.filterManagerList}>
               {group.presets.map((preset) => {
-                const checked = draftSet.has(preset.id)
+                const checked = visibleSet.has(preset.id)
+                const customFilter = preset.customFilterId ? customChatFilterMap.get(preset.customFilterId) || null : null
                 return (
-                  <button
+                  <div
                     key={preset.id}
-                    type="button"
                     className={`${styles.filterManagerOption} ${checked ? styles.filterManagerOptionSelected : ''}`}
-                    onClick={() => toggleVisibleFilterDraft(preset)}
-                    disabled={preset.locked}
-                    aria-pressed={checked}
                   >
-                    <span className={styles.filterManagerOptionText}>
-                      <strong>{preset.label}</strong>
-                      <small>{preset.description}</small>
-                    </span>
-                    <span className={styles.filterManagerOptionAction}>
-                      {preset.locked ? (
-                        <>
-                          <Check size={15} />
-                          Fijo
-                        </>
-                      ) : checked ? (
-                        <>
-                          <Trash2 size={15} />
-                          Quitar
-                        </>
-                      ) : (
-                        <>
-                          <Plus size={15} />
-                          Agregar
-                        </>
-                      )}
-                    </span>
-                  </button>
+                    <button
+                      type="button"
+                      className={styles.filterManagerOptionMain}
+                      onClick={() => {
+                        if (checked) {
+                          applyChatFilterPreset(preset.id)
+                        } else {
+                          void addFilterPresetToQuickList(preset)
+                        }
+                      }}
+                      aria-pressed={checked}
+                    >
+                      <span className={styles.filterManagerOptionText}>
+                        <strong>{preset.label}</strong>
+                        <small>{preset.description}</small>
+                      </span>
+                      <span className={styles.filterManagerOptionAction}>
+                        {preset.locked ? (
+                          <>
+                            <Check size={15} />
+                            Fijo
+                          </>
+                        ) : checked ? (
+                          <>
+                            <Check size={15} />
+                            Usar
+                          </>
+                        ) : (
+                          <>
+                            <Plus size={15} />
+                            Agregar
+                          </>
+                        )}
+                      </span>
+                    </button>
+                    {(!preset.locked || customFilter) && (
+                      <div className={styles.filterManagerOptionTools}>
+                        {checked && !preset.locked && (
+                          <button type="button" onClick={() => { void removeFilterPresetFromQuickList(preset) }}>
+                            <Trash2 size={14} />
+                            Quitar
+                          </button>
+                        )}
+                        {customFilter && (
+                          <>
+                            <button type="button" onClick={() => startEditCustomChatFilter(customFilter)}>
+                              <Pencil size={14} />
+                              Editar
+                            </button>
+                            <button type="button" className={styles.filterManagerDangerTool} onClick={() => deleteCustomChatFilter(customFilter)}>
+                              <Trash2 size={14} />
+                              Eliminar
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 )
               })}
             </div>
           </section>
         ))}
-
-        <button type="button" className={styles.filterManagerSaveButton} onClick={() => { void saveVisibleFilterPresets() }}>
-          <Check size={17} />
-          Guardar predeterminados
-        </button>
       </div>
     )
   }

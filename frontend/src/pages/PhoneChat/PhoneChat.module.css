@@ -7072,7 +7072,10 @@
 }
 
 .filterManagerSummary button,
-.filterManagerSaveButton {
+.filterManagerCreateButton,
+.filterEditorAddButton,
+.filterEditorFooter button,
+.filterEditorTopbar button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7085,6 +7088,12 @@
   background: var(--phone-chat-surface-soft);
   font-size: 12px;
   font-weight: 820;
+}
+
+.filterManagerCreateButton,
+.filterEditorAddButton {
+  width: 100%;
+  min-height: 42px;
 }
 
 .filterManagerGroup {
@@ -7110,17 +7119,10 @@
 
 .filterManagerOption {
   position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
   min-width: 0;
-  min-height: 58px;
-  padding: 10px 12px;
-  border: 0;
+  padding: 0;
   color: var(--phone-chat-text);
   background: transparent;
-  text-align: left;
 }
 
 .filterManagerOption::after {
@@ -7141,8 +7143,18 @@
   background: color-mix(in srgb, var(--phone-chat-accent-soft) 72%, var(--phone-chat-surface));
 }
 
-.filterManagerOption:disabled {
-  opacity: 1;
+.filterManagerOptionMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 12px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
 }
 
 .filterManagerOptionAction {
@@ -7165,15 +7177,181 @@
   background: color-mix(in srgb, var(--phone-chat-accent) 16%, var(--phone-chat-surface));
 }
 
-.filterManagerSaveButton {
+.filterManagerOptionTools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 0 12px 10px;
+}
+
+.filterManagerOptionTools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface-soft);
+  font-size: 11px;
+  font-weight: 830;
+}
+
+.filterManagerOptionTools .filterManagerDangerTool {
+  color: color-mix(in srgb, var(--phone-chat-text) 72%, var(--phone-chat-accent));
+}
+
+.filterEditorStack {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 0;
+  padding-bottom: 8px;
+}
+
+.filterEditorTopbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.filterEditorTopbar strong {
+  color: var(--phone-chat-text);
+  font-size: 14px;
+  font-weight: 860;
+}
+
+.filterEditorMatch {
+  display: grid;
+  gap: 7px;
+}
+
+.filterEditorMatch > span {
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 830;
+}
+
+.filterEditorMatch > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border-radius: 999px;
+  background: var(--phone-chat-surface);
+  border: 1px solid var(--phone-chat-border);
+}
+
+.filterEditorMatch button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 840;
+}
+
+.filterEditorMatchActive {
+  color: var(--phone-chat-text) !important;
+  background: var(--phone-chat-surface-soft) !important;
+  box-shadow: 0 7px 14px color-mix(in srgb, var(--phone-chat-primary) 12%, transparent);
+}
+
+.filterEditorLoading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--phone-chat-muted);
+  font-size: 12px;
+  font-weight: 790;
+}
+
+.filterEditorRules {
+  display: grid;
+  gap: 10px;
+}
+
+.filterEditorRule {
+  display: grid;
+  gap: 10px;
+  padding: 11px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 16px;
+  background: var(--phone-chat-surface);
+}
+
+.filterEditorRuleHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.filterEditorRuleHeader strong {
+  color: var(--phone-chat-text);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.filterEditorRuleHeader button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface-soft);
+}
+
+.filterEditorControls {
+  display: grid;
+  gap: 8px;
+}
+
+.filterEditorValue,
+.filterEditorValuePair {
+  display: grid;
+  gap: 8px;
+}
+
+.filterEditorValuePair {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.filterEditorEmptyValue {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 12px;
+  border-radius: 12px;
+  color: var(--phone-chat-muted);
+  background: var(--phone-chat-surface-soft);
+  font-size: 12px;
+  font-weight: 790;
+}
+
+.filterEditorFooter {
   position: sticky;
   bottom: 0;
   z-index: 1;
-  width: 100%;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  padding-top: 8px;
+  background: linear-gradient(to top, var(--phone-chat-panel), color-mix(in srgb, var(--phone-chat-panel) 82%, transparent));
+}
+
+.filterEditorFooter .filterEditorSaveButton {
   min-height: 44px;
   color: var(--phone-chat-text-on-primary);
   background: var(--phone-chat-primary);
-  box-shadow: 0 -10px 22px color-mix(in srgb, var(--phone-chat-panel) 78%, transparent);
+  box-shadow: 0 10px 22px color-mix(in srgb, var(--phone-chat-primary) 20%, transparent);
 }
 
 .tagSearchBox {
