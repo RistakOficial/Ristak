@@ -26,6 +26,7 @@ import {
   Archive,
   BarChart3,
   Bell,
+  BellRing,
   BellOff,
   Bot,
   CalendarDays,
@@ -33,17 +34,29 @@ import {
   Check,
   CheckCheck,
   ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
+  CircleAlert,
   Clock,
+  FileText,
+  ListChecks,
+  LogOut,
   Mail,
   MessageCircle,
+  Mic,
   MoreHorizontal,
+  Moon,
   Pause,
   Play,
+  RefreshCw,
+  Save,
   Send,
   Plus,
   Search,
   Settings,
+  Smartphone,
+  Sparkles,
+  Sun,
   Tag,
   User,
   X,
@@ -77,13 +90,18 @@ import type {
   CalendarItem,
   ChatContact,
   ChatMessage,
+  ConfigValue,
+  ContactCustomFieldDefinition,
   ContactTag,
   ConversationAgentState,
+  AIAgentConfigStatus,
   DashboardMetrics,
   PhoneSection,
+  PhoneThemePreference,
   ProductItem,
   RistakUser,
   TransactionItem,
+  WhatsAppApiTemplate,
 } from './types';
 
 const COLORS = {
@@ -113,6 +131,7 @@ type ChatFilterId = string;
 type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
 type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
+type SettingsPanel = 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null;
 type ChatFilterPreset = {
   id: ChatFilterId;
   label: string;
@@ -154,6 +173,36 @@ const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
 const AI_AGENT_CHAT_SEARCH_TEXT = 'asistente personal ai ristak ai agente inteligencia artificial ia';
+const SETTINGS_APP_CONFIG_KEYS = [
+  'mobile_chat_ai_agent_enabled',
+  'mobile_chat_ai_reply_suggestions_enabled',
+  'mobile_chat_show_archived',
+  'mobile_chat_sort_mode',
+  'mobile_chat_show_last_preview',
+  'mobile_chat_show_unread_indicators',
+  'mobile_chat_theme_preference',
+];
+const SETTINGS_USER_CONFIG_KEYS = [
+  'chat_push_notifications_enabled',
+  'calendar_push_notifications_enabled',
+  'appointment_confirmation_push_notifications_enabled',
+  'payment_push_notifications_enabled',
+  'push_notification_sound_enabled',
+  'push_notification_vibration_enabled',
+  'calendar_push_notification_calendar_ids',
+];
+const TEMPLATE_BLOCKED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED']);
+const PHONE_CHAT_THEME_OPTIONS: Array<{
+  id: PhoneThemePreference;
+  label: string;
+  description: string;
+  Icon: LucideIcon;
+}> = [
+  { id: 'system', label: 'Sistema', description: 'Usa el modo que tiene tu celular.', Icon: Smartphone },
+  { id: 'light', label: 'Claro', description: 'Mantiene la app con fondo claro.', Icon: Sun },
+  { id: 'dark', label: 'Noche', description: 'Mantiene la app oscura todo el tiempo.', Icon: Moon },
+  { id: 'auto', label: 'Horario', description: 'Claro de día y noche después de las 7 PM.', Icon: Clock },
+];
 const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
   { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', locked: true },
   { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos' },
@@ -311,6 +360,19 @@ function PhoneShell({
     );
   }
 
+  if (activeSection === 'settings') {
+    return (
+      <SettingsScreen
+        api={api}
+        user={user}
+        baseUrl={baseUrl}
+        footer={dock}
+        onLogout={onLogout}
+        onChangeServer={onChangeServer}
+      />
+    );
+  }
+
   return (
     <AppFrame>
       <SectionHeader
@@ -323,7 +385,6 @@ function PhoneShell({
       {activeSection === 'calendar' ? <CalendarSection api={api} /> : null}
       {activeSection === 'payments' ? <PaymentsSection api={api} /> : null}
       {activeSection === 'analytics' ? <AnalyticsSection api={api} /> : null}
-      {activeSection === 'settings' ? <SettingsSection api={api} /> : null}
       {dock}
     </AppFrame>
   );
@@ -1596,37 +1657,132 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
   );
 }
 
-function SettingsSection({ api }: { api: RistakApiClient }) {
+function unwrapConfigResponse(response: { config?: Record<string, ConfigValue> } | Record<string, ConfigValue> | null | undefined): Record<string, ConfigValue> {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) return {};
+  const nested = (response as { config?: unknown }).config;
+  if (nested && typeof nested === 'object' && !Array.isArray(nested)) return nested as Record<string, ConfigValue>;
+  return response as Record<string, ConfigValue>;
+}
+
+function coerceConfigBoolean(value: unknown, fallback: boolean) {
+  if (value === null || value === undefined || value === '') return fallback;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const normalized = String(value).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
+function coerceConfigString(value: unknown, fallback: string) {
+  if (value === null || value === undefined || value === '') return fallback;
+  return String(value);
+}
+
+function coerceConfigStringArray(value: unknown, fallback: string[] = []) {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+  if (typeof value !== 'string' || !value.trim()) return fallback;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function coercePhoneThemePreference(value: unknown): PhoneThemePreference {
+  return value === 'light' || value === 'dark' || value === 'auto' || value === 'system' ? value : 'system';
+}
+
+function getThemeMeta(preference: PhoneThemePreference) {
+  if (preference === 'light') return 'Claro';
+  if (preference === 'dark') return 'Noche';
+  if (preference === 'auto') return 'Horario: Noche';
+  return 'Sistema: Noche';
+}
+
+function getTemplateStatus(template: WhatsAppApiTemplate) {
+  return String(template.status || 'UNKNOWN').toUpperCase();
+}
+
+function getTemplateStatusLabel(status: string) {
+  if (status === 'APPROVED') return 'Aprobada';
+  if (status === 'PENDING' || status === 'IN_REVIEW') return 'En revisión';
+  if (status === 'REJECTED') return 'Rechazada';
+  if (status === 'PAUSED' || status === 'DISABLED') return 'Bloqueada';
+  return status === 'UNKNOWN' ? 'Sin estado' : status;
+}
+
+function getTemplatePreview(template: WhatsAppApiTemplate) {
+  const body = template.components?.find((component) => String(component.type || '').toUpperCase() === 'BODY');
+  const text = typeof body?.text === 'string' ? body.text : '';
+  return text || template.reason || 'Sin vista previa.';
+}
+
+function getSettingsPanelTitle(panel: SettingsPanel) {
+  if (panel === 'templates') return 'Plantillas';
+  if (panel === 'agent') return AI_AGENT_CHAT_DISPLAY_NAME;
+  if (panel === 'chats') return 'Lista de chats';
+  if (panel === 'custom-fields') return 'Campos personalizados';
+  if (panel === 'appearance') return 'Apariencia';
+  if (panel === 'notifications') return 'Notificaciones';
+  return 'Ajustes';
+}
+
+function getSettingsIconToneStyle(tone: 'green' | 'black' | 'blue' | 'gold' | 'red') {
+  if (tone === 'green') return styles.settingsListIcon_green;
+  if (tone === 'black') return styles.settingsListIcon_black;
+  if (tone === 'gold') return styles.settingsListIcon_gold;
+  if (tone === 'red') return styles.settingsListIcon_red;
+  return styles.settingsListIcon_blue;
+}
+
+function SettingsScreen({
+  api,
+  user,
+  baseUrl,
+  footer,
+  onLogout,
+  onChangeServer,
+}: {
+  api: RistakApiClient;
+  user: RistakUser | null;
+  baseUrl: string;
+  footer?: React.ReactNode;
+  onLogout: () => Promise<void>;
+  onChangeServer: () => Promise<void>;
+}) {
+  const [activePanel, setActivePanel] = useState<SettingsPanel>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [config, setConfig] = useState<Record<string, unknown>>({});
+  const [appConfig, setAppConfig] = useState<Record<string, ConfigValue>>({});
+  const [userConfig, setUserConfigState] = useState<Record<string, ConfigValue>>({});
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [templatesError, setTemplatesError] = useState('');
+  const [customFields, setCustomFields] = useState<ContactCustomFieldDefinition[]>([]);
+  const [customFieldsLoading, setCustomFieldsLoading] = useState(false);
+  const [customFieldsError, setCustomFieldsError] = useState('');
+  const [calendars, setCalendars] = useState<CalendarItem[]>([]);
+  const [calendarsLoading, setCalendarsLoading] = useState(false);
+  const [aiAgentConfig, setAiAgentConfig] = useState<AIAgentConfigStatus | null>(null);
+  const [aiAgentLoading, setAiAgentLoading] = useState(false);
+  const [businessContextDraft, setBusinessContextDraft] = useState('');
+  const [savedBusinessContext, setSavedBusinessContext] = useState('');
+  const [businessContextSaving, setBusinessContextSaving] = useState(false);
+  const [businessContextMessage, setBusinessContextMessage] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const [appConfig, userConfig] = await Promise.all([
-        api.getConfig([
-          'mobile_chat_ai_agent_enabled',
-          'mobile_chat_show_archived',
-          'mobile_chat_sort_mode',
-          'mobile_chat_show_last_preview',
-        ]),
-        api.getUserConfig([
-          'chat_push_notifications_enabled',
-          'calendar_push_notifications_enabled',
-          'payment_push_notifications_enabled',
-          'push_notification_sound_enabled',
-          'push_notification_vibration_enabled',
-        ]),
+        api.getConfig(SETTINGS_APP_CONFIG_KEYS),
+        api.getUserConfig(SETTINGS_USER_CONFIG_KEYS),
       ]);
-      const appConfigValues = appConfig && typeof appConfig === 'object' && 'config' in appConfig
-        ? appConfig.config
-        : appConfig;
-      setConfig({
-        ...(appConfigValues && typeof appConfigValues === 'object' ? appConfigValues : {}),
-        ...(userConfig.config && typeof userConfig.config === 'object' ? userConfig.config : {}),
-      });
+      setAppConfig(unwrapConfigResponse(appConfig));
+      setUserConfigState(unwrapConfigResponse(userConfig));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudieron cargar los ajustes.');
     } finally {
@@ -1638,34 +1794,614 @@ function SettingsSection({ api }: { api: RistakApiClient }) {
     void load();
   }, [load]);
 
-  const rows = [
-    ['Agente IA en chat', config.mobile_chat_ai_agent_enabled],
-    ['Mostrar archivados', config.mobile_chat_show_archived],
-    ['Orden de conversaciones', config.mobile_chat_sort_mode || 'recent'],
-    ['Preview del ultimo mensaje', config.mobile_chat_show_last_preview],
-    ['Push de chat', config.chat_push_notifications_enabled],
-    ['Push de citas', config.calendar_push_notifications_enabled],
-    ['Push de pagos', config.payment_push_notifications_enabled],
-    ['Sonido', config.push_notification_sound_enabled],
-    ['Vibracion', config.push_notification_vibration_enabled],
-  ];
+  const loadAIAgentStatus = useCallback(async () => {
+    setAiAgentLoading(true);
+    try {
+      const status = await api.getAIAgentConfig();
+      const context = String(status.businessContext || '').trim();
+      setAiAgentConfig(status);
+      setBusinessContextDraft(context);
+      setSavedBusinessContext(context);
+    } catch {
+      setAiAgentConfig(null);
+      setBusinessContextDraft('');
+      setSavedBusinessContext('');
+    } finally {
+      setAiAgentLoading(false);
+    }
+  }, [api]);
+
+  const loadTemplates = useCallback(async () => {
+    setTemplatesLoading(true);
+    setTemplatesError('');
+    try {
+      const response = await api.getWhatsAppTemplates(null);
+      setTemplates(Array.isArray(response.items) ? response.items : []);
+    } catch (err) {
+      setTemplates([]);
+      setTemplatesError(err instanceof Error ? err.message : 'No se pudieron cargar las plantillas.');
+    } finally {
+      setTemplatesLoading(false);
+    }
+  }, [api]);
+
+  const loadCustomFields = useCallback(async () => {
+    setCustomFieldsLoading(true);
+    setCustomFieldsError('');
+    try {
+      const definitions = await api.getCustomFieldDefinitions(false);
+      setCustomFields(Array.isArray(definitions) ? definitions.filter((definition) => !definition.archived) : []);
+    } catch (err) {
+      setCustomFields([]);
+      setCustomFieldsError(err instanceof Error ? err.message : 'No se pudieron cargar los campos personalizados.');
+    } finally {
+      setCustomFieldsLoading(false);
+    }
+  }, [api]);
+
+  const loadCalendars = useCallback(async () => {
+    setCalendarsLoading(true);
+    try {
+      const response = await api.getCalendars();
+      const nextCalendars = Array.isArray(response) ? response : response.calendars || [];
+      setCalendars(nextCalendars.filter((calendar) => calendar.isActive !== false));
+    } catch {
+      setCalendars([]);
+    } finally {
+      setCalendarsLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    void loadAIAgentStatus();
+    void loadCalendars();
+  }, [loadAIAgentStatus, loadCalendars]);
+
+  useEffect(() => {
+    if (activePanel === 'templates') void loadTemplates();
+    if (activePanel === 'custom-fields') void loadCustomFields();
+    if (activePanel === 'agent') void loadAIAgentStatus();
+  }, [activePanel, loadAIAgentStatus, loadCustomFields, loadTemplates]);
+
+  const getAppBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(appConfig[key], fallback);
+  const getUserBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(userConfig[key], fallback);
+  const getUserStringArray = (key: string, fallback: string[] = []) => coerceConfigStringArray(userConfig[key], fallback);
+
+  const saveAppPreference = async (key: string, value: ConfigValue) => {
+    const previous = appConfig[key] ?? null;
+    setSavingKey(key);
+    setAppConfig((current) => ({ ...current, [key]: value }));
+    try {
+      await api.setConfig(key, value);
+    } catch (err) {
+      setAppConfig((current) => ({ ...current, [key]: previous }));
+      Alert.alert('No se guardó el ajuste', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setSavingKey((current) => (current === key ? null : current));
+    }
+  };
+
+  const saveUserPreference = async (key: string, value: ConfigValue) => {
+    const previous = userConfig[key] ?? null;
+    setSavingKey(key);
+    setUserConfigState((current) => ({ ...current, [key]: value }));
+    try {
+      await api.setUserConfig(key, value);
+    } catch (err) {
+      setUserConfigState((current) => ({ ...current, [key]: previous }));
+      Alert.alert('No se guardó el ajuste', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setSavingKey((current) => (current === key ? null : current));
+    }
+  };
+
+  const aiReady = Boolean(aiAgentConfig?.configured && !aiAgentConfig?.needsReconnect);
+  const aiAgentChatEnabled = getAppBoolean('mobile_chat_ai_agent_enabled', true);
+  const aiReplySuggestionsEnabled = getAppBoolean('mobile_chat_ai_reply_suggestions_enabled', false);
+  const showArchivedChats = getAppBoolean('mobile_chat_show_archived', true);
+  const showLastMessagePreview = getAppBoolean('mobile_chat_show_last_preview', true);
+  const showUnreadIndicators = getAppBoolean('mobile_chat_show_unread_indicators', true);
+  const conversationSortMode = coerceConfigString(appConfig.mobile_chat_sort_mode, 'recent');
+  const themePreference = coercePhoneThemePreference(appConfig.mobile_chat_theme_preference);
+  const chatPushEnabled = getUserBoolean('chat_push_notifications_enabled', true);
+  const calendarPushEnabled = getUserBoolean('calendar_push_notifications_enabled', false);
+  const appointmentConfirmationPushEnabled = getUserBoolean('appointment_confirmation_push_notifications_enabled', true);
+  const paymentPushEnabled = getUserBoolean('payment_push_notifications_enabled', true);
+  const notificationSoundEnabled = getUserBoolean('push_notification_sound_enabled', true);
+  const notificationVibrationEnabled = getUserBoolean('push_notification_vibration_enabled', true);
+  const pushCalendarIds = getUserStringArray('calendar_push_notification_calendar_ids');
+  const selectedCalendarCount = pushCalendarIds.length || calendars.length;
+  const blockedTemplates = templates.filter((template) => TEMPLATE_BLOCKED_STATUSES.has(getTemplateStatus(template))).length;
+  const notificationCount = [
+    chatPushEnabled,
+    calendarPushEnabled,
+    appointmentConfirmationPushEnabled,
+    paymentPushEnabled,
+  ].filter(Boolean).length;
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Cerrar sesión',
+      `¿Seguro que quieres cerrar tu sesión en este dispositivo?\n\n${getUserDisplayName(user)} · ${baseUrl}`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Cambiar app', onPress: () => void onChangeServer() },
+        { text: 'Cerrar sesión', style: 'destructive', onPress: () => void onLogout() },
+      ],
+    );
+  };
+
+  const handleSaveBusinessContext = async () => {
+    const draft = businessContextDraft.trim();
+    if (!draft || businessContextSaving || !aiReady) {
+      Alert.alert(
+        'Asistente Personal AI',
+        aiReady ? 'Escribe la descripción del negocio primero.' : 'Conecta OpenAI para pulir y guardar la descripción.',
+      );
+      return;
+    }
+    setBusinessContextSaving(true);
+    setBusinessContextMessage('Puliendo y guardando...');
+    try {
+      const result = await api.saveAIAgentBusinessContext(draft);
+      const next = String(result.text || result.status?.businessContext || draft).trim();
+      setBusinessContextDraft(next);
+      setSavedBusinessContext(next);
+      setBusinessContextMessage('Guardado.');
+      if (result.status) setAiAgentConfig(result.status);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo guardar la descripción.';
+      setBusinessContextMessage(message);
+      Alert.alert('No se guardó la descripción', message);
+    } finally {
+      setBusinessContextSaving(false);
+    }
+  };
+
+  const togglePushCalendar = (calendarId: string) => {
+    const next = pushCalendarIds.includes(calendarId)
+      ? pushCalendarIds.filter((id) => id !== calendarId)
+      : [...pushCalendarIds, calendarId];
+    void saveUserPreference('calendar_push_notification_calendar_ids', next);
+  };
+
+  const renderMainList = () => {
+    const items: Array<{
+      id: Exclude<SettingsPanel, null>;
+      title: string;
+      description: string;
+      meta: string;
+      Icon: LucideIcon;
+      tone: 'green' | 'black' | 'blue' | 'gold' | 'red';
+    }> = [
+      { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
+      { id: 'agent', title: AI_AGENT_CHAT_DISPLAY_NAME, description: 'Chat fijo y sugerencias.', meta: aiReady ? (aiAgentChatEnabled ? 'Activo' : 'Apagado') : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
+      { id: 'chats', title: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
+      { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: customFields.length ? `${customFields.length}` : 'Todos', Icon: ListChecks, tone: 'gold' },
+      { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: getThemeMeta(themePreference), Icon: Sun, tone: 'blue' },
+      { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: notificationCount ? `${notificationCount} activas` : 'Configurar', Icon: Bell, tone: 'red' },
+    ];
+
+    return (
+      <>
+        <View style={styles.settingsListGroup}>
+          {items.map(({ id, title, description, meta, Icon, tone }) => (
+            <Pressable
+              key={id}
+              accessibilityRole="button"
+              onPress={() => setActivePanel(id)}
+              style={({ pressed }) => [styles.settingsListItem, pressed && styles.pressed]}
+            >
+              <View style={[styles.settingsListIcon, getSettingsIconToneStyle(tone)]}>
+                <Icon size={19} color={tone === 'black' ? COLORS.white : COLORS.bg} strokeWidth={2.35} />
+              </View>
+              <View style={styles.settingsListText}>
+                <Text numberOfLines={2} style={styles.settingsListTitle}>{title}</Text>
+                <Text numberOfLines={1} style={styles.settingsListSubtitle}>{description}</Text>
+              </View>
+              <View style={styles.settingsListMeta}>
+                <Text numberOfLines={1} style={styles.settingsListMetaText}>{meta}</Text>
+                <ChevronRight size={18} color={COLORS.muted} strokeWidth={2.6} />
+              </View>
+            </Pressable>
+          ))}
+        </View>
+        <Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }) => [styles.settingsLogoutButton, pressed && styles.pressed]}>
+          <LogOut size={18} color={COLORS.danger} strokeWidth={2.4} />
+          <Text style={styles.settingsLogoutText}>Cerrar sesión</Text>
+        </Pressable>
+      </>
+    );
+  };
+
+  const renderTemplates = () => (
+    <>
+      <SettingsActionCard
+        Icon={FileText}
+        title="Plantillas de WhatsApp"
+        subtitle={blockedTemplates ? `${blockedTemplates} necesitan revisión.` : 'Revisa estados y aprobaciones de Meta.'}
+        actionLabel="Actualizar"
+        actionIcon={RefreshCw}
+        busy={templatesLoading}
+        onPress={loadTemplates}
+      />
+      {templatesError ? <SettingsAlert message={templatesError} /> : null}
+      {templatesLoading ? <SettingsInlineLoading label="Cargando plantillas..." /> : null}
+      {!templatesLoading && templates.length ? (
+        <View style={styles.settingsItemList}>
+          {templates.map((template, index) => {
+            const status = getTemplateStatus(template);
+            const blocked = TEMPLATE_BLOCKED_STATUSES.has(status);
+            return (
+              <View key={`${template.id || template.name}-${template.language || index}`} style={styles.templateRow}>
+                <View style={styles.templateIcon}><FileText size={18} color={COLORS.white} strokeWidth={2.2} /></View>
+                <View style={styles.templateCopy}>
+                  <Text numberOfLines={1} style={styles.templateTitle}>{template.name}</Text>
+                  <Text numberOfLines={2} style={styles.templatePreview}>{getTemplatePreview(template)}</Text>
+                  {blocked ? <Text numberOfLines={2} style={styles.templateBlockedReason}>{template.reason || template.status_update_event || 'Meta no permite usar esta plantilla por ahora.'}</Text> : null}
+                </View>
+                <View style={[styles.templateStatus, blocked ? styles.templateStatusBlocked : status === 'APPROVED' ? styles.templateStatusApproved : styles.templateStatusPending]}>
+                  <Text style={[styles.templateStatusText, blocked ? styles.templateStatusTextBlocked : status === 'APPROVED' ? styles.templateStatusTextApproved : styles.templateStatusTextPending]}>
+                    {getTemplateStatusLabel(status)}
+                  </Text>
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
+      {!templatesLoading && !templates.length && !templatesError ? <SettingsEmptyState label="Todavía no hay plantillas guardadas." /> : null}
+    </>
+  );
+
+  const renderAgent = () => {
+    const descriptionChanged = businessContextDraft.trim() !== savedBusinessContext.trim();
+    return (
+      <>
+        <View style={styles.businessDescriptionPanel}>
+          {!aiReady ? (
+            <SettingsEmptyState label={aiAgentConfig?.needsReconnect ? 'Reconecta OpenAI para activar el agente en este celular.' : 'Conecta OpenAI para activar el agente en este celular.'} />
+          ) : null}
+          <View style={styles.businessDescriptionHeader}>
+            <View style={styles.businessDescriptionIcon}><Sparkles size={19} color={COLORS.white} strokeWidth={2.25} /></View>
+            <View style={styles.businessDescriptionCopy}>
+              <Text style={styles.businessDescriptionTitle}>Descripción del negocio</Text>
+              <Text style={styles.businessDescriptionSubtitle}>Dicta tu giro, servicios y clientes; la IA lo pule y lo guarda aquí.</Text>
+            </View>
+          </View>
+          <View style={styles.businessDescriptionField}>
+            <TextInput
+              value={businessContextDraft}
+              onChangeText={(text) => {
+                setBusinessContextDraft(text);
+                setBusinessContextMessage('');
+              }}
+              editable={!businessContextSaving && !aiAgentLoading}
+              multiline
+              placeholder="Ejemplo: Somos una clínica dental en Ciudad Juárez, atendemos familias..."
+              placeholderTextColor={COLORS.muted}
+              textAlignVertical="top"
+              style={styles.businessDescriptionInput}
+            />
+            <Pressable
+              accessibilityRole="button"
+              disabled={!aiReady}
+              onPress={() => {
+                Alert.alert('Dictar', 'El dictado nativo queda pendiente de conectar al módulo de audio; por ahora escribe la descripción aquí.');
+              }}
+              style={({ pressed }) => [styles.businessVoiceButton, !aiReady && styles.disabledButton, pressed && styles.pressed]}
+            >
+              <Mic size={17} color={COLORS.white} strokeWidth={2.4} />
+              <Text style={styles.businessVoiceButtonText}>Dictar</Text>
+            </Pressable>
+          </View>
+          <View style={styles.businessDescriptionActions}>
+            <Text numberOfLines={2} style={styles.businessDescriptionMessage}>
+              {aiAgentLoading ? '' : businessContextMessage || (aiReady ? 'El dictado se guarda automático al terminar.' : 'OpenAI debe estar conectado para dictar y pulir.')}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              disabled={!aiReady || businessContextSaving || !descriptionChanged || !businessContextDraft.trim()}
+              onPress={() => void handleSaveBusinessContext()}
+              style={({ pressed }) => [styles.settingsSmallPrimaryButton, (!aiReady || businessContextSaving || !descriptionChanged || !businessContextDraft.trim()) && styles.disabledButton, pressed && styles.pressed]}
+            >
+              {businessContextSaving ? <ActivityIndicator color={COLORS.white} /> : <Save size={16} color={COLORS.white} strokeWidth={2.4} />}
+              <Text style={styles.settingsSmallPrimaryText}>Guardar</Text>
+            </Pressable>
+          </View>
+        </View>
+        <SettingsToggleRow
+          title="Mostrar como primer chat"
+          description="El agente aparece fijo arriba de tus conversaciones."
+          checked={aiReady && aiAgentChatEnabled}
+          disabled={!aiReady || savingKey === 'mobile_chat_ai_agent_enabled'}
+          onChange={(checked) => void saveAppPreference('mobile_chat_ai_agent_enabled', checked)}
+        />
+        <SettingsToggleRow
+          title="Sugerir respuestas"
+          description="El agente puede preparar un texto para responder en chats reales."
+          checked={aiReady && aiReplySuggestionsEnabled}
+          disabled={!aiReady || !aiAgentChatEnabled || savingKey === 'mobile_chat_ai_reply_suggestions_enabled'}
+          onChange={(checked) => void saveAppPreference('mobile_chat_ai_reply_suggestions_enabled', checked)}
+        />
+      </>
+    );
+  };
+
+  const renderChats = () => (
+    <>
+      <View style={styles.settingsCard}>
+        <Text style={styles.settingsFieldTitle}>Ordenar conversaciones</Text>
+        <View style={styles.settingsSegmented}>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void saveAppPreference('mobile_chat_sort_mode', 'recent')}
+            style={[styles.settingsSegmentButton, conversationSortMode === 'recent' && styles.settingsSegmentButtonActive]}
+          >
+            <Text style={[styles.settingsSegmentText, conversationSortMode === 'recent' && styles.settingsSegmentTextActive]}>Más recientes</Text>
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void saveAppPreference('mobile_chat_sort_mode', 'unread')}
+            style={[styles.settingsSegmentButton, conversationSortMode === 'unread' && styles.settingsSegmentButtonActive]}
+          >
+            <Text style={[styles.settingsSegmentText, conversationSortMode === 'unread' && styles.settingsSegmentTextActive]}>No leídas</Text>
+          </Pressable>
+        </View>
+      </View>
+      <SettingsToggleRow title="Mostrar archivados" description="Deja visible el acceso a chats archivados." checked={showArchivedChats} disabled={savingKey === 'mobile_chat_show_archived'} onChange={(checked) => void saveAppPreference('mobile_chat_show_archived', checked)} />
+      <SettingsToggleRow title="Vista previa" description="Muestra un resumen debajo del nombre del contacto." checked={showLastMessagePreview} disabled={savingKey === 'mobile_chat_show_last_preview'} onChange={(checked) => void saveAppPreference('mobile_chat_show_last_preview', checked)} />
+      <SettingsToggleRow title="Indicadores de no leídos" description="Muestra el contador cuando hay mensajes nuevos." checked={showUnreadIndicators} disabled={savingKey === 'mobile_chat_show_unread_indicators'} onChange={(checked) => void saveAppPreference('mobile_chat_show_unread_indicators', checked)} />
+    </>
+  );
+
+  const renderCustomFields = () => (
+    <>
+      {customFieldsError ? <SettingsAlert message={customFieldsError} /> : null}
+      {customFieldsLoading ? <SettingsInlineLoading label="Cargando campos..." /> : null}
+      {!customFieldsLoading && customFields.length ? (
+        <View style={styles.settingsCard}>
+          <Text style={styles.settingsFieldTitle}>Todos aparecen en la info del contacto</Text>
+          <Text style={styles.settingsHint}>El chat móvil muestra el catálogo completo, agrupado por carpeta, y cada campo se edita desde la ficha del contacto.</Text>
+          <View style={styles.customFieldsList}>
+            {customFields.map((definition, index) => (
+              <View key={definition.definitionId || definition.fieldKey || definition.key || `field-${index}`} style={styles.customFieldRow}>
+                <View style={styles.customFieldCopy}>
+                  <Text numberOfLines={1} style={styles.customFieldTitle}>{definition.label || definition.name || `Campo ${index + 1}`}</Text>
+                  <Text numberOfLines={1} style={styles.customFieldSubtitle}>{definition.folderName || 'Campos personalizados'} · {definition.dataType || 'text'}</Text>
+                </View>
+                <Check size={17} color={COLORS.accent} strokeWidth={2.8} />
+              </View>
+            ))}
+          </View>
+        </View>
+      ) : null}
+      {!customFieldsLoading && !customFields.length && !customFieldsError ? <SettingsEmptyState label="Todavía no hay campos personalizados guardados." /> : null}
+    </>
+  );
+
+  const renderAppearance = () => (
+    <View style={styles.settingsCard}>
+      <View style={styles.settingsCardHeader}>
+        <View style={styles.settingsCardHeaderIcon}><Sun size={18} color={COLORS.white} strokeWidth={2.3} /></View>
+        <View style={styles.settingsCardHeaderCopy}>
+          <Text style={styles.settingsCardTitle}>Color del chat</Text>
+          <Text style={styles.settingsCardSubtitle}>Elige cómo quieres ver esta app en este celular.</Text>
+        </View>
+      </View>
+      <View style={styles.settingsChoiceList}>
+        {PHONE_CHAT_THEME_OPTIONS.map(({ id, label, description, Icon }) => {
+          const selected = themePreference === id;
+          return (
+            <Pressable
+              key={id}
+              accessibilityRole="radio"
+              accessibilityState={{ selected }}
+              onPress={() => void saveAppPreference('mobile_chat_theme_preference', id)}
+              style={({ pressed }) => [styles.settingsChoiceButton, selected && styles.settingsChoiceActive, pressed && styles.pressed]}
+            >
+              <View style={styles.settingsChoiceIcon}><Icon size={18} color={COLORS.white} strokeWidth={2.35} /></View>
+              <View style={styles.settingsChoiceCopy}>
+                <Text style={styles.settingsChoiceTitle}>{label}</Text>
+                <Text style={styles.settingsChoiceSubtitle}>{description}</Text>
+              </View>
+              <View style={styles.settingsChoiceCheck}>{selected ? <Check size={17} color={COLORS.accent} strokeWidth={3} /> : null}</View>
+            </Pressable>
+          );
+        })}
+      </View>
+      <Text style={styles.settingsHint}>Ahorita el chat se ve en modo {getThemeMeta(themePreference).toLowerCase()}.</Text>
+    </View>
+  );
+
+  const renderNotifications = () => (
+    <>
+      <View style={styles.settingsEnabledCard}>
+        <Check size={18} color="#0f6b3e" strokeWidth={2.6} />
+        <Text style={styles.settingsEnabledText}>Este celular usa las preferencias guardadas de notificaciones.</Text>
+      </View>
+      <SettingsToggleRow title="Mensajes del chat" description="Avísame cuando llegue un WhatsApp nuevo." checked={chatPushEnabled} disabled={savingKey === 'chat_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('chat_push_notifications_enabled', checked)} />
+      <SettingsToggleRow title="Citas agendadas" description="Avísame cuando alguien reserve una cita nueva." checked={calendarPushEnabled} disabled={savingKey === 'calendar_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('calendar_push_notifications_enabled', checked)} />
+      {calendarPushEnabled ? (
+        <View style={styles.settingsCard}>
+          <View style={styles.calendarPickerHeader}>
+            <Text style={styles.settingsFieldTitle}>Calendarios con alertas</Text>
+            <Text style={styles.calendarPickerCount}>{pushCalendarIds.length ? `${selectedCalendarCount} seleccionados` : 'Todos'}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => void saveUserPreference('calendar_push_notification_calendar_ids', [])}
+            style={[styles.calendarChip, pushCalendarIds.length === 0 && styles.calendarChipActive]}
+          >
+            <Text style={[styles.calendarChipText, pushCalendarIds.length === 0 && styles.calendarChipTextActive]}>Todos los calendarios</Text>
+          </Pressable>
+          {calendarsLoading ? <SettingsInlineLoading label="Cargando calendarios..." /> : null}
+          {!calendarsLoading && calendars.length ? (
+            <View style={styles.calendarChipGrid}>
+              {calendars.map((calendar, index) => {
+                const id = calendar.id || calendar._id || `calendar-${index}`;
+                const active = pushCalendarIds.includes(id);
+                return (
+                  <Pressable key={id} accessibilityRole="button" onPress={() => togglePushCalendar(id)} style={[styles.calendarChip, active && styles.calendarChipActive]}>
+                    <View style={[styles.calendarColorDot, { backgroundColor: calendar.eventColor || calendar.color || COLORS.accent }]} />
+                    <Text numberOfLines={1} style={[styles.calendarChipText, active && styles.calendarChipTextActive]}>{calendar.name || calendar.title || 'Calendario'}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          ) : null}
+          {!calendarsLoading && !calendars.length ? <Text style={styles.settingsHint}>No hay calendarios activos para elegir.</Text> : null}
+        </View>
+      ) : null}
+      <SettingsToggleRow title="Citas confirmadas" description="Avísame cuando un cliente confirme que sí asistirá." checked={appointmentConfirmationPushEnabled} disabled={savingKey === 'appointment_confirmation_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('appointment_confirmation_push_notifications_enabled', checked)} />
+      <SettingsToggleRow title="Pagos" description="Avísame cuando se registre un pago." checked={paymentPushEnabled} disabled={savingKey === 'payment_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('payment_push_notifications_enabled', checked)} />
+      <View style={styles.settingsCard}>
+        <View style={styles.settingsCardHeader}>
+          <View style={styles.settingsCardHeaderIcon}><BellRing size={18} color={COLORS.white} strokeWidth={2.3} /></View>
+          <View style={styles.settingsCardHeaderCopy}>
+            <Text style={styles.settingsCardTitle}>Sonido y vibración</Text>
+            <Text style={styles.settingsCardSubtitle}>Controla cómo se sienten las alertas en este celular.</Text>
+          </View>
+        </View>
+        <SettingsToggleRow embedded title="Timbre de notificación" description="Hace sonar el celular cuando llegue una alerta." checked={notificationSoundEnabled} disabled={savingKey === 'push_notification_sound_enabled'} onChange={(checked) => void saveUserPreference('push_notification_sound_enabled', checked)} />
+        <SettingsToggleRow embedded title="Vibración de notificación" description="Vibra cuando entren mensajes, citas, confirmaciones o pagos." checked={notificationVibrationEnabled} disabled={savingKey === 'push_notification_vibration_enabled'} onChange={(checked) => void saveUserPreference('push_notification_vibration_enabled', checked)} />
+      </View>
+    </>
+  );
+
+  const renderPanel = () => {
+    if (activePanel === 'templates') return renderTemplates();
+    if (activePanel === 'agent') return renderAgent();
+    if (activePanel === 'chats') return renderChats();
+    if (activePanel === 'custom-fields') return renderCustomFields();
+    if (activePanel === 'appearance') return renderAppearance();
+    if (activePanel === 'notifications') return renderNotifications();
+    return renderMainList();
+  };
 
   return (
-    <ScrollView contentContainerStyle={styles.sectionScroll}>
-      <SectionState loading={loading} error={error} onRetry={load} />
-      {!loading && !error ? (
-        <SectionBlock title="Preferencias moviles">
-          {rows.map(([title, value]) => (
-            <InfoRow
-              key={String(title)}
-              title={String(title)}
-              subtitle="Misma preferencia que usa /movil"
-              value={formatConfigValue(value)}
-            />
-          ))}
-        </SectionBlock>
-      ) : null}
-    </ScrollView>
+    <AppFrame>
+      <ScrollView contentContainerStyle={styles.settingsFrame}>
+        {activePanel ? (
+          <Pressable accessibilityRole="button" onPress={() => setActivePanel(null)} style={({ pressed }) => [styles.settingsBackButton, pressed && styles.pressed]}>
+            <ChevronLeft size={22} color={COLORS.text} strokeWidth={2.8} />
+            <Text style={styles.settingsBackLabel}>Ajustes</Text>
+          </Pressable>
+        ) : null}
+        <View style={styles.settingsHeader}>
+          <Text style={styles.settingsKicker}>Ristak</Text>
+          <Text numberOfLines={2} style={styles.settingsTitle}>{getSettingsPanelTitle(activePanel)}</Text>
+          {activePanel === 'custom-fields' ? <Text style={styles.settingsHeaderSubtitle}>Elige qué datos quieres ver en la info de cada contacto.</Text> : null}
+        </View>
+        <SectionState loading={loading} error={error} onRetry={load} />
+        {!loading && !error ? <View style={styles.settingsContent}>{renderPanel()}</View> : null}
+      </ScrollView>
+      {footer}
+    </AppFrame>
+  );
+}
+
+function SettingsActionCard({
+  Icon,
+  title,
+  subtitle,
+  actionLabel,
+  actionIcon: ActionIcon,
+  busy,
+  onPress,
+}: {
+  Icon: LucideIcon;
+  title: string;
+  subtitle: string;
+  actionLabel: string;
+  actionIcon: LucideIcon;
+  busy?: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <View style={styles.settingsActionCard}>
+      <View style={styles.settingsActionIcon}>
+        <Icon size={18} color={COLORS.white} strokeWidth={2.3} />
+      </View>
+      <View style={styles.settingsActionCopy}>
+        <Text numberOfLines={1} style={styles.settingsActionTitle}>{title}</Text>
+        <Text numberOfLines={2} style={styles.settingsActionSubtitle}>{subtitle}</Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        disabled={busy}
+        onPress={onPress}
+        style={({ pressed }) => [styles.settingsActionButton, busy && styles.disabledButton, pressed && styles.pressed]}
+      >
+        {busy ? <ActivityIndicator color={COLORS.white} /> : <ActionIcon size={15} color={COLORS.white} strokeWidth={2.5} />}
+        <Text style={styles.settingsActionButtonText}>{actionLabel}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function SettingsToggleRow({
+  title,
+  description,
+  checked,
+  disabled,
+  embedded,
+  onChange,
+}: {
+  title: string;
+  description: string;
+  checked: boolean;
+  disabled?: boolean;
+  embedded?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="switch"
+      accessibilityState={{ checked, disabled: Boolean(disabled) }}
+      disabled={disabled}
+      onPress={() => onChange(!checked)}
+      style={({ pressed }) => [
+        styles.settingsToggleRow,
+        embedded && styles.settingsToggleRowEmbedded,
+        disabled && styles.settingsToggleRowDisabled,
+        pressed && styles.pressed,
+      ]}
+    >
+      <View style={styles.settingsToggleCopy}>
+        <Text style={styles.settingsToggleTitle}>{title}</Text>
+        <Text numberOfLines={2} style={styles.settingsToggleSubtitle}>{description}</Text>
+      </View>
+      <View style={[styles.settingsToggleControl, checked && styles.settingsToggleControlChecked]}>
+        {checked ? <Check size={18} color={COLORS.bg} strokeWidth={3} /> : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function SettingsAlert({ message }: { message: string }) {
+  return (
+    <View style={styles.settingsAlert}>
+      <CircleAlert size={18} color={COLORS.danger} strokeWidth={2.4} />
+      <Text style={styles.settingsAlertText}>{message}</Text>
+    </View>
+  );
+}
+
+function SettingsInlineLoading({ label }: { label: string }) {
+  return (
+    <View style={styles.settingsInlineState}>
+      <ActivityIndicator color={COLORS.accent} />
+      <Text style={styles.settingsInlineText}>{label}</Text>
+    </View>
+  );
+}
+
+function SettingsEmptyState({ label }: { label: string }) {
+  return (
+    <View style={styles.settingsEmptyState}>
+      <Text style={styles.settingsEmptyText}>{label}</Text>
+    </View>
   );
 }
 
@@ -3045,6 +3781,668 @@ const styles = StyleSheet.create({
     paddingTop: 4,
     paddingBottom: 112,
     gap: 14,
+  },
+  settingsFrame: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 126,
+    gap: 16,
+  },
+  settingsBackButton: {
+    alignSelf: 'flex-start',
+    minHeight: 34,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingRight: 8,
+  },
+  settingsBackLabel: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  settingsHeader: {
+    gap: 2,
+    paddingHorizontal: 2,
+  },
+  settingsKicker: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  settingsTitle: {
+    color: COLORS.text,
+    fontSize: 40,
+    lineHeight: 45,
+    fontWeight: '900',
+  },
+  settingsHeaderSubtitle: {
+    color: COLORS.muted,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  settingsContent: {
+    gap: 12,
+  },
+  settingsListGroup: {
+    overflow: 'hidden',
+  },
+  settingsListItem: {
+    minHeight: 70,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 2,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  settingsListIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsListIcon_green: {
+    backgroundColor: COLORS.accentSoft,
+  },
+  settingsListIcon_black: {
+    backgroundColor: COLORS.text,
+  },
+  settingsListIcon_blue: {
+    backgroundColor: 'rgba(70,185,255,0.22)',
+  },
+  settingsListIcon_gold: {
+    backgroundColor: 'rgba(245,158,11,0.22)',
+  },
+  settingsListIcon_red: {
+    backgroundColor: 'rgba(248,113,113,0.2)',
+  },
+  settingsListText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  settingsListTitle: {
+    color: COLORS.text,
+    fontSize: 19,
+    lineHeight: 22,
+    fontWeight: '900',
+  },
+  settingsListSubtitle: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  settingsListMeta: {
+    maxWidth: 96,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 2,
+  },
+  settingsListMetaText: {
+    flexShrink: 1,
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  settingsLogoutButton: {
+    minHeight: 52,
+    marginTop: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+  },
+  settingsLogoutText: {
+    color: COLORS.danger,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  settingsCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(10,31,92,0.58)',
+    padding: 16,
+    gap: 14,
+  },
+  settingsFieldTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  settingsHint: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  settingsSegmented: {
+    minHeight: 46,
+    borderRadius: 23,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    padding: 5,
+    gap: 5,
+  },
+  settingsSegmentButton: {
+    flex: 1,
+    minHeight: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsSegmentButtonActive: {
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  settingsSegmentText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  settingsSegmentTextActive: {
+    color: COLORS.text,
+  },
+  settingsActionCard: {
+    minHeight: 74,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(10,31,92,0.58)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 14,
+  },
+  settingsActionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.text,
+  },
+  settingsActionCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  settingsActionTitle: {
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  settingsActionSubtitle: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  settingsActionButton: {
+    minHeight: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.text,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    paddingHorizontal: 11,
+  },
+  settingsActionButtonText: {
+    color: COLORS.bg,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  settingsAlert: {
+    minHeight: 52,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,93,108,0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,93,108,0.22)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+  },
+  settingsAlertText: {
+    flex: 1,
+    color: COLORS.danger,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '800',
+  },
+  settingsInlineState: {
+    minHeight: 72,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(10,31,92,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  settingsInlineText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  settingsEmptyState: {
+    minHeight: 76,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(10,31,92,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 14,
+  },
+  settingsEmptyText: {
+    color: COLORS.muted,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  settingsToggleRow: {
+    minHeight: 68,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 4,
+    paddingVertical: 14,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  settingsToggleRowEmbedded: {
+    paddingHorizontal: 0,
+  },
+  settingsToggleRowDisabled: {
+    opacity: 0.56,
+  },
+  settingsToggleCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  settingsToggleTitle: {
+    color: COLORS.text,
+    fontSize: 17,
+    lineHeight: 20,
+    fontWeight: '900',
+  },
+  settingsToggleSubtitle: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  settingsToggleControl: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+    borderWidth: 2,
+    borderColor: 'rgba(170,192,231,0.44)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsToggleControlChecked: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accent,
+  },
+  settingsItemList: {
+    gap: 10,
+  },
+  templateRow: {
+    minHeight: 76,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(10,31,92,0.58)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+  },
+  templateIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.text,
+  },
+  templateCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  templateTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  templatePreview: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  templateBlockedReason: {
+    color: COLORS.danger,
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '800',
+  },
+  templateStatus: {
+    minHeight: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 9,
+    backgroundColor: COLORS.panelSoft,
+  },
+  templateStatusApproved: {
+    backgroundColor: 'rgba(34,197,94,0.16)',
+  },
+  templateStatusBlocked: {
+    backgroundColor: 'rgba(255,93,108,0.18)',
+  },
+  templateStatusPending: {
+    backgroundColor: 'rgba(245,158,11,0.18)',
+  },
+  templateStatusText: {
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  templateStatusTextApproved: {
+    color: '#86efac',
+  },
+  templateStatusTextBlocked: {
+    color: COLORS.danger,
+  },
+  templateStatusTextPending: {
+    color: '#facc15',
+  },
+  businessDescriptionPanel: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(10,31,92,0.58)',
+    padding: 16,
+    gap: 12,
+  },
+  businessDescriptionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  businessDescriptionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.text,
+  },
+  businessDescriptionCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  businessDescriptionTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  businessDescriptionSubtitle: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  businessDescriptionField: {
+    position: 'relative',
+  },
+  businessDescriptionInput: {
+    minHeight: 178,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 62,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '600',
+  },
+  businessVoiceButton: {
+    position: 'absolute',
+    right: 10,
+    bottom: 10,
+    minWidth: 98,
+    minHeight: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.text,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+  },
+  businessVoiceButtonText: {
+    color: COLORS.bg,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  businessDescriptionActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  businessDescriptionMessage: {
+    flex: 1,
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '700',
+  },
+  settingsSmallPrimaryButton: {
+    minHeight: 38,
+    borderRadius: 19,
+    backgroundColor: COLORS.text,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+  },
+  settingsSmallPrimaryText: {
+    color: COLORS.bg,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  customFieldsList: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+  },
+  customFieldRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  customFieldCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  customFieldTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  customFieldSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  settingsCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  settingsCardHeaderIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.text,
+  },
+  settingsCardHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  settingsCardTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  settingsCardSubtitle: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  settingsChoiceList: {
+    gap: 10,
+  },
+  settingsChoiceButton: {
+    minHeight: 74,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: 'rgba(6,18,58,0.44)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+  },
+  settingsChoiceActive: {
+    borderColor: 'rgba(0,168,248,0.45)',
+    backgroundColor: COLORS.accentSoft,
+  },
+  settingsChoiceIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.text,
+  },
+  settingsChoiceCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  settingsChoiceTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  settingsChoiceSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '600',
+  },
+  settingsChoiceCheck: {
+    width: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsEnabledCard: {
+    minHeight: 54,
+    borderRadius: 20,
+    backgroundColor: 'rgba(34,197,94,0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(34,197,94,0.22)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 14,
+  },
+  settingsEnabledText: {
+    flex: 1,
+    color: '#86efac',
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '800',
+  },
+  calendarPickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  calendarPickerCount: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  calendarChipGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  calendarChip: {
+    alignSelf: 'flex-start',
+    minHeight: 38,
+    maxWidth: '100%',
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 12,
+  },
+  calendarChipActive: {
+    borderColor: 'rgba(0,168,248,0.45)',
+    backgroundColor: COLORS.accentSoft,
+  },
+  calendarChipText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  calendarChipTextActive: {
+    color: COLORS.text,
+  },
+  calendarColorDot: {
+    width: 9,
+    height: 9,
+    borderRadius: 5,
   },
   sectionBlock: {
     gap: 4,

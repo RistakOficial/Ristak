@@ -31,6 +31,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - Navegacion movil original: `frontend/src/components/phone/phoneNavigation.ts`.
 - Chips/filtros moviles: `frontend/src/components/phone/ui/PhoneFilterChips.tsx`
   y la configuracion en `PhoneChat.tsx`.
+- Ajustes moviles originales: `frontend/src/pages/PhoneSettings/PhoneSettings.tsx`
+  y `frontend/src/pages/PhoneSettings/PhoneSettings.module.css`.
 - Iconos de canal: `frontend/src/components/phone/PhoneMessageChannelIcon.tsx`.
 - App nativa nueva: `mobile/src/App.tsx`, `mobile/src/api.ts`,
   `mobile/src/types.ts`.
@@ -158,6 +160,37 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     completos para crear cita/pago dentro del sheet y selector de fecha/hora
     avanzado para programacion.
 - [ ] Sheets de configuracion movil relevantes.
+
+## Fase Ajustes
+
+- [x] Separar `Ajustes` del header generico nativo para que no muestre el
+  correo/usuario debajo del titulo.
+- [x] Replicar la lista principal de `/movil`: Plantillas, Asistente Personal
+  AI, Lista de chat, Campos personalizados, Apariencia, Notificaciones y
+  `Cerrar sesion`, con iconos, metas y navegacion interna.
+- [x] Conectar lectura/escritura de preferencias reales:
+  - Globales via `/api/config`: agente en chat, sugerencias IA, archivados,
+    orden, preview, no leidos y tema.
+  - Por usuario via `/api/user-config`: push de chat/citas/confirmaciones/pagos,
+    sonido, vibracion y calendarios con alerta.
+- [x] Conectar subpantallas de lectura real:
+  - Plantillas desde `/api/whatsapp-api/templates`.
+  - Campos personalizados desde `/api/contacts/custom-fields`.
+  - Calendarios desde `/api/calendars`.
+  - Estado/contexto del agente desde `/api/ai-agent/config`.
+- [x] Agregar edicion de la descripcion del negocio del Asistente Personal AI
+  usando `/api/ai-agent/business-context-answer` cuando OpenAI esta conectado.
+- [ ] Replicar dictado de voz nativo de la descripcion del negocio. Avance:
+  el boton `Dictar` ya existe visualmente, pero muestra una alerta porque falta
+  decidir/agregar el modulo de audio nativo equivalente al `MediaRecorder` web.
+- [ ] Replicar activacion real de permisos push del celular. Avance: la UI y
+  preferencias por usuario ya estan, pero falta integrar el modulo nativo de
+  notificaciones/permisos para sustituir el flujo web `pushNotificationsService`.
+- [ ] Aplicar visualmente el tema claro/noche al resto de `mobile/`. Avance:
+  `mobile_chat_theme_preference` ya se guarda y la pantalla pinta el estado; el
+  shell nativo todavia usa la paleta oscura base.
+- [ ] Validar visualmente contra `/movil` en iPhone real y corregir diferencias
+  finas de espaciado/tipografia.
 
 ## Validacion minima por fase
 

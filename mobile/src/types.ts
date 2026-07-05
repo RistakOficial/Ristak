@@ -162,6 +162,8 @@ export type CalendarItem = {
   name?: string;
   title?: string;
   color?: string;
+  eventColor?: string;
+  isActive?: boolean;
 };
 
 export type CalendarEventItem = {
@@ -177,3 +179,45 @@ export type CalendarEventItem = {
 };
 
 export type ConfigValue = string | number | boolean | string[] | Record<string, unknown> | null;
+
+export type PhoneThemePreference = 'system' | 'light' | 'dark' | 'auto';
+
+export type WhatsAppApiTemplate = {
+  id: string;
+  name: string;
+  language?: string;
+  status?: string | null;
+  reason?: string | null;
+  status_update_event?: string | null;
+  components?: Array<Record<string, unknown>>;
+};
+
+export type WhatsAppApiTemplatesResponse = {
+  total?: number;
+  approved?: number;
+  blocked?: number;
+  items?: WhatsAppApiTemplate[];
+};
+
+export type ContactCustomFieldDefinition = {
+  definitionId?: string;
+  key?: string;
+  fieldKey?: string;
+  label?: string;
+  name?: string;
+  dataType?: string;
+  folderName?: string;
+  archived?: boolean;
+};
+
+export type AIAgentConfigStatus = {
+  configured?: boolean;
+  credentialStatus?: 'missing' | 'ready' | 'reconnect_required' | string;
+  needsReconnect?: boolean;
+  businessContext?: string;
+};
+
+export type AIAgentBusinessContextAnswerResult = {
+  text?: string;
+  status?: AIAgentConfigStatus;
+};

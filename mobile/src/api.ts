@@ -4,6 +4,9 @@ import type {
   ChatContact,
   ConfigValue,
   ContactTag,
+  ContactCustomFieldDefinition,
+  AIAgentBusinessContextAnswerResult,
+  AIAgentConfigStatus,
   ConversationAgentState,
   DashboardMetrics,
   JourneyEvent,
@@ -13,6 +16,7 @@ import type {
   SendTextResponse,
   TransactionItem,
   VerifyResponse,
+  WhatsAppApiTemplatesResponse,
 } from './types';
 
 type RequestOptions = RequestInit & {
@@ -274,11 +278,55 @@ export class RistakApiClient {
     });
   }
 
+  setConfig(key: string, value: ConfigValue) {
+    return this.request<{ success?: boolean; message?: string }>('/config', {
+      method: 'POST',
+      body: JSON.stringify({ key, value }),
+    });
+  }
+
   getUserConfig(keys: string[]) {
     return this.request<{ config?: Record<string, ConfigValue> }>('/user-config', {
       params: {
         keys: keys.join(','),
       },
+    });
+  }
+
+  setUserConfig(key: string, value: ConfigValue) {
+    return this.request<{ success?: boolean; message?: string }>('/user-config', {
+      method: 'POST',
+      body: JSON.stringify({ key, value }),
+    });
+  }
+
+  getWhatsAppTemplates(status?: string | null) {
+    return this.request<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
+      params: {
+        status: status || undefined,
+      },
+    });
+  }
+
+  getCustomFieldDefinitions(includeArchived = false) {
+    return this.request<ContactCustomFieldDefinition[]>('/contacts/custom-fields', {
+      params: {
+        includeArchived: includeArchived ? 'true' : undefined,
+      },
+    });
+  }
+
+  getAIAgentConfig() {
+    return this.request<AIAgentConfigStatus>('/ai-agent/config');
+  }
+
+  saveAIAgentBusinessContext(answer: string) {
+    return this.request<AIAgentBusinessContextAnswerResult>('/ai-agent/business-context-answer', {
+      method: 'POST',
+      body: JSON.stringify({
+        field: 'businessContext',
+        answer,
+      }),
     });
   }
 }
