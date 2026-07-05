@@ -2,6 +2,7 @@ import type {
   CalendarEventItem,
   CalendarItem,
   ChatContact,
+  ChatMessage,
   ConfigValue,
   ContactTag,
   ConversationAgentState,
@@ -202,6 +203,38 @@ export class RistakApiClient {
         contactId: contact.id,
         text,
         externalId: `native-${Date.now()}`,
+        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        messageOrigin: 'native_mobile_chat',
+      }),
+    });
+  }
+
+  sendImage(contact: ChatContact, imageDataUrl: string, caption = '') {
+    return this.request<SendTextResponse>('/whatsapp-api/messages/image', {
+      method: 'POST',
+      body: JSON.stringify({
+        to: contact.phone || '',
+        from: contact.lastBusinessPhone || undefined,
+        contactId: contact.id,
+        imageDataUrl,
+        caption,
+        externalId: `native-image-${Date.now()}`,
+        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        messageOrigin: 'native_mobile_chat',
+      }),
+    });
+  }
+
+  sendReaction(contact: ChatContact, message: ChatMessage, emoji: string) {
+    return this.request<SendTextResponse>('/whatsapp-api/messages/reaction', {
+      method: 'POST',
+      body: JSON.stringify({
+        to: contact.phone || '',
+        from: contact.lastBusinessPhone || undefined,
+        contactId: contact.id,
+        messageId: message.providerMessageId || message.id,
+        emoji,
+        externalId: `native-reaction-${Date.now()}`,
         phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
       }),

@@ -35,12 +35,20 @@ import {
   ChevronLeft,
   CircleDollarSign,
   Clock,
+  FileText,
+  Image as ImageIcon,
+  Info,
   Mail,
+  MapPin,
   MessageCircle,
+  Mic,
   MoreHorizontal,
   Pause,
   Play,
+  RefreshCw,
+  Reply,
   Send,
+  Smile,
   Plus,
   Search,
   Settings,
@@ -65,8 +73,11 @@ import {
   buildMessagesFromJourney,
   cleanBaseUrl,
   formatChatListDate,
+  formatConversationDayLabel,
   formatCurrency,
+  formatMessageTime,
   formatShortDate,
+  getConversationDayKey,
   getContactAvatar,
   getContactName,
   getTodayRange,
@@ -77,6 +88,7 @@ import type {
   CalendarItem,
   ChatContact,
   ChatMessage,
+  ChatAttachment,
   ContactTag,
   ConversationAgentState,
   DashboardMetrics,
@@ -111,8 +123,20 @@ type SessionState = {
 type Screen = 'boot' | 'server' | 'login' | 'shell';
 type ChatFilterId = string;
 type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
+type ConversationSheetMode = 'attachments' | 'messageActions' | 'chatMore' | 'tag' | 'schedule' | null;
 type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
+type ConversationDraftAttachment = {
+  id: string;
+  uri: string;
+  dataUrl: string;
+  kind: 'image';
+  name: string;
+  mimeType: string;
+};
+type ConversationListItem =
+  | { type: 'day'; id: string; label: string }
+  | { type: 'message'; id: string; message: ChatMessage };
 type ChatFilterPreset = {
   id: ChatFilterId;
   label: string;
@@ -150,6 +174,8 @@ const CHAT_CHANNEL_BADGE_SIZE = 22;
 const CHAT_SHEET_OPEN_DURATION_MS = 260;
 const CHAT_SHEET_CLOSE_DURATION_MS = 280;
 const CHAT_SHEET_HIDDEN_TRANSLATE_Y = 860;
+const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏'];
+const CONVERSATION_ATTACHMENT_LIMIT = 4;
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
@@ -1142,13 +1168,32 @@ function ChatScreen({
 
   if (selected) {
     return (
-      <ConversationScreen
+      <NativeConversationScreen
         api={api}
         contact={selected}
+        archived={archivedChatIds.includes(selected.id)}
+        muted={mutedChatIds.includes(selected.id)}
+        timezone={businessTimezone}
+        onArchiveToggle={(contact) => {
+          if (archivedChatIds.includes(contact.id)) {
+            restoreChat(contact);
+          } else {
+            archiveChat(contact);
+          }
+        }}
         onBack={() => {
           setSelected(null);
           void loadChats(true);
         }}
+        onContactPatch={(contactId, patch) => {
+          setSelected((current) => (current?.id === contactId ? { ...current, ...patch } : current));
+          setChats((current) => current.map((item) => (
+            item.id === contactId ? { ...item, ...patch } : item
+          )));
+        }}
+        onNavigate={onNavigate}
+        onRefreshChats={() => void loadChats(true)}
+        onToggleMute={toggleMuteChat}
       />
     );
   }
@@ -2845,108 +2890,19 @@ function ConversationScreen({
   contact: ChatContact;
   onBack: () => void;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [draft, setDraft] = useState('');
-  const [sending, setSending] = useState(false);
-  const listRef = useRef<FlatList<ChatMessage>>(null);
-
-  const loadConversation = useCallback(async () => {
-    setLoading(true);
-    try {
-      const journey = await api.getConversation(contact.id);
-      setMessages(buildMessagesFromJourney(contact.id, journey));
-      void api.markChatRead(contact.id).catch(() => undefined);
-    } catch (err) {
-      Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo cargar la conversacion.');
-    } finally {
-      setLoading(false);
-    }
-  }, [api, contact.id]);
-
-  useEffect(() => {
-    void loadConversation();
-  }, [loadConversation]);
-
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || sending) return;
-    if (!contact.phone) {
-      Alert.alert('Falta telefono', 'Este contacto no tiene telefono principal para enviar WhatsApp.');
-      return;
-    }
-
-    const optimistic: ChatMessage = {
-      id: `local-${Date.now()}`,
-      contactId: contact.id,
-      date: new Date().toISOString(),
-      direction: 'outbound',
-      text,
-      channel: 'native',
-      pending: true,
-    };
-    setDraft('');
-    setMessages((current) => [...current, optimistic]);
-    setSending(true);
-    try {
-      const response = await api.sendText(contact, text);
-      setMessages((current) => current.map((message) => (
-        message.id === optimistic.id
-          ? { ...message, pending: false, status: response.status || 'sent', channel: response.transport || message.channel }
-          : message
-      )));
-      void loadConversation();
-    } catch (err) {
-      setMessages((current) => current.map((message) => (
-        message.id === optimistic.id ? { ...message, pending: false, failed: true } : message
-      )));
-      Alert.alert('No se envio', err instanceof Error ? err.message : 'Intenta otra vez.');
-    } finally {
-      setSending(false);
-    }
-  };
-
   return (
-    <AppFrame>
-      <View style={styles.conversationHeader}>
-        <Pressable onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backLabel}>{'<'}</Text>
-        </Pressable>
-        <View style={styles.conversationTitleWrap}>
-          <Text numberOfLines={1} style={styles.headerTitle}>{getContactName(contact)}</Text>
-          <Text numberOfLines={1} style={styles.caption}>{contact.phone || 'Sin telefono'}</Text>
-        </View>
-      </View>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={12} style={styles.conversationBody}>
-        {loading ? (
-          <View style={styles.centerState}>
-            <ActivityIndicator color={COLORS.accent} />
-          </View>
-        ) : (
-          <FlatList
-            ref={listRef}
-            data={messages}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.messageList}
-            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
-            renderItem={({ item }) => <MessageBubble message={item} />}
-          />
-        )}
-        <View style={styles.composer}>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            multiline
-            placeholder="Escribe un mensaje"
-            placeholderTextColor={COLORS.muted}
-            style={styles.composerInput}
-          />
-          <Pressable disabled={sending || !draft.trim()} onPress={send} style={[styles.sendButton, (!draft.trim() || sending) && styles.disabledButton]}>
-            {sending ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.sendLabel}>Enviar</Text>}
-          </Pressable>
-        </View>
-      </KeyboardAvoidingView>
-    </AppFrame>
+    <NativeConversationScreen
+      api={api}
+      archived={false}
+      contact={contact}
+      muted={false}
+      timezone={resolveBusinessTimezone()}
+      onArchiveToggle={() => undefined}
+      onBack={onBack}
+      onContactPatch={() => undefined}
+      onRefreshChats={() => undefined}
+      onToggleMute={() => undefined}
+    />
   );
 }
 
@@ -2964,6 +2920,1007 @@ function MessageBubble({ message }: { message: ChatMessage }) {
       </View>
     </View>
   );
+}
+
+function NativeConversationScreen({
+  api,
+  archived,
+  contact,
+  muted,
+  timezone,
+  onArchiveToggle,
+  onBack,
+  onContactPatch,
+  onNavigate,
+  onRefreshChats,
+  onToggleMute,
+}: {
+  api: RistakApiClient;
+  archived: boolean;
+  contact: ChatContact;
+  muted: boolean;
+  timezone: string;
+  onArchiveToggle: (contact: ChatContact) => void;
+  onBack: () => void;
+  onContactPatch: (contactId: string, patch: Partial<ChatContact>) => void;
+  onNavigate?: (section: PhoneSection) => void;
+  onRefreshChats: () => void;
+  onToggleMute: (contact: ChatContact) => void;
+}) {
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [draftAttachments, setDraftAttachments] = useState<ConversationDraftAttachment[]>([]);
+  const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
+  const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
+  const [activeSheet, setActiveSheet] = useState<ConversationSheetMode>(null);
+  const [closingSheet, setClosingSheet] = useState<ConversationSheetMode>(null);
+  const [chatTags, setChatTags] = useState<ContactTag[]>([]);
+  const [chatTagsLoading, setChatTagsLoading] = useState(false);
+  const [tagQuery, setTagQuery] = useState('');
+  const [tagBusy, setTagBusy] = useState(false);
+  const [scheduleText, setScheduleText] = useState('');
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  const [agentStates, setAgentStates] = useState<ConversationAgentState[]>([]);
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
+  const listRef = useRef<FlatList<ConversationListItem>>(null);
+  const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadRequestRef = useRef(0);
+  const onContactPatchRef = useRef(onContactPatch);
+  const unreadCountRef = useRef(contact.unreadCount);
+
+  useEffect(() => {
+    onContactPatchRef.current = onContactPatch;
+  }, [onContactPatch]);
+
+  useEffect(() => {
+    unreadCountRef.current = contact.unreadCount;
+  }, [contact.unreadCount]);
+
+  const loadConversation = useCallback(async (silent = false) => {
+    const requestId = loadRequestRef.current + 1;
+    loadRequestRef.current = requestId;
+    if (silent) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+    try {
+      const journey = await api.getConversation(contact.id, 100);
+      if (requestId !== loadRequestRef.current) return;
+      setMessages(buildMessagesFromJourney(contact.id, journey));
+      void api.markChatRead(contact.id).catch(() => undefined);
+      if (Number(unreadCountRef.current || 0) > 0) {
+        unreadCountRef.current = 0;
+        onContactPatchRef.current(contact.id, { unreadCount: 0 });
+      }
+    } catch (err) {
+      if (requestId !== loadRequestRef.current) return;
+      Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo cargar la conversación.');
+    } finally {
+      if (requestId === loadRequestRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [api, contact.id]);
+
+  useEffect(() => {
+    void loadConversation();
+  }, [loadConversation]);
+
+  useEffect(() => () => {
+    if (sheetCloseTimerRef.current) clearTimeout(sheetCloseTimerRef.current);
+  }, []);
+
+  const clearSheetCloseTimer = useCallback(() => {
+    if (sheetCloseTimerRef.current) {
+      clearTimeout(sheetCloseTimerRef.current);
+      sheetCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const openSheet = useCallback((sheet: Exclude<ConversationSheetMode, null>) => {
+    clearSheetCloseTimer();
+    setClosingSheet(null);
+    setActiveSheet(sheet);
+  }, [clearSheetCloseTimer]);
+
+  const closeSheet = useCallback(() => {
+    if (!activeSheet) return;
+    const sheet = activeSheet;
+    clearSheetCloseTimer();
+    setClosingSheet(sheet);
+    setActiveSheet(null);
+    sheetCloseTimerRef.current = setTimeout(() => {
+      sheetCloseTimerRef.current = null;
+      setClosingSheet(null);
+      if (sheet === 'messageActions') setSelectedMessage(null);
+    }, CHAT_SHEET_CLOSE_DURATION_MS + 40);
+  }, [activeSheet, clearSheetCloseTimer]);
+
+  const filteredMessages = useMemo(() => {
+    const needle = searchQuery.trim().toLowerCase();
+    if (!needle) return messages;
+    return messages.filter((message) => [
+      message.text,
+      message.attachment?.name,
+      message.channel,
+      message.transport,
+      message.status,
+    ].filter(Boolean).join(' ').toLowerCase().includes(needle));
+  }, [messages, searchQuery]);
+
+  const conversationItems = useMemo<ConversationListItem[]>(() => {
+    const items: ConversationListItem[] = [];
+    let previousDay = '';
+    filteredMessages.forEach((message) => {
+      const key = getConversationDayKey(message.date, timezone);
+      if (key !== previousDay) {
+        items.push({
+          type: 'day',
+          id: `day-${key}`,
+          label: formatConversationDayLabel(message.date, timezone) || key,
+        });
+        previousDay = key;
+      }
+      items.push({ type: 'message', id: message.id, message });
+    });
+    return items;
+  }, [filteredMessages, timezone]);
+
+  const channelKind = getContactChannelKind(contact);
+  const channelColor = CHANNEL_BADGE_COLORS[channelKind];
+  const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0);
+
+  const updateContactPreview = useCallback((text: string, sentAt: string, channel?: string) => {
+    onContactPatch(contact.id, {
+      lastMessageText: text,
+      lastMessageDate: sentAt,
+      lastMessageDirection: 'outbound',
+      lastMessageChannel: channel || contact.lastMessageChannel,
+      messageCount: Number(contact.messageCount || 0) + 1,
+    });
+  }, [contact.id, contact.lastMessageChannel, contact.messageCount, onContactPatch]);
+
+  const removeDraftAttachment = (id: string) => {
+    setDraftAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  };
+
+  const appendImageAttachments = (assets: ImagePicker.ImagePickerAsset[]) => {
+    const prepared = assets.reduce<ConversationDraftAttachment[]>((items, asset, index) => {
+      if (!asset.base64) return items;
+      const mimeType = asset.mimeType || 'image/jpeg';
+      items.push({
+        id: `draft-image-${Date.now()}-${index}`,
+        uri: asset.uri,
+        dataUrl: `data:${mimeType};base64,${asset.base64}`,
+        kind: 'image',
+        name: asset.fileName || `foto-${items.length + 1}.jpg`,
+        mimeType,
+      });
+      return items;
+    }, []);
+
+    if (!prepared.length) {
+      Alert.alert('Foto', 'No pude preparar la imagen para enviarla.');
+      return;
+    }
+
+    setDraftAttachments((current) => [...current, ...prepared].slice(0, CONVERSATION_ATTACHMENT_LIMIT));
+    closeSheet();
+  };
+
+  const pickImage = async (source: 'camera' | 'library') => {
+    const remaining = CONVERSATION_ATTACHMENT_LIMIT - draftAttachments.length;
+    if (remaining <= 0) {
+      Alert.alert('Adjuntos', `Puedes preparar hasta ${CONVERSATION_ATTACHMENT_LIMIT} fotos por mensaje.`);
+      return;
+    }
+
+    const permission = source === 'camera'
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) {
+      Alert.alert(source === 'camera' ? 'Cámara' : 'Fotos', 'Necesito permiso para usar esta opción.');
+      return;
+    }
+
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        quality: 0.86,
+        base64: true,
+      })
+      : await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.86,
+        base64: true,
+        allowsMultipleSelection: remaining > 1,
+        selectionLimit: remaining,
+      });
+    if (result.canceled || !result.assets?.length) return;
+    appendImageAttachments(result.assets.slice(0, remaining));
+  };
+
+  const send = async () => {
+    const text = draft.trim();
+    const attachmentsToSend = draftAttachments;
+    if ((!text && attachmentsToSend.length === 0) || sending) return;
+    if (!contact.phone) {
+      Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar WhatsApp.');
+      return;
+    }
+
+    const optimisticId = `local-${Date.now()}`;
+    const sentAt = new Date().toISOString();
+    const optimisticMessages: ChatMessage[] = attachmentsToSend.length
+      ? attachmentsToSend.map((attachment, index) => ({
+        id: `${optimisticId}-attachment-${index}`,
+        contactId: contact.id,
+        date: sentAt,
+        direction: 'outbound',
+        text: index === 0 ? text : '',
+        channel: 'native',
+        transport: 'native',
+        status: 'enviando',
+        pending: true,
+        replyToMessageId: replyingToMessage?.id,
+        attachment: {
+          type: 'image',
+          dataUrl: attachment.dataUrl,
+          url: attachment.uri,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+        },
+      }))
+      : [{
+        id: optimisticId,
+        contactId: contact.id,
+        date: sentAt,
+        direction: 'outbound',
+        text,
+        channel: 'native',
+        transport: 'native',
+        status: 'enviando',
+        pending: true,
+        replyToMessageId: replyingToMessage?.id,
+      }];
+
+    setDraft('');
+    setDraftAttachments([]);
+    setReplyingToMessage(null);
+    setMessages((current) => [...current, ...optimisticMessages]);
+    updateContactPreview(attachmentsToSend.length ? (text || 'Foto') : text, sentAt, 'native');
+    setSending(true);
+    try {
+      if (attachmentsToSend.length > 0) {
+        const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
+          api.sendImage(contact, attachment.dataUrl, index === 0 ? text : '')
+        )));
+        setMessages((current) => current.map((message) => {
+          if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
+          const index = Number(message.id.replace(`${optimisticId}-attachment-`, ''));
+          const response = responses[index];
+          return {
+            ...message,
+            pending: false,
+            status: response?.status || 'sent',
+            channel: response?.transport || message.channel,
+            transport: response?.transport || message.transport,
+          };
+        }));
+      } else {
+        const response = await api.sendText(contact, text);
+        setMessages((current) => current.map((message) => (
+          message.id === optimisticId
+            ? {
+              ...message,
+              pending: false,
+              status: response.status || 'sent',
+              channel: response.transport || message.channel,
+              transport: response.transport || message.transport,
+              routingReason: response.routingReason || response.fallbackReason || message.routingReason,
+            }
+            : message
+        )));
+      }
+      onRefreshChats();
+      void loadConversation(true);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Intenta otra vez.';
+      setMessages((current) => current.map((message) => (
+        message.id === optimisticId || message.id.startsWith(`${optimisticId}-attachment-`)
+          ? { ...message, pending: false, failed: true, status: 'error', errorReason: errorMessage }
+          : message
+      )));
+      setDraft(text);
+      setDraftAttachments(attachmentsToSend);
+      Alert.alert('No se envió', errorMessage);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const openMessageActions = (message: ChatMessage) => {
+    if (message.direction === 'system') return;
+    setSelectedMessage(message);
+    openSheet('messageActions');
+  };
+
+  const reactToMessage = async (message: ChatMessage, emoji: string) => {
+    closeSheet();
+    setMessages((current) => current.map((item) => (
+      item.id === message.id
+        ? {
+          ...item,
+          reactions: [
+            ...(item.reactions || []).filter((reaction) => reaction.id !== `local-reaction-${message.id}`),
+            { id: `local-reaction-${message.id}`, emoji, direction: 'outbound' },
+          ],
+        }
+        : item
+    )));
+
+    try {
+      await api.sendReaction(contact, message, emoji);
+      void loadConversation(true);
+    } catch (err) {
+      Alert.alert('Reacción', err instanceof Error ? err.message : 'No se pudo mandar la reacción.');
+    }
+  };
+
+  const openChatMore = () => {
+    setAgentLoading(true);
+    openSheet('chatMore');
+    api.getAgentStates(contact.id)
+      .then((states) => setAgentStates(Array.isArray(states) ? states : []))
+      .catch(() => setAgentStates([]))
+      .finally(() => setAgentLoading(false));
+  };
+
+  const openTagSheet = () => {
+    setTagQuery('');
+    setChatTagsLoading(true);
+    openSheet('tag');
+    api.getContactTags()
+      .then((tags) => setChatTags(Array.isArray(tags) ? tags : []))
+      .catch((err) => {
+        setChatTags([]);
+        Alert.alert('Etiquetas', err instanceof Error ? err.message : 'No se cargaron las etiquetas.');
+      })
+      .finally(() => setChatTagsLoading(false));
+  };
+
+  const applyTagToContact = async (target: ChatContact, tag: ContactTag) => {
+    if (tagBusy) return;
+    if ((target.tags || []).includes(tag.id)) {
+      Alert.alert('Etiqueta', `${getContactName(target)} ya tiene ${tag.name}.`);
+      return;
+    }
+
+    setTagBusy(true);
+    try {
+      await api.addContactTag(target.id, tag.id);
+      const nextTags = Array.from(new Set([...(target.tags || []), tag.id]));
+      onContactPatch(target.id, { tags: nextTags });
+      closeSheet();
+      Alert.alert('Etiqueta agregada', `${tag.name} quedó en ${getContactName(target)}.`);
+    } catch (err) {
+      Alert.alert('Etiqueta', err instanceof Error ? err.message : 'No se pudo agregar la etiqueta.');
+    } finally {
+      setTagBusy(false);
+    }
+  };
+
+  const createAndApplyTag = async (target: ChatContact) => {
+    const name = tagQuery.trim();
+    if (!name || tagBusy) return;
+    setTagBusy(true);
+    try {
+      const tag = await api.createContactTag(name);
+      setChatTags((current) => [tag, ...current.filter((item) => item.id !== tag.id)]);
+      await api.addContactTag(target.id, tag.id);
+      const nextTags = Array.from(new Set([...(target.tags || []), tag.id]));
+      onContactPatch(target.id, { tags: nextTags });
+      closeSheet();
+      Alert.alert('Etiqueta creada', `${tag.name} quedó en ${getContactName(target)}.`);
+    } catch (err) {
+      Alert.alert('Etiqueta', err instanceof Error ? err.message : 'No se pudo crear la etiqueta.');
+    } finally {
+      setTagBusy(false);
+    }
+  };
+
+  const scheduleMessageForContact = async (target: ChatContact) => {
+    const text = scheduleText.trim();
+    if (!text || scheduleBusy) return;
+    const scheduledAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    setScheduleBusy(true);
+    try {
+      await api.scheduleText(target, text, scheduledAt);
+      closeSheet();
+      setScheduleText('');
+      Alert.alert('Mensaje programado', `Se programó para enviarse en 1 hora a ${getContactName(target)}.`);
+      void loadConversation(true);
+    } catch (err) {
+      Alert.alert('Programar mensaje', err instanceof Error ? err.message : 'No se pudo programar el mensaje.');
+    } finally {
+      setScheduleBusy(false);
+    }
+  };
+
+  const runAgentAction = async (target: ChatContact, action: AgentAction) => {
+    if (agentBusyAction) return;
+    setAgentBusyAction(action);
+    try {
+      const state = await api.updateAgentState(target.id, action);
+      setAgentStates([state]);
+      closeSheet();
+      Alert.alert('Agente conversacional', getAgentActionSuccess(action, getContactName(target)));
+    } catch (err) {
+      Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudo actualizar el agente.');
+    } finally {
+      setAgentBusyAction(null);
+    }
+  };
+
+  const navigateToContactTool = (target: ChatContact, section: PhoneSection) => {
+    closeSheet();
+    onNavigate?.(section);
+    Alert.alert(
+      section === 'calendar' ? 'Agendar cita' : 'Registrar pagos',
+      `${section === 'calendar' ? 'Abriendo Citas' : 'Abriendo Pagos'} para continuar con ${getContactName(target)}.`,
+    );
+  };
+
+  const markChatAsRead = (target: ChatContact) => {
+    onContactPatch(target.id, { unreadCount: 0 });
+    closeSheet();
+    void api.markChatRead(target.id).catch((err) => {
+      Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo marcar como leído.');
+    });
+  };
+
+  const toggleArchiveFromSheet = (target: ChatContact) => {
+    onArchiveToggle(target);
+    closeSheet();
+    Alert.alert(archived ? 'Chat restaurado' : 'Chat archivado', getContactName(target));
+  };
+
+  const toggleMuteFromSheet = (target: ChatContact) => {
+    onToggleMute(target);
+    closeSheet();
+  };
+
+  return (
+    <AppFrame>
+      <View style={styles.conversationHeader}>
+        <Pressable onPress={onBack} style={styles.backButton}>
+          <ChevronLeft size={30} color={COLORS.text} strokeWidth={2.5} />
+        </Pressable>
+        <Pressable onPress={openChatMore} style={({ pressed }) => [styles.conversationContactButton, pressed && styles.pressed]}>
+          <View style={[styles.conversationAvatar, { borderColor: channelColor }]}>
+            <View style={styles.conversationAvatarCircle}>
+              {getContactAvatar(contact) ? (
+                <Image source={{ uri: getContactAvatar(contact) }} style={styles.conversationAvatarImage} />
+              ) : (
+                <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>
+              )}
+            </View>
+            {channelKind !== 'unknown' ? (
+              <View style={[styles.conversationAvatarBadge, { backgroundColor: channelColor }]}>
+                <ChannelBadgeIcon kind={channelKind} size={13} />
+              </View>
+            ) : null}
+          </View>
+          <View style={styles.conversationTitleWrap}>
+            <Text numberOfLines={1} style={styles.conversationTitle}>{getContactName(contact)}</Text>
+            <Text numberOfLines={1} style={styles.conversationSubtitle}>{getContactDetail(contact)}</Text>
+          </View>
+        </Pressable>
+        <View style={styles.conversationHeaderActions}>
+          <Pressable accessibilityRole="button" onPress={openChatMore} style={styles.conversationHeaderIconButton}>
+            <Bot size={18} color={COLORS.accent} strokeWidth={2.45} />
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={openTagSheet} style={styles.conversationHeaderIconButton}>
+            <Tag size={18} color={COLORS.accent} strokeWidth={2.45} />
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setSearchOpen((current) => !current)} style={[styles.conversationHeaderIconButton, searchOpen && styles.conversationHeaderIconButtonActive]}>
+            <Search size={18} color={COLORS.accent} strokeWidth={2.45} />
+          </Pressable>
+        </View>
+      </View>
+
+      {searchOpen ? (
+        <View style={styles.conversationSearchBar}>
+          <Search size={18} color={COLORS.muted} strokeWidth={2.4} />
+          <TextInput
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            placeholder="Buscar en este chat"
+            placeholderTextColor={COLORS.muted}
+            autoCapitalize="none"
+            autoCorrect={false}
+            style={styles.conversationSearchInput}
+          />
+          {searchQuery ? <Text style={styles.conversationSearchCount}>{filteredMessages.length}</Text> : null}
+          <Pressable accessibilityRole="button" onPress={() => {
+            setSearchQuery('');
+            setSearchOpen(false);
+          }} style={styles.clearSearchButton}>
+            <X size={17} color={COLORS.muted} strokeWidth={2.45} />
+          </Pressable>
+        </View>
+      ) : null}
+
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={8} style={styles.conversationBody}>
+        {loading ? (
+          <View style={styles.centerState}>
+            <ActivityIndicator color={COLORS.accent} />
+          </View>
+        ) : (
+          <FlatList
+            ref={listRef}
+            data={conversationItems}
+            keyExtractor={(item) => item.id}
+            contentContainerStyle={styles.messageList}
+            keyboardShouldPersistTaps="handled"
+            refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={() => void loadConversation(true)} />}
+            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+            ListEmptyComponent={(
+              <View style={styles.emptyConversation}>
+                <MessageCircle size={30} color={COLORS.accent} strokeWidth={2.4} />
+                <Text style={styles.emptyConversationTitle}>{searchQuery ? 'Sin resultados' : 'Aún no hay mensajes'}</Text>
+                <Text style={styles.emptyConversationCopy}>{searchQuery ? 'Cambia la búsqueda para ver otros mensajes.' : 'Escribe el primer mensaje o usa + para tomar acciones.'}</Text>
+              </View>
+            )}
+            renderItem={({ item }) => (
+              item.type === 'day'
+                ? (
+                  <View style={styles.messageDaySeparator}>
+                    <Text style={styles.messageDayLabel}>{item.label}</Text>
+                  </View>
+                )
+                : (
+                  <NativeMessageBubble
+                    contact={contact}
+                    message={item.message}
+                    replyTarget={item.message.replyToMessageId ? messages.find((message) => message.id === item.message.replyToMessageId) : null}
+                    searchActive={Boolean(searchQuery)}
+                    timezone={timezone}
+                    onLongPress={() => openMessageActions(item.message)}
+                  />
+                )
+            )}
+          />
+        )}
+
+        {replyingToMessage ? (
+          <View style={styles.replyPreviewBar}>
+            <View style={styles.replyPreviewMarker} />
+            <View style={styles.replyPreviewCopy}>
+              <Text numberOfLines={1} style={styles.replyPreviewTitle}>Respondiendo a {replyingToMessage.direction === 'outbound' ? 'ti' : getContactName(contact)}</Text>
+              <Text numberOfLines={1} style={styles.replyPreviewText}>{getMessagePreviewText(replyingToMessage)}</Text>
+            </View>
+            <Pressable accessibilityRole="button" onPress={() => setReplyingToMessage(null)} style={styles.replyPreviewClose}>
+              <X size={16} color={COLORS.muted} strokeWidth={2.45} />
+            </Pressable>
+          </View>
+        ) : null}
+
+        {draftAttachments.length ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.draftAttachmentStrip}>
+            {draftAttachments.map((attachment) => (
+              <View key={attachment.id} style={styles.draftAttachment}>
+                <Image source={{ uri: attachment.uri }} style={styles.draftAttachmentImage} />
+                <Pressable accessibilityRole="button" onPress={() => removeDraftAttachment(attachment.id)} style={styles.draftAttachmentRemove}>
+                  <X size={14} color={COLORS.white} strokeWidth={2.6} />
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        <View style={[styles.composer, hasComposerContent && styles.composerHasContent]}>
+          <Pressable accessibilityRole="button" onPress={openChatMore} style={[styles.composerChannelButton, { backgroundColor: channelColor }]}>
+            <ChannelBadgeIcon kind={channelKind} size={15} />
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => openSheet('attachments')} style={styles.composerPlus}>
+            <Plus size={22} color={COLORS.accent} strokeWidth={2.55} />
+          </Pressable>
+          <View style={[styles.messageInputWrap, draft.trim() && styles.messageInputWrapWithSchedule]}>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              placeholder=""
+              placeholderTextColor={COLORS.muted}
+              textAlignVertical="center"
+              style={styles.composerInput}
+            />
+            {draft.trim() && !draftAttachments.length ? (
+              <Pressable accessibilityRole="button" onPress={() => {
+                setScheduleText(draft);
+                openSheet('schedule');
+              }} style={styles.composerScheduleButton}>
+                <Clock size={17} color={COLORS.accent} strokeWidth={2.45} />
+              </Pressable>
+            ) : null}
+          </View>
+          <View style={[styles.composerTrailingActions, hasComposerContent && styles.composerTrailingActionsCompact]}>
+            {!hasComposerContent ? (
+              <Pressable accessibilityRole="button" onPress={() => void pickImage('camera')} style={styles.composerIconButton}>
+                <Camera size={20} color={COLORS.accent} strokeWidth={2.55} />
+              </Pressable>
+            ) : null}
+            <Pressable disabled={sending || !hasComposerContent} onPress={send} style={[styles.composerSendButton, (!hasComposerContent || sending) && styles.disabledButton]}>
+              {sending ? <ActivityIndicator color={COLORS.white} /> : hasComposerContent ? <Send size={17} color={COLORS.white} strokeWidth={2.65} /> : <Mic size={19} color={COLORS.muted} strokeWidth={2.5} />}
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+
+      <NativeConversationAttachmentSheet
+        closing={activeSheet !== 'attachments' && closingSheet === 'attachments'}
+        contact={contact}
+        open={activeSheet === 'attachments' || closingSheet === 'attachments'}
+        onAppointment={() => navigateToContactTool(contact, 'calendar')}
+        onCamera={() => void pickImage('camera')}
+        onClose={closeSheet}
+        onLibrary={() => void pickImage('library')}
+        onMore={openChatMore}
+        onPayment={() => navigateToContactTool(contact, 'payments')}
+        onSchedule={() => {
+          setScheduleText(draft);
+          openSheet('schedule');
+        }}
+        onTag={openTagSheet}
+      />
+
+      <NativeMessageActionSheet
+        closing={activeSheet !== 'messageActions' && closingSheet === 'messageActions'}
+        message={selectedMessage}
+        open={activeSheet === 'messageActions' || closingSheet === 'messageActions'}
+        timezone={timezone}
+        onClose={closeSheet}
+        onInfo={(message) => {
+          Alert.alert('Mensaje', [
+            `Canal: ${getMessageChannelLabel(message.channel || message.transport)}`,
+            `Estado: ${message.status || 'sin estado'}`,
+            `Hora: ${formatMessageTime(message.date, timezone)}`,
+            message.errorReason ? `Error: ${message.errorReason}` : '',
+          ].filter(Boolean).join('\n'));
+        }}
+        onReact={reactToMessage}
+        onReply={(message) => {
+          setReplyingToMessage(message);
+          closeSheet();
+        }}
+      />
+
+      <ChatMoreSheet
+        archived={archived}
+        agentBusyAction={agentBusyAction}
+        agentLoading={agentLoading}
+        agentState={selectPrimaryAgentState(agentStates)}
+        closing={activeSheet !== 'chatMore' && closingSheet === 'chatMore'}
+        contact={contact}
+        muted={muted}
+        open={activeSheet === 'chatMore' || closingSheet === 'chatMore'}
+        unread={getUnreadCount(contact)}
+        onAgentAction={runAgentAction}
+        onAppointment={(target) => navigateToContactTool(target, 'calendar')}
+        onArchiveToggle={toggleArchiveFromSheet}
+        onClose={closeSheet}
+        onMarkRead={markChatAsRead}
+        onPayment={(target) => navigateToContactTool(target, 'payments')}
+        onSchedule={() => {
+          setScheduleText('');
+          openSheet('schedule');
+        }}
+        onSelect={() => {
+          closeSheet();
+          Alert.alert('Seleccionar', 'La selección múltiple se maneja desde la lista de chats.');
+        }}
+        onTag={openTagSheet}
+        onToggleMute={toggleMuteFromSheet}
+      />
+
+      <ContactTagSheet
+        busy={tagBusy}
+        closing={activeSheet !== 'tag' && closingSheet === 'tag'}
+        contact={contact}
+        loading={chatTagsLoading}
+        open={activeSheet === 'tag' || closingSheet === 'tag'}
+        query={tagQuery}
+        tags={chatTags}
+        onApply={applyTagToContact}
+        onChangeQuery={setTagQuery}
+        onClose={closeSheet}
+        onCreate={createAndApplyTag}
+      />
+
+      <ScheduleMessageSheet
+        busy={scheduleBusy}
+        closing={activeSheet !== 'schedule' && closingSheet === 'schedule'}
+        contact={contact}
+        open={activeSheet === 'schedule' || closingSheet === 'schedule'}
+        text={scheduleText}
+        onChangeText={setScheduleText}
+        onClose={closeSheet}
+        onSubmit={scheduleMessageForContact}
+      />
+    </AppFrame>
+  );
+}
+
+function NativeConversationAttachmentSheet({
+  closing,
+  contact,
+  open,
+  onAppointment,
+  onCamera,
+  onClose,
+  onLibrary,
+  onMore,
+  onPayment,
+  onSchedule,
+  onTag,
+}: {
+  closing?: boolean;
+  contact: ChatContact;
+  open: boolean;
+  onAppointment: () => void;
+  onCamera: () => void;
+  onClose: () => void;
+  onLibrary: () => void;
+  onMore: () => void;
+  onPayment: () => void;
+  onSchedule: () => void;
+  onTag: () => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open}
+      title="Acciones"
+      subtitle={getContactName(contact)}
+      onClose={onClose}
+    >
+      <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
+        <SheetActionRow Icon={Camera} title="Tomar foto" subtitle="Abre la cámara y deja la foto lista para enviar." onPress={onCamera} />
+        <SheetActionRow Icon={ImageIcon} title="Elegir foto" subtitle="Adjunta una imagen desde tu galería." onPress={onLibrary} />
+        <View style={styles.sheetSectionDivider}>
+          <Text style={styles.sheetSectionLabel}>Herramientas</Text>
+        </View>
+        <SheetActionRow Icon={CalendarDays} title="Agendar cita" subtitle="Crear una cita para este contacto." onPress={onAppointment} />
+        <SheetActionRow Icon={CircleDollarSign} title="Registrar pagos" subtitle="Elegir pago único, plan o suscripción." onPress={onPayment} />
+        <SheetActionRow Icon={Clock} title="Programar mensaje" subtitle="Prepara un envío en una hora." onPress={onSchedule} />
+        <SheetActionRow Icon={Tag} title="Agregar etiqueta" subtitle="Clasificar este chat con una etiqueta." onPress={onTag} />
+        <SheetActionRow Icon={MoreHorizontal} title="Más acciones" subtitle="Silenciar, archivar o controlar agente." onPress={onMore} />
+      </ScrollView>
+    </BottomActionSheet>
+  );
+}
+
+function NativeMessageActionSheet({
+  closing,
+  message,
+  open,
+  timezone,
+  onClose,
+  onInfo,
+  onReact,
+  onReply,
+}: {
+  closing?: boolean;
+  message: ChatMessage | null;
+  open: boolean;
+  timezone: string;
+  onClose: () => void;
+  onInfo: (message: ChatMessage) => void;
+  onReact: (message: ChatMessage, emoji: string) => void;
+  onReply: (message: ChatMessage) => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open && Boolean(message)}
+      title="Acciones del mensaje"
+      subtitle={message ? formatMessageTime(message.date, timezone) : ''}
+      onClose={onClose}
+    >
+      {message ? (
+        <View style={styles.messageActionSheetBody}>
+          <View style={styles.messageActionPreview}>
+            <Text numberOfLines={2} style={styles.messageActionPreviewText}>{getMessagePreviewText(message)}</Text>
+          </View>
+          <View style={styles.reactionRow}>
+            {MESSAGE_REACTION_EMOJIS.map((emoji) => (
+              <Pressable key={emoji} accessibilityRole="button" onPress={() => onReact(message, emoji)} style={styles.reactionButton}>
+                <Text style={styles.reactionEmoji}>{emoji}</Text>
+              </Pressable>
+            ))}
+          </View>
+          <SheetActionRow Icon={Reply} title="Responder" subtitle="Cita este mensaje en tu siguiente respuesta." onPress={() => onReply(message)} />
+          <SheetActionRow Icon={Smile} title="Reaccionar" subtitle="Usa los emojis rápidos de arriba." onPress={() => undefined} disabled />
+          <SheetActionRow Icon={Info} title="Información" subtitle="Ver canal, estado y hora del mensaje." onPress={() => onInfo(message)} />
+        </View>
+      ) : null}
+    </BottomActionSheet>
+  );
+}
+
+function NativeMessageBubble({
+  contact,
+  message,
+  replyTarget,
+  searchActive,
+  timezone,
+  onLongPress,
+}: {
+  contact: ChatContact;
+  message: ChatMessage;
+  replyTarget?: ChatMessage | null;
+  searchActive?: boolean;
+  timezone: string;
+  onLongPress?: () => void;
+}) {
+  const outbound = message.direction === 'outbound';
+  const system = message.direction === 'system';
+  const attachment = message.attachment;
+  const status = getMessageReceiptStatus(message);
+
+  if (system) {
+    return (
+      <View style={styles.systemMessageRow}>
+        <View style={styles.systemMessageBubble}>
+          <Text style={styles.systemMessageText}>{message.text}</Text>
+        </View>
+      </View>
+    );
+  }
+
+  return (
+    <View style={[styles.messageRow, outbound ? styles.messageRowOutbound : styles.messageRowInbound]}>
+      <Pressable
+        delayLongPress={260}
+        onLongPress={onLongPress}
+        style={({ pressed }) => [
+          styles.messageBubble,
+          outbound ? styles.outboundBubble : styles.inboundBubble,
+          attachment?.type === 'image' && styles.imageMessageBubble,
+          message.failed && styles.failedBubble,
+          searchActive && styles.messageSearchMatch,
+          pressed && styles.pressed,
+        ]}
+      >
+        {replyTarget ? (
+          <View style={styles.quotedMessage}>
+            <View style={styles.quotedMessageMarker} />
+            <View style={styles.quotedMessageCopy}>
+              <Text numberOfLines={1} style={styles.quotedMessageTitle}>{replyTarget.direction === 'outbound' ? 'Tú' : getContactName(contact)}</Text>
+              <Text numberOfLines={1} style={styles.quotedMessageText}>{getMessagePreviewText(replyTarget)}</Text>
+            </View>
+          </View>
+        ) : null}
+        {attachment ? <NativeMessageAttachment attachment={attachment} /> : null}
+        {message.location ? <NativeMessageLocation location={message.location} /> : null}
+        {message.isComment ? (
+          <View style={styles.commentContext}>
+            <MessageCircle size={12} color={COLORS.accent} strokeWidth={2.5} />
+            <Text style={styles.commentContextText}>
+              {message.commentReplyMode === 'public' ? 'Respuesta pública al comentario' : message.commentReplyMode === 'private' ? 'Respuesta por privado' : 'Comentario'}
+            </Text>
+          </View>
+        ) : null}
+        {message.text ? <Text style={styles.messageText}>{message.text}</Text> : null}
+        {message.routingReason ? <Text numberOfLines={2} style={styles.messageRoutingNote}>{message.routingReason}</Text> : null}
+        <View style={styles.messageMetaRow}>
+          <Text style={styles.messageMeta}>
+            {formatMessageTime(message.date, timezone)}
+            {message.pending ? ' · enviando' : ''}
+            {message.failed ? ' · error' : ''}
+          </Text>
+          {outbound ? <NativeMessageReceipt status={status} failed={Boolean(message.failed)} pending={Boolean(message.pending)} /> : null}
+        </View>
+        {message.reactions?.length ? (
+          <View style={styles.messageReactions}>
+            {message.reactions.slice(-3).map((reaction) => (
+              <Text key={reaction.id} style={styles.messageReaction}>{reaction.emoji}</Text>
+            ))}
+          </View>
+        ) : null}
+      </Pressable>
+    </View>
+  );
+}
+
+function NativeMessageAttachment({ attachment }: { attachment: ChatAttachment }) {
+  const imageUri = attachment.dataUrl || attachment.url;
+  if (attachment.type === 'image' && imageUri) {
+    return <Image source={{ uri: imageUri }} style={styles.messageImage} />;
+  }
+
+  const Icon = attachment.type === 'audio' ? Mic : attachment.type === 'video' ? Play : FileText;
+  return (
+    <View style={styles.messageFileCard}>
+      <View style={styles.messageFileIcon}>
+        <Icon size={18} color={COLORS.accent} strokeWidth={2.5} />
+      </View>
+      <View style={styles.messageFileCopy}>
+        <Text numberOfLines={1} style={styles.messageFileTitle}>{attachment.name || getAttachmentLabel(attachment.type)}</Text>
+        <Text numberOfLines={1} style={styles.messageFileSubtitle}>{attachment.mimeType || getAttachmentLabel(attachment.type)}</Text>
+      </View>
+    </View>
+  );
+}
+
+function NativeMessageLocation({ location }: { location: NonNullable<ChatMessage['location']> }) {
+  return (
+    <View style={styles.messageLocationCard}>
+      <View style={styles.messageLocationIcon}>
+        <MapPin size={20} color={COLORS.white} fill={COLORS.accent} strokeWidth={2.4} />
+      </View>
+      <View style={styles.messageLocationCopy}>
+        <Text numberOfLines={1} style={styles.messageLocationTitle}>{location.name || 'Ubicación'}</Text>
+        <Text numberOfLines={1} style={styles.messageLocationSubtitle}>{location.address || `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`}</Text>
+      </View>
+    </View>
+  );
+}
+
+function NativeMessageReceipt({ status, failed, pending }: { status: 'sent' | 'delivered' | 'read' | 'pending' | 'failed'; failed?: boolean; pending?: boolean }) {
+  if (failed) return <X size={13} color={COLORS.danger} strokeWidth={2.7} />;
+  if (pending || status === 'pending') return <ActivityIndicator color={COLORS.meta} size="small" />;
+  if (status === 'delivered' || status === 'read') {
+    return <CheckCheck size={14} color={status === 'read' ? COLORS.accent : COLORS.meta} strokeWidth={2.45} />;
+  }
+  return <Check size={14} color={COLORS.meta} strokeWidth={2.45} />;
+}
+
+function getContactDetail(contact: ChatContact) {
+  return contact.phone || contact.email || contact.source || 'Sin teléfono';
+}
+
+function getAttachmentLabel(type?: string) {
+  if (type === 'image') return 'Foto';
+  if (type === 'video') return 'Video';
+  if (type === 'audio') return 'Audio';
+  if (type === 'document' || type === 'file') return 'Documento';
+  return 'Adjunto';
+}
+
+function getMessagePreviewText(message: ChatMessage) {
+  if (message.text) return message.text;
+  if (message.attachment) return getAttachmentLabel(message.attachment.type);
+  if (message.location) return 'Ubicación';
+  return 'Mensaje';
+}
+
+function getMessageChannelLabel(value?: string) {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized.includes('instagram')) return 'Instagram';
+  if (normalized.includes('messenger') || normalized.includes('facebook')) return 'Messenger';
+  if (normalized.includes('email')) return 'Correo';
+  if (normalized.includes('sms')) return 'SMS';
+  if (normalized.includes('qr')) return 'WhatsApp QR';
+  if (normalized.includes('api') || normalized.includes('whatsapp')) return 'WhatsApp';
+  return value || 'Ristak';
+}
+
+function getMessageReceiptStatus(message: ChatMessage): 'sent' | 'delivered' | 'read' | 'pending' | 'failed' {
+  if (message.failed || String(message.status || '').toLowerCase() === 'error') return 'failed';
+  if (message.pending || ['pending', 'queued', 'enviando', 'sending'].includes(String(message.status || '').toLowerCase())) return 'pending';
+  if (message.readAt || String(message.status || '').toLowerCase() === 'read') return 'read';
+  if (message.deliveredAt || String(message.status || '').toLowerCase() === 'delivered') return 'delivered';
+  return 'sent';
 }
 
 function PrimaryButton({ label, busy, onPress }: { label: string; busy?: boolean; onPress: () => void }) {
@@ -4242,40 +5199,182 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   conversationHeader: {
-    minHeight: 64,
+    minHeight: 72,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
-    gap: 10,
+    gap: 8,
   },
   backButton: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.panel,
+    backgroundColor: 'rgba(16,42,120,0.68)',
   },
   backLabel: {
     color: COLORS.text,
     fontSize: 34,
     lineHeight: 34,
   },
+  conversationContactButton: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 50,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  conversationAvatar: {
+    position: 'relative',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.bg,
+  },
+  conversationAvatarCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  conversationAvatarImage: {
+    width: 42,
+    height: 42,
+  },
+  conversationAvatarBadge: {
+    position: 'absolute',
+    right: -4,
+    bottom: -2,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: COLORS.bg,
+  },
   conversationTitleWrap: {
     flex: 1,
     minWidth: 0,
   },
+  conversationTitle: {
+    color: COLORS.text,
+    fontSize: 17,
+    lineHeight: 21,
+    fontWeight: '900',
+  },
+  conversationSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    marginTop: 1,
+  },
+  conversationHeaderActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  conversationHeaderIconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(16,42,120,0.68)',
+  },
+  conversationHeaderIconButtonActive: {
+    backgroundColor: COLORS.accentSoft,
+  },
+  conversationSearchBar: {
+    minHeight: 48,
+    marginHorizontal: 12,
+    marginTop: 8,
+    marginBottom: 4,
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: COLORS.panelSoft,
+    paddingHorizontal: 13,
+  },
+  conversationSearchInput: {
+    flex: 1,
+    minHeight: 48,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  conversationSearchCount: {
+    minWidth: 28,
+    textAlign: 'center',
+    color: COLORS.accent,
+    fontSize: 12,
+    fontWeight: '900',
+  },
   conversationBody: {
     flex: 1,
+    backgroundColor: COLORS.bg,
   },
   messageList: {
-    padding: 14,
+    flexGrow: 1,
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 12,
     gap: 8,
+  },
+  emptyConversation: {
+    flex: 1,
+    minHeight: 360,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 28,
+  },
+  emptyConversationTitle: {
+    color: COLORS.text,
+    fontSize: 19,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  emptyConversationCopy: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: 'center',
+  },
+  messageDaySeparator: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 6,
+  },
+  messageDayLabel: {
+    overflow: 'hidden',
+    borderRadius: 999,
+    backgroundColor: 'rgba(16,42,120,0.72)',
+    color: COLORS.meta,
+    fontSize: 11,
+    fontWeight: '900',
+    paddingHorizontal: 11,
+    paddingVertical: 5,
   },
   messageRow: {
     flexDirection: 'row',
+    marginVertical: 1,
   },
   messageRowInbound: {
     justifyContent: 'flex-start',
@@ -4284,50 +5383,401 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   messageBubble: {
-    maxWidth: '82%',
-    borderRadius: 20,
-    paddingVertical: 10,
-    paddingHorizontal: 13,
+    maxWidth: '84%',
+    borderRadius: 18,
+    paddingVertical: 8,
+    paddingHorizontal: 11,
+    gap: 5,
   },
   inboundBubble: {
-    backgroundColor: COLORS.panelSoft,
+    backgroundColor: 'rgba(16,42,120,0.88)',
+    borderTopLeftRadius: 6,
   },
   outboundBubble: {
-    backgroundColor: COLORS.primary,
+    backgroundColor: 'rgba(0,168,248,0.92)',
+    borderTopRightRadius: 6,
+  },
+  imageMessageBubble: {
+    paddingHorizontal: 6,
+    paddingTop: 6,
   },
   failedBubble: {
     backgroundColor: COLORS.dangerSoft,
   },
+  messageSearchMatch: {
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.26)',
+  },
   messageText: {
     color: COLORS.text,
-    fontSize: 16,
-    lineHeight: 22,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '500',
   },
   messageMeta: {
     color: COLORS.meta,
     fontSize: 11,
-    marginTop: 5,
+    fontWeight: '800',
     textAlign: 'right',
   },
-  composer: {
+  messageMetaRow: {
+    alignSelf: 'flex-end',
     flexDirection: 'row',
-    alignItems: 'flex-end',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 1,
+  },
+  messageImage: {
+    width: 214,
+    height: 228,
+    borderRadius: 14,
+    backgroundColor: COLORS.bg,
+  },
+  messageFileCard: {
+    minWidth: 214,
+    maxWidth: 248,
+    minHeight: 54,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10,
-    padding: 12,
+    padding: 10,
+    backgroundColor: 'rgba(6,18,58,0.32)',
+  },
+  messageFileIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  messageFileCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  messageFileTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  messageFileSubtitle: {
+    color: COLORS.muted,
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '700',
+  },
+  messageLocationCard: {
+    minWidth: 214,
+    maxWidth: 248,
+    minHeight: 58,
+    borderRadius: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    padding: 10,
+    backgroundColor: 'rgba(6,18,58,0.32)',
+  },
+  messageLocationIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  messageLocationCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  messageLocationTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  messageLocationSubtitle: {
+    color: COLORS.muted,
+    fontSize: 11,
+    marginTop: 2,
+    fontWeight: '700',
+  },
+  quotedMessage: {
+    minWidth: 190,
+    maxWidth: 248,
+    borderRadius: 12,
+    flexDirection: 'row',
+    overflow: 'hidden',
+    backgroundColor: 'rgba(6,18,58,0.3)',
+  },
+  quotedMessageMarker: {
+    width: 3,
+    backgroundColor: COLORS.accent,
+  },
+  quotedMessageCopy: {
+    flex: 1,
+    minWidth: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+  },
+  quotedMessageTitle: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  quotedMessageText: {
+    color: COLORS.muted,
+    fontSize: 11,
+    marginTop: 1,
+    fontWeight: '700',
+  },
+  commentContext: {
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(6,18,58,0.28)',
+  },
+  commentContextText: {
+    color: COLORS.meta,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  messageRoutingNote: {
+    color: COLORS.meta,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '700',
+  },
+  messageReactions: {
+    position: 'absolute',
+    right: 6,
+    bottom: -13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 999,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    backgroundColor: COLORS.panel,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  messageReaction: {
+    fontSize: 13,
+  },
+  systemMessageRow: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 4,
+  },
+  systemMessageBubble: {
+    maxWidth: '84%',
+    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(16,42,120,0.62)',
+  },
+  systemMessageText: {
+    color: COLORS.meta,
+    fontSize: 12,
+    lineHeight: 17,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  replyPreviewBar: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.border,
     backgroundColor: COLORS.panel,
   },
-  composerInput: {
+  replyPreviewMarker: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderRadius: 999,
+    backgroundColor: COLORS.accent,
+  },
+  replyPreviewCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  replyPreviewTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  replyPreviewText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 1,
+    fontWeight: '700',
+  },
+  replyPreviewClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panelSoft,
+  },
+  draftAttachmentStrip: {
+    gap: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    backgroundColor: COLORS.panel,
+  },
+  draftAttachment: {
+    width: 74,
+    height: 74,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: COLORS.bg,
+  },
+  draftAttachmentImage: {
+    width: 74,
+    height: 74,
+  },
+  draftAttachmentRemove: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.62)',
+  },
+  messageActionSheetBody: {
+    paddingHorizontal: 12,
+    paddingTop: 10,
+    paddingBottom: 12,
+  },
+  messageActionPreview: {
+    borderRadius: 18,
+    padding: 12,
+    backgroundColor: COLORS.bg,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  messageActionPreviewText: {
+    color: COLORS.text,
+    fontSize: 14,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  reactionRow: {
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  reactionButton: {
     flex: 1,
     minHeight: 44,
-    maxHeight: 126,
-    borderRadius: 18,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: COLORS.panelSoft,
+  },
+  reactionEmoji: {
+    fontSize: 24,
+  },
+  composer: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 6,
+    paddingHorizontal: 7,
+    paddingTop: 5,
+    paddingBottom: 6,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+  },
+  composerHasContent: {
+    backgroundColor: COLORS.panel,
+  },
+  composerChannelButton: {
+    width: 32,
+    height: 36,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  composerPlus: {
+    width: 32,
+    height: 36,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  messageInputWrap: {
+    flex: 1,
+    minHeight: 36,
+    maxHeight: 112,
+    borderRadius: 18,
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    backgroundColor: COLORS.panelSoft,
+    overflow: 'hidden',
+  },
+  messageInputWrapWithSchedule: {
+    paddingRight: 2,
+  },
+  composerInput: {
+    flex: 1,
+    minHeight: 36,
+    maxHeight: 106,
     color: COLORS.text,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    fontSize: 16,
+    paddingHorizontal: 11,
+    paddingTop: 8,
+    paddingBottom: 8,
+    fontSize: 15,
+    lineHeight: 20,
+  },
+  composerScheduleButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 1,
+  },
+  composerTrailingActions: {
+    minWidth: 74,
+    height: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 5,
+  },
+  composerTrailingActionsCompact: {
+    minWidth: 36,
+  },
+  composerIconButton: {
+    width: 34,
+    height: 36,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  composerSendButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
   },
   sendButton: {
     minHeight: 44,

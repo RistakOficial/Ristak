@@ -82,14 +82,60 @@ export type JourneyEvent = {
   data?: Record<string, unknown>;
 };
 
+export type ChatAttachment = {
+  type: 'image' | 'video' | 'audio' | 'document' | 'file';
+  url?: string;
+  dataUrl?: string;
+  name?: string;
+  mimeType?: string;
+  isGif?: boolean;
+  durationMs?: number;
+};
+
+export type ChatLocation = {
+  latitude: number;
+  longitude: number;
+  name?: string;
+  address?: string;
+  url?: string;
+};
+
+export type ChatReaction = {
+  id: string;
+  emoji: string;
+  direction?: 'inbound' | 'outbound' | 'system';
+};
+
 export type ChatMessage = {
   id: string;
   contactId: string;
   date: string;
-  direction: 'inbound' | 'outbound';
+  direction: 'inbound' | 'outbound' | 'system';
   text: string;
   channel: string;
   status?: string;
+  transport?: string;
+  errorReason?: string;
+  providerMessageId?: string;
+  sentAt?: string;
+  deliveredAt?: string;
+  readAt?: string;
+  scheduledAt?: string;
+  scheduledMessageId?: string;
+  messageType?: string;
+  businessPhone?: string;
+  businessPhoneNumberId?: string;
+  routingReason?: string;
+  replyToMessageId?: string;
+  replyToProviderMessageId?: string;
+  reactionEmoji?: string;
+  reactionTargetMessageId?: string;
+  reactionTargetProviderMessageId?: string;
+  reactions?: ChatReaction[];
+  attachment?: ChatAttachment;
+  location?: ChatLocation;
+  isComment?: boolean;
+  commentReplyMode?: 'public' | 'private';
   pending?: boolean;
   failed?: boolean;
 };

@@ -409,6 +409,18 @@ debe abrir una pantalla/sheet de destinatarios antes de enviar; si el envio
 multimedia todavia no esta conectado al composer/canal, esa brecha debe quedar
 en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
 
+La conversacion nativa en `mobile/src/App.tsx` debe cargar el mismo journey
+recortado que `/movil` (`/contacts/:id/journey` con `chatMessagesOnly` y
+`messageLimit`), agrupar mensajes por dia usando la zona horaria del negocio,
+mostrar avatar/badge de canal en el header y exponer acciones equivalentes por
+bottom sheet: adjuntos/camara, agendar cita, registrar pagos, programar mensaje,
+agregar etiqueta, silenciar, archivar/restaurar y controles de agente. El
+composer nativo manda texto por `/whatsapp-api/messages/text` y fotos por
+`/whatsapp-api/messages/image`; cualquier canal pendiente (QR, HighLevel,
+Messenger, Instagram, email/SMS, audio/video/documentos completos) debe quedar
+marcado como brecha en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md` hasta que use el
+mismo contrato que `/movil`.
+
 En la conversación móvil no uses rails/barras verticales pegadas al lado
 izquierdo como indicador visual de foco, comentario o chat no leído. Los estados
 de no leído/activo deben resolverse con fondo, tipografía y badge, no con una

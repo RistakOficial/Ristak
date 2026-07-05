@@ -119,13 +119,44 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 ### 2. Conversacion
 
 - [ ] Header de conversacion con avatar/canal/estado como `/movil`.
+  - Avance: `mobile/` ya abre `NativeConversationScreen` desde la bandeja, usa
+    avatar/foto/inicial, aro/badge de canal, nombre del contacto, detalle
+    principal y acciones de agente, etiqueta y busqueda en el header. Falta
+    replicar estado online/agente exacto y selector de numero/remitente de
+    `/movil`.
 - [ ] Timeline con globos inbound/outbound, email desplegable, media, ubicacion,
   notas de voz, documentos y comentarios FB/IG.
+  - Avance: el parser nativo de `buildMessagesFromJourney` ya entiende
+    `whatsapp_message`, `meta_message`, `email_message`,
+    `appointment_confirmation`, adjuntos basicos, ubicacion, comentarios,
+    estados, timestamps de lectura/entrega, reacciones y mensajes de sistema.
+    La UI nativa ya agrupa por dia con zona horaria del negocio, pinta globos
+    inbound/outbound, media imagen, tarjetas de archivo/ubicacion, contexto de
+    comentario, receipts y errores. Falta correo desplegable completo, player
+    real de audio/video, documentos abribles y carga incremental de mensajes
+    anteriores.
 - [ ] Composer completo: texto, adjuntos, camara, ubicacion, sugerencia IA,
   voice note, reply/reactions y teclado.
+  - Avance: el composer nativo ya muestra boton de canal, `+`, texto multilinea,
+    reloj para programar cuando hay texto, camara cuando esta vacio, preview de
+    respuesta, tira de fotos preparadas y boton enviar/mic visual. El `+` abre
+    sheet con tomar foto, elegir foto, cita, pagos, programar, etiqueta y mas
+    acciones. Falta voice note real, ubicacion, sugerencia IA, plantillas,
+    picker avanzado de fecha/hora y soporte de video/audio/documento desde el
+    picker.
 - [ ] Envio por canal correcto: WhatsApp API, QR, HighLevel, Messenger,
   Instagram, email/SMS cuando aplique.
+  - Avance: texto nativo usa `/whatsapp-api/messages/text`; fotos del composer
+    usan `/whatsapp-api/messages/image`; programacion usa
+    `/whatsapp-api/messages/scheduled`; reacciones intentan
+    `/whatsapp-api/messages/reaction`. Falta rutas QR/Baileys, HighLevel,
+    Messenger/Instagram Meta nativo, email/SMS y fallback por ventana de 24h
+    como en `/movil`.
 - [ ] Info de mensaje, receipts, errores, pendientes y reintentos.
+  - Avance: long press sobre globo abre bottom sheet con preview, reacciones
+    rapidas, responder e informacion de canal/estado/hora. Los globos muestran
+    pending/error y ticks sent/delivered/read. Falta reintento real, pantalla
+    completa de info del mensaje y acciones especiales de programados.
 - [ ] Contact info/modal movil y campos personalizados.
 - [ ] Agenda desde chat.
 - [ ] Validar en iPhone real.
