@@ -2771,7 +2771,7 @@ export async function createRebillSubscriptionPlanLink(input = {}, { baseUrl = '
     config,
     idempotencyKey: `ristak:rebill-subscription-link:${subscriptionId}`,
     body: {
-      plan: rebillPlanId,
+      plan: { id: rebillPlanId },
       title: toRebillLocalizedText(title, 'Suscripción Ristak', 140),
       description: toRebillLocalizedText(description, title, 300),
       paymentMethods: [{ methods: ['card'], currency }],
