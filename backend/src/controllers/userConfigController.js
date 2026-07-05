@@ -1,4 +1,4 @@
-// (MOB-006) Configuración de notificaciones del celular POR USUARIO.
+// (MOB-006) Configuración móvil POR USUARIO.
 // El usuario lee/escribe SUS preferencias (req.user.userId) sin necesitar el gate
 // settings_account (para que los empleados puedan guardar lo suyo). El admin ve/ajusta
 // las de todo el equipo. Todo cae con fallback al valor global de app_config cuando el
@@ -14,7 +14,7 @@ import {
 } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 
-// Las 7 claves de notificaciones del celular que SÍ se pueden personalizar por usuario.
+// Claves móviles que SÍ se pueden personalizar por usuario.
 // Cualquier otra clave queda fuera (no se lee ni se escribe por este endpoint).
 const USER_CONFIG_WHITELIST = [
   'calendar_push_notifications_enabled',
@@ -23,7 +23,8 @@ const USER_CONFIG_WHITELIST = [
   'payment_push_notifications_enabled',
   'push_notification_sound_enabled',
   'push_notification_vibration_enabled',
-  'calendar_push_notification_calendar_ids'
+  'calendar_push_notification_calendar_ids',
+  'mobile_chat_appointment_entry_mode'
 ]
 const USER_CONFIG_WHITELIST_SET = new Set(USER_CONFIG_WHITELIST)
 
@@ -80,7 +81,7 @@ export async function getUserConfig(req, res) {
 
 /**
  * POST /api/user-config (self)
- * El usuario escribe SU configuración por-usuario. Solo permite las 7 claves whitelist.
+ * El usuario escribe SU configuración por-usuario. Solo permite claves whitelist.
  * Body modo 1: { key, value }. Modo 2: { config: { k: v, ... } }.
  * SEGURIDAD: siempre escribe con req.user.userId; NUNCA acepta user_id del body.
  */
