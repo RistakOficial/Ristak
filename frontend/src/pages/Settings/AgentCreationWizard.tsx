@@ -2,15 +2,27 @@ import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft, ArrowRight, Sparkles, Calendar, ShoppingBag, ClipboardList, Filter, Wand2,
   Building2, User, Coffee, Compass, Target, Briefcase, Smile, MessageCircle,
-  UserCheck, CalendarCheck, CreditCard, Link2, Wallet, ShieldCheck, Users, Rocket, type LucideIcon
+  UserCheck, CalendarCheck, CreditCard, Link2, Wallet, ShieldCheck, Users, Rocket, Bell, MessageSquareText, Bot, type LucideIcon
 } from 'lucide-react'
 import { Modal, Button, CustomSelect, NumberInput } from '@/components/common'
-import type { ConversationalAIProviderId } from '@/constants/conversationalAIProviders'
+import {
+  conversationalAIProviderOptions,
+  getConversationalAIProviderOption,
+  getDefaultConversationalModel,
+  getKnownConversationalAIProvider,
+  getKnownConversationalModel,
+  type ConversationalAIProviderId
+} from '@/constants/conversationalAIProviders'
 import { useAccountCurrency } from '@/hooks'
 import { calendarsService, type Calendar as CalendarRecord } from '@/services/calendarsService'
+import { userAccessService, type TeamUser } from '@/services/userAccessService'
 import { formatCurrency } from '@/utils/format'
 import {
+  type AgentCompletionMode,
   type AgentIdentityMode,
+  type AgentReplyDeliveryMode,
+  type AgentResponseDelayUnit,
+  type ConversationalAIProviderStatus,
   type ConversationalAgentDefInput,
   type ConversationalLanguageLevel,
   type ConversationalObjective,
@@ -20,6 +32,7 @@ import {
 import {
   buildInitialAgentWizardDraft as buildInitialDraft,
   buildOverridesFromDraft,
+  DEFAULT_AGENT_REPLY_DELIVERY,
   isAgentWizardCitasBooking as isCitasBooking,
   isAgentWizardVentasCharging as isVentasCharging,
   type AgentWizardDraft
@@ -45,8 +58,10 @@ const objectiveChoices: Array<Choice<ConversationalObjective>> = [
 ]
 
 const identityChoices: Array<Choice<AgentIdentityMode>> = [
-  { value: 'business', label: 'Como el negocio', example: 'Habla en plural: "nosotros te ayudamos". Suena a equipo, no a una persona.', Icon: Building2 },
-  { value: 'custom', label: 'Con un nombre propio', example: 'Se presenta con nombre: "hola, soy Sofía". Se siente más humano y cercano.', Icon: User }
+  { value: 'business', label: 'Representante del negocio', example: 'Habla como equipo: "nosotros te ayudamos".', Icon: Building2 },
+  { value: 'user', label: 'Persona del equipo', example: 'Se presenta con el nombre de alguien de tu equipo.', Icon: UserCheck },
+  { value: 'custom', label: 'Nombre personalizado', example: 'Se presenta con nombre: "hola, soy Sofía".', Icon: User },
+  { value: 'agent', label: 'Nombre del agente', example: 'Usa el nombre que configuraste arriba para presentarse.', Icon: Bot }
 ]
 
 const persuasionChoices: Array<Choice<ConversationalPersuasionLevel>> = [
@@ -63,30 +78,47 @@ const languageChoices: Array<Choice<ConversationalLanguageLevel>> = [
 
 const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<ConversationalSuccessAction>>> = {
   citas: [
-    { value: 'ready_for_human', label: 'Avisar al equipo', example: 'Cuando ya quiere cita, detiene el bot y le avisa a tu gente para agendar.', Icon: UserCheck },
-    { value: 'book_appointment', label: 'Que la IA agende', example: 'La IA confirma un horario real y aparta la cita en el calendario, solita.', Icon: CalendarCheck },
-    { value: 'send_goal_url', label: 'Mandar enlace', example: 'Manda el link del calendario para que la persona elija su horario.', Icon: Link2 }
+    { value: 'ready_for_human', label: 'Un humano', example: 'La IA detecta intención real y avisa para que tu equipo agende.', Icon: UserCheck },
+    { value: 'book_appointment', label: 'El agente IA', example: 'La IA confirma un horario real y agenda la cita en el calendario.', Icon: CalendarCheck },
+    { value: 'send_goal_url', label: 'La IA mandando un enlace', example: 'Manda el link del calendario para que la persona elija su horario.', Icon: Link2 }
   ],
   ventas: [
-    { value: 'ready_for_human', label: 'Avisar al equipo', example: 'Cuando ya quiere comprar, detiene el bot y avisa a tu gente para cerrar.', Icon: UserCheck },
-    { value: 'ready_to_buy', label: 'Que la IA cobre', example: 'La IA guía el pago y la venta se cierra cuando el dinero entra.', Icon: CreditCard },
-    { value: 'send_goal_url', label: 'Mandar enlace', example: 'Manda el link de compra para que la persona pague.', Icon: Link2 }
+    { value: 'ready_for_human', label: 'Un humano', example: 'La IA detecta intención de compra y avisa para que tu equipo cierre.', Icon: UserCheck },
+    { value: 'ready_to_buy', label: 'El agente IA', example: 'La IA guía el pago y la venta se completa cuando el pago queda confirmado.', Icon: CreditCard },
+    { value: 'send_goal_url', label: 'La IA mandando un enlace', example: 'Manda el link de compra para que la persona pague.', Icon: Link2 }
   ],
   datos: [
-    { value: 'ready_for_human', label: 'Avisar al equipo', example: 'Junta los datos y avisa a tu gente para que continúe.', Icon: UserCheck }
+    { value: 'ready_for_human', label: 'Un humano', example: 'Junta los datos y avisa a tu gente para que continúe.', Icon: UserCheck }
   ],
   filtrar: [
-    { value: 'ready_for_human', label: 'Avisar al equipo', example: 'Filtra la plática y avisa cuando el prospecto ya vale la pena atender.', Icon: UserCheck }
+    { value: 'ready_for_human', label: 'Un humano', example: 'Filtra la plática y avisa cuando el prospecto ya vale la pena atender.', Icon: UserCheck }
   ],
   custom: [
-    { value: 'ready_for_human', label: 'Avisar al equipo', example: 'Cuando la meta está lista, detiene el bot y avisa a tu gente.', Icon: UserCheck },
-    { value: 'send_trigger_link', label: 'Mandar enlace', example: 'Manda un enlace y se detiene cuando la persona lo abre.', Icon: Link2 }
+    { value: 'ready_for_human', label: 'Un humano', example: 'Cuando la meta está lista, detiene el bot y avisa a tu gente.', Icon: UserCheck },
+    { value: 'send_trigger_link', label: 'La IA mandando un enlace', example: 'Manda un enlace y se detiene cuando la persona lo abre.', Icon: Link2 }
   ]
 }
 
+const responseDelayModeOptions: Array<{ value: AgentWizardDraft['responseDelay']['mode']; label: string }> = [
+  { value: 'none', label: 'No esperar' },
+  { value: 'fixed', label: 'Esperar tiempo fijo' },
+  { value: 'random', label: 'Aleatorio en un rango' }
+]
+
+const responseDelayUnitOptions: Array<{ value: AgentResponseDelayUnit; label: string }> = [
+  { value: 'seconds', label: 'Segundos' },
+  { value: 'minutes', label: 'Minutos' }
+]
+
+const completionModeOptions: Array<{ value: AgentCompletionMode; label: string }> = [
+  { value: 'notify_only', label: 'Pasar a humano y notificar' },
+  { value: 'assign_user', label: 'Asignar usuario y notificar' }
+]
+
 type StepId =
-  | 'welcome' | 'name' | 'objective' | 'identity' | 'persuasion' | 'language'
-  | 'action' | 'calendar' | 'payment' | 'data' | 'scope' | 'instructions' | 'recap' | 'test'
+  | 'welcome' | 'name' | 'ai' | 'identity' | 'persuasion' | 'language' | 'instructions' | 'advanced'
+  | 'delay' | 'delivery' | 'notifications' | 'objective' | 'action' | 'calendar'
+  | 'payment' | 'goalUrl' | 'completion' | 'data' | 'handoff' | 'scope' | 'recap' | 'test'
 
 interface Props {
   isOpen: boolean
@@ -97,12 +129,15 @@ interface Props {
   defaultName?: string
   aiProvider?: ConversationalAIProviderId
   model?: string
+  aiProviders?: ConversationalAIProviderStatus[]
 }
 
-export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManual, creating = false, defaultName = '', aiProvider, model }: Props) {
+export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManual, creating = false, defaultName = '', aiProvider, model, aiProviders = [] }: Props) {
   const [stepIndex, setStepIndex] = useState(0)
-  const [draft, setDraft] = useState<AgentWizardDraft>(() => buildInitialDraft(defaultName))
+  const [draft, setDraft] = useState<AgentWizardDraft>(() => buildInitialDraft(defaultName, { aiProvider, model }))
   const [calendars, setCalendars] = useState<CalendarRecord[]>([])
+  const [teamUsers, setTeamUsers] = useState<TeamUser[]>([])
+  const [teamUsersLoading, setTeamUsersLoading] = useState(false)
   const [testResetKey, setTestResetKey] = useState(0)
   const [accountCurrency] = useAccountCurrency()
 
@@ -111,24 +146,42 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     if (!isOpen) return
     setStepIndex(0)
     setTestResetKey((k) => k + 1)
-    setDraft(buildInitialDraft(defaultName))
+    setDraft(buildInitialDraft(defaultName, { aiProvider, model }))
     let alive = true
     calendarsService.getCalendars()
       .then((list) => { if (alive) setCalendars((list || []).filter((c) => c.isActive)) })
       .catch(() => { if (alive) setCalendars([]) })
     return () => { alive = false }
-  }, [isOpen, defaultName])
+  }, [isOpen, defaultName, aiProvider, model])
+
+  useEffect(() => {
+    if (!isOpen) return
+    let alive = true
+    setTeamUsersLoading(true)
+    userAccessService.listUsers()
+      .then((users) => { if (alive) setTeamUsers(users.filter((user) => user.isActive)) })
+      .catch(() => { if (alive) setTeamUsers([]) })
+      .finally(() => { if (alive) setTeamUsersLoading(false) })
+    return () => { alive = false }
+  }, [isOpen])
 
   // Pasos ACTIVOS según las respuestas (if/if-not). El calendario y el cobro solo
   // aparecen cuando aplican; si no, ni se ven.
   const activeSteps = useMemo<StepId[]>(() => {
-    const showCalendar = isCitasBooking(draft)
+    const showCalendar = isCitasBooking(draft) || (draft.objective === 'citas' && draft.successAction === 'send_goal_url')
     const showPayment = isCitasBooking(draft) || isVentasCharging(draft)
+    const showGoalUrl = draft.successAction === 'send_goal_url' && (draft.objective === 'citas' || draft.objective === 'ventas')
+    const showCompletion = ['book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link'].includes(draft.successAction)
     return [
-      'welcome', 'name', 'objective', 'identity', 'persuasion', 'language', 'action',
+      'welcome', 'name', 'ai',
+      'identity', 'persuasion', 'language', 'instructions', 'advanced',
+      'delay', 'delivery', 'notifications',
+      'objective', 'action',
       ...(showCalendar ? ['calendar'] as StepId[] : []),
       ...(showPayment ? ['payment'] as StepId[] : []),
-      'data', 'scope', 'instructions', 'recap', 'test'
+      ...(showGoalUrl ? ['goalUrl'] as StepId[] : []),
+      ...(showCompletion ? ['completion'] as StepId[] : []),
+      'data', 'handoff', 'scope', 'recap', 'test'
     ]
   }, [draft.objective, draft.successAction])
 
@@ -145,6 +198,27 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   const totalQuestions = activeSteps.length - 3 // sin bienvenida, resumen ni prueba
   const questionNumber = isQuestion ? safeIndex : null
   const actionChoices = actionChoicesByObjective[draft.objective] || actionChoicesByObjective.citas
+  const selectedProviderId = getKnownConversationalAIProvider(draft.aiProvider)
+  const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
+  const selectedProviderStatus = aiProviders.find((provider) => provider.id === selectedProviderId) || null
+  const providerConnectionKnown = aiProviders.length > 0
+  const selectedProviderConnected = providerConnectionKnown ? Boolean(selectedProviderStatus?.connected) : true
+  const selectedModelValue = getKnownConversationalModel(selectedProviderId, draft.model || getDefaultConversationalModel(selectedProviderId))
+  const selectedModelOptions = selectedProvider.modelGroups.map((group) => ({
+    label: group.label,
+    options: group.options.map((option) => ({ value: option.value, label: option.label }))
+  }))
+  const responseDelay = draft.responseDelay
+  const replyDelivery = draft.replyDelivery
+  const humanMessagesEnabled = replyDelivery.splitMessagesEnabled || replyDelivery.mode === 'split'
+  const teamUserOptions = [
+    { value: '', label: teamUsersLoading ? 'Cargando usuarios...' : 'Elegir usuario' },
+    ...teamUsers.map((user) => ({
+      value: user.id,
+      label: user.fullName || user.email || user.phone || user.username || `Usuario ${user.id}`
+    }))
+  ]
+  const showCompletionStep = ['book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link'].includes(draft.successAction)
 
   const reconfigure = () => {
     setTestResetKey((k) => k + 1)
@@ -152,23 +226,59 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   }
 
   const patch = (next: Partial<AgentWizardDraft>) => setDraft((current) => ({ ...current, ...next }))
+  const patchResponseDelay = (next: Partial<AgentWizardDraft['responseDelay']>) => patch({ responseDelay: { ...draft.responseDelay, ...next } })
+  const patchReplyDelivery = (next: Partial<AgentWizardDraft['replyDelivery']>) => patch({ replyDelivery: { ...draft.replyDelivery, ...next } })
 
   const chooseObjective = (objective: ConversationalObjective) => {
     const firstAction = (actionChoicesByObjective[objective] || actionChoicesByObjective.citas)[0]?.value || 'ready_for_human'
     patch({ objective, successAction: firstAction, ...(objective === 'custom' ? {} : { customObjective: '' }) })
   }
 
+  const chooseProvider = (providerId: ConversationalAIProviderId) => {
+    const nextProvider = getKnownConversationalAIProvider(providerId)
+    patch({
+      aiProvider: nextProvider,
+      model: getKnownConversationalModel(nextProvider, nextProvider === draft.aiProvider ? draft.model : getDefaultConversationalModel(nextProvider))
+    })
+  }
+
+  const chooseIdentity = (identityMode: AgentIdentityMode) => {
+    if (identityMode === 'user') {
+      const user = teamUsers.find((item) => item.id === draft.identityUserId) || teamUsers[0] || null
+      patch({
+        identityMode,
+        identityUserId: user?.id || '',
+        identityUserName: user ? (user.fullName || user.email || user.phone || user.username || '') : '',
+        identityCustomName: ''
+      })
+      return
+    }
+    patch({
+      identityMode,
+      identityUserId: '',
+      identityUserName: '',
+      identityCustomName: identityMode === 'custom' ? draft.identityCustomName : ''
+    })
+  }
+
   const needsDepositAmount = (isCitasBooking(draft) && draft.askDeposit) || (isVentasCharging(draft) && draft.paymentMode === 'deposit')
 
   const canAdvance = useMemo(() => {
     if (step === 'name') return draft.name.trim().length > 0
+    if (step === 'ai') return selectedProviderConnected && selectedModelValue.trim().length > 0
+    if (step === 'identity' && draft.identityMode === 'custom') return draft.identityCustomName.trim().length > 0
+    if (step === 'identity' && draft.identityMode === 'user') return draft.identityUserId.trim().length > 0
     if (step === 'objective' && draft.objective === 'custom') return draft.customObjective.trim().length > 0
+    if (step === 'delay' && draft.responseDelay.mode === 'random') return Number(draft.responseDelay.minValue) <= Number(draft.responseDelay.maxValue)
+    if (step === 'delivery' && humanMessagesEnabled) return Number(draft.replyDelivery.minDelaySeconds) <= Number(draft.replyDelivery.maxDelaySeconds)
     // Si pide anticipo/pago, exige el monto: sin él el backend deja el avance atascado.
     if (step === 'payment' && needsDepositAmount) return Number(draft.depositAmount) > 0
+    if (step === 'goalUrl') return draft.goalUrl.trim().length > 0
+    if (step === 'completion' && draft.completionMode === 'assign_user') return draft.completionUserId.trim().length > 0
     return true
-  }, [step, draft, needsDepositAmount])
+  }, [step, draft, needsDepositAmount, humanMessagesEnabled, selectedModelValue, selectedProviderConnected])
 
-  const currentOverrides = () => buildOverridesFromDraft(draft, accountCurrency, defaultName || draft.name || 'Agente', { aiProvider, model })
+  const currentOverrides = () => buildOverridesFromDraft(draft, accountCurrency, defaultName || draft.name || 'Agente')
 
   const goNext = () => setStepIndex((i) => Math.min(i + 1, activeSteps.length - 1))
   const goBack = () => setStepIndex((i) => Math.max(i - 1, 0))
@@ -176,6 +286,18 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
 
   const labelOf = <T extends string>(choices: Array<Choice<T>>, value: T) => choices.find((c) => c.value === value)?.label || ''
   const money = (amount: number | null) => (amount && amount > 0 ? formatCurrency(amount, accountCurrency) : 'monto pendiente')
+  const actionTitle = (() => {
+    if (draft.objective === 'citas') return '¿Quién debería agendar la cita?'
+    if (draft.objective === 'ventas') return '¿Quién debería cerrar el pago?'
+    if (draft.objective === 'datos') return '¿Quién debería recibir los datos?'
+    if (draft.objective === 'filtrar') return '¿Quién debería atender al prospecto filtrado?'
+    return '¿Quién debería completar el objetivo?'
+  })()
+  const responseDelaySummary = (() => {
+    if (responseDelay.mode === 'fixed') return `${responseDelay.fixedValue} ${responseDelay.fixedUnit === 'minutes' ? 'min' : 'seg'}`
+    if (responseDelay.mode === 'random') return `${responseDelay.minValue}-${responseDelay.maxValue} ${responseDelay.rangeUnit === 'minutes' ? 'min' : 'seg'}`
+    return 'Sin espera'
+  })()
 
   const cobroRecap = (() => {
     if (isCitasBooking(draft)) return draft.askDeposit ? `Anticipo de ${money(draft.depositAmount)}` : 'Sin anticipo'
@@ -231,6 +353,52 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
             </>
           )}
 
+          {step === 'ai' && (
+            <>
+              <h2 className={styles.title}>¿Qué IA va a contestar?</h2>
+              <p className={styles.help}>Elige el proveedor y el modelo que van a escribir los mensajes de este agente.</p>
+              <div className={styles.field}>
+                <label className={styles.label}>Proveedor</label>
+                <CustomSelect
+                  value={selectedProviderId}
+                  onChange={(event) => chooseProvider(event.target.value as ConversationalAIProviderId)}
+                  portal
+                >
+                  {conversationalAIProviderOptions.map((provider) => {
+                    const status = aiProviders.find((item) => item.id === provider.id)
+                    const connected = providerConnectionKnown ? Boolean(status?.connected) : true
+                    return (
+                      <option key={provider.id} value={provider.id} disabled={!connected}>
+                        {provider.label}{providerConnectionKnown ? ` · ${connected ? 'Conectado' : 'No conectado'}` : ''}
+                      </option>
+                    )
+                  })}
+                </CustomSelect>
+                <p className={styles.fieldHint}>
+                  {selectedProviderConnected
+                    ? `${selectedProvider.label} queda guardado sólo para este agente.`
+                    : `Conecta ${selectedProvider.label} antes de usarlo en este agente.`}
+                </p>
+              </div>
+              <div className={styles.field}>
+                <label className={styles.label}>Modelo</label>
+                <CustomSelect
+                  value={selectedModelValue}
+                  onChange={(event) => patch({ model: event.target.value })}
+                  portal
+                >
+                  {selectedModelOptions.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.options.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </CustomSelect>
+              </div>
+            </>
+          )}
+
           {step === 'objective' && (
             <>
               <h2 className={styles.title}>¿Qué quieres que logre?</h2>
@@ -257,9 +425,29 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
               <p className={styles.help}>Define si se siente como "la empresa" o como una persona con nombre.</p>
               <div className={styles.options}>
                 {identityChoices.map(({ value, label, example, Icon }) => (
-                  <OptionCard key={value} active={draft.identityMode === value} Icon={Icon} label={label} example={example} onClick={() => patch({ identityMode: value })} />
+                  <OptionCard key={value} active={draft.identityMode === value} Icon={Icon} label={label} example={value === 'user' && teamUsers.length === 0 ? 'No hay usuarios activos disponibles; usa nombre personalizado o nombre del agente.' : example} onClick={() => chooseIdentity(value)} />
                 ))}
               </div>
+              {draft.identityMode === 'user' && (
+                <div className={styles.field}>
+                  <label className={styles.label}>Persona visible</label>
+                  <CustomSelect
+                    value={draft.identityUserId}
+                    onChange={(event) => {
+                      const user = teamUsers.find((item) => item.id === event.target.value) || null
+                      patch({
+                        identityUserId: user?.id || '',
+                        identityUserName: user ? (user.fullName || user.email || user.phone || user.username || '') : ''
+                      })
+                    }}
+                    portal
+                  >
+                    {teamUserOptions.map((option) => (
+                      <option key={option.value || 'empty-user'} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                </div>
+              )}
               {draft.identityMode === 'custom' && (
                 <input
                   className={styles.input}
@@ -295,10 +483,143 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
             </>
           )}
 
+          {step === 'delay' && (
+            <>
+              <h2 className={styles.title}>¿Cuánto debe esperar antes de contestar?</h2>
+              <p className={styles.help}>Controla si responde de inmediato o si parece que se toma un momento antes de escribir.</p>
+              <div className={styles.field}>
+                <label className={styles.label}>Espera antes de responder</label>
+                <CustomSelect
+                  value={responseDelay.mode}
+                  onChange={(event) => patchResponseDelay({ mode: event.target.value as AgentWizardDraft['responseDelay']['mode'] })}
+                  portal
+                >
+                  {responseDelayModeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </CustomSelect>
+              </div>
+              {responseDelay.mode === 'fixed' && (
+                <div className={styles.inlineFields}>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Tiempo</label>
+                    <NumberInput
+                      className={styles.input}
+                      min={0}
+                      step={1}
+                      value={responseDelay.fixedValue}
+                      onValueChange={(fixedValue) => patchResponseDelay({ fixedValue })}
+                    />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Unidad</label>
+                    <CustomSelect
+                      value={responseDelay.fixedUnit}
+                      onChange={(event) => patchResponseDelay({ fixedUnit: event.target.value as AgentResponseDelayUnit })}
+                      portal
+                    >
+                      {responseDelayUnitOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                  </div>
+                </div>
+              )}
+              {responseDelay.mode === 'random' && (
+                <>
+                  <div className={styles.inlineFields}>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Mínimo</label>
+                      <NumberInput
+                        className={styles.input}
+                        min={0}
+                        step={1}
+                        value={responseDelay.minValue}
+                        onValueChange={(minValue) => patchResponseDelay({ minValue })}
+                      />
+                    </div>
+                    <div className={styles.field}>
+                      <label className={styles.label}>Máximo</label>
+                      <NumberInput
+                        className={styles.input}
+                        min={0}
+                        step={1}
+                        value={responseDelay.maxValue}
+                        onValueChange={(maxValue) => patchResponseDelay({ maxValue })}
+                      />
+                    </div>
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Unidad</label>
+                    <CustomSelect
+                      value={responseDelay.rangeUnit}
+                      onChange={(event) => patchResponseDelay({ rangeUnit: event.target.value as AgentResponseDelayUnit })}
+                      portal
+                    >
+                      {responseDelayUnitOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                  </div>
+                  {!canAdvance && <p className={styles.fieldHint}>El mínimo no puede ser mayor que el máximo.</p>}
+                </>
+              )}
+            </>
+          )}
+
+          {step === 'delivery' && (
+            <>
+              <h2 className={styles.title}>¿Quieres que mande mensajes como persona?</h2>
+              <p className={styles.help}>Si está activo, parte respuestas largas en globitos con pausas cortas entre mensaje y mensaje.</p>
+              <div className={styles.options}>
+                <OptionCard active={humanMessagesEnabled} Icon={MessageSquareText} label="Sí, en globitos" example="Manda una idea, espera tantito y manda otra." onClick={() => patchReplyDelivery({ ...DEFAULT_AGENT_REPLY_DELIVERY, mode: 'split' as AgentReplyDeliveryMode, splitMessagesEnabled: true })} />
+                <OptionCard active={!humanMessagesEnabled} Icon={MessageCircle} label="No, todo junto" example="Manda la respuesta completa en un solo mensaje." onClick={() => patchReplyDelivery({ mode: 'single' as AgentReplyDeliveryMode, splitMessagesEnabled: false })} />
+              </div>
+              {humanMessagesEnabled && (
+                <div className={styles.inlineFields}>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Pausa mínima</label>
+                    <NumberInput
+                      className={styles.input}
+                      min={0}
+                      max={60}
+                      step={1}
+                      value={replyDelivery.minDelaySeconds}
+                      onValueChange={(minDelaySeconds) => patchReplyDelivery({ minDelaySeconds })}
+                    />
+                  </div>
+                  <div className={styles.field}>
+                    <label className={styles.label}>Pausa máxima</label>
+                    <NumberInput
+                      className={styles.input}
+                      min={0}
+                      max={60}
+                      step={1}
+                      value={replyDelivery.maxDelaySeconds}
+                      onValueChange={(maxDelaySeconds) => patchReplyDelivery({ maxDelaySeconds })}
+                    />
+                  </div>
+                  {!canAdvance && <p className={styles.fieldHint}>La pausa mínima no puede ser mayor que la máxima.</p>}
+                </div>
+              )}
+            </>
+          )}
+
+          {step === 'notifications' && (
+            <>
+              <h2 className={styles.title}>¿Quieres recibir notificaciones mientras el agente IA toma la conversación?</h2>
+              <p className={styles.help}>Esto sólo controla los avisos para tu equipo mientras el agente atiende. El chat sigue visible.</p>
+              <div className={styles.options}>
+                <OptionCard active={!draft.hideAttendedNotifications} Icon={Bell} label="Sí" example="Avísame aunque el agente esté contestando." onClick={() => patch({ hideAttendedNotifications: false })} />
+                <OptionCard active={draft.hideAttendedNotifications} Icon={ShieldCheck} label="No" example="Silencia avisos hasta que el agente termine o pase el chat." onClick={() => patch({ hideAttendedNotifications: true })} />
+              </div>
+            </>
+          )}
+
           {step === 'action' && (
             <>
-              <h2 className={styles.title}>Cuando la persona ya está lista, ¿qué hace?</h2>
-              <p className={styles.help}>El momento clave: ya convenciste, ¿ahora qué? Es como el cierre de la jugada.</p>
+              <h2 className={styles.title}>{actionTitle}</h2>
+              <p className={styles.help}>Define quién completa la meta: una persona del equipo, el agente IA o la IA mandando un enlace.</p>
               <div className={styles.options}>
                 {actionChoices.map(({ value, label, example, Icon }) => (
                   <OptionCard key={value} active={draft.successAction === value} Icon={Icon} label={label} example={example} onClick={() => patch({ successAction: value })} />
@@ -351,6 +672,83 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
             </>
           )}
 
+          {step === 'goalUrl' && (
+            <>
+              <h2 className={styles.title}>{draft.objective === 'ventas' ? '¿Qué enlace de compra va a mandar?' : '¿Qué enlace de agenda va a mandar?'}</h2>
+              <p className={styles.help}>
+                Pega el link que la IA debe mandar cuando la persona ya está lista. Luego podrás afinar tracking en el editor.
+              </p>
+              <input
+                className={styles.input}
+                value={draft.goalUrl}
+                placeholder={draft.objective === 'ventas' ? 'https://tu-sitio.com/comprar' : 'https://tu-sitio.com/agendar'}
+                onChange={(e) => patch({ goalUrl: e.target.value })}
+              />
+              <div className={styles.field}>
+                <label className={styles.label}>Código para reconocer el enlace</label>
+                <input
+                  className={styles.input}
+                  value={draft.trackingParam}
+                  placeholder="ristak_goal_id"
+                  onChange={(e) => patch({ trackingParam: e.target.value })}
+                />
+              </div>
+            </>
+          )}
+
+          {step === 'completion' && (
+            <>
+              <h2 className={styles.title}>Cuando la IA cumpla el objetivo, ¿qué debe pasar?</h2>
+              <p className={styles.help}>Esto sólo aparece cuando la IA o un enlace completan la meta. Si agenda un humano, no hace falta otra logística.</p>
+              <div className={styles.field}>
+                <label className={styles.label}>Cierre posterior</label>
+                <CustomSelect
+                  value={draft.completionMode}
+                  onChange={(event) => {
+                    const mode = event.target.value as AgentCompletionMode
+                    if (mode === 'assign_user') {
+                      const user = teamUsers.find((item) => item.id === draft.completionUserId) || teamUsers[0] || null
+                      patch({
+                        completionMode: mode,
+                        completionUserId: user?.id || '',
+                        completionUserName: user ? (user.fullName || user.email || user.phone || user.username || '') : ''
+                      })
+                      return
+                    }
+                    patch({ completionMode: 'notify_only', completionUserId: '', completionUserName: '' })
+                  }}
+                  portal
+                >
+                  {completionModeOptions.map((option) => (
+                    <option key={option.value} value={option.value} disabled={option.value === 'assign_user' && teamUsers.length === 0}>
+                      {option.label}
+                    </option>
+                  ))}
+                </CustomSelect>
+              </div>
+              {draft.completionMode === 'assign_user' && (
+                <div className={styles.field}>
+                  <label className={styles.label}>Usuario asignado</label>
+                  <CustomSelect
+                    value={draft.completionUserId}
+                    onChange={(event) => {
+                      const user = teamUsers.find((item) => item.id === event.target.value) || null
+                      patch({
+                        completionUserId: user?.id || '',
+                        completionUserName: user ? (user.fullName || user.email || user.phone || user.username || '') : ''
+                      })
+                    }}
+                    portal
+                  >
+                    {teamUserOptions.map((option) => (
+                      <option key={option.value || 'completion-empty-user'} value={option.value}>{option.label}</option>
+                    ))}
+                  </CustomSelect>
+                </div>
+              )}
+            </>
+          )}
+
           {step === 'data' && (
             <>
               <h2 className={styles.title}>¿Qué datos debe pedir?</h2>
@@ -362,6 +760,21 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 placeholder={'Ejemplo:\n- Nombre completo\n- Servicio que le interesa'}
                 onChange={(e) => patch({ requiredData: e.target.value })}
               />
+            </>
+          )}
+
+          {step === 'handoff' && (
+            <>
+              <h2 className={styles.title}>¿Cuándo debe pasar el chat al equipo?</h2>
+              <p className={styles.help}>Úsalo para casos que una persona debe ver. Ejemplo: enojo, facturación, reclamos o algo delicado.</p>
+              <textarea
+                className={styles.textarea}
+                value={draft.handoffRules}
+                rows={4}
+                placeholder={'Ejemplo:\n- Si se enoja\n- Si pregunta por facturación\n- Si pide garantía o devolución'}
+                onChange={(e) => patch({ handoffRules: e.target.value })}
+              />
+              <p className={styles.fieldHint}>Puedes dejarlo en blanco y configurarlo después.</p>
             </>
           )}
 
@@ -402,24 +815,46 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
             </>
           )}
 
+          {step === 'advanced' && (
+            <>
+              <h2 className={styles.title}>Instrucciones avanzadas</h2>
+              <p className={styles.help}>Esto pisa la estrategia normal de cierre. Déjalo en blanco si quieres que Ristak use la estrategia adaptada a tu negocio.</p>
+              <textarea
+                className={styles.textarea}
+                value={draft.closingStrategyCustom}
+                rows={6}
+                placeholder={'Opcional. Ejemplo:\n- Vende con más calma\n- Antes de cerrar, valida si ya conoce el servicio\n- No uses urgencia salvo que la persona pregunte por disponibilidad'}
+                onChange={(e) => patch({ closingStrategyCustom: e.target.value })}
+              />
+            </>
+          )}
+
           {step === 'recap' && (
             <>
               <h2 className={styles.title}>¡Así quedó tu asistente! 🚀</h2>
               <p className={styles.help}>Revísalo de un vistazo. Si algo no te late, regresa y cámbialo. Después podrás afinar todo en el editor.</p>
               <div className={styles.recapList}>
                 <RecapRow label="Se llama" value={draft.name.trim() || '—'} />
+                <RecapRow label="IA" value={`${selectedProvider.label} · ${selectedModelValue}`} />
                 <RecapRow label="Su misión" value={draft.objective === 'custom' ? (draft.customObjective.trim() || 'Meta propia') : labelOf(objectiveChoices, draft.objective)} />
-                <RecapRow label="Habla como" value={draft.identityMode === 'custom' ? (draft.identityCustomName.trim() || 'Nombre propio') : labelOf(identityChoices, draft.identityMode)} />
+                <RecapRow label="Habla como" value={draft.identityMode === 'user' ? (draft.identityUserName || 'Persona del equipo') : draft.identityMode === 'custom' ? (draft.identityCustomName.trim() || 'Nombre propio') : labelOf(identityChoices, draft.identityMode)} />
                 <RecapRow label="Estilo de venta" value={labelOf(persuasionChoices, draft.persuasionLevel)} />
                 <RecapRow label="Forma de hablar" value={labelOf(languageChoices, draft.languageLevel)} />
+                <RecapRow label="Espera" value={responseDelaySummary} />
+                <RecapRow label="Mensajes" value={humanMessagesEnabled ? 'En globitos' : 'Todo junto'} />
+                <RecapRow label="Notificaciones" value={draft.hideAttendedNotifications ? 'Silenciadas mientras atiende' : 'Activas mientras atiende'} />
                 <RecapRow label="Al estar listo" value={labelOf(actionChoices, draft.successAction)} />
                 {isCitasBooking(draft) && (
                   <RecapRow label="Calendario" value={calendars.find((c) => c.id === draft.calendarId)?.name || 'El que tenga hueco'} />
                 )}
+                {draft.goalUrl.trim() && <RecapRow label="Enlace" value={draft.goalUrl.trim()} />}
                 {cobroRecap && <RecapRow label="Cobro" value={cobroRecap} />}
+                {showCompletionStep && <RecapRow label="Al cumplir" value={draft.completionMode === 'assign_user' ? (draft.completionUserName || 'Asignar usuario') : 'Notificar al equipo'} />}
                 <RecapRow label="Atiende a" value={draft.contactScope === 'new_only' ? 'Solo contactos nuevos' : 'Todos (nuevos y actuales)'} />
                 <RecapRow label="Pide datos" value={draft.requiredData.trim() ? 'Sí' : 'No por ahora'} />
+                <RecapRow label="Pasa al equipo" value={draft.handoffRules.trim() ? 'Con reglas propias' : 'Sin reglas extra'} />
                 <RecapRow label="Tus indicaciones" value={draft.extraInstructions.trim() ? 'Sí, con reglas propias' : 'Ninguna por ahora'} />
+                <RecapRow label="Avanzadas" value={draft.closingStrategyCustom.trim() ? 'Editadas a mano' : 'Estrategia normal'} />
               </div>
             </>
           )}

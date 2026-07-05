@@ -173,6 +173,13 @@
   text-align: left;
   margin-top: 4px;
 }
+.inlineFields {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  text-align: left;
+}
 .label {
   font-size: 11px;
   font-weight: 500;
@@ -303,4 +310,5 @@
   .body { padding-left: 16px; padding-right: 16px; }
   .footer { padding-left: 16px; padding-right: 16px; }
   .title { font-size: 19px; }
+  .inlineFields { grid-template-columns: 1fr; }
 }

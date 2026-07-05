@@ -1647,11 +1647,16 @@ Ristak tiene dos superficies principales:
 - `ai-agent`: asistente interno de operacion, busqueda, analisis y acciones con
   ledger de ejecucion.
 - `conversational-agent`: agentes que interactuan con contactos y objetivos.
-  El wizard de nuevo asistente y el formulario manual exponen `extraInstructions`
-  como campo abierto de indicaciones obligatorias: reglas del negocio que mandan
-  por encima de la configuracion general del agente. En el formulario manual, el
-  tono y la persuasión viven en "Cómo va a contestar"; la configuracion de cierre
-  posterior solo aparece cuando el objetivo lo cumple la IA o un enlace.
+  El formulario manual agrupa la configuracion en cinco bloques: personalidad e
+  instrucciones, operacion tecnica del chat, objetivo y cierre, reglas de
+  atencion, y entrada/salida. El wizard de nuevo asistente cubre las decisiones
+  principales de esos bloques: proveedor/modelo de IA, identidad, persuasion,
+  lenguaje, indicaciones obligatorias (`extraInstructions`), instrucciones
+  avanzadas, tiempos de respuesta, mensajes en partes, notificaciones mientras el
+  agente atiende, objetivo, quien cumple la meta, cierre posterior cuando lo
+  cumple la IA o un enlace, datos requeridos, reglas de pase a equipo y alcance
+  de contactos. Las reglas finas de entrada/salida y acciones extra de cierre se
+  ajustan desde el formulario manual avanzado.
 
 Reglas:
 

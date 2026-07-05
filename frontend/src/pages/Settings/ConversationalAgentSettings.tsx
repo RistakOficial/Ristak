@@ -2597,45 +2597,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           )}
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>1. Cómo va a contestar</h3>
+            <h3 className={styles.sectionTitle}>1. Personalidad e instrucciones</h3>
             <p className={styles.agentSectionHint}>
-              Elige quién escribe, cuándo contesta y si los mensajes se ven como chat real. Ejemplo: rápido, pausado o en globitos.
+              Define cómo se presenta, qué tono usa y qué reglas de negocio mandan por encima de la configuración normal.
             </p>
             <div className={styles.configQuestionList}>
-              <QuestionSelectRow
-                question="¿Qué IA va a contestar?"
-                helper={`Es el cerebro que escribe los mensajes. Ejemplo: ${selectedProvider.label} contesta este agente.`}
-                value={selectedProviderId}
-                options={conversationalAIProviderOptions.map((provider) => {
-                  const status = getProviderStatus(aiProviders, provider.id)
-                  const connected = Boolean(status?.connected)
-                  return {
-                    value: provider.id,
-                    label: `${provider.label} · ${connected ? 'Conectado' : 'Toca para conectar'}`
-                  }
-                })}
-                selectLabel="IA del agente"
-                onChange={(providerId) => handleProviderSelect(getKnownConversationalAIProvider(providerId))}
-              >
-                <div className={styles.inlineMeta}>
-                  <Badge variant={selectedProviderConnected ? 'success' : 'neutral'}>
-                    {selectedProviderConnected ? 'Conectado' : 'Toca para conectar'}
-                  </Badge>
-                  {selectedProviderStatus?.needsReconnect && (
-                    <span className={styles.helperWarning}>{selectedProviderStatus.connectionIssue || `${selectedProvider.label} necesita reconectarse.`}</span>
-                  )}
-                </div>
-              </QuestionSelectRow>
-
-              <QuestionSelectRow
-                question={`¿Qué modelo de ${selectedProvider.label} va a usar?`}
-                helper={`Elige el modelo exacto que va a escribir. Ejemplo: ${selectedAgentModel?.label || selectedAgentModelValue} se usa sólo en este agente.`}
-                value={selectedAgentModelValue}
-                options={selectedAgentModelOptions}
-                selectLabel={`Modelo de ${selectedProvider.label}`}
-                onChange={(model) => onChange({ model })}
-              />
-
               <QuestionSelectRow
                 question="¿Cómo quieres que se identifique el agente?"
                 helper={identityHelper}
@@ -2713,6 +2679,112 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <p className={styles.helper}>{languageLevelHelp[agent.languageLevel]}</p>
                 </div>
               </div>
+
+              <div className={styles.configQuestion}>
+                <div className={styles.field}>
+                  <label className={styles.label}>Tus indicaciones obligatorias para el asistente</label>
+                  <textarea
+                    className={styles.textarea}
+                    value={agent.extraInstructions}
+                    placeholder={'Ejemplo:\n- No des precios hasta que digan su presupuesto\n- Menciona la promoción de fin de mes\n- Si preguntan por el color rosa, di que no hay\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas'}
+                    onChange={(event) => onChange({ extraInstructions: event.target.value })}
+                    rows={5}
+                  />
+                  <p className={styles.helper}>
+                    Reglas del negocio que siempre debe cumplir. Si contradicen cómo viene configurado el asistente, ganan estas indicaciones. Puedes dejarlo en blanco.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <details className={styles.advancedDetails} open={strategyIsCustom || undefined}>
+              <summary>
+                <span>Instrucciones avanzadas</span>
+                <small>{strategyIsCustom ? 'Editada a mano' : promptStatusText}</small>
+              </summary>
+              <div className={styles.advancedContent}>
+                <div className={styles.strategyHeaderRow}>
+                  <label className={styles.label}>Cómo debe vender o cerrar</label>
+                  <span className={`${styles.strategyBadge} ${strategyIsCustom ? styles.strategyBadgeCustom : businessPromptReady ? styles.strategyBadgeReady : styles.strategyBadgeLocked}`}>
+                    {strategyIsCustom ? 'Editada' : businessPromptReady ? 'Adaptada' : 'Pendiente'}
+                  </span>
+                  {strategyIsCustom && (
+                    <button
+                      type="button"
+                      className={styles.resetStrategyButton}
+                      onClick={() => onChange({ closingStrategyMode: 'system', closingStrategyCustom: '' })}
+                    >
+                      <RotateCcw size={13} />
+                      Usar la normal
+                    </button>
+                  )}
+                </div>
+                {!strategyIsCustom && (
+                  <div className={`${styles.strategyPromptState} ${businessPromptReady ? styles.strategyPromptStateReady : styles.strategyPromptStateLocked}`}>
+                    <strong>{promptStatusText}</strong>
+                    <span>
+                      {businessPromptReady
+                        ? 'Ya usa los datos actuales de tu negocio.'
+                        : promptBlockerText}
+                    </span>
+                  </div>
+                )}
+                <textarea
+                  className={`${styles.textarea} ${styles.actionTextarea}`}
+                  value={strategyText}
+                  onChange={(event) => onChange({ closingStrategyMode: 'custom' as ClosingStrategyMode, closingStrategyCustom: event.target.value })}
+                  rows={7}
+                />
+                <p className={styles.helper}>
+                  {strategyIsCustom
+                    ? 'Este agente usa tu texto editado.'
+                    : businessPromptReady
+                      ? 'Ya usa los datos de tu negocio. Ejemplo: habla según lo que vendes y a quién atiendes.'
+                      : 'Primero describe tu negocio para preparar estas instrucciones.'}
+                </p>
+              </div>
+            </details>
+          </div>
+
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>2. Operación técnica del chat</h3>
+            <p className={styles.agentSectionHint}>
+              Configura el motor de IA, tiempos, formato de mensajes, notificaciones y recordatorios.
+            </p>
+            <div className={styles.configQuestionList}>
+              <QuestionSelectRow
+                question="¿Qué IA va a contestar?"
+                helper={`Es el cerebro que escribe los mensajes. Ejemplo: ${selectedProvider.label} contesta este agente.`}
+                value={selectedProviderId}
+                options={conversationalAIProviderOptions.map((provider) => {
+                  const status = getProviderStatus(aiProviders, provider.id)
+                  const connected = Boolean(status?.connected)
+                  return {
+                    value: provider.id,
+                    label: `${provider.label} · ${connected ? 'Conectado' : 'Toca para conectar'}`
+                  }
+                })}
+                selectLabel="IA del agente"
+                onChange={(providerId) => handleProviderSelect(getKnownConversationalAIProvider(providerId))}
+              >
+                <div className={styles.inlineMeta}>
+                  <Badge variant={selectedProviderConnected ? 'success' : 'neutral'}>
+                    {selectedProviderConnected ? 'Conectado' : 'Toca para conectar'}
+                  </Badge>
+                  {selectedProviderStatus?.needsReconnect && (
+                    <span className={styles.helperWarning}>{selectedProviderStatus.connectionIssue || `${selectedProvider.label} necesita reconectarse.`}</span>
+                  )}
+                </div>
+              </QuestionSelectRow>
+
+              <QuestionSelectRow
+                question={`¿Qué modelo de ${selectedProvider.label} va a usar?`}
+                helper={`Elige el modelo exacto que va a escribir. Ejemplo: ${selectedAgentModel?.label || selectedAgentModelValue} se usa sólo en este agente.`}
+                value={selectedAgentModelValue}
+                options={selectedAgentModelOptions}
+                selectLabel={`Modelo de ${selectedProvider.label}`}
+                onChange={(model) => onChange({ model })}
+              />
 
               <QuestionSelectRow
                 question="¿Cuánto debe esperar antes de contestar?"
@@ -2832,15 +2904,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 )}
               </QuestionSelectRow>
 
-            </div>
-          </div>
-
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>Notificaciones mientras el agente atiende</h3>
-            <p className={styles.agentSectionHint}>
-              Decide si el equipo recibe avisos mientras el agente IA toma la conversación. El contacto siempre se queda visible.
-            </p>
-            <div className={styles.configQuestionList}>
               <QuestionSelectRow
                 question="¿Quieres recibir notificaciones mientras el agente IA toma la conversación?"
                 helper={selectedAttendedChatAction.description}
@@ -2849,11 +2912,106 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 selectLabel="Notificaciones mientras el agente atiende"
                 onChange={(value) => onChange(getAttendedChatActionPatch(value as AttendedChatActionValue))}
               />
+
+              <QuestionSelectRow
+                question="¿Quieres mandar un recordatorio?"
+                helper="Sólo se manda si la persona no responde. Ejemplo: el agente retoma lo último que hablaron."
+                value={followUp.enabled ? 'yes' : 'no'}
+                options={binaryChoiceOptions}
+                selectLabel="Seguimiento del contacto"
+                onChange={(value) => {
+                  const enabled = value === 'yes'
+                  updateFollowUp({
+                    enabled,
+                    first: { ...followUp.first, enabled: true },
+                    second: { ...followUp.second, enabled: enabled ? followUp.second.enabled : false },
+                    strategy: followUp.strategy || defaultFollowUpStrategy
+                  })
+                }}
+              />
+
+              {followUp.enabled && (
+                <>
+                  <div className={`${styles.followUpDelayRow} ${styles.followUpDelayRowSpaced}`}>
+                    <span className={styles.followUpDelayLabel}>¿Cuándo lo manda?</span>
+                    <span className={styles.followUpDelayText}>Después de</span>
+                    <NumberInput
+                      className={`${styles.input} ${styles.delayNumberInput}`}
+                      min={1}
+                      max={getFollowUpMaxValue(followUp.first.unit)}
+                      step={1}
+                      value={followUp.first.value}
+                      onValueChange={(value) => updateFollowUpStep('first', { value })}
+                    />
+                    <CustomSelect
+                      value={followUp.first.unit}
+                      onChange={(event) => updateFollowUpStep('first', { unit: event.target.value as AgentFollowUpUnit })}
+                      portal
+                      aria-label="Unidad del primer seguimiento"
+                    >
+                      {followUpUnitOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </CustomSelect>
+                    <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
+                  </div>
+
+                  <QuestionSelectRow
+                    question="¿Quieres mandar un segundo recordatorio?"
+                    helper="Sólo sale si todavía no responde. Ejemplo: un último mensaje corto más tarde."
+                    error={followUp.second.enabled ? followUpError : ''}
+                    value={followUp.second.enabled ? 'yes' : 'no'}
+                    options={binaryChoiceOptions}
+                    selectLabel="Segundo seguimiento"
+                    onChange={(value) => updateFollowUpStep('second', { enabled: value === 'yes' })}
+                  >
+                    {followUp.second.enabled && (
+                      <div className={styles.followUpDelayRow}>
+                        <span className={styles.followUpDelayLabel}>Segundo recordatorio</span>
+                        <span className={styles.followUpDelayText}>Después de</span>
+                        <NumberInput
+                          className={`${styles.input} ${styles.delayNumberInput}`}
+                          min={1}
+                          max={getFollowUpMaxValue(followUp.second.unit)}
+                          step={1}
+                          value={followUp.second.value}
+                          onValueChange={(value) => updateFollowUpStep('second', { value })}
+                        />
+                        <CustomSelect
+                          value={followUp.second.unit}
+                          onChange={(event) => updateFollowUpStep('second', { unit: event.target.value as AgentFollowUpUnit })}
+                          portal
+                          aria-label="Unidad del segundo seguimiento"
+                        >
+                          {followUpUnitOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </CustomSelect>
+                        <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
+                      </div>
+                    )}
+                  </QuestionSelectRow>
+
+                  <div className={styles.fieldWide}>
+                    <label className={styles.label}>Qué debe decir en el recordatorio</label>
+                    <textarea
+                      className={styles.textarea}
+                      value={followUp.strategy}
+                      placeholder="Ejemplo: retoma lo último que dijo, no vendas de golpe y abre con una pregunta corta."
+                      onChange={(event) => updateFollowUp({ strategy: event.target.value })}
+                      rows={4}
+                    />
+                    <p className={`${styles.helper} ${followUpError ? styles.helperError : ''}`}>
+                      {followUpError || 'Ejemplo: que salude corto, use lo último que dijo la persona y haga una sola pregunta.'}
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>2. Qué debe lograr</h3>
+            <h3 className={styles.sectionTitle}>3. Objetivo y cierre</h3>
             <p className={styles.agentSectionHint}>
               Define la meta, quién la cumple y qué pasa después. Ejemplo: pedir anticipo antes de agendar.
             </p>
@@ -3026,159 +3184,10 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           </div>
 
           <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>3. Si la persona no contesta</h3>
+            <h3 className={styles.sectionTitle}>4. Reglas de atención</h3>
             <p className={styles.agentSectionHint}>
-              Manda un mensaje después si la persona se queda callada. Ejemplo: "oye, te quedó alguna duda?"
+              Define datos obligatorios y casos donde el agente debe dejar de improvisar y pasar el chat al equipo.
             </p>
-            <div className={styles.configQuestionList}>
-              <QuestionSelectRow
-                question="¿Quieres mandar un recordatorio?"
-                helper="Sólo se manda si la persona no responde. Ejemplo: el agente retoma lo último que hablaron."
-                value={followUp.enabled ? 'yes' : 'no'}
-                options={binaryChoiceOptions}
-                selectLabel="Seguimiento del contacto"
-                onChange={(value) => {
-                  const enabled = value === 'yes'
-                  updateFollowUp({
-                    enabled,
-                    first: { ...followUp.first, enabled: true },
-                    second: { ...followUp.second, enabled: enabled ? followUp.second.enabled : false },
-                    strategy: followUp.strategy || defaultFollowUpStrategy
-                  })
-                }}
-              />
-
-              {followUp.enabled && (
-                <>
-                  <div className={`${styles.followUpDelayRow} ${styles.followUpDelayRowSpaced}`}>
-                    <span className={styles.followUpDelayLabel}>¿Cuándo lo manda?</span>
-                    <span className={styles.followUpDelayText}>Después de</span>
-                    <NumberInput
-                      className={`${styles.input} ${styles.delayNumberInput}`}
-                      min={1}
-                      max={getFollowUpMaxValue(followUp.first.unit)}
-                      step={1}
-                      value={followUp.first.value}
-                      onValueChange={(value) => updateFollowUpStep('first', { value })}
-                    />
-                    <CustomSelect
-                      value={followUp.first.unit}
-                      onChange={(event) => updateFollowUpStep('first', { unit: event.target.value as AgentFollowUpUnit })}
-                      portal
-                      aria-label="Unidad del primer seguimiento"
-                    >
-                      {followUpUnitOptions.map((option) => (
-                        <option key={option.value} value={option.value}>{option.label}</option>
-                      ))}
-                    </CustomSelect>
-                    <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
-                  </div>
-
-                  <QuestionSelectRow
-                    question="¿Quieres mandar un segundo recordatorio?"
-                    helper="Sólo sale si todavía no responde. Ejemplo: un último mensaje corto más tarde."
-                    error={followUp.second.enabled ? followUpError : ''}
-                    value={followUp.second.enabled ? 'yes' : 'no'}
-                    options={binaryChoiceOptions}
-                    selectLabel="Segundo seguimiento"
-                    onChange={(value) => updateFollowUpStep('second', { enabled: value === 'yes' })}
-                  >
-                    {followUp.second.enabled && (
-                      <div className={styles.followUpDelayRow}>
-                        <span className={styles.followUpDelayLabel}>Segundo recordatorio</span>
-                        <span className={styles.followUpDelayText}>Después de</span>
-                        <NumberInput
-                          className={`${styles.input} ${styles.delayNumberInput}`}
-                          min={1}
-                          max={getFollowUpMaxValue(followUp.second.unit)}
-                          step={1}
-                          value={followUp.second.value}
-                          onValueChange={(value) => updateFollowUpStep('second', { value })}
-                        />
-                        <CustomSelect
-                          value={followUp.second.unit}
-                          onChange={(event) => updateFollowUpStep('second', { unit: event.target.value as AgentFollowUpUnit })}
-                          portal
-                          aria-label="Unidad del segundo seguimiento"
-                        >
-                          {followUpUnitOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </CustomSelect>
-                        <span className={styles.followUpDelayText}>desde el último mensaje enviado.</span>
-                      </div>
-                    )}
-                  </QuestionSelectRow>
-
-                  <div className={styles.fieldWide}>
-                    <label className={styles.label}>Qué debe decir en el recordatorio</label>
-                    <textarea
-                      className={styles.textarea}
-                      value={followUp.strategy}
-                      placeholder="Ejemplo: retoma lo último que dijo, no vendas de golpe y abre con una pregunta corta."
-                      onChange={(event) => updateFollowUp({ strategy: event.target.value })}
-                      rows={4}
-                    />
-                    <p className={`${styles.helper} ${followUpError ? styles.helperError : ''}`}>
-                      {followUpError || 'Ejemplo: que salude corto, use lo último que dijo la persona y haga una sola pregunta.'}
-                    </p>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>4. Cuándo empieza y cuándo se detiene</h3>
-            <p className={styles.agentSectionHint}>
-              Elige en qué chats puede entrar. Ejemplo: sólo cuando venga de una página, una etiqueta o cualquier chat nuevo.
-            </p>
-            <div className={styles.field}>
-              <label className={styles.label}>¿A quién puede atender?</label>
-              <CustomSelect
-                value={agent.contactScope}
-                onChange={(event) => onChange({ contactScope: (event.target.value || 'all') as ConversationalContactScope })}
-                portal
-              >
-                <option value="all">Cualquier chat (incluye contactos que ya tenías)</option>
-                <option value="new_only">Solo contactos nuevos desde ahora</option>
-              </CustomSelect>
-              <p className={styles.helper}>
-                {agent.contactScope === 'new_only'
-                  ? 'Medida de seguridad: ignora a tus contactos de antes; solo atiende a quien llegue desde ahora.'
-                  : 'Puede tomar tanto a tus contactos actuales como a los nuevos.'}
-              </p>
-            </div>
-            <ConditionBuilder
-              groups={agent.filters.entry.groups}
-              mode="entry"
-              calendars={calendars}
-              options={filterOptions}
-              emptyText="Sin reglas: puede contestar cualquier chat nuevo."
-              onChange={(groups) => onChange({ filters: { ...agent.filters, entry: { groups } } })}
-            />
-
-            <div className={styles.agentNestedSection}>
-              <div className={styles.agentSubsectionHeader}>
-                <h4>Cuándo se detiene</h4>
-                <span>Opcional</span>
-              </div>
-              <p className={styles.agentSectionHint}>
-                Puedes hacer que deje de contestar cuando pase algo. Ejemplo: cuando ya haya cita o cuando alguien del equipo tome el chat.
-              </p>
-              <ConditionBuilder
-                groups={agent.filters.exit.groups}
-                mode="exit"
-                calendars={calendars}
-                options={filterOptions}
-                emptyText="Opcional: si no agregas reglas, se detiene cuando cumple la meta o un humano toma el chat."
-                onChange={(groups) => onChange({ filters: { ...agent.filters, exit: { groups } } })}
-              />
-            </div>
-          </div>
-
-          <div className={styles.agentSection}>
-            <h3 className={styles.sectionTitle}>5. Cosas que debe cuidar</h3>
             <div className={styles.configQuestionList}>
               <QuestionSelectRow
                 question="¿Debe pedir algún dato?"
@@ -3226,71 +3235,57 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 )}
               </QuestionSelectRow>
 
-              <div className={styles.configQuestion}>
-                <div className={styles.field}>
-                  <label className={styles.label}>Tus indicaciones obligatorias para el asistente</label>
-                  <textarea
-                    className={styles.textarea}
-                    value={agent.extraInstructions}
-                    placeholder={'Ejemplo:\n- No des precios hasta que digan su presupuesto\n- Menciona la promoción de fin de mes\n- Si preguntan por el color rosa, di que no hay\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas'}
-                    onChange={(event) => onChange({ extraInstructions: event.target.value })}
-                    rows={5}
-                  />
-                  <p className={styles.helper}>
-                    Reglas del negocio que siempre debe cumplir. Si contradicen cómo viene configurado el asistente, ganan estas indicaciones. Puedes dejarlo en blanco.
-                  </p>
-                </div>
-              </div>
             </div>
           </div>
 
-          <details className={styles.advancedDetails} open={strategyIsCustom || undefined}>
-            <summary>
-              <span>Instrucciones avanzadas</span>
-              <small>{strategyIsCustom ? 'Editada a mano' : promptStatusText}</small>
-            </summary>
-            <div className={styles.advancedContent}>
-              <div className={styles.strategyHeaderRow}>
-                <label className={styles.label}>Cómo debe vender o cerrar</label>
-                <span className={`${styles.strategyBadge} ${strategyIsCustom ? styles.strategyBadgeCustom : businessPromptReady ? styles.strategyBadgeReady : styles.strategyBadgeLocked}`}>
-                  {strategyIsCustom ? 'Editada' : businessPromptReady ? 'Adaptada' : 'Pendiente'}
-                </span>
-                {strategyIsCustom && (
-                  <button
-                    type="button"
-                    className={styles.resetStrategyButton}
-                    onClick={() => onChange({ closingStrategyMode: 'system', closingStrategyCustom: '' })}
-                  >
-                    <RotateCcw size={13} />
-                    Usar la normal
-                  </button>
-                )}
-              </div>
-              {!strategyIsCustom && (
-                <div className={`${styles.strategyPromptState} ${businessPromptReady ? styles.strategyPromptStateReady : styles.strategyPromptStateLocked}`}>
-                  <strong>{promptStatusText}</strong>
-                  <span>
-                    {businessPromptReady
-                      ? 'Ya usa los datos actuales de tu negocio.'
-                      : promptBlockerText}
-                  </span>
-                </div>
-              )}
-              <textarea
-                className={`${styles.textarea} ${styles.actionTextarea}`}
-                value={strategyText}
-                onChange={(event) => onChange({ closingStrategyMode: 'custom' as ClosingStrategyMode, closingStrategyCustom: event.target.value })}
-                rows={7}
-              />
+          <div className={styles.agentSection}>
+            <h3 className={styles.sectionTitle}>5. Entrada y salida</h3>
+            <p className={styles.agentSectionHint}>
+              Define a qué contactos puede tomar, con qué reglas entra y cuándo debe soltar la conversación.
+            </p>
+            <div className={styles.field}>
+              <label className={styles.label}>¿A quién puede atender?</label>
+              <CustomSelect
+                value={agent.contactScope}
+                onChange={(event) => onChange({ contactScope: (event.target.value || 'all') as ConversationalContactScope })}
+                portal
+              >
+                <option value="all">Cualquier chat (incluye contactos que ya tenías)</option>
+                <option value="new_only">Solo contactos nuevos desde ahora</option>
+              </CustomSelect>
               <p className={styles.helper}>
-                {strategyIsCustom
-                  ? 'Este agente usa tu texto editado.'
-                  : businessPromptReady
-                    ? 'Ya usa los datos de tu negocio. Ejemplo: habla según lo que vendes y a quién atiendes.'
-                    : 'Primero describe tu negocio para preparar estas instrucciones.'}
+                {agent.contactScope === 'new_only'
+                  ? 'Medida de seguridad: ignora a tus contactos de antes; solo atiende a quien llegue desde ahora.'
+                  : 'Puede tomar tanto a tus contactos actuales como a los nuevos.'}
               </p>
             </div>
-          </details>
+            <ConditionBuilder
+              groups={agent.filters.entry.groups}
+              mode="entry"
+              calendars={calendars}
+              options={filterOptions}
+              emptyText="Sin reglas: puede contestar cualquier chat nuevo."
+              onChange={(groups) => onChange({ filters: { ...agent.filters, entry: { groups } } })}
+            />
+
+            <div className={styles.agentNestedSection}>
+              <div className={styles.agentSubsectionHeader}>
+                <h4>Cuándo se detiene</h4>
+                <span>Opcional</span>
+              </div>
+              <p className={styles.agentSectionHint}>
+                Puedes hacer que deje de contestar cuando pase algo. Ejemplo: cuando ya haya cita o cuando alguien del equipo tome el chat.
+              </p>
+              <ConditionBuilder
+                groups={agent.filters.exit.groups}
+                mode="exit"
+                calendars={calendars}
+                options={filterOptions}
+                emptyText="Opcional: si no agregas reglas, se detiene cuando cumple la meta o un humano toma el chat."
+                onChange={(groups) => onChange({ filters: { ...agent.filters, exit: { groups } } })}
+              />
+            </div>
+          </div>
 
         </div>
       </Card>
@@ -4265,6 +4260,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         defaultName={`Agente ${agents.length + 1}`}
         aiProvider={getKnownConversationalAIProvider(config?.aiProvider)}
         model={getKnownConversationalModel(getKnownConversationalAIProvider(config?.aiProvider), config?.model || getDefaultConversationalModel(getKnownConversationalAIProvider(config?.aiProvider)))}
+        aiProviders={aiProviders}
       />
       <Modal
         isOpen={scopePrompt}
