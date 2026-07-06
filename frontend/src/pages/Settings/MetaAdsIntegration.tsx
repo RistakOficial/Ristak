@@ -1666,6 +1666,10 @@ export const MetaAdsIntegration: React.FC = () => {
   const handleToggleMetaComments = async (platform: 'facebook' | 'instagram', newValue: boolean) => {
     const label = platform === 'instagram' ? 'Comentarios de Instagram' : 'Comentarios de Facebook'
     const instagramTokenReady = Boolean(credentials.instagramAccessToken.trim())
+    if (newValue && !hasAccessToken) {
+      showToast('warning', 'Sesión de Meta requerida', 'Inicia sesión en Meta Developers antes de activar comentarios.')
+      return
+    }
     if (newValue && platform === 'instagram' && !hasInstagramAccount) {
       showToast('warning', 'Instagram requerido', 'Primero selecciona la cuenta de Instagram en el wizard')
       return
@@ -1701,6 +1705,10 @@ export const MetaAdsIntegration: React.FC = () => {
     const isInstagram = platform === 'instagram'
     const platformLabel = isInstagram ? 'Instagram DM' : 'Messenger'
     const instagramTokenReady = Boolean(credentials.instagramAccessToken.trim())
+    if (newValue && !hasAccessToken) {
+      showToast('warning', 'Sesión de Meta requerida', 'Inicia sesión en Meta Developers antes de activar mensajes.')
+      return
+    }
 
     if (newValue && !isInstagram && !hasPageId) {
       showToast(
@@ -1829,6 +1837,10 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasPageId = Boolean(credentials.pageId)
   const hasInstagramAccount = Boolean(credentials.instagramAccountId)
   const hasInstagramApiToken = Boolean(credentials.instagramAccessToken.trim())
+  const canEnableMessengerMessaging = hasAccessToken && hasPageId
+  const canEnableMessengerComments = hasAccessToken && hasPageId
+  const canEnableInstagramMessaging = hasAccessToken && hasInstagramAccount && hasInstagramApiToken
+  const canEnableInstagramComments = hasAccessToken && hasInstagramAccount && hasInstagramApiToken
   const isMetaConfigured = Boolean(hasAccessToken && hasAdAccount)
   const normalizedMetaTestEventName = normalizeMetaTestEventName(metaTestEventName)
   const normalizedMetaTestEventParameters = withMetaTestDefaultsForEvent(metaTestEventParameters, normalizedMetaTestEventName)
@@ -2469,7 +2481,8 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div className={styles.connectedPagesHeader}>
                   <h4 className={styles.connectedPagesTitle}>Redes sociales</h4>
                   <p className={styles.connectedPagesDescription}>
-                    Configura Messenger e Instagram por separado. Instagram usa su propio Instagram API token para nombres, fotos, mensajes y comentarios; no uses aqui el System User token ni el Page token de Messenger.
+                    Configura Messenger e Instagram por separado. Para activar mensajes y comentarios hay que iniciar sesión en Meta con permisos de negocio y mantener la conexión activa.
+                    Instagram usa su propio Instagram API token para nombres, fotos, mensajes y comentarios; no uses aqui el System User token ni el Page token de Messenger.
                   </p>
                 </div>
 
@@ -2482,7 +2495,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Messenger</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook.
+                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Para nuevos mensajes o comentarios, primero inicia sesión en Meta y suscríbete en Webhooks.
                         </p>
                       </div>
                     </div>
@@ -2496,17 +2509,17 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Mensajes de Messenger</strong>
-                          <span>Recibir y responder DMs desde la bandeja de chat.</span>
+                          <span>Recibir y responder DMs desde la bandeja de chat. Requiere sesión iniciada en Meta.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
-                          <Badge variant={getMetaMessagingStatusVariant(messengerMessagingEnabled, hasPageId)}>
-                            {getMetaMessagingStatus(messengerMessagingEnabled, hasPageId)}
+                          <Badge variant={getMetaMessagingStatusVariant(messengerMessagingEnabled, canEnableMessengerMessaging)}>
+                            {getMetaMessagingStatus(messengerMessagingEnabled, canEnableMessengerMessaging)}
                           </Badge>
                           <Switch
                             aria-label="Activar mensajes de Messenger"
                             checked={messengerMessagingEnabled === true}
                             onChange={(next) => handleToggleMetaMessaging('messenger', next)}
-                            disabled={!hasPageId || savingMessengerMessaging}
+                            disabled={!canEnableMessengerMessaging || savingMessengerMessaging}
                           />
                         </div>
                       </div>
@@ -2514,17 +2527,17 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Comentarios de Facebook</strong>
-                          <span>Guardar comentarios de publicaciones y anuncios.</span>
+                          <span>Guardar comentarios de publicaciones y anuncios. Requiere sesión activa y webhook suscrito.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
-                          <Badge variant={facebookCommentsEnabled ? 'success' : hasPageId ? 'neutral' : 'warning'}>
-                            {!hasPageId ? 'Pendiente' : facebookCommentsEnabled ? 'Activo' : 'Apagado'}
+                          <Badge variant={getMetaMessagingStatusVariant(facebookCommentsEnabled, canEnableMessengerComments)}>
+                            {getMetaMessagingStatus(facebookCommentsEnabled, canEnableMessengerComments)}
                           </Badge>
                           <Switch
                             aria-label="Activar comentarios de Facebook"
                             checked={facebookCommentsEnabled === true}
                             onChange={(next) => handleToggleMetaComments('facebook', next)}
-                            disabled={!hasPageId || savingFacebookComments}
+                            disabled={!canEnableMessengerComments || savingFacebookComments}
                           />
                         </div>
                       </div>
@@ -2539,7 +2552,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Instagram</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa el Instagram User access token generado desde Instagram Login para perfilar contactos, DMs y comentarios.
+                          Usa el Instagram User access token generado desde Instagram Login para perfilar contactos, DMs y comentarios. Para mensajes y comentarios, primero inicia sesión en Meta/Instagram.
                         </p>
                       </div>
                     </div>
@@ -2593,17 +2606,19 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Instagram DM</strong>
-                          <span>Nombres, fotos y respuestas usan el token directo.</span>
+                          <span>Nombres, fotos y respuestas usan el token directo. Requiere sesión iniciada e Instagram DM activo.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
-                          <Badge variant={getMetaMessagingStatusVariant(instagramMessagingEnabled, hasInstagramAccount && hasInstagramApiToken)}>
-                            {getMetaMessagingStatus(instagramMessagingEnabled, hasInstagramAccount && hasInstagramApiToken)}
+                          <Badge
+                            variant={getMetaMessagingStatusVariant(instagramMessagingEnabled, canEnableInstagramMessaging)}
+                          >
+                            {getMetaMessagingStatus(instagramMessagingEnabled, canEnableInstagramMessaging)}
                           </Badge>
                           <Switch
                             aria-label="Activar mensajes de Instagram DM"
                             checked={instagramMessagingEnabled === true}
                             onChange={(next) => handleToggleMetaMessaging('instagram', next)}
-                            disabled={!hasInstagramAccount || !hasInstagramApiToken || savingInstagramMessaging}
+                            disabled={!canEnableInstagramMessaging || savingInstagramMessaging}
                           />
                         </div>
                       </div>
@@ -2611,17 +2626,17 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Comentarios de Instagram</strong>
-                          <span>Guardar autores, fotos y comentarios nuevos.</span>
+                          <span>Guardar autores, fotos y comentarios nuevos. Necesita sesión activa y token de Instagram válido.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
-                          <Badge variant={instagramCommentsEnabled ? 'success' : hasInstagramAccount && hasInstagramApiToken ? 'neutral' : 'warning'}>
-                            {!(hasInstagramAccount && hasInstagramApiToken) ? 'Pendiente' : instagramCommentsEnabled ? 'Activo' : 'Apagado'}
+                          <Badge variant={getMetaMessagingStatusVariant(instagramCommentsEnabled, canEnableInstagramComments)}>
+                            {getMetaMessagingStatus(instagramCommentsEnabled, canEnableInstagramComments)}
                           </Badge>
                           <Switch
                             aria-label="Activar comentarios de Instagram"
                             checked={instagramCommentsEnabled === true}
                             onChange={(next) => handleToggleMetaComments('instagram', next)}
-                            disabled={!hasInstagramAccount || !hasInstagramApiToken || savingInstagramComments}
+                            disabled={!canEnableInstagramComments || savingInstagramComments}
                           />
                         </div>
                       </div>
@@ -2684,6 +2699,33 @@ export const MetaAdsIntegration: React.FC = () => {
                         </Button>
                       </div>
                     </div>
+                  </div>
+
+                  <div className={styles.webhookTutorialGallery}>
+                    <figure className={styles.webhookTutorialItem}>
+                      <p className={styles.webhookTutorialTitle}>Conexión de Messenger (Webhooks)</p>
+                      <p className={styles.webhookTutorialDescription}>
+                        Entra a Meta Developers con tu cuenta y suscribe la Página antes de activar mensajes o comentarios.
+                      </p>
+                      <img
+                        src="/meta-tutorial-messenger.png"
+                        alt="Guía de configuración de Messenger en Meta Developers"
+                        className={styles.webhookTutorialImage}
+                        loading="lazy"
+                      />
+                    </figure>
+                    <figure className={styles.webhookTutorialItem}>
+                      <p className={styles.webhookTutorialTitle}>Conexión de Instagram (Login + Webhooks)</p>
+                      <p className={styles.webhookTutorialDescription}>
+                        Inicia sesión con Instagram, genera token y pégalo aquí; luego conecta webhooks del objeto Instagram.
+                      </p>
+                      <img
+                        src="/meta-tutorial-instagram.png"
+                        alt="Guía de configuración de Instagram en Meta Developers"
+                        className={styles.webhookTutorialImage}
+                        loading="lazy"
+                      />
+                    </figure>
                   </div>
 
                   <ol className={styles.webhookSteps}>
