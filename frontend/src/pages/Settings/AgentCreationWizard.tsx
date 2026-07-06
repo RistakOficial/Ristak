@@ -815,28 +815,44 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'instructions' && (
             <>
               <h2 className={styles.title}>Tus indicaciones para el asistente</h2>
-              <p className={styles.help}>Aquí van las reglas del negocio que <strong>siempre</strong> debe obedecer: qué no decir, qué datos pedir, cuándo frenar y qué promesas evitar. Si esto contradice el estilo normal del asistente, <strong>ganan tus indicaciones</strong>. Puedes dejarlo en blanco y agregarlo luego.</p>
+              <p className={styles.help}>Aquí van las reglas del negocio que <strong>siempre</strong> debe obedecer: qué no decir, qué datos pedir, cuándo frenar y qué promesas evitar. Si esto contradice el estilo normal del asistente, <strong>ganan tus indicaciones</strong>.</p>
               <textarea
                 className={styles.textarea}
                 value={draft.extraInstructions}
                 rows={6}
-                placeholder={'Ejemplo:\n- No des precios hasta que digan su presupuesto\n- Menciona la promoción de fin de mes\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas\n- Pide nombre completo y servicio de interés antes de pasar a humano'}
+                placeholder={'Ejemplo:\n- No des el valor ni rangos hasta saber qué servicio quiere, cuál es su problema y qué resultado busca\n- Si pregunta precio sin contexto, pide primero que explique su caso\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas\n- Pide nombre completo y servicio de interés antes de pasar a humano'}
                 onChange={(e) => patch({ extraInstructions: e.target.value })}
               />
+              <div className={styles.exampleList} aria-label="Ejemplos de indicaciones obligatorias">
+                <span className={styles.exampleListTitle}>Ejemplos que sí van aquí:</span>
+                <ul>
+                  <li>No des precio hasta conocer el problema o reto completo.</li>
+                  <li>No prometas resultados garantizados ni tiempos que no estén confirmados.</li>
+                  <li>Si falta nombre, servicio o teléfono, pídelo antes de pasar a humano.</li>
+                </ul>
+              </div>
             </>
           )}
 
           {step === 'advanced' && (
             <>
               <h2 className={styles.title}>Instrucciones avanzadas</h2>
-              <p className={styles.help}>Esto sólo cambia la <strong>estrategia de cierre</strong>: cómo empuja, negocia, valida objeciones o baja la presión. No lo uses para datos obligatorios; esos van en la caja anterior o en "Qué datos debe pedir". Déjalo en blanco para usar la estrategia normal de Ristak.</p>
+              <p className={styles.help}>Esto cambia la <strong>estrategia de cierre</strong>: cómo empuja, negocia, valida objeciones o baja la presión. Si una regla debe cumplirse siempre, ponla también en la caja anterior.</p>
               <textarea
                 className={styles.textarea}
                 value={draft.closingStrategyCustom}
                 rows={6}
-                placeholder={'Opcional. Ejemplo:\n- Vende con más calma\n- Antes de cerrar, valida si ya conoce el servicio\n- No uses urgencia salvo que la persona pregunte por disponibilidad'}
+                placeholder={'Opcional. Ejemplo:\n- Cierra con calma; no uses urgencia ni descuentos como presión\n- Si compara precios, valida primero qué está comparando antes de defender el valor\n- Si ya explicó su problema y pide precio, da sólo el valor que aplica y pregunta si quiere avanzar'}
                 onChange={(e) => patch({ closingStrategyCustom: e.target.value })}
               />
+              <div className={styles.exampleList} aria-label="Ejemplos de instrucciones avanzadas">
+                <span className={styles.exampleListTitle}>Ejemplos que sí van aquí:</span>
+                <ul>
+                  <li>Si objeta precio, responde con el costo de seguir igual antes de ofrecer alternativa.</li>
+                  <li>Si ya calificó, cierra directo y sin discurso largo.</li>
+                  <li>No uses urgencia salvo que la disponibilidad sea realmente limitada.</li>
+                </ul>
+              </div>
             </>
           )}
 

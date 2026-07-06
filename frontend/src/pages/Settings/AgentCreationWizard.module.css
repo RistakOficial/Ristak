@@ -194,6 +194,34 @@
   color: var(--text-mute);
 }
 
+.exampleList {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 0;
+  padding-top: 2px;
+  text-align: left;
+  color: var(--text-dim);
+}
+
+.exampleListTitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.exampleList ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.exampleList li {
+  margin: 3px 0;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
 .field {
   width: 100%;
   display: flex;

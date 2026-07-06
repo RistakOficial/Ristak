@@ -2927,6 +2927,59 @@ test('las indicaciones del negocio se inyectan como OBLIGATORIAS y con prioridad
   assert.doesNotMatch(build('   \n  '), /Indicaciones del negocio \(MÁXIMA PRIORIDAD/)
 })
 
+test('bloquea revelar precio cuando las indicaciones condicionan el valor', () => {
+  const commonContext = {
+    businessContext: 'Vendemos programas con precios configurados.',
+    brandVoice: '',
+    businessName: 'Clinica Norte',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: 'Ana',
+    channel: 'whatsapp',
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  }
+
+  const build = (config) => buildConversationalInstructions({
+    config: {
+      persuasionLevel: 'high',
+      languageLevel: 'intermediate',
+      objective: 'ventas',
+      successAction: 'ready_to_buy',
+      requiredData: '',
+      closingStrategyMode: 'system',
+      closingStrategyCustom: '',
+      extraInstructions: '',
+      ...config
+    },
+    ...commonContext
+  })
+
+  const fromBusinessRules = build({
+    requiredData: '- Servicio que le interesa\n- Reto principal',
+    extraInstructions: 'No des precios hasta conocer completamente el problema o reto de la persona.'
+  })
+  assert.match(fromBusinessRules, /Bloqueo de precio\/valor condicionado \(REGLA DURA\)/)
+  assert.match(fromBusinessRules, /Una pregunta directa como "precio".*NO desbloquea el precio/)
+  assert.match(fromBusinessRules, /consultar datos reales NO te autoriza a revelar el precio/)
+  assert.match(fromBusinessRules, /qué servicio\/producto busca/)
+  assert.match(fromBusinessRules, /qué le pasa hoy o qué quiere resolver/)
+  assert.match(fromBusinessRules, /Datos mínimos configurados: - Servicio que le interesa - Reto principal/)
+  assert.match(fromBusinessRules, /No des precios hasta conocer completamente el problema o reto/)
+
+  const fromAdvancedStrategy = build({
+    closingStrategyMode: 'custom',
+    closingStrategyCustom: 'No menciones costos ni cotices hasta entender su situación completa y el reto real.'
+  })
+  assert.match(fromAdvancedStrategy, /Bloqueo de precio\/valor condicionado \(REGLA DURA\)/)
+  assert.match(fromAdvancedStrategy, /Instrucciones avanzadas: No menciones costos ni cotices/)
+  assert.match(fromAdvancedStrategy, /Esta sección manda sobre la estrategia de cierre/)
+
+  const promotionOnly = build({
+    extraInstructions: 'Menciona la promoción de fin de mes cuando la persona ya esté interesada.'
+  })
+  assert.doesNotMatch(promotionOnly, /Bloqueo de precio\/valor condicionado/)
+})
+
 test('instrucciones del agente respetan el toggle de emojis', () => {
   const baseConfig = {
     objective: 'citas',

@@ -1868,6 +1868,49 @@ function cleanAgentIdentityText(value, maxLength = 160) {
   return String(value || '').trim().slice(0, maxLength)
 }
 
+function cleanInstructionExcerpt(value, maxLength = 1800) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return ''
+  if (normalized.length <= maxLength) return normalized
+  return `${normalized.slice(0, maxLength - 1).trim()}…`
+}
+
+const PRICE_DISCLOSURE_TERMS = /\b(precio|precios|costos?|cu[aá]nto|valor(?:es)?|tarifas?|cotiza(?:r|ci[oó]n|ciones)?|presupuesto|monto|mensualidad|pago|inversi[oó]n|promoci[oó]n|descuento)\b/i
+const PRICE_GATE_TERMS = /\b(no\s+(?:des|dar|digas|menciones|sueltes|compartas|cotices|respondas|pases)|sin\s+(?:saber|conocer|entender|diagnosticar|validar|revisar)|hasta\s+que|antes\s+de|primero|requiere|necesita|necesitamos|conocer|entender|diagnosticar|validar|problema|reto|situaci[oó]n|contexto|presupuesto)\b/i
+
+function hasConfiguredPriceDisclosureGate(...values) {
+  const text = values.map((value) => String(value || '')).join('\n')
+  return PRICE_DISCLOSURE_TERMS.test(text) && PRICE_GATE_TERMS.test(text)
+}
+
+function buildPriceDisclosureGateSection(config = {}) {
+  const businessRules = String(config.extraInstructions || '').trim()
+  const customStrategy = config.closingStrategyMode === 'custom'
+    ? String(config.closingStrategyCustom || '').trim()
+    : ''
+
+  if (!hasConfiguredPriceDisclosureGate(businessRules, customStrategy)) return ''
+
+  const sources = [
+    businessRules ? `Indicaciones obligatorias: ${cleanInstructionExcerpt(businessRules, 1800)}` : '',
+    customStrategy ? `Instrucciones avanzadas: ${cleanInstructionExcerpt(customStrategy, 1800)}` : '',
+    config.requiredData ? `Datos mínimos configurados: ${cleanInstructionExcerpt(config.requiredData, 900)}` : ''
+  ].filter(Boolean).join('\n')
+
+  return `## Bloqueo de precio/valor condicionado (REGLA DURA)
+Hay instrucciones del negocio que condicionan cuándo puedes hablar de precio, valor, costo, cotización, descuentos, promociones, mensualidades o pagos. Esta sección manda sobre la estrategia de cierre, sobre la regla general de responder dudas puntuales y sobre cualquier impulso de dar precios cuando el contacto pregunta directo.
+- Una pregunta directa como "precio", "cuánto cuesta", "mándame costos" o "dime de una vez" NO desbloquea el precio por sí sola.
+- Antes de revelar un monto, rango, lista de precios, descuento, promoción, mensualidad, cotización o enlace de pago, revisa si ya se cumplió la condición escrita por el negocio.
+- Si la regla dice que primero debes conocer el problema, reto, situación o contexto, considéralo incompleto hasta tener al menos: qué servicio/producto busca, qué le pasa hoy o qué quiere resolver, qué resultado espera y qué dato relevante falta para ubicar su caso (presupuesto, urgencia, restricciones o intento previo, según aplique).
+- Si falta contexto, NO reveles el precio ni el menú de precios. Responde breve, con naturalidad, y haz UNA pregunta útil para completar la condición. Ejemplo de intención: "para no darte un número que no aplique, cuéntame tantito qué estás buscando resolver".
+- Puedes consultar list_products internamente para no inventar datos, pero no muestres el monto hasta que el bloqueo esté cumplido.
+- Cuando la condición sí esté cumplida, da sólo el precio real que aplica, no el menú completo, y continúa con una pregunta o siguiente paso natural.
+- Si la instrucción está ambigua o choca con las ganas de cerrar, conserva el precio bloqueado y pide contexto; si el caso se vuelve delicado o confuso, manda a humano.
+
+Reglas que activaron este bloqueo:
+${sources}`
+}
+
 function resolveAgentIdentity(config = {}, businessName = '') {
   const mode = cleanAgentIdentityText(config.identityMode, 24)
   const businessLabel = cleanAgentIdentityText(businessName, 120) || 'el negocio'
@@ -2027,6 +2070,7 @@ export function buildConversationalInstructions({ config, businessContext, brand
   const mirrorCriteria = readClosingParameter(regionalParameters, 'CRITERIO_DE_ESPEJO')
   // Indicaciones OBLIGATORIAS del dueño del negocio: mandan sobre todo lo interno (ver sección al final).
   const businessRules = String(config.extraInstructions || '').trim()
+  const priceDisclosureGateSection = buildPriceDisclosureGateSection(config)
 
   sections.push(`Eres el asistente conversacional de ${businessName || 'este negocio'} dentro de una conversación por ${conversationChannelLabel} con un prospecto o cliente.
 Tu objetivo principal es llevar la conversación de forma natural hacia: ${describeObjective(config)}.
@@ -2046,6 +2090,7 @@ No estás para vender de forma agresiva. Estás para acompañar, orientar, resol
 - Usa las tools para consultar la información real del negocio: get_business_profile (datos generales y ubicación), list_products (servicios/productos y su valor), list_calendars y get_free_slots (horarios y disponibilidad), get_contact_profile (datos y citas del contacto).
 - NUNCA inventes precios, horarios, ubicaciones, servicios ni disponibilidad. Si una tool no devuelve el dato, dilo con naturalidad o pide solo el dato necesario.
 - Si no tienes información suficiente para responder algo importante, ejecuta send_to_human en lugar de adivinar.
+- Si hay un bloqueo de precio/valor condicionado configurado por el negocio, consultar datos reales NO te autoriza a revelar el precio antes de cumplir la condición. Primero cumple la condición; después, si aplica, das el dato real.
 - Refiérete al precio como "valor". Nunca uses la palabra "quiero".`)
 
   sections.push(`## ${isEmailChannel ? 'Adjuntos recibidos por correo' : `Multimedia recibida por ${conversationChannelLabel}`}
@@ -2190,6 +2235,10 @@ Si una indicación del dueño choca con uno de estos límites, no la cumplas y m
 
 Indicaciones del negocio:
 ${businessRules}`)
+  }
+
+  if (priceDisclosureGateSection) {
+    sections.push(priceDisclosureGateSection)
   }
 
   sections.push(`## Contexto actual

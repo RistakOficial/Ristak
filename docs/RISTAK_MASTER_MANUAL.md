@@ -1684,7 +1684,12 @@ Ristak tiene dos superficies principales:
   obligatorias del negocio y mandan sobre estilo/venta salvo limites de seguridad
   e integridad; `closingStrategyCustom` reemplaza la estrategia de cierre, no es
   el lugar principal para datos obligatorios. Los datos estrictamente necesarios
-  para avanzar deben vivir en `requiredData`.
+  para avanzar deben vivir en `requiredData`. Si `extraInstructions` o
+  `closingStrategyCustom` condicionan precio/valor/costo/cotizacion (por ejemplo,
+  "no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
+  explicito: una pregunta directa por precio no desbloquea montos, rangos,
+  descuentos, promociones ni links de pago hasta cumplir esa condicion; el agente
+  debe pedir el contexto faltante de uno en uno y despues usar precios reales.
 
 Reglas:
 

@@ -2686,13 +2686,21 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   <textarea
                     className={styles.textarea}
                     value={agent.extraInstructions}
-                    placeholder={'Ejemplo:\n- No des precios hasta que digan su presupuesto\n- Menciona la promoción de fin de mes\n- Si preguntan por el color rosa, di que no hay\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas'}
+                    placeholder={'Ejemplo:\n- No des el valor ni rangos hasta saber qué servicio quiere, cuál es su problema y qué resultado busca\n- Si pregunta precio sin contexto, pide primero que explique su caso\n- Si preguntan por el color rosa, di que no hay\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas'}
                     onChange={(event) => onChange({ extraInstructions: event.target.value })}
                     rows={5}
                   />
                   <p className={styles.helper}>
-                    Reglas del negocio que siempre debe cumplir. Si contradicen cómo viene configurado el asistente, ganan estas indicaciones. Puedes dejarlo en blanco.
+                    Reglas del negocio que siempre debe cumplir. Si contradicen cómo viene configurado el asistente, ganan estas indicaciones.
                   </p>
+                  <div className={styles.guidanceExamples} aria-label="Ejemplos de indicaciones obligatorias">
+                    <span>Ejemplos que sí van aquí:</span>
+                    <ul>
+                      <li>No des precio hasta conocer el problema o reto completo.</li>
+                      <li>No prometas resultados garantizados ni tiempos que no estén confirmados.</li>
+                      <li>Si falta nombre, servicio o teléfono, pídelo antes de pasar a humano.</li>
+                    </ul>
+                  </div>
                 </div>
               </div>
             </div>
@@ -2737,11 +2745,19 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 />
                 <p className={styles.helper}>
                   {strategyIsCustom
-                    ? 'Este agente usa tu texto editado.'
+                    ? 'Este agente usa tu texto editado. Sirve para dirigir cómo cierra, negocia y maneja objeciones; las reglas obligatorias viven arriba.'
                     : businessPromptReady
-                      ? 'Ya usa los datos de tu negocio. Ejemplo: habla según lo que vendes y a quién atiendes.'
+                      ? 'Ya usa los datos de tu negocio. Ejemplo: habla según lo que vendes y a quién atiendes. Edita sólo si necesitas una estrategia de cierre distinta.'
                       : 'Primero describe tu negocio para preparar estas instrucciones.'}
                 </p>
+                <div className={styles.guidanceExamples} aria-label="Ejemplos de instrucciones avanzadas">
+                  <span>Ejemplos que sí van aquí:</span>
+                  <ul>
+                    <li>Si objeta precio, responde con el costo de seguir igual antes de ofrecer alternativa.</li>
+                    <li>Si ya calificó, cierra directo y sin discurso largo.</li>
+                    <li>No uses urgencia salvo que la disponibilidad sea realmente limitada.</li>
+                  </ul>
+                </div>
               </div>
             </details>
           </div>
