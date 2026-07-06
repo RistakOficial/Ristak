@@ -2481,7 +2481,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div className={styles.connectedPagesHeader}>
                   <h4 className={styles.connectedPagesTitle}>Redes sociales</h4>
                   <p className={styles.connectedPagesDescription}>
-                    Configura Messenger e Instagram por separado. Para activar mensajes y comentarios hay que iniciar sesión en Meta con permisos de negocio y mantener la conexión activa.
+                    Configura Messenger e Instagram por separado para activar mensajes y comentarios.
                     Instagram usa su propio Instagram API token para nombres, fotos, mensajes y comentarios; no uses aqui el System User token ni el Page token de Messenger.
                   </p>
                 </div>
@@ -2495,7 +2495,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Messenger</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Para nuevos mensajes o comentarios, primero inicia sesión en Meta y suscríbete en Webhooks.
+                          Usa la Facebook Page conectada para Messenger y comentarios de Facebook. Para nuevos mensajes o comentarios, suscribe en Webhooks.
                         </p>
                       </div>
                     </div>
@@ -2509,7 +2509,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Mensajes de Messenger</strong>
-                          <span>Recibir y responder DMs desde la bandeja de chat. Requiere sesión iniciada en Meta.</span>
+                          <span>Recibir y responder DMs desde la bandeja de chat.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge variant={getMetaMessagingStatusVariant(messengerMessagingEnabled, canEnableMessengerMessaging)}>
@@ -2552,7 +2552,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Instagram</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa el Instagram User access token generado desde Instagram Login para perfilar contactos, DMs y comentarios. Para mensajes y comentarios, primero inicia sesión en Meta/Instagram.
+                          Usa el Instagram User access token generado desde Instagram Login para perfilar contactos, DMs y comentarios.
                         </p>
                       </div>
                     </div>
@@ -2606,7 +2606,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Instagram DM</strong>
-                          <span>Nombres, fotos y respuestas usan el token directo. Requiere sesión iniciada e Instagram DM activo.</span>
+                          <span>Nombres, fotos y respuestas usan el token directo.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge
@@ -2626,7 +2626,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Comentarios de Instagram</strong>
-                          <span>Guardar autores, fotos y comentarios nuevos. Necesita sesión activa y token de Instagram válido.</span>
+                          <span>Guardar autores, fotos y comentarios nuevos. Necesita token de Instagram válido.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge variant={getMetaMessagingStatusVariant(instagramCommentsEnabled, canEnableInstagramComments)}>
@@ -2705,7 +2705,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <figure className={styles.webhookTutorialItem}>
                       <p className={styles.webhookTutorialTitle}>Conexión de Messenger (Webhooks)</p>
                       <p className={styles.webhookTutorialDescription}>
-                        Entra a Meta Developers con tu cuenta y suscribe la Página antes de activar mensajes o comentarios.
+                        Conecta las páginas de Facebook para generar tokens de acceso y configurar suscripciones a webhooks.
                       </p>
                       <img
                         src="/meta-tutorial-messenger.png"
@@ -2717,7 +2717,7 @@ export const MetaAdsIntegration: React.FC = () => {
                     <figure className={styles.webhookTutorialItem}>
                       <p className={styles.webhookTutorialTitle}>Conexión de Instagram (Login + Webhooks)</p>
                       <p className={styles.webhookTutorialDescription}>
-                        Inicia sesión con Instagram, genera token y pégalo aquí; luego conecta webhooks del objeto Instagram.
+                        Agrega una cuenta de Instagram para generar tokens de acceso y configurar suscripciones a webhooks.
                       </p>
                       <img
                         src="/meta-tutorial-instagram.png"
@@ -2731,7 +2731,8 @@ export const MetaAdsIntegration: React.FC = () => {
                   <ol className={styles.webhookSteps}>
                     <li><strong>Facebook / Messenger:</strong> en Meta Developers entra a <strong>Configuración de la API con Facebook</strong> → <strong>Webhooks</strong>, pega la <strong>URL de devolución de llamada</strong> y el <strong>token de verificación</strong> de arriba, da <strong>Verificar y guardar</strong> y suscríbete a los campos.</li>
                     <li><strong>Instagram va en otro lugar:</strong> entra a <strong>Configuración de la API con inicio de sesión de empresa de Instagram</strong>.</li>
-                    <li>Ahí primero, en <strong>Generar tokens de acceso</strong>, agrega tu cuenta de Instagram: te pedirá <strong>iniciar sesión</strong> para generar el <strong>Instagram User access token</strong> que normalmente empieza con <strong>IGA...</strong>. Ese token se pega en el recuadro de Instagram de esta pantalla.</li>
+                    <li><strong>2. Generar tokens de acceso:</strong> Conecta las páginas de Facebook para generar tokens de acceso y configurar suscripciones a webhooks.</li>
+                    <li><strong>2. Generar tokens de acceso:</strong> Agrega una cuenta de Instagram para generar tokens de acceso y configurar suscripciones a webhooks.</li>
                     <li>No pegues ahi el <strong>System User Access Token</strong> ni el <strong>Page token</strong>: esos son para Meta Ads/Messenger. Para Instagram necesitas el token de Instagram Login con <strong>instagram_business_basic</strong>, <strong>instagram_business_manage_messages</strong> y, si usaras comentarios, <strong>instagram_business_manage_comments</strong>.</li>
                     <li>Ya con el token, en <strong>Configurar webhooks</strong> pega la <strong>misma URL</strong> y el <strong>mismo token de verificación</strong> de arriba, y suscríbete a los campos.</li>
                     <li>Si iniciaste sesión con Facebook, la suscripción de la Página suele quedar automática; en Instagram hazla manual si no aparece.</li>
