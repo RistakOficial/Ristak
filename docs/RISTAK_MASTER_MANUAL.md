@@ -1383,6 +1383,14 @@ ruta predeterminada de cada dominio puede apuntar a un sitio completo o a una
 pagina especifica (`siteId + pageId`): cuando apunta a una pagina, esa pagina
 abre en la raiz de ese dominio (`https://dominio/`) y su slug propio sigue
 resolviendo como ruta directa.
+La ruta `/meta-privacy` esta reservada por el sistema en cualquier host publico
+de Ristak, incluyendo el dominio Render `*.onrender.com` y dominios publicos de
+Sites. Siempre responde una Privacy Policy publica para Meta/Facebook/Instagram
+antes de resolver el dashboard, calendarios o paginas editables del usuario, por
+lo que ningun Site, slug o pagina personalizada puede sobrescribirla. El
+contenido toma nombre, email, telefono, direccion y sitio web desde
+`account_business_profile` (Configuracion > Cuenta) y usa el usuario admin activo
+solo como respaldo para nombre/email; no depende de secrets externos.
 Configuracion > Dominios separa la lista de dominios publicos de la configuracion
 de cada dominio: el usuario agrega dominios con "Agregar dominio", el modal
 valida que el dominio responda a esta instalacion de Ristak en Render antes de

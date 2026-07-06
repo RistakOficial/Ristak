@@ -62,6 +62,10 @@ import {
   getMediaAssetBunnyStreamAnalytics,
   listMediaAssets
 } from '../services/mediaStorageService.js'
+import {
+  isMetaPrivacyPolicyPath,
+  renderMetaPrivacyPolicyHtml
+} from '../services/publicMetaPrivacyPolicyService.js'
 import { getVideoPlaybackAggregate, getVideoPlaybackViewers } from '../services/videoTrackingService.js'
 import { logger } from '../utils/logger.js'
 import { requestHasNoTrack } from '../utils/noTracking.js'
@@ -924,6 +928,14 @@ function sendDomainError(req, res, status, message) {
   return res.status(status).type('html').send(renderDomainErrorHtml({ host, message }))
 }
 
+function getRequestProtocol(req) {
+  const forwardedProtocol = String(req.headers?.['x-forwarded-proto'] || req.protocol || 'https')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+  return forwardedProtocol === 'http' ? 'http' : 'https'
+}
+
 function decodePathSegment(segment) {
   try {
     return decodeURIComponent(segment)
@@ -979,6 +991,18 @@ export async function publicSiteHostMiddleware(req, res, next) {
 
     const host = getRequestHost(req)
     if (!host) return next()
+
+    if (isMetaPrivacyPolicyPath(req.path)) {
+      if (req.method !== 'GET' && req.method !== 'HEAD') {
+        return sendDomainError(req, res, 404, 'Ruta no disponible')
+      }
+
+      res.set('Cache-Control', 'no-store')
+      return res.status(200).type('html').send(await renderMetaPrivacyPolicyHtml({
+        host,
+        protocol: getRequestProtocol(req)
+      }))
+    }
 
     const appDomainResolution = await resolveConnectedAppDomainForHost(host)
     if (appDomainResolution.ok) {
