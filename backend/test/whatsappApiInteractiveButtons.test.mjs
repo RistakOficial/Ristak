@@ -59,6 +59,8 @@ async function snapshotAppConfig(keys = [], callback) {
 async function withYCloudMessageCapture(callback) {
   await initializeMasterKey()
   const keys = getWhatsAppApiConfigKeys()
+  const businessPhone = '+526561234567'
+  const phoneNumberId = 'phone_ycloud_buttons_test'
   const configKeys = [
     keys.enabled,
     keys.apiKey,
@@ -69,12 +71,58 @@ async function withYCloudMessageCapture(callback) {
     keys.lastError
   ]
   const captures = []
+  captures.openReplyWindow = async (phone, existingContactId = '') => {
+    const now = new Date().toISOString()
+    const suffix = String(phone || '').replace(/\D/g, '') || randomUUID().replace(/-/g, '')
+    const contactId = existingContactId || `ycloud_buttons_contact_${suffix}`
+    const messageId = `ycloud_buttons_inbound_${suffix}`
+
+    if (!existingContactId) {
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, full_name, first_name, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          phone = excluded.phone,
+          updated_at = excluded.updated_at
+      `, [
+        contactId,
+        phone,
+        'Cliente Botones',
+        'Cliente',
+        'WhatsApp_API',
+        now,
+        now
+      ])
+    }
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+        business_phone, business_phone_number_id, transport, direction, message_type,
+        message_text, status, message_timestamp, created_at, updated_at
+      ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text', ?, 'received', ?, ?, ?)
+    `, [
+      messageId,
+      messageId,
+      contactId,
+      phone,
+      phone,
+      businessPhone,
+      businessPhone,
+      phoneNumberId,
+      'Respuesta reciente del cliente',
+      now,
+      now,
+      now
+    ])
+  }
 
   return snapshotAppConfig(configKeys, async () => {
     await setAppConfig(keys.enabled, '1')
     await setAppConfig(keys.apiKey, encrypt('ycloud_test_secret'))
-    await setAppConfig(keys.senderPhone, '+526561234567')
-    await setAppConfig(keys.phoneNumberId, 'phone_ycloud_buttons_test')
+    await setAppConfig(keys.senderPhone, businessPhone)
+    await setAppConfig(keys.phoneNumberId, phoneNumberId)
     await setAppConfig(keys.wabaId, 'waba_ycloud_buttons_test')
     await setAppConfig(keys.provider, 'ycloud')
     await setAppConfig(keys.lastError, '')
@@ -156,6 +204,8 @@ test('envía botones interactivos de respuesta por YCloud', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const to = '+5215511112222'
     try {
+      await captures.openReplyWindow(to)
+
       await sendWhatsAppApiInteractiveMessage({
         to,
         body: 'Elige una opción',
@@ -589,6 +639,7 @@ test('automatización de WhatsApp queda esperando botón y continúa por la sali
          VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
         [automationId, 'Test botón WhatsApp', JSON.stringify(flow), JSON.stringify(flow)]
       )
+      await captures.openReplyWindow(phone, contactId)
 
       await handleAutomationEvent('contact-created', { contactId })
 
@@ -688,6 +739,7 @@ test('automatización con respaldo QR usa WhatsApp API primero cuando está disp
          VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
         [automationId, 'Test WhatsApp QR mode', JSON.stringify(flow), JSON.stringify(flow)]
       )
+      await captures.openReplyWindow(phone, contactId)
 
       await handleAutomationEvent('contact-created', { contactId })
 

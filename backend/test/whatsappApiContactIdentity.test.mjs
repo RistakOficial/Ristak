@@ -1117,6 +1117,138 @@ test('envio API fuera de ventana usa QR en preflight sin llamar YCloud', async (
   }
 })
 
+test('envio API sin inbound conocido usa QR en preflight sin llamar YCloud', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52988${suffix}`
+  const businessPhone = `+52654${suffix}`
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const phoneNumberId = `phone_api_qr_unknown_window_${id}`
+  const contactId = `rstk_contact_api_qr_unknown_window_${id}`
+  const externalId = `manual_chat_unknown_window_${id}`
+  const body = 'Hola, esto tampoco debe tocar la API'
+  const now = new Date().toISOString()
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+  const sentMessages = []
+  let ycloudPostCalls = 0
+
+  await cleanup({ contactId, messageId: externalId, phone })
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_qr_unknown_window_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_api_qr_unknown_window_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_api_qr_unknown_window_test', ?, ?, 'API QR Unknown Window Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+
+      await db.run(`
+        INSERT INTO whatsapp_qr_sessions (
+          id, phone_number_id, expected_phone, connected_phone, status,
+          consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `qr_${phoneNumberId}`,
+        phoneNumberId,
+        businessPhone,
+        businessPhone,
+        QR_CONSENT_TEXT
+      ])
+
+      await db.run(`
+        INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+        VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+      `, [
+        phoneNumberId,
+        JSON.stringify({
+          me: { id: connectedJid },
+          registered: true
+        })
+      ])
+
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, full_name, first_name, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `, [
+        contactId,
+        phone,
+        'Cliente Sin Inbound',
+        'Cliente',
+        'WhatsApp_API',
+        now,
+        now
+      ])
+
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({ connectedJid, sentMessages }))
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        const path = parsed.pathname.replace(/^\/v2/, '')
+        const method = String(options.method || 'GET').toUpperCase()
+        if (path === '/whatsapp/messages' && method === 'POST') {
+          ycloudPostCalls += 1
+          throw new Error('YCloud no debe recibir mensajes sin ventana de respuesta conocida')
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      const result = await sendWhatsAppApiTextMessage({
+        to: phone,
+        from: businessPhone,
+        text: body,
+        externalId,
+        contactId,
+        phoneNumberId,
+        skipQrSendProtection: true
+      })
+
+      assert.equal(result.transport, 'qr')
+      assert.equal(result.fallback, true)
+      assert.equal(result.fallbackFrom, 'api')
+      assert.match(result.routingReason, /No hay una respuesta reciente del cliente registrada/)
+      assert.equal(ycloudPostCalls, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.equal(sentMessages[0].payload.text, body)
+
+      const message = await db.get(`
+        SELECT transport, routing_reason, status, error_code, error_message, message_text
+        FROM whatsapp_api_messages
+        WHERE contact_id = ? AND direction = 'outbound' AND message_text = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [contactId, body])
+
+      assert.equal(message.transport, 'qr')
+      assert.equal(message.error_code, null)
+      assert.equal(message.error_message, null)
+      assert.equal(message.message_text, body)
+      assert.match(message.routing_reason, /No hay una respuesta reciente del cliente registrada/)
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId: externalId, phone })
+  }
+})
+
 test('envio API fuera de ventana usa QR aunque el QR viva en otro registro del mismo numero', async () => {
   const id = randomUUID()
   const suffix = Date.now().toString().slice(-7)

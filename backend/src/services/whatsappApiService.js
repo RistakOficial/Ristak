@@ -90,6 +90,8 @@ const MAX_WHATSAPP_VIDEO_OUTPUT_BYTES = 16 * 1024 * 1024
 const WHATSAPP_VIDEO_MIME_TYPE = 'video/mp4'
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000
+const WHATSAPP_REPLY_WINDOW_CLOSED_REASON = 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
+const WHATSAPP_REPLY_WINDOW_UNKNOWN_REASON = 'No hay una respuesta reciente del cliente registrada; WhatsApp API solo permite mensajes libres dentro de la ventana de 24 horas.'
 const WHATSAPP_API_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_API_PROFILE_PICTURE_BATCH_LIMIT = 40
 const WHATSAPP_PROFILE_PICTURE_BACKFILL_DEFAULT_LIMIT = 1000
@@ -1286,11 +1288,12 @@ function mergeMediaMetadata(...values) {
 }
 
 async function uploadPreparedMediaToYCloud({ config, fromPhone, media, type } = {}) {
+  const uploadMimeType = cleanMimeType(media?.uploadMimeType || media?.mimeType)
   const uploaded = await ycloudUploadWhatsAppMedia({
     apiKey: config?.apiKey,
     phoneNumber: fromPhone,
     buffer: media?.buffer,
-    mimeType: media?.mimeType,
+    mimeType: uploadMimeType || media?.mimeType,
     filename: media?.filename
   })
 
@@ -1299,13 +1302,16 @@ async function uploadPreparedMediaToYCloud({ config, fromPhone, media, type } = 
     providerMediaId: uploaded.providerMediaId,
     provider: uploaded.provider,
     providerMediaExpiresAt: uploaded.expiresAt,
-    mimeType: media?.mimeType || uploaded.mimeType || '',
+    mimeType: uploadMimeType || uploaded.mimeType || '',
     filename: media?.filename || uploaded.filename || '',
     size: media?.size || uploaded.size || null,
     storage: 'provider',
     storageProvider: PROVIDER_NAME,
     uploadType: type || '',
-    metadata: media?.metadata || {},
+    metadata: {
+      ...(media?.metadata || {}),
+      ...(media?.mimeType && uploadMimeType && media.mimeType !== uploadMimeType ? { originalUploadMimeType: media.mimeType } : {})
+    },
     rawUpload: uploaded.raw || {}
   }
 }
@@ -2716,7 +2722,7 @@ async function getOfficialApiClosedReplyWindowReason({ contactId, toPhone, fromP
     contactClauses.push(`(phone IN (${contactPhoneMatches.clause}) OR from_phone IN (${contactPhoneMatches.clause}))`)
     params.push(...contactPhoneMatches.params, ...contactPhoneMatches.params)
   }
-  if (!contactClauses.length) return ''
+  if (!contactClauses.length) return WHATSAPP_REPLY_WINDOW_UNKNOWN_REASON
 
   const businessClauses = []
   const businessPhoneMatches = buildSqlInClause(buildPhoneMatchCandidates(businessPhone))
@@ -2740,11 +2746,11 @@ async function getOfficialApiClosedReplyWindowReason({ contactId, toPhone, fromP
   `, params).catch(() => null)
 
   const lastInboundAt = toDateTime(row?.message_timestamp || row?.created_at)
-  if (!lastInboundAt) return ''
+  if (!lastInboundAt) return WHATSAPP_REPLY_WINDOW_UNKNOWN_REASON
   const lastInboundMs = Date.parse(lastInboundAt)
-  if (!Number.isFinite(lastInboundMs)) return ''
+  if (!Number.isFinite(lastInboundMs)) return WHATSAPP_REPLY_WINDOW_UNKNOWN_REASON
   return Date.now() - lastInboundMs >= WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS
-    ? 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
+    ? WHATSAPP_REPLY_WINDOW_CLOSED_REASON
     : ''
 }
 
@@ -2859,7 +2865,7 @@ function getOfficialApiConversationWindowReason(error) {
   const text = getOfficialApiErrorText(error)
   if (!text) return ''
   if (/\b(131047|470)\b/.test(text) || /24.?HOUR|24 HORAS|CUSTOMER SERVICE WINDOW|OUTSIDE.*WINDOW/i.test(text)) {
-    return 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
+    return WHATSAPP_REPLY_WINDOW_CLOSED_REASON
   }
   return ''
 }

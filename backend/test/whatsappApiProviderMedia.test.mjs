@@ -81,6 +81,10 @@ function restoreMediaStorageEnv(snapshot) {
   }
 }
 
+function normalizeDigits(value = '') {
+  return String(value || '').replace(/\D/g, '')
+}
+
 function forceLocalMediaStorageForProviderPreview() {
   process.env.MEDIA_STORAGE_PROVIDER = 'local'
   process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'false'
@@ -133,6 +137,8 @@ async function withYCloudProviderMediaCapture(callback) {
   await initializeMasterKey()
   const previousMediaStorageEnv = snapshotMediaStorageEnv()
   const keys = getWhatsAppApiConfigKeys()
+  const businessPhone = '+526561234567'
+  const phoneNumberId = 'phone_ycloud_provider_media_test'
   const configKeys = [
     keys.enabled,
     keys.apiKey,
@@ -144,7 +150,51 @@ async function withYCloudProviderMediaCapture(callback) {
   ]
   const captures = {
     uploads: [],
-    messages: []
+    messages: [],
+    openReplyWindow: async (phone) => {
+      const now = new Date().toISOString()
+      const digits = normalizeDigits(phone) || randomUUID().replace(/-/g, '')
+      const contactId = `provider_media_contact_${digits}`
+      const messageId = `provider_media_inbound_${digits}`
+
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, full_name, first_name, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          phone = excluded.phone,
+          updated_at = excluded.updated_at
+      `, [
+        contactId,
+        phone,
+        'Cliente Media Provider',
+        'Cliente',
+        'WhatsApp_API',
+        now,
+        now
+      ])
+
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text', ?, 'received', ?, ?, ?)
+      `, [
+        messageId,
+        messageId,
+        contactId,
+        phone,
+        phone,
+        businessPhone,
+        businessPhone,
+        phoneNumberId,
+        'Respuesta reciente del cliente',
+        now,
+        now,
+        now
+      ])
+    }
   }
 
   return snapshotAppConfig(configKeys, async () => {
@@ -152,8 +202,8 @@ async function withYCloudProviderMediaCapture(callback) {
     try {
       await setAppConfig(keys.enabled, '1')
       await setAppConfig(keys.apiKey, encrypt('ycloud_provider_media_secret'))
-      await setAppConfig(keys.senderPhone, '+526561234567')
-      await setAppConfig(keys.phoneNumberId, 'phone_ycloud_provider_media_test')
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
       await setAppConfig(keys.wabaId, 'waba_ycloud_provider_media_test')
       await setAppConfig(keys.provider, 'ycloud')
       await setAppConfig(keys.lastError, '')
@@ -210,6 +260,8 @@ test('envío API de imagen sube media al proveedor y conserva preview interno si
     let previewMediaAssetId = ''
 
     try {
+      await captures.openReplyWindow(to)
+
       const response = await sendWhatsAppApiImageMessage({
         to,
         imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
@@ -253,7 +305,7 @@ test('envío API de imagen sube media al proveedor y conserva preview interno si
       assert.match(raw.image.previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
       previewMediaAssetId = raw.image.previewMediaAssetId
     } finally {
-      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ?', ['ycloud_provider_message_1', to])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
       if (previewMediaAssetId) {
         await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
       }
@@ -270,6 +322,8 @@ test('envío API de ubicación manda payload location y lo persiste en historial
     const externalId = `provider-location-${suffix}`
 
     try {
+      await captures.openReplyWindow(to)
+
       const response = await sendWhatsAppApiLocationMessage({
         to,
         latitude: 31.6904,
@@ -306,7 +360,7 @@ test('envío API de ubicación manda payload location y lo persiste en historial
       assert.equal(raw.location.longitude, -106.4245)
       assert.equal(raw.location.address, 'Ciudad Juárez')
     } finally {
-      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ?', ['ycloud_provider_message_1', to])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
       await db.run('DELETE FROM contacts WHERE phone = ?', [to])
     }
@@ -320,6 +374,8 @@ test('envío API de documento conserva metadata del archivo sin guardar URL prop
     const externalId = `provider-document-${suffix}`
 
     try {
+      await captures.openReplyWindow(to)
+
       const response = await sendWhatsAppApiDocumentMessage({
         to,
         documentDataUrl: PDF_DATA_URL,
@@ -357,7 +413,7 @@ test('envío API de documento conserva metadata del archivo sin guardar URL prop
       assert.equal(raw.document.filename, 'contrato.pdf')
       assert.equal(raw.document.storage, 'provider')
     } finally {
-      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ?', ['ycloud_provider_message_1', to])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
       await db.run('DELETE FROM contacts WHERE phone = ?', [to])
     }
@@ -371,6 +427,8 @@ test('envío API de audio sube nota de voz al proveedor sin usar URL propia', as
     const externalId = `provider-audio-${suffix}`
 
     try {
+      await captures.openReplyWindow(to)
+
       const response = await sendWhatsAppApiAudioMessage({
         to,
         audioDataUrl: OGG_OPUS_DATA_URL,
@@ -400,15 +458,16 @@ test('envío API de audio sube nota de voz al proveedor sin usar URL propia', as
       )
       assert.ok(row)
       assert.equal(row.media_url, null)
-      assert.equal(row.media_mime_type, 'audio/ogg; codecs=opus')
+      assert.equal(row.media_mime_type, 'audio/ogg')
       assert.equal(row.media_filename, 'whatsapp-audio.ogg')
       assert.equal(row.media_duration_ms, 1200)
       const raw = JSON.parse(row.raw_payload_json)
       assert.equal(raw.audio.id, 'provider_media_1')
       assert.equal(raw.audio.storage, 'provider')
       assert.equal(raw.audio.storageProvider, 'ycloud')
+      assert.equal(raw.audio.metadata.originalUploadMimeType, 'audio/ogg; codecs=opus')
     } finally {
-      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ?', ['ycloud_provider_message_1', to])
+      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
       await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
       await db.run('DELETE FROM contacts WHERE phone = ?', [to])
     }
@@ -423,6 +482,8 @@ test('envío API de video comprime a MP4 y manda media tipo video', async () => 
       const externalId = `provider-video-${suffix}`
 
       try {
+        await captures.openReplyWindow(to)
+
         const response = await sendWhatsAppApiVideoMessage({
           to,
           videoDataUrl: WEBM_VIDEO_DATA_URL,
@@ -462,7 +523,7 @@ test('envío API de video comprime a MP4 y manda media tipo video', async () => 
         assert.equal(raw.video.storageProvider, 'ycloud')
         assert.equal(raw.video.metadata.originalMimeType, 'video/webm')
       } finally {
-        await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ?', ['ycloud_provider_message_1', to])
+        await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
         await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
         await db.run('DELETE FROM contacts WHERE phone = ?', [to])
       }

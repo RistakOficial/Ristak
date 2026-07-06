@@ -2501,8 +2501,30 @@ function isPhoneQrConnected(phone?: WhatsAppApiPhoneNumber | null) {
   return String(phone?.qr_status || '').trim().toLowerCase() === 'connected' || Boolean(phone?.qr_send_enabled && phone?.qr_connected_phone)
 }
 
+function isPhoneQrReadyForSend(phone?: WhatsAppApiPhoneNumber | null) {
+  return Boolean(phone?.qr_send_enabled) && String(phone?.qr_status || '').trim().toLowerCase() === 'connected'
+}
+
 function isPhoneApiEnabled(phone?: WhatsAppApiPhoneNumber | null, status?: WhatsAppApiStatus | null) {
   return Boolean(status?.connected) && Number(phone?.api_send_enabled ?? 1) !== 0
+}
+
+function isInsideWhatsAppReplyWindow(date?: string | null) {
+  if (!date) return false
+  const timestamp = parseSortableDateValue(date)
+  if (!timestamp) return false
+  return Date.now() - timestamp < 24 * 60 * 60 * 1000
+}
+
+function desktopMessageCanOpenWhatsAppReplyWindow(message: DesktopChatMessage) {
+  if (message.direction !== 'inbound') return false
+  if (message.subject) return false
+
+  const transport = String(message.transport || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (transport.startsWith('ghl_')) return transport === 'ghl_whatsapp' || transport === 'ghl_whatsapp_api'
+  if (transport === 'sms_qr' || transport === 'messenger' || transport === 'instagram' || transport === 'email') return false
+
+  return !transport || ['api', 'qr', 'whatsapp', 'whatsapp_api', 'whatsapp_qr', 'baileys', 'bailey'].includes(transport)
 }
 
 function getMessageBusinessPhone(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
@@ -2784,6 +2806,21 @@ export const DesktopChat: React.FC = () => {
     : 'Sin número configurado'
   const selectedBusinessPhoneValue = getBusinessPhoneValue(selectedBusinessPhone)
   const whatsappConnected = Boolean(whatsappStatus?.connected && selectedBusinessPhoneValue)
+  const lastInboundForSelectedPhone = useMemo(() => {
+    return [...messages]
+      .filter((message) => {
+        if (!desktopMessageCanOpenWhatsAppReplyWindow(message)) return false
+        if (!selectedBusinessPhoneValue) return true
+        return phoneValueMatches(message.businessPhone, selectedBusinessPhoneValue)
+      })
+      .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
+  }, [messages, selectedBusinessPhoneValue])
+  const apiReplyWindowOpen = isInsideWhatsAppReplyWindow(lastInboundForSelectedPhone?.date)
+  const selectedQrReady = isPhoneQrReadyForSend(selectedBusinessPhone)
+  const selectedApiUnavailable = selectedBusinessPhone?.availability?.apiAvailable === false || Number(selectedBusinessPhone?.api_send_enabled ?? 1) === 0
+  const nativeWhatsAppTransport: 'api' | 'qr' = selectedQrReady && (!apiReplyWindowOpen || !whatsappConnected || selectedApiUnavailable)
+    ? 'qr'
+    : 'api'
   useEffect(() => {
     setCommentReplyTarget(null)
     if (!activeContact) {
@@ -3218,12 +3255,15 @@ export const DesktopChat: React.FC = () => {
     ? [selectedBusinessPhone]
     : []
   const whatsappApiSourcesAvailable = Boolean(whatsappStatus?.connected && whatsappComposerPhones.some((phone) => getBusinessPhoneValue(phone)))
+  const whatsappNativeSourcesAvailable = whatsappComposerPhones.some((phone) => (
+    Boolean(getBusinessPhoneValue(phone)) && (isPhoneApiEnabled(phone, whatsappStatus) || isPhoneQrReadyForSend(phone))
+  ))
   const canSendMessenger = metaMessengerConnected || highLevelConnected
   const canSendInstagram = metaInstagramConnected || highLevelConnected
   const emailChannelConnected = highLevelConnected || emailConnected
   const composerChannelOptions = COMPOSER_CHANNEL_OPTIONS.flatMap((option) => {
     if (option.value === 'whatsapp') {
-      const whatsappDisabled = !activeContact?.phone || (!whatsappApiSourcesAvailable && !highLevelConnected)
+      const whatsappDisabled = !activeContact?.phone || (!whatsappNativeSourcesAvailable && !highLevelConnected)
       if (whatsappComposerPhones.length === 0) return [{ ...option, icon: renderComposerChannelIcon(option.value), disabled: whatsappDisabled }]
       return whatsappComposerPhones.map((phone) => ({
         value: `whatsapp:${phone.id}`,
@@ -3254,7 +3294,7 @@ export const DesktopChat: React.FC = () => {
   const composerChannelReady = isEmailComposer
     ? Boolean(hasEmailAccess && activeContact?.email && emailChannelConnected)
     : composerChannel === 'whatsapp'
-    ? Boolean(activeContact?.phone && (whatsappConnected || highLevelConnected))
+    ? Boolean(activeContact?.phone && (whatsappConnected || selectedQrReady || highLevelConnected))
     : composerChannel === 'messenger'
     ? Boolean(hasDetectedMessenger && canSendMessenger)
     : Boolean(hasDetectedInstagram && canSendInstagram)
@@ -3270,8 +3310,8 @@ export const DesktopChat: React.FC = () => {
     ? 'Este contacto no tiene teléfono guardado.'
     : composerChannel === 'whatsapp' && whatsappApiSourcesAvailable && !selectedBusinessPhoneValue && !highLevelConnected
     ? 'Elige una caja de WhatsApp para responder.'
-    : composerChannel === 'whatsapp' && !whatsappApiSourcesAvailable && !highLevelConnected
-    ? 'Conecta WhatsApp API para responder desde Ristak.'
+    : composerChannel === 'whatsapp' && !whatsappNativeSourcesAvailable && !highLevelConnected
+    ? 'Conecta WhatsApp API o QR para responder desde Ristak.'
     : composerChannel === 'messenger' && !hasDetectedMessenger
     ? 'Este contacto no tiene Messenger detectado.'
     : composerChannel === 'instagram' && !hasDetectedInstagram
@@ -5801,7 +5841,7 @@ export const DesktopChat: React.FC = () => {
     const sendAttachmentsThroughHighLevel = attachmentsToSend.length > 0 && highLevelConnected && (
       composerChannel === 'messenger' ||
       composerChannel === 'instagram' ||
-      (composerChannel === 'whatsapp' && !whatsappConnected)
+      (composerChannel === 'whatsapp' && !whatsappConnected && !selectedQrReady)
     )
     const sendAttachmentsThroughNativeMeta = attachmentsToSend.length > 0 && (
       (composerChannel === 'messenger' && metaMessengerConnected && !sendAttachmentsThroughHighLevel) ||
@@ -5813,8 +5853,8 @@ export const DesktopChat: React.FC = () => {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar audio por WhatsApp.')
         return
       }
-      if (!whatsappConnected) {
-        showToast('warning', 'Conecta WhatsApp para audio', 'Los mensajes de voz salen por WhatsApp API.')
+      if (!whatsappConnected && !selectedQrReady) {
+        showToast('warning', 'Conecta WhatsApp para audio', 'Los mensajes de voz salen por WhatsApp API o QR.')
         return
       }
     } else if (sendAttachmentsThroughNativeMeta) {
@@ -5825,8 +5865,8 @@ export const DesktopChat: React.FC = () => {
         showToast('error', 'Falta el teléfono', 'Guarda el número del contacto antes de mandar archivos por WhatsApp.')
         return
       }
-      if (!whatsappConnected) {
-        showToast('warning', 'Conecta WhatsApp para adjuntos', 'Las fotos y documentos se mandan desde WhatsApp API.')
+      if (!whatsappConnected && !selectedQrReady) {
+        showToast('warning', 'Conecta WhatsApp para adjuntos', 'Las fotos y documentos se mandan desde WhatsApp API o QR.')
         return
       }
     } else if (!activeContact.phone && activeConversationChannel !== 'instagram' && activeConversationChannel !== 'messenger') {
@@ -5834,8 +5874,21 @@ export const DesktopChat: React.FC = () => {
       return
     }
 
+    if (
+      composerChannel === 'whatsapp' &&
+      activeContact.phone &&
+      (whatsappConnected || selectedQrReady) &&
+      !apiReplyWindowOpen &&
+      !selectedQrReady &&
+      !sendAttachmentsThroughHighLevel
+    ) {
+      showToast('warning', 'Usa plantilla o QR', 'La ventana de 24 horas está cerrada. Envía una plantilla aprobada o conecta QR para mensajes libres.')
+      return
+    }
+
     const optimisticId = `desktop-chat-${Date.now()}`
     const sentAt = new Date().toISOString()
+    const nativeSendStatus = nativeWhatsAppTransport === 'qr' ? 'enviando por QR' : 'enviando'
     const optimisticMessages: DesktopChatMessage[] = voiceToSend
       ? [{
           id: `${optimisticId}-audio`,
@@ -5843,10 +5896,10 @@ export const DesktopChat: React.FC = () => {
           text: '',
           date: sentAt,
           direction: 'outbound',
-          status: 'enviando',
+          status: sendAttachmentsThroughHighLevel ? 'enviando' : nativeSendStatus,
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
-          transport: sendAttachmentsThroughHighLevel ? activeConversationChannel : 'api',
+          transport: sendAttachmentsThroughHighLevel ? activeConversationChannel : nativeWhatsAppTransport,
           attachment: {
             type: 'audio',
             dataUrl: voiceToSend.dataUrl,
@@ -5862,10 +5915,10 @@ export const DesktopChat: React.FC = () => {
           text: index === 0 ? text : '',
           date: sentAt,
           direction: 'outbound',
-          status: 'enviando',
+          status: sendAttachmentsThroughHighLevel ? 'enviando' : nativeSendStatus,
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
-          transport: sendAttachmentsThroughHighLevel ? activeConversationChannel : 'api',
+          transport: sendAttachmentsThroughHighLevel ? activeConversationChannel : nativeWhatsAppTransport,
           attachment: {
             type: getDraftAttachmentMessageType(attachment),
             dataUrl: attachment.dataUrl,
@@ -5879,10 +5932,10 @@ export const DesktopChat: React.FC = () => {
           text,
           date: sentAt,
           direction: 'outbound',
-          status: 'enviando',
+          status: composerChannel === 'whatsapp' && (whatsappConnected || selectedQrReady) ? nativeSendStatus : 'enviando',
           businessPhone: selectedBusinessPhoneValue,
           businessPhoneNumberId: selectedBusinessPhone?.id || '',
-          transport: whatsappConnected ? 'api' : activeConversationChannel
+          transport: composerChannel === 'whatsapp' && (whatsappConnected || selectedQrReady) ? nativeWhatsAppTransport : activeConversationChannel
         }]
 
     setComposerStatus('sending')
@@ -5917,7 +5970,7 @@ export const DesktopChat: React.FC = () => {
           durationMs: voiceToSend.durationMs,
           voice: true,
           externalId: `${optimisticId}-audio`,
-          transport: 'api',
+          transport: nativeWhatsAppTransport,
           phoneNumberId: selectedBusinessPhone?.id || undefined,
           messageOrigin: 'manual_chat'
         })
@@ -5979,7 +6032,7 @@ export const DesktopChat: React.FC = () => {
                 imageDataUrl: attachment.dataUrl,
                 caption: index === 0 ? text : '',
                 externalId: `${optimisticId}-attachment-${index}`,
-                transport: 'api',
+                transport: nativeWhatsAppTransport,
                 phoneNumberId: selectedBusinessPhone?.id || undefined,
                 messageOrigin: 'manual_chat'
               })
@@ -5993,7 +6046,7 @@ export const DesktopChat: React.FC = () => {
                 videoDataUrl: attachment.dataUrl,
                 caption: index === 0 ? text : '',
                 externalId: `${optimisticId}-attachment-${index}`,
-                transport: 'api',
+                transport: nativeWhatsAppTransport,
                 phoneNumberId: selectedBusinessPhone?.id || undefined,
                 messageOrigin: 'manual_chat'
               })
@@ -6007,7 +6060,7 @@ export const DesktopChat: React.FC = () => {
                 durationMs: undefined,
                 voice: attachment.deliveryMode === 'voice',
                 externalId: `${optimisticId}-attachment-${index}`,
-                transport: 'api',
+                transport: nativeWhatsAppTransport,
                 phoneNumberId: selectedBusinessPhone?.id || undefined,
                 messageOrigin: 'manual_chat'
               })
@@ -6022,7 +6075,7 @@ export const DesktopChat: React.FC = () => {
               mimeType: attachment.mimeType,
               caption: index === 0 ? text : '',
               externalId: `${optimisticId}-attachment-${index}`,
-              transport: 'api',
+              transport: nativeWhatsAppTransport,
               phoneNumberId: selectedBusinessPhone?.id || undefined,
               messageOrigin: 'manual_chat'
             })
@@ -6053,14 +6106,14 @@ export const DesktopChat: React.FC = () => {
               : message
           )))
         }
-      } else if (whatsappConnected && activeContact.phone) {
+      } else if (composerChannel === 'whatsapp' && (whatsappConnected || selectedQrReady) && activeContact.phone) {
         const result = await whatsappApiService.sendText({
           to: activeContact.phone,
           from: selectedBusinessPhoneValue,
           contactId: activeContact.id,
           text,
           externalId: optimisticId,
-          transport: 'api',
+          transport: nativeWhatsAppTransport,
           phoneNumberId: selectedBusinessPhone?.id || undefined,
           messageOrigin: 'manual_chat'
         })
