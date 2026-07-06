@@ -11,6 +11,7 @@ import {
   getDefaultConversationalModel,
   getKnownConversationalAIProvider,
   getKnownConversationalModel,
+  getConversationalModelLabel,
   type ConversationalAIProviderId
 } from '@/constants/conversationalAIProviders'
 import { useAccountCurrency } from '@/hooks'
@@ -204,6 +205,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   const providerConnectionKnown = aiProviders.length > 0
   const selectedProviderConnected = providerConnectionKnown ? Boolean(selectedProviderStatus?.connected) : true
   const selectedModelValue = getKnownConversationalModel(selectedProviderId, draft.model || getDefaultConversationalModel(selectedProviderId))
+  const selectedModelLabel = getConversationalModelLabel(selectedProviderId, selectedModelValue)
   const selectedModelOptions = selectedProvider.modelGroups.map((group) => ({
     label: group.label,
     options: group.options.map((option) => ({ value: option.value, label: option.label }))
@@ -306,7 +308,16 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   })()
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} type="custom" size="md" flushContent title="Nuevo asistente">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      type="custom"
+      size="md"
+      flushContent
+      title="Nuevo asistente"
+      className={styles.wizardModal}
+      contentClassName={styles.wizardContent}
+    >
       <div className={styles.wizard}>
         {questionNumber !== null && (
           <div className={styles.progress}>
@@ -317,7 +328,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           </div>
         )}
 
-        <div className={styles.body}>
+        <div className={`${styles.body} ${step === 'test' ? styles.bodyTest : ''}`}>
           {step !== 'test' && <div className={styles.art}><StepArt kind={step} /></div>}
 
           {step === 'welcome' && (
@@ -804,12 +815,12 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'instructions' && (
             <>
               <h2 className={styles.title}>Tus indicaciones para el asistente</h2>
-              <p className={styles.help}>Nosotros le dimos el alma para que suene humano; aquí <strong>tú mandas</strong>. Escribe las reglas del negocio que <strong>siempre</strong> debe cumplir. Si algo aquí contradice cómo trae configurado el asistente, <strong>ganan tus indicaciones</strong>. <strong>Puedes dejarlo en blanco</strong> y agregarlo luego.</p>
+              <p className={styles.help}>Aquí van las reglas del negocio que <strong>siempre</strong> debe obedecer: qué no decir, qué datos pedir, cuándo frenar y qué promesas evitar. Si esto contradice el estilo normal del asistente, <strong>ganan tus indicaciones</strong>. Puedes dejarlo en blanco y agregarlo luego.</p>
               <textarea
                 className={styles.textarea}
                 value={draft.extraInstructions}
                 rows={6}
-                placeholder={'Ejemplo:\n- No des precios hasta que digan su presupuesto\n- Menciona la promoción de fin de mes\n- Si preguntan por el color rosa, di que no hay\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas'}
+                placeholder={'Ejemplo:\n- No des precios hasta que digan su presupuesto\n- Menciona la promoción de fin de mes\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas\n- Pide nombre completo y servicio de interés antes de pasar a humano'}
                 onChange={(e) => patch({ extraInstructions: e.target.value })}
               />
             </>
@@ -818,7 +829,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'advanced' && (
             <>
               <h2 className={styles.title}>Instrucciones avanzadas</h2>
-              <p className={styles.help}>Esto pisa la estrategia normal de cierre. Déjalo en blanco si quieres que Ristak use la estrategia adaptada a tu negocio.</p>
+              <p className={styles.help}>Esto sólo cambia la <strong>estrategia de cierre</strong>: cómo empuja, negocia, valida objeciones o baja la presión. No lo uses para datos obligatorios; esos van en la caja anterior o en "Qué datos debe pedir". Déjalo en blanco para usar la estrategia normal de Ristak.</p>
               <textarea
                 className={styles.textarea}
                 value={draft.closingStrategyCustom}
@@ -835,7 +846,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
               <p className={styles.help}>Revísalo de un vistazo. Si algo no te late, regresa y cámbialo. Después podrás afinar todo en el editor.</p>
               <div className={styles.recapList}>
                 <RecapRow label="Se llama" value={draft.name.trim() || '—'} />
-                <RecapRow label="IA" value={`${selectedProvider.label} · ${selectedModelValue}`} />
+                <RecapRow label="IA" value={`${selectedProvider.label} · ${selectedModelLabel}`} />
                 <RecapRow label="Su misión" value={draft.objective === 'custom' ? (draft.customObjective.trim() || 'Meta propia') : labelOf(objectiveChoices, draft.objective)} />
                 <RecapRow label="Habla como" value={draft.identityMode === 'user' ? (draft.identityUserName || 'Persona del equipo') : draft.identityMode === 'custom' ? (draft.identityCustomName.trim() || 'Nombre propio') : labelOf(identityChoices, draft.identityMode)} />
                 <RecapRow label="Estilo de venta" value={labelOf(persuasionChoices, draft.persuasionLevel)} />
@@ -868,6 +879,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                   key={testResetKey}
                   agentName={draft.name}
                   getConfig={currentOverrides}
+                  density="compact"
                 />
               </div>
               <p className={styles.fieldHint}>Tip: pídele una cita, pregúntale precios, o mándale un audio a ver si te entiende. Si algo no te late, reconfigúralo.</p>

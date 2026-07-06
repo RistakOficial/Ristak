@@ -1676,8 +1676,15 @@ Ristak tiene dos superficies principales:
   avanzadas, tiempos de respuesta, mensajes en partes, notificaciones mientras el
   agente atiende, objetivo, quien cumple la meta, cierre posterior cuando lo
   cumple la IA o un enlace, datos requeridos, reglas de pase a equipo y alcance
-  de contactos. Las reglas finas de entrada/salida y acciones extra de cierre se
-  ajustan desde el formulario manual avanzado.
+  de contactos. Cuando el proveedor es OpenAI, el modelo default del sistema es
+  `gpt-5.4-mini` (mostrado en UI como ChatGPT GPT-5.4 Mini); las conexiones
+  nuevas de OpenAI y los agentes sin modelo explicito deben caer en ese default.
+  Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
+  el formulario manual avanzado. En el wizard, `extraInstructions` son reglas
+  obligatorias del negocio y mandan sobre estilo/venta salvo limites de seguridad
+  e integridad; `closingStrategyCustom` reemplaza la estrategia de cierre, no es
+  el lugar principal para datos obligatorios. Los datos estrictamente necesarios
+  para avanzar deben vivir en `requiredData`.
 
 Reglas:
 

@@ -38,6 +38,14 @@
   font-family: var(--pc-font);
 }
 
+.phoneMockup[data-preview-density='compact'] {
+  width: min(100%, 320px);
+  height: min(100%, clamp(284px, 44dvh, 430px));
+  min-height: 0;
+  padding: 9px;
+  border-radius: 32px;
+}
+
 .phoneMockup::before {
   position: absolute;
   inset: 5px;
@@ -45,6 +53,11 @@
   border-radius: 33px;
   pointer-events: none;
   content: "";
+}
+
+.phoneMockup[data-preview-density='compact']::before {
+  inset: 4px;
+  border-radius: 28px;
 }
 
 .phoneIsland {
@@ -60,6 +73,12 @@
   transform: translateX(-50%);
 }
 
+.phoneMockup[data-preview-density='compact'] .phoneIsland {
+  top: 17px;
+  width: 76px;
+  height: 21px;
+}
+
 .phoneScreen {
   position: relative;
   z-index: 1;
@@ -73,6 +92,10 @@
   border-radius: 28px;
   background: var(--pc-bg);
   color: var(--pc-text);
+}
+
+.phoneMockup[data-preview-density='compact'] .phoneScreen {
+  border-radius: 24px;
 }
 
 .chatHeader {
@@ -92,6 +115,85 @@
       rgba(var(--pc-bg-rgb), 0.88) 100%
     );
   box-shadow: 0 1px 0 var(--pc-border);
+}
+
+.phoneMockup[data-preview-density='compact'] .chatHeader {
+  grid-template-columns: 29px 35px minmax(0, 1fr) auto;
+  gap: 6px;
+  min-height: 72px;
+  padding: 33px 8px 6px;
+}
+
+.phoneMockup[data-preview-density='compact'] .headerIconButton {
+  width: 29px;
+  height: 31px;
+}
+
+.phoneMockup[data-preview-density='compact'] .avatar {
+  width: 35px;
+  height: 35px;
+  font-size: 12px;
+}
+
+.phoneMockup[data-preview-density='compact'] .avatarBadge {
+  width: 16px;
+  height: 16px;
+}
+
+.phoneMockup[data-preview-density='compact'] .headerIdentity strong {
+  font-size: 14px;
+}
+
+.phoneMockup[data-preview-density='compact'] .headerIdentity span {
+  font-size: 11px;
+}
+
+.phoneMockup[data-preview-density='compact'] .messagesContent {
+  padding: 9px 8px 12px;
+}
+
+.phoneMockup[data-preview-density='compact'] .daySeparator {
+  margin-bottom: 5px;
+}
+
+.phoneMockup[data-preview-density='compact'] .emptyText {
+  max-width: 190px;
+  font-size: 12px;
+}
+
+.phoneMockup[data-preview-density='compact'] .messageBody p,
+.phoneMockup[data-preview-density='compact'] .messageText {
+  font-size: 13px;
+}
+
+.phoneMockup[data-preview-density='compact'] .composer {
+  grid-template-columns: 31px minmax(0, 1fr) 34px;
+  min-height: 42px;
+  padding: 4px 6px;
+}
+
+.phoneMockup[data-preview-density='compact'] .composerPlus {
+  width: 31px;
+  height: 34px;
+}
+
+.phoneMockup[data-preview-density='compact'] .composerPlus svg {
+  width: 24px;
+  height: 24px;
+}
+
+.phoneMockup[data-preview-density='compact'] .messageInputWrap {
+  min-height: 31px;
+}
+
+.phoneMockup[data-preview-density='compact'] .composerInput {
+  height: 30px;
+  font-size: 13px;
+}
+
+.phoneMockup[data-preview-density='compact'] .composerSendButton {
+  width: 34px;
+  height: 34px;
 }
 
 .headerIconButton {

@@ -120,9 +120,10 @@ function toPayload(message: ChatMessage): ConversationalAgentTestMessage {
 interface Props {
   getConfig: () => ConversationalAgentDefInput
   agentName: string
+  density?: 'regular' | 'compact'
 }
 
-export function WizardTestChat({ getConfig, agentName }: Props) {
+export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Props) {
   const { showToast } = useNotification()
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -417,6 +418,7 @@ export function WizardTestChat({ getConfig, agentName }: Props) {
       messages={previewMessages}
       typing={sending}
       emptyText="Escríbele algo para probarlo 👇"
+      density={density}
       composer={(
         <>
           <input ref={photoInputRef} type="file" accept={PHOTO_ACCEPT} multiple hidden onChange={onAttachmentsChange} />

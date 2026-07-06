@@ -73,6 +73,7 @@ interface PhoneChatPreviewProps {
   screenClassName?: string
   chatClassName?: string
   ariaLabel?: string
+  density?: 'regular' | 'compact'
 }
 
 interface PhoneChatPreviewComposerProps {
@@ -426,7 +427,8 @@ export const PhoneChatPreview: React.FC<PhoneChatPreviewProps> = ({
   className = '',
   screenClassName = '',
   chatClassName = '',
-  ariaLabel = 'Vista previa de chat en celular'
+  ariaLabel = 'Vista previa de chat en celular',
+  density = 'regular'
 }) => {
   const initials = getInitials(avatarLabel || title)
   const chatSurfaceRef = useRef<HTMLDivElement | null>(null)
@@ -594,7 +596,7 @@ export const PhoneChatPreview: React.FC<PhoneChatPreviewProps> = ({
   }
 
   return (
-    <div className={`${styles.phoneMockup} ${className}`.trim()} aria-label={ariaLabel}>
+    <div className={`${styles.phoneMockup} ${className}`.trim()} aria-label={ariaLabel} data-preview-density={density}>
       <span className={styles.phoneIsland} aria-hidden="true" />
       <div className={`${styles.phoneScreen} ${screenClassName}`.trim()}>
         <header className={styles.chatHeader}>
