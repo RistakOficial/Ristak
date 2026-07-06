@@ -848,6 +848,94 @@ test('processMetaSocialWebhook refleja respuestas propias a comentarios en el ch
   })
 })
 
+test('processMetaSocialWebhook conserva el texto de comentario Facebook si un duplicado llega sin message', async () => {
+  const senderId = 'psid-comment-preserve-test'
+  const commentId = 'fb-comment-preserve-text'
+  const postId = 'fb-post-preserve-text'
+
+  await initializeMasterKey()
+
+  await snapshotMetaConfig(async () => {
+    await snapshotAppConfig(['meta_facebook_comments_enabled'], async () => {
+      try {
+        await db.run('DELETE FROM meta_social_messages WHERE sender_id = ? OR meta_message_id = ?', [senderId, commentId]).catch(() => undefined)
+        await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE id = ?', [hashTestId('meta_social_contact', `messenger:${senderId}`)]).catch(() => undefined)
+        await db.run('DELETE FROM meta_social_webhook_events WHERE raw_payload_json LIKE ?', [`%${commentId}%`]).catch(() => undefined)
+        await setAppConfig('meta_facebook_comments_enabled', '1')
+
+        await processMetaSocialWebhook({
+          payload: {
+            object: 'page',
+            entry: [
+              {
+                id: 'page-send-test',
+                time: 1783180860,
+                changes: [
+                  {
+                    field: 'feed',
+                    value: {
+                      item: 'comment',
+                      verb: 'add',
+                      comment_id: commentId,
+                      post_id: postId,
+                      from: { id: senderId, name: 'Cliente Facebook' },
+                      message: 'Quiero informes',
+                      created_time: 1783180860
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        })
+
+        await processMetaSocialWebhook({
+          payload: {
+            object: 'page',
+            entry: [
+              {
+                id: 'page-send-test',
+                time: 1783180870,
+                changes: [
+                  {
+                    field: 'feed',
+                    value: {
+                      item: 'comment',
+                      verb: 'add',
+                      comment_id: commentId,
+                      post_id: postId,
+                      from: { id: senderId, name: 'Cliente Facebook' },
+                      created_time: 1783180870
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        })
+
+        const stored = await db.get(
+          `SELECT message_text, message_type, comment_id, post_id
+             FROM meta_social_messages
+            WHERE meta_message_id = ?`,
+          [commentId]
+        )
+
+        assert.equal(stored.message_text, 'Quiero informes')
+        assert.equal(stored.message_type, 'comment')
+        assert.equal(stored.comment_id, commentId)
+        assert.equal(stored.post_id, postId)
+      } finally {
+        await db.run('DELETE FROM meta_social_messages WHERE sender_id = ? OR meta_message_id = ?', [senderId, commentId]).catch(() => undefined)
+        await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
+        await db.run('DELETE FROM contacts WHERE id = ?', [hashTestId('meta_social_contact', `messenger:${senderId}`)]).catch(() => undefined)
+        await db.run('DELETE FROM meta_social_webhook_events WHERE raw_payload_json LIKE ?', [`%${commentId}%`]).catch(() => undefined)
+      }
+    })
+  })
+})
+
 test('processMetaSocialWebhook marca comentarios como eliminados cuando se borra la publicación', async () => {
   const contactId = 'meta_comment_deleted_post_contact'
   const metaContactId = 'meta_comment_deleted_post_profile'

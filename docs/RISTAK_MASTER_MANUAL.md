@@ -1316,11 +1316,14 @@ Ristak usa Meta en varias areas:
   incrementan no leidos ni disparan automatizaciones o agente conversacional.
 - Los comentarios de Facebook e Instagram nunca deben pintar globos vacios en
   Chat o Movil. Si Meta entrega un comentario sin texto, Ristak muestra
-  `Comentario sin texto`; si el comentario, media o publicacion relacionada se
-  elimina o deja de estar disponible por Graph, conserva la fila como historial y
-  muestra `Comentario eliminado`. El contexto de la publicacion comentada se
-  cachea en `meta_social_posts`; si Graph ya no expone el post/media, el chip del
-  globo queda como `Publicacion eliminada` sin borrar el hilo.
+  `Comentario sin texto` solo como fallback visual; ese texto generico no debe
+  persistirse como contenido real del mensaje, porque Meta puede reenviar el
+  mismo `comment_id` sin `message` y no debe pisar el comentario original. Si el
+  comentario, media o publicacion relacionada se elimina o deja de estar
+  disponible por Graph, conserva la fila como historial y muestra
+  `Comentario eliminado`. El contexto de la publicacion comentada se cachea en
+  `meta_social_posts`; si Graph ya no expone el post/media, el chip del globo
+  queda como `Publicacion eliminada` sin borrar el hilo.
 - El enriquecimiento de contactos Meta usa el mismo contrato separado:
   Messenger lee perfil/conversaciones por Facebook Graph con Page token;
   Instagram lee perfiles de DMs y autores de comentarios por Instagram Graph con

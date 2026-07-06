@@ -23,7 +23,6 @@ const META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION = 500
 const META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES = 50000
 const META_SOCIAL_HISTORY_MESSAGE_FIELDS = 'id,message,created_time,from,to,attachments,shares'
 const COMMENT_DELETED_TEXT = 'Comentario eliminado'
-const COMMENT_EMPTY_TEXT = 'Comentario sin texto'
 const POST_DELETED_TEXT = 'Publicación eliminada'
 const metaSocialHistorySyncing = new Set()
 
@@ -401,7 +400,9 @@ function extractCommentEvent({ objectType, entry, change, config = {} }) {
     instagramAccountId: platform === 'instagram' ? igId : '',
     metaMessageId: commentId, // dedup natural (edits/reenvíos llegan con el mismo id)
     messageType: isEcho ? 'comment_reply_public' : 'comment',
-    messageText: text || (verb === 'remove' || verb === 'hide' ? COMMENT_DELETED_TEXT : COMMENT_EMPTY_TEXT),
+    // No persistas "Comentario sin texto" como contenido real: Meta puede reenviar
+    // el mismo comment_id sin message y ese fallback pisaría el texto original.
+    messageText: text || (verb === 'remove' || verb === 'hide' ? COMMENT_DELETED_TEXT : ''),
     mediaUrl: commentMedia.mediaUrl,
     mediaType: commentMedia.mediaType,
     mediaMimeType: '',
