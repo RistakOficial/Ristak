@@ -1100,6 +1100,43 @@
   gap: 8px;
 }
 
+.messageRow {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+}
+
+.messageRowInbound {
+  justify-content: flex-start;
+}
+
+.messageRowOutbound {
+  justify-content: flex-end;
+}
+
+.messageRowSystem {
+  justify-content: center;
+}
+
+.messageStack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: min(72%, 560px);
+  min-width: 0;
+}
+
+.messageRowOutbound .messageStack {
+  align-items: flex-end;
+}
+
+.messageRowSystem .messageStack {
+  align-items: center;
+}
+
 .dayDivider {
   align-self: center;
   padding: 4px 9px;
@@ -1112,7 +1149,7 @@
 }
 
 .messageBubble {
-  max-width: min(72%, 560px);
+  max-width: 100%;
   padding: 10px 12px 8px;
   border: 1px solid var(--chat-border);
   border-radius: 18px 18px 18px 6px;
@@ -1163,8 +1200,8 @@
 }
 
 .messageLocationBubble {
-  width: min(390px, 76%);
-  max-width: min(390px, 76%);
+  width: min(390px, 100%);
+  max-width: min(390px, 100%);
   padding: 4px;
 }
 
@@ -1172,28 +1209,37 @@
   padding: 2px 7px 0;
 }
 
+.messageMediaBubble {
+  width: fit-content;
+  max-width: min(380px, 100%);
+  padding: 4px;
+}
+
+.messageAudioBubble {
+  width: min(390px, 100%);
+  max-width: min(390px, 100%);
+  padding: 9px 11px;
+}
+
 .messageLocation {
-  display: grid;
+  display: block;
   width: 100%;
   min-width: 0;
   overflow: hidden;
-  border: 1px solid var(--chat-border);
+  border: 0;
   border-radius: 15px;
-  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  background: transparent;
   color: inherit;
   text-decoration: none;
-  box-shadow: var(--shadow-xs);
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: transform 0.15s ease;
 }
 
 .messageLocation:hover {
-  border-color: var(--chat-border-strong);
-  background: color-mix(in srgb, var(--surface) 88%, var(--chat-soft));
+  transform: translateY(-1px);
 }
 
 .messageOutbound .messageLocation {
-  border-color: color-mix(in srgb, var(--accent) 20%, var(--chat-border));
-  background: color-mix(in srgb, var(--accent-soft) 22%, var(--surface));
+  background: transparent;
 }
 
 .messageLocationMap {
@@ -1203,7 +1249,7 @@
   width: 100%;
   aspect-ratio: 1.92 / 1;
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: 14px;
   background:
     radial-gradient(circle at 48% 48%, color-mix(in srgb, var(--location-pin-color) 15%, transparent), transparent 18%),
     linear-gradient(118deg, transparent 0 27%, color-mix(in srgb, var(--surface) 82%, transparent) 28% 34%, transparent 35% 100%),
@@ -1284,7 +1330,7 @@
 
 .messageLocationAttribution {
   position: absolute;
-  right: 7px;
+  left: 7px;
   bottom: 6px;
   z-index: 2;
   padding: 2px 5px;
@@ -1335,15 +1381,25 @@
 }
 
 .messageLocationAction {
+  position: absolute;
+  right: 8px;
+  bottom: 7px;
+  z-index: 3;
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
-  gap: 3px;
+  gap: 4px;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--surface-solid) 72%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-solid) 86%, transparent);
   color: var(--accent);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0;
+  line-height: 1;
   white-space: nowrap;
+  backdrop-filter: blur(8px);
 }
 
 .messageLocationCoordinates {
@@ -1625,6 +1681,18 @@
   font-size: 11px;
 }
 
+.messageStack > .messageMeta {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 0 8px;
+  color: var(--color-text-tertiary);
+  opacity: 1;
+}
+
+.messageRowOutbound .messageStack > .messageMeta {
+  align-self: flex-end;
+}
+
 .messageTransport {
   display: inline-flex;
   align-items: center;
@@ -1642,12 +1710,20 @@
 
 .messageRoutingNote {
   display: block;
-  margin-top: 6px;
-  color: currentColor;
+  align-self: flex-start;
+  max-width: 100%;
+  margin-top: 4px;
+  padding: 0 8px;
+  color: var(--color-text-tertiary);
   font-size: 11px;
   font-weight: 520;
   line-height: 1.35;
-  opacity: 0.72;
+  opacity: 1;
+}
+
+.messageRowOutbound .messageRoutingNote {
+  align-self: flex-end;
+  text-align: right;
 }
 
 .errorText,
@@ -1659,6 +1735,51 @@
 
 .errorText {
   color: var(--color-status-error);
+}
+
+.messageErrorBadge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--neg) 34%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--neg) 10%, var(--surface));
+  color: var(--neg);
+  cursor: help;
+}
+
+.messageErrorBadge::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  width: max-content;
+  max-width: min(320px, 58vw);
+  padding: 8px 10px;
+  border: 1px solid var(--chat-border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-solid);
+  color: var(--text);
+  box-shadow: var(--shadow-md);
+  font-size: var(--font-size-xs);
+  font-weight: 550;
+  line-height: 1.35;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.messageErrorBadge:hover::after,
+.messageErrorBadge:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 .scheduledText {
@@ -1744,10 +1865,15 @@
   contain: paint;
 }
 
+.messageMediaBubble .mediaAttachment,
+.messageAudioBubble .audioAttachment {
+  margin: 0;
+}
+
 .mediaAttachmentImage {
-  display: inline-block;
+  display: block;
   width: fit-content;
-  max-width: min(360px, 54vw, 100%);
+  max-width: min(360px, 100%);
   height: auto;
   aspect-ratio: auto;
   background: transparent;
@@ -1771,8 +1897,8 @@
 .mediaAttachmentImage img {
   width: auto;
   height: auto;
-  max-width: min(360px, 54vw, 100%);
-  max-height: min(420px, 56vh);
+  max-width: min(360px, 100%);
+  max-height: min(460px, 58vh);
   object-fit: contain;
   background: transparent;
   border-radius: inherit;
@@ -1784,16 +1910,16 @@
   --audio-dot: var(--color-text-primary);
   --audio-avatar-bg: var(--chat-soft-strong);
   display: grid;
-  grid-template-columns: 34px minmax(150px, 1fr) 42px;
+  grid-template-columns: 42px 34px minmax(150px, 1fr);
   grid-template-rows: 32px 18px;
   grid-template-areas:
-    "play wave avatar"
-    "details details avatar";
+    "avatar play wave"
+    "avatar details details";
   align-items: center;
-  column-gap: 8px;
+  column-gap: 7px;
   row-gap: 3px;
-  width: min(340px, 100%);
-  min-width: min(290px, 58vw);
+  width: min(356px, 100%);
+  min-width: min(300px, 58vw);
   color: inherit;
 }
 
@@ -1890,7 +2016,6 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding-left: 2px;
 }
 
 .audioAttachmentBody strong {

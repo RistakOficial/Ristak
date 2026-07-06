@@ -8775,12 +8775,13 @@ export async function sendWhatsAppApiTemplateMessage({
   if (fallbackSendResponse) {
     return {
       ...fallbackSendResponse,
+      localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null,
       type: 'template',
       template: requestBody.template
     }
   }
 
-  return response
+  return { ...response, localMessageId: persistedMessage?.messageId || null }
 }
 
 export async function sendWhatsAppApiInteractiveMessage({
@@ -8939,9 +8940,14 @@ export async function sendWhatsAppApiInteractiveMessage({
     contactId
   })
   const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-  if (fallbackSendResponse) return fallbackSendResponse
+  if (fallbackSendResponse) {
+    return {
+      ...fallbackSendResponse,
+      localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
+    }
+  }
 
-  return response
+  return { ...response, localMessageId: persistedMessage?.messageId || null }
 }
 
 function buildQrFallbackError(originalError, fallbackError) {
@@ -8979,8 +8985,9 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
       skipQrSendProtection
     })
 
+    let persistedMessage = null
     if (persist) {
-      await upsertMessage({
+      persistedMessage = await upsertMessage({
         payload: {
           id: response.id || externalId || hashId('waqr_send_event', `${fromPhone}|${toPhone}|${body}`),
           type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
@@ -9005,7 +9012,10 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
       })
     }
 
-    return decorateQrFallbackResponse(response, fallbackReason)
+    return {
+      ...decorateQrFallbackResponse(response, fallbackReason),
+      localMessageId: persistedMessage?.messageId || null
+    }
   } catch (fallbackError) {
     if (originalError) throw buildQrFallbackError(originalError, fallbackError)
     throw fallbackError
@@ -9027,8 +9037,9 @@ async function sendLocationViaQrFallback({ fromPhone, toPhone, location, externa
     })
     const responseLocation = normalizeWhatsAppLocation(response.location || location)
 
+    let persistedMessage = null
     if (persist) {
-      await upsertMessage({
+      persistedMessage = await upsertMessage({
         payload: {
           id: response.id || externalId || hashId('waqr_location_event', `${fromPhone}|${toPhone}|${responseLocation?.latitude}|${responseLocation?.longitude}`),
           type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
@@ -9055,6 +9066,7 @@ async function sendLocationViaQrFallback({ fromPhone, toPhone, location, externa
 
     return {
       ...decorateQrFallbackResponse(response, fallbackReason),
+      localMessageId: persistedMessage?.messageId || null,
       location: responseLocation
     }
   } catch (fallbackError) {
@@ -9097,8 +9109,9 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
     if (!finalImage.filename) delete finalImage.filename
     if (mergedMetadata) finalImage.metadata = mergedMetadata
 
+    let persistedMessage = null
     if (persist) {
-      await upsertMessage({
+      persistedMessage = await upsertMessage({
         payload: {
           id: response.id || externalId || hashId('waqr_img_event', `${fromPhone}|${toPhone}|${requestImage?.link || ''}`),
           type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
@@ -9124,6 +9137,7 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
 
     return {
       ...decorateQrFallbackResponse(response, fallbackReason),
+      localMessageId: persistedMessage?.messageId || null,
       image: finalImage,
       localMedia: localMedia
         ? { ...localMedia, publicUrl: localMediaUrl }
@@ -9172,8 +9186,9 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
     if (finalDocument.mimeType) finalDocument.mimetype = finalDocument.mimeType
     if (mergedMetadata) finalDocument.metadata = mergedMetadata
 
+    let persistedMessage = null
     if (persist) {
-      await upsertMessage({
+      persistedMessage = await upsertMessage({
         payload: {
           id: response.id || externalId || hashId('waqr_doc_event', `${fromPhone}|${toPhone}|${finalDocument.link}`),
           type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
@@ -9199,6 +9214,7 @@ async function sendDocumentViaQrFallback({ fromPhone, toPhone, requestDocument, 
 
     return {
       ...decorateQrFallbackResponse(response, fallbackReason),
+      localMessageId: persistedMessage?.messageId || null,
       document: finalDocument,
       localMedia: localMedia
         ? { ...localMedia, publicUrl: localMediaUrl }
@@ -9247,8 +9263,9 @@ async function sendVideoViaQrFallback({ fromPhone, toPhone, requestVideo, videoD
     if (!finalVideo.filename) delete finalVideo.filename
     if (mergedMetadata) finalVideo.metadata = mergedMetadata
 
+    let persistedMessage = null
     if (persist) {
-      await upsertMessage({
+      persistedMessage = await upsertMessage({
         payload: {
           id: response.id || externalId || hashId('waqr_video_event', `${fromPhone}|${toPhone}|${finalVideo.link}`),
           type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
@@ -9274,6 +9291,7 @@ async function sendVideoViaQrFallback({ fromPhone, toPhone, requestVideo, videoD
 
     return {
       ...decorateQrFallbackResponse(response, fallbackReason),
+      localMessageId: persistedMessage?.messageId || null,
       video: finalVideo,
       localMedia: localMedia
         ? { ...localMedia, publicUrl: localMediaUrl }
@@ -9323,8 +9341,9 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
     if (finalAudio.mimeType) finalAudio.mimetype = finalAudio.mimeType
     if (mergedMetadata) finalAudio.metadata = mergedMetadata
 
+    let persistedMessage = null
     if (persist) {
-      await upsertMessage({
+      persistedMessage = await upsertMessage({
         payload: {
           id: response.id || externalId || hashId('waqr_audio_event', `${fromPhone}|${toPhone}|${publicAudioUrl || qrAudioUrl}`),
           type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
@@ -9350,6 +9369,7 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
 
     return {
       ...decorateQrFallbackResponse(response, fallbackReason),
+      localMessageId: persistedMessage?.messageId || null,
       audio: finalAudio,
       localMedia: localMedia
         ? { ...localMedia, publicUrl: localMediaUrl }
@@ -9519,9 +9539,14 @@ export async function sendWhatsAppApiTextMessage({
     contactId
   })
   const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-  if (fallbackSendResponse) return fallbackSendResponse
+  if (fallbackSendResponse) {
+    return {
+      ...fallbackSendResponse,
+      localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
+    }
+  }
 
-  return response
+  return { ...response, localMessageId: persistedMessage?.messageId || null }
 }
 
 export async function sendWhatsAppApiReactionMessage({
@@ -9763,8 +9788,13 @@ export async function sendWhatsAppApiLocationMessage({
       contactId
     })
     const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-    if (fallbackSendResponse) return fallbackSendResponse
-    return { ...response, location }
+    if (fallbackSendResponse) {
+      return {
+        ...fallbackSendResponse,
+        localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
+      }
+    }
+    return { ...response, localMessageId: persistedMessage?.messageId || null, location }
   }
 
   if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
@@ -9889,10 +9919,16 @@ export async function sendWhatsAppApiLocationMessage({
     contactId
   })
   const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-  if (fallbackSendResponse) return fallbackSendResponse
+  if (fallbackSendResponse) {
+    return {
+      ...fallbackSendResponse,
+      localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
+    }
+  }
 
   return {
     ...response,
+    localMessageId: persistedMessage?.messageId || null,
     type: response.type || 'location',
     location: responseLocation
   }
@@ -10105,10 +10141,16 @@ export async function sendWhatsAppApiImageMessage({
     contactId
   })
   const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-  if (fallbackSendResponse) return fallbackSendResponse
+  if (fallbackSendResponse) {
+    return {
+      ...fallbackSendResponse,
+      localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
+    }
+  }
 
   return {
     ...response,
+    localMessageId: persistedMessage?.messageId || null,
     image: {
       ...storedImage,
       ...(response.image || {})
@@ -10319,10 +10361,16 @@ export async function sendWhatsAppApiDocumentMessage({
     contactId
   })
   const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-  if (fallbackSendResponse) return fallbackSendResponse
+  if (fallbackSendResponse) {
+    return {
+      ...fallbackSendResponse,
+      localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
+    }
+  }
 
   return {
     ...response,
+    localMessageId: persistedMessage?.messageId || null,
     document: {
       ...storedDocument,
       ...(response.document || {})
@@ -10546,10 +10594,16 @@ export async function sendWhatsAppApiVideoMessage({
     contactId
   })
   const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-  if (fallbackSendResponse) return fallbackSendResponse
+  if (fallbackSendResponse) {
+    return {
+      ...fallbackSendResponse,
+      localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
+    }
+  }
 
   return {
     ...response,
+    localMessageId: persistedMessage?.messageId || null,
     video: {
       ...storedVideo,
       ...(response.video || {})
@@ -10750,10 +10804,16 @@ export async function sendWhatsAppApiAudioMessage({
     contactId
   })
   const fallbackSendResponse = buildSendResponseFromQrFallback(response, persistedMessage?.fallbackResponse)
-  if (fallbackSendResponse) return fallbackSendResponse
+  if (fallbackSendResponse) {
+    return {
+      ...fallbackSendResponse,
+      localMessageId: fallbackSendResponse.localMessageId || persistedMessage?.messageId || null
+    }
+  }
 
   return {
     ...response,
+    localMessageId: persistedMessage?.messageId || null,
     audio: {
       ...storedAudio,
       ...(response.audio || {}),

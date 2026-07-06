@@ -378,13 +378,14 @@ desplegar, el globo debe mostrar los campos estructurados del correo, incluyendo
 cuando existan y el `Cuerpo` completo a partir de `message_text` o `html_body`
 sanitizado.
 
-Los mensajes de ubicacion de WhatsApp/API y QR deben renderizarse como tarjeta
-de mapa tanto en `/chat` desktop como en `/movil`. El frontend normaliza payloads
+Los mensajes de ubicacion de WhatsApp/API y QR deben renderizarse como mapa
+limpio tanto en `/chat` desktop como en `/movil`. El frontend normaliza payloads
 con `location_latitude`/`location_longitude`, `location`, `locationMessage`,
 `whatsappMessage.location`, `whatsappInboundMessage.location`, `response.location`
-o `request.location`; la tarjeta muestra tiles de OpenStreetMap, pin, nombre o
-direccion y abre Google Maps con las coordenadas. Si el texto recibido solo dice
-`location` o `Ubicacion`, se oculta para no duplicar el contenido debajo del mapa.
+o `request.location`; el globo muestra tiles de OpenStreetMap, pin y accion de
+abrir Maps sin una franja secundaria de titulo/coordenadas dentro del mensaje.
+Si el texto recibido solo dice `location` o `Ubicacion`, se oculta para no
+duplicar el contenido debajo del mapa.
 
 El chat movil permite responder un globo especifico y reaccionar a mensajes
 recibidos cuando el canal expone soporte nativo. La respuesta a un globo normal
@@ -443,9 +444,16 @@ compatibles. Si un video o audio cabe como media directa, la UI pregunta si debe
 mandarse como video/nota de voz o como archivo. Si excede el limite de media
 directa pero cabe como documento, se clasifica automaticamente como archivo. En
 WhatsApp API/QR los adjuntos usan las rutas nativas de imagen, video, audio o
-documento segun esa decision. En Messenger/Instagram nativo el chat conserva
-texto solamente; si HighLevel esta conectado, los adjuntos se publican primero
-como URLs publicas y se envian por `attachments` de HighLevel.
+documento segun esa decision; las notas de voz de WhatsApp se preparan y envian
+como OGG/Opus (`audio/ogg; codecs=opus`) cuando el canal requiere nota de voz. En
+`/chat` desktop, las burbujas de media deben mostrar solo el contenido principal:
+foto/video completo, audio con icono/control del lado izquierdo o mapa completo.
+La hora, etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de
+la burbuja para no crear columnas internas. Los errores de envio no se escriben
+dentro del globo: se muestran como icono externo con detalle en tooltip. En
+Messenger/Instagram nativo el chat conserva texto solamente; si HighLevel esta
+conectado, los adjuntos se publican primero como URLs publicas y se envian por
+`attachments` de HighLevel.
 
 En el chat movil, si el usuario abre la camara desde la bandeja sin estar dentro
 de una conversacion, la captura de foto o video abre un selector de destinatarios.

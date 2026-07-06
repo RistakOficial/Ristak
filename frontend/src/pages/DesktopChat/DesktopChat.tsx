@@ -1806,10 +1806,6 @@ function getLocationMapTiles(location: ChatLocation): LocationMapTile[] {
   return tiles
 }
 
-function formatLocationCoordinates(location: Pick<ChatLocation, 'latitude' | 'longitude'>) {
-  return `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`
-}
-
 function normalizeLocationValue(value: unknown): ChatLocation | undefined {
   if (!value || typeof value !== 'object') return undefined
   const location = value as Record<string, unknown>
@@ -1878,11 +1874,6 @@ function cleanLocationMessageText(text = '', location?: ChatLocation) {
 
 function getLocationTitle(location?: ChatLocation) {
   return location?.name || 'Ubicación'
-}
-
-function getLocationSubtitle(location?: ChatLocation) {
-  if (!location) return ''
-  return location.address || formatLocationCoordinates(location)
 }
 
 function getMediaPathExtension(value = '') {
@@ -4707,7 +4698,14 @@ export const DesktopChat: React.FC = () => {
       })
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
-          ? { ...message, status: 'sent', errorReason: '', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
+          ? {
+              ...message,
+              id: result.localMessageId || result.data?.localMessageId || message.id,
+              status: 'sent',
+              errorReason: '',
+              transport: result.transport || message.transport,
+              routingReason: result.routingReason || result.fallbackReason || message.routingReason
+            }
           : message
       )))
       showToast(
@@ -5980,6 +5978,7 @@ export const DesktopChat: React.FC = () => {
         setMessages((current) => current.map((message) => message.id === `${optimisticId}-audio`
           ? {
               ...message,
+              id: result.localMessageId || result.data?.localMessageId || message.id,
               status: result.status || 'sent',
               transport: result.transport || message.transport,
               routingReason: result.routingReason || result.fallbackReason || message.routingReason,
@@ -6090,6 +6089,7 @@ export const DesktopChat: React.FC = () => {
                   const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.video?.filename || result?.localMedia?.filename || ''
                   return {
                     ...message,
+                    id: result?.localMessageId || result?.data?.localMessageId || message.id,
                     status: result?.status || 'sent',
                     transport: result?.transport || message.transport,
                     routingReason: result?.routingReason || result?.fallbackReason || message.routingReason,
@@ -6119,6 +6119,7 @@ export const DesktopChat: React.FC = () => {
         })
         setMessages((current) => current.map((message) => message.id === optimisticId ? {
           ...message,
+          id: result.localMessageId || result.data?.localMessageId || message.id,
           status: result.status || 'sent',
           transport: result.transport || message.transport,
           routingReason: result.routingReason || result.fallbackReason || message.routingReason
@@ -6786,9 +6787,7 @@ export const DesktopChat: React.FC = () => {
 
     const href = location.url || buildLocationUrl(location)
     const title = getLocationTitle(location)
-    const subtitle = getLocationSubtitle(location)
     const tiles = getLocationMapTiles(location)
-    const coordinates = formatLocationCoordinates(location)
 
     return (
       <a
@@ -6820,20 +6819,21 @@ export const DesktopChat: React.FC = () => {
             <MapPin size={26} fill="currentColor" />
           </span>
           <span className={styles.messageLocationAttribution}>© OpenStreetMap contributors</span>
-        </span>
-        <span className={styles.messageLocationDetails}>
-          <span className={styles.messageLocationTitleRow}>
-            <strong>{title}</strong>
-            <span className={styles.messageLocationAction}>
-              Abrir
-              <ExternalLink size={12} />
-            </span>
+          <span className={styles.messageLocationAction}>
+            Abrir
+            <ExternalLink size={12} />
           </span>
-          {subtitle ? <small>{subtitle}</small> : null}
-          {subtitle !== coordinates ? <span className={styles.messageLocationCoordinates}>{coordinates}</span> : null}
         </span>
       </a>
     )
+  }
+
+  const getMessageBubbleMediaClass = (message: DesktopChatMessage) => {
+    if (message.location) return styles.messageLocationBubble
+    const attachmentType = message.attachment?.type
+    if (attachmentType === 'image' || attachmentType === 'video') return styles.messageMediaBubble
+    if (attachmentType === 'audio') return styles.messageAudioBubble
+    return ''
   }
 
   const renderAttachment = (message: DesktopChatMessage) => {
@@ -6987,6 +6987,21 @@ export const DesktopChat: React.FC = () => {
         {sending ? <Loader2 size={13} className={styles.spin} aria-label="Enviando" /> : null}
         {failed ? <CircleAlert size={13} /> : null}
       </span>
+    )
+  }
+
+  const renderMessageErrorBadge = (message: DesktopChatMessage) => {
+    const errorText = String(message.errorReason || '').trim()
+    if (!errorText) return null
+    return (
+      <button
+        type="button"
+        className={styles.messageErrorBadge}
+        aria-label={`Error del mensaje: ${errorText}`}
+        data-tooltip={errorText}
+      >
+        <CircleAlert size={14} />
+      </button>
     )
   }
 
@@ -7607,95 +7622,107 @@ export const DesktopChat: React.FC = () => {
                         }
                         const message = item.message
                         const routingDetails = getMessageRoutingDetails(message, whatsappStatus)
+                        const directionClass = message.direction === 'outbound'
+                          ? styles.messageOutbound
+                          : message.direction === 'system'
+                            ? styles.messageSystem
+                            : styles.messageInbound
+                        const bubbleMediaClass = getMessageBubbleMediaClass(message)
                         return (
-                          <article
+                          <div
                             key={item.id}
-                            className={`${styles.messageBubble} ${message.direction === 'outbound' ? styles.messageOutbound : message.direction === 'system' ? styles.messageSystem : styles.messageInbound} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${message.location ? styles.messageLocationBubble : ''}`}
+                            className={`${styles.messageRow} ${message.direction === 'outbound' ? styles.messageRowOutbound : message.direction === 'system' ? styles.messageRowSystem : styles.messageRowInbound}`}
                           >
-	                            {message.isComment ? (
-	                              <div className={styles.commentCard}>
-	                                <span className={styles.commentContextLabel}>
-	                                  <MessageCircle size={13} aria-hidden="true" />
-	                                  {message.commentReplyMode === 'public'
-	                                    ? 'Respuesta pública al comentario'
-	                                    : message.commentReplyMode === 'private'
-	                                      ? 'Respuesta por privado'
-	                                      : 'Comentó en tu publicación'}
-	                                </span>
-                                {message.commentPost ? (
-	                                  (() => {
-                                    const visiblePostMessage = message.commentPost.message && !(message.commentPost.deleted && message.commentPost.message === 'Publicación eliminada')
-                                      ? message.commentPost.message
-                                      : ''
-	                                    const postInner = (
-	                                      <>
-	                                        {message.commentPost.imageUrl ? (
-	                                          <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-	                                        ) : (
-	                                          <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
-	                                        )}
-	                                        <span className={styles.commentPostMeta}>
-	                                          <span className={styles.commentPostKind}>{message.commentPost.deleted ? 'Publicación eliminada' : 'Publicación'}</span>
-	                                          {visiblePostMessage ? (
-	                                            <span className={styles.commentPostText}>{visiblePostMessage}</span>
-	                                          ) : (
-	                                            <span className={styles.commentPostTextMuted}>{message.commentPost.deleted ? 'Comentario conservado en Ristak' : 'Ver publicación'}</span>
-	                                          )}
-	                                        </span>
-	                                        {message.commentPost.permalink ? (
-	                                          <ExternalLink size={14} className={styles.commentPostExternal} aria-hidden="true" />
-	                                        ) : null}
-	                                      </>
-	                                    )
-	                                    return message.commentPost.permalink ? (
-	                                      <a className={styles.commentPostChip} href={message.commentPost.permalink} target="_blank" rel="noopener noreferrer">
-	                                        {postInner}
-	                                      </a>
-	                                    ) : (
-	                                      <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
-	                                        {postInner}
-	                                      </div>
-	                                    )
-	                                  })()
-	                                ) : null}
-	                                {message.text ? <WhatsAppFormattedText text={message.text} className={styles.commentBody} /> : null}
-	                                {renderMessageMeta(message, routingDetails.label)}
-	                                {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
-	                                  <button
-	                                    type="button"
-	                                    className={styles.commentReplyButton}
-	                                    onClick={() => setCommentReplyTarget({
-	                                      messageId: message.id,
-	                                      commentId: message.commentId as string,
-	                                      platform: message.commentPlatform || 'messenger',
-	                                      preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
-	                                    })}
-	                                  >
-	                                    <MessageCircle size={13} aria-hidden="true" />
-	                                    Responder en la publicación
-	                                  </button>
-	                                ) : null}
-	                              </div>
-	                            ) : (
-	                              <>
-	                                {message.email ? (
-	                                  <EmailChatMessageBubble email={message.email} />
-	                                ) : (
-	                                  <>
-                                      {message.location ? renderLocationMessage(message) : null}
-	                                    {renderAttachment(message)}
-	                                    {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
-	                                    {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}
-	                                  </>
-	                                )}
-	                              </>
-	                            )}
-                            {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
-                            {message.errorReason && !message.email ? <small className={styles.errorText}>{message.errorReason}</small> : null}
-                            {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
-                            {renderScheduledMessageActions(message)}
-                            {!message.isComment ? renderMessageMeta(message, routingDetails.label) : null}
-                          </article>
+                            {renderMessageErrorBadge(message)}
+                            <div className={styles.messageStack}>
+                              <article
+                                className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
+                              >
+                                {message.isComment ? (
+                                  <div className={styles.commentCard}>
+                                    <span className={styles.commentContextLabel}>
+                                      <MessageCircle size={13} aria-hidden="true" />
+                                      {message.commentReplyMode === 'public'
+                                        ? 'Respuesta pública al comentario'
+                                        : message.commentReplyMode === 'private'
+                                          ? 'Respuesta por privado'
+                                          : 'Comentó en tu publicación'}
+                                    </span>
+                                    {message.commentPost ? (
+                                      (() => {
+                                        const visiblePostMessage = message.commentPost.message && !(message.commentPost.deleted && message.commentPost.message === 'Publicación eliminada')
+                                          ? message.commentPost.message
+                                          : ''
+                                        const postInner = (
+                                          <>
+                                            {message.commentPost.imageUrl ? (
+                                              <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+                                            ) : (
+                                              <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
+                                            )}
+                                            <span className={styles.commentPostMeta}>
+                                              <span className={styles.commentPostKind}>{message.commentPost.deleted ? 'Publicación eliminada' : 'Publicación'}</span>
+                                              {visiblePostMessage ? (
+                                                <span className={styles.commentPostText}>{visiblePostMessage}</span>
+                                              ) : (
+                                                <span className={styles.commentPostTextMuted}>{message.commentPost.deleted ? 'Comentario conservado en Ristak' : 'Ver publicación'}</span>
+                                              )}
+                                            </span>
+                                            {message.commentPost.permalink ? (
+                                              <ExternalLink size={14} className={styles.commentPostExternal} aria-hidden="true" />
+                                            ) : null}
+                                          </>
+                                        )
+                                        return message.commentPost.permalink ? (
+                                          <a className={styles.commentPostChip} href={message.commentPost.permalink} target="_blank" rel="noopener noreferrer">
+                                            {postInner}
+                                          </a>
+                                        ) : (
+                                          <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
+                                            {postInner}
+                                          </div>
+                                        )
+                                      })()
+                                    ) : null}
+                                    {message.text ? <WhatsAppFormattedText text={message.text} className={styles.commentBody} /> : null}
+                                    {renderMessageMeta(message, routingDetails.label)}
+                                    {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
+                                      <button
+                                        type="button"
+                                        className={styles.commentReplyButton}
+                                        onClick={() => setCommentReplyTarget({
+                                          messageId: message.id,
+                                          commentId: message.commentId as string,
+                                          platform: message.commentPlatform || 'messenger',
+                                          preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+                                        })}
+                                      >
+                                        <MessageCircle size={13} aria-hidden="true" />
+                                        Responder en la publicación
+                                      </button>
+                                    ) : null}
+                                  </div>
+                                ) : (
+                                  <>
+                                    {message.email ? (
+                                      <EmailChatMessageBubble email={message.email} />
+                                    ) : (
+                                      <>
+                                        {message.location ? renderLocationMessage(message) : null}
+                                        {renderAttachment(message)}
+                                        {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
+                                        {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}
+                                      </>
+                                    )}
+                                  </>
+                                )}
+                                {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
+                                {renderScheduledMessageActions(message)}
+                              </article>
+                              {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
+                              {!message.isComment ? renderMessageMeta(message, routingDetails.label) : null}
+                            </div>
+                          </div>
                         )
                       })}
                     </div>
