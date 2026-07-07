@@ -70,30 +70,29 @@ test('permite agentes con etiquetas de entrada distintas', () => {
   assert.equal(conflicts.length, 0)
 })
 
-test('calcula el corte de contactos nuevos al inicio del dia del negocio', () => {
+test('calcula el corte de contactos nuevos en el instante exacto indicado', () => {
   const cutoff = buildNewContactScopeCutoffAt({
-    timezone: 'America/Mexico_City',
-    referenceDate: new Date('2026-07-07T02:00:00.000Z')
+    referenceDate: new Date('2026-07-07T02:00:00.500Z')
   })
 
-  assert.equal(cutoff, '2026-07-06T06:00:00.000Z')
+  assert.equal(cutoff, '2026-07-07T02:00:00.500Z')
 })
 
-test('new_only permite contactos creados durante el dia de negocio del corte', () => {
+test('new_only permite solo contactos creados desde el instante exacto del corte', () => {
   const scopedAgent = {
     contactScope: 'new_only',
-    contactScopeCutoffAt: '2026-07-06T06:00:00.000Z'
+    contactScopeCutoffAt: '2026-07-07T02:00:00.500Z'
   }
 
   assert.equal(contactIsOutOfScopeForAgent(scopedAgent, {
-    contactInfo: { createdAt: '2026-07-06 05:59:59' }
+    contactInfo: { createdAt: '2026-07-07 02:00:00' }
   }), true)
 
   assert.equal(contactIsOutOfScopeForAgent(scopedAgent, {
-    contactInfo: { createdAt: '2026-07-06 06:00:00' }
+    contactInfo: { createdAt: '2026-07-07T02:00:00.500Z' }
   }), false)
 
   assert.equal(contactIsOutOfScopeForAgent(scopedAgent, {
-    contactInfo: { createdAt: '2026-07-06 14:00:06.247' }
+    contactInfo: { createdAt: '2026-07-07 02:00:01' }
   }), false)
 })
