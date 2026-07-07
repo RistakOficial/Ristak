@@ -2466,15 +2466,17 @@ function ChatScreen({
     () => Array.isArray(whatsappStatus?.phoneNumbers) ? whatsappStatus.phoneNumbers : [],
     [whatsappStatus],
   );
+  const chatPhoneFilterEnabled = businessPhones.length > 1;
   const selectedChatPhone = useMemo(() => {
     if (!settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all') return null;
     return businessPhones.find((phone) => phone.id === settings.selectedWhatsAppPhoneId) || null;
   }, [businessPhones, settings.selectedWhatsAppPhoneId]);
+  const selectedChatPhoneFilterActive = Boolean(chatPhoneFilterEnabled && selectedChatPhone);
   const chatPhoneFilteredBase = useMemo(
-    () => selectedChatPhone
+    () => selectedChatPhoneFilterActive && selectedChatPhone
       ? listBaseChats.filter((contact) => contactMatchesBusinessPhoneFilter(contact, selectedChatPhone))
       : listBaseChats,
-    [listBaseChats, selectedChatPhone],
+    [listBaseChats, selectedChatPhone, selectedChatPhoneFilterActive],
   );
   const normalizedCustomChatFilters = useMemo(
     () => normalizePhoneChatCustomFilterPresets(customChatFilters),
@@ -2659,6 +2661,7 @@ function ChatScreen({
   );
   const showArchiveRow = settings.showArchived && !selectionActive && !query.trim() && (archivedViewOpen || activeFilter === 'all');
   const chatListHasRows = selectionActive || showAssistantRow || showArchiveRow || filteredChats.length > 0;
+  const showMainEmptyState = !archivedViewOpen && !selectionActive && filteredChats.length === 0;
   const emptyChatsMinHeight = Math.max(
     260,
     Math.round(chatListViewportHeight - chatListHeaderHeight - PHONE_DOCK_RESERVED_SPACE),
@@ -3418,7 +3421,7 @@ function ChatScreen({
           }}
         >
           {chatListHeaderContent}
-          <View style={styles.archivedEmptyBody}>
+          <View style={styles.chatEmptyBody}>
             <View style={styles.emptyChats}>
               <View style={styles.emptyChatsIcon}>
                 <MessageCircle size={28} color={COLORS.accent} strokeWidth={2.4} />
@@ -3428,6 +3431,31 @@ function ChatScreen({
             </View>
           </View>
         </View>
+      ) : showMainEmptyState ? (
+        <ScrollView
+          style={styles.chatListScroller}
+          contentContainerStyle={styles.chatEmptyScrollContent}
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
+          showsVerticalScrollIndicator={false}
+          onLayout={(event) => {
+            const nextHeight = Math.round(event.nativeEvent.layout.height || 0);
+            setChatListViewportHeight((current) => (current === nextHeight ? current : nextHeight));
+          }}
+        >
+          {chatListHeaderContent}
+          <View style={styles.chatEmptyBody}>
+            <View style={styles.emptyChats}>
+              <View style={styles.emptyChatsIcon}>
+                <MessageCircle size={28} color={COLORS.accent} strokeWidth={2.4} />
+              </View>
+              <Text style={styles.emptyChatsTitle}>{chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}</Text>
+              <Text style={styles.emptyChatsCopy}>
+                {chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
+              </Text>
+            </View>
+          </View>
+        </ScrollView>
       ) : (
         <FlatList
           style={styles.chatListScroller}
@@ -26913,6 +26941,10 @@ function createAppStyles() {
     paddingBottom: PHONE_DOCK_RESERVED_SPACE,
     backgroundColor: COLORS.bg,
   },
+  chatEmptyScrollContent: {
+    flexGrow: 1,
+    backgroundColor: COLORS.bg,
+  },
   chatListHeaderWrap: {
     alignSelf: 'stretch',
     width: '100%',
@@ -26930,7 +26962,7 @@ function createAppStyles() {
     paddingBottom: PHONE_DOCK_RESERVED_SPACE,
     backgroundColor: COLORS.bg,
   },
-  archivedEmptyBody: {
+  chatEmptyBody: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
