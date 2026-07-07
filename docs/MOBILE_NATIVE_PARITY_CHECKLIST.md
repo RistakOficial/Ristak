@@ -58,6 +58,12 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [x] Login por correo + contrasena con resolucion automatica de tenant, igual que `/movil/login`.
 - [x] Shell inicial con Chat, Citas, Pagos, Analiticas y Ajustes.
 - [x] Primer pase de lista de chats con API real, filtros basicos y filas planas.
+- [x] Suprimir avisos intrusivos moviles de acciones exitosas.
+  - Avance: en `mobile/` y `/movil`, registrar pagos, programar mensajes y
+    crear/editar citas ya no deben mostrar popups/toasts de exito; la
+    confirmacion vive en el cierre del sheet, actualizacion de lista o estado
+    visible. Errores, permisos, validaciones bloqueantes y confirmaciones
+    destructivas se mantienen.
 - [x] Consolidar worktrees nativos en una sola app bajo `mobile/`.
   - Avance: los pases de Chat/lista, Conversacion, Citas, Pagos, Analiticas,
     Ajustes, dock inferior, login y notificaciones ya conviven en el mismo
@@ -73,6 +79,12 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     corten detras del panel. Si cambia
     `frontend/src/components/phone/PhoneEcosystemNav.*`, revisar tambien
     `mobile/src/App.tsx`.
+- [x] Transiciones nativas entre pantallas.
+  - Avance: las secciones principales del shell usan transicion direccional con
+    `transform`/`opacity`; abrir una conversacion desde la bandeja monta el chat
+    como una capa animada encima de la lista y volver espera a que termine la
+    salida antes de desmontar. `BottomActionSheet` centraliza la expansion y
+    contraccion suave de sheets/dropdowns para no duplicar animaciones por flujo.
 - [ ] Paridad completa de Chat.
 - [ ] Paridad completa de Citas.
   - Avance: `mobile/` ya reemplaza el placeholder generico de Citas por una
@@ -131,10 +143,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Paridad completa de Pagos.
   - Avance: la pantalla nativa de Pagos ya dejó de ser un resumen recortado.
     Ahora replica el flujo principal de `/movil/payments`: selector de tipo de
-    pago, gating por `/api/integrations/status`, últimos pagos recibidos con
+    pago, bottom-sheet de contacto antes de configurar el cobro, últimos pagos recibidos con
     periodos Hoy/7 días/30 días/90 días, detalle seleccionable, productos /
-    precios guardados con crear/editar/eliminar, pago único manual, invoice de
-    HighLevel por email/WhatsApp-SMS/both, liga de pasarela, plan de
+    precios guardados con crear/editar/eliminar, pago único manual, liga de
+    pasarela con MSI basico, plan de
     parcialidades y suscripción con contacto requerido. Los cobros usan
     `account_currency` y `account_timezone` desde `/api/config`; si no se puede
     leer la moneda de cuenta, los formularios no crean pagos. Los links externos
@@ -143,7 +155,7 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     si no, guarda una transacción local.
   - Brecha pendiente: el formulario nativo no copia todo el `RecordPaymentModal`
     web de escritorio; implementa componentes nativos propios basados en la
-    estructura de `/movil`. Aun faltan opciones avanzadas de impuestos, MSI,
+    estructura de `/movil`. Aun faltan opciones avanzadas de impuestos, validaciones MSI,
     tarjetas guardadas, selector visual de fecha nativo y envío directo del link
     por WhatsApp/email/SMS desde la pantalla de link listo.
 - [ ] Paridad completa de Analiticas.
@@ -202,28 +214,29 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     `/movil`.
 - [ ] Replicar estados de agente: prioridad humana, agente activo/inactivo,
   hub de agente y badges.
-- [x] Replicar swipe de fila: Mas, Archivar/Restaurar.
-  - Avance: `mobile/` ya desplaza la fila a la izquierda con acciones `Mas` y
-    `Archivar/Restaurar`. `Mas` abre un bottom sheet nativo con marcar leido,
-    archivar/restaurar y seleccionar; el sheet exacto completo de `/movil`
-    queda pendiente en "Mas acciones de chat". El swipe debe mantener la fila
-    abierta despues de soltar, mostrar las acciones con alto/ancho alineados a la
-    fila, permitir tocar `Mas`/`Archivar` sin que la fila animada tape los
-    botones y cerrarse al tocar otra fila o empezar scroll. La apertura no debe
-    rebotar/cerrarse por umbral alto ni por cancelacion del responder horizontal:
-    un arrastre corto a la izquierda abre y, una vez abierta, un arrastre corto a
-    la derecha cierra. Los separadores de chats deben salir del borde inferior
-    del area estirada de la fila, no de una linea falsa con padding debajo del
-    texto. Las filas base deben conservar altura tactil amplia y avatar grande.
+- [x] Reemplazar swipe lateral por acciones con long press.
+  - Avance: por decision de producto, `mobile/` ya no muestra `Mas` ni
+    `Archivar/Restaurar` como botones laterales por swipe. Tocar una fila abre
+    el chat; mantenerla presionada abre el bottom sheet `Mas acciones` con
+    feedback haptico. El sheet conserva archivar/restaurar, marcar leido y las
+    herramientas del contacto, y `Seleccionar` va como primera accion para entrar
+    a seleccion multiple. Los separadores de chats deben seguir saliendo del borde
+    inferior real de la fila y las filas base deben conservar altura tactil amplia
+    y avatar grande.
 - [x] Replicar filtros horizontales de chat.
   - Avance: los chips de filtros en `mobile/` usan todo el ancho util y arrancan
     al margen izquierdo de la pantalla; no deben quedar centrados con `Todos` o
     cualquier chip lateral cortado al cambiar de filtro.
 - [x] Replicar fechas relativas de la lista.
-  - Avance: la lista nativa formatea con zona horaria del negocio: `Hoy`,
-    `Ayer`, dia de semana para 2 a 6 dias y fecha corta despues de una semana.
-- [x] Replicar long press/seleccion multiple.
-  - Avance: mantener presionada una fila entra en seleccion multiple, muestra
+  - Avance: la lista nativa formatea con zona horaria del negocio: hora exacta
+    para mensajes de hoy, `Ayer`, dia de semana para 2 a 6 dias y fecha corta
+    despues de una semana.
+- [x] Cargar la bandeja por lotes.
+  - Avance: `mobile/` pide `/contacts/chats` con `limit`/`offset`, muestra el
+    primer lote de 50 conversaciones y agrega mas al llegar al final del scroll
+    sin duplicar contactos ni perder avatares hidratados.
+- [x] Replicar seleccion multiple.
+  - Avance: `Mas acciones` > `Seleccionar` entra en seleccion multiple, muestra
     check circular, oculta filtros, permite seleccionar visibles, cancelar,
     marcar como leidos via API y archivar/restaurar seleccionados.
 - [x] Replicar pull to refresh y copy visible.
@@ -283,8 +296,9 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Nuevo chat / selector de contacto.
   - Avance: el boton `+` ya abre bottom sheet nativo reusable, busca contactos
     via `/contacts/search`, mezcla resultados con chats recientes y abre la
-    conversacion seleccionada. Falta crear contacto nuevo si no existe y replicar
-    todos los estados del sheet original.
+    conversacion al tocar cualquier punto de la fila, sin boton/avion de enviar
+    por contacto. Falta crear contacto nuevo si no existe y replicar todos los
+    estados del sheet original.
 - [x] Selector de destinatarios despues de foto/video para WhatsApp.
   - Avance: el boton de camara ya pide permiso, abre camara nativa con
     `expo-image-picker`, permite tomar foto o grabar video, muestra preview,
@@ -295,10 +309,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Menu global de agente.
 - [ ] Administrador de filtros.
 - [ ] Mas acciones de chat.
-  - Avance: `mobile/` ya usa bottom sheet desde swipe `Mas`, no `Alert.alert`.
-    Incluye agendar cita, registrar pagos, programar mensaje, agregar etiqueta,
-    silenciar/quitar silencio, controles del agente, marcar leido,
-    archivar/restaurar y seleccionar. `Agregar etiqueta` usa las APIs reales de
+  - Avance: `mobile/` ya usa bottom sheet desde long press de fila, no
+    `Alert.alert`. Incluye seleccionar como primera accion, agendar cita,
+    registrar pagos, programar mensaje, agregar etiqueta, silenciar/quitar
+    silencio, controles del agente, marcar leido y archivar/restaurar. `Agregar
+    etiqueta` usa las APIs reales de
     `/contact-tags` y `/contacts/bulk/tags`; `Programar mensaje` usa
     `/whatsapp-api/messages/scheduled` con envio en 1 hora; las acciones del
     agente usan `/conversational-agent/states/:contactId`. El sheet conserva el
@@ -323,13 +338,17 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   eliminar productos via `/api/products`.
 - [x] Formulario nativo funcional para registrar pago unico manual via
   `/api/transactions`.
+- [x] Bottom-sheet de contacto antes de configurar pago unico, plan o
+  suscripcion, reutilizando el patron de `Nueva cita`.
+- [x] Wizard nativo de pago unico con opcion manual o link de pasarela y MSI
+  basico contra `/api/*/payment-links`.
 - [x] Primer formulario nativo de parcialidades contra
   `/api/transactions/payment-flows/installments`.
 - [x] Primer formulario nativo de suscripcion contra `/api/subscriptions`.
 - [ ] Portar paridad completa de `RecordPaymentModal`: busqueda/seleccion de
-  productos, impuestos, links de pago, tarjetas guardadas, Stripe/Conekta/
-  Mercado Pago/CLIP, MSI, transferencias, estados de link listo, copia/compartir
-  y errores especificos de pasarela.
+  productos, impuestos, tarjetas guardadas, validaciones avanzadas de
+  Stripe/Conekta/Mercado Pago/CLIP/Rebill, estados de link listo,
+  copia/compartir y errores especificos de pasarela.
 - [ ] Portar paridad completa de `PhoneSubscriptionForm`: selector de proveedor
   segun capacidades reales, autorizacion/copia de link, contactos bloqueados y
   validaciones especificas por proveedor.

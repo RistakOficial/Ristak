@@ -1776,6 +1776,46 @@ async function sendMetaInstagramReactionRequest({ businessId, recipientId, react
   })
 }
 
+async function sendMetaMessengerMarkSeenRequest({ businessId, recipientId, config }) {
+  const sendPayload = {
+    recipient: { id: recipientId },
+    sender_action: 'mark_seen'
+  }
+
+  try {
+    return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config }),
+      body: sendPayload
+    })
+  } catch (error) {
+    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
+    if (!looksLikeTokenIssue) throw error
+    return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      body: sendPayload
+    })
+  }
+}
+
+async function sendMetaInstagramMarkSeenRequest({ recipientId, config }) {
+  const instagramUserToken = resolveInstagramAccessToken(config)
+  if (!instagramUserToken) {
+    throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
+  }
+
+  return await metaSocialGraphRequest('/me/messages', {
+    method: 'POST',
+    token: instagramUserToken,
+    baseUrl: API_URLS.INSTAGRAM_GRAPH,
+    body: {
+      recipient: { id: recipientId },
+      sender_action: 'mark_seen'
+    }
+  })
+}
+
 async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', messageTimestamp = '', commentId = '', postId = '', parentCommentId = '', mediaUrl = '', mediaMimeType = '', context = null }) {
   const now = cleanString(messageTimestamp) || new Date().toISOString()
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
@@ -2062,6 +2102,99 @@ export async function sendMetaSocialReactionMessage({ contactId, platform, emoji
     provider: 'meta',
     data: sent
   }
+}
+
+export async function markLatestMetaSocialMessageReadForContact({ contactId, platform = '' } = {}) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) {
+    return [{ platform: '', attempted: false, reason: 'missing_contact' }]
+  }
+
+  const requestedPlatform = cleanString(platform).toLowerCase()
+  const platforms = requestedPlatform
+    ? [requestedPlatform === 'instagram' ? 'instagram' : 'messenger']
+    : ['messenger', 'instagram']
+  const config = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer Meta para marcar visto: ${error.message}`)
+    return null
+  })
+  const results = []
+
+  for (const cleanPlatform of platforms) {
+    try {
+      const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
+      if (!enabled) {
+        results.push({ platform: cleanPlatform, attempted: false, reason: 'messaging_disabled' })
+        continue
+      }
+
+      const profile = await db.get(
+        `SELECT id, sender_id, recipient_id, page_id, instagram_account_id
+         FROM meta_social_contacts
+         WHERE contact_id = ? AND platform = ?
+         ORDER BY updated_at DESC, last_seen_at DESC
+         LIMIT 1`,
+        [cleanContactId, cleanPlatform]
+      ).catch(() => null)
+      const recipientId = cleanString(profile?.sender_id)
+      if (!profile || !recipientId) {
+        results.push({ platform: cleanPlatform, attempted: false, reason: 'contact_not_linked' })
+        continue
+      }
+
+      const row = await db.get(`
+        SELECT id, meta_message_id, sender_id
+        FROM meta_social_messages
+        WHERE contact_id = ?
+          AND platform = ?
+          AND LOWER(COALESCE(direction, '')) = 'inbound'
+          AND COALESCE(comment_id, '') = ''
+          AND LOWER(COALESCE(status, '')) NOT IN ('read', 'failed', 'removed')
+        ORDER BY COALESCE(message_timestamp, updated_at, created_at) DESC
+        LIMIT 1
+      `, [cleanContactId, cleanPlatform]).catch(() => null)
+      if (!row) {
+        results.push({ platform: cleanPlatform, attempted: false, reason: 'no_unread_inbound_message' })
+        continue
+      }
+
+      const businessId = getMetaSocialBusinessId(cleanPlatform, config, profile)
+      if (!businessId && cleanPlatform !== 'instagram') {
+        results.push({ platform: cleanPlatform, attempted: false, reason: 'missing_business_id' })
+        continue
+      }
+
+      if (cleanPlatform === 'instagram') {
+        await sendMetaInstagramMarkSeenRequest({ recipientId, config })
+      } else {
+        await sendMetaMessengerMarkSeenRequest({ businessId, recipientId, config })
+      }
+
+      await db.run(`
+        UPDATE meta_social_messages
+        SET status = 'read',
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `, [row.id]).catch(() => undefined)
+
+      results.push({
+        platform: cleanPlatform,
+        attempted: true,
+        provider: 'meta',
+        messageId: row.id,
+        providerMessageId: cleanString(row.meta_message_id)
+      })
+    } catch (error) {
+      results.push({
+        platform: cleanPlatform,
+        attempted: false,
+        error: true,
+        reason: error.message || 'meta_mark_seen_failed'
+      })
+    }
+  }
+
+  return results
 }
 
 // Responder un COMENTARIO. replyType:

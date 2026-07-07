@@ -4,6 +4,7 @@ import {
   BellRing,
   BadgeDollarSign,
   CalendarDays,
+  CheckCheck,
   Code2,
   CreditCard,
   Database,
@@ -31,6 +32,7 @@ import { APIAccessSettings } from './APIAccessSettings'
 import { Domains } from './Domains'
 import { MobileAppSettings } from './MobileAppSettings'
 import { NotificationSettings } from './NotificationSettings'
+import { PrivacySettings } from './PrivacySettings'
 import { MediaSettings } from './MediaSettings'
 import { CustomFields } from './CustomFields'
 import { VariableFields } from './VariableFields'
@@ -66,6 +68,7 @@ const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/users-access': Users,
   '/settings/notifications': BellRing,
   '/settings/mobile-app': MonitorSmartphone,
+  '/settings/privacy': CheckCheck,
   '/settings/calendars': CalendarDays,
   '/settings/payments': CreditCard,
   '/settings/highlevel': HighLevelIcon,
@@ -163,6 +166,7 @@ export const Settings: React.FC = () => {
               <Route path="api-access" element={<SettingsAccessGate moduleKey="settings_api_access"><Navigate to="../developers" replace /></SettingsAccessGate>} />
               <Route path="notifications" element={<SettingsAccessGate moduleKey="settings_account"><NotificationSettings /></SettingsAccessGate>} />
               <Route path="mobile-app" element={<SettingsAccessGate moduleKey="settings_mobile"><MobileAppSettings /></SettingsAccessGate>} />
+              <Route path="privacy" element={<SettingsAccessGate moduleKey="settings_account"><PrivacySettings /></SettingsAccessGate>} />
               <Route path="users-access" element={<SettingsAccessGate moduleKey="settings_users"><UserAccessSettings /></SettingsAccessGate>} />
               <Route path="account" element={<SettingsAccessGate moduleKey="settings_account"><AccountSettings /></SettingsAccessGate>} />
             </Routes>

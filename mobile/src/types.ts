@@ -19,6 +19,15 @@ export type VerifyResponse = {
   user?: RistakUser;
 };
 
+export type LicenseStatusResponse = {
+  success?: boolean;
+  enforced?: boolean;
+  allowed?: boolean;
+  plan?: string | null;
+  features?: Record<string, unknown>;
+  expires_at?: string | null;
+};
+
 export type RuntimeTenant = {
   clientId: string;
   installationId: string;
@@ -160,6 +169,34 @@ export type ChatMessage = {
   location?: ChatLocation;
   isComment?: boolean;
   commentReplyMode?: 'public' | 'private';
+  linkPreview?: {
+    kind?: string;
+    title?: string;
+    subtitle?: string;
+    amountLabel?: string;
+    providerLabel?: string;
+    url?: string;
+  };
+  paymentPreview?: {
+    kind?: string;
+    title?: string;
+    subtitle?: string;
+    amountLabel?: string;
+    providerLabel?: string;
+    url?: string;
+  };
+  emailDetails?: {
+    subject: string;
+    fromEmail: string;
+    toEmail: string;
+    ccEmail?: string;
+    bccEmail?: string;
+    replyTo: string;
+    status: string;
+    transport: string;
+    body: string;
+    bodyHtml?: string;
+  };
   pending?: boolean;
   failed?: boolean;
 };
@@ -492,6 +529,36 @@ export type PaymentLinkResponse = {
   [key: string]: unknown;
 };
 
+export type SavedCardPaymentPayload = {
+  contactId: string;
+  contactName?: string;
+  email?: string;
+  phone?: string;
+  amount: number;
+  currency?: string;
+  title: string;
+  description?: string;
+  dueDate?: string;
+  source?: string;
+  lineItems?: Array<Record<string, unknown>>;
+  paymentMethodId?: string;
+  paymentSourceId?: string;
+  rebillCardId?: string;
+  installments?: {
+    enabled?: boolean;
+    maxInstallments?: number;
+  };
+};
+
+export type SavedCardPaymentResponse = {
+  payment?: TransactionItem;
+  transaction?: TransactionItem;
+  id?: string;
+  provider?: string;
+  status?: string;
+  [key: string]: unknown;
+};
+
 export type HighLevelInvoiceResponse = {
   success?: boolean;
   invoice?: {
@@ -558,8 +625,27 @@ export type PaymentPlanPayload = {
   }>;
   channels?: Record<string, boolean>;
   paymentMethodId?: string;
+  paymentSourceId?: string;
+  rebillCardId?: string;
   cardSetupAmount?: number;
   source?: string;
+};
+
+export type SavedPaymentMethodItem = {
+  id: string;
+  contactId?: string;
+  stripePaymentMethodId?: string;
+  conektaPaymentSourceId?: string;
+  rebillCardId?: string;
+  brand?: string;
+  last4?: string;
+  expMonth?: number;
+  expYear?: number;
+  mode?: 'test' | 'live' | string;
+  isDefault?: boolean;
+  label?: string;
+  expiresLabel?: string;
+  [key: string]: unknown;
 };
 
 export type PaymentSubscription = {
@@ -606,7 +692,12 @@ export type SubscriptionPayload = {
   paymentMethod?: string;
   paymentProvider?: string;
   paymentMode?: string;
+  paymentMethodId?: string;
+  paymentSourceId?: string;
+  rebillCardId?: string;
   source?: string;
+  lineItems?: Array<Record<string, unknown>>;
+  metadata?: Record<string, unknown>;
 };
 
 export type CalendarItem = {
@@ -743,6 +834,73 @@ export type AIAgentBusinessContextAnswerResult = {
 export type AIAgentTranscriptionResult = {
   text?: string;
   model?: string;
+};
+
+export type AIAgentRole = 'user' | 'assistant';
+
+export type AIAgentSource = {
+  title: string;
+  url: string;
+};
+
+export type AIAgentAttachmentKind = 'image' | 'video' | 'pdf' | 'text' | 'file';
+
+export type AIAgentAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: AIAgentAttachmentKind;
+  dataUrl?: string;
+  text?: string;
+  thumbnailDataUrl?: string;
+};
+
+export type AIAgentTraceSummary = {
+  traceId?: string;
+  status?: string;
+  detailUrl?: string;
+};
+
+export type AIAgentClarificationOption = {
+  label: string;
+  value: string;
+  description?: string;
+};
+
+export type AIAgentSelectedClarificationOption = {
+  label: string;
+  value: string;
+  description?: string;
+  assistantMessageId?: string;
+};
+
+export type AIAgentMessage = {
+  id?: string;
+  role: AIAgentRole;
+  content: string;
+  attachments?: AIAgentAttachment[];
+  sources?: AIAgentSource[];
+  clarificationOptions?: AIAgentClarificationOption[];
+  selectedClarificationOption?: AIAgentSelectedClarificationOption;
+  trace?: AIAgentTraceSummary | null;
+  createdAt?: string;
+};
+
+export type AIAgentViewContext = {
+  path: string;
+  title: string;
+  routeLabel: string;
+  visibleText: string;
+};
+
+export type AIAgentChatResult = {
+  reply?: string;
+  model?: string;
+  category?: string;
+  sources?: AIAgentSource[];
+  clarificationOptions?: AIAgentClarificationOption[];
+  trace?: AIAgentTraceSummary | null;
 };
 
 export type WebPushPublicConfig = {

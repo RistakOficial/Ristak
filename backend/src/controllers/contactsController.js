@@ -1,4 +1,4 @@
-import { db } from '../config/database.js'
+import { db, getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { updateContactsStats } from '../utils/updateContactsStats.js'
 import { resolveDateRange, resolveDateRangeWithGHLTimezone } from '../utils/dateUtils.js'
@@ -20,9 +20,9 @@ import { buildContactSearchClause, buildContactSearchRank } from '../utils/searc
 import { coalescedTimestampSortExpression, parseSortableTimestamp, timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
-import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
-import { warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
-import { isMetaSocialMessagingEnabled } from '../services/metaSocialMessagingService.js'
+import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, markLatestInboundWhatsAppApiMessageReadForContact, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
+import { markLatestInboundWhatsAppQrMessageReadForContact, warmWhatsAppQrProfilePictures } from '../services/whatsappQrService.js'
+import { isMetaSocialMessagingEnabled, markLatestMetaSocialMessageReadForContact } from '../services/metaSocialMessagingService.js'
 import {
   getChatUnreadCountsForUser,
   markChatContactReadForUser,
@@ -76,11 +76,83 @@ import { getEmailStatus } from '../services/emailService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
 
+const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
+const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
+const PROVIDER_READ_RECEIPT_TIMEOUT_MS = 3500
+
+const isProviderReadReceiptsEnabled = (value) => {
+  const normalizedValue = String(value ?? '').trim().toLowerCase()
+  return !DISABLED_CONFIG_VALUES.has(normalizedValue)
+}
+
 const normalizePhone = (phone) => {
   if (!phone) return null
   const digits = String(phone).replace(/\D/g, '')
   if (digits.length < 7) return null
   return digits.slice(-10)
+}
+
+function withProviderReadReceiptTimeout(key, task) {
+  let timeoutId
+  const taskPromise = Promise.resolve().then(task)
+  taskPromise.catch(() => null)
+
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`provider_read_timeout:${key}`))
+    }, PROVIDER_READ_RECEIPT_TIMEOUT_MS)
+    if (typeof timeoutId?.unref === 'function') timeoutId.unref()
+  })
+
+  return Promise.race([taskPromise, timeoutPromise])
+    .finally(() => {
+      if (timeoutId) clearTimeout(timeoutId)
+    })
+}
+
+async function runProviderReadReceiptsForContact(contactId) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) return {}
+
+  const providerRead = {}
+  const providerReadResults = await Promise.allSettled([
+    withProviderReadReceiptTimeout('whatsappApi', () => markLatestInboundWhatsAppApiMessageReadForContact({ contactId: cleanContactId })),
+    withProviderReadReceiptTimeout('whatsappQr', () => markLatestInboundWhatsAppQrMessageReadForContact({ contactId: cleanContactId })),
+    withProviderReadReceiptTimeout('meta', () => markLatestMetaSocialMessageReadForContact({ contactId: cleanContactId }))
+  ])
+
+  ;[
+    ['whatsappApi', providerReadResults[0]],
+    ['whatsappQr', providerReadResults[1]],
+    ['meta', providerReadResults[2]]
+  ].forEach(([key, result]) => {
+    if (result.status === 'fulfilled') {
+      providerRead[key] = result.value
+      return
+    }
+    providerRead[key] = { attempted: false, error: true, reason: result.reason?.message || 'provider_read_failed' }
+    logger.warn(`No se pudo marcar como leído en ${key} para ${cleanContactId}: ${result.reason?.message || result.reason}`)
+  })
+
+  return providerRead
+}
+
+function queueProviderReadReceiptsForContact(contactId) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) return
+
+  const run = () => {
+    void runProviderReadReceiptsForContact(cleanContactId).catch(error => {
+      logger.warn(`No se pudieron procesar vistos externos para ${cleanContactId}: ${error.message}`)
+    })
+  }
+
+  if (typeof setImmediate === 'function') {
+    setImmediate(run)
+    return
+  }
+
+  setTimeout(run, 0)
 }
 
 const parseContactTags = (raw) => {
@@ -2587,7 +2659,38 @@ export const markChatContactRead = async (req, res) => {
     }
 
     const state = await markChatContactReadForUser({ userId, contactId })
-    res.json({ success: true, data: state })
+    let sendProviderReadReceipts = true
+    try {
+      sendProviderReadReceipts = isProviderReadReceiptsEnabled(
+        await getAppConfig(CHAT_SEND_READ_RECEIPTS_CONFIG_KEY)
+      )
+    } catch (error) {
+      logger.warn('[Contacts] No se pudo leer configuracion de vistos externos; se mantiene comportamiento default', {
+        contactId,
+        error: error?.message
+      })
+    }
+
+    if (!sendProviderReadReceipts) {
+      return res.json({
+        success: true,
+        data: state,
+        providerRead: {
+          enabled: false,
+          reason: 'read_receipts_disabled'
+        }
+      })
+    }
+
+    queueProviderReadReceiptsForContact(contactId)
+    res.json({
+      success: true,
+      data: state,
+      providerRead: {
+        enabled: true,
+        queued: true
+      }
+    })
   } catch (error) {
     logger.error(`Error marcando chat como leído: ${error.message}`)
     res.status(500).json({

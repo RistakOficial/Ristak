@@ -7566,7 +7566,7 @@ export const PhoneChat: React.FC = () => {
   const handleAgentStateAction = useCallback(async (
     contactId: string,
     action: ConversationStateAction,
-    successMessage: string,
+    _successMessage: string,
     options: { agentId?: string } = {}
   ) => {
     try {
@@ -7579,7 +7579,6 @@ export const PhoneChat: React.FC = () => {
         ...current,
         [contactId]: selectPrimaryAgentState([state, current[contactId]].filter(Boolean) as ConversationAgentState[]) || state
       }))
-      showToast('success', 'Agente conversacional', successMessage)
     } catch (error: any) {
       showToast('error', 'Agente conversacional', error?.message || 'No se pudo actualizar la conversación')
     }
@@ -10289,13 +10288,6 @@ export const PhoneChat: React.FC = () => {
     try {
       const nextConfig = await conversationalAgentService.saveConfig({ enabled: nextEnabled })
       setAgentConfig(nextConfig)
-      showToast(
-        'success',
-        'Agente conversacional',
-        nextEnabled
-          ? `${publishedAgentCount === 1 ? '1 agente publicado quedó activo' : `${publishedAgentCount} agentes publicados quedaron activos`}.`
-          : 'La inteligencia artificial quedó apagada.'
-      )
     } catch (error: any) {
       setAgentConfig(previousConfig)
       showToast('error', 'Agente conversacional', error?.message || 'No se pudo cambiar el estado.')
@@ -10361,11 +10353,6 @@ export const PhoneChat: React.FC = () => {
 
       setAgentDefs((current) => current.map((agent) => (agent.id === nextAgent.id ? nextAgent : agent)))
       if (nextConfig) setAgentConfig(nextConfig)
-      showToast(
-        'success',
-        'Agente conversacional',
-        nextAgentEnabled ? `${agentName} quedó encendido.` : `${agentName} quedó apagado.`
-      )
     } catch (error: any) {
       setAgentDefs((current) => current.map((agent) => (agent.id === previousAgent.id ? previousAgent : agent)))
       setAgentConfig(previousConfig)
@@ -11204,7 +11191,6 @@ export const PhoneChat: React.FC = () => {
       setMessages((current) => current.filter((item) => item.id !== message.id && item.scheduledMessageId !== scheduledMessageId))
       await loadConversation(activeContact.id, { silent: true, useCache: false })
       await loadChats({ silent: true, useCache: false })
-      showToast('success', 'Programación eliminada', 'Ese mensaje ya no se enviará.')
     } catch (error: any) {
       showToast('error', 'No se eliminó', getErrorMessage(error, 'Intenta eliminar la programación otra vez.'))
     } finally {
@@ -12366,11 +12352,6 @@ export const PhoneChat: React.FC = () => {
 
       setSheet(null)
       setScheduleEditingMessageId(null)
-      showToast(
-        'success',
-        editingScheduledMessageId ? 'Programación actualizada' : 'Mensaje programado',
-        formatScheduledMessageLabel(scheduledDate.toISOString())
-      )
     } catch (error: any) {
       const errorMessage = getErrorMessage(error, 'No se pudo programar el mensaje.')
       setScheduleError(errorMessage)
@@ -12680,7 +12661,6 @@ export const PhoneChat: React.FC = () => {
     }
 
     if (sendingThroughMetaSocial && activeMetaSocialChannel && !sendAttachmentsThroughHighLevel) {
-      const channelLabel = GHL_CHAT_CHANNEL_LABELS[activeMetaSocialChannel]
       const outgoingText = locationToSend ? buildLocationFallbackText(locationToSend) : text
 
       if (!outgoingText) {
@@ -12756,7 +12736,6 @@ export const PhoneChat: React.FC = () => {
               }
             : message
         )))
-        showToast('success', 'Mensaje enviado', `Se envió por ${channelLabel}.`)
         await loadConversation(activeContact.id, { silent: true, useCache: false })
         await loadChats({ silent: true, useCache: false })
       } catch (error: any) {
@@ -12789,9 +12768,6 @@ export const PhoneChat: React.FC = () => {
       const optimisticChannel: HighLevelChatChannel = requestedChannel === activeHighLevelChatChannel
         ? effectiveHighLevelChatChannel
         : requestedChannel
-      const channelLabel = GHL_CHAT_CHANNEL_LABELS[optimisticChannel]
-      const autoSmsFallback = requestedChannel === 'whatsapp_api' && optimisticChannel === 'sms_qr'
-
       if (!text && !voiceToSend && attachmentsToSend.length === 0 && !locationToSend) {
         showToast('warning', 'Escribe o adjunta algo', 'Manda texto, una nota de voz o un archivo desde este chat.')
         return
@@ -12910,10 +12886,6 @@ export const PhoneChat: React.FC = () => {
         })
         const resultData = result.data || result
         const resultStatus = String(resultData.status || '').trim() || 'pending'
-        const resultDelivered = ['sent', 'delivered', 'read'].includes(resultStatus.toLowerCase())
-        const resultFallbackApplied = typeof resultData.fallbackApplied === 'boolean'
-          ? resultData.fallbackApplied
-          : Boolean(autoSmsFallback || (resultData.requestedChannel === 'whatsapp_api' && resultData.channel === 'sms_qr'))
         const responseAudioUrl = resultData.audio?.link || resultData.audio?.url || resultData.localMedia?.publicUrl || ''
         const responseAudioMimeType = resultData.audio?.mimeType || resultData.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(resultData.audio?.durationMs || 0) || voiceToSend?.durationMs
@@ -12939,13 +12911,6 @@ export const PhoneChat: React.FC = () => {
               }
             : message
         )))
-        showToast(
-          'success',
-          resultFallbackApplied ? 'Se mandó por SMS' : resultDelivered ? 'Mensaje enviado' : 'Mensaje en cola',
-          resultFallbackApplied
-            ? 'WhatsApp ya estaba fuera de 24 horas, así que Ristak usó el SMS de GoHighLevel.'
-            : `${resultDelivered ? 'Se envió' : 'HighLevel lo recibió'} por ${resultData.channelLabel || channelLabel}.`
-        )
         await loadConversation(activeContact.id, { silent: true, useCache: false })
         await loadChats({ silent: true, useCache: false })
       } catch (error: any) {
@@ -13578,7 +13543,6 @@ export const PhoneChat: React.FC = () => {
           setWideAppointmentContact(null)
         }
       }
-      showToast('success', 'Cita agendada', 'La cita quedó guardada.')
       if (wideSidebarMode !== 'appointment' && !isCalendarActionAppointment && activeContact) {
         setMessages((current) => [
           ...current,

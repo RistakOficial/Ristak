@@ -4438,6 +4438,54 @@ async function resolveWhatsAppMessageReference({ messageId, providerMessageId, c
   }
 }
 
+export async function markLatestInboundWhatsAppApiMessageReadForContact({ contactId } = {}) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) {
+    return { attempted: false, reason: 'missing_contact' }
+  }
+
+  const config = await loadConfig({ includeSecrets: true })
+  const provider = cleanString(config.provider || PROVIDER_NAME).toLowerCase()
+  if (!config.enabled || !config.apiKey || provider !== PROVIDER_NAME) {
+    return { attempted: false, reason: 'ycloud_not_connected' }
+  }
+
+  const row = await db.get(`
+    SELECT id, ycloud_message_id, wamid, status
+    FROM whatsapp_api_messages
+    WHERE contact_id = ?
+      AND LOWER(COALESCE(direction, '')) = 'inbound'
+      AND LOWER(COALESCE(transport, 'api')) != 'qr'
+      AND LOWER(COALESCE(status, '')) NOT IN ('read', 'failed')
+    ORDER BY COALESCE(message_timestamp, updated_at, created_at) DESC
+    LIMIT 1
+  `, [cleanContactId]).catch(() => null)
+
+  const providerMessageId = cleanString(row?.wamid || row?.ycloud_message_id || row?.id)
+  if (!providerMessageId) {
+    return { attempted: false, reason: 'no_unread_inbound_message' }
+  }
+
+  await ycloudRequest(`/whatsapp/inboundMessages/${encodeURIComponent(providerMessageId)}/markAsRead`, {
+    apiKey: config.apiKey,
+    method: 'POST'
+  })
+
+  await db.run(`
+    UPDATE whatsapp_api_messages
+    SET status = 'read',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [row.id]).catch(() => undefined)
+
+  return {
+    attempted: true,
+    provider: PROVIDER_NAME,
+    messageId: row.id,
+    providerMessageId
+  }
+}
+
 async function resolveWhatsAppReplyContext({ replyToMessageId, replyToProviderMessageId, contactId } = {}) {
   const reference = await resolveWhatsAppMessageReference({
     messageId: replyToMessageId,

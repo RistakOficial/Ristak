@@ -383,7 +383,7 @@ export function formatChatListDate(value?: string | null, timezone?: string | nu
   if (!todayParts) return '';
 
   const diffDays = Math.round((dateOnlyUtcDay(todayParts) - dateOnlyUtcDay(messageParts)) / 86400000);
-  if (diffDays === 0) return 'Hoy';
+  if (diffDays === 0) return formatMessageTime(value, messageParts.timezone);
   if (diffDays === 1) return 'Ayer';
   if (diffDays > 1 && diffDays < 7) {
     return new Intl.DateTimeFormat('es-MX', {
@@ -403,7 +403,7 @@ export function formatMessageTime(value?: string | null, timezone?: string | nul
   if (!parts) return '';
   return new Intl.DateTimeFormat('es-MX', {
     timeZone: parts.timezone,
-    hour: '2-digit',
+    hour: 'numeric',
     minute: '2-digit',
   }).format(parts.date);
 }
@@ -760,6 +760,98 @@ function cleanLocationMessageText(text: string, location?: ChatLocation) {
   return text;
 }
 
+function cleanRedundantRoutingMessageText(text: string) {
+  if (!text) return '';
+  const normalized = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (
+    normalized === 'capturado desde la sesión de whatsapp web.' ||
+    normalized === 'capturado desde la sesion de whatsapp web.' ||
+    normalized === 'capturado desde la sesión api.' ||
+    normalized === 'capturado desde la sesion api.' ||
+    normalized === 'capturado desde la api.' ||
+    normalized === 'capturado desde whatsapp api.'
+  ) {
+    return '';
+  }
+  return text;
+}
+
+function normalizeEmailBodyText(value = '') {
+  return String(value || '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function htmlToPlainEmailText(html = '') {
+  const value = String(html || '').trim();
+  if (!value) return '';
+  return normalizeEmailBodyText(
+    value
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/(p|div|li|tr|h[1-6])>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .replace(/&quot;/gi, '"')
+      .replace(/&#39;/gi, "'"),
+  );
+}
+
+function buildEmailMessageText(subject = '', body = '') {
+  const cleanSubject = String(subject || '').replace(/\s+/g, ' ').trim();
+  const cleanBody = normalizeEmailBodyText(body);
+  if (cleanSubject && cleanBody) return `${cleanSubject}\n${cleanBody}`;
+  return cleanSubject || cleanBody || 'Correo electrónico';
+}
+
+function buildJourneyEmailDetails(data: Record<string, unknown>, status = ''): ChatMessage['emailDetails'] | undefined {
+  const bodyHtml = readString(data, ['html_body', 'htmlBody', 'html', 'body_html', 'bodyHtml']);
+  const body = normalizeEmailBodyText(readString(data, [
+    'message_text',
+    'messageText',
+    'message',
+    'body',
+    'text',
+    'message_body',
+    'messageBody',
+    'content',
+  ])) || htmlToPlainEmailText(bodyHtml);
+
+  const details = {
+    subject: readString(data, ['subject', 'asunto']),
+    fromEmail: readString(data, ['from_email', 'fromEmail', 'from', 'sender', 'sender_email', 'senderEmail']),
+    toEmail: readString(data, ['to_email', 'toEmail', 'to', 'recipient', 'recipients', 'recipient_email', 'recipientEmail']),
+    ccEmail: readString(data, ['cc_email', 'ccEmail', 'cc']) || undefined,
+    bccEmail: readString(data, ['bcc_email', 'bccEmail', 'bcc']) || undefined,
+    replyTo: readString(data, ['reply_to', 'replyTo']),
+    status: status || readString(data, ['status', 'message_status', 'messageStatus']),
+    transport: readString(data, ['transport', 'channel', 'provider']) || 'email',
+    body,
+    bodyHtml: bodyHtml || undefined,
+  };
+
+  if (
+    details.subject ||
+    details.fromEmail ||
+    details.toEmail ||
+    details.ccEmail ||
+    details.bccEmail ||
+    details.replyTo ||
+    details.body ||
+    details.bodyHtml
+  ) {
+    return details;
+  }
+
+  return undefined;
+}
+
 function normalizeDirection(value?: string) {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === 'outbound' || normalized === 'sent') return 'outbound';
@@ -847,22 +939,27 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
 
       const messageType = readString(data, ['message_type', 'messageType', 'type']);
       const status = readString(data, ['status']);
+      const emailDetails = event.type === 'email_message' ? buildJourneyEmailDetails(data, status) : undefined;
       const attachment = getJourneyMediaAttachment(data);
       const location = getJourneyLocation(data);
-      const rawText = readString(data, [
-        'message_text',
-        'message',
-        'text',
-        'body',
-        'subject',
-        'caption',
-      ]);
+      const rawText = emailDetails
+        ? buildEmailMessageText(emailDetails.subject, emailDetails.body)
+        : readString(data, [
+          'message_text',
+          'message',
+          'text',
+          'body',
+          'subject',
+          'caption',
+        ]);
       const postDeleted = readBoolean(data.post_deleted || data.postDeleted || data.post_removed || data.postRemoved || data.post_unavailable || data.postUnavailable);
-      const text = cleanLocationMessageText(
-        cleanAttachmentMessageText(rawText, attachment),
-        location,
+      const text = cleanRedundantRoutingMessageText(
+        cleanLocationMessageText(
+          cleanAttachmentMessageText(rawText, attachment),
+          location,
+        ),
       ) || getCommentFallbackText(messageType, status, postDeleted) || (attachment || location ? '' : getMediaFallback(data));
-      if (!text && !messageType && !attachment && !location) return null;
+      if (!text && !messageType && !attachment && !location && !emailDetails) return null;
 
       const id = readString(data, [
         'whatsapp_api_message_id',
@@ -890,11 +987,12 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
         readAt: pickMessageTimestamp(data, ['read_at', 'readAt', 'seen_at', 'seenAt', 'message_read_at', 'messageReadAt', 'played_at', 'playedAt']),
         businessPhone: readString(data, ['business_phone', 'businessPhone']),
         businessPhoneNumberId: readString(data, ['business_phone_number_id', 'businessPhoneNumberId']),
-        routingReason: readString(data, ['routing_reason', 'routingReason', 'fallbackReason']),
+        routingReason: cleanRedundantRoutingMessageText(readString(data, ['routing_reason', 'routingReason', 'fallbackReason'])),
         messageType,
         replyToProviderMessageId: readString(data, ['reply_to_provider_message_id', 'replyToProviderMessageId']),
         reactionEmoji: readString(data, ['reaction_emoji', 'reactionEmoji']),
         reactionTargetProviderMessageId: readString(data, ['reaction_target_provider_message_id', 'reactionTargetProviderMessageId']),
+        emailDetails,
         attachment,
         location,
         isComment: isCommentMessageType(messageType),

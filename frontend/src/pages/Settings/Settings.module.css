@@ -1744,6 +1744,93 @@ body.dark .select:focus {
   min-width: 0;
 }
 
+.privacyToggleCard {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.privacyToggleIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: var(--radius-ctl);
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--accent);
+  flex: none;
+}
+
+.privacyToggleText {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.privacyToggleText strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.privacyToggleText span {
+  color: var(--text-mute);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.privacyChannelList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.privacyChannelPill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-mute);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.privacyNote {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-2);
+  color: var(--text-mute);
+}
+
+.privacyNote svg {
+  color: var(--accent);
+  flex: none;
+  margin-top: 1px;
+}
+
+.privacyNote p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .notificationExperienceText label {
   display: block;
   color: var(--text);

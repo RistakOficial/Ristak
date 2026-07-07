@@ -296,10 +296,8 @@ export const PhonePayments: React.FC = () => {
     try {
       if (productFormMode === 'edit' && editingProduct) {
         await apiClient.put(`/products/${getProductId(editingProduct)}`, payload)
-        showToast('success', 'Producto actualizado', `${name} ya quedó listo para cobrar.`)
       } else {
         await apiClient.post('/products', payload)
-        showToast('success', 'Producto creado', `${name} ya aparece en tu catálogo.`)
       }
 
       closeProductForm()
@@ -322,7 +320,6 @@ export const PhonePayments: React.FC = () => {
       if (editingProduct && getProductId(editingProduct) === productId) {
         closeProductForm()
       }
-      showToast('success', 'Producto eliminado', `${product.name} ya no aparece para cobrar.`)
     } catch (error: any) {
       showToast('error', 'No se eliminó', error?.message || 'Intenta otra vez.')
     } finally {

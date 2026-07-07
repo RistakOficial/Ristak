@@ -11,27 +11,31 @@ import {
   KeyboardAvoidingView,
   Linking,
   Modal,
+  NativeModules,
   PanResponder,
   Platform,
   Pressable,
   RefreshControl,
-  SafeAreaView,
   ScrollView,
   StatusBar,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   View,
   Vibration,
   useWindowDimensions,
 } from 'react-native';
-import type { GestureResponderEvent, ImageSourcePropType, ImageStyle, LayoutChangeEvent } from 'react-native';
+import type { GestureResponderEvent, ImageSourcePropType, ImageStyle, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, StyleProp, TextStyle, ViewStyle } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import * as Location from 'expo-location';
+import { DeviceMotion } from 'expo-sensors';
+import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -41,6 +45,9 @@ import {
   useAudioRecorder,
   useAudioRecorderState,
 } from 'expo-audio';
+import type { AudioSource } from 'expo-audio';
+import { FontAwesome, Ionicons } from '@expo/vector-icons';
+import FontAwesome6 from '@expo/vector-icons/FontAwesome6';
 import {
   Archive,
   Activity,
@@ -70,6 +77,7 @@ import {
   Forward,
   Image as ImageIcon,
   Info,
+  Link2,
   ListChecks,
   LogOut,
   Mail,
@@ -77,6 +85,7 @@ import {
   MessageCircle,
   Mic,
   MoreHorizontal,
+  MousePointerClick,
   Moon,
   Package,
   Pause,
@@ -90,6 +99,7 @@ import {
   Repeat2,
   Save,
   Search,
+  ArrowRight,
   Send,
   Settings,
   Smartphone,
@@ -109,7 +119,8 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react-native';
-import Svg, { Circle, Line, Path, Polyline, Rect, Text as SvgText } from 'react-native-svg';
+import NativeSvg, { Circle, Line, Path, Polyline, Rect, Text as SvgText } from 'react-native-svg';
+import { VideoView, useVideoPlayer } from 'expo-video';
 import {
   clearAuthToken,
   clearRuntimeState,
@@ -177,18 +188,28 @@ import type {
   ContactTag,
   CustomLabels,
   ConversationAgentState,
+  AIAgentClarificationOption,
+  AIAgentAttachment,
+  AIAgentAttachmentKind,
   AIAgentConfigStatus,
+  AIAgentMessage,
   MessageTemplate,
   NativeMessageChannel,
   DashboardFunnelRow,
   DashboardFunnelScope,
   DashboardMetrics,
+  IntegrationsStatus,
+  LicenseStatusResponse,
   OriginDistributionData,
+  PaymentGatewayProvider,
+  PaymentLinkResponse,
+  PaymentSubscription,
   PhoneSection,
   PhoneThemePreference,
   ProductItem,
   ProductPrice,
   RistakUser,
+  SavedPaymentMethodItem,
   ScheduledChatMessage,
   SourceDatum,
   TransactionItem,
@@ -199,23 +220,137 @@ import type {
   WhatsAppNumberOriginDatum,
 } from './types';
 
-const COLORS = {
-  bg: '#06123a',
-  panel: '#0a1f5c',
-  panelSoft: '#102a78',
-  border: 'rgba(199,226,255,0.14)',
-  text: '#f3f8ff',
-  muted: '#aac0e7',
-  accent: '#00a8f8',
-  accentSoft: 'rgba(0,168,248,0.18)',
-  primary: '#46b9ff',
+type NativeThemeTone = 'light' | 'dark';
+type NativeColorPalette = {
+  bg: string;
+  panel: string;
+  panelSoft: string;
+  border: string;
+  text: string;
+  muted: string;
+  accent: string;
+  accentSoft: string;
+  primary: string;
+  success: string;
+  danger: string;
+  dangerSoft: string;
+  meta: string;
+  white: string;
+  black: string;
+};
+
+const DARK_COLORS: NativeColorPalette = {
+  bg: '#050506',
+  panel: '#111114',
+  panelSoft: '#1c1c1e',
+  border: 'rgba(235,235,245,0.16)',
+  text: '#f5f5f7',
+  muted: '#a1a1aa',
+  accent: '#636366',
+  accentSoft: 'rgba(118,118,128,0.24)',
+  primary: '#636366',
+  success: '#18b66f',
   danger: '#ff5d6c',
   dangerSoft: '#6f2030',
-  meta: '#bddcff',
+  meta: '#c7c7cc',
   white: '#ffffff',
+  black: '#000000',
 };
 
 const RISTAK_NIGHT_MODE_LOGO: ImageSourcePropType = require('../assets/ristak-night-mode-sin-fondo.webp');
+
+const LIGHT_COLORS: NativeColorPalette = {
+  bg: '#ffffff',
+  panel: '#ffffff',
+  panelSoft: '#f5f5f7',
+  border: 'rgba(60,60,67,0.14)',
+  text: '#1d1d1f',
+  muted: '#6e6e73',
+  accent: '#1d1d1f',
+  accentSoft: 'rgba(118,118,128,0.12)',
+  primary: '#1d1d1f',
+  success: '#18b66f',
+  danger: '#e5485d',
+  dangerSoft: '#ffe4e8',
+  meta: '#6e6e73',
+  white: '#ffffff',
+  black: '#000000',
+};
+
+const INITIAL_NATIVE_THEME_TONE: NativeThemeTone = Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
+const COLORS: NativeColorPalette = { ...(INITIAL_NATIVE_THEME_TONE === 'light' ? LIGHT_COLORS : DARK_COLORS) };
+let activeNativeThemeTone: NativeThemeTone = INITIAL_NATIVE_THEME_TONE;
+
+type RgbColor = { r: number; g: number; b: number };
+
+function parseHexColor(value: string): RgbColor | null {
+  const normalized = value.trim().replace('#', '');
+  if (!/^[0-9a-fA-F]{3}$|^[0-9a-fA-F]{6}$/.test(normalized)) return null;
+  const hex = normalized.length === 3
+    ? normalized.split('').map((char) => `${char}${char}`).join('')
+    : normalized;
+  return {
+    r: Number.parseInt(hex.slice(0, 2), 16),
+    g: Number.parseInt(hex.slice(2, 4), 16),
+    b: Number.parseInt(hex.slice(4, 6), 16),
+  };
+}
+
+function getRelativeLuminance({ r, g, b }: RgbColor) {
+  const convert = (channel: number) => {
+    const value = channel / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  return (0.2126 * convert(r)) + (0.7152 * convert(g)) + (0.0722 * convert(b));
+}
+
+function getContrastRatio(foreground: RgbColor, background: RgbColor) {
+  const foregroundLum = getRelativeLuminance(foreground);
+  const backgroundLum = getRelativeLuminance(background);
+  const light = Math.max(foregroundLum, backgroundLum);
+  const dark = Math.min(foregroundLum, backgroundLum);
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function getReadableTextColor(backgroundColor: string, lightText = COLORS.white, darkText = LIGHT_COLORS.text) {
+  const background = parseHexColor(backgroundColor);
+  const light = parseHexColor(lightText);
+  const dark = parseHexColor(darkText);
+  if (!background || !light || !dark) return lightText;
+  return getContrastRatio(light, background) >= getContrastRatio(dark, background) ? lightText : darkText;
+}
+
+function buildContactInfoTheme(palette: NativeColorPalette) {
+  const usesLightBase = palette.bg === LIGHT_COLORS.bg && palette.panel === LIGHT_COLORS.panel;
+  return {
+    bg: palette.bg,
+    surface: palette.panel,
+    surfaceSoft: palette.panelSoft,
+    conversationBg: usesLightBase ? palette.panelSoft : palette.bg,
+    text: palette.text,
+    muted: palette.muted,
+    border: palette.border,
+    fieldBorder: palette.border,
+    primary: palette.primary,
+    accent: palette.accent,
+    accentSoft: palette.accentSoft,
+    success: palette.success,
+    successSoft: 'rgba(24,182,111,0.16)',
+    avatarBorder: palette.border,
+    archiveActive: palette.accentSoft,
+    mediaOverlay: palette.black,
+    scrim: palette.black,
+    sheetHandle: palette.border,
+  };
+}
+
+const CONTACT_INFO_THEME = buildContactInfoTheme(COLORS);
+const PHONE_COMPACT_SCALE = 0.78;
+const phoneCompact = (value: number) => Math.max(1, Math.round(value * PHONE_COMPACT_SCALE));
+
+const DEFAULT_IOS_TOP_SAFE_AREA = 47;
+const DEFAULT_IOS_BOTTOM_SAFE_AREA = 34;
+const BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS = 8000;
 
 type SessionState = {
   baseUrl: string;
@@ -227,6 +362,29 @@ type Screen = 'boot' | 'login' | 'shell';
 type ChatFilterId = string;
 type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
 type ConversationSheetMode = 'attachments' | 'messageActions' | 'chatMore' | 'tag' | 'schedule' | 'channel' | 'templates' | 'clabe' | 'payment' | 'appointment' | null;
+type ContactInfoPanel = 'main' | 'payments' | 'appointments' | 'archives' | 'journey' | 'agent_history';
+type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null;
+
+function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label}_timeout`));
+    }, timeoutMs);
+
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+type ContactInfoArchiveTab = 'media' | 'documents' | 'links';
+type JourneyEvent = {
+  id?: string;
+  type: string;
+  date: string;
+  data?: Record<string, unknown> | null;
+  [key: string]: unknown;
+};
 type CalendarViewMode = 'day' | 'week' | 'month' | 'year' | 'years';
 type CalendarSheetMode = 'calendar' | 'contactPicker' | 'event' | 'appointmentForm' | null;
 type AppointmentFormMode = 'create' | 'edit';
@@ -263,12 +421,91 @@ type TimelinePendingTouch = {
   y: number;
   timerId: ReturnType<typeof setTimeout>;
 };
+type CalendarBootstrapCache = {
+  timezone?: string;
+  defaultCalendarId?: string;
+  selectedCalendarId?: string;
+  calendars?: CalendarItem[];
+  updatedAt?: string;
+};
 type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
+type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email';
+type AdvancedOriginFilter = 'all' | 'meta' | 'site' | 'organic' | 'trigger' | 'unknown';
+type AdvancedSocialFilter = 'all' | 'facebook' | 'instagram' | 'messenger' | 'whatsapp' | 'google' | 'unknown';
+type AdvancedStageFilter = 'all' | 'lead' | 'appointment' | 'customer';
+type AdvancedActivityFilter = 'all' | 'payments' | 'appointments' | 'with_source' | 'no_phone';
+type AdvancedFilterGroupId = 'channel' | 'origin' | 'social' | 'stage' | 'activity';
+type ContactAdvancedFieldType = 'text' | 'number' | 'boolean' | 'select' | 'tags';
+type ContactAdvancedOperator =
+  | 'is'
+  | 'is_not'
+  | 'contains'
+  | 'not_contains'
+  | 'starts_with'
+  | 'ends_with'
+  | 'empty'
+  | 'not_empty'
+  | 'eq'
+  | 'neq'
+  | 'gt'
+  | 'lt'
+  | 'gte'
+  | 'lte'
+  | 'between'
+  | 'yes'
+  | 'no'
+  | 'any'
+  | 'all'
+  | 'none';
+type ContactAdvancedOption = {
+  value: string;
+  label: string;
+  description?: string;
+};
+type PhoneChatConditionField = {
+  key: string;
+  label: string;
+  type: ContactAdvancedFieldType;
+  section: string;
+  options?: ContactAdvancedOption[];
+};
+type PhoneChatConditionFieldGroup = {
+  label: string;
+  fields: PhoneChatConditionField[];
+};
+type PhoneChatCustomFilterMatchMode = 'all' | 'any';
+type PhoneChatCustomFilterRule = {
+  id: string;
+  field: string;
+  operator: ContactAdvancedOperator;
+  value?: string | string[] | number | boolean | null;
+  valueTo?: string | number | null;
+};
+type PhoneChatCustomFilterPreset = {
+  id: string;
+  label: string;
+  match: PhoneChatCustomFilterMatchMode;
+  rules: PhoneChatCustomFilterRule[];
+  createdAt?: string;
+  updatedAt?: string;
+};
+type PhoneChatCustomFilterDraft = {
+  id: string;
+  label: string;
+  match: PhoneChatCustomFilterMatchMode;
+  rules: PhoneChatCustomFilterRule[];
+};
+type PhoneChatConditionEvalContext = {
+  fieldsByKey: Map<string, PhoneChatConditionField>;
+  businessPhones: WhatsAppApiPhoneNumber[];
+  contactTagsById: Map<string, ContactTag>;
+  customFiltersById: Map<string, PhoneChatCustomFilterPreset>;
+};
 type PaymentView = 'select' | 'single' | 'partial' | 'subscription' | 'products';
-type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d';
+type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d' | 'custom';
 type ProductFormMode = 'create' | 'edit' | null;
-type SettingsPanel = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null;
+type SettingsPanel = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'privacy' | 'notifications' | null;
 type BusinessVoiceState = 'idle' | 'recording' | 'processing';
 type ConversationDraftAttachment = {
   id: string;
@@ -280,14 +517,65 @@ type ConversationDraftAttachment = {
   size?: number;
   durationMs?: number;
 };
+type NativeAttachmentKind = ConversationDraftAttachment['kind'];
+type ConversationActivityMarker = {
+  id: string;
+  kind: 'payment' | 'appointment';
+  date: string;
+  title: string;
+  subtitle: string;
+  amountLabel?: string;
+};
+type NativeConversationSuccessNotice = {
+  kind: 'payment' | 'appointment';
+  title: string;
+  subtitle: string;
+};
 type ConversationListItem =
   | { type: 'day'; id: string; label: string }
+  | { type: 'completionNotice'; id: string; notice: NativeConversationSuccessNotice }
+  | { type: 'activity'; id: string; marker: ConversationActivityMarker }
   | { type: 'message'; id: string; message: ChatMessage };
+type AssistantConversationMessage = AIAgentMessage & {
+  id: string;
+  failed?: boolean;
+};
+type AssistantAttachmentDraft = AIAgentAttachment & {
+  uri: string;
+};
+type AssistantVoiceState = 'idle' | 'recording' | 'paused' | 'processing';
+type WhatsAppTextSegment = {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  strike?: boolean;
+  mono?: boolean;
+};
+type NativeLocationMapTile = {
+  key: string;
+  url: string;
+  left: number;
+  top: number;
+};
+type WhatsAppTextMarker = {
+  marker: string;
+  style: Omit<WhatsAppTextSegment, 'text'>;
+};
+type WhatsAppTextMarkerMatch = WhatsAppTextMarker & {
+  start: number;
+  close: number;
+};
 type ChatFilterPreset = {
   id: ChatFilterId;
   label: string;
   description: string;
   section: string;
+  kind?: 'quick' | 'comments' | 'phone' | 'advanced' | 'custom';
+  quickFilter?: ChatFilterId;
+  phoneId?: string;
+  advancedGroup?: AdvancedFilterGroupId;
+  advancedValue?: string;
+  customFilterId?: string;
   locked?: boolean;
   separatorBefore?: boolean;
 };
@@ -310,7 +598,7 @@ type AnalyticsMetricCardConfig = {
   key: keyof DashboardMetrics;
   title: string;
   Icon: LucideIcon;
-  tone: 'green' | 'black' | 'blue' | 'gold' | 'red';
+  tone: 'green' | 'black' | 'neutral' | 'gold' | 'red';
   formatter: (value: number) => string;
 };
 type AnalyticsPhoneNumberOriginRow = {
@@ -335,6 +623,13 @@ type AppointmentDraft = {
   assignedUserId?: string;
   guests: AppointmentGuest[];
 };
+type SchedulePeriod = 'AM' | 'PM';
+type ScheduleDraft = {
+  date: string;
+  hour: string;
+  minute: string;
+  period: SchedulePeriod;
+};
 
 const PHONE_NAV_ITEMS: Array<{ key: PhoneSection; label: string; Icon: LucideIcon }> = [
   { key: 'settings', label: 'Ajustes', Icon: Settings },
@@ -344,32 +639,154 @@ const PHONE_NAV_ITEMS: Array<{ key: PhoneSection; label: string; Icon: LucideIco
   { key: 'analytics', label: 'Analíticas', Icon: BarChart3 },
 ];
 
+type PhoneSectionErrorBoundaryProps = {
+  children: React.ReactNode;
+  resetKey: string;
+  section: PhoneSection;
+};
+
+type PhoneSectionErrorBoundaryState = {
+  error: Error | null;
+};
+
+class PhoneSectionErrorBoundary extends React.Component<PhoneSectionErrorBoundaryProps, PhoneSectionErrorBoundaryState> {
+  state: PhoneSectionErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.warn(`[RistakNative][${this.props.section}] screen render failed`, error, info.componentStack);
+  }
+
+  componentDidUpdate(previousProps: PhoneSectionErrorBoundaryProps) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return (
+      <AppFrame>
+        <View style={styles.screenErrorState}>
+          <View style={styles.screenErrorIcon}>
+            <CircleAlert size={24} color={COLORS.danger} strokeWidth={2.4} />
+          </View>
+          <Text style={styles.screenErrorTitle}>Esta pantalla se atoró</Text>
+          <Text style={styles.screenErrorCopy}>Ristak no se va a cerrar. Vuelve a intentarlo.</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => this.setState({ error: null })}
+            style={({ pressed }) => [styles.screenErrorButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.screenErrorButtonText}>Reintentar</Text>
+          </Pressable>
+        </View>
+      </AppFrame>
+    );
+  }
+}
+
 const DEFAULT_CHAT_FILTER_IDS = ['all', 'unread', 'appointments', 'customers', 'leads', 'comments'];
 const CHAT_FILTERS_MORE_VALUE = '__filters_more__';
 const CHAT_FILTERS_STORAGE_KEY = 'ristak.native.chat.visibleFilterIds.v1';
+const PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY = 'mobile_chat_custom_filter_presets';
+const PHONE_CHAT_PHONE_FILTER_PREFIX = 'phone:';
+const PHONE_CHAT_ADVANCED_FILTER_PREFIX = 'advanced:';
+const PHONE_CHAT_CUSTOM_FILTER_PREFIX = 'custom:';
+const PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD = 'chat_segment';
 const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
 const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
-const CHAT_SWIPE_ACTION_WIDTH = 184;
-const CHAT_SWIPE_MORE_WIDTH = 84;
-const CHAT_SWIPE_ARCHIVE_WIDTH = CHAT_SWIPE_ACTION_WIDTH - CHAT_SWIPE_MORE_WIDTH;
-const CHAT_SWIPE_GESTURE_START_DISTANCE = 3;
-const CHAT_SWIPE_OPEN_TRIGGER_DISTANCE = 2;
-const CHAT_SWIPE_CLOSE_TRIGGER_DISTANCE = 2;
-const CHAT_SWIPE_OPEN_DURATION_MS = 250;
-const CHAT_SWIPE_CLOSE_DURATION_MS = 180;
+const CHAT_LIST_PAGE_SIZE = 50;
+const CHAT_CONVERSATION_MESSAGE_LIMIT = 100;
+const CHAT_CONVERSATION_OLDER_THRESHOLD = 0.22;
 const CHAT_ROW_MIN_HEIGHT = 86;
 const CHAT_AVATAR_SIZE = 58;
-const CHAT_AVATAR_INNER_SIZE = 50;
-const CHAT_CHANNEL_BADGE_SIZE = 22;
+const CHAT_CHANNEL_ICON_BOX_SIZE = 22;
 const CHAT_SHEET_OPEN_DURATION_MS = 260;
 const CHAT_SHEET_CLOSE_DURATION_MS = 280;
+const MESSAGE_ACTION_CLOSE_DURATION_MS = 90;
 const CHAT_SHEET_HIDDEN_TRANSLATE_Y = 860;
+const PAGE_TRANSITION_DURATION_MS = 240;
+const PAGE_TRANSITION_OFFSET_RATIO = 0.18;
+const CONVERSATION_ROUTE_OPEN_DURATION_MS = 260;
+const CONVERSATION_ROUTE_CLOSE_DURATION_MS = 230;
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏'];
 const CONVERSATION_ATTACHMENT_LIMIT = 4;
+const AI_AGENT_DIRECT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+const AI_AGENT_DIRECT_ATTACHMENTS_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
+const AI_AGENT_TEXT_ATTACHMENT_MAX_BYTES = 1.5 * 1024 * 1024;
+const AI_AGENT_TEXT_ATTACHMENT_CHAR_LIMIT = 18000;
+const AI_AGENT_PICKER_PRESENTATION_DELAY_MS = 280;
+const CONVERSATION_COMPOSER_LIGHT_BACKGROUND = '#f5f5f7';
+const CONVERSATION_COMPOSER_SAFE_BOTTOM = 22;
+const CONVERSATION_COMPOSER_KEYBOARD_BOTTOM = 3;
+const CONVERSATION_KEYBOARD_LIGHT_BACKGROUND = '#e3e4e7';
+const CONVERSATION_KEYBOARD_DARK_BACKGROUND = '#171718';
+const CONVERSATION_LATEST_SCROLL_THRESHOLD = 64;
+const CONVERSATION_AUDIO_WAVE_BAR_HEIGHTS = [7, 13, 9, 17, 11, 6, 15, 10, 18, 8, 14, 6, 16, 11, 7, 13, 9, 18, 10, 15, 6, 12];
+const CONVERSATION_AUDIO_PLAYBACK_SPEEDS = [1, 2, 4] as const;
+const CONVERSATION_AUDIO_MAX_MOBILE_RATE = 2;
+const CONVERSATION_PARALLAX_MAX_OFFSET = 13;
+const CHAT_WALLPAPER_PARALLAX_MAX_OFFSET = 13;
+const CHAT_WALLPAPER_PARALLAX_PADDING = 18;
+const CHAT_WALLPAPER_SENSOR_INTERVAL_MS = 110;
+const CONVERSATION_WALLPAPER_DOTS = [
+  { left: '2%', top: '3%', size: 7, opacity: 0.28 },
+  { left: '10%', top: '8%', size: 5, opacity: 0.2 },
+  { left: '20%', top: '3%', size: 7, opacity: 0.24 },
+  { left: '34%', top: '9%', size: 5, opacity: 0.19 },
+  { left: '56%', top: '3%', size: 7, opacity: 0.24 },
+  { left: '80%', top: '8%', size: 5, opacity: 0.2 },
+  { left: '93%', top: '3%', size: 7, opacity: 0.24 },
+  { left: '2%', top: '17%', size: 8, opacity: 0.26 },
+  { left: '20%', top: '17%', size: 8, opacity: 0.25 },
+  { left: '39%', top: '17%', size: 7, opacity: 0.24 },
+  { left: '58%', top: '17%', size: 8, opacity: 0.25 },
+  { left: '76%', top: '17%', size: 8, opacity: 0.25 },
+  { left: '94%', top: '17%', size: 7, opacity: 0.23 },
+  { left: '11%', top: '31%', size: 5, opacity: 0.18 },
+  { left: '34%', top: '31%', size: 5, opacity: 0.18 },
+  { left: '57%', top: '31%', size: 6, opacity: 0.21 },
+  { left: '80%', top: '31%', size: 5, opacity: 0.18 },
+  { left: '2%', top: '43%', size: 7, opacity: 0.24 },
+  { left: '20%', top: '43%', size: 7, opacity: 0.23 },
+  { left: '39%', top: '43%', size: 7, opacity: 0.23 },
+  { left: '58%', top: '43%', size: 7, opacity: 0.23 },
+  { left: '76%', top: '43%', size: 7, opacity: 0.23 },
+  { left: '94%', top: '43%', size: 7, opacity: 0.23 },
+  { left: '10%', top: '57%', size: 5, opacity: 0.18 },
+  { left: '33%', top: '57%', size: 5, opacity: 0.18 },
+  { left: '57%', top: '57%', size: 6, opacity: 0.21 },
+  { left: '80%', top: '57%', size: 5, opacity: 0.18 },
+  { left: '2%', top: '71%', size: 7, opacity: 0.24 },
+  { left: '20%', top: '71%', size: 7, opacity: 0.23 },
+  { left: '39%', top: '71%', size: 7, opacity: 0.23 },
+  { left: '58%', top: '71%', size: 7, opacity: 0.23 },
+  { left: '76%', top: '71%', size: 7, opacity: 0.23 },
+  { left: '94%', top: '71%', size: 7, opacity: 0.23 },
+] as const;
+const AUDIO_ATTACHMENT_PATTERN = /\.(ogg|oga|opus|m4a|mp3|wav|aac|amr|caf|webm)(?:[?#].*)?$/i;
+const IMAGE_ATTACHMENT_PATTERN = /\.(png|jpe?g|webp|gif|heic|heif)(?:[?#].*)?$/i;
+const VIDEO_ATTACHMENT_PATTERN = /\.(mp4|mov|m4v|webm)(?:[?#].*)?$/i;
+const MESSAGE_IMAGE_MAX_WIDTH = 252;
+const MESSAGE_IMAGE_MAX_HEIGHT = 318;
+const LOCATION_MAP_TILE_ZOOM = 16;
+const LOCATION_MAP_TILE_SIZE = 144;
+const LOCATION_MAP_WIDTH = 270;
+const LOCATION_MAP_HEIGHT = 124;
+const LOCATION_MAP_MAX_LATITUDE = 85.05112878;
+const LOCATION_PIN_COLOR = '#ff5d7e';
+const SCHEDULE_PICKER_WEEKDAYS = ['DOM', 'LUN', 'MAR', 'MIÉ', 'JUE', 'VIE', 'SÁB'];
 const MEDIA_ATTACHMENT_MAX_BYTES = 16 * 1024 * 1024;
 const DOCUMENT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+const CAMERA_SHARE_VIDEO_MAX_DURATION_SECONDS = 60;
 const CALENDAR_SELECTED_ID_STORAGE_KEY = 'ristak.native.calendar.selectedCalendarId.v1';
+const CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY = 'ristak.native.calendar.bootstrapCache.v1';
 const CALENDAR_EVENTS_CACHE_STORAGE_KEY = 'ristak.native.calendar.eventsCache.v1';
 const CALENDAR_WEEKDAYS = ['D', 'L', 'M', 'M', 'J', 'V', 'S'];
 const CALENDAR_WEEKDAY_ROW_HEIGHT = 28;
@@ -382,9 +799,12 @@ const CALENDAR_VIEW_OPTIONS: Array<{ view: Exclude<CalendarViewMode, 'years'>; l
   { view: 'year', label: 'Año' },
 ];
 const YEAR_GRID_SIZE = 12;
+const MONTH_PAGER_CENTER_INDEX = 1;
+const MONTH_PAGER_OFFSETS = [-1, 0, 1] as const;
 const MONTH_SWIPE_MIN_PX = 56;
 const MONTH_SWIPE_COMMIT_RATIO = 0.18;
 const MONTH_SWIPE_MAX_OFFSET_RATIO = 0.92;
+const CALENDAR_REQUEST_TIMEOUT_MS = 8000;
 const TIMELINE_HOUR_HEIGHT = 54;
 const TIMELINE_TOTAL_MINUTES = 24 * 60;
 const TIMELINE_GRID_HEIGHT = TIMELINE_HOUR_HEIGHT * 24;
@@ -409,15 +829,19 @@ const APPOINTMENT_DATE_MONTH_OPTIONS = [
   { value: 12, label: 'Diciembre' },
 ];
 const APPOINTMENT_TIME_HOUR_OPTIONS = Array.from({ length: 12 }, (_, index) => index + 1);
-const APPOINTMENT_TIME_MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index) => index);
-const APPOINTMENT_DURATION_HOUR_OPTIONS = Array.from({ length: 24 }, (_, index) => index + 1);
-const APPOINTMENT_DURATION_MINUTE_OPTIONS = [0, 15, 30, 45];
+const APPOINTMENT_TIME_MINUTE_OPTIONS = Array.from({ length: 12 }, (_, index) => index * 5);
+const APPOINTMENT_DURATION_HOUR_OPTIONS = Array.from({ length: 13 }, (_, index) => index);
+const APPOINTMENT_DURATION_MINUTE_OPTIONS = Array.from({ length: 60 }, (_, index) => index);
+const APPOINTMENT_WHEEL_OPTION_HEIGHT = 64;
+const APPOINTMENT_WHEEL_LABEL_HEIGHT = 42;
 const FREE_SLOT_DATE_CHIP_SPAN = 140;
 const AI_AGENT_CHAT_ID = 'ristak-ai-agent-mobile-chat';
 const AI_AGENT_CHAT_DISPLAY_NAME = 'Asistente Personal AI';
 const AI_AGENT_CHAT_SUBTITLE = 'Te ayuda dentro de Ristak';
 const AI_AGENT_CHAT_SEARCH_TEXT = 'asistente personal ai ristak ai agente inteligencia artificial ia';
+let assistantConversationMessageCounter = 0;
 const ACCOUNT_CURRENCY_CONFIG_KEY = 'account_currency';
+const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled';
 const DEFAULT_ACCOUNT_CURRENCY = 'MXN';
 const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City';
 const SUCCESS_PAYMENT_STATUSES = new Set(['paid', 'partial', 'succeeded', 'completed', 'complete', 'fulfilled', 'success']);
@@ -426,6 +850,7 @@ const RECENT_PAYMENT_PERIODS: Array<{ id: RecentPaymentsPeriod; label: string; d
   { id: '7d', label: '7 días', days: 7 },
   { id: '30d', label: '30 días', days: 30 },
   { id: '90d', label: '90 días', days: 90 },
+  { id: 'custom', label: 'Personalizado', days: 0 },
 ];
 const SETTINGS_APP_CONFIG_KEYS = [
   'mobile_chat_ai_agent_enabled',
@@ -436,6 +861,7 @@ const SETTINGS_APP_CONFIG_KEYS = [
   'mobile_chat_show_unread_indicators',
   'mobile_chat_theme_preference',
   'mobile_chat_selected_whatsapp_phone_id',
+  CHAT_SEND_READ_RECEIPTS_CONFIG_KEY,
 ];
 const SETTINGS_USER_CONFIG_KEYS = [
   'chat_push_notifications_enabled',
@@ -458,12 +884,133 @@ const PHONE_CHAT_THEME_OPTIONS: Array<{
   { id: 'dark', label: 'Noche', description: 'Mantiene la app oscura todo el tiempo.', Icon: Moon },
   { id: 'auto', label: 'Horario', description: 'Claro de día y noche después de las 7 PM.', Icon: Clock },
 ];
+
+type MobileChatSettings = {
+  aiAgentEnabled: boolean;
+  aiReplySuggestionsEnabled: boolean;
+  showArchived: boolean;
+  sortMode: 'recent' | 'unread';
+  showLastPreview: boolean;
+  showUnreadIndicators: boolean;
+  themePreference: PhoneThemePreference;
+  selectedWhatsAppPhoneId: string;
+};
+
+const DEFAULT_MOBILE_CHAT_SETTINGS: MobileChatSettings = {
+  aiAgentEnabled: true,
+  aiReplySuggestionsEnabled: false,
+  showArchived: true,
+  sortMode: 'recent',
+  showLastPreview: true,
+  showUnreadIndicators: true,
+  themePreference: 'system',
+  selectedWhatsAppPhoneId: 'all',
+};
 const DEFAULT_CUSTOM_LABELS: CustomLabels = {
   customer: 'Cliente',
   customers: 'Clientes',
   lead: 'Interesado',
   leads: 'Interesados',
 };
+const CHANNEL_FILTER_OPTIONS: Array<{ value: AdvancedChannelFilter; label: string }> = [
+  { value: 'all', label: 'Todos los canales' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'messenger', label: 'Messenger' },
+  { value: 'instagram', label: 'Instagram Direct' },
+  { value: 'webchat', label: 'Webchat / sitio' },
+  { value: 'sms', label: 'SMS' },
+  { value: 'email', label: 'Email' },
+];
+const ORIGIN_FILTER_OPTIONS: Array<{ value: AdvancedOriginFilter; label: string }> = [
+  { value: 'all', label: 'Todos los origenes' },
+  { value: 'meta', label: 'Meta / red social' },
+  { value: 'site', label: 'Sitio o formulario' },
+  { value: 'organic', label: 'Organico / directo' },
+  { value: 'trigger', label: 'Enlace de disparo' },
+  { value: 'unknown', label: 'Sin origen' },
+];
+const SOCIAL_FILTER_OPTIONS: Array<{ value: AdvancedSocialFilter; label: string }> = [
+  { value: 'all', label: 'Todas las redes' },
+  { value: 'facebook', label: 'Facebook' },
+  { value: 'instagram', label: 'Instagram' },
+  { value: 'messenger', label: 'Messenger' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'google', label: 'Google' },
+  { value: 'unknown', label: 'Sin red detectada' },
+];
+const STAGE_FILTER_OPTIONS: Array<{ value: AdvancedStageFilter; label: string }> = [
+  { value: 'all', label: 'Todas las etapas' },
+  { value: 'lead', label: 'Interesados' },
+  { value: 'appointment', label: 'Con cita' },
+  { value: 'customer', label: 'Clientes' },
+];
+const ACTIVITY_FILTER_OPTIONS: Array<{ value: AdvancedActivityFilter; label: string }> = [
+  { value: 'all', label: 'Toda la actividad' },
+  { value: 'payments', label: 'Con pagos' },
+  { value: 'appointments', label: 'Con citas' },
+  { value: 'with_source', label: 'Con origen detectado' },
+  { value: 'no_phone', label: 'Sin telefono' },
+];
+const PHONE_CHAT_TEXT_OPERATORS: ContactAdvancedOption[] = [
+  { value: 'contains', label: 'contiene' },
+  { value: 'not_contains', label: 'no contiene' },
+  { value: 'is', label: 'es igual a' },
+  { value: 'is_not', label: 'no es igual a' },
+  { value: 'starts_with', label: 'empieza con' },
+  { value: 'ends_with', label: 'termina con' },
+  { value: 'empty', label: 'esta vacio' },
+  { value: 'not_empty', label: 'no esta vacio' },
+];
+const PHONE_CHAT_NUMBER_OPERATORS: ContactAdvancedOption[] = [
+  { value: 'eq', label: 'es igual a' },
+  { value: 'neq', label: 'no es igual a' },
+  { value: 'gt', label: 'mayor que' },
+  { value: 'gte', label: 'mayor o igual que' },
+  { value: 'lt', label: 'menor que' },
+  { value: 'lte', label: 'menor o igual que' },
+  { value: 'between', label: 'esta entre' },
+  { value: 'empty', label: 'esta en cero' },
+  { value: 'not_empty', label: 'no esta en cero' },
+];
+const PHONE_CHAT_BOOLEAN_OPERATORS: ContactAdvancedOption[] = [
+  { value: 'yes', label: 'si lo tiene' },
+  { value: 'no', label: 'no lo tiene' },
+];
+const PHONE_CHAT_SELECT_OPERATORS: ContactAdvancedOption[] = [
+  { value: 'is', label: 'es igual a' },
+  { value: 'is_not', label: 'no es igual a' },
+  { value: 'empty', label: 'esta vacio' },
+  { value: 'not_empty', label: 'no esta vacio' },
+];
+const PHONE_CHAT_TAG_OPERATORS: ContactAdvancedOption[] = [
+  { value: 'any', label: 'tiene cualquiera de' },
+  { value: 'all', label: 'tiene todas' },
+  { value: 'none', label: 'no tiene' },
+  { value: 'empty', label: 'sin etiquetas' },
+  { value: 'not_empty', label: 'con etiquetas' },
+];
+const PHONE_CHAT_CONDITION_OPERATORS = new Set<ContactAdvancedOperator>([
+  'is',
+  'is_not',
+  'contains',
+  'not_contains',
+  'starts_with',
+  'ends_with',
+  'empty',
+  'not_empty',
+  'eq',
+  'neq',
+  'gt',
+  'lt',
+  'gte',
+  'lte',
+  'between',
+  'yes',
+  'no',
+  'any',
+  'all',
+  'none',
+]);
 const ANALYTICS_PERIOD_OPTIONS: Array<{ id: AnalyticsPeriod; label: string; menuLabel: string; days?: number }> = [
   { id: '30d', label: '30 días', menuLabel: 'Últimos 30 días', days: 30 },
   { id: '60d', label: '60 días', menuLabel: 'Últimos 60 días', days: 60 },
@@ -484,21 +1031,57 @@ const EMPTY_ORIGIN_DATA: OriginDistributionData = {
   whatsappNumbers: [],
 };
 const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
-  { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', locked: true },
-  { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos' },
-  { id: 'appointments', label: 'Agendados', description: 'Contactos con cita guardada.', section: 'Rápidos' },
-  { id: 'customers', label: 'Clientes', description: 'Contactos marcados como clientes o con compras.', section: 'Rápidos' },
-  { id: 'leads', label: 'Leads', description: 'Contactos interesados que todavía no son clientes ni citados.', section: 'Rápidos' },
-  { id: 'comments', label: 'Comentarios', description: 'Abre la bandeja de comentarios de Facebook e Instagram.', section: 'Rápidos', separatorBefore: true },
-  { id: 'advanced:channel:whatsapp', label: 'Canal: WhatsApp', description: 'Filtra chats con actividad de WhatsApp.', section: 'Canal' },
-  { id: 'advanced:channel:messenger', label: 'Canal: Messenger', description: 'Filtra chats de Messenger.', section: 'Canal' },
-  { id: 'advanced:channel:instagram', label: 'Canal: Instagram', description: 'Filtra chats de Instagram.', section: 'Canal' },
-  { id: 'advanced:channel:email', label: 'Canal: Correo', description: 'Filtra conversaciones por correo.', section: 'Canal' },
-  { id: 'advanced:channel:sms', label: 'Canal: SMS', description: 'Filtra conversaciones SMS.', section: 'Canal' },
-  { id: 'advanced:activity:payments', label: 'Actividad: Pagos', description: 'Contactos con compras o valor registrado.', section: 'Actividad' },
-  { id: 'advanced:activity:appointments', label: 'Actividad: Citas', description: 'Contactos con citas.', section: 'Actividad' },
-  { id: 'advanced:activity:with_source', label: 'Actividad: Con origen', description: 'Contactos con fuente rastreada.', section: 'Actividad' },
-  { id: 'advanced:activity:no_phone', label: 'Actividad: Sin teléfono', description: 'Contactos sin teléfono guardado.', section: 'Actividad' },
+  { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', kind: 'quick', quickFilter: 'all', locked: true },
+  { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos', kind: 'quick', quickFilter: 'unread' },
+  { id: 'appointments', label: 'Agendados', description: 'Contactos con cita guardada.', section: 'Rápidos', kind: 'quick', quickFilter: 'appointments' },
+  { id: 'customers', label: 'Clientes', description: 'Contactos marcados como clientes o con compras.', section: 'Rápidos', kind: 'quick', quickFilter: 'customers' },
+  { id: 'leads', label: 'Leads', description: 'Contactos interesados que todavía no son clientes ni citados.', section: 'Rápidos', kind: 'quick', quickFilter: 'leads' },
+  { id: 'comments', label: 'Comentarios', description: 'Abre la bandeja de comentarios de Facebook e Instagram.', section: 'Rápidos', kind: 'comments', separatorBefore: true },
+  ...CHANNEL_FILTER_OPTIONS.filter((option) => option.value !== 'all').map((option) => ({
+    id: `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}channel:${option.value}`,
+    label: `Canal: ${option.label}`,
+    description: 'Filtro avanzado de canal.',
+    section: 'Canal',
+    kind: 'advanced' as const,
+    advancedGroup: 'channel' as const,
+    advancedValue: option.value,
+  })),
+  ...ORIGIN_FILTER_OPTIONS.filter((option) => option.value !== 'all').map((option) => ({
+    id: `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}origin:${option.value}`,
+    label: `Origen: ${option.label}`,
+    description: 'Filtro avanzado de origen.',
+    section: 'Origen',
+    kind: 'advanced' as const,
+    advancedGroup: 'origin' as const,
+    advancedValue: option.value,
+  })),
+  ...SOCIAL_FILTER_OPTIONS.filter((option) => option.value !== 'all').map((option) => ({
+    id: `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}social:${option.value}`,
+    label: `Red social: ${option.label}`,
+    description: 'Filtro avanzado de red social.',
+    section: 'Red social',
+    kind: 'advanced' as const,
+    advancedGroup: 'social' as const,
+    advancedValue: option.value,
+  })),
+  ...STAGE_FILTER_OPTIONS.filter((option) => option.value !== 'all').map((option) => ({
+    id: `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}stage:${option.value}`,
+    label: `Etapa: ${option.label}`,
+    description: 'Filtro avanzado de etapa comercial.',
+    section: 'Etapa',
+    kind: 'advanced' as const,
+    advancedGroup: 'stage' as const,
+    advancedValue: option.value,
+  })),
+  ...ACTIVITY_FILTER_OPTIONS.filter((option) => option.value !== 'all').map((option) => ({
+    id: `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}activity:${option.value}`,
+    label: `Actividad: ${option.label}`,
+    description: 'Filtro avanzado de actividad.',
+    section: 'Actividad',
+    kind: 'advanced' as const,
+    advancedGroup: 'activity' as const,
+    advancedValue: option.value,
+  })),
 ];
 
 const CHANNEL_BADGE_COLORS: Record<ChannelBadgeKind, string> = {
@@ -509,12 +1092,28 @@ const CHANNEL_BADGE_COLORS: Record<ChannelBadgeKind, string> = {
   instagram_comment: '#d62976',
   email: '#8b5cf6',
   sms: '#0ea5e9',
-  unknown: '#27c7d8',
+  unknown: '#8e8e93',
 };
+
+const CHANNEL_AVATAR_BADGE_ASSETS: Partial<Record<ChannelBadgeKind, ImageSourcePropType>> = {
+  whatsapp: require('../assets/channel-badges/whatsapp.webp'),
+  instagram: require('../assets/channel-badges/instagram.webp'),
+  instagram_comment: require('../assets/channel-badges/instagram.webp'),
+  messenger: require('../assets/channel-badges/messenger.webp'),
+  facebook_comment: require('../assets/channel-badges/facebook.webp'),
+  email: require('../assets/channel-badges/gmail.webp'),
+};
+const CHAT_WALLPAPER_SOURCE: ImageSourcePropType = require('../assets/chat-wallpaper.webp');
 const PHONE_DOCK_HORIZONTAL_PADDING = 8;
-const PHONE_DOCK_SWIPE_START_DISTANCE = 6;
+const PHONE_DOCK_INDICATOR_WIDTH = 64;
+const PHONE_DOCK_INDICATOR_HEIGHT = 50;
+const PHONE_DOCK_COMPACT_SCALE = 0.8;
+const PHONE_DOCK_BOTTOM_OFFSET = 30;
+const PHONE_DOCK_COLLAPSE_DURATION_MS = 380;
+const PHONE_DOCK_EXPAND_DURATION_MS = 180;
+const PHONE_DOCK_SWIPE_START_DISTANCE = 3;
 const PHONE_DOCK_CLICK_SUPPRESS_MS = 140;
-const PHONE_DOCK_RESERVED_SPACE = 132;
+const PHONE_DOCK_RESERVED_SPACE = 118;
 
 export default function RistakNativeApp() {
   const [screen, setScreen] = useState<Screen>('boot');
@@ -540,23 +1139,39 @@ export default function RistakNativeApp() {
     }
 
     try {
+      setSession({ baseUrl: storedBaseUrl, token: storedToken, user: null });
+      setScreen('shell');
       const verifier = new RistakApiClient(storedBaseUrl);
-      const verified = await verifier.verify(storedToken);
+      const verified = await withStartupTimeout(
+        verifier.verify(storedToken),
+        BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS,
+        'native_session_verify',
+      );
       if (verified.success && verified.user) {
         setSession({ baseUrl: storedBaseUrl, token: storedToken, user: verified.user });
-        setScreen('shell');
+      } else {
+        await clearAuthToken();
+        setSession({ baseUrl: storedBaseUrl, token: '', user: null });
+        setScreen('login');
+      }
+      return;
+    } catch (error) {
+      const status = Number((error as { status?: unknown })?.status || 0);
+      if (status === 401 || status === 403) {
+        await clearAuthToken();
+        setSession({ baseUrl: storedBaseUrl, token: '', user: null });
+        setScreen('login');
         return;
       }
-    } catch {
-      await clearAuthToken();
+      console.warn('[RistakNative] session verify skipped during startup', error);
+      setSession({ baseUrl: storedBaseUrl, token: storedToken, user: null });
+      setScreen('shell');
+      return;
     }
-
-    setSession({ baseUrl: storedBaseUrl, token: '', user: null });
-    setScreen('login');
   }, []);
 
   useEffect(() => {
-    void SystemUI.setBackgroundColorAsync(COLORS.bg).catch(() => undefined);
+    applyNativePhoneThemePreference('system');
     void bootstrap();
   }, [bootstrap]);
 
@@ -617,23 +1232,126 @@ function PhoneShell({
   onChangeServer: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
+  const [pageDirection, setPageDirection] = useState(1);
+  const [dockHidden, setDockHidden] = useState(false);
+  const [dockCompact, setDockCompact] = useState(false);
   const [chatUnreadTotal, setChatUnreadTotal] = useState(0);
   const [notificationContactId, setNotificationContactId] = useState('');
+  const [pendingChatDraft, setPendingChatDraft] = useState<PendingChatDraft | null>(null);
+  const [contactToolContext, setContactToolContext] = useState<{ section: PhoneSection; contact: ChatContact; key: string } | null>(null);
+  const [mobileAppConfig, setMobileAppConfig] = useState<Record<string, ConfigValue>>({});
+  const [nativeThemeState, setNativeThemeState] = useState(() => ({
+    tone: activeNativeThemeTone,
+    background: getNativePhoneThemeBackground(activeNativeThemeTone),
+  }));
+  const nativeThemeTone = nativeThemeState.tone;
+  const dockTouchRef = useRef({ x: 0, y: 0, lastX: 0, lastY: 0 });
+  const dockCompactRef = useRef(false);
   const autoRegisteredPushKeyRef = useRef('');
   const clearNotificationContactId = useCallback(() => setNotificationContactId(''), []);
-  const dock = (
-    <PhoneDock
-      active={activeSection}
-      badges={{ chat: chatUnreadTotal }}
-      onSelect={setActiveSection}
-    />
-  );
+  const handleDockHiddenChange = useCallback((hidden: boolean) => setDockHidden(hidden), []);
+  const navigateSection = useCallback((section: PhoneSection) => {
+    setActiveSection((current) => {
+      if (current === section) return current;
+      const currentIndex = Math.max(0, PHONE_NAV_ITEMS.findIndex((item) => item.key === current));
+      const nextIndex = Math.max(0, PHONE_NAV_ITEMS.findIndex((item) => item.key === section));
+      setPageDirection(nextIndex >= currentIndex ? 1 : -1);
+      return section;
+    });
+  }, []);
+  const navigateToContactTool = useCallback((contact: ChatContact, section: PhoneSection) => {
+    setContactToolContext({
+      section,
+      contact,
+      key: `${section}:${contact.id || getContactName(contact)}:${Date.now()}`,
+    });
+    navigateSection(section);
+  }, [navigateSection]);
+  const clearContactToolContext = useCallback((key: string) => {
+    setContactToolContext((current) => (current?.key === key ? null : current));
+  }, []);
+  const handleShellTouchStart = useCallback((event: GestureResponderEvent) => {
+    const x = Number(event.nativeEvent.pageX) || 0;
+    const y = Number(event.nativeEvent.pageY) || 0;
+    dockTouchRef.current = { x, y, lastX: x, lastY: y };
+  }, []);
+  const handleShellTouchMove = useCallback((event: GestureResponderEvent) => {
+    if (dockHidden) return;
+    const x = Number(event.nativeEvent.pageX) || 0;
+    const y = Number(event.nativeEvent.pageY) || 0;
+    const deltaX = x - dockTouchRef.current.lastX;
+    const deltaY = y - dockTouchRef.current.lastY;
+    dockTouchRef.current.lastX = x;
+    dockTouchRef.current.lastY = y;
+    if (Math.abs(deltaY) < 4 || Math.abs(deltaY) < Math.abs(deltaX) * 1.15) return;
+    const nextCompact = deltaY < 0;
+    if (nextCompact === dockCompactRef.current) return;
+    dockCompactRef.current = nextCompact;
+    setDockCompact(nextCompact);
+  }, [dockHidden]);
+  const mobileChatSettings = useMemo(() => normalizeMobileChatSettings(mobileAppConfig), [mobileAppConfig]);
+  const patchMobileAppConfig = useCallback((patch: Record<string, ConfigValue>) => {
+    setMobileAppConfig((current) => ({ ...current, ...patch }));
+  }, []);
+	  const dock = (
+	    <PhoneDock
+	      active={activeSection}
+	      badges={{ chat: chatUnreadTotal }}
+	      compact={dockCompact}
+	      onSelect={navigateSection}
+	    />
+	  );
 
-  useEffect(() => configureNativeNotificationListeners((intent) => {
-    if (!intent.contactId) return;
-    setNotificationContactId(intent.contactId);
-    setActiveSection('chat');
-  }), []);
+  useEffect(() => {
+    let cancelled = false;
+    api.getConfig(SETTINGS_APP_CONFIG_KEYS)
+      .then((response) => {
+        if (!cancelled) setMobileAppConfig(unwrapConfigResponse(response));
+      })
+      .catch(() => {
+        if (!cancelled) setMobileAppConfig({});
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
+    const applyTheme = (systemTone?: string | null) => {
+      const result = applyNativePhoneThemePreference(mobileChatSettings.themePreference, systemTone);
+      setNativeThemeState((current) => (
+        current.tone === result.tone && current.background === result.background
+          ? current
+          : result
+      ));
+    };
+
+    applyTheme();
+
+    const appearanceSubscription = mobileChatSettings.themePreference === 'system'
+      ? Appearance.addChangeListener(({ colorScheme }) => applyTheme(colorScheme))
+      : null;
+    const interval = mobileChatSettings.themePreference === 'auto'
+      ? setInterval(applyTheme, 60 * 1000)
+      : null;
+
+    return () => {
+      appearanceSubscription?.remove();
+      if (interval) clearInterval(interval);
+    };
+  }, [mobileChatSettings.themePreference]);
+
+  useEffect(() => {
+    if (activeSection !== 'chat') setDockHidden(false);
+    dockCompactRef.current = false;
+    setDockCompact(false);
+  }, [activeSection]);
+
+	  useEffect(() => configureNativeNotificationListeners((intent) => {
+	    if (!intent.contactId) return;
+	    setNotificationContactId(intent.contactId);
+	    navigateSection('chat');
+	  }), [navigateSection]);
 
   useEffect(() => {
     const userId = String(user?.id || user?.email || '').trim();
@@ -657,88 +1375,193 @@ function PhoneShell({
     };
   }, [api, baseUrl, user?.email, user?.id]);
 
-  if (activeSection === 'chat') {
-    return (
-      <ChatScreen
-        api={api}
-        footer={dock}
-        notificationContactId={notificationContactId}
-        onNotificationHandled={clearNotificationContactId}
-        onUnreadTotalChange={setChatUnreadTotal}
-        onNavigate={setActiveSection}
-      />
-    );
-  }
-
-  if (activeSection === 'calendar') {
-    return (
-      <CalendarSection
-        api={api}
-        footer={dock}
-      />
-    );
-  }
-
-  if (activeSection === 'payments') {
-    return (
-      <AppFrame>
-        <PaymentsSection api={api} />
-        {dock}
-      </AppFrame>
-    );
-  }
-
-  if (activeSection === 'analytics') {
-    return (
-      <AppFrame>
-        <AnalyticsSection api={api} />
-        {dock}
-      </AppFrame>
-    );
-  }
-
-  if (activeSection === 'settings') {
-    return (
-      <SettingsScreen
-        api={api}
-        user={user}
-        baseUrl={baseUrl}
-        footer={dock}
-        onLogout={onLogout}
-        onChangeServer={onChangeServer}
-      />
-    );
-  }
+	  const renderSection = (section: PhoneSection) => {
+	    if (section !== activeSection) return null;
+	    return (
+	      <AnimatedShellPage
+	        active
+	        direction={pageDirection}
+	        key={section}
+	        pointerEvents="auto"
+	      >
+        <PhoneSectionErrorBoundary resetKey={`${section}:${nativeThemeTone}`} section={section}>
+	          {section === 'chat' ? (
+	            <ChatScreen
+              api={api}
+              settings={mobileChatSettings}
+              notificationContactId={notificationContactId}
+              pendingDraft={pendingChatDraft}
+              onDockHiddenChange={handleDockHiddenChange}
+              onNotificationHandled={clearNotificationContactId}
+              onPendingDraftHandled={(id) => {
+                setPendingChatDraft((current) => (current?.id === id ? null : current));
+              }}
+              onUnreadTotalChange={setChatUnreadTotal}
+	              onNavigate={navigateSection}
+              onNavigateToContactTool={navigateToContactTool}
+	            />
+	          ) : null}
+          {section === 'calendar' ? (
+            <CalendarSection
+              api={api}
+              initialContact={contactToolContext?.section === 'calendar' ? contactToolContext.contact : null}
+              initialContactKey={contactToolContext?.section === 'calendar' ? contactToolContext.key : ''}
+              onInitialContactConsumed={clearContactToolContext}
+            />
+          ) : null}
+          {section === 'payments' ? (
+            <AppFrame>
+	              <PaymentsSection
+	                api={api}
+                initialContact={contactToolContext?.section === 'payments' ? contactToolContext.contact : null}
+                initialContactKey={contactToolContext?.section === 'payments' ? contactToolContext.key : ''}
+	                onOpenChatDraft={(draft) => {
+	                  setPendingChatDraft(draft);
+	                  navigateSection('chat');
+	                }}
+                onInitialContactConsumed={clearContactToolContext}
+	              />
+            </AppFrame>
+          ) : null}
+          {section === 'analytics' ? (
+            <AppFrame>
+              <AnalyticsSection api={api} />
+            </AppFrame>
+          ) : null}
+          {section === 'settings' ? (
+            <SettingsScreen
+              api={api}
+              user={user}
+              baseUrl={baseUrl}
+              nativeThemeTone={nativeThemeTone}
+              onAppConfigPatch={patchMobileAppConfig}
+              onLogout={onLogout}
+              onChangeServer={onChangeServer}
+            />
+          ) : null}
+        </PhoneSectionErrorBoundary>
+	      </AnimatedShellPage>
+	    );
+	  };
 
   return (
-    <AppFrame>
-      <SectionHeader
-        section={activeSection}
-        user={user}
-        baseUrl={baseUrl}
-        onLogout={onLogout}
-        onChangeServer={onChangeServer}
-      />
-      {dock}
-    </AppFrame>
+    <View
+      onTouchMove={handleShellTouchMove}
+      onTouchStart={handleShellTouchStart}
+      style={styles.phoneShellRoot}
+    >
+      {PHONE_NAV_ITEMS.map((item) => renderSection(item.key))}
+      {!dockHidden ? dock : null}
+    </View>
+	  );
+	}
+
+function AnimatedShellPage({
+  active,
+  children,
+  direction,
+  pointerEvents,
+}: {
+  active: boolean;
+  children: React.ReactNode;
+  direction: number;
+  pointerEvents?: 'auto' | 'none' | 'box-none' | 'box-only';
+}) {
+  const { width } = useWindowDimensions();
+  const progress = useRef(new Animated.Value(active ? 1 : 0)).current;
+  const [transitioning, setTransitioning] = useState(!active);
+
+  useEffect(() => {
+    setTransitioning(true);
+    Animated.timing(progress, {
+      toValue: active ? 1 : 0,
+      duration: PAGE_TRANSITION_DURATION_MS,
+      easing: active ? Easing.out(Easing.cubic) : Easing.in(Easing.quad),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished && active) {
+        setTransitioning(false);
+      }
+    });
+  }, [active, direction, progress]);
+
+  const distance = Math.max(54, width * PAGE_TRANSITION_OFFSET_RATIO);
+  const resolvedDirection = direction || 1;
+  const translateX = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [resolvedDirection * distance, 0],
+  });
+  const opacity = progress.interpolate({
+    inputRange: [0, 0.3, 1],
+    outputRange: [0, 0.72, 1],
+  });
+  const scale = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0.988, 1],
+  });
+
+  return (
+    <Animated.View
+      pointerEvents={pointerEvents}
+      style={[
+        styles.phoneShellPage,
+        transitioning || !active ? {
+          opacity,
+          transform: [{ translateX }, { scale }],
+        } : null,
+        { zIndex: active ? 2 : 1 },
+      ]}
+    >
+      {children}
+    </Animated.View>
+  );
+}
+
+function ConversationRouteLayer({
+  children,
+  progress,
+  width,
+}: {
+  children: React.ReactNode;
+  progress: Animated.Value;
+  width: number;
+}) {
+  const translateX = progress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [Math.max(320, width), 0],
+  });
+
+  return (
+    <Animated.View
+      pointerEvents="auto"
+      style={[
+        styles.conversationRouteLayer,
+        { transform: [{ translateX }] },
+      ]}
+    >
+      {children}
+    </Animated.View>
   );
 }
 
 function PhoneDock({
   active,
   badges = {},
+  compact,
   onSelect,
 }: {
   active: PhoneSection;
   badges?: Partial<Record<PhoneSection, number>>;
+  compact: boolean;
   onSelect: (section: PhoneSection) => void;
 }) {
   const activeIndex = Math.max(0, PHONE_NAV_ITEMS.findIndex((item) => item.key === active));
   const [dockWidth, setDockWidth] = useState(0);
   const [visualIndex, setVisualIndex] = useState(activeIndex);
   const [swiping, setSwiping] = useState(false);
-  const dockRef = useRef<View>(null);
   const indicatorX = useRef(new Animated.Value(0)).current;
+  const compactProgress = useRef(new Animated.Value(compact ? 1 : 0)).current;
+  const dockRef = useRef<View>(null);
   const dragStartXRef = useRef(0);
   const dockPageXRef = useRef(0);
   const visualIndexRef = useRef(activeIndex);
@@ -748,6 +1571,15 @@ function PhoneDock({
   const tabWidth = dockWidth > 0
     ? (dockWidth - (PHONE_DOCK_HORIZONTAL_PADDING * 2)) / PHONE_NAV_ITEMS.length
     : 0;
+  const dockGlassEffectStyle = useMemo(() => ({
+    style: 'clear',
+    animate: true,
+    animationDuration: compact ? PHONE_DOCK_COLLAPSE_DURATION_MS / 1000 : PHONE_DOCK_EXPAND_DURATION_MS / 1000,
+  } as const), [compact]);
+  const dockScale = compactProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, PHONE_DOCK_COMPACT_SCALE],
+  });
 
   const clearSuppressPressTimer = useCallback(() => {
     if (suppressPressTimerRef.current) {
@@ -758,27 +1590,14 @@ function PhoneDock({
 
   useEffect(() => clearSuppressPressTimer, [clearSuppressPressTimer]);
 
-  const animateIndicatorTo = useCallback((index: number) => {
-    if (!tabWidth) return;
-    Animated.timing(indicatorX, {
-      toValue: index * tabWidth,
-      duration: 360,
-      easing: Easing.bezier(0.2, 0.88, 0.2, 1),
+  useEffect(() => {
+    Animated.timing(compactProgress, {
+      toValue: compact ? 1 : 0,
+      duration: compact ? PHONE_DOCK_COLLAPSE_DURATION_MS : PHONE_DOCK_EXPAND_DURATION_MS,
+      easing: compact ? Easing.bezier(0.16, 1, 0.3, 1) : Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
-  }, [indicatorX, tabWidth]);
-
-  useEffect(() => {
-    visualIndexRef.current = activeIndex;
-    setVisualIndex(activeIndex);
-    if (swipingRef.current) return;
-    animateIndicatorTo(activeIndex);
-  }, [activeIndex, animateIndicatorTo]);
-
-  useEffect(() => {
-    if (!tabWidth || swipingRef.current) return;
-    indicatorX.setValue(activeIndex * tabWidth);
-  }, [activeIndex, indicatorX, tabWidth]);
+  }, [compact, compactProgress]);
 
   const resolveDockIndex = useCallback((locationX: number) => {
     if (!tabWidth || !dockWidth) return activeIndex;
@@ -791,19 +1610,53 @@ function PhoneDock({
     ));
   }, [activeIndex, dockWidth, tabWidth]);
 
+  const getIndicatorXForIndex = useCallback((index: number, width = dockWidth) => {
+    const computedTabWidth = width > 0
+      ? (width - (PHONE_DOCK_HORIZONTAL_PADDING * 2)) / PHONE_NAV_ITEMS.length
+      : 0;
+    if (!computedTabWidth) return 0;
+    const safeIndex = Math.max(0, Math.min(PHONE_NAV_ITEMS.length - 1, index));
+    const centerX = PHONE_DOCK_HORIZONTAL_PADDING + (computedTabWidth * safeIndex) + (computedTabWidth / 2);
+    return centerX - (PHONE_DOCK_INDICATOR_WIDTH / 2);
+  }, [dockWidth]);
+
+  const getIndicatorXForLocation = useCallback((locationX: number) => {
+    if (!tabWidth || !dockWidth) return getIndicatorXForIndex(activeIndex);
+    const minX = getIndicatorXForIndex(0);
+    const maxX = getIndicatorXForIndex(PHONE_NAV_ITEMS.length - 1);
+    const nextX = locationX - (PHONE_DOCK_INDICATOR_WIDTH / 2);
+    return Math.max(minX, Math.min(nextX, maxX));
+  }, [activeIndex, dockWidth, getIndicatorXForIndex, tabWidth]);
+
+  const setIndicatorX = useCallback((nextX: number) => {
+    indicatorX.setValue(nextX);
+  }, [indicatorX]);
+
+  const animateIndicatorToIndex = useCallback((index: number, duration = 170) => {
+    const nextX = getIndicatorXForIndex(index);
+    Animated.timing(indicatorX, {
+      toValue: nextX,
+      duration,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [getIndicatorXForIndex, indicatorX]);
+
+  useEffect(() => {
+    visualIndexRef.current = activeIndex;
+    setVisualIndex(activeIndex);
+    if (dockWidth > 0) animateIndicatorToIndex(activeIndex, 150);
+  }, [activeIndex, animateIndicatorToIndex, dockWidth]);
+
   const updateDragIndicator = useCallback((locationX: number) => {
     if (!tabWidth || !dockWidth) return;
-    const minCenter = PHONE_DOCK_HORIZONTAL_PADDING + (tabWidth / 2);
-    const maxCenter = dockWidth - PHONE_DOCK_HORIZONTAL_PADDING - (tabWidth / 2);
-    const clampedCenter = Math.max(minCenter, Math.min(locationX, maxCenter));
+    setIndicatorX(getIndicatorXForLocation(locationX));
     const nextIndex = resolveDockIndex(locationX);
-    indicatorX.setValue(clampedCenter - minCenter);
     if (nextIndex !== visualIndexRef.current) {
-      Vibration.vibrate(8);
       visualIndexRef.current = nextIndex;
       setVisualIndex(nextIndex);
     }
-  }, [dockWidth, indicatorX, resolveDockIndex, tabWidth]);
+  }, [dockWidth, getIndicatorXForLocation, resolveDockIndex, setIndicatorX, tabWidth]);
 
   const suppressNextPress = useCallback(() => {
     suppressPressRef.current = true;
@@ -818,6 +1671,7 @@ function PhoneDock({
     swipingRef.current = false;
     setSwiping(false);
     suppressNextPress();
+    animateIndicatorToIndex(nextIndex, 130);
     const nextItem = PHONE_NAV_ITEMS[nextIndex];
     if (nextItem && nextItem.key !== active) {
       onSelect(nextItem.key);
@@ -825,8 +1679,8 @@ function PhoneDock({
     }
     visualIndexRef.current = activeIndex;
     setVisualIndex(activeIndex);
-    animateIndicatorTo(activeIndex);
-  }, [active, activeIndex, animateIndicatorTo, onSelect, suppressNextPress]);
+    animateIndicatorToIndex(activeIndex, 130);
+  }, [active, activeIndex, animateIndicatorToIndex, onSelect, suppressNextPress]);
 
   const panResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, gestureState) => (
@@ -834,7 +1688,6 @@ function PhoneDock({
       && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.25
     ),
     onPanResponderGrant: (event) => {
-      indicatorX.stopAnimation();
       swipingRef.current = true;
       setSwiping(true);
       const locationX = Number(event.nativeEvent.locationX) || 0;
@@ -845,6 +1698,7 @@ function PhoneDock({
       });
       dragStartXRef.current = locationX;
       visualIndexRef.current = visualIndex;
+      indicatorX.stopAnimation();
       updateDragIndicator(dragStartXRef.current);
     },
     onPanResponderMove: (_, gestureState) => {
@@ -856,7 +1710,7 @@ function PhoneDock({
     onPanResponderRelease: () => finishSwipe(visualIndexRef.current),
     onPanResponderTerminationRequest: () => true,
     onPanResponderTerminate: () => finishSwipe(activeIndex),
-  }), [activeIndex, finishSwipe, indicatorX, updateDragIndicator, visualIndex]);
+  }), [activeIndex, finishSwipe, updateDragIndicator, visualIndex]);
 
   const handlePress = (section: PhoneSection, index: number) => {
     if (suppressPressRef.current) {
@@ -866,33 +1720,66 @@ function PhoneDock({
     }
     visualIndexRef.current = index;
     setVisualIndex(index);
-    animateIndicatorTo(index);
+    animateIndicatorToIndex(index, 150);
     if (section !== active) onSelect(section);
   };
 
+  const handleDockLayout = useCallback((event: LayoutChangeEvent) => {
+    const nextWidth = event.nativeEvent.layout.width;
+    setDockWidth(nextWidth);
+    setIndicatorX(getIndicatorXForIndex(visualIndexRef.current, nextWidth));
+  }, [getIndicatorXForIndex, setIndicatorX]);
+
   return (
-    <View style={styles.phoneDockWrap} pointerEvents="box-none">
+    <Animated.View
+      pointerEvents="box-none"
+      style={[
+        styles.phoneDockWrap,
+        { transform: [{ scale: dockScale }] },
+      ]}
+    >
       <View
         ref={dockRef}
         {...panResponder.panHandlers}
-        onLayout={(event) => setDockWidth(event.nativeEvent.layout.width)}
+        onLayout={handleDockLayout}
         style={[styles.phoneDock, swiping && styles.phoneDockSwiping]}
       >
+        <LiquidGlassLayer
+          colorScheme={activeNativeThemeTone}
+          fallbackStyle={styles.phoneDockSurfaceFallback}
+          glassEffectStyle={dockGlassEffectStyle}
+          style={styles.phoneDockSurface}
+          tintColor={activeNativeThemeTone === 'light' ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.08)'}
+        />
+        <View pointerEvents="none" style={styles.phoneDockSurfaceStroke} />
         <Animated.View
           pointerEvents="none"
           style={[
             styles.phoneDockIndicator,
             {
               opacity: tabWidth ? 1 : 0,
-              width: tabWidth || 0,
               transform: [{ translateX: indicatorX }],
             },
           ]}
-        />
+        >
+          <LiquidGlassLayer
+            colorScheme={activeNativeThemeTone}
+            fallbackStyle={styles.phoneDockIndicatorSurfaceFallback}
+            glassEffectStyle={dockGlassEffectStyle}
+            style={styles.phoneDockIndicatorSurface}
+            tintColor={activeNativeThemeTone === 'light' ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.16)'}
+          />
+          <View pointerEvents="none" style={styles.phoneDockIndicatorSurfaceStroke} />
+        </Animated.View>
         {PHONE_NAV_ITEMS.map((item, index) => {
           const selected = index === visualIndex;
           const badgeCount = Math.max(0, Number(badges[item.key] || 0));
           const DockIcon = item.Icon;
+          const dockIconColor = activeNativeThemeTone === 'light'
+            ? COLORS.black
+            : selected
+              ? COLORS.text
+              : COLORS.muted;
           return (
             <Pressable
               key={item.key}
@@ -907,9 +1794,9 @@ function PhoneDock({
             >
               <View style={[styles.phoneDockIconWrap, selected && styles.phoneDockIconWrapActive]}>
                 <DockIcon
-                  size={item.key === 'chat' ? 26 : 24}
-                  color={selected ? COLORS.accent : COLORS.muted}
-                  strokeWidth={selected ? 2.35 : 2.05}
+                  size={item.key === 'chat' ? 25 : 23}
+                  color={dockIconColor}
+                  strokeWidth={selected ? 1.95 : 1.75}
                 />
                 {badgeCount > 0 ? (
                   <View style={styles.phoneDockBadge}>
@@ -921,7 +1808,7 @@ function PhoneDock({
           );
         })}
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -958,19 +1845,180 @@ function SectionHeader({
         }}
         style={styles.roundButton}
       >
+        <LiquidControlBackground />
         <Text style={styles.roundButtonLabel}>...</Text>
       </Pressable>
     </View>
   );
 }
 
-function AppFrame({ children }: { children: React.ReactNode }) {
-  return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar barStyle="light-content" />
-      {children}
-    </SafeAreaView>
+function AppFrame({
+  backgroundColor = COLORS.bg,
+  children,
+  keyboardAvoiding = true,
+}: {
+  backgroundColor?: string;
+  children: React.ReactNode;
+  keyboardAvoiding?: boolean;
+}) {
+  const [topInset, setTopInset] = useState(() => {
+    if (Platform.OS === 'android') return StatusBar.currentHeight || 0;
+    if (Platform.OS === 'ios') return DEFAULT_IOS_TOP_SAFE_AREA;
+    return 0;
+  });
+
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(backgroundColor).catch(() => undefined);
+    StatusBar.setBarStyle(activeNativeThemeTone === 'light' ? 'dark-content' : 'light-content', true);
+    if (Platform.OS === 'android') {
+      StatusBar.setBackgroundColor(backgroundColor, true);
+    }
+
+    if (Platform.OS === 'ios') {
+      const statusBarManager = NativeModules.StatusBarManager as {
+        getHeight?: (callback: (statusBarFrameData: { height?: number }) => void) => void;
+      } | undefined;
+      statusBarManager?.getHeight?.(({ height }) => {
+        const nextHeight = Number(height);
+        if (Number.isFinite(nextHeight) && nextHeight > 0) setTopInset(nextHeight);
+      });
+    }
+  }, [backgroundColor]);
+
+  const content = (
+    <>
+      <View pointerEvents="none" style={[styles.appFrameBleed, { backgroundColor }]} />
+      <StatusBar barStyle={activeNativeThemeTone === 'light' ? 'dark-content' : 'light-content'} backgroundColor="transparent" translucent />
+      <View style={[styles.appFrameContent, { paddingTop: topInset }]}>
+        {children}
+      </View>
+    </>
   );
+
+  if (!keyboardAvoiding) {
+    return (
+      <View style={[styles.appFrame, { backgroundColor }]}>
+        {content}
+      </View>
+    );
+  }
+
+  return (
+    <KeyboardAvoidingView
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={0}
+      style={[styles.appFrame, { backgroundColor }]}
+    >
+      {content}
+    </KeyboardAvoidingView>
+  );
+}
+
+function useChatWallpaperParallax(active = true) {
+  const parallaxX = useRef(new Animated.Value(0)).current;
+  const parallaxY = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    let disposed = false;
+    let subscription: { remove: () => void } | null = null;
+
+    if (!active || Platform.OS === 'web') {
+      Animated.parallel([
+        Animated.timing(parallaxX, {
+          toValue: 0,
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+        Animated.timing(parallaxY, {
+          toValue: 0,
+          duration: 180,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }),
+      ]).start();
+      return undefined;
+    }
+
+    DeviceMotion.setUpdateInterval(CHAT_WALLPAPER_SENSOR_INTERVAL_MS);
+    void DeviceMotion.isAvailableAsync().then((available) => {
+      if (disposed || !available) return;
+      subscription = DeviceMotion.addListener((motion) => {
+        const gamma = Number(motion.rotation?.gamma || 0);
+        const beta = Number(motion.rotation?.beta || 0);
+        const nextX = Math.max(-CHAT_WALLPAPER_PARALLAX_MAX_OFFSET, Math.min(CHAT_WALLPAPER_PARALLAX_MAX_OFFSET, gamma * 9));
+        const nextY = Math.max(-CHAT_WALLPAPER_PARALLAX_MAX_OFFSET, Math.min(CHAT_WALLPAPER_PARALLAX_MAX_OFFSET, beta * -5));
+        Animated.timing(parallaxX, {
+          toValue: nextX,
+          duration: 140,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+        Animated.timing(parallaxY, {
+          toValue: nextY,
+          duration: 140,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      });
+    }).catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      subscription?.remove();
+    };
+  }, [active, parallaxX, parallaxY]);
+
+  return { parallaxX, parallaxY };
+}
+
+function ChatWallpaper({
+  parallaxX,
+  parallaxY,
+}: {
+  parallaxX: Animated.Value;
+  parallaxY: Animated.Value;
+}) {
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.chatWallpaper,
+        { transform: [{ translateX: parallaxX }, { translateY: parallaxY }] },
+      ]}
+    >
+      <Image source={CHAT_WALLPAPER_SOURCE} resizeMode="cover" style={styles.chatWallpaperImage as ImageStyle} />
+    </Animated.View>
+  );
+}
+
+function useKeyboardInset(active = true) {
+  const [keyboardInset, setKeyboardInset] = useState(0);
+
+  useEffect(() => {
+    if (!active) {
+      setKeyboardInset(0);
+      return undefined;
+    }
+
+    const show = (event: { endCoordinates?: { height?: number } }) => {
+      const height = Number(event?.endCoordinates?.height || 0);
+      setKeyboardInset(Number.isFinite(height) && height > 0 ? height : 0);
+    };
+    const hide = () => setKeyboardInset(0);
+    const subscriptions = [
+      Keyboard.addListener('keyboardWillShow', show),
+      Keyboard.addListener('keyboardDidShow', show),
+      Keyboard.addListener('keyboardWillHide', hide),
+      Keyboard.addListener('keyboardDidHide', hide),
+    ];
+
+    return () => {
+      subscriptions.forEach((subscription) => subscription.remove());
+    };
+  }, [active]);
+
+  return active ? keyboardInset : 0;
 }
 
 function BootScreen() {
@@ -1017,7 +2065,7 @@ function LoginScreen({
   };
 
   return (
-    <AppFrame>
+    <AppFrame keyboardAvoiding={false}>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.authWrap}>
         <ScrollView contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
           <View style={styles.authPanel}>
@@ -1063,17 +2111,28 @@ function ChatScreen({
   api,
   footer,
   notificationContactId,
+  pendingDraft,
+  settings = DEFAULT_MOBILE_CHAT_SETTINGS,
+  onDockHiddenChange,
   onNotificationHandled,
+  onPendingDraftHandled,
   onUnreadTotalChange,
   onNavigate,
+  onNavigateToContactTool,
 }: {
   api: RistakApiClient;
   footer?: React.ReactNode;
   notificationContactId?: string;
+  pendingDraft?: PendingChatDraft | null;
+  settings?: MobileChatSettings;
+  onDockHiddenChange?: (hidden: boolean) => void;
   onNotificationHandled?: () => void;
+  onPendingDraftHandled?: (id: string) => void;
   onUnreadTotalChange?: (count: number) => void;
   onNavigate?: (section: PhoneSection) => void;
+  onNavigateToContactTool?: (contact: ChatContact, section: PhoneSection) => void;
 }) {
+  const { width: chatViewportWidth } = useWindowDimensions();
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ChatFilterId>('all');
   const [visibleFilterIds, setVisibleFilterIds] = useState<ChatFilterId[]>(DEFAULT_CHAT_FILTER_IDS);
@@ -1082,7 +2141,6 @@ function ChatScreen({
   const [mutedChatIds, setMutedChatIds] = useState<string[]>([]);
   const [archivedViewOpen, setArchivedViewOpen] = useState(false);
   const [chatPrefsHydrated, setChatPrefsHydrated] = useState(false);
-  const [openSwipeChatId, setOpenSwipeChatId] = useState<string | null>(null);
   const [selectedChatIds, setSelectedChatIds] = useState<string[]>([]);
   const [selectionActionsOpen, setSelectionActionsOpen] = useState(false);
   const [bulkActionBusy, setBulkActionBusy] = useState(false);
@@ -1094,38 +2152,154 @@ function ChatScreen({
   const [contactsLoading, setContactsLoading] = useState(false);
   const [chatTags, setChatTags] = useState<ContactTag[]>([]);
   const [chatTagsLoading, setChatTagsLoading] = useState(false);
+  const [customChatFilters, setCustomChatFiltersState] = useState<PhoneChatCustomFilterPreset[]>([]);
+  const [chatCustomFields, setChatCustomFields] = useState<ContactCustomFieldDefinition[]>([]);
+  const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null);
+  const [filterCatalogLoading, setFilterCatalogLoading] = useState(false);
+  const [filterManagerMode, setFilterManagerMode] = useState<'list' | 'editor'>('list');
+  const [editingCustomChatFilterId, setEditingCustomChatFilterId] = useState('');
+  const [customFilterDraft, setCustomFilterDraft] = useState<PhoneChatCustomFilterDraft>(() => createPhoneChatCustomFilterDraft());
   const [tagQuery, setTagQuery] = useState('');
   const [tagBusy, setTagBusy] = useState(false);
   const [scheduleText, setScheduleText] = useState('');
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft());
+  const [scheduleError, setScheduleError] = useState('');
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [agentStatesByContactId, setAgentStatesByContactId] = useState<Record<string, ConversationAgentState[]>>({});
   const [agentStateLoadingId, setAgentStateLoadingId] = useState<string | null>(null);
   const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
-  const [cameraAsset, setCameraAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
+  const [cameraAttachment, setCameraAttachment] = useState<ConversationDraftAttachment | null>(null);
+  const [cameraRecipients, setCameraRecipients] = useState<ChatContact[]>([]);
+  const [cameraCaption, setCameraCaption] = useState('');
+  const [cameraSending, setCameraSending] = useState(false);
   const [chats, setChats] = useState<ChatContact[]>([]);
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
   const [accountCurrency, setAccountCurrency] = useState(DEFAULT_ACCOUNT_CURRENCY);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [chatsLoadingMore, setChatsLoadingMore] = useState(false);
+  const [chatsHasMore, setChatsHasMore] = useState(true);
+  const [chatListOffset, setChatListOffset] = useState(0);
+  const [chatListViewportHeight, setChatListViewportHeight] = useState(0);
+  const [chatListHeaderHeight, setChatListHeaderHeight] = useState(0);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<ChatContact | null>(null);
+  const [conversationClosing, setConversationClosing] = useState(false);
+  const [pendingConversationDraft, setPendingConversationDraft] = useState<PendingChatDraft | null>(null);
   const [assistantOpen, setAssistantOpen] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chatListGenerationRef = useRef(0);
+  const chatListLoadedQueryRef = useRef('');
+  const chatMountedRef = useRef(true);
+  const conversationRouteProgress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => () => {
+    chatMountedRef.current = false;
+    chatListGenerationRef.current += 1;
+  }, []);
+
+  useEffect(() => {
+    onDockHiddenChange?.(assistantOpen || Boolean(selected));
+    return () => onDockHiddenChange?.(false);
+  }, [assistantOpen, onDockHiddenChange, selected]);
+
+  const openChatConversation = useCallback((contact: ChatContact) => {
+    conversationRouteProgress.stopAnimation();
+    conversationRouteProgress.setValue(0);
+    setConversationClosing(false);
+    setSelected(contact);
+  }, [conversationRouteProgress]);
+
+  const closeChatConversation = useCallback(() => {
+    if (!selected || conversationClosing) return;
+    setConversationClosing(true);
+  }, [conversationClosing, selected]);
 
   const loadChats = useCallback(async (silent = false) => {
+    const requestQuery = query.trim();
+    const generation = chatListGenerationRef.current + 1;
+    chatListGenerationRef.current = generation;
     if (!silent) setLoading(true);
+    setChatsLoadingMore(false);
+    setChatsHasMore(true);
+    setChatListOffset(0);
     setError('');
     try {
-      const data = await api.getChats(query, 0, 50);
-      setChats(Array.isArray(data) ? data : []);
+      const data = await api.getChats(requestQuery, 0, CHAT_LIST_PAGE_SIZE);
+      if (!chatMountedRef.current) return;
+      if (generation !== chatListGenerationRef.current) return;
+      chatListLoadedQueryRef.current = requestQuery;
+      const nextChats = Array.isArray(data) ? data : [];
+      setChats(nextChats);
+      setChatListOffset(nextChats.length);
+      setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudo cargar la bandeja.');
+      console.warn('[RistakNative][chat] loadChats failed', err);
+      if (!chatMountedRef.current) return;
+      if (generation === chatListGenerationRef.current) {
+        setError(err instanceof Error ? err.message : 'No se pudo cargar la bandeja.');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (chatMountedRef.current && generation === chatListGenerationRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [api, query]);
+
+  const finishCloseChatConversation = useCallback(() => {
+    setSelected(null);
+    setConversationClosing(false);
+    void loadChats(true);
+  }, [loadChats]);
+
+  useEffect(() => {
+    if (!selected) {
+      conversationRouteProgress.stopAnimation();
+      conversationRouteProgress.setValue(0);
+      return undefined;
+    }
+
+    const animation = Animated.timing(conversationRouteProgress, {
+      toValue: conversationClosing ? 0 : 1,
+      duration: conversationClosing ? CONVERSATION_ROUTE_CLOSE_DURATION_MS : CONVERSATION_ROUTE_OPEN_DURATION_MS,
+      easing: conversationClosing ? Easing.in(Easing.cubic) : Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    });
+
+    animation.start(({ finished }) => {
+      if (finished && conversationClosing) {
+        finishCloseChatConversation();
+      }
+    });
+
+    return () => animation.stop();
+  }, [conversationClosing, conversationRouteProgress, finishCloseChatConversation, selected]);
+
+  const loadMoreChats = useCallback(async () => {
+    if (loading || refreshing || chatsLoadingMore || !chatsHasMore) return;
+    const requestQuery = query.trim();
+    if (requestQuery !== chatListLoadedQueryRef.current) return;
+    const generation = chatListGenerationRef.current;
+    const offset = chatListOffset;
+    setChatsLoadingMore(true);
+    try {
+      const data = await api.getChats(requestQuery, offset, CHAT_LIST_PAGE_SIZE);
+      if (!chatMountedRef.current) return;
+      if (generation !== chatListGenerationRef.current) return;
+      const nextChats = Array.isArray(data) ? data : [];
+      setChats((current) => mergeChatContactPages(current, nextChats));
+      setChatListOffset(offset + nextChats.length);
+      setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
+    } catch (err) {
+      console.warn('[RistakNative][chat] loadMoreChats failed', err);
+      if (!chatMountedRef.current) return;
+      if (generation === chatListGenerationRef.current) setChatsHasMore(false);
+    } finally {
+      if (chatMountedRef.current && generation === chatListGenerationRef.current) setChatsLoadingMore(false);
+    }
+  }, [api, chatListOffset, chatsHasMore, chatsLoadingMore, loading, query, refreshing]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -1134,26 +2308,30 @@ function ChatScreen({
     return () => clearTimeout(timer);
   }, [loadChats, query]);
 
-  useEffect(() => {
+ useEffect(() => {
+    let cancelled = false;
     void Promise.all([
       readJsonValue<string[]>(CHAT_FILTERS_STORAGE_KEY, DEFAULT_CHAT_FILTER_IDS),
       readJsonValue<string[]>(ARCHIVED_CHAT_IDS_STORAGE_KEY, []),
       readJsonValue<string[]>(MUTED_CHAT_IDS_STORAGE_KEY, []),
     ]).then(([savedFilterIds, savedArchivedIds, savedMutedIds]) => {
-      const availableIds = new Set(CHAT_FILTER_LIBRARY.map((preset) => preset.id));
-      const next = savedFilterIds.filter((id, index, list) => availableIds.has(id) && list.indexOf(id) === index);
+      if (cancelled || !chatMountedRef.current) return;
+      const next = savedFilterIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index);
       setVisibleFilterIds(next.includes('all') ? next : ['all', ...next]);
       setArchivedChatIds(savedArchivedIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index));
       setMutedChatIds(savedMutedIds.filter((id, index, list) => typeof id === 'string' && id.trim() && list.indexOf(id) === index));
       setChatPrefsHydrated(true);
     });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     api.getConfig(['account_timezone', 'account_currency'])
       .then((response) => {
-        if (cancelled) return;
+        if (cancelled || !chatMountedRef.current) return;
         const values = response && typeof response === 'object' && 'config' in response
           ? response.config
           : response;
@@ -1167,7 +2345,7 @@ function ChatScreen({
         setAccountCurrency(typeof currency === 'string' ? normalizeCurrencyCode(currency) : DEFAULT_ACCOUNT_CURRENCY);
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && chatMountedRef.current) {
           setBusinessTimezone(resolveBusinessTimezone());
           setAccountCurrency(DEFAULT_ACCOUNT_CURRENCY);
         }
@@ -1176,6 +2354,34 @@ function ChatScreen({
       cancelled = true;
     };
   }, [api]);
+
+  const loadChatFilterCatalogs = useCallback(async () => {
+    setFilterCatalogLoading(true);
+    setChatTagsLoading(true);
+    try {
+      const [configResponse, tags, fields, status] = await Promise.all([
+        api.getConfig([PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY]).catch(() => null),
+        api.getContactTags().catch(() => []),
+        api.getCustomFieldDefinitions(false).catch(() => []),
+        api.getWhatsAppStatus().catch(() => null),
+      ]);
+      const config = unwrapConfigResponse(configResponse);
+      if (!chatMountedRef.current) return;
+      setCustomChatFiltersState(normalizePhoneChatCustomFilterPresets(config[PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY]));
+      setChatTags(Array.isArray(tags) ? tags : []);
+      setChatCustomFields(Array.isArray(fields) ? fields.filter((field) => !field.archived) : []);
+      setWhatsappStatus(status);
+    } finally {
+      if (chatMountedRef.current) {
+        setFilterCatalogLoading(false);
+        setChatTagsLoading(false);
+      }
+    }
+  }, [api]);
+
+  useEffect(() => {
+    void loadChatFilterCatalogs();
+  }, [loadChatFilterCatalogs]);
 
   useEffect(() => {
     if (!chatPrefsHydrated) return;
@@ -1236,10 +2442,11 @@ function ChatScreen({
     ), 0),
     [archivedChatIds, chats],
   );
+  const visibleUnreadTotal = settings.showUnreadIndicators ? unreadTotal : 0;
 
   useEffect(() => {
-    onUnreadTotalChange?.(unreadTotal);
-  }, [onUnreadTotalChange, unreadTotal]);
+    onUnreadTotalChange?.(visibleUnreadTotal);
+  }, [onUnreadTotalChange, visibleUnreadTotal]);
 
   const listBaseChats = useMemo(
     () => chats.filter((contact) => (
@@ -1248,10 +2455,83 @@ function ChatScreen({
     [archivedChatIds, archivedViewOpen, chats],
   );
 
-  const filteredChats = useMemo(
-    () => listBaseChats.filter((contact) => chatMatchesFilter(contact, archivedViewOpen ? 'all' : activeFilter)),
-    [activeFilter, archivedViewOpen, listBaseChats],
+  const businessPhones = useMemo(
+    () => Array.isArray(whatsappStatus?.phoneNumbers) ? whatsappStatus.phoneNumbers : [],
+    [whatsappStatus],
   );
+  const selectedChatPhone = useMemo(() => {
+    if (!settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all') return null;
+    return businessPhones.find((phone) => phone.id === settings.selectedWhatsAppPhoneId) || null;
+  }, [businessPhones, settings.selectedWhatsAppPhoneId]);
+  const chatPhoneFilteredBase = useMemo(
+    () => selectedChatPhone
+      ? listBaseChats.filter((contact) => contactMatchesBusinessPhoneFilter(contact, selectedChatPhone))
+      : listBaseChats,
+    [listBaseChats, selectedChatPhone],
+  );
+  const normalizedCustomChatFilters = useMemo(
+    () => normalizePhoneChatCustomFilterPresets(customChatFilters),
+    [customChatFilters],
+  );
+  const customChatFilterMap = useMemo(
+    () => new Map(normalizedCustomChatFilters.map((filter) => [filter.id, filter])),
+    [normalizedCustomChatFilters],
+  );
+  const chatTagMap = useMemo(
+    () => new Map(chatTags.map((tag) => [tag.id, tag])),
+    [chatTags],
+  );
+  const phoneChatConditionFieldGroups = useMemo(
+    () => buildPhoneChatConditionFieldGroups(businessPhones, chatCustomFields),
+    [businessPhones, chatCustomFields],
+  );
+  const phoneChatConditionFields = useMemo(
+    () => phoneChatConditionFieldGroups.flatMap((group) => group.fields),
+    [phoneChatConditionFieldGroups],
+  );
+  const phoneChatConditionFieldMap = useMemo(
+    () => new Map(phoneChatConditionFields.map((field) => [field.key, field])),
+    [phoneChatConditionFields],
+  );
+  const defaultPhoneChatConditionField = useMemo(
+    () => phoneChatConditionFieldMap.get(PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD) || phoneChatConditionFields[0],
+    [phoneChatConditionFieldMap, phoneChatConditionFields],
+  );
+  const phoneChatConditionEvalContext = useMemo<PhoneChatConditionEvalContext>(() => ({
+    fieldsByKey: phoneChatConditionFieldMap,
+    businessPhones,
+    contactTagsById: chatTagMap,
+    customFiltersById: customChatFilterMap,
+  }), [businessPhones, chatTagMap, customChatFilterMap, phoneChatConditionFieldMap]);
+  const availableChatFilterPresets = useMemo(
+    () => buildAvailableChatFilterPresets(businessPhones, normalizedCustomChatFilters),
+    [businessPhones, normalizedCustomChatFilters],
+  );
+  const filterPresetMap = useMemo(
+    () => new Map(availableChatFilterPresets.map((preset) => [preset.id, preset])),
+    [availableChatFilterPresets],
+  );
+  const normalizedVisibleFilterIds = useMemo(() => {
+    const availableIds = new Set(availableChatFilterPresets.map((preset) => preset.id));
+    const sourceIds = visibleFilterIds.length ? visibleFilterIds : DEFAULT_CHAT_FILTER_IDS;
+    const next = sourceIds.filter((id, index, list) => availableIds.has(id) && list.indexOf(id) === index);
+    if (!next.includes('all')) next.unshift('all');
+    return next.length ? next : ['all'];
+  }, [availableChatFilterPresets, visibleFilterIds]);
+  const filteredChats = useMemo(() => {
+    const nextChats = chatPhoneFilteredBase
+      .filter((contact) => chatMatchesFilter(contact, archivedViewOpen ? 'all' : activeFilter, phoneChatConditionEvalContext));
+    if (settings.sortMode === 'unread') {
+      return nextChats.slice().sort((left, right) => {
+        const unreadDelta = getUnreadCount(right) - getUnreadCount(left);
+        if (unreadDelta !== 0) return unreadDelta;
+        return parseSortableDateValue(right.lastMessageDate) - parseSortableDateValue(left.lastMessageDate);
+      });
+    }
+    return nextChats.slice().sort((left, right) => (
+      parseSortableDateValue(right.lastMessageDate) - parseSortableDateValue(left.lastMessageDate)
+    ));
+  }, [activeFilter, archivedViewOpen, chatPhoneFilteredBase, phoneChatConditionEvalContext, settings.sortMode]);
   const visibleChatIdSet = useMemo(() => new Set(filteredChats.map((contact) => contact.id)), [filteredChats]);
   const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds]);
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds]);
@@ -1263,14 +2543,14 @@ function ChatScreen({
   const selectedVisibleChatCount = selectedChatContacts.length;
   const allVisibleChatsSelected = filteredChats.length > 0 && filteredChats.every((contact) => selectedChatIdSet.has(contact.id));
   const archivedChatCount = archivedChatIds.length;
-  const filterPresetMap = useMemo(
-    () => new Map(CHAT_FILTER_LIBRARY.map((preset) => [preset.id, preset])),
-    [],
-  );
+  const canPaginateChatList = !(archivedViewOpen && archivedChatCount === 0);
   const visibleFilters = useMemo(
-    () => visibleFilterIds.map((id) => filterPresetMap.get(id)).filter((filter): filter is ChatFilterPreset => Boolean(filter)),
-    [filterPresetMap, visibleFilterIds],
+    () => normalizedVisibleFilterIds.map((id) => filterPresetMap.get(id)).filter((filter): filter is ChatFilterPreset => Boolean(filter)),
+    [filterPresetMap, normalizedVisibleFilterIds],
   );
+  useEffect(() => {
+    if (!filterPresetMap.has(activeFilter)) setActiveFilter('all');
+  }, [activeFilter, filterPresetMap]);
   const normalizedContactQuery = contactQuery.trim().toLowerCase();
   const contactSheetOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -1289,6 +2569,10 @@ function ChatScreen({
       return true;
     });
   }, [chats, contactResults, normalizedContactQuery]);
+  const cameraRecipientIdSet = useMemo(
+    () => new Set(cameraRecipients.map((contact) => contact.id)),
+    [cameraRecipients],
+  );
 
   useEffect(() => {
     const contactId = String(notificationContactId || '').trim();
@@ -1301,7 +2585,6 @@ function ChatScreen({
       setAssistantOpen(false);
       setSelectedChatIds([]);
       setSelectionActionsOpen(false);
-      setOpenSwipeChatId(null);
       setArchivedViewOpen(false);
       setActiveFilter('all');
       setQuery('');
@@ -1311,7 +2594,7 @@ function ChatScreen({
 
       const existingContact = chats.find((contact) => contact.id === contactId);
       if (existingContact) {
-        if (!cancelled) setSelected(existingContact);
+        if (!cancelled) openChatConversation(existingContact);
         return;
       }
 
@@ -1322,7 +2605,7 @@ function ChatScreen({
           ? current
           : [fetchedContact, ...current]
       ));
-      setSelected(fetchedContact);
+      openChatConversation(fetchedContact);
     };
 
     void openNotificationContact()
@@ -1335,22 +2618,55 @@ function ChatScreen({
     return () => {
       cancelled = true;
     };
-  }, [api, chats, notificationContactId, onNotificationHandled]);
+  }, [api, chats, notificationContactId, onNotificationHandled, openChatConversation]);
 
-  const showAssistantRow = !archivedViewOpen && !selectionActive && activeFilter === 'all' && (
+  useEffect(() => {
+    if (!pendingDraft?.contact?.id || (!pendingDraft.text.trim() && !pendingDraft.paymentPreview && !pendingDraft.activityMarker && !pendingDraft.successNotice)) return;
+
+    onPendingDraftHandled?.(pendingDraft.id);
+    setAssistantOpen(false);
+    setSelectedChatIds([]);
+    setSelectionActionsOpen(false);
+    setArchivedViewOpen(false);
+    setActiveFilter('all');
+    setQuery('');
+    setActiveSheet(null);
+    setClosingSheet(null);
+    setSheetContact(null);
+    const existingContact = chats.find((contact) => contact.id === pendingDraft.contact.id);
+    const targetContact = existingContact
+      ? mergeContactWithoutLosingAvatar(existingContact, pendingDraft.contact)
+      : pendingDraft.contact;
+    setPendingConversationDraft({ ...pendingDraft, contact: targetContact });
+    setChats((current) => {
+      return [
+        targetContact,
+        ...current.filter((contact) => contact.id !== pendingDraft.contact.id),
+      ];
+    });
+    openChatConversation(targetContact);
+  }, [chats, onPendingDraftHandled, openChatConversation, pendingDraft]);
+
+  const showAssistantRow = settings.aiAgentEnabled && !archivedViewOpen && activeFilter === 'all' && (
     !query.trim() || AI_AGENT_CHAT_SEARCH_TEXT.includes(query.trim().toLowerCase())
   );
-  const showArchiveRow = !selectionActive && !query.trim() && (archivedViewOpen || activeFilter === 'all');
+  const showArchiveRow = settings.showArchived && !selectionActive && !query.trim() && (archivedViewOpen || activeFilter === 'all');
   const chatListHasRows = selectionActive || showAssistantRow || showArchiveRow || filteredChats.length > 0;
+  const emptyChatsMinHeight = Math.max(
+    260,
+    Math.round(chatListViewportHeight - chatListHeaderHeight - PHONE_DOCK_RESERVED_SPACE),
+  );
 
   const applyFilter = (filterId: ChatFilterId) => {
     if (filterId === CHAT_FILTERS_MORE_VALUE) {
+      setFilterManagerMode('list');
       setFilterManagerOpen(true);
+      void loadChatFilterCatalogs();
       return;
     }
+    if (!filterPresetMap.has(filterId)) return;
     setSelectedChatIds([]);
     setSelectionActionsOpen(false);
-    setOpenSwipeChatId(null);
     setArchivedViewOpen(false);
     setActiveFilter(filterId);
   };
@@ -1359,24 +2675,186 @@ function ChatScreen({
     const preset = filterPresetMap.get(filterId);
     if (!preset || preset.locked) return;
     setVisibleFilterIds((current) => {
-      if (current.includes(filterId)) {
-        const next = current.filter((id) => id !== filterId);
+      const source = current.length ? current : normalizedVisibleFilterIds;
+      if (source.includes(filterId)) {
+        const next = source.filter((id) => id !== filterId);
         return next.includes('all') ? next : ['all', ...next];
       }
-      return [...current, filterId];
+      return [...source, filterId];
     });
   };
+
+  const persistCustomChatFilters = useCallback(async (nextFilters: PhoneChatCustomFilterPreset[]) => {
+    setCustomChatFiltersState(nextFilters);
+    await api.setConfig(PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY, JSON.stringify(nextFilters));
+  }, [api]);
+
+  const startCreateCustomChatFilter = useCallback(() => {
+    setEditingCustomChatFilterId('');
+    setCustomFilterDraft(createPhoneChatCustomFilterDraft(defaultPhoneChatConditionField));
+    setFilterManagerMode('editor');
+    void loadChatFilterCatalogs();
+  }, [defaultPhoneChatConditionField, loadChatFilterCatalogs]);
+
+  const startEditCustomChatFilter = useCallback((filter: PhoneChatCustomFilterPreset) => {
+    setEditingCustomChatFilterId(filter.id);
+    setCustomFilterDraft({
+      id: filter.id,
+      label: filter.label,
+      match: filter.match,
+      rules: filter.rules.length ? filter.rules : [createPhoneChatConditionRule(defaultPhoneChatConditionField)],
+    });
+    setFilterManagerMode('editor');
+    void loadChatFilterCatalogs();
+  }, [defaultPhoneChatConditionField, loadChatFilterCatalogs]);
+
+  const patchCustomFilterRule = useCallback((ruleId: string, patch: Partial<PhoneChatCustomFilterRule>) => {
+    setCustomFilterDraft((current) => ({
+      ...current,
+      rules: current.rules.map((rule) => (rule.id === ruleId ? { ...rule, ...patch } : rule)),
+    }));
+  }, []);
+
+  const setCustomFilterRuleField = useCallback((ruleId: string, fieldKey: string) => {
+    const field = phoneChatConditionFieldMap.get(fieldKey) || defaultPhoneChatConditionField;
+    setCustomFilterDraft((current) => ({
+      ...current,
+      rules: current.rules.map((rule) => (rule.id === ruleId
+        ? {
+            ...rule,
+            field: field?.key || PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD,
+            operator: getDefaultOperatorForContactAdvancedField(field),
+            value: '',
+            valueTo: '',
+          }
+        : rule)),
+    }));
+  }, [defaultPhoneChatConditionField, phoneChatConditionFieldMap]);
+
+  const setCustomFilterRuleOperator = useCallback((ruleId: string, operator: ContactAdvancedOperator) => {
+    setCustomFilterDraft((current) => ({
+      ...current,
+      rules: current.rules.map((rule) => (rule.id === ruleId
+        ? {
+            ...rule,
+            operator,
+            value: operatorNeedsContactAdvancedValue(operator) ? rule.value ?? '' : '',
+            valueTo: operatorUsesContactAdvancedRange(operator) ? rule.valueTo ?? '' : '',
+          }
+        : rule)),
+    }));
+  }, []);
+
+  const addCustomFilterRule = useCallback(() => {
+    setCustomFilterDraft((current) => ({
+      ...current,
+      rules: [...current.rules, createPhoneChatConditionRule(defaultPhoneChatConditionField)],
+    }));
+  }, [defaultPhoneChatConditionField]);
+
+  const removeCustomFilterRule = useCallback((ruleId: string) => {
+    setCustomFilterDraft((current) => {
+      const nextRules = current.rules.filter((rule) => rule.id !== ruleId);
+      return {
+        ...current,
+        rules: nextRules.length ? nextRules : [createPhoneChatConditionRule(defaultPhoneChatConditionField)],
+      };
+    });
+  }, [defaultPhoneChatConditionField]);
+
+  const saveCustomChatFilter = useCallback(async () => {
+    const label = customFilterDraft.label.trim();
+    if (!label) {
+      Alert.alert('Filtro', 'Ponle nombre al filtro.');
+      return;
+    }
+    const completeRules = customFilterDraft.rules
+      .filter((rule) => isPhoneChatConditionRuleComplete(rule, phoneChatConditionFieldMap.get(rule.field)))
+      .map((rule) => ({
+        ...rule,
+        value: operatorNeedsContactAdvancedValue(rule.operator) ? rule.value ?? '' : '',
+        valueTo: operatorUsesContactAdvancedRange(rule.operator) ? rule.valueTo ?? '' : '',
+      }));
+    if (!completeRules.length) {
+      Alert.alert('Filtro', 'Agrega al menos una condicion completa.');
+      return;
+    }
+
+    const filterId = editingCustomChatFilterId || customFilterDraft.id || makePhoneChatCustomFilterId();
+    const now = new Date().toISOString();
+    const nextFilter: PhoneChatCustomFilterPreset = {
+      id: filterId,
+      label,
+      match: customFilterDraft.match,
+      rules: completeRules,
+      createdAt: normalizedCustomChatFilters.find((filter) => filter.id === filterId)?.createdAt || now,
+      updatedAt: now,
+    };
+    const nextFilters = normalizedCustomChatFilters.some((filter) => filter.id === filterId)
+      ? normalizedCustomChatFilters.map((filter) => (filter.id === filterId ? nextFilter : filter))
+      : [nextFilter, ...normalizedCustomChatFilters];
+    const chipId = makePhoneChatCustomFilterPresetId(filterId);
+    try {
+      await persistCustomChatFilters(nextFilters);
+      setVisibleFilterIds((current) => {
+        const source = current.length ? current : normalizedVisibleFilterIds;
+        return source.includes(chipId) ? source : [...source, chipId];
+      });
+      setActiveFilter(chipId);
+      setFilterManagerMode('list');
+      setFilterManagerOpen(false);
+      setEditingCustomChatFilterId('');
+      setCustomFilterDraft(createPhoneChatCustomFilterDraft(defaultPhoneChatConditionField));
+    } catch (err) {
+      Alert.alert('No se guardó el filtro', err instanceof Error ? err.message : 'Intenta otra vez.');
+    }
+  }, [
+    customFilterDraft,
+    defaultPhoneChatConditionField,
+    editingCustomChatFilterId,
+    normalizedCustomChatFilters,
+    normalizedVisibleFilterIds,
+    persistCustomChatFilters,
+    phoneChatConditionFieldMap,
+  ]);
+
+  const deleteCustomChatFilter = useCallback((filter: PhoneChatCustomFilterPreset) => {
+    Alert.alert(
+      `Eliminar "${filter.label}"`,
+      'Se borra el filtro guardado y desaparece de tus filtros rápidos.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            const chipId = makePhoneChatCustomFilterPresetId(filter.id);
+            const nextFilters = normalizedCustomChatFilters.filter((item) => item.id !== filter.id);
+            void persistCustomChatFilters(nextFilters)
+              .then(() => {
+                setVisibleFilterIds((current) => {
+                  const next = (current.length ? current : normalizedVisibleFilterIds).filter((id) => id !== chipId);
+                  return next.includes('all') ? next : ['all', ...next];
+                });
+                if (activeFilter === chipId) setActiveFilter('all');
+              })
+              .catch((err) => {
+                Alert.alert('No se eliminó', err instanceof Error ? err.message : 'Intenta otra vez.');
+              });
+          },
+        },
+      ],
+    );
+  }, [activeFilter, normalizedCustomChatFilters, normalizedVisibleFilterIds, persistCustomChatFilters]);
 
   const archiveChat = (contact: ChatContact) => {
     setArchivedChatIds((current) => (
       current.includes(contact.id) ? current : [contact.id, ...current]
     ));
-    setOpenSwipeChatId(null);
   };
 
   const restoreChat = (contact: ChatContact) => {
     setArchivedChatIds((current) => current.filter((id) => id !== contact.id));
-    setOpenSwipeChatId(null);
   };
 
   const clearSheetCloseTimer = useCallback(() => {
@@ -1405,7 +2883,10 @@ function ChatScreen({
       setClosingSheet(null);
       setSheetContact(null);
       if (sheet === 'cameraShare') {
-        setCameraAsset(null);
+        setCameraAttachment(null);
+        setCameraRecipients([]);
+        setCameraCaption('');
+        setCameraSending(false);
       }
     }, CHAT_SHEET_CLOSE_DURATION_MS + 40);
   }, [activeSheet, clearSheetCloseTimer]);
@@ -1417,27 +2898,33 @@ function ChatScreen({
 
   const openNewChatSheet = () => {
     resetSheetState();
-    setOpenSwipeChatId(null);
     setContactQuery('');
     setContactResults([]);
-    setCameraAsset(null);
+    setCameraAttachment(null);
+    setCameraRecipients([]);
+    setCameraCaption('');
+    setCameraSending(false);
     setSheetContact(null);
     openSheet('newChat');
   };
 
-  const openCameraShareSheet = (asset: ImagePicker.ImagePickerAsset) => {
+  const openCameraShareSheet = (attachment: ConversationDraftAttachment) => {
     resetSheetState();
-    setOpenSwipeChatId(null);
     setContactQuery('');
     setContactResults([]);
-    setCameraAsset(asset);
+    setCameraAttachment(attachment);
+    setCameraRecipients([]);
+    setCameraCaption('');
+    setCameraSending(false);
     setSheetContact(null);
     openSheet('cameraShare');
   };
 
   const openChatMoreActions = (contact: ChatContact) => {
     resetSheetState();
-    setOpenSwipeChatId(null);
+    void Haptics.selectionAsync().catch(() => {
+      Vibration.vibrate(12);
+    });
     setSheetContact(contact);
     openSheet('chatMore');
     setAgentStateLoadingId(contact.id);
@@ -1455,7 +2942,6 @@ function ChatScreen({
 
   const openTagSheet = (contact: ChatContact) => {
     resetSheetState();
-    setOpenSwipeChatId(null);
     setSheetContact(contact);
     setTagQuery('');
     setChatTagsLoading(true);
@@ -1471,19 +2957,20 @@ function ChatScreen({
 
   const openScheduleSheet = (contact: ChatContact) => {
     resetSheetState();
-    setOpenSwipeChatId(null);
     setSheetContact(contact);
     setScheduleText('');
+    setScheduleDraft(createDefaultScheduleDraft(businessTimezone));
+    setScheduleError('');
     openSheet('schedule');
   };
 
   const navigateToContactTool = (contact: ChatContact, section: PhoneSection) => {
     closeSheet();
+    if (onNavigateToContactTool) {
+      onNavigateToContactTool(contact, section);
+      return;
+    }
     onNavigate?.(section);
-    Alert.alert(
-      section === 'calendar' ? 'Agendar cita' : 'Registrar pagos',
-      `${section === 'calendar' ? 'Abriendo Citas' : 'Abriendo Pagos'} para continuar con ${getContactName(contact)}.`,
-    );
   };
 
   const toggleMuteChat = (contact: ChatContact) => {
@@ -1498,7 +2985,6 @@ function ChatScreen({
   const applyTagToContact = async (contact: ChatContact, tag: ContactTag) => {
     if (tagBusy) return;
     if ((contact.tags || []).includes(tag.id)) {
-      Alert.alert('Etiqueta', `${getContactName(contact)} ya tiene ${tag.name}.`);
       return;
     }
 
@@ -1510,7 +2996,6 @@ function ChatScreen({
         item.id === contact.id ? { ...item, tags: nextTags } : item
       )));
       closeSheet();
-      Alert.alert('Etiqueta agregada', `${tag.name} quedó en ${getContactName(contact)}.`);
     } catch (err) {
       Alert.alert('Etiqueta', err instanceof Error ? err.message : 'No se pudo agregar la etiqueta.');
     } finally {
@@ -1531,7 +3016,6 @@ function ChatScreen({
         item.id === contact.id ? { ...item, tags: nextTags } : item
       )));
       closeSheet();
-      Alert.alert('Etiqueta creada', `${tag.name} quedó en ${getContactName(contact)}.`);
     } catch (err) {
       Alert.alert('Etiqueta', err instanceof Error ? err.message : 'No se pudo crear la etiqueta.');
     } finally {
@@ -1541,15 +3025,38 @@ function ChatScreen({
 
   const scheduleMessageForContact = async (contact: ChatContact) => {
     const text = scheduleText.trim();
-    if (!text || scheduleBusy) return;
-    const scheduledAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    if (scheduleBusy) return;
+    if (!text) {
+      setScheduleError('Escribe el mensaje que quieres programar.');
+      return;
+    }
+    const scheduledDate = getScheduleDateFromDraft(scheduleDraft, businessTimezone);
+    if (!scheduledDate) {
+      setScheduleError('Revisa la fecha y la hora.');
+      return;
+    }
+    if (scheduledDate.getTime() < Date.now() + 10 * 1000) {
+      setScheduleError('Elige una hora futura para programar el mensaje.');
+      return;
+    }
+    const scheduleChannel = getDefaultComposerChannel(contact);
+    const channelUnavailableReason = getScheduleChannelUnavailableReason(scheduleChannel, contact);
+    if (channelUnavailableReason) {
+      setScheduleError(channelUnavailableReason);
+      Alert.alert('Programar mensaje', channelUnavailableReason);
+      return;
+    }
     setScheduleBusy(true);
+    setScheduleError('');
     try {
-      await api.scheduleText(contact, text, scheduledAt);
+      await api.scheduleText(contact, text, scheduledDate.toISOString(), scheduleChannel);
       closeSheet();
-      Alert.alert('Mensaje programado', `Se programó para enviarse en 1 hora a ${getContactName(contact)}.`);
+      setScheduleText('');
+      setScheduleDraft(createDefaultScheduleDraft(businessTimezone));
     } catch (err) {
-      Alert.alert('Programar mensaje', err instanceof Error ? err.message : 'No se pudo programar el mensaje.');
+      const message = err instanceof Error ? err.message : 'No se pudo programar el mensaje.';
+      setScheduleError(message);
+      Alert.alert('Programar mensaje', message);
     } finally {
       setScheduleBusy(false);
     }
@@ -1562,7 +3069,6 @@ function ChatScreen({
       const state = await api.updateAgentState(contact.id, action);
       setAgentStatesByContactId((current) => ({ ...current, [contact.id]: [state] }));
       closeSheet();
-      Alert.alert('Agente conversacional', getAgentActionSuccess(action, getContactName(contact)));
     } catch (err) {
       Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudo actualizar el agente.');
     } finally {
@@ -1582,15 +3088,21 @@ function ChatScreen({
   const openCamera = async () => {
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) {
-      Alert.alert('Cámara', 'Necesito permiso de cámara para tomar fotos desde la app.');
+      Alert.alert('Cámara', 'Necesito permiso de cámara para tomar fotos o videos desde la app.');
       return;
     }
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: 0.86,
-    });
-    if (result.canceled || !result.assets?.[0]) return;
-    openCameraShareSheet(result.assets[0]);
+    try {
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images', 'videos'],
+        quality: 0.86,
+        allowsEditing: false,
+        videoMaxDuration: CAMERA_SHARE_VIDEO_MAX_DURATION_SECONDS,
+      });
+      if (result.canceled || !result.assets?.[0]) return;
+      openCameraShareSheet(await preparePickedMediaAttachment(result.assets[0], 0));
+    } catch (err) {
+      Alert.alert('Cámara', err instanceof Error ? err.message : 'No pude preparar la foto o video.');
+    }
   };
 
   const openContactFromSheet = (contact: ChatContact) => {
@@ -1598,15 +3110,73 @@ function ChatScreen({
       current.some((item) => item.id === contact.id) ? current : [contact, ...current]
     ));
     closeSheet();
-    setSelected(contact);
+    openChatConversation(contact);
   };
 
-  const chooseCameraRecipient = (contact: ChatContact) => {
-    setSheetContact(contact);
-    Alert.alert(
-      'Foto lista',
-      `La foto quedó lista para enviar a ${getContactName(contact)}. El envío multimedia completo sigue pendiente de conectar al composer nativo.`,
-    );
+  const toggleCameraRecipient = (contact: ChatContact) => {
+    setCameraRecipients((current) => (
+      current.some((item) => item.id === contact.id)
+        ? current.filter((item) => item.id !== contact.id)
+        : [...current, contact]
+    ));
+  };
+
+  const sendCameraShare = async () => {
+    if (!cameraAttachment || cameraSending) return;
+    if (!cameraRecipients.length) {
+      Alert.alert('Elige destinatarios', 'Selecciona al menos un contacto para enviar.');
+      return;
+    }
+    const contactsWithoutPhone = cameraRecipients.filter((contact) => !contact.phone);
+    if (contactsWithoutPhone.length) {
+      Alert.alert(
+        'Falta teléfono',
+        `Por ahora la cámara global envía por WhatsApp. Revisa el teléfono de ${contactsWithoutPhone.map(getContactName).slice(0, 2).join(', ')}.`,
+      );
+      return;
+    }
+
+    const caption = cameraCaption.trim();
+    const sentAt = new Date().toISOString();
+    const previewText = caption || getAttachmentLabel(cameraAttachment.kind);
+    setCameraSending(true);
+    try {
+      const results = await Promise.allSettled(cameraRecipients.map((contact) => (
+        sendDraftAttachment(api, contact, cameraAttachment, caption)
+      )));
+      const failed = results.filter((result) => result.status === 'rejected');
+      const succeededContacts = cameraRecipients.filter((_, index) => results[index]?.status === 'fulfilled');
+      if (succeededContacts.length) {
+        setChats((current) => {
+          const nextById = new Map(current.map((contact) => [contact.id, contact]));
+          succeededContacts.forEach((contact) => {
+            nextById.set(contact.id, {
+              ...contact,
+              ...(nextById.get(contact.id) || {}),
+              lastMessageText: previewText,
+              lastMessageDate: sentAt,
+              lastMessageChannel: 'whatsapp_api',
+              lastMessageDirection: 'outbound',
+              unreadCount: 0,
+            });
+          });
+          const succeededIdSet = new Set(succeededContacts.map((contact) => contact.id));
+          return [
+            ...succeededContacts.map((contact) => nextById.get(contact.id)).filter((contact): contact is ChatContact => Boolean(contact)),
+            ...current.filter((contact) => !succeededIdSet.has(contact.id)),
+          ];
+        });
+      }
+      if (failed.length) {
+        Alert.alert('Envío parcial', `Se envió a ${succeededContacts.length} contacto(s), pero falló en ${failed.length}.`);
+        return;
+      }
+      closeSheet();
+    } catch (err) {
+      Alert.alert('No se envió', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setCameraSending(false);
+    }
   };
 
   const clearChatSelection = () => {
@@ -1615,7 +3185,9 @@ function ChatScreen({
   };
 
   const startChatSelection = (contact: ChatContact) => {
-    setOpenSwipeChatId(null);
+    void Haptics.selectionAsync().catch(() => {
+      Vibration.vibrate(12);
+    });
     setSelectionActionsOpen(false);
     setSelectedChatIds((current) => (
       current.includes(contact.id) ? current : [...current, contact.id]
@@ -1623,7 +3195,6 @@ function ChatScreen({
   };
 
   const toggleChatSelection = (contact: ChatContact) => {
-    setOpenSwipeChatId(null);
     setSelectedChatIds((current) => (
       current.includes(contact.id)
         ? current.filter((id) => id !== contact.id)
@@ -1633,7 +3204,6 @@ function ChatScreen({
 
   const toggleVisibleChatSelection = () => {
     const visibleIds = filteredChats.map((contact) => contact.id);
-    setOpenSwipeChatId(null);
     setSelectionActionsOpen(false);
     setSelectedChatIds((current) => {
       if (visibleIds.length && visibleIds.every((id) => current.includes(id))) {
@@ -1648,15 +3218,7 @@ function ChatScreen({
       toggleChatSelection(contact);
       return;
     }
-    if (openSwipeChatId === contact.id) {
-      setOpenSwipeChatId(null);
-      return;
-    }
-    if (openSwipeChatId) {
-      setOpenSwipeChatId(null);
-      return;
-    }
-    setSelected(contact);
+    openChatConversation(contact);
   };
 
   const markSelectedChatsAsRead = async () => {
@@ -1690,7 +3252,6 @@ function ChatScreen({
   };
 
   useEffect(() => {
-    setOpenSwipeChatId(null);
     setSelectedChatIds([]);
     setSelectionActionsOpen(false);
   }, [activeFilter, archivedViewOpen, query]);
@@ -1700,7 +3261,6 @@ function ChatScreen({
       setSelectionActionsOpen(false);
       return;
     }
-    setOpenSwipeChatId(null);
     setSelectedChatIds((current) => {
       const next = current.filter((id) => visibleChatIdSet.has(id));
       return next.length === current.length ? current : next;
@@ -1708,40 +3268,7 @@ function ChatScreen({
   }, [selectionActive, visibleChatIdSet]);
 
   if (assistantOpen) {
-    return <AssistantConversationScreen onBack={() => setAssistantOpen(false)} />;
-  }
-
-  if (selected) {
-    return (
-      <NativeConversationScreen
-        api={api}
-        contact={selected}
-        accountCurrency={accountCurrency}
-        archived={archivedChatIds.includes(selected.id)}
-        muted={mutedChatIds.includes(selected.id)}
-        timezone={businessTimezone}
-        onArchiveToggle={(contact) => {
-          if (archivedChatIds.includes(contact.id)) {
-            restoreChat(contact);
-          } else {
-            archiveChat(contact);
-          }
-        }}
-        onBack={() => {
-          setSelected(null);
-          void loadChats(true);
-        }}
-        onContactPatch={(contactId, patch) => {
-          setSelected((current) => (current?.id === contactId ? { ...current, ...patch } : current));
-          setChats((current) => current.map((item) => (
-            item.id === contactId ? { ...item, ...patch } : item
-          )));
-        }}
-        onNavigate={onNavigate}
-        onRefreshChats={() => void loadChats(true)}
-        onToggleMute={toggleMuteChat}
-      />
-    );
+    return <AssistantConversationScreen api={api} onBack={() => setAssistantOpen(false)} />;
   }
 
   const chatMoreSheetOpen = activeSheet === 'chatMore' || closingSheet === 'chatMore';
@@ -1757,34 +3284,83 @@ function ChatScreen({
   const tagSheetClosing = activeSheet !== 'tag' && closingSheet === 'tag';
   const scheduleSheetClosing = activeSheet !== 'schedule' && closingSheet === 'schedule';
   const sheetAgentState = sheetContact ? selectPrimaryAgentState(agentStatesByContactId[sheetContact.id]) : null;
+  const chatRouteWidth = Math.max(320, chatViewportWidth);
+  const chatListTranslateX = conversationRouteProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -chatRouteWidth],
+  });
+  const chatListPageStyle = selected ? { transform: [{ translateX: chatListTranslateX }] } : null;
+  const archivedEmptyVisible = archivedViewOpen && archivedChatCount === 0 && !selectionActive;
+  const chatListHeaderContent = (
+    <View
+      style={styles.chatListHeaderWrap}
+      onLayout={(event) => {
+        const nextHeight = Math.round(event.nativeEvent.layout.height || 0);
+        setChatListHeaderHeight((current) => (current === nextHeight ? current : nextHeight));
+      }}
+    >
+      {!selectionActive ? (
+        <View style={styles.chatFilterFloatingBand}>
+          <ChatFilterBar
+            active={activeFilter}
+            filters={visibleFilters}
+            unreadTotal={visibleUnreadTotal}
+            onChange={applyFilter}
+          />
+        </View>
+      ) : null}
+      {showAssistantRow ? (
+        <AssistantChatRow
+          onPress={() => setAssistantOpen(true)}
+        />
+      ) : null}
+      {selectionActive ? (
+        <ChatSelectionPanel
+          allVisibleSelected={allVisibleChatsSelected}
+          archiveLabel={archivedViewOpen ? 'Restaurar seleccionados' : 'Archivar seleccionados'}
+          busy={bulkActionBusy}
+          count={selectedVisibleChatCount}
+          menuOpen={selectionActionsOpen}
+          onArchiveSelected={archiveSelectedChats}
+          onClear={clearChatSelection}
+          onMarkRead={() => void markSelectedChatsAsRead()}
+          onToggleMenu={() => setSelectionActionsOpen((current) => !current)}
+          onToggleVisible={toggleVisibleChatSelection}
+        />
+      ) : showArchiveRow ? (
+        <ArchiveRow
+          active={archivedViewOpen}
+          count={archivedChatCount}
+          onPress={() => setArchivedViewOpen((current) => !current)}
+        />
+      ) : null}
+    </View>
+  );
 
   return (
     <AppFrame>
+      <Animated.View
+        pointerEvents={selected ? 'none' : 'auto'}
+        style={[styles.chatRouteListPage, chatListPageStyle]}
+      >
       <View style={styles.chatListHeader}>
         <View style={styles.chatTopActionRow}>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              Alert.alert('Agente conversacional', 'La bandeja nativa ya respeta los chats del agente. La configuración fina vive en Ajustes.');
-            }}
-            style={({ pressed }) => [styles.agentRoundButton, pressed && styles.pressed]}
-          >
-            <Bot size={22} color={COLORS.primary} strokeWidth={2.3} />
-          </Pressable>
           <View style={styles.chatHeaderActions}>
             <Pressable
               accessibilityRole="button"
               onPress={() => void openCamera()}
               style={({ pressed }) => [styles.headerIconButton, pressed && styles.pressed]}
             >
-              <Camera size={23} color={COLORS.primary} strokeWidth={2.3} />
+              <LiquidControlBackground />
+              <Camera size={27} color={COLORS.text} strokeWidth={1.9} />
             </Pressable>
             <Pressable
               accessibilityRole="button"
               onPress={openNewChatSheet}
               style={({ pressed }) => [styles.newChatButton, pressed && styles.pressed]}
             >
-              <Plus size={31} color={COLORS.white} strokeWidth={2.45} />
+              <LiquidControlBackground />
+              <Plus size={37} color={COLORS.text} strokeWidth={1.9} />
             </Pressable>
           </View>
         </View>
@@ -1811,14 +3387,6 @@ function ChatScreen({
             </Pressable>
           ) : null}
         </View>
-        {!selectionActive ? (
-          <ChatFilterBar
-            active={activeFilter}
-            filters={visibleFilters}
-            unreadTotal={unreadTotal}
-            onChange={applyFilter}
-          />
-        ) : null}
       </View>
       {loading ? (
         <View style={styles.centerState}>
@@ -1830,92 +3398,151 @@ function ChatScreen({
           <Text style={styles.errorText}>{error}</Text>
           <SecondaryButton label="Reintentar" onPress={() => void loadChats()} />
         </View>
+      ) : archivedEmptyVisible ? (
+        <View
+          style={styles.chatListScroller}
+          onLayout={(event) => {
+            const nextHeight = Math.round(event.nativeEvent.layout.height || 0);
+            setChatListViewportHeight((current) => (current === nextHeight ? current : nextHeight));
+          }}
+        >
+          {chatListHeaderContent}
+          <View style={styles.archivedEmptyBody}>
+            <View style={styles.emptyChats}>
+              <View style={styles.emptyChatsIcon}>
+                <MessageCircle size={28} color={COLORS.accent} strokeWidth={2.4} />
+              </View>
+              <Text style={styles.emptyChatsTitle}>No hay nada archivado</Text>
+              <Text style={styles.emptyChatsCopy}>Los chats que archives aparecerán aquí.</Text>
+            </View>
+          </View>
+        </View>
       ) : (
         <FlatList
+          style={styles.chatListScroller}
+          onLayout={(event) => {
+            const nextHeight = Math.round(event.nativeEvent.layout.height || 0);
+            setChatListViewportHeight((current) => (current === nextHeight ? current : nextHeight));
+          }}
           data={filteredChats}
           keyExtractor={(item) => item.id}
-          extraData={`${openSwipeChatId || ''}|${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${businessTimezone}|${selectionActive ? 'selecting' : 'normal'}`}
+          extraData={`${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${businessTimezone}|${selectionActive ? 'selecting' : 'normal'}|${settings.showLastPreview ? 'preview' : 'no-preview'}|${settings.showUnreadIndicators ? 'unread' : 'no-unread'}`}
           refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
-          onScrollBeginDrag={() => {
-            if (openSwipeChatId) setOpenSwipeChatId(null);
+          onEndReached={() => {
+            if (!canPaginateChatList) return;
+            void loadMoreChats();
           }}
+          onEndReachedThreshold={0.38}
           contentContainerStyle={chatListHasRows ? styles.chatList : styles.emptyList}
-          ListHeaderComponent={(
-            selectionActive ? (
-              <ChatSelectionPanel
-                allVisibleSelected={allVisibleChatsSelected}
-                archiveLabel={archivedViewOpen ? 'Restaurar seleccionados' : 'Archivar seleccionados'}
-                busy={bulkActionBusy}
-                count={selectedVisibleChatCount}
-                menuOpen={selectionActionsOpen}
-                onArchiveSelected={archiveSelectedChats}
-                onClear={clearChatSelection}
-                onMarkRead={() => void markSelectedChatsAsRead()}
-                onToggleMenu={() => setSelectionActionsOpen((current) => !current)}
-                onToggleVisible={toggleVisibleChatSelection}
-              />
-            ) : (
-              <>
-                {showAssistantRow ? <AssistantChatRow onPress={() => setAssistantOpen(true)} /> : null}
-                {showArchiveRow ? (
-                  <ArchiveRow
-                    active={archivedViewOpen}
-                    count={archivedChatCount}
-                    onPress={() => setArchivedViewOpen((current) => !current)}
-                  />
-                ) : null}
-              </>
-            )
-          )}
+          ListHeaderComponent={chatListHeaderContent}
+          ListFooterComponent={chatsLoadingMore && canPaginateChatList ? (
+            <View style={styles.chatListLoadingMore}>
+              <ActivityIndicator color={COLORS.accent} size="small" />
+            </View>
+          ) : null}
           renderItem={({ item }) => (
             <ChatRow
               contact={item}
               archived={archivedChatIds.includes(item.id)}
               selectionActive={selectionActive}
+              showLastPreview={settings.showLastPreview}
+              showUnreadIndicators={settings.showUnreadIndicators}
               selected={selectedChatIdSet.has(item.id)}
-              swipeOpen={openSwipeChatId === item.id}
               timezone={businessTimezone}
-              onArchiveToggle={() => {
-                if (archivedChatIds.includes(item.id)) restoreChat(item);
-                else archiveChat(item);
-              }}
-              onLongPress={() => startChatSelection(item)}
-              onMore={() => openChatMoreActions(item)}
+              onLongPress={() => openChatMoreActions(item)}
               onPress={() => handleChatPress(item)}
-              onSwipeClose={() => setOpenSwipeChatId(null)}
-              onSwipeOpen={() => setOpenSwipeChatId(item.id)}
-              onSwipeStart={() => {
-                if (openSwipeChatId && openSwipeChatId !== item.id) setOpenSwipeChatId(null);
-              }}
             />
           )}
           ListEmptyComponent={
-            <View style={styles.emptyChats}>
+            <View style={[styles.emptyChats, { minHeight: emptyChatsMinHeight }]}>
               <View style={styles.emptyChatsIcon}>
                 <MessageCircle size={28} color={COLORS.accent} strokeWidth={2.4} />
               </View>
               <Text style={styles.emptyChatsTitle}>
-                {chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}
+                {archivedViewOpen ? 'No hay nada archivado' : chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}
               </Text>
               <Text style={styles.emptyChatsCopy}>
-                {chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
+                {archivedViewOpen ? 'Los chats que archives aparecerán aquí.' : chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
               </Text>
             </View>
           }
         />
       )}
+      </Animated.View>
+      {selected ? (
+        <ConversationRouteLayer
+          progress={conversationRouteProgress}
+          width={chatRouteWidth}
+        >
+          <NativeConversationScreen
+            api={api}
+            contact={selected}
+            accountCurrency={accountCurrency}
+            archived={archivedChatIds.includes(selected.id)}
+            businessPhones={businessPhones}
+            muted={mutedChatIds.includes(selected.id)}
+            timezone={businessTimezone}
+            onArchiveToggle={(contact) => {
+              if (archivedChatIds.includes(contact.id)) {
+                restoreChat(contact);
+              } else {
+                archiveChat(contact);
+              }
+            }}
+            onBack={closeChatConversation}
+            onContactPatch={(contactId, patch) => {
+              setSelected((current) => (current?.id === contactId ? mergeContactWithoutLosingAvatar(current, patch as ChatContact) : current));
+              setChats((current) => current.map((item) => (
+                item.id === contactId ? mergeContactWithoutLosingAvatar(item, patch as ChatContact) : item
+              )));
+            }}
+            pendingDraft={pendingConversationDraft?.contact.id === selected.id ? pendingConversationDraft : null}
+            onPendingDraftHandled={(id) => {
+              setPendingConversationDraft((current) => (current?.id === id ? null : current));
+            }}
+            onNavigate={onNavigate}
+            onNavigateToContactTool={onNavigateToContactTool}
+            onRefreshChats={() => void loadChats(true)}
+            onToggleMute={toggleMuteChat}
+          />
+        </ConversationRouteLayer>
+      ) : null}
       <FilterManagerSheet
         activeFilter={activeFilter}
-        visibleFilterIds={visibleFilterIds}
+        availableFilters={availableChatFilterPresets}
+        catalogLoading={filterCatalogLoading}
+        customFiltersById={customChatFilterMap}
+        draft={customFilterDraft}
+        editingCustomFilterId={editingCustomChatFilterId}
+        fieldGroups={phoneChatConditionFieldGroups}
+        fieldsByKey={phoneChatConditionFieldMap}
+        mode={filterManagerMode}
         open={filterManagerOpen}
+        tags={chatTags}
+        tagsLoading={chatTagsLoading}
+        visibleFilterIds={normalizedVisibleFilterIds}
+        onAddRule={addCustomFilterRule}
         onClose={() => setFilterManagerOpen(false)}
+        onCreateCustom={startCreateCustomChatFilter}
+        onDeleteCustom={deleteCustomChatFilter}
+        onEditCustom={startEditCustomChatFilter}
         onApply={(filterId) => {
-          if (!visibleFilterIds.includes(filterId)) {
-            setVisibleFilterIds((current) => [...current, filterId]);
+          if (!normalizedVisibleFilterIds.includes(filterId)) {
+            setVisibleFilterIds((current) => {
+              const source = current.length ? current : normalizedVisibleFilterIds;
+              return source.includes(filterId) ? source : [...source, filterId];
+            });
           }
-          setActiveFilter(filterId);
+          applyFilter(filterId);
           setFilterManagerOpen(false);
         }}
+        onPatchRule={patchCustomFilterRule}
+        onRemoveRule={removeCustomFilterRule}
+        onSaveCustom={saveCustomChatFilter}
+        onSelectRuleField={setCustomFilterRuleField}
+        onSelectRuleOperator={setCustomFilterRuleOperator}
+        onSetDraft={setCustomFilterDraft}
+        onSetMode={setFilterManagerMode}
         onToggleVisible={toggleVisibleFilter}
       />
       <ChatMoreSheet
@@ -1966,33 +3593,66 @@ function ChatScreen({
         busy={scheduleBusy}
         closing={scheduleSheetClosing}
         contact={sheetContact}
+        draft={scheduleDraft}
+        error={scheduleError}
         open={scheduleSheetOpen}
         text={scheduleText}
-        onChangeText={setScheduleText}
+        timezone={businessTimezone}
+        onChangeDraft={(patch) => {
+          setScheduleDraft((current) => ({ ...current, ...patch }));
+          setScheduleError('');
+        }}
+        onChangeText={(value) => {
+          setScheduleText(value);
+          setScheduleError('');
+        }}
         onClose={closeSheet}
         onSubmit={scheduleMessageForContact}
       />
       <ContactPickerSheet
-        asset={contactPickerSheet === 'cameraShare' ? cameraAsset : null}
+        caption={cameraCaption}
         contacts={contactSheetOptions}
         closing={contactPickerClosing}
         loading={contactsLoading}
+        media={contactPickerSheet === 'cameraShare' ? cameraAttachment : null}
         open={Boolean(contactPickerSheet)}
         query={contactQuery}
-        title={contactPickerSheet === 'cameraShare' ? 'Enviar foto' : 'Nuevo chat'}
+        selectedIds={contactPickerSheet === 'cameraShare' ? cameraRecipientIdSet : undefined}
+        sending={cameraSending}
+        title={contactPickerSheet === 'cameraShare' ? 'Enviar media' : 'Nuevo chat'}
+        onChangeCaption={setCameraCaption}
         onChangeQuery={setContactQuery}
         onClose={closeSheet}
-        onSelect={contactPickerSheet === 'cameraShare' ? chooseCameraRecipient : openContactFromSheet}
+        onSelect={contactPickerSheet === 'cameraShare' ? toggleCameraRecipient : openContactFromSheet}
+        onSubmit={contactPickerSheet === 'cameraShare' ? sendCameraShare : undefined}
       />
       {footer}
     </AppFrame>
   );
 }
 
-function PaymentsSection({ api }: { api: RistakApiClient }) {
+function PaymentsSection({
+  api,
+  initialContact = null,
+  initialContactKey = '',
+  onOpenChatDraft,
+  onInitialContactConsumed,
+}: {
+  api: RistakApiClient;
+  initialContact?: ChatContact | null;
+  initialContactKey?: string;
+  onOpenChatDraft: (draft: PendingChatDraft) => void;
+  onInitialContactConsumed?: (key: string) => void;
+}) {
   const [view, setView] = useState<PaymentView>('select');
   const [accountCurrency, setAccountCurrency] = useState(DEFAULT_ACCOUNT_CURRENCY);
   const [businessTimezone, setBusinessTimezone] = useState(DEFAULT_BUSINESS_TIMEZONE);
+  const [pendingPaymentMode, setPendingPaymentMode] = useState<Exclude<PaymentView, 'select' | 'products'> | null>(null);
+  const [paymentContactQuery, setPaymentContactQuery] = useState('');
+  const [paymentContactResults, setPaymentContactResults] = useState<ChatContact[]>([]);
+  const [paymentContactsLoading, setPaymentContactsLoading] = useState(false);
+  const [paymentContact, setPaymentContact] = useState<ChatContact | null>(null);
+  const [paymentContactLocked, setPaymentContactLocked] = useState(false);
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsRefreshing, setProductsRefreshing] = useState(false);
@@ -2002,12 +3662,20 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
   const [productForm, setProductForm] = useState(() => createEmptyProductForm());
   const [savingProduct, setSavingProduct] = useState(false);
   const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
-  const [recentPaymentsOpen, setRecentPaymentsOpen] = useState(false);
   const [recentPaymentsPeriod, setRecentPaymentsPeriod] = useState<RecentPaymentsPeriod>('30d');
+  const [customRecentStartDate, setCustomRecentStartDate] = useState('');
+  const [customRecentEndDate, setCustomRecentEndDate] = useState('');
+  const [customRecentDraftStartDate, setCustomRecentDraftStartDate] = useState('');
+  const [customRecentDraftEndDate, setCustomRecentDraftEndDate] = useState('');
+  const [customRecentRangeOpen, setCustomRecentRangeOpen] = useState(false);
+  const [customRecentRangeError, setCustomRecentRangeError] = useState('');
   const [recentPayments, setRecentPayments] = useState<TransactionItem[]>([]);
   const [recentPaymentsLoading, setRecentPaymentsLoading] = useState(false);
   const [recentPaymentsRefreshing, setRecentPaymentsRefreshing] = useState(false);
   const [selectedRecentPaymentId, setSelectedRecentPaymentId] = useState<string | null>(null);
+  const [paymentAccess, setPaymentAccess] = useState<MobilePaymentAccess>(DEFAULT_MOBILE_PAYMENT_ACCESS);
+  const [paymentAccessLoading, setPaymentAccessLoading] = useState(true);
+  const handledInitialPaymentContactKeyRef = useRef('');
 
   const loadAccountContext = useCallback(async () => {
     try {
@@ -2040,8 +3708,23 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
     }
   }, [api]);
 
+  const loadPaymentAccess = useCallback(async () => {
+    setPaymentAccessLoading(true);
+    try {
+      const [licenseResponse, integrationsResponse] = await Promise.all([
+        api.getLicenseStatus().catch(() => null),
+        api.getIntegrationsStatus().catch(() => null),
+      ]);
+      setPaymentAccess(resolveMobilePaymentAccess(licenseResponse, integrationsResponse));
+    } catch {
+      setPaymentAccess(DEFAULT_MOBILE_PAYMENT_ACCESS);
+    } finally {
+      setPaymentAccessLoading(false);
+    }
+  }, [api]);
+
   const loadRecentPayments = useCallback(async () => {
-    const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod, businessTimezone);
+    const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod, businessTimezone, customRecentStartDate, customRecentEndDate);
     if (recentPayments.length) setRecentPaymentsRefreshing(true);
     else setRecentPaymentsLoading(true);
     try {
@@ -2060,19 +3743,103 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
       setRecentPaymentsLoading(false);
       setRecentPaymentsRefreshing(false);
     }
-  }, [api, businessTimezone, recentPayments.length, recentPaymentsPeriod]);
+  }, [api, businessTimezone, customRecentEndDate, customRecentStartDate, recentPayments.length, recentPaymentsPeriod]);
 
   useEffect(() => {
     void loadAccountContext();
   }, [loadAccountContext]);
 
   useEffect(() => {
+    void loadPaymentAccess();
+  }, [loadPaymentAccess]);
+
+  useEffect(() => {
     if (view === 'products') void loadProducts();
   }, [loadProducts, view]);
 
   useEffect(() => {
-    if (recentPaymentsOpen) void loadRecentPayments();
-  }, [loadRecentPayments, recentPaymentsOpen]);
+    if (view === 'select') void loadRecentPayments();
+  }, [loadRecentPayments, view]);
+
+  useEffect(() => {
+    if (!initialContact || !initialContactKey || handledInitialPaymentContactKeyRef.current === initialContactKey) return;
+    if (paymentAccessLoading) return;
+    handledInitialPaymentContactKeyRef.current = initialContactKey;
+    setView(paymentAccess.offlineOnly ? 'single' : 'select');
+    setPaymentContact(initialContact);
+    setPaymentContactLocked(true);
+    setPaymentContactQuery('');
+    setPaymentContactResults([]);
+    setPendingPaymentMode(null);
+    onInitialContactConsumed?.(initialContactKey);
+  }, [initialContact, initialContactKey, onInitialContactConsumed, paymentAccess.offlineOnly, paymentAccessLoading]);
+
+  useEffect(() => {
+    if (!pendingPaymentMode) {
+      setPaymentContactResults([]);
+      setPaymentContactsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const query = paymentContactQuery.trim();
+    setPaymentContactsLoading(true);
+    const timer = setTimeout(() => {
+      const request = query.length >= 2
+        ? api.searchContacts(query)
+        : api.getChats('', 0, 60);
+      request
+        .then((results) => {
+          if (!cancelled) setPaymentContactResults(Array.isArray(results) ? results : []);
+        })
+        .catch(() => {
+          if (!cancelled) setPaymentContactResults([]);
+        })
+        .finally(() => {
+          if (!cancelled) setPaymentContactsLoading(false);
+        });
+    }, query ? 150 : 0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [api, paymentContactQuery, pendingPaymentMode]);
+
+  const openPaymentContactPicker = (mode: Exclude<PaymentView, 'select' | 'products'>) => {
+    if (mode === 'partial' && !paymentAccess.canUsePaymentPlans) {
+      Alert.alert('Plan de pagos no disponible', 'Esta cuenta necesita plan compatible y una pasarela conectada para crear planes de pago.');
+      return;
+    }
+    if (mode === 'subscription' && !paymentAccess.canUseSubscriptions) {
+      Alert.alert('Suscripciones no disponibles', 'Esta cuenta necesita plan compatible y una pasarela conectada para crear suscripciones.');
+      return;
+    }
+    const resolvedMode = paymentAccess.offlineOnly ? 'single' : mode;
+    if (paymentContactLocked && paymentContact) {
+      setView(resolvedMode);
+      return;
+    }
+    setPaymentContact(null);
+    setPaymentContactLocked(false);
+    setPaymentContactQuery('');
+    setPaymentContactResults([]);
+    setPendingPaymentMode(resolvedMode);
+  };
+
+  const closePaymentContactPicker = () => {
+    setPendingPaymentMode(null);
+    setPaymentContactQuery('');
+    setPaymentContactResults([]);
+  };
+
+  const selectPaymentContact = (contact: ChatContact) => {
+    if (!pendingPaymentMode) return;
+    setPaymentContact(contact);
+    setPaymentContactLocked(false);
+    setView(pendingPaymentMode);
+    closePaymentContactPicker();
+  };
 
   const openCreateProduct = () => {
     setEditingProduct(null);
@@ -2171,6 +3938,48 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
     );
   };
 
+  const defaultRecentCustomRange = useMemo(() => {
+    const endDate = todayDateOnlyInTimezone(businessTimezone);
+    return { startDate: addDateOnlyDays(endDate, -29), endDate };
+  }, [businessTimezone]);
+
+  const customRecentRangeLabel = isValidDateOnly(customRecentStartDate) && isValidDateOnly(customRecentEndDate)
+    ? `${formatDateOnlyRangeLabel(customRecentStartDate)} - ${formatDateOnlyRangeLabel(customRecentEndDate)}`
+    : '';
+
+  const openCustomRecentRangePicker = () => {
+    setCustomRecentDraftStartDate(customRecentStartDate || defaultRecentCustomRange.startDate);
+    setCustomRecentDraftEndDate(customRecentEndDate || defaultRecentCustomRange.endDate);
+    setCustomRecentRangeError('');
+    setCustomRecentRangeOpen(true);
+  };
+
+  const closeCustomRecentRangePicker = () => {
+    setCustomRecentRangeOpen(false);
+    setCustomRecentRangeError('');
+  };
+
+  const applyCustomRecentRange = () => {
+    const startDate = customRecentDraftStartDate.trim();
+    const endDate = customRecentDraftEndDate.trim();
+
+    if (!isValidDateOnly(startDate) || !isValidDateOnly(endDate)) {
+      setCustomRecentRangeError('Usa el formato YYYY-MM-DD.');
+      return;
+    }
+
+    if ((getDateOnlyUtcTime(startDate) || 0) > (getDateOnlyUtcTime(endDate) || 0)) {
+      setCustomRecentRangeError('La fecha inicial no puede ser mayor que la final.');
+      return;
+    }
+
+    setCustomRecentStartDate(startDate);
+    setCustomRecentEndDate(endDate);
+    setRecentPaymentsPeriod('custom');
+    setCustomRecentRangeOpen(false);
+    setCustomRecentRangeError('');
+  };
+
   if (view === 'products') {
     return (
       <PaymentsProductsView
@@ -2197,16 +4006,34 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
   }
 
   if (view === 'single' || view === 'partial' || view === 'subscription') {
+    if (!paymentContact) {
+      return null;
+    }
     return (
       <PaymentFormView
         api={api}
         currency={accountCurrency}
+        initialContact={paymentContact}
         mode={view}
+        offlineOnly={paymentAccess.offlineOnly}
         timezone={businessTimezone}
-        onBack={() => setView('select')}
-        onSaved={() => {
+        onBack={() => {
           setView('select');
-          if (recentPaymentsOpen) void loadRecentPayments();
+          if (!paymentContactLocked) setPaymentContact(null);
+        }}
+        onPaymentLinkReady={(draft) => {
+          setView('select');
+          setPaymentContact(null);
+          setPaymentContactLocked(false);
+          void loadRecentPayments();
+          onOpenChatDraft(draft);
+        }}
+        onSaved={(draft) => {
+          setView('select');
+          setPaymentContact(null);
+          setPaymentContactLocked(false);
+          void loadRecentPayments();
+          if (draft) onOpenChatDraft(draft);
         }}
       />
     );
@@ -2214,34 +4041,61 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
 
   const selectedRecentPeriod = RECENT_PAYMENT_PERIODS.find((period) => period.id === recentPaymentsPeriod) || RECENT_PAYMENT_PERIODS[2];
   const selectedRecentPayment = recentPayments.find((payment) => getTransactionId(payment) === selectedRecentPaymentId) || null;
+  const recentPaymentsSubtitle = selectedRecentPayment
+    ? `${formatCurrency(getPaymentAmount(selectedRecentPayment), selectedRecentPayment.currency || accountCurrency)} seleccionado`
+    : recentPaymentsPeriod === 'custom' && customRecentRangeLabel
+      ? customRecentRangeLabel
+      : recentPaymentsPeriod === 'custom'
+        ? 'Rango personalizado'
+        : `${selectedRecentPeriod.label} recientes`;
 
   return (
-    <ScrollView
-      contentContainerStyle={styles.paymentsSelectStack}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    >
+    <>
+      <ScrollView
+        contentContainerStyle={styles.paymentsSelectStack}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
       <Text style={styles.paymentsSelectTitle}>Elige cómo quieres pagar</Text>
+      {paymentContactLocked && paymentContact ? (
+        <View style={styles.selectedContactCard}>
+          <View style={styles.selectedContactIcon}>
+            {hasContactAvatarValue(paymentContact) ? (
+              <Image source={{ uri: getContactAvatar(paymentContact) }} style={styles.selectedContactAvatarImage as ImageStyle} />
+            ) : (
+              <Text style={styles.avatarText}>{getContactInitials(paymentContact)}</Text>
+            )}
+          </View>
+          <View style={styles.selectedContactCopy}>
+            <Text numberOfLines={1} style={styles.selectedContactName}>Cobro para {getContactName(paymentContact)}</Text>
+            <Text numberOfLines={1} style={styles.selectedContactDetail}>{paymentContact.email || paymentContact.phone || 'Contacto asignado desde el chat'}</Text>
+          </View>
+        </View>
+      ) : null}
 
       <PaymentChoiceCard
         Icon={CreditCard}
         iconTone="green"
         title="Registrar pago único"
-        subtitle="Cobro único: envía una liga de pago o registra un pago manual."
-        onPress={() => setView('single')}
+        subtitle={paymentAccess.offlineOnly ? 'Registra efectivo, transferencia, depósito u otro pago ya confirmado.' : 'Cobro único: envía una liga de pago o registra un pago manual.'}
+        onPress={() => openPaymentContactPicker('single')}
       />
-      <PaymentChoiceCard
-        Icon={CalendarDays}
-        title="Planes de pago"
-        subtitle="Parcialidades automáticas con enganche y cobros recurrentes."
-        onPress={() => setView('partial')}
-      />
-      <PaymentChoiceCard
-        Icon={Repeat2}
-        title="Suscripción"
-        subtitle="Cobros recurrentes con Stripe, Conekta o Mercado Pago."
-        onPress={() => setView('subscription')}
-      />
+      {paymentAccess.canUsePaymentPlans ? (
+        <PaymentChoiceCard
+          Icon={CalendarDays}
+          title="Planes de pago"
+          subtitle="Parcialidades automáticas con enganche y cobros recurrentes."
+          onPress={() => openPaymentContactPicker('partial')}
+        />
+      ) : null}
+      {paymentAccess.canUseSubscriptions ? (
+        <PaymentChoiceCard
+          Icon={Repeat2}
+          title="Suscripción"
+          subtitle="Cobros recurrentes con Stripe, Conekta o Mercado Pago."
+          onPress={() => openPaymentContactPicker('subscription')}
+        />
+      ) : null}
       <PaymentChoiceCard
         Icon={Package}
         title="Precios Guardados"
@@ -2250,48 +4104,43 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
       />
 
       <View style={styles.recentPaymentsSection}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityState={{ expanded: recentPaymentsOpen }}
-          onPress={() => setRecentPaymentsOpen((open) => !open)}
-          style={({ pressed }) => [styles.recentPaymentsToggle, pressed && styles.pressed]}
-        >
-          <View style={styles.recentPaymentsToggleCopy}>
-            <Text numberOfLines={1} style={styles.recentPaymentsToggleTitle}>
-              {recentPaymentsOpen ? 'Ocultar últimos pagos' : 'Mostrar últimos pagos'}
-            </Text>
-            <Text numberOfLines={1} style={styles.recentPaymentsToggleSubtitle}>
-              {selectedRecentPayment
-                ? `${formatCurrency(getPaymentAmount(selectedRecentPayment), selectedRecentPayment.currency || accountCurrency)} seleccionado`
-                : `${selectedRecentPeriod.label} recientes`}
-            </Text>
-          </View>
-          <ChevronDown
-            size={22}
-            color={COLORS.text}
-            strokeWidth={2.45}
-            style={recentPaymentsOpen ? styles.recentPaymentsChevronOpen : undefined}
-          />
-        </Pressable>
+        <View style={styles.recentPaymentsHeader}>
+          <Text numberOfLines={1} style={styles.recentPaymentsTitle}>Pagos</Text>
+          <Text numberOfLines={1} style={styles.recentPaymentsSubtitle}>{recentPaymentsSubtitle}</Text>
+        </View>
 
-        {recentPaymentsOpen ? (
-          <View style={styles.recentPaymentsPanel}>
-            <View style={styles.recentPeriodPicker}>
-              {RECENT_PAYMENT_PERIODS.map((period) => {
-                const active = period.id === recentPaymentsPeriod;
-                return (
+        <View style={styles.recentPaymentsPanel}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.recentPeriodPicker}
+            contentContainerStyle={styles.recentPeriodRow}
+          >
+            {RECENT_PAYMENT_PERIODS.map((period) => {
+              const active = period.id === recentPaymentsPeriod;
+              const custom = period.id === 'custom';
+              return (
+                <React.Fragment key={period.id}>
+                  {custom ? <View style={styles.recentPeriodSeparator} /> : null}
                   <Pressable
-                    key={period.id}
                     accessibilityRole="button"
                     accessibilityState={{ selected: active }}
-                    onPress={() => setRecentPaymentsPeriod(period.id)}
-                    style={[styles.recentPeriodButton, active && styles.recentPeriodButtonActive]}
+                    onPress={() => {
+                      if (custom) {
+                        openCustomRecentRangePicker();
+                        return;
+                      }
+                      setRecentPaymentsPeriod(period.id);
+                    }}
+                    style={({ pressed }) => [styles.recentPeriodButton, active && styles.recentPeriodButtonActive, pressed && styles.pressed]}
                   >
+                    <LiquidControlBackground selected={active} />
                     <Text style={[styles.recentPeriodText, active && styles.recentPeriodTextActive]}>{period.label}</Text>
                   </Pressable>
-                );
-              })}
-            </View>
+                </React.Fragment>
+              );
+            })}
+          </ScrollView>
 
             {recentPaymentsLoading && recentPayments.length === 0 ? (
               <View style={styles.recentPaymentsState}>
@@ -2343,22 +4192,87 @@ function PaymentsSection({ api }: { api: RistakApiClient }) {
               </View>
             )}
           </View>
-        ) : null}
       </View>
       <View style={styles.paymentsBottomSpacer} />
-    </ScrollView>
+      </ScrollView>
+      <AppointmentContactPickerSheet
+        closing={false}
+        contacts={paymentContactResults}
+        loading={paymentContactsLoading}
+        open={Boolean(pendingPaymentMode)}
+        query={paymentContactQuery}
+        selectedDateOnly={todayDateOnlyInTimezone(businessTimezone)}
+        emptyText="Busca un contacto para cobrar."
+        subtitle={pendingPaymentMode === 'single'
+          ? 'Elige a quién le vas a registrar o enviar el cobro.'
+          : pendingPaymentMode === 'partial'
+            ? 'Elige el contacto para crear su plan de pagos.'
+            : 'Elige el contacto para activar su suscripción.'}
+        title={pendingPaymentMode === 'single'
+          ? 'Registrar pago único'
+          : pendingPaymentMode === 'partial'
+            ? 'Plan de pago'
+            : 'Nueva suscripción'}
+        onChangeQuery={setPaymentContactQuery}
+        onClose={closePaymentContactPicker}
+        onSelect={selectPaymentContact}
+      />
+      <BottomActionSheet
+        open={customRecentRangeOpen}
+        title="Fecha personalizada"
+        subtitle="Rango de pagos"
+        onClose={closeCustomRecentRangePicker}
+      >
+        <View style={styles.analyticsCustomSheetBody}>
+          <Text style={styles.analyticsCustomHint}>Escribe el rango en formato YYYY-MM-DD.</Text>
+          <View style={styles.analyticsCustomDateRow}>
+            <View style={styles.analyticsCustomDateField}>
+              <Text style={styles.analyticsCustomDateLabel}>Inicio</Text>
+              <TextInput
+                value={customRecentDraftStartDate}
+                onChangeText={setCustomRecentDraftStartDate}
+                placeholder={defaultRecentCustomRange.startDate}
+                placeholderTextColor={COLORS.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="numbers-and-punctuation"
+                style={styles.analyticsCustomDateInput}
+              />
+            </View>
+            <View style={styles.analyticsCustomDateField}>
+              <Text style={styles.analyticsCustomDateLabel}>Fin</Text>
+              <TextInput
+                value={customRecentDraftEndDate}
+                onChangeText={setCustomRecentDraftEndDate}
+                placeholder={defaultRecentCustomRange.endDate}
+                placeholderTextColor={COLORS.muted}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="numbers-and-punctuation"
+                style={styles.analyticsCustomDateInput}
+              />
+            </View>
+          </View>
+          {customRecentRangeError ? <Text style={styles.errorText}>{customRecentRangeError}</Text> : null}
+          <View style={styles.analyticsCustomActions}>
+            <PrimaryButton label="Aplicar rango" onPress={applyCustomRecentRange} />
+            <SecondaryButton label="Cancelar" onPress={closeCustomRecentRangePicker} />
+          </View>
+        </View>
+      </BottomActionSheet>
+    </>
   );
 }
 
 function PaymentChoiceCard({
   Icon,
-  iconTone = 'blue',
+  iconTone = 'neutral',
   title,
   subtitle,
   onPress,
 }: {
   Icon: LucideIcon;
-  iconTone?: 'blue' | 'green';
+  iconTone?: 'neutral' | 'green';
   title: string;
   subtitle: string;
   onPress: () => void;
@@ -2421,8 +4335,9 @@ function PaymentsProductsView({
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.productsTopBar}>
+        <View style={styles.productsTopBar}>
         <Pressable accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.paymentsBackButton, pressed && styles.pressed]}>
+          <LiquidControlBackground />
           <ChevronLeft size={19} color={COLORS.text} strokeWidth={2.5} />
           <Text style={styles.paymentsBackText}>Atrás</Text>
         </Pressable>
@@ -2442,6 +4357,7 @@ function PaymentsProductsView({
             onPress={onRefresh}
             style={[styles.productIconButton, (loading || refreshing) && styles.disabledButton]}
           >
+            <LiquidControlBackground />
             {refreshing ? <ActivityIndicator color={COLORS.text} size="small" /> : <RefreshCw size={18} color={COLORS.text} strokeWidth={2.45} />}
           </Pressable>
           <Pressable
@@ -2464,6 +4380,7 @@ function PaymentsProductsView({
               <Text style={styles.productFormSubtitle}>Estos datos aparecerán al cobrar desde Guardados.</Text>
             </View>
             <Pressable accessibilityRole="button" onPress={onCloseForm} style={styles.sheetCloseButton}>
+              <LiquidControlBackground />
               <X size={18} color={COLORS.text} strokeWidth={2.5} />
             </Pressable>
           </View>
@@ -2473,6 +4390,7 @@ function PaymentsProductsView({
           <PaymentTextField label="Descripción" value={form.description} onChangeText={(value) => onChangeForm('description', value)} placeholder="Agrega una nota corta para reconocerlo." multiline />
           <View style={styles.productFormActions}>
             <Pressable accessibilityRole="button" disabled={saving} onPress={onCloseForm} style={[styles.productSecondaryButton, saving && styles.disabledButton]}>
+              <LiquidControlBackground />
               <Text style={styles.productSecondaryButtonText}>Cancelar</Text>
             </Pressable>
             <Pressable accessibilityRole="button" disabled={saving} onPress={onSaveProduct} style={[styles.productPrimaryButton, styles.productFormPrimaryButton, saving && styles.disabledButton]}>
@@ -2555,9 +4473,11 @@ function ProductListItem({
       </View>
       <View style={styles.productItemActions}>
         <Pressable accessibilityRole="button" onPress={onEdit} style={styles.productItemActionButton}>
+          <LiquidControlBackground />
           <Pencil size={17} color={COLORS.text} strokeWidth={2.4} />
         </Pressable>
         <Pressable accessibilityRole="button" disabled={deleting} onPress={onDelete} style={[styles.productItemActionButton, styles.productDeleteButton, deleting && styles.disabledButton]}>
+          <LiquidControlBackground />
           {deleting ? <ActivityIndicator color={COLORS.danger} size="small" /> : <Trash2 size={17} color={COLORS.danger} strokeWidth={2.4} />}
         </Pressable>
       </View>
@@ -2565,39 +4485,290 @@ function ProductListItem({
   );
 }
 
+type PendingChatDraft = {
+  id: string;
+  contact: ChatContact;
+  text: string;
+  channel?: NativeMessageChannel;
+  activityMarker?: ConversationActivityMarker;
+  paymentPreview?: PendingChatDraftPaymentPreview;
+  successNotice?: NativeConversationSuccessNotice;
+};
+
+type PendingChatDraftPaymentPreview = {
+  kind: 'payment_link';
+  title: string;
+  subtitle: string;
+  amountLabel?: string;
+  providerLabel?: string;
+  url: string;
+};
+
+type NativeMessageLinkPreviewData = {
+  kind: 'payment_link' | 'link';
+  title: string;
+  subtitle: string;
+  amountLabel?: string;
+  providerLabel?: string;
+  url: string;
+};
+
+type NativeUrlPreviewMetadata = {
+  title?: string;
+  description?: string;
+  imageUrl?: string;
+  siteName?: string;
+};
+
+type NativeMessageLinkPreviewResult = {
+  preview: NativeMessageLinkPreviewData;
+  displayText: string;
+};
+
+const nativeUrlPreviewCache = new Map<string, NativeUrlPreviewMetadata | null>();
+
+type PaymentDatePickerTarget =
+  | { kind: 'paymentDate' }
+  | { kind: 'firstPaymentDate' }
+  | { kind: 'subscriptionStartDate' }
+  | { kind: 'planPaymentDate'; id: string };
+
+type NativePlanCollectionMode = 'authorization_link' | 'saved_card';
+type NativeSubscriptionCollectionMode = 'authorization_link' | 'saved_card';
+type NativePaymentWizardStep = 'details' | 'method' | 'configuration';
+type NativePlanSavedCardOption = SavedPaymentMethodItem & {
+  provider: 'stripe' | 'conekta' | 'rebill';
+  providerLabel: string;
+  paymentMethodId: string;
+  optionKey: string;
+  displayLabel: string;
+  detailLabel: string;
+};
+
+function getCreatedPaymentLinkUrl(response: PaymentLinkResponse) {
+  const metadata = response.payment?.metadata || {};
+  const candidates = [
+    response.paymentUrl,
+    response.cardSetupLink,
+    response.firstPaymentLink,
+    response.payment?.paymentUrl,
+    metadata.paymentUrl,
+    metadata.payment_url,
+    metadata.checkoutUrl,
+    metadata.checkout_url,
+    metadata.url,
+  ];
+  return candidates
+    .map((value) => String(value || '').trim())
+    .find(Boolean) || '';
+}
+
+function getCreatedSubscriptionLinkUrl(subscription: PaymentSubscription | null | undefined) {
+  const candidates = [
+    subscription?.subscriptionStartUrl,
+    subscription?.stripeCheckoutUrl,
+    subscription?.conektaCheckoutUrl,
+    subscription?.mercadoPagoInitPoint,
+    subscription?.mercadoPagoSandboxInitPoint,
+    subscription?.rebillPaymentLinkUrl,
+    subscription?.rebillCheckoutUrl,
+  ];
+  return candidates
+    .map((value) => String(value || '').trim())
+    .find(Boolean) || '';
+}
+
+function getPaymentProviderLabel(provider: string) {
+  return [...PAYMENT_LINK_PROVIDER_OPTIONS, ...PAYMENT_PLAN_PROVIDER_OPTIONS, ...SUBSCRIPTION_PROVIDER_OPTIONS]
+    .find((option) => option.value === provider)?.label || provider;
+}
+
+function getPaymentLinkPreviewHost(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url.replace(/^https?:\/\//, '').split('/')[0] || 'ristak.com';
+  }
+}
+
+function getProductSelectMeta(product: ProductItem | null, fallbackCurrency: string) {
+  if (!product) return undefined;
+  const price = getPrimaryPrice(product);
+  return price
+    ? formatCurrency(getPriceAmount(price), getProductPriceCurrency(product, price, fallbackCurrency))
+    : 'Sin precio';
+}
+
+function hasContactAvatarValue(contact?: ChatContact | null) {
+  return Boolean(String(getContactAvatar(contact) || '').trim());
+}
+
+function mergeContactWithoutLosingAvatar(base: ChatContact, patch: ChatContact) {
+  const merged: ChatContact = { ...base, ...patch };
+  (['profilePhotoUrl', 'avatarUrl', 'photoUrl', 'pictureUrl'] as const).forEach((key) => {
+    const patchValue = String(patch[key] || '').trim();
+    const baseValue = String(base[key] || '').trim();
+    if (baseValue) {
+      merged[key] = base[key];
+    } else if (patchValue) {
+      merged[key] = patch[key];
+    }
+  });
+  return merged;
+}
+
+function mergeChatContactPages(current: ChatContact[], incoming: ChatContact[]) {
+  if (!incoming.length) return current;
+  const merged = [...current];
+  const indexById = new Map(merged.map((contact, index) => [contact.id, index]));
+  incoming.forEach((contact) => {
+    if (!contact?.id) return;
+    const existingIndex = indexById.get(contact.id);
+    if (existingIndex === undefined) {
+      indexById.set(contact.id, merged.length);
+      merged.push(contact);
+      return;
+    }
+    merged[existingIndex] = mergeContactWithoutLosingAvatar(merged[existingIndex], contact);
+  });
+  return merged;
+}
+
+function normalizeNativePlanSavedCards(provider: NativePlanSavedCardOption['provider'], cards: SavedPaymentMethodItem[]): NativePlanSavedCardOption[] {
+  const providerLabel = provider === 'stripe' ? 'Stripe' : provider === 'conekta' ? 'Conekta' : 'Rebill';
+  return (cards || [])
+    .map((card) => {
+      const paymentMethodId = String(
+        provider === 'stripe'
+          ? card.stripePaymentMethodId || card.id
+          : provider === 'conekta'
+            ? card.conektaPaymentSourceId || card.id
+            : card.rebillCardId || card.id,
+      ).trim();
+      if (!paymentMethodId) return null;
+      const brand = String(card.brand || 'Tarjeta').trim();
+      const last4 = String(card.last4 || '').trim();
+      const displayLabel = card.label
+        ? String(card.label)
+        : last4
+          ? `${providerLabel} · ${brand} ${last4}`
+          : `${providerLabel} · ${brand}`;
+      const detailLabel = [
+        card.expiresLabel ? String(card.expiresLabel) : '',
+        card.mode ? String(card.mode).toUpperCase() : '',
+        card.isDefault ? 'Predeterminada' : '',
+      ].filter(Boolean).join(' · ');
+      return {
+        ...card,
+        provider,
+        providerLabel,
+        paymentMethodId,
+        optionKey: `${provider}:${paymentMethodId}`,
+        displayLabel,
+        detailLabel,
+      };
+    })
+    .filter((card): card is NativePlanSavedCardOption => Boolean(card));
+}
+
 function PaymentFormView({
   api,
   currency,
+  initialContact,
   mode,
+  offlineOnly = false,
   timezone,
   onBack,
+  onPaymentLinkReady,
   onSaved,
 }: {
   api: RistakApiClient;
   currency: string;
+  initialContact: ChatContact;
   mode: Exclude<PaymentView, 'select' | 'products'>;
+  offlineOnly?: boolean;
   timezone: string;
   onBack: () => void;
-  onSaved: () => void;
+  onPaymentLinkReady: (draft: PendingChatDraft) => void;
+  onSaved: (draft?: PendingChatDraft) => void;
 }) {
-  const [selectedContact, setSelectedContact] = useState<ChatContact | null>(null);
+  const [selectedContact, setSelectedContact] = useState<ChatContact | null>(initialContact);
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<ChatContact[]>([]);
   const [contactSearching, setContactSearching] = useState(false);
+  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [productsLoading, setProductsLoading] = useState(false);
+  const [chargeType, setChargeType] = useState<'custom' | 'product'>('custom');
+  const [selectedProductId, setSelectedProductId] = useState('');
+  const [selectedPriceId, setSelectedPriceId] = useState('');
+  const [productDropdownOpen, setProductDropdownOpen] = useState(false);
+  const [priceDropdownOpen, setPriceDropdownOpen] = useState(false);
+  const [customProductAmount, setCustomProductAmount] = useState('');
   const [contactName, setContactName] = useState('');
   const [contactEmail, setContactEmail] = useState('');
   const [contactPhone, setContactPhone] = useState('');
   const [amount, setAmount] = useState('');
   const [concept, setConcept] = useState('');
+  const [description, setDescription] = useState('');
+  const [singleAction, setSingleAction] = useState<'manual' | 'payment_link' | 'saved_card'>('manual');
+  const [paymentLinkProvider, setPaymentLinkProvider] = useState('stripe');
+  const [installmentsEnabled, setInstallmentsEnabled] = useState('disabled');
+  const [maxInstallments, setMaxInstallments] = useState('3');
   const [method, setMethod] = useState('cash');
-  const [status, setStatus] = useState('paid');
+  const [paymentDate, setPaymentDate] = useState(() => todayDateOnlyInTimezone(timezone));
+  const [reference, setReference] = useState('');
+  const [notes, setNotes] = useState('');
   const [firstPayment, setFirstPayment] = useState('');
-  const [paymentCount, setPaymentCount] = useState('3');
+  const [firstPaymentTiming, setFirstPaymentTiming] = useState<'immediate' | 'scheduled'>('immediate');
+  const [firstPaymentDate, setFirstPaymentDate] = useState(() => todayDateOnlyInTimezone(timezone));
+  const [firstPaymentMethod, setFirstPaymentMethod] = useState('cash');
+  const [planCollectionMode, setPlanCollectionMode] = useState<NativePlanCollectionMode>('authorization_link');
+  const [planGatewayProvider, setPlanGatewayProvider] = useState('stripe');
+  const [planSavedCards, setPlanSavedCards] = useState<NativePlanSavedCardOption[]>([]);
+  const [planSavedCardsLoading, setPlanSavedCardsLoading] = useState(false);
+  const [selectedPlanSavedCardKey, setSelectedPlanSavedCardKey] = useState('');
+  const [planPayments, setPlanPayments] = useState<NativePlanPaymentDraft[]>(() => createDefaultNativePlanPayments(timezone));
+  const [planAutoDistribute, setPlanAutoDistribute] = useState(true);
   const [frequency, setFrequency] = useState('monthly');
+  const [frequencyDropdownOpen, setFrequencyDropdownOpen] = useState(false);
   const [provider, setProvider] = useState('stripe');
+  const [subscriptionCollectionMode, setSubscriptionCollectionMode] = useState<NativeSubscriptionCollectionMode>('authorization_link');
   const [intervalType, setIntervalType] = useState('monthly');
   const [intervalCount, setIntervalCount] = useState('1');
+  const [subscriptionStartDate, setSubscriptionStartDate] = useState(() => todayDateOnlyInTimezone(timezone));
+  const [formStep, setFormStep] = useState<NativePaymentWizardStep>('details');
   const [saving, setSaving] = useState(false);
+  const [datePickerTarget, setDatePickerTarget] = useState<PaymentDatePickerTarget | null>(null);
+  const [datePickerMonth, setDatePickerMonth] = useState(() => todayDateOnlyInTimezone(timezone));
+  const paymentFormScrollRef = useRef<ScrollView>(null);
+
+  const selectedProduct = useMemo(() => (
+    products.find((product) => getProductId(product) === selectedProductId) || null
+  ), [products, selectedProductId]);
+  const productPrices = useMemo(() => getProductPrices(selectedProduct), [selectedProduct]);
+  const selectedPrice = useMemo(() => (
+    productPrices.find((price) => getPriceId(price) === selectedPriceId) || null
+  ), [productPrices, selectedPriceId]);
+  const resolvedCurrency = chargeType === 'product'
+    ? getProductPriceCurrency(selectedProduct, selectedPrice, currency)
+    : currency;
+  const resolvedAmount = normalizeAmountInput(chargeType === 'product' ? customProductAmount : amount);
+  const firstPaymentAmount = normalizeAmountInput(firstPayment);
+  const remainingPlanTotal = planPayments.reduce((sum, payment) => sum + normalizeAmountInput(payment.amount), 0);
+  const planDraftTotal = Math.round((firstPaymentAmount + remainingPlanTotal) * 100) / 100;
+  const planDifference = Math.round((resolvedAmount - planDraftTotal) * 100) / 100;
+  const effectivePlanCollectionMode: NativePlanCollectionMode = mode === 'partial' && firstPaymentMethod === 'card'
+    ? 'saved_card'
+    : planCollectionMode;
+  const planProviderSavedCards = useMemo(() => (
+    planSavedCards.filter((card) => card.provider === planGatewayProvider)
+  ), [planGatewayProvider, planSavedCards]);
+  const availablePlanSavedCards = mode === 'partial' && effectivePlanCollectionMode === 'saved_card'
+    ? planProviderSavedCards
+    : planSavedCards;
+  const selectedPlanSavedCard = useMemo(() => (
+    availablePlanSavedCards.find((card) => card.optionKey === selectedPlanSavedCardKey) || null
+  ), [availablePlanSavedCards, selectedPlanSavedCardKey]);
 
   useEffect(() => {
     const query = contactQuery.trim();
@@ -2628,6 +4799,134 @@ function PaymentFormView({
     };
   }, [api, contactQuery, selectedContact]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setProductsLoading(true);
+    api.getProducts(100)
+      .then((response) => {
+        if (!cancelled) setProducts(Array.isArray(response.products) ? response.products : []);
+      })
+      .catch(() => {
+        if (!cancelled) setProducts([]);
+      })
+      .finally(() => {
+        if (!cancelled) setProductsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
+    if (mode === 'single' && offlineOnly) {
+      setSingleAction('manual');
+      setPlanSavedCards([]);
+      setSelectedPlanSavedCardKey('');
+      setPlanSavedCardsLoading(false);
+      return;
+    }
+    if (!selectedContact?.id || (mode !== 'partial' && mode !== 'single' && mode !== 'subscription')) {
+      setPlanSavedCards([]);
+      setSelectedPlanSavedCardKey('');
+      setPlanSavedCardsLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setPlanSavedCardsLoading(true);
+    Promise.all([
+      api.getStripeSavedPaymentMethods(selectedContact.id).catch(() => []),
+      api.getConektaSavedPaymentSources(selectedContact.id).catch(() => []),
+      api.getRebillSavedPaymentSources(selectedContact.id).catch(() => []),
+    ])
+      .then(([stripeCards, conektaCards, rebillCards]) => {
+        if (cancelled) return;
+        const normalizedCards = [
+          ...normalizeNativePlanSavedCards('stripe', stripeCards),
+          ...normalizeNativePlanSavedCards('conekta', conektaCards),
+          ...normalizeNativePlanSavedCards('rebill', rebillCards),
+        ];
+        setPlanSavedCards(normalizedCards);
+        setSelectedPlanSavedCardKey((current) => (
+          current && normalizedCards.some((card) => card.optionKey === current)
+            ? current
+            : normalizedCards.find((card) => card.isDefault)?.optionKey || normalizedCards[0]?.optionKey || ''
+        ));
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPlanSavedCards([]);
+          setSelectedPlanSavedCardKey('');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPlanSavedCardsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [api, mode, offlineOnly, selectedContact?.id]);
+
+  useEffect(() => {
+    if (chargeType !== 'product' || !selectedProduct) return;
+    if (!productPrices.length) {
+      setSelectedPriceId('');
+      setCustomProductAmount('');
+      return;
+    }
+    if (!productPrices.some((price) => getPriceId(price) === selectedPriceId)) {
+      setSelectedPriceId(getPriceId(productPrices[0]));
+    }
+  }, [chargeType, productPrices, selectedPriceId, selectedProduct]);
+
+  useEffect(() => {
+    if (chargeType !== 'product' || !selectedPrice) return;
+    const priceAmount = getPriceAmount(selectedPrice);
+    setCustomProductAmount(priceAmount > 0 ? formatPlainAmount(priceAmount) : '');
+    setConcept((current) => current || selectedProduct?.name || '');
+    setDescription((current) => current || selectedProduct?.description || selectedPrice.name || '');
+  }, [chargeType, selectedPrice, selectedProduct]);
+
+  useEffect(() => {
+    if (frequency === 'custom') return;
+    setPlanPayments((current) => current.map((payment, index) => ({
+      ...payment,
+      dueDate: getNextNativePlanDueDate(firstPaymentDate, frequency, index + 1),
+    })));
+  }, [firstPaymentDate, frequency]);
+
+  useEffect(() => {
+    if (mode !== 'partial' || firstPaymentTiming !== 'immediate') return;
+    setFirstPaymentDate(todayDateOnlyInTimezone(timezone));
+  }, [firstPaymentTiming, mode, timezone]);
+
+  useEffect(() => {
+    if (mode !== 'partial' || !planAutoDistribute) return;
+    const schedule = distributeNativePlanPayments(
+      resolvedAmount,
+      0,
+      Array.from({ length: planPayments.length + 1 }, (_, index) => createNativePlanPaymentDraft(index === 0 ? firstPaymentDate : '', '')),
+    );
+    setFirstPayment((current) => {
+      const next = schedule[0]?.amount || '';
+      return current === next ? current : next;
+    });
+    setPlanPayments((current) => current.map((payment, index) => ({
+      ...payment,
+      amount: schedule[index + 1]?.amount || '',
+    })));
+  }, [mode, planAutoDistribute, planPayments.length, resolvedAmount]);
+
+  useEffect(() => {
+    if (mode !== 'partial' || effectivePlanCollectionMode !== 'saved_card') return;
+    setSelectedPlanSavedCardKey((current) => (
+      current && planProviderSavedCards.some((card) => card.optionKey === current)
+        ? current
+        : planProviderSavedCards.find((card) => card.isDefault)?.optionKey || planProviderSavedCards[0]?.optionKey || ''
+    ));
+  }, [effectivePlanCollectionMode, mode, planProviderSavedCards]);
+
   const resolvedContactName = selectedContact ? getContactName(selectedContact) : contactName.trim();
   const resolvedContactEmail = selectedContact?.email || contactEmail.trim();
   const resolvedContactPhone = selectedContact?.phone || contactPhone.trim();
@@ -2637,20 +4936,355 @@ function PaymentFormView({
       ? 'Planes de pago'
       : 'Suscripción';
   const subtitle = mode === 'single'
-    ? 'Cobro manual inmediato desde el celular.'
+    ? offlineOnly
+      ? 'Registra efectivo, transferencia o depósito confirmado.'
+      : 'Crea link, cobra tarjeta guardada o registra pago manual.'
     : mode === 'partial'
       ? 'Define enganche y cobros restantes.'
       : 'Crea un cobro recurrente con la pasarela disponible.';
+  const paymentWizardStepCount = mode === 'single' && offlineOnly ? 2 : 3;
+  const paymentWizardStepNumber = formStep === 'details' ? 1 : formStep === 'method' ? 2 : paymentWizardStepCount;
+  const stepLabel = `Paso ${paymentWizardStepNumber} de ${paymentWizardStepCount}`;
+  const todayDateOnly = todayDateOnlyInTimezone(timezone);
+  const submitLabel = formStep === 'details' || formStep === 'method'
+    ? 'Continuar'
+    : mode === 'single'
+      ? singleAction === 'payment_link'
+        ? 'Enviar enlace de pago'
+        : singleAction === 'saved_card'
+          ? 'Cobrar tarjeta'
+          : 'Registrar pago'
+      : mode === 'partial'
+        ? effectivePlanCollectionMode === 'saved_card'
+          ? 'Programar con tarjeta'
+          : firstPaymentAmount > 0
+            ? 'Registrar pago y enviar domiciliación'
+            : 'Crear link de domiciliación'
+        : subscriptionCollectionMode === 'saved_card'
+          ? 'Activar con tarjeta'
+          : 'Crear suscripción';
+  const SubmitIcon = formStep === 'details' || formStep === 'method'
+    ? ChevronRight
+    : mode === 'single'
+      ? singleAction === 'payment_link'
+        ? Send
+        : singleAction === 'saved_card'
+          ? CreditCard
+          : DollarSign
+      : mode === 'partial'
+        ? effectivePlanCollectionMode === 'saved_card'
+          ? CreditCard
+          : Send
+        : subscriptionCollectionMode === 'saved_card'
+          ? CreditCard
+          : Repeat2;
+  const submitLabelIsLong = submitLabel.length > 28;
+  const selectedPickerDateOnly = useMemo(() => {
+    if (!datePickerTarget) return todayDateOnly;
+    if (datePickerTarget.kind === 'paymentDate') return paymentDate || todayDateOnly;
+    if (datePickerTarget.kind === 'firstPaymentDate') return firstPaymentDate || todayDateOnly;
+    if (datePickerTarget.kind === 'subscriptionStartDate') return subscriptionStartDate || todayDateOnly;
+    return planPayments.find((payment) => payment.id === datePickerTarget.id)?.dueDate || todayDateOnly;
+  }, [datePickerTarget, firstPaymentDate, paymentDate, planPayments, subscriptionStartDate, todayDateOnly]);
 
-  const clearSelectedContact = () => {
-    setSelectedContact(null);
-    setContactQuery('');
-    setContactResults([]);
+  useEffect(() => {
+    paymentFormScrollRef.current?.scrollTo({ y: 0, animated: true });
+  }, [formStep]);
+
+  const openPaymentDatePicker = (target: PaymentDatePickerTarget, value: string) => {
+    const nextDate = value || todayDateOnly;
+    setDatePickerTarget(target);
+    setDatePickerMonth(nextDate);
   };
 
+  const applyPaymentDateSelection = (dateOnly: string) => {
+    if (!datePickerTarget) return;
+    if (datePickerTarget.kind === 'paymentDate') {
+      setPaymentDate(dateOnly);
+    } else if (datePickerTarget.kind === 'firstPaymentDate') {
+      setFirstPaymentDate(dateOnly);
+    } else if (datePickerTarget.kind === 'subscriptionStartDate') {
+      setSubscriptionStartDate(dateOnly);
+    } else {
+      setFrequency('custom');
+      patchPlanPayment(datePickerTarget.id, { dueDate: dateOnly });
+    }
+    setDatePickerMonth(dateOnly);
+    setDatePickerTarget(null);
+  };
+
+  const continueToConfiguration = () => {
+    if (chargeType === 'product') {
+      if (!selectedProduct) {
+        Alert.alert('Falta el producto', 'Selecciona un producto guardado o cambia a precio personalizado.');
+        return;
+      }
+      if (!selectedPrice) {
+        Alert.alert('Falta el precio', 'Selecciona el precio guardado que quieres cobrar.');
+        return;
+      }
+    }
+    if (resolvedAmount <= 0) {
+      Alert.alert('Falta el monto', 'Escribe un monto válido para continuar.');
+      return;
+    }
+    if (!resolvedContactName && !resolvedContactEmail && !resolvedContactPhone) {
+      Alert.alert('Falta el cliente', 'Selecciona un contacto para continuar.');
+      return;
+    }
+    if (mode === 'partial') {
+      continueFromMethod();
+      return;
+    }
+    if (mode === 'single' && offlineOnly) {
+      setSingleAction('manual');
+      setFormStep('configuration');
+      return;
+    }
+    setFormStep('method');
+  };
+
+  const continueFromMethod = () => {
+    if (mode === 'single' && singleAction === 'saved_card' && !selectedPlanSavedCard) {
+      Alert.alert('Falta tarjeta guardada', 'Este contacto no tiene una tarjeta guardada disponible. Usa link de pago o registra manual.');
+      return;
+    }
+    if (mode === 'partial') {
+      if (!PLAN_FIRST_PAYMENT_METHOD_OPTIONS.some((option) => option.value === firstPaymentMethod)) {
+        Alert.alert('Falta método', 'Elige cómo se hará el primer pago: efectivo, transferencia o tarjeta guardada.');
+        return;
+      }
+      if (firstPaymentAmount >= resolvedAmount) {
+        Alert.alert('Primer pago inválido', 'El primer pago debe ser menor al total para que existan pagos restantes.');
+        return;
+      }
+      if (!planPayments.length || planPayments.some((payment) => normalizeAmountInput(payment.amount) <= 0 || !payment.dueDate)) {
+        Alert.alert('Faltan pagos restantes', 'Cada pago restante necesita monto y fecha.');
+        return;
+      }
+      if (Math.abs(planDifference) > 0.5) {
+        Alert.alert('No cuadran las parcialidades', `Ajusta los pagos: ${planDifference > 0 ? 'faltan' : 'sobran'} ${formatCurrency(Math.abs(planDifference), resolvedCurrency)}.`);
+        return;
+      }
+      setPlanCollectionMode(firstPaymentMethod === 'card' ? 'saved_card' : 'authorization_link');
+      setFormStep('configuration');
+      return;
+    }
+    if (mode === 'subscription' && subscriptionCollectionMode === 'saved_card' && !selectedPlanSavedCard) {
+      Alert.alert('Falta tarjeta guardada', 'Este contacto no tiene una tarjeta guardada disponible. Usa autorización por pasarela.');
+      return;
+    }
+    setFormStep('configuration');
+  };
+
+  const buildPaymentLineItems = (parsedAmount: number, paymentConcept: string, paymentDescription: string) => {
+    if (chargeType === 'product' && selectedProduct && selectedPrice) {
+      return [{
+        name: selectedProduct.name || paymentConcept,
+        description: paymentDescription || selectedProduct.description || selectedPrice.name || selectedProduct.name || paymentConcept,
+        priceId: getPriceId(selectedPrice),
+        productId: getProductId(selectedProduct),
+        localProductId: selectedProduct.localId || '',
+        amount: parsedAmount,
+        qty: 1,
+        currency: resolvedCurrency,
+      }];
+    }
+    return [{
+      name: paymentConcept,
+      description: paymentDescription || paymentConcept,
+      amount: parsedAmount,
+      qty: 1,
+      currency: resolvedCurrency,
+    }];
+  };
+
+  const buildPaymentCompletionDraft = (parsedAmount: number, paymentConcept: string, paidAt = new Date().toISOString()): PendingChatDraft | undefined => {
+    if (!selectedContact?.id) return undefined;
+    const amountLabel = formatCurrency(parsedAmount, resolvedCurrency);
+    return {
+      id: `payment-completed-${Date.now()}`,
+      contact: selectedContact,
+      text: '',
+      activityMarker: {
+        id: `local-payment-${Date.now()}`,
+        kind: 'payment',
+        date: paidAt,
+        title: 'Pago completado',
+        subtitle: paymentConcept,
+        amountLabel,
+      },
+      successNotice: {
+        kind: 'payment',
+        title: 'Pago confirmado',
+        subtitle: `${amountLabel} · ${paymentConcept}`,
+      },
+    };
+  };
+
+  const patchPlanPayment = (id: string, updates: Partial<NativePlanPaymentDraft>, disableAutoDistribute = false) => {
+    if (disableAutoDistribute) setPlanAutoDistribute(false);
+    setPlanPayments((current) => current.map((payment) => (
+      payment.id === id ? { ...payment, ...updates } : payment
+    )));
+  };
+
+  const addPlanPayment = () => {
+    setPlanPayments((current) => {
+      const next = [
+        ...current,
+        createNativePlanPaymentDraft(getNextNativePlanDueDate(firstPaymentDate, frequency, current.length + 1)),
+      ];
+      if (!planAutoDistribute) return next;
+      const schedule = distributeNativePlanPayments(resolvedAmount, 0, [
+        createNativePlanPaymentDraft(firstPaymentDate, firstPayment),
+        ...next,
+      ]);
+      setFirstPayment(schedule[0]?.amount || '');
+      return next.map((payment, index) => ({ ...payment, amount: schedule[index + 1]?.amount || '' }));
+    });
+  };
+
+  const removePlanPayment = (id: string) => {
+    setPlanPayments((current) => {
+      const next = current.length <= 1 ? current : current.filter((payment) => payment.id !== id);
+      if (!planAutoDistribute) return next;
+      const schedule = distributeNativePlanPayments(resolvedAmount, 0, [
+        createNativePlanPaymentDraft(firstPaymentDate, firstPayment),
+        ...next,
+      ]);
+      setFirstPayment(schedule[0]?.amount || '');
+      return next.map((payment, index) => ({ ...payment, amount: schedule[index + 1]?.amount || '' }));
+    });
+  };
+
+  const renderPartialPlanSchedule = () => (
+    <>
+      <View style={styles.paymentFlatSectionHeader}>
+        <Text style={styles.paymentFormBlockTitle}>Diferimiento</Text>
+        <Text style={styles.paymentWarningText}>Define frecuencia y pagos. Si editas un pago manualmente, Ristak ya no mueve los demás.</Text>
+      </View>
+      <PaymentSelectField
+        icon={Repeat2}
+        label="Frecuencia de cobro"
+        open={frequencyDropdownOpen}
+        title={PAYMENT_FREQUENCY_OPTIONS.find((option) => option.value === frequency)?.label || 'Mensual'}
+        subtitle="Se aplica a los pagos restantes."
+        onPress={() => setFrequencyDropdownOpen((current) => !current)}
+      />
+      {frequencyDropdownOpen ? (
+        <View style={styles.paymentChoiceList}>
+          {PAYMENT_FREQUENCY_OPTIONS.map((option) => {
+            const selected = option.value === frequency;
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => {
+                  setFrequency(option.value);
+                  setFrequencyDropdownOpen(false);
+                }}
+                style={[styles.paymentChoiceRow, selected && styles.paymentChoiceRowActive]}
+              >
+                <View style={styles.paymentChoiceText}>
+                  <Text style={styles.paymentChoiceTitle}>{option.label}</Text>
+                  <Text style={styles.paymentChoiceSubtitle}>
+                    {option.value === 'custom' ? 'Usa fechas elegidas manualmente.' : 'Ristak calcula las próximas fechas.'}
+                  </Text>
+                </View>
+                {selected ? <Check size={18} color={COLORS.accent} strokeWidth={2.6} /> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : null}
+      <View style={styles.paymentSummaryRow}>
+        <Text style={styles.paymentSummaryLabel}>Total armado</Text>
+        <Text style={styles.paymentSummaryValue}>{formatCurrency(planDraftTotal, resolvedCurrency)}</Text>
+      </View>
+      {Math.abs(planDifference) > 0.5 ? (
+        <Text style={styles.paymentWarningText}>
+          {planDifference > 0 ? 'Falta asignar' : 'Te pasaste por'} {formatCurrency(Math.abs(planDifference), resolvedCurrency)}.
+        </Text>
+      ) : null}
+      <View style={styles.paymentPlanList}>
+        <View style={styles.paymentPlanRow}>
+          <View style={styles.paymentPlanRowHeader}>
+            <Text style={styles.paymentPlanRowTitle}>Pago 1</Text>
+          </View>
+          <PaymentTextField
+            label={`Monto (${resolvedCurrency})`}
+            value={firstPayment}
+            onChangeText={(value) => {
+              setPlanAutoDistribute(false);
+              setFirstPayment(value);
+            }}
+            placeholder="0.00"
+            keyboardType="decimal-pad"
+          />
+          <PaymentOptionGroup label="Cuándo cobrar" value={firstPaymentTiming} options={PLAN_FIRST_PAYMENT_TIMING_OPTIONS} onChange={(value) => setFirstPaymentTiming(value as 'immediate' | 'scheduled')} />
+          {firstPaymentTiming === 'scheduled' ? (
+            <PaymentDateField label="Fecha de cobro" value={firstPaymentDate} onPress={() => openPaymentDatePicker({ kind: 'firstPaymentDate' }, firstPaymentDate)} />
+          ) : null}
+          <PaymentOptionGroup label="Método" value={firstPaymentMethod} options={PLAN_FIRST_PAYMENT_METHOD_OPTIONS} onChange={setFirstPaymentMethod} />
+        </View>
+        {planPayments.map((payment, index) => (
+          <View key={payment.id} style={styles.paymentPlanRow}>
+            <View style={styles.paymentPlanRowHeader}>
+              <Text style={styles.paymentPlanRowTitle}>Pago {index + 2}</Text>
+              <Pressable accessibilityRole="button" disabled={planPayments.length <= 1} onPress={() => removePlanPayment(payment.id)} style={[styles.paymentPlanDeleteButton, planPayments.length <= 1 && styles.disabledButton]}>
+                <Trash2 size={15} color={COLORS.danger} strokeWidth={2.4} />
+              </Pressable>
+            </View>
+            <PaymentTextField label={`Monto (${resolvedCurrency})`} value={payment.amount} onChangeText={(value) => patchPlanPayment(payment.id, { amount: value }, true)} placeholder="0.00" keyboardType="decimal-pad" />
+            <PaymentDateField label="Fecha de cobro" value={payment.dueDate} onPress={() => openPaymentDatePicker({ kind: 'planPaymentDate', id: payment.id }, payment.dueDate)} />
+          </View>
+        ))}
+      </View>
+      <View style={styles.paymentInlineActions}>
+        <Pressable accessibilityRole="button" onPress={addPlanPayment} style={styles.paymentSecondaryAction}>
+          <LiquidControlBackground />
+          <Plus size={16} color={COLORS.text} strokeWidth={2.4} />
+          <Text style={styles.paymentSecondaryActionText}>Agregar pago</Text>
+        </Pressable>
+        <Pressable accessibilityRole="button" onPress={() => {
+          setPlanAutoDistribute(true);
+          setPlanPayments((current) => {
+            const schedule = distributeNativePlanPayments(resolvedAmount, 0, [
+              createNativePlanPaymentDraft(firstPaymentDate, firstPayment),
+              ...current,
+            ]);
+            setFirstPayment(schedule[0]?.amount || '');
+            return current.map((payment, index) => ({ ...payment, amount: schedule[index + 1]?.amount || '' }));
+          });
+        }} style={styles.paymentSecondaryAction}>
+          <LiquidControlBackground />
+          <RefreshCw size={16} color={COLORS.text} strokeWidth={2.4} />
+          <Text style={styles.paymentSecondaryActionText}>Distribuir</Text>
+        </Pressable>
+      </View>
+    </>
+  );
+
   const submit = async () => {
-    const parsedAmount = normalizeAmountInput(amount);
+    const parsedAmount = resolvedAmount;
     const paymentConcept = concept.trim() || (mode === 'subscription' ? 'Suscripción' : mode === 'partial' ? 'Plan de parcialidades' : 'Pago');
+    const paymentDescription = description.trim() || paymentConcept;
+    const lineItems = buildPaymentLineItems(parsedAmount, paymentConcept, paymentDescription);
+    const productMetadata = chargeType === 'product' && selectedProduct && selectedPrice
+      ? {
+          chargeType: 'product',
+          productId: getProductId(selectedProduct),
+          priceId: getPriceId(selectedPrice),
+          productName: selectedProduct.name || '',
+          priceName: selectedPrice.name || '',
+          lineItems,
+        }
+      : { chargeType: 'custom', lineItems };
+    const activeSubscriptionProvider = subscriptionCollectionMode === 'saved_card' && selectedPlanSavedCard
+      ? selectedPlanSavedCard.provider
+      : provider;
     if (parsedAmount <= 0) {
       Alert.alert('Falta el monto', 'Escribe un monto válido para continuar.');
       return;
@@ -2659,27 +5293,120 @@ function PaymentFormView({
       Alert.alert('Falta el cliente', 'Selecciona un contacto o escribe nombre, correo o teléfono.');
       return;
     }
+    if (mode === 'subscription') {
+      if ((activeSubscriptionProvider === 'mercadopago' || activeSubscriptionProvider === 'rebill') && !resolvedContactEmail) {
+        Alert.alert('Falta el email', `${activeSubscriptionProvider === 'mercadopago' ? 'Mercado Pago' : 'Rebill'} necesita email para que el cliente autorice la suscripción.`);
+        return;
+      }
+      if (activeSubscriptionProvider === 'conekta' && intervalType === 'daily') {
+        Alert.alert('Frecuencia no soportada', 'Conekta no acepta suscripciones diarias.');
+        return;
+      }
+      if (activeSubscriptionProvider === 'rebill' && intervalType !== 'monthly' && intervalType !== 'yearly') {
+        Alert.alert('Frecuencia no soportada', 'Rebill sólo acepta suscripciones mensuales o anuales.');
+        return;
+      }
+    }
 
     setSaving(true);
     try {
       if (mode === 'single') {
+        if (singleAction === 'payment_link') {
+          if (!selectedContact?.id) {
+            Alert.alert('Selecciona un contacto', 'Los links de pago necesitan un contacto guardado.');
+            return;
+          }
+          const linkProvider = paymentLinkProvider as PaymentGatewayProvider;
+          const response = await api.createPaymentLink(linkProvider, {
+            contactId: selectedContact.id,
+            contactName: resolvedContactName,
+            email: resolvedContactEmail,
+            phone: resolvedContactPhone,
+            amount: parsedAmount,
+            currency: resolvedCurrency,
+            title: paymentConcept,
+            description: paymentDescription,
+            source: 'native_mobile_payments',
+            lineItems,
+            installments: {
+              enabled: installmentsEnabled === 'enabled',
+              maxInstallments: Math.max(2, Math.round(Number(maxInstallments) || 3)),
+            },
+          });
+          const paymentUrl = getCreatedPaymentLinkUrl(response);
+          if (paymentUrl) {
+            const amountLabel = formatCurrency(parsedAmount, resolvedCurrency);
+            const providerLabel = getPaymentProviderLabel(linkProvider);
+            onPaymentLinkReady({
+              id: `payment-link-${Date.now()}`,
+              contact: selectedContact,
+              text: '',
+              paymentPreview: {
+                kind: 'payment_link',
+                title: paymentConcept,
+                subtitle: `${providerLabel} · Link de pago`,
+                amountLabel,
+                providerLabel,
+                url: paymentUrl,
+              },
+            });
+            return;
+          }
+          onSaved();
+          return;
+        }
+
+        if (singleAction === 'saved_card') {
+          if (!selectedContact?.id) {
+            Alert.alert('Selecciona un contacto', 'El cobro con tarjeta guardada necesita un contacto guardado.');
+            return;
+          }
+          if (!selectedPlanSavedCard) {
+            Alert.alert('Falta tarjeta guardada', 'Selecciona una tarjeta guardada del contacto.');
+            return;
+          }
+          await api.chargeSavedCard(selectedPlanSavedCard.provider, {
+            contactId: selectedContact.id,
+            contactName: resolvedContactName,
+            email: resolvedContactEmail,
+            phone: resolvedContactPhone,
+            amount: parsedAmount,
+            currency: resolvedCurrency,
+            title: paymentConcept,
+            description: paymentDescription,
+            dueDate: paymentDate || todayDateOnlyInTimezone(timezone),
+            source: 'native_mobile_payments_saved_card',
+            lineItems,
+            paymentMethodId: selectedPlanSavedCard.provider === 'stripe' ? selectedPlanSavedCard.paymentMethodId : undefined,
+            paymentSourceId: selectedPlanSavedCard.provider === 'conekta' ? selectedPlanSavedCard.paymentMethodId : undefined,
+            rebillCardId: selectedPlanSavedCard.provider === 'rebill' ? selectedPlanSavedCard.paymentMethodId : undefined,
+          });
+          onSaved(buildPaymentCompletionDraft(parsedAmount, paymentConcept));
+          return;
+        }
+
         await api.createTransaction({
           id: `native_payment_${Date.now()}`,
           amount: parsedAmount,
-          currency,
+          currency: resolvedCurrency,
           method,
-          status,
+          status: 'paid',
           title: paymentConcept,
-          description: paymentConcept,
-          date: new Date().toISOString(),
+          description: paymentDescription,
+          date: paymentDate || todayDateOnlyInTimezone(timezone),
           contactId: selectedContact?.id,
           contactName: resolvedContactName,
           email: resolvedContactEmail,
           phone: resolvedContactPhone,
-          metadata: { source: 'native_mobile_payments' },
+          reference: reference.trim() || undefined,
+          paymentMode: 'single',
+          metadata: {
+            ...productMetadata,
+            source: 'native_mobile_payments',
+            notes: notes.trim() || undefined,
+          },
         });
-        Alert.alert('Pago registrado', `${formatCurrency(parsedAmount, currency)} quedó guardado.`);
-        onSaved();
+        onSaved(buildPaymentCompletionDraft(parsedAmount, paymentConcept));
         return;
       }
 
@@ -2688,18 +5415,34 @@ function PaymentFormView({
           Alert.alert('Selecciona un contacto', 'Las parcialidades necesitan un contacto guardado para crear el flujo.');
           return;
         }
-        const today = todayDateOnlyInTimezone(timezone);
-        const count = Math.max(1, Math.round(Number(paymentCount) || 1));
-        const firstAmount = Math.min(parsedAmount, Math.max(0, normalizeAmountInput(firstPayment)));
+        const firstAmount = Math.min(parsedAmount, Math.max(0, firstPaymentAmount));
         const remainingTotal = Math.max(0, Math.round((parsedAmount - firstAmount) * 100) / 100);
+        const normalizedPayments = planPayments.map((payment, index) => ({
+          sequence: index + 1,
+          type: 'amount',
+          value: normalizeAmountInput(payment.amount),
+          amount: normalizeAmountInput(payment.amount),
+          percentage: null,
+          dueDate: payment.dueDate.trim(),
+          frequency,
+        }));
         if (remainingTotal <= 0) {
           Alert.alert('Faltan pagos restantes', 'Deja una parte del total para los cobros restantes.');
           return;
         }
-        const installmentAmount = Math.round((remainingTotal / count) * 100) / 100;
-        const remainderFix = Math.round((remainingTotal - installmentAmount * count) * 100) / 100;
-        const stepDays = frequency === 'weekly' ? 7 : frequency === 'biweekly' ? 14 : 30;
-        await api.createInstallmentFlow({
+        if (!normalizedPayments.length || normalizedPayments.some((payment) => payment.amount <= 0 || !payment.dueDate)) {
+          Alert.alert('Faltan parcialidades', 'Cada pago restante necesita monto y fecha.');
+          return;
+        }
+        if (Math.abs(planDifference) > 0.5) {
+          Alert.alert('No cuadran las parcialidades', `Ajusta los pagos: ${planDifference > 0 ? 'faltan' : 'sobran'} ${formatCurrency(Math.abs(planDifference), resolvedCurrency)}.`);
+          return;
+        }
+        if (effectivePlanCollectionMode === 'saved_card' && !selectedPlanSavedCard) {
+          Alert.alert('Falta tarjeta guardada', 'Selecciona la tarjeta guardada del contacto para activar el plan.');
+          return;
+        }
+        const planPayload = {
           contact: {
             id: selectedContact.id,
             name: getContactName(selectedContact),
@@ -2707,48 +5450,114 @@ function PaymentFormView({
             phone: selectedContact.phone,
           },
           totalAmount: parsedAmount,
-          currency,
+          currency: resolvedCurrency,
           concept: paymentConcept,
-          description: paymentConcept,
+          description: paymentDescription,
+          title: paymentConcept,
+          invoicePayload: {
+            title: paymentConcept,
+            name: paymentConcept,
+            description: paymentDescription,
+            currency: resolvedCurrency,
+            items: lineItems,
+            contactDetails: {
+              id: selectedContact.id,
+              name: getContactName(selectedContact),
+              email: selectedContact.email || '',
+              phoneNo: selectedContact.phone || '',
+            },
+          },
           firstPayment: firstAmount > 0
-            ? { enabled: true, type: 'amount', value: firstAmount, amount: firstAmount, date: today, method }
-            : { enabled: false },
+            ? { enabled: true, type: 'amount', value: firstAmount, amount: firstAmount, date: firstPaymentDate, frequency, method: firstPaymentMethod }
+            : { enabled: false, amount: 0 },
           remainingAutomatic: false,
-          remainingFrequency: 'custom',
-          remainingPayments: Array.from({ length: count }).map((_, index) => ({
-            sequence: index + 1,
-            type: 'amount',
-            amount: index === count - 1 ? Math.round((installmentAmount + remainderFix) * 100) / 100 : installmentAmount,
-            dueDate: addDateOnlyDays(today, stepDays * (index + 1)),
-            paymentMethod: 'manual',
-          })),
+          remainingFrequency: frequency,
+          remainingPayments: normalizedPayments,
           source: 'native_mobile_payments',
+        };
+        const planProvider = effectivePlanCollectionMode === 'saved_card'
+          ? selectedPlanSavedCard?.provider
+          : planGatewayProvider;
+        const response = await api.createPaymentPlan(planProvider as PaymentGatewayProvider, {
+          ...planPayload,
+          paymentMethodId: effectivePlanCollectionMode === 'saved_card' ? selectedPlanSavedCard?.paymentMethodId : undefined,
         });
-        Alert.alert('Plan creado', 'Las parcialidades quedaron guardadas.');
-        onSaved();
+        const planUrl = getCreatedPaymentLinkUrl(response);
+        if (effectivePlanCollectionMode === 'authorization_link' && planUrl) {
+          const amountLabel = formatCurrency(parsedAmount, resolvedCurrency);
+          const providerLabel = getPaymentProviderLabel(String(planProvider || planGatewayProvider));
+          onPaymentLinkReady({
+            id: `payment-plan-link-${Date.now()}`,
+            contact: selectedContact,
+            text: '',
+            paymentPreview: {
+              kind: 'payment_link',
+              title: 'Plan de pagos',
+              subtitle: `${providerLabel} · Domiciliación`,
+              amountLabel,
+              providerLabel,
+              url: planUrl,
+            },
+          });
+          return;
+        }
+        onSaved(effectivePlanCollectionMode === 'saved_card' ? buildPaymentCompletionDraft(firstAmount > 0 ? firstAmount : parsedAmount, 'Plan de pagos activado') : undefined);
         return;
       }
 
-      const startDate = todayDateOnlyInTimezone(timezone);
-      await api.createSubscription({
+      const startDate = subscriptionStartDate || todayDateOnlyInTimezone(timezone);
+      const createdSubscription = await api.createSubscription({
         contactId: selectedContact?.id || null,
         contactName: resolvedContactName,
         contactEmail: resolvedContactEmail || null,
         contactPhone: resolvedContactPhone || null,
         name: paymentConcept,
-        description: paymentConcept,
-        status: provider === 'mercadopago' || provider === 'clip' ? 'incomplete' : 'active',
+        description: paymentDescription,
+        status: subscriptionCollectionMode === 'saved_card'
+          ? 'active'
+          : activeSubscriptionProvider === 'mercadopago' || activeSubscriptionProvider === 'rebill'
+            ? 'incomplete'
+            : 'active',
         amount: parsedAmount,
-        currency,
+        currency: resolvedCurrency,
         intervalType,
         intervalCount: Math.max(1, Math.round(Number(intervalCount) || 1)),
         startDate,
-        nextRunAt: provider === 'mercadopago' || provider === 'clip' ? null : startDate,
-        paymentMethod: getSubscriptionPaymentMethod(provider),
-        paymentProvider: provider,
+        nextRunAt: subscriptionCollectionMode === 'saved_card' || (activeSubscriptionProvider !== 'mercadopago' && activeSubscriptionProvider !== 'rebill') ? startDate : null,
+        paymentMethod: getSubscriptionPaymentMethod(activeSubscriptionProvider, subscriptionCollectionMode),
+        paymentProvider: activeSubscriptionProvider,
+        paymentMethodId: selectedPlanSavedCard?.provider === 'stripe' ? selectedPlanSavedCard.paymentMethodId : undefined,
+        paymentSourceId: selectedPlanSavedCard?.provider === 'conekta' ? selectedPlanSavedCard.paymentMethodId : undefined,
+        rebillCardId: selectedPlanSavedCard?.provider === 'rebill' ? selectedPlanSavedCard.paymentMethodId : undefined,
+        source: 'native_mobile_payments',
+        lineItems,
+        metadata: {
+          ...productMetadata,
+          collectionMode: subscriptionCollectionMode,
+          paymentMethodId: selectedPlanSavedCard?.paymentMethodId,
+          savedCardProvider: selectedPlanSavedCard?.provider,
+        },
       });
-      Alert.alert('Suscripción creada', `${paymentConcept} quedó guardada.`);
-      onSaved();
+      const subscriptionUrl = getCreatedSubscriptionLinkUrl(createdSubscription);
+      if (subscriptionCollectionMode === 'authorization_link' && subscriptionUrl && selectedContact?.id) {
+        const amountLabel = formatCurrency(parsedAmount, resolvedCurrency);
+        const providerLabel = getPaymentProviderLabel(activeSubscriptionProvider);
+        onPaymentLinkReady({
+          id: `subscription-link-${Date.now()}`,
+          contact: selectedContact,
+          text: '',
+          paymentPreview: {
+            kind: 'payment_link',
+            title: paymentConcept,
+            subtitle: `${providerLabel} · Suscripción`,
+            amountLabel,
+            providerLabel,
+            url: subscriptionUrl,
+          },
+        });
+        return;
+      }
+      onSaved(subscriptionCollectionMode === 'saved_card' ? buildPaymentCompletionDraft(parsedAmount, `${paymentConcept} activada`) : undefined);
     } catch (err) {
       Alert.alert('No se guardó', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
@@ -2757,16 +5566,33 @@ function PaymentFormView({
   };
 
   return (
-    <ScrollView contentContainerStyle={styles.paymentFormHost} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    <View style={styles.paymentFormScreen}>
+      <ScrollView ref={paymentFormScrollRef} contentContainerStyle={styles.paymentFormHost} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       <View style={styles.productsTopBar}>
-        <Pressable accessibilityRole="button" onPress={onBack} style={({ pressed }) => [styles.paymentsBackButton, pressed && styles.pressed]}>
+        <Pressable accessibilityRole="button" onPress={() => {
+          if (formStep === 'configuration') {
+            setFormStep(mode === 'partial' ? 'details' : 'method');
+            return;
+          }
+          if (formStep === 'method') {
+            setFormStep('details');
+            return;
+          }
+          onBack();
+        }} style={({ pressed }) => [styles.paymentsBackButton, pressed && styles.pressed]}>
+          <LiquidControlBackground />
           <ChevronLeft size={19} color={COLORS.text} strokeWidth={2.5} />
           <Text style={styles.paymentsBackText}>Atrás</Text>
         </Pressable>
       </View>
       <View style={styles.paymentFormHeader}>
-        <Text style={styles.paymentFormTitle}>{title}</Text>
-        <Text style={styles.paymentFormSubtitle}>{subtitle}</Text>
+        <Text style={styles.paymentFormStep}>{stepLabel}</Text>
+        {formStep === 'details' ? (
+          <>
+            <Text style={styles.paymentFormTitle}>{title}</Text>
+            <Text style={styles.paymentFormSubtitle}>{subtitle}</Text>
+          </>
+        ) : null}
       </View>
 
       <View style={styles.paymentFormBlock}>
@@ -2774,15 +5600,16 @@ function PaymentFormView({
         {selectedContact ? (
           <View style={styles.selectedContactCard}>
             <View style={styles.selectedContactIcon}>
-              <User size={22} color={COLORS.accent} strokeWidth={2.4} />
+              {hasContactAvatarValue(selectedContact) ? (
+                <Image source={{ uri: getContactAvatar(selectedContact) }} style={styles.selectedContactAvatarImage as ImageStyle} />
+              ) : (
+                <Text style={styles.avatarText}>{getContactInitials(selectedContact)}</Text>
+              )}
             </View>
             <View style={styles.selectedContactCopy}>
               <Text numberOfLines={1} style={styles.selectedContactName}>{getContactName(selectedContact)}</Text>
               <Text numberOfLines={1} style={styles.selectedContactDetail}>{selectedContact.email || selectedContact.phone || 'Contacto guardado'}</Text>
             </View>
-            <Pressable accessibilityRole="button" onPress={clearSelectedContact} style={styles.clearSearchButton}>
-              <X size={17} color={COLORS.muted} strokeWidth={2.45} />
-            </Pressable>
           </View>
         ) : (
           <>
@@ -2825,42 +5652,343 @@ function PaymentFormView({
         )}
       </View>
 
-      <View style={styles.paymentFormBlock}>
-        <Text style={styles.paymentFormBlockTitle}>Cobro</Text>
-        <PaymentTextField label={`Monto (${currency})`} value={amount} onChangeText={setAmount} placeholder="0.00" keyboardType="decimal-pad" />
-        <PaymentTextField label={mode === 'subscription' ? 'Nombre de la suscripción' : 'Concepto'} value={concept} onChangeText={setConcept} placeholder="Ej. Consulta inicial" />
+      {formStep === 'details' ? (
+        <>
+        <View style={styles.paymentFormBlock}>
+          <Text style={styles.paymentFormBlockTitle}>Cobro</Text>
+          <PaymentOptionGroup
+            label="Tipo de cobro"
+            value={chargeType}
+            variant="tabs"
+            options={[
+              { value: 'custom', label: 'Precio personalizado' },
+              { value: 'product', label: 'Producto guardado' },
+            ]}
+            onChange={(value) => {
+              if (value === 'product') {
+                setChargeType('product');
+                setAmount('');
+                setProductDropdownOpen(false);
+                setPriceDropdownOpen(false);
+              } else {
+                setChargeType('custom');
+                setSelectedProductId('');
+                setSelectedPriceId('');
+                setCustomProductAmount('');
+                setProductDropdownOpen(false);
+                setPriceDropdownOpen(false);
+              }
+            }}
+          />
+          {chargeType === 'product' ? (
+            <>
+              {productsLoading ? (
+                <View style={styles.paymentInlineLoading}>
+                  <ActivityIndicator color={COLORS.accent} size="small" />
+                  <Text style={styles.caption}>Cargando productos...</Text>
+                </View>
+              ) : products.length ? (
+                <>
+                  <PaymentSelectField
+                    icon={Package}
+                    label="Producto"
+                    open={productDropdownOpen}
+                    title={selectedProduct?.name || 'Seleccionar producto'}
+                    subtitle={selectedProduct ? (selectedProduct.description || 'Producto guardado') : 'Toca para elegir uno de tus productos'}
+                    meta={getProductSelectMeta(selectedProduct, currency)}
+                    onPress={() => {
+                      setProductDropdownOpen((current) => !current);
+                      setPriceDropdownOpen(false);
+                    }}
+                  />
+                  {productDropdownOpen ? (
+                    <View style={styles.paymentChoiceList}>
+                      {products.slice(0, 24).map((product) => {
+                        const productId = getProductId(product);
+                        const price = getPrimaryPrice(product);
+                        const selected = productId === selectedProductId;
+                        return (
+                          <Pressable
+                            key={productId || product.name}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected }}
+                            onPress={() => {
+                              setSelectedProductId(productId);
+                              setSelectedPriceId('');
+                              setProductDropdownOpen(false);
+                              setPriceDropdownOpen(true);
+                            }}
+                            style={[styles.paymentChoiceRow, selected && styles.paymentChoiceRowActive]}
+                          >
+                            <View style={styles.paymentChoiceIcon}>
+                              <Package size={18} color={COLORS.accent} strokeWidth={2.35} />
+                            </View>
+                            <View style={styles.paymentChoiceText}>
+                              <Text numberOfLines={1} style={styles.paymentChoiceTitle}>{product.name || 'Producto sin nombre'}</Text>
+                              <Text numberOfLines={1} style={styles.paymentChoiceSubtitle}>{product.description || 'Producto guardado'}</Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.paymentChoiceMeta}>
+                              {price ? formatCurrency(getPriceAmount(price), getProductPriceCurrency(product, price, currency)) : 'Sin precio'}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </>
+              ) : (
+                <Text style={styles.paymentWarningText}>No hay productos guardados. Cambia a precio personalizado o crea uno en Precios Guardados.</Text>
+              )}
+              {selectedProduct ? (
+                <>
+                  <PaymentSelectField
+                    icon={Tag}
+                    label="Precio"
+                    open={priceDropdownOpen}
+                    title={selectedPrice?.name || 'Seleccionar precio'}
+                    subtitle={selectedPrice ? 'Precio guardado' : 'Toca para elegir el precio de este producto'}
+                    meta={selectedPrice ? formatCurrency(getPriceAmount(selectedPrice), getProductPriceCurrency(selectedProduct, selectedPrice, currency)) : undefined}
+                    onPress={() => setPriceDropdownOpen((current) => !current)}
+                  />
+                  {priceDropdownOpen ? (
+                    <View style={styles.paymentChoiceList}>
+                      {productPrices.map((price) => {
+                        const priceId = getPriceId(price);
+                        const selected = priceId === selectedPriceId;
+                        return (
+                          <Pressable
+                            key={priceId || price.name}
+                            accessibilityRole="button"
+                            accessibilityState={{ selected }}
+                            onPress={() => {
+                              setSelectedPriceId(priceId);
+                              setPriceDropdownOpen(false);
+                            }}
+                            style={[styles.paymentChoiceRow, selected && styles.paymentChoiceRowActive]}
+                          >
+                            <View style={styles.paymentChoiceText}>
+                              <Text numberOfLines={1} style={styles.paymentChoiceTitle}>{price.name || 'Precio'}</Text>
+                              <Text numberOfLines={1} style={styles.paymentChoiceSubtitle}>Precio guardado</Text>
+                            </View>
+                            <Text numberOfLines={1} style={styles.paymentChoiceMeta}>
+                              {formatCurrency(getPriceAmount(price), getProductPriceCurrency(selectedProduct, price, currency))}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </>
+              ) : null}
+              {selectedProduct && selectedPrice ? (
+                <PaymentTextField label={`Monto a cobrar (${resolvedCurrency})`} value={customProductAmount} onChangeText={setCustomProductAmount} placeholder="0.00" keyboardType="decimal-pad" />
+              ) : null}
+            </>
+          ) : (
+            <PaymentTextField label={`Monto (${currency})`} value={amount} onChangeText={setAmount} placeholder="0.00" keyboardType="decimal-pad" />
+          )}
+          <PaymentTextField label={mode === 'subscription' ? 'Nombre de la suscripción' : 'Concepto'} value={concept} onChangeText={setConcept} placeholder="Ej. Consulta inicial" />
+          <PaymentTextField label="Descripción del producto / detalle" value={description} onChangeText={setDescription} placeholder="Ej. Pago de servicios, consulta, etc." multiline />
+        </View>
+        {mode === 'partial' ? renderPartialPlanSchedule() : null}
+        </>
+      ) : formStep === 'method' ? (
+        <View style={styles.paymentFormBlock}>
+          <Text style={styles.paymentFormBlockTitle}>
+            {mode === 'single'
+              ? '¿Cómo quieres cobrar?'
+              : mode === 'partial'
+                ? '¿Cómo quieres activar el plan?'
+                : '¿Cómo quieres activar la suscripción?'}
+          </Text>
+          <View style={styles.paymentChoiceList}>
+            {mode === 'single' ? (
+              offlineOnly ? (
+                <PaymentWizardChoice
+                  icon={Banknote}
+                  meta="Offline"
+                  selected
+                  subtitle="Registra efectivo, transferencia, depósito u otro pago que ya quedó confirmado."
+                  title="Registrar pago offline"
+                  onPress={() => setSingleAction('manual')}
+                />
+              ) : (
+              <>
+                <PaymentWizardChoice
+                  icon={Link2}
+                  meta="Link"
+                  selected={singleAction === 'payment_link'}
+                  subtitle="Se crea el enlace, te lleva al chat y queda la previsualización lista para enviar."
+                  title="Enviar enlace de pago"
+                  onPress={() => setSingleAction('payment_link')}
+                />
+                <PaymentWizardChoice
+                  disabled={!planSavedCardsLoading && !planSavedCards.length}
+                  icon={CreditCard}
+                  meta={planSavedCardsLoading ? 'Buscando' : `${planSavedCards.length}`}
+                  selected={singleAction === 'saved_card'}
+                  subtitle={planSavedCards.length ? 'Cobra una tarjeta guardada del contacto en Stripe, Conekta o Rebill.' : 'Este contacto todavía no tiene tarjetas guardadas.'}
+                  title="Cobrar tarjeta guardada"
+                  onPress={() => setSingleAction('saved_card')}
+                />
+                <PaymentWizardChoice
+                  icon={Banknote}
+                  meta="Offline"
+                  selected={singleAction === 'manual'}
+                  subtitle="Registra efectivo, transferencia, cheque u otro pago ya confirmado."
+                  title="Registrar pago manual"
+                  onPress={() => setSingleAction('manual')}
+                />
+              </>
+              )
+            ) : null}
+            {mode === 'subscription' ? (
+              <>
+                <PaymentWizardChoice
+                  icon={Repeat2}
+                  meta="Pasarela"
+                  selected={subscriptionCollectionMode === 'authorization_link'}
+                  subtitle="Crea la suscripción con la pasarela seleccionada y su flujo de autorización."
+                  title="Autorizar por pasarela"
+                  onPress={() => setSubscriptionCollectionMode('authorization_link')}
+                />
+                <PaymentWizardChoice
+                  disabled={!planSavedCardsLoading && !planSavedCards.length}
+                  icon={CreditCard}
+                  meta={planSavedCardsLoading ? 'Buscando' : `${planSavedCards.length}`}
+                  selected={subscriptionCollectionMode === 'saved_card'}
+                  subtitle={planSavedCards.length ? 'Activa la suscripción con una tarjeta ya guardada del contacto.' : 'Este contacto todavía no tiene tarjetas guardadas.'}
+                  title="Tarjeta guardada"
+                  onPress={() => setSubscriptionCollectionMode('saved_card')}
+                />
+              </>
+            ) : null}
+          </View>
+          <Text style={styles.paymentWarningText}>
+            {mode === 'single'
+              ? 'Después de elegir la ruta sólo vas a ver la configuración necesaria para esa acción.'
+              : mode === 'partial'
+                ? 'El método del primer pago se configura dentro del primer pago; los cobros restantes siguen la domiciliación del plan.'
+                : 'La pasarela o tarjeta elegida define cómo se activa el cobro recurrente.'}
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.paymentFormBlock}>
+          <Text style={styles.paymentFormBlockTitle}>Configuración</Text>
 
-        {mode === 'single' ? (
-          <>
-            <PaymentOptionGroup label="Método" value={method} options={PAYMENT_METHOD_OPTIONS} onChange={setMethod} />
-            <PaymentOptionGroup label="Estado" value={status} options={PAYMENT_STATUS_OPTIONS} onChange={setStatus} />
-          </>
-        ) : null}
+          {mode === 'single' ? (
+            <>
+              {singleAction === 'payment_link' ? (
+                <>
+                  <PaymentOptionGroup label="Pasarela" value={paymentLinkProvider} options={PAYMENT_LINK_PROVIDER_OPTIONS} onChange={setPaymentLinkProvider} />
+                  <PaymentOptionGroup label="Meses sin intereses" value={installmentsEnabled} options={PAYMENT_INSTALLMENT_OPTIONS} onChange={setInstallmentsEnabled} />
+                  {installmentsEnabled === 'enabled' ? (
+                    <PaymentTextField label="Máximo de meses" value={maxInstallments} onChangeText={setMaxInstallments} placeholder="3" keyboardType="number-pad" />
+                  ) : null}
+                </>
+              ) : singleAction === 'saved_card' ? (
+                <>
+                  <Text style={styles.paymentWarningText}>Elige qué tarjeta del contacto vas a cobrar. Si tiene varias de la misma pasarela, se muestran por separado.</Text>
+                  <PaymentSavedCardList
+                    cards={planSavedCards}
+                    emptyText="Este contacto no tiene tarjetas guardadas. Regresa y usa link de pago."
+                    loading={planSavedCardsLoading}
+                    selectedKey={selectedPlanSavedCardKey}
+                    onSelect={setSelectedPlanSavedCardKey}
+                  />
+                </>
+              ) : (
+                <>
+                  <PaymentOptionGroup label="Método" value={method} options={offlineOnly ? OFFLINE_PAYMENT_METHOD_OPTIONS : PAYMENT_METHOD_OPTIONS} onChange={setMethod} />
+                  <PaymentDateField label="Fecha de pago" value={paymentDate} onPress={() => openPaymentDatePicker({ kind: 'paymentDate' }, paymentDate)} />
+                  <PaymentTextField label="Referencia (opcional)" value={reference} onChangeText={setReference} placeholder={offlineOnly ? 'Transferencia, depósito, recibo...' : 'Transferencia, cheque, recibo...'} />
+                  <PaymentTextField label="Notas internas" value={notes} onChangeText={setNotes} placeholder="Notas del pago" multiline />
+                </>
+              )}
+            </>
+          ) : null}
 
-        {mode === 'partial' ? (
-          <>
-            <PaymentTextField label={`Primer pago (${currency})`} value={firstPayment} onChangeText={setFirstPayment} placeholder="0.00" keyboardType="decimal-pad" />
-            <PaymentTextField label="Pagos restantes" value={paymentCount} onChangeText={setPaymentCount} placeholder="3" keyboardType="number-pad" />
-            <PaymentOptionGroup label="Frecuencia" value={frequency} options={PAYMENT_FREQUENCY_OPTIONS} onChange={setFrequency} />
-            <PaymentOptionGroup label="Método del primer pago" value={method} options={PAYMENT_METHOD_OPTIONS} onChange={setMethod} />
-          </>
-        ) : null}
+          {mode === 'partial' ? (
+            <>
+              {effectivePlanCollectionMode === 'authorization_link' ? (
+                <>
+                  <PaymentOptionGroup label="Pasarela de domiciliación" value={planGatewayProvider} options={PAYMENT_PLAN_PROVIDER_OPTIONS} onChange={setPlanGatewayProvider} />
+                  <Text style={styles.paymentWarningText}>
+                    {firstPaymentAmount > 0
+                      ? 'Se registrará el primer pago y después se preparará el enlace para domiciliar los cobros restantes.'
+                      : 'Se preparará un enlace para que el cliente autorice la tarjeta de los cobros restantes.'}
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <PaymentOptionGroup label="Pasarela" value={planGatewayProvider} options={PAYMENT_PLAN_PROVIDER_OPTIONS} onChange={setPlanGatewayProvider} />
+                  <PaymentSavedCardList
+                    cards={availablePlanSavedCards}
+                    emptyText={`Este contacto no tiene tarjetas guardadas en ${getPaymentProviderLabel(planGatewayProvider)}. Regresa y usa efectivo o transferencia para enviar link de domiciliación.`}
+                    loading={planSavedCardsLoading}
+                    selectedKey={selectedPlanSavedCardKey}
+                    onSelect={setSelectedPlanSavedCardKey}
+                  />
+                </>
+              )}
+            </>
+          ) : null}
 
-        {mode === 'subscription' ? (
-          <>
-            <PaymentOptionGroup label="Pasarela" value={provider} options={SUBSCRIPTION_PROVIDER_OPTIONS} onChange={setProvider} />
-            <PaymentOptionGroup label="Frecuencia" value={intervalType} options={SUBSCRIPTION_INTERVAL_OPTIONS} onChange={setIntervalType} />
-            <PaymentTextField label="Cada cuántos periodos" value={intervalCount} onChangeText={setIntervalCount} placeholder="1" keyboardType="number-pad" />
-          </>
-        ) : null}
-      </View>
+          {mode === 'subscription' ? (
+            <>
+              {subscriptionCollectionMode === 'saved_card' ? (
+                <PaymentSavedCardList
+                  cards={planSavedCards}
+                  emptyText="Este contacto no tiene tarjetas guardadas. Regresa y usa autorización por pasarela."
+                  loading={planSavedCardsLoading}
+                  selectedKey={selectedPlanSavedCardKey}
+                  onSelect={setSelectedPlanSavedCardKey}
+                />
+              ) : (
+                <PaymentOptionGroup label="Pasarela" value={provider} options={SUBSCRIPTION_PROVIDER_OPTIONS} onChange={setProvider} />
+              )}
+              <PaymentOptionGroup label="Frecuencia" value={intervalType} options={SUBSCRIPTION_INTERVAL_OPTIONS} onChange={setIntervalType} />
+              <PaymentTextField label="Cada cuántos periodos" value={intervalCount} onChangeText={setIntervalCount} placeholder="1" keyboardType="number-pad" />
+              <PaymentDateField label="Inicio" value={subscriptionStartDate} onPress={() => openPaymentDatePicker({ kind: 'subscriptionStartDate' }, subscriptionStartDate)} />
+            </>
+          ) : null}
+        </View>
+      )}
 
-      <Pressable accessibilityRole="button" disabled={saving} onPress={() => void submit()} style={[styles.paymentSubmitButton, saving && styles.disabledButton]}>
-        {saving ? <ActivityIndicator color={COLORS.white} /> : <DollarSign size={20} color={COLORS.white} strokeWidth={2.6} />}
-        <Text style={styles.paymentSubmitText}>{saving ? 'Guardando...' : mode === 'single' ? 'Registrar pago' : mode === 'partial' ? 'Crear plan' : 'Crear suscripción'}</Text>
+      <Pressable accessibilityRole="button" disabled={saving} onPress={() => {
+        if (formStep === 'details') {
+          continueToConfiguration();
+          return;
+        }
+        if (formStep === 'method') {
+          continueFromMethod();
+          return;
+        }
+        void submit();
+      }} style={[styles.paymentSubmitButton, saving && styles.disabledButton]}>
+        {saving ? <ActivityIndicator color={COLORS.white} /> : submitLabelIsLong ? null : <SubmitIcon size={20} color={COLORS.white} strokeWidth={2.6} />}
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.62}
+          style={[styles.paymentSubmitText, submitLabelIsLong && styles.paymentSubmitTextCompact]}
+        >
+          {saving ? 'Guardando...' : submitLabel}
+        </Text>
       </Pressable>
       <View style={styles.paymentsBottomSpacer} />
-    </ScrollView>
+      </ScrollView>
+      <ScheduleDatePickerPanel
+        monthDateOnly={datePickerMonth}
+        open={Boolean(datePickerTarget)}
+        selectedDateOnly={selectedPickerDateOnly}
+        timezone={timezone}
+        onChangeMonth={setDatePickerMonth}
+        onClose={() => setDatePickerTarget(null)}
+        onReset={() => applyPaymentDateSelection(todayDateOnly)}
+        onSelect={applyPaymentDateSelection}
+      />
+    </View>
   );
 }
 
@@ -2896,21 +6024,184 @@ function PaymentTextField({
   );
 }
 
+function PaymentDateField({
+  label,
+  onPress,
+  value,
+}: {
+  label: string;
+  onPress: () => void;
+  value: string;
+}) {
+  return (
+    <View style={styles.paymentField}>
+      <Text style={styles.paymentFieldLabel}>{label}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        onPress={onPress}
+        style={({ pressed }) => [styles.paymentDateButton, pressed && styles.pressed]}
+      >
+        <LiquidControlBackground />
+        <CalendarDays size={18} color={COLORS.accent} strokeWidth={2.45} />
+        <Text numberOfLines={1} style={styles.paymentDateButtonText}>{formatCompactBusinessDate(value)}</Text>
+        <ChevronDown size={18} color={COLORS.meta} strokeWidth={2.45} />
+      </Pressable>
+      <Text numberOfLines={1} style={styles.paymentDateHint}>{formatScheduleDateDisplay(value)}</Text>
+    </View>
+  );
+}
+
+function PaymentSelectField({
+  icon: Icon,
+  label,
+  meta,
+  onPress,
+  open,
+  subtitle,
+  title,
+}: {
+  icon: LucideIcon;
+  label: string;
+  meta?: string;
+  onPress: () => void;
+  open?: boolean;
+  subtitle?: string;
+  title: string;
+}) {
+  return (
+    <View style={styles.paymentField}>
+      <Text style={styles.paymentFieldLabel}>{label}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={label}
+        accessibilityState={{ expanded: Boolean(open) }}
+        onPress={onPress}
+        style={({ pressed }) => [styles.paymentSelectButton, open && styles.paymentSelectButtonOpen, pressed && styles.pressed]}
+      >
+        <LiquidControlBackground selected={Boolean(open)} />
+        <View style={styles.paymentChoiceIcon}>
+          <Icon size={18} color={COLORS.accent} strokeWidth={2.35} />
+        </View>
+        <View style={styles.paymentChoiceText}>
+          <Text numberOfLines={1} style={styles.paymentChoiceTitle}>{title}</Text>
+          {subtitle ? <Text numberOfLines={1} style={styles.paymentChoiceSubtitle}>{subtitle}</Text> : null}
+        </View>
+        {meta ? <Text numberOfLines={1} style={styles.paymentChoiceMeta}>{meta}</Text> : null}
+        <ChevronDown size={18} color={COLORS.meta} strokeWidth={2.45} />
+      </Pressable>
+    </View>
+  );
+}
+
+function PaymentWizardChoice({
+  disabled,
+  icon: Icon,
+  meta,
+  onPress,
+  selected,
+  subtitle,
+  title,
+}: {
+  disabled?: boolean;
+  icon: LucideIcon;
+  meta?: string;
+  onPress: () => void;
+  selected: boolean;
+  subtitle: string;
+  title: string;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled: Boolean(disabled), selected }}
+      disabled={disabled}
+      onPress={onPress}
+      style={[styles.paymentChoiceRow, selected && styles.paymentChoiceRowActive, disabled && styles.disabledButton]}
+    >
+      <View style={styles.paymentChoiceIcon}>
+        <Icon size={18} color={selected ? COLORS.accent : COLORS.text} strokeWidth={2.35} />
+      </View>
+      <View style={styles.paymentChoiceText}>
+        <Text numberOfLines={1} style={styles.paymentChoiceTitle}>{title}</Text>
+        <Text numberOfLines={2} style={styles.paymentChoiceSubtitle}>{subtitle}</Text>
+      </View>
+      {meta ? <Text numberOfLines={1} style={styles.paymentChoiceMeta}>{meta}</Text> : null}
+      {selected ? <Check size={18} color={COLORS.accent} strokeWidth={2.6} /> : null}
+    </Pressable>
+  );
+}
+
+function PaymentSavedCardList({
+  cards,
+  emptyText,
+  loading,
+  onSelect,
+  selectedKey,
+}: {
+  cards: NativePlanSavedCardOption[];
+  emptyText: string;
+  loading: boolean;
+  onSelect: (key: string) => void;
+  selectedKey: string;
+}) {
+  return (
+    <View style={styles.paymentChoiceList}>
+      {loading ? (
+        <View style={styles.paymentInlineLoading}>
+          <ActivityIndicator color={COLORS.accent} size="small" />
+          <Text style={styles.caption}>Buscando tarjetas guardadas...</Text>
+        </View>
+      ) : cards.length ? (
+        cards.map((card) => {
+          const selected = card.optionKey === selectedKey;
+          return (
+            <Pressable
+              key={card.optionKey}
+              accessibilityRole="button"
+              accessibilityState={{ selected }}
+              onPress={() => onSelect(card.optionKey)}
+              style={[styles.paymentChoiceRow, selected && styles.paymentChoiceRowActive]}
+            >
+              <View style={styles.paymentChoiceIcon}>
+                <CreditCard size={18} color={COLORS.accent} strokeWidth={2.35} />
+              </View>
+              <View style={styles.paymentChoiceText}>
+                <Text numberOfLines={1} style={styles.paymentChoiceTitle}>{card.displayLabel}</Text>
+                <Text numberOfLines={1} style={styles.paymentChoiceSubtitle}>{card.providerLabel} · {card.detailLabel || 'Tarjeta guardada'}</Text>
+              </View>
+              <Text numberOfLines={1} style={styles.paymentChoiceMeta}>{card.providerLabel}</Text>
+              {selected ? <Check size={18} color={COLORS.accent} strokeWidth={2.6} /> : null}
+            </Pressable>
+          );
+        })
+      ) : (
+        <View style={styles.paymentChoiceEmpty}>
+          <Text style={styles.paymentWarningText}>{emptyText}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
 function PaymentOptionGroup({
   label,
+  variant = 'pills',
   options,
   value,
   onChange,
 }: {
   label: string;
+  variant?: 'pills' | 'tabs';
   options: Array<{ label: string; value: string }>;
   value: string;
   onChange: (value: string) => void;
 }) {
+  const isTabs = variant === 'tabs';
   return (
     <View style={styles.paymentField}>
       <Text style={styles.paymentFieldLabel}>{label}</Text>
-      <View style={styles.paymentOptionGrid}>
+      <View style={isTabs ? styles.paymentTabList : styles.paymentOptionGrid}>
         {options.map((option) => {
           const selected = option.value === value;
           return (
@@ -2919,9 +6210,15 @@ function PaymentOptionGroup({
               accessibilityRole="button"
               accessibilityState={{ selected }}
               onPress={() => onChange(option.value)}
-              style={[styles.paymentOptionPill, selected && styles.paymentOptionPillActive]}
+              style={isTabs
+                ? [styles.paymentTabItem, selected && styles.paymentTabItemActive]
+                : [styles.paymentOptionPill, selected && styles.paymentOptionPillActive]}
             >
-              <Text style={[styles.paymentOptionText, selected && styles.paymentOptionTextActive]}>{option.label}</Text>
+              <LiquidControlBackground selected={selected} />
+              <Text style={[
+                isTabs ? styles.paymentTabText : styles.paymentOptionText,
+                selected && (isTabs ? styles.paymentTabTextActive : styles.paymentOptionTextActive),
+              ]}>{option.label}</Text>
             </Pressable>
           );
         })}
@@ -3005,6 +6302,34 @@ function unwrapCalendarEvents(response: Awaited<ReturnType<RistakApiClient['getC
   return Array.isArray(response)
     ? response
     : Array.isArray(response.events) ? response.events : [];
+}
+
+function withCalendarRequestTimeout<T>(request: Promise<T>, timeoutMs = CALENDAR_REQUEST_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error('La respuesta del calendario tardó demasiado.')));
+    }, timeoutMs);
+
+    request.then(
+      (value) => finish(() => resolve(value)),
+      (error) => finish(() => reject(error)),
+    );
+  });
+}
+
+async function calendarRequestOrFallback<T>(request: Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await withCalendarRequestTimeout(request);
+  } catch {
+    return fallback;
+  }
 }
 
 function getEventKey(event: CalendarEventItem, index = 0) {
@@ -3095,6 +6420,12 @@ function getDateOnlyYear(dateOnly: string) {
 function getDateOnlyMonthIndex(dateOnly: string) {
   const date = dateOnlyToCalendarDate(dateOnly);
   return date?.getMonth() || 0;
+}
+
+function getDateOnlyMonthSerial(dateOnly: string) {
+  const date = dateOnlyToCalendarDate(dateOnly);
+  if (!date) return 0;
+  return date.getFullYear() * 12 + date.getMonth();
 }
 
 function buildYearMonthDateOnly(year: number, monthIndex: number) {
@@ -3321,7 +6652,19 @@ function extractAppointmentIdFromUrl(url: string) {
   }
 }
 
-function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React.ReactNode }) {
+function CalendarSection({
+  api,
+  footer,
+  initialContact = null,
+  initialContactKey = '',
+  onInitialContactConsumed,
+}: {
+  api: RistakApiClient;
+  footer?: React.ReactNode;
+  initialContact?: ChatContact | null;
+  initialContactKey?: string;
+  onInitialContactConsumed?: (key: string) => void;
+}) {
   const initialToday = useMemo(() => todayDateOnlyInBusinessTimezone(), []);
   const { width: viewportWidth } = useWindowDimensions();
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
@@ -3347,11 +6690,13 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
   const [pendingAppointmentDefaults, setPendingAppointmentDefaults] = useState<PendingAppointmentDefaults | null>(null);
   const [timelineSelection, setTimelineSelection] = useState<TimelineSelectionState | null>(null);
   const [monthSwipeWidth, setMonthSwipeWidth] = useState(0);
-  const monthSwipeTranslate = useRef(new Animated.Value(0)).current;
+  const monthSwipePosition = useRef(new Animated.Value(getDateOnlyMonthSerial(initialToday))).current;
+  const selectedCalendarIdRef = useRef('');
   const timelineSelectionRef = useRef<TimelineSelectionState | null>(null);
   const timelinePendingTouchRef = useRef<TimelinePendingTouch | null>(null);
   const timelineSwipeRef = useRef<{ dateOnly: string; x: number; y: number; dx: number; dy: number } | null>(null);
   const handledOpenAppointmentRef = useRef('');
+  const handledInitialAppointmentContactKeyRef = useRef('');
   const lastDayTapRef = useRef<{ dateOnly: string; at: number } | null>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -3361,11 +6706,14 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
   }, [activeCalendars, calendars, selectedCalendarId]);
   const selectedCalendarKey = getCalendarKey(selectedCalendar);
   const todayDateOnly = useMemo(() => todayDateOnlyInBusinessTimezone(businessTimezone), [businessTimezone]);
-  const monthPages = useMemo(() => [-1, 0, 1].map((offset) => {
+  const currentMonthSerial = getDateOnlyMonthSerial(currentMonthDateOnly);
+  const monthPages = useMemo(() => MONTH_PAGER_OFFSETS.map((offset, index) => {
     const pageDateOnly = addBusinessDateOnlyMonths(currentMonthDateOnly, offset);
     return {
-      key: `${pageDateOnly}-${offset}`,
+      key: pageDateOnly,
+      index,
       offset,
+      serial: getDateOnlyMonthSerial(pageDateOnly),
       dateOnly: pageDateOnly,
       cells: buildBusinessMonthCells(pageDateOnly, todayDateOnly),
     };
@@ -3412,6 +6760,10 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     eventRange.startDate,
     eventRange.endDate,
   ].join('|'), [businessTimezone, eventRange.endDate, eventRange.startDate, selectedCalendarKey]);
+
+  useEffect(() => {
+    selectedCalendarIdRef.current = selectedCalendarId;
+  }, [selectedCalendarId]);
 
   const eventsByDate = useMemo(() => {
     const grouped: Record<string, CalendarEventItem[]> = {};
@@ -3561,32 +6913,30 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
   }, [selectedDateOnly]);
 
   useLayoutEffect(() => {
-    if (monthSwipeWidth > 0) {
-      monthSwipeTranslate.setValue(-monthSwipeWidth);
-    }
-  }, [currentMonthDateOnly, monthSwipeTranslate, monthSwipeWidth]);
+    monthSwipePosition.setValue(currentMonthSerial);
+  }, [currentMonthSerial, monthSwipePosition]);
 
   const finishMonthSwipe = useCallback((direction: -1 | 1) => {
     if (!monthSwipeWidth) return;
-    Animated.timing(monthSwipeTranslate, {
-      toValue: direction > 0 ? -monthSwipeWidth * 2 : 0,
+    Animated.timing(monthSwipePosition, {
+      toValue: currentMonthSerial + direction,
       duration: 230,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start(() => {
       movePeriod(direction);
     });
-  }, [monthSwipeTranslate, monthSwipeWidth, movePeriod]);
+  }, [currentMonthSerial, monthSwipePosition, monthSwipeWidth, movePeriod]);
 
   const reboundMonthSwipe = useCallback(() => {
     if (!monthSwipeWidth) return;
-    Animated.timing(monthSwipeTranslate, {
-      toValue: -monthSwipeWidth,
+    Animated.timing(monthSwipePosition, {
+      toValue: currentMonthSerial,
       duration: 190,
       easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     }).start();
-  }, [monthSwipeTranslate, monthSwipeWidth]);
+  }, [currentMonthSerial, monthSwipePosition, monthSwipeWidth]);
 
   const monthPanResponder = useMemo(() => PanResponder.create({
     onMoveShouldSetPanResponder: (_, gestureState) => (
@@ -3596,13 +6946,13 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) * 1.18
     ),
     onPanResponderGrant: () => {
-      monthSwipeTranslate.stopAnimation();
+      monthSwipePosition.stopAnimation();
     },
     onPanResponderMove: (_, gestureState) => {
       if (!monthSwipeWidth) return;
       const maxOffset = monthSwipeWidth * MONTH_SWIPE_MAX_OFFSET_RATIO;
       const offset = Math.sign(gestureState.dx) * Math.min(Math.abs(gestureState.dx), maxOffset);
-      monthSwipeTranslate.setValue(-monthSwipeWidth + offset);
+      monthSwipePosition.setValue(currentMonthSerial - (offset / monthSwipeWidth));
     },
     onPanResponderRelease: (_, gestureState) => {
       if (!monthSwipeWidth) return;
@@ -3615,13 +6965,13 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     },
     onPanResponderTerminate: reboundMonthSwipe,
     onPanResponderTerminationRequest: () => false,
-  }), [calendarView, finishMonthSwipe, monthSwipeTranslate, monthSwipeWidth, reboundMonthSwipe]);
+  }), [calendarView, currentMonthSerial, finishMonthSwipe, monthSwipePosition, monthSwipeWidth, reboundMonthSwipe]);
 
   const handleMonthLayout = useCallback((event: LayoutChangeEvent) => {
     const width = Math.max(1, event.nativeEvent.layout.width);
     setMonthSwipeWidth(width);
-    monthSwipeTranslate.setValue(-width);
-  }, [monthSwipeTranslate]);
+    monthSwipePosition.setValue(currentMonthSerial);
+  }, [currentMonthSerial, monthSwipePosition]);
 
   const openSheet = useCallback((sheet: Exclude<CalendarSheetMode, null>) => {
     if (sheetCloseTimerRef.current) {
@@ -3653,16 +7003,68 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
 
   const chooseCalendar = useCallback((calendar: CalendarItem) => {
     const id = getCalendarKey(calendar);
+    selectedCalendarIdRef.current = id;
     setSelectedCalendarId(id);
     void writeJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, id);
+    void writeJsonValue<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {
+      timezone: businessTimezone,
+      selectedCalendarId: id,
+      calendars,
+      updatedAt: new Date().toISOString(),
+    });
     closeSheet();
-  }, [closeSheet]);
+  }, [businessTimezone, calendars, closeSheet]);
 
   const loadCalendars = useCallback(async () => {
-    const [configResponse, savedCalendarId, calendarsResponse] = await Promise.all([
-      api.getConfig(['account_timezone', 'default_calendar_id']),
-      readJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, ''),
-      api.getCalendars(),
+    const [savedCalendarId, cachedBootstrap] = await Promise.all([
+      readJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, '').catch(() => ''),
+      readJsonValue<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {}).catch((): CalendarBootstrapCache => ({})),
+    ]);
+    const cachedCalendars = unwrapCalendars(cachedBootstrap.calendars || []);
+
+    const applyCalendars = (
+      calendarList: CalendarItem[],
+      timezoneValue: string,
+      defaultCalendarIdValue: string,
+      preferredCalendarIdValue?: string,
+    ) => {
+      const nextTimezone = resolveBusinessTimezone(timezoneValue);
+      const preferredId = [preferredCalendarIdValue, selectedCalendarIdRef.current, savedCalendarId, defaultCalendarIdValue]
+        .map((value) => String(value || '').trim())
+        .find((value) => value && calendarList.some((calendar) => getCalendarKey(calendar) === value && calendarIsActive(calendar)));
+      const fallbackCalendar = calendarList.find(calendarIsActive) || calendarList[0] || null;
+      const nextCalendarId = preferredId || getCalendarKey(fallbackCalendar);
+
+      setBusinessTimezone(nextTimezone);
+      setCalendars(calendarList);
+      selectedCalendarIdRef.current = nextCalendarId;
+      setSelectedCalendarId(nextCalendarId);
+      setCalendarReady(true);
+      if (nextCalendarId) {
+        void writeJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, nextCalendarId);
+      }
+      return { nextTimezone, nextCalendarId };
+    };
+
+    if (cachedCalendars.length) {
+      applyCalendars(
+        cachedCalendars,
+        String(cachedBootstrap.timezone || ''),
+        String(cachedBootstrap.defaultCalendarId || ''),
+        String(cachedBootstrap.selectedCalendarId || ''),
+      );
+      setLoading(false);
+    }
+
+    const [configResponse, calendarsResponse] = await Promise.all([
+      calendarRequestOrFallback<Awaited<ReturnType<RistakApiClient['getConfig']>>>(
+        api.getConfig(['account_timezone', 'default_calendar_id']),
+        {},
+      ),
+      calendarRequestOrFallback<Awaited<ReturnType<RistakApiClient['getCalendars']>>>(
+        api.getCalendars(),
+        [],
+      ),
     ]);
     const configValues = unwrapConfigValues(configResponse);
     const timezone = typeof configValues.account_timezone === 'string'
@@ -3671,22 +7073,24 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     const defaultCalendarId = typeof configValues.default_calendar_id === 'string'
       ? configValues.default_calendar_id
       : '';
-    const nextTimezone = resolveBusinessTimezone(timezone);
     const calendarList = unwrapCalendars(calendarsResponse);
-    const preferredId = [selectedCalendarId, savedCalendarId, defaultCalendarId]
-      .map((value) => String(value || '').trim())
-      .find((value) => value && calendarList.some((calendar) => getCalendarKey(calendar) === value && calendarIsActive(calendar)));
-    const fallbackCalendar = calendarList.find(calendarIsActive) || calendarList[0] || null;
-    const nextCalendarId = preferredId || getCalendarKey(fallbackCalendar);
-
-    setBusinessTimezone(nextTimezone);
-    setCalendars(calendarList);
-    setSelectedCalendarId(nextCalendarId);
-    setCalendarReady(true);
-    if (nextCalendarId) {
-      void writeJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, nextCalendarId);
+    const effectiveCalendarList = calendarList.length ? calendarList : cachedCalendars;
+    if (effectiveCalendarList.length || !cachedCalendars.length) {
+      const { nextTimezone, nextCalendarId } = applyCalendars(
+        effectiveCalendarList,
+        timezone || String(cachedBootstrap.timezone || ''),
+        defaultCalendarId || String(cachedBootstrap.defaultCalendarId || ''),
+        String(cachedBootstrap.selectedCalendarId || ''),
+      );
+      void writeJsonValue<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {
+        timezone: nextTimezone,
+        defaultCalendarId,
+        selectedCalendarId: nextCalendarId,
+        calendars: effectiveCalendarList,
+        updatedAt: new Date().toISOString(),
+      });
     }
-  }, [api, selectedCalendarId]);
+  }, [api]);
 
   const loadEvents = useCallback(async (silent = false) => {
     if (!selectedCalendarKey) {
@@ -3704,12 +7108,17 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       }
       if (!silent) {
         const cache = await readJsonValue<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
-        const cachedEvents = Array.isArray(cache[calendarEventCacheKey]) ? cache[calendarEventCacheKey] : [];
-        if (cachedEvents.length) {
+        if (Object.prototype.hasOwnProperty.call(cache, calendarEventCacheKey)) {
+          const cachedEvents = Array.isArray(cache[calendarEventCacheKey]) ? cache[calendarEventCacheKey] : [];
           setEvents(cachedEvents);
+          setLoading(false);
         }
       }
-      const response = await api.getCalendarEvents(eventRangeTimestamps.startTime, eventRangeTimestamps.endTime, selectedCalendarKey);
+      const response = await withCalendarRequestTimeout(api.getCalendarEvents(
+        eventRangeTimestamps.startTime,
+        eventRangeTimestamps.endTime,
+        selectedCalendarKey,
+      ));
       const nextEvents = unwrapCalendarEvents(response);
       setEvents(nextEvents);
       const cache = await readJsonValue<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
@@ -4014,6 +7423,22 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
     openSheet('appointmentForm');
   }, [businessTimezone, openSheet, pendingAppointmentDefaults, selectedCalendarKey, selectedDateOnly]);
 
+  useEffect(() => {
+    if (!initialContact || !initialContactKey || handledInitialAppointmentContactKeyRef.current === initialContactKey) return;
+    if (!calendarReady || !selectedCalendarKey) return;
+    handledInitialAppointmentContactKeyRef.current = initialContactKey;
+    setPendingAppointmentDefaults(null);
+    openCreateAppointmentForContact(initialContact);
+    onInitialContactConsumed?.(initialContactKey);
+  }, [
+    calendarReady,
+    initialContact,
+    initialContactKey,
+    onInitialContactConsumed,
+    openCreateAppointmentForContact,
+    selectedCalendarKey,
+  ]);
+
   const openEditAppointment = useCallback((event: CalendarEventItem) => {
     const eventId = getEventId(event);
     const start = getEventStart(event);
@@ -4151,7 +7576,6 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
       closeSheet();
       setSelectedEvent(null);
       await loadEvents(true);
-      Alert.alert(appointmentMode === 'edit' ? 'Cita actualizada' : 'Cita agendada', 'Los cambios ya están guardados.');
     } catch (err) {
       Alert.alert('No se pudo guardar', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
@@ -4174,7 +7598,6 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
             closeSheet();
             setSelectedEvent(null);
             await loadEvents(true);
-            Alert.alert('Cita eliminada', 'Ya no aparece en el calendario.');
           } catch (err) {
             Alert.alert('No se pudo eliminar', err instanceof Error ? err.message : 'Intenta otra vez.');
           } finally {
@@ -4236,12 +7659,14 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
               onPress={handleNavigateUp}
               style={({ pressed }) => [styles.calendarPeriodChip, pressed && styles.pressed]}
             >
-              <ChevronLeft size={15} color={COLORS.text} strokeWidth={2.8} />
+              <LiquidControlBackground />
+              <ChevronLeft size={15} color={COLORS.text} strokeWidth={2} />
               <Text numberOfLines={1} style={styles.calendarPeriodText}>
                 {periodChipLabel}
               </Text>
             </Pressable>
             <View style={styles.calendarHeaderCapsule}>
+              <LiquidControlBackground />
               <Pressable
                 accessibilityRole="button"
                 onPress={goToday}
@@ -4254,14 +7679,14 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
                 onPress={() => openSheet('calendar')}
                 style={({ pressed }) => [styles.calendarCapsuleIconButton, pressed && styles.pressed]}
               >
-                <CalendarDays size={19} color={COLORS.text} strokeWidth={2.35} />
+                <CalendarDays size={19} color={COLORS.text} strokeWidth={1.95} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
                 onPress={openCreateSheet}
                 style={({ pressed }) => [styles.calendarCapsuleIconButton, pressed && styles.pressed]}
               >
-                <Plus size={22} color={COLORS.text} strokeWidth={2.25} />
+                <Plus size={22} color={COLORS.text} strokeWidth={1.95} />
               </Pressable>
             </View>
           </View>
@@ -4276,21 +7701,36 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
               ]}
             >
               {calendarView === 'month' && monthSwipeWidth > 0 ? (
-                <Animated.View
+                <View
                   style={[
                     styles.calendarTitleSwipeTrack,
                     {
-                      width: headerTitleSwipeWidth * 3,
-                      transform: [{ translateX: monthSwipeTranslate }],
+                      width: headerTitleSwipeWidth,
+                      height: 43,
                     },
                   ]}
                 >
-                  {monthPages.map((page) => (
-                    <View key={`title-${page.key}`} style={[styles.calendarTitleSwipePage, { width: headerTitleSwipeWidth }]}>
-                      <Text numberOfLines={1} style={styles.calendarTitle}>{formatBusinessMonthTitle(page.dateOnly)}</Text>
-                    </View>
-                  ))}
-                </Animated.View>
+                  {monthPages.map((page) => {
+                    const translateX = Animated.multiply(
+                      Animated.subtract(page.serial, monthSwipePosition),
+                      headerTitleSwipeWidth,
+                    );
+                    return (
+                      <Animated.View
+                        key={`title-${page.key}`}
+                        style={[
+                          styles.calendarTitleSwipePage,
+                          {
+                            width: headerTitleSwipeWidth,
+                            transform: [{ translateX }],
+                          },
+                        ]}
+                      >
+                        <Text numberOfLines={1} style={styles.calendarTitle}>{formatBusinessMonthTitle(page.dateOnly)}</Text>
+                      </Animated.View>
+                    );
+                  })}
+                </View>
               ) : (
                 <Text numberOfLines={1} style={styles.calendarTitle}>{displayMonthTitle}</Text>
               )}
@@ -4316,10 +7756,11 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
                 {calendarView === 'month' ? (
                   <CalendarMonthSwipe
                     eventsByDate={eventsByDate}
+                    currentMonthDateOnly={currentMonthDateOnly}
                     monthPages={monthPages}
                     panHandlers={monthPanResponder.panHandlers}
                     selectedDateOnly={selectedDateOnly}
-                    translateX={monthSwipeTranslate}
+                    position={monthSwipePosition}
                     width={monthSwipeWidth}
                     onLayout={handleMonthLayout}
                     onSelectDate={handleDayPress}
@@ -4344,7 +7785,6 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
                 ) : null}
                 {calendarView === 'day' || calendarView === 'week' ? (
                   <CalendarTimelineView
-                    calendarColor={getCalendarColor(selectedCalendar)}
                     calendarView={calendarView}
                     eventsByDate={eventsByDate}
                     selectedDateOnly={selectedDateOnly}
@@ -4409,14 +7849,12 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
         )}
 
         <CalendarPickerSheet
-          activeView={calendarView}
           calendars={calendars}
           closing={calendarSheetClosing}
           open={calendarSheetOpen}
           selectedCalendarId={selectedCalendarKey}
           onClose={closeSheet}
           onSelect={chooseCalendar}
-          onSelectView={handleSelectCalendarView}
         />
         <AppointmentContactPickerSheet
           closing={contactPickerClosing}
@@ -4444,6 +7882,7 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
           api={api}
           busy={appointmentBusy}
           calendar={selectedCalendar}
+          calendars={calendars}
           closing={appointmentFormClosing}
           draft={appointmentDraft}
           mode={appointmentMode}
@@ -4460,52 +7899,69 @@ function CalendarSection({ api, footer }: { api: RistakApiClient; footer?: React
 }
 
 function CalendarMonthSwipe({
+  currentMonthDateOnly,
   eventsByDate,
   monthPages,
   panHandlers,
+  position,
   selectedDateOnly,
-  translateX,
   width,
   onLayout,
   onSelectDate,
 }: {
+  currentMonthDateOnly: string;
   eventsByDate: Record<string, CalendarEventItem[]>;
   monthPages: Array<{
     key: string;
-    offset: number;
+    index: number;
+    offset: -1 | 0 | 1;
+    serial: number;
     dateOnly: string;
     cells: ReturnType<typeof buildBusinessMonthCells>;
   }>;
   panHandlers: ReturnType<typeof PanResponder.create>['panHandlers'];
+  position: Animated.Value;
   selectedDateOnly: string;
-  translateX: Animated.Value;
   width: number;
   onLayout: (event: LayoutChangeEvent) => void;
   onSelectDate: (dateOnly: string) => void;
 }) {
-  const currentPage = monthPages.find((page) => page.offset === 0) || monthPages[1] || monthPages[0];
+  const currentMonthSerial = getDateOnlyMonthSerial(currentMonthDateOnly);
+  const currentPage = monthPages[MONTH_PAGER_CENTER_INDEX] || monthPages.find((page) => page.serial === currentMonthSerial) || monthPages[0];
   const monthRowCount = Math.max(1, Math.ceil((currentPage?.cells.length || 35) / 7));
   const monthHeight = CALENDAR_WEEKDAY_ROW_HEIGHT + CALENDAR_MONTH_GRID_TOP_PADDING + (monthRowCount * CALENDAR_MONTH_DAY_CELL_HEIGHT);
   return (
     <View style={[styles.calendarMonthSwipeViewport, { height: monthHeight }]} onLayout={onLayout} {...panHandlers}>
-      <Animated.View
-        style={[
-          styles.calendarMonthSwipeTrack,
-          width ? { width: width * 3, height: monthHeight, transform: [{ translateX }] } : { height: monthHeight },
-        ]}
-      >
-        {monthPages.map((page) => (
-          <View key={page.key} style={[styles.calendarMonthSwipePage, width ? { width, height: monthHeight } : { height: monthHeight }]}>
-            <CalendarMonthGrid
-              cells={page.cells}
-              eventsByDate={eventsByDate}
-              muted={page.offset !== 0}
-              selectedDateOnly={selectedDateOnly}
-              onSelectDate={onSelectDate}
-            />
-          </View>
-        ))}
-      </Animated.View>
+      <View style={[styles.calendarMonthSwipeTrack, { height: monthHeight }]}>
+        {monthPages.map((page) => {
+          const pageWidth = width || 1;
+          const translateX = Animated.multiply(
+            Animated.subtract(page.serial, position),
+            pageWidth,
+          );
+          return (
+            <Animated.View
+              key={page.key}
+              style={[
+                styles.calendarMonthSwipePage,
+                {
+                  width: pageWidth,
+                  height: monthHeight,
+                  transform: [{ translateX }],
+                },
+              ]}
+            >
+              <CalendarMonthGrid
+                cells={page.cells}
+                eventsByDate={eventsByDate}
+                muted={page.serial !== currentMonthSerial}
+                selectedDateOnly={selectedDateOnly}
+                onSelectDate={onSelectDate}
+              />
+            </Animated.View>
+          );
+        })}
+      </View>
     </View>
   );
 }
@@ -4534,6 +7990,7 @@ function CalendarMonthGrid({
         {cells.map((cell, index) => {
           const selected = cell.dateOnly === selectedDateOnly;
           const dayEvents = eventsByDate[cell.dateOnly] || [];
+          const dayMarkers = dayEvents.slice(0, 3);
           const weekend = index % 7 === 0 || index % 7 === 6;
           return (
             <Pressable
@@ -4561,11 +8018,16 @@ function CalendarMonthGrid({
                 ]}>
                   {cell.day}
                 </Text>
-              </View>
-              <View style={styles.calendarDayMarkers}>
-                {dayEvents.slice(0, 3).map((event, index) => (
-                  <View key={`${getEventKey(event, index)}-dot`} style={styles.calendarDayMarker} />
-                ))}
+                {dayMarkers.length ? (
+                  <View pointerEvents="none" style={styles.calendarDayInlineMarkers}>
+                    {dayMarkers.map((event, index) => (
+                      <View
+                        key={`${getEventKey(event, index)}-dot`}
+                        style={[styles.calendarDayMarker, selected && styles.calendarDayMarkerSelected]}
+                      />
+                    ))}
+                  </View>
+                ) : null}
               </View>
             </Pressable>
           );
@@ -4610,6 +8072,7 @@ function CalendarYearOverview({
               pressed && styles.pressed,
             ]}
           >
+            <LiquidControlBackground selected={selected} />
             <Text style={[
               styles.calendarYearMonthTitle,
               today && styles.calendarYearMonthToday,
@@ -4678,6 +8141,7 @@ function CalendarYearsOverview({
               pressed && styles.pressed,
             ]}
           >
+            <LiquidControlBackground selected={selected} />
             <Text
               style={[
                 styles.calendarYearButtonText,
@@ -4716,6 +8180,7 @@ function CalendarViewPicker({
               pressed && styles.pressed,
             ]}
           >
+            <LiquidControlBackground selected={selected} />
             <Text style={[styles.calendarViewPickerText, selected && styles.calendarViewPickerTextActive]}>{label}</Text>
           </Pressable>
         );
@@ -4725,7 +8190,6 @@ function CalendarViewPicker({
 }
 
 function CalendarTimelineView({
-  calendarColor,
   calendarView,
   eventsByDate,
   selectedDateOnly,
@@ -4741,7 +8205,6 @@ function CalendarTimelineView({
   onSelectDate,
   onSelectDateForCreate,
 }: {
-  calendarColor: string;
   calendarView: 'day' | 'week';
   eventsByDate: Record<string, CalendarEventItem[]>;
   selectedDateOnly: string;
@@ -4782,6 +8245,7 @@ function CalendarTimelineView({
                   pressed && styles.pressed,
                 ]}
               >
+                <LiquidControlBackground selected={selected} />
                 <Text style={[styles.calendarWeekDayLabel, today && styles.calendarWeekDayToday]}>{CALENDAR_WEEKDAYS[dateOnlyToCalendarDate(dateOnly)?.getDay() || 0]}</Text>
                 <Text style={[styles.calendarWeekDayNumber, selected && styles.calendarWeekDayNumberSelected]}>{formatDateOnlyDayNumber(dateOnly)}</Text>
                 {events.length ? <Text style={styles.calendarWeekDayCount}>{events.length}</Text> : null}
@@ -4800,7 +8264,6 @@ function CalendarTimelineView({
           {dayColumns.map(({ dateOnly, events }) => (
             <CalendarTimelineGrid
               key={dateOnly}
-              calendarColor={calendarColor}
               dateOnly={dateOnly}
               events={events}
               hours={hours}
@@ -4820,7 +8283,6 @@ function CalendarTimelineView({
 }
 
 function CalendarTimelineGrid({
-  calendarColor,
   dateOnly,
   events,
   hours,
@@ -4832,7 +8294,6 @@ function CalendarTimelineGrid({
   onOpenEvent,
   onRelease,
 }: {
-  calendarColor: string;
   dateOnly: string;
   events: CalendarEventItem[];
   hours: number[];
@@ -4897,7 +8358,6 @@ function CalendarTimelineGrid({
                 {
                   top: timeline.top,
                   height: timeline.height,
-                  borderLeftColor: calendarColor,
                 },
                 pressed && styles.pressed,
               ]}
@@ -4972,34 +8432,28 @@ function CalendarErrorState({ message, onRetry }: { message: string; onRetry: ()
 }
 
 function CalendarPickerSheet({
-  activeView,
   calendars,
   closing,
   open,
   selectedCalendarId,
   onClose,
   onSelect,
-  onSelectView,
 }: {
-  activeView: CalendarViewMode;
   calendars: CalendarItem[];
   closing: boolean;
   open: boolean;
   selectedCalendarId: string;
   onClose: () => void;
   onSelect: (calendar: CalendarItem) => void;
-  onSelectView: (view: Exclude<CalendarViewMode, 'years'>) => void;
 }) {
   return (
     <BottomActionSheet
       closing={closing}
       open={open}
       title="Calendarios"
-      subtitle="Elige el calendario activo para esta vista"
       onClose={onClose}
     >
       <ScrollView contentContainerStyle={styles.calendarSheetList} showsVerticalScrollIndicator={false}>
-        <CalendarViewPicker activeView={activeView} onSelectView={onSelectView} />
         {calendars.map((calendar) => {
           const id = getCalendarKey(calendar);
           const selected = id === selectedCalendarId;
@@ -5034,6 +8488,50 @@ function CalendarPickerSheet({
   );
 }
 
+function AppointmentCalendarPickerList({
+  calendars,
+  selectedCalendarId,
+  onSelect,
+}: {
+  calendars: CalendarItem[];
+  selectedCalendarId: string;
+  onSelect: (calendar: CalendarItem) => void;
+}) {
+  return (
+    <ScrollView contentContainerStyle={styles.calendarSheetList} showsVerticalScrollIndicator={false}>
+      {calendars.map((calendar) => {
+        const id = getCalendarKey(calendar);
+        const selected = id === selectedCalendarId;
+        return (
+          <Pressable
+            key={id}
+            accessibilityRole="button"
+            onPress={() => onSelect(calendar)}
+            style={({ pressed }) => [
+              styles.calendarSheetRow,
+              selected && styles.calendarSheetRowSelected,
+              pressed && styles.pressed,
+            ]}
+          >
+            <View style={[styles.calendarSheetDot, { backgroundColor: getCalendarColor(calendar) }]} />
+            <View style={styles.calendarSheetCopy}>
+              <Text numberOfLines={1} style={styles.calendarSheetTitle}>{getCalendarTitle(calendar)}</Text>
+              <Text numberOfLines={1} style={styles.calendarSheetSubtitle}>
+                {calendarIsActive(calendar) ? 'Activo' : 'Inactivo'}
+                {calendar.provider || calendar.source ? ` · ${calendar.provider || calendar.source}` : ' · Ristak'}
+              </Text>
+            </View>
+            {selected ? <Check size={21} color={COLORS.accent} strokeWidth={2.8} /> : null}
+          </Pressable>
+        );
+      })}
+      {!calendars.length ? (
+        <Text style={styles.contactPickerEmpty}>No hay calendarios conectados.</Text>
+      ) : null}
+    </ScrollView>
+  );
+}
+
 function AppointmentContactPickerSheet({
   closing,
   contacts,
@@ -5041,6 +8539,9 @@ function AppointmentContactPickerSheet({
   open,
   query,
   selectedDateOnly,
+  emptyText = 'Busca un contacto para agendar.',
+  subtitle,
+  title = 'Nueva cita',
   onChangeQuery,
   onClose,
   onSelect,
@@ -5051,6 +8552,9 @@ function AppointmentContactPickerSheet({
   open: boolean;
   query: string;
   selectedDateOnly: string;
+  emptyText?: string;
+  subtitle?: string;
+  title?: string;
   onChangeQuery: (value: string) => void;
   onClose: () => void;
   onSelect: (contact: ChatContact) => void;
@@ -5059,12 +8563,12 @@ function AppointmentContactPickerSheet({
     <BottomActionSheet
       closing={closing}
       open={open}
-      title="Nueva cita"
-      subtitle={formatBusinessDayHeader(selectedDateOnly)}
+      title={title}
+      subtitle={subtitle || formatBusinessDayHeader(selectedDateOnly)}
       onClose={onClose}
     >
       <View style={styles.contactPickerBody}>
-        <View style={styles.sheetSearchBox}>
+        <View style={[styles.sheetSearchBox, styles.contactPickerSearchBox]}>
           <Search size={19} color={COLORS.muted} strokeWidth={2.35} />
           <TextInput
             value={query}
@@ -5082,14 +8586,20 @@ function AppointmentContactPickerSheet({
             <Text style={styles.caption}>Buscando contactos...</Text>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.contactPickerList} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            alwaysBounceHorizontal={false}
+            contentContainerStyle={styles.contactPickerList}
+            directionalLockEnabled
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             {contacts.map((contact) => (
               <ContactPickerRow key={contact.id} contact={contact} showSendIcon={false} onPress={() => onSelect(contact)} />
             ))}
             {!contacts.length ? (
               <View style={styles.sheetInlineState}>
                 <User size={26} color={COLORS.accent} strokeWidth={2.3} />
-                <Text style={styles.contactPickerEmpty}>Busca un contacto para agendar.</Text>
+                <Text style={styles.contactPickerEmpty}>{emptyText}</Text>
               </View>
             ) : null}
           </ScrollView>
@@ -5199,6 +8709,7 @@ function AppointmentFormSheet({
   api,
   busy,
   calendar,
+  calendars,
   closing,
   draft,
   mode,
@@ -5211,6 +8722,7 @@ function AppointmentFormSheet({
   api: RistakApiClient;
   busy: boolean;
   calendar: CalendarItem | null;
+  calendars: CalendarItem[];
   closing: boolean;
   draft: AppointmentDraft | null;
   mode: AppointmentFormMode;
@@ -5220,6 +8732,7 @@ function AppointmentFormSheet({
   onClose: () => void;
   onSave: (draft: AppointmentDraft) => void;
 }) {
+  const { height: viewportHeight } = useWindowDimensions();
   const [scheduleMode, setScheduleMode] = useState<AppointmentScheduleMode>('default');
   const [advancedPicker, setAdvancedPicker] = useState<AppointmentAdvancedPicker>(null);
   const [freeSlots, setFreeSlots] = useState<CalendarFreeSlot[]>([]);
@@ -5233,11 +8746,20 @@ function AppointmentFormSheet({
   const [guestName, setGuestName] = useState('');
   const [guestContact, setGuestContact] = useState('');
   const [guestCreating, setGuestCreating] = useState(false);
+  const [includeGuests, setIncludeGuests] = useState(false);
+  const [calendarPickerOpen, setCalendarPickerOpen] = useState(false);
   const [assignmentUsers, setAssignmentUsers] = useState<CalendarUser[]>([]);
   const [assignmentLoading, setAssignmentLoading] = useState(false);
   const [assignmentError, setAssignmentError] = useState('');
   const freeSlotDateScrollRef = useRef<ScrollView | null>(null);
+  const wheelScrollRefs = useRef<Record<string, ScrollView | null>>({});
+  const wheelScrollValues = useRef<Record<string, Animated.Value>>({});
   const preferredSlotDateRef = useRef('');
+
+  const activeDraftCalendar = useMemo(() => {
+    const draftCalendarId = String(draft?.calendarId || '').trim();
+    return calendars.find((item) => getCalendarKey(item) === draftCalendarId) || calendar || null;
+  }, [calendar, calendars, draft?.calendarId]);
 
   const updateDraft = useCallback((updates: Partial<AppointmentDraft>) => {
     if (!draft) return;
@@ -5245,7 +8767,7 @@ function AppointmentFormSheet({
   }, [draft, onChange]);
 
   const loadFreeSlots = useCallback(async () => {
-    const calendarId = getCalendarKey(calendar);
+    const calendarId = getCalendarKey(activeDraftCalendar);
     if (!calendarId) return;
     setFreeSlotsLoading(true);
     setFreeSlotsError('');
@@ -5267,17 +8789,17 @@ function AppointmentFormSheet({
     } finally {
       setFreeSlotsLoading(false);
     }
-  }, [api, calendar, timezone]);
+  }, [activeDraftCalendar, api, timezone]);
 
   const loadAssignmentUsers = useCallback(async () => {
-    const teamMemberIds = (calendar?.teamMembers || [])
+    const teamMemberIds = (activeDraftCalendar?.teamMembers || [])
       .map(getCalendarTeamMemberId)
       .filter(Boolean);
 
     setAssignmentLoading(true);
     setAssignmentError('');
     try {
-      const response = teamMemberIds.length > 0 && isRoundRobinCalendar(calendar)
+      const response = teamMemberIds.length > 0 && isRoundRobinCalendar(activeDraftCalendar)
         ? await api.getCalendarUsersByIds(teamMemberIds)
         : await api.getCalendarUsers();
       let users = unwrapCalendarUsers(response);
@@ -5291,7 +8813,7 @@ function AppointmentFormSheet({
     } finally {
       setAssignmentLoading(false);
     }
-  }, [api, calendar]);
+  }, [activeDraftCalendar, api]);
 
   useEffect(() => {
     if (!open || !draft) return;
@@ -5304,6 +8826,8 @@ function AppointmentFormSheet({
     setGuestSearching(false);
     setGuestName('');
     setGuestContact('');
+    setIncludeGuests(Boolean(draft.guests.length));
+    setCalendarPickerOpen(false);
   }, [draft?.contactId, draft?.eventId, mode, open]);
 
   useEffect(() => {
@@ -5318,6 +8842,8 @@ function AppointmentFormSheet({
       setGuestSearching(false);
       setGuestName('');
       setGuestContact('');
+      setIncludeGuests(false);
+      setCalendarPickerOpen(false);
       setAssignmentUsers([]);
       setAssignmentError('');
       return;
@@ -5328,9 +8854,9 @@ function AppointmentFormSheet({
   }, [Boolean(draft), loadFreeSlots, open, scheduleMode]);
 
   useEffect(() => {
-    if (!open || !draft || (!draft.assignedUserId && !isRoundRobinCalendar(calendar))) return;
+    if (!open || !draft || (!draft.assignedUserId && !isRoundRobinCalendar(activeDraftCalendar))) return;
     void loadAssignmentUsers();
-  }, [calendar, draft?.assignedUserId, draft?.calendarId, loadAssignmentUsers, open]);
+  }, [activeDraftCalendar, draft?.assignedUserId, draft?.calendarId, loadAssignmentUsers, open]);
 
   useEffect(() => {
     if (!open || !draft || !selectedSlotDate || scheduleMode !== 'default') return;
@@ -5385,22 +8911,25 @@ function AppointmentFormSheet({
   const selectedTimeMinute = selectedTimeMinutes % 60;
   const selectedTimePeriod: 'AM' | 'PM' = selectedTimeHour24 >= 12 ? 'PM' : 'AM';
   const selectedTimeHour12 = selectedTimeHour24 % 12 || 12;
-  const selectedDuration = Math.max(60, Math.min(TIMELINE_TOTAL_MINUTES, draft?.durationMinutes || 60));
-  const selectedDurationHours = Math.max(1, Math.min(24, Math.floor(selectedDuration / 60) || 1));
-  const selectedDurationMinutes = APPOINTMENT_DURATION_MINUTE_OPTIONS.includes(selectedDuration % 60) ? selectedDuration % 60 : 0;
+  const selectedDuration = Math.max(1, Math.min(TIMELINE_TOTAL_MINUTES, draft?.durationMinutes || 60));
+  const selectedDurationHours = Math.max(0, Math.min(12, Math.floor(selectedDuration / 60)));
+  const selectedDurationMinutes = Math.max(0, Math.min(59, selectedDuration % 60));
   const dateDayOptions = useMemo(
     () => Array.from({ length: getDaysInMonth(selectedDateParts.year, selectedDateParts.month) }, (_, index) => index + 1),
     [selectedDateParts.month, selectedDateParts.year],
   );
-  const dateYearOptions = useMemo(() => (
-    Array.from({ length: 9 }, (_, index) => selectedDateParts.year - 3 + index)
-  ), [selectedDateParts.year]);
+  const currentBusinessYear = Number(formatBusinessYear(todayDateOnlyInBusinessTimezone(timezone))) || selectedDateParts.year;
+  const dateYearOptions = useMemo(() => {
+    const startYear = Math.min(currentBusinessYear - 3, selectedDateParts.year - 3);
+    const endYear = Math.max(currentBusinessYear + 9, selectedDateParts.year + 5);
+    return Array.from({ length: endYear - startYear + 1 }, (_, index) => startYear + index);
+  }, [currentBusinessYear, selectedDateParts.year]);
   const selectedSlotGroup = freeSlots.find((group) => group.date === selectedSlotDate) || null;
-  const assignmentRequired = mode === 'create' && isRoundRobinCalendar(calendar);
+  const assignmentRequired = mode === 'create' && isRoundRobinCalendar(activeDraftCalendar);
   const showAssignmentPicker = Boolean(draft && (
     assignmentRequired ||
     draft.assignedUserId ||
-    (isRoundRobinCalendar(calendar) && (assignmentUsers.length || assignmentLoading || assignmentError))
+    (isRoundRobinCalendar(activeDraftCalendar) && (assignmentUsers.length || assignmentLoading || assignmentError))
   ));
 
   const setScheduleModeSafely = useCallback((nextMode: AppointmentScheduleMode) => {
@@ -5426,9 +8955,9 @@ function AppointmentFormSheet({
   }, [selectedTimeHour12, selectedTimeMinute, selectedTimePeriod, updateDraft]);
 
   const applyDurationPart = useCallback((hours: number, minutes: number) => {
-    const safeHours = Math.max(1, Math.min(24, Math.round(hours || 1)));
-    const safeMinutes = APPOINTMENT_DURATION_MINUTE_OPTIONS.includes(minutes) ? minutes : 0;
-    const total = Math.min(TIMELINE_TOTAL_MINUTES, safeHours * 60 + safeMinutes);
+    const safeHours = Math.max(0, Math.min(12, Math.round(hours || 0)));
+    const safeMinutes = Math.max(0, Math.min(59, Math.round(minutes || 0)));
+    const total = Math.max(1, Math.min(TIMELINE_TOTAL_MINUTES, safeHours * 60 + safeMinutes));
     updateDraft({ durationMinutes: total });
   }, [updateDraft]);
 
@@ -5511,163 +9040,364 @@ function AppointmentFormSheet({
     updateDraft({ guests: draft.guests.filter((guest) => guest.id !== guestId) });
   }, [draft, updateDraft]);
 
-  const renderPickerChip = (
-    label: string,
-    selected: boolean,
-    onPress: () => void,
-    key?: string | number,
-  ) => (
-    <Pressable
-      key={key ?? label}
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.appointmentPickerChip,
-        selected && styles.appointmentPickerChipActive,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Text style={[styles.appointmentPickerText, selected && styles.appointmentPickerTextActive]}>{label}</Text>
-    </Pressable>
+  const appointmentWheelColumnHeight = Math.round(Math.min(390, Math.max(252, viewportHeight * 0.42)));
+  const appointmentWheelScrollerHeight = Math.max(
+    APPOINTMENT_WHEEL_OPTION_HEIGHT * 3,
+    appointmentWheelColumnHeight - APPOINTMENT_WHEEL_LABEL_HEIGHT,
   );
+  const appointmentWheelCenterPadding = Math.max(0, (appointmentWheelScrollerHeight - APPOINTMENT_WHEEL_OPTION_HEIGHT) / 2);
 
-  const renderAdvancedPicker = () => {
+  type AppointmentWheelColumnOption<T extends string | number> = {
+    key: string;
+    label: string;
+    value: T;
+  };
+
+  const getWheelColumnKey = (label: string) => `${advancedPicker || 'appointment'}-${label}`;
+
+  const getWheelScrollValue = (columnKey: string, initialOffset: number) => {
+    if (!wheelScrollValues.current[columnKey]) {
+      wheelScrollValues.current[columnKey] = new Animated.Value(initialOffset);
+    }
+    return wheelScrollValues.current[columnKey];
+  };
+
+  const scrollWheelColumnToIndex = (columnKey: string, index: number, animated = true) => {
+    const offsetY = Math.max(0, index) * APPOINTMENT_WHEEL_OPTION_HEIGHT;
+    if (!animated) {
+      getWheelScrollValue(columnKey, offsetY).setValue(offsetY);
+    }
+    wheelScrollRefs.current[columnKey]?.scrollTo({
+      y: offsetY,
+      animated,
+    });
+  };
+
+  const renderWheelColumn = <T extends string | number,>(
+    label: string,
+    options: AppointmentWheelColumnOption<T>[],
+    selectedValue: T,
+    onSelect: (value: T) => void,
+  ) => {
+    const columnKey = getWheelColumnKey(label);
+    const selectedIndex = Math.max(0, options.findIndex((option) => option.value === selectedValue));
+    const scrollY = getWheelScrollValue(columnKey, selectedIndex * APPOINTMENT_WHEEL_OPTION_HEIGHT);
+    const commitFromOffset = (event: NativeSyntheticEvent<NativeScrollEvent>, snapIfNeeded = false) => {
+      if (!options.length) return;
+      const offsetY = event.nativeEvent.contentOffset.y;
+      const rawIndex = Math.round(offsetY / APPOINTMENT_WHEEL_OPTION_HEIGHT);
+      const nextIndex = Math.max(0, Math.min(options.length - 1, rawIndex));
+      const nextOption = options[nextIndex];
+      if (!nextOption) return;
+      const targetOffset = nextIndex * APPOINTMENT_WHEEL_OPTION_HEIGHT;
+      if (snapIfNeeded && Math.abs(offsetY - targetOffset) > 1) {
+        scrollWheelColumnToIndex(columnKey, nextIndex, false);
+      }
+      if (nextOption.value !== selectedValue) onSelect(nextOption.value);
+    };
+
+    return (
+      <View style={[styles.appointmentWheelColumn, { height: appointmentWheelColumnHeight }]}>
+        <View style={[styles.appointmentWheelColumnLabel, { height: APPOINTMENT_WHEEL_LABEL_HEIGHT }]}>
+          <Text style={styles.appointmentWheelColumnLabelText}>{label}</Text>
+        </View>
+        <View style={[styles.appointmentWheelColumnScrollerFrame, { height: appointmentWheelScrollerHeight }]}>
+          <View
+            pointerEvents="none"
+            style={[
+              styles.appointmentWheelCenterHighlight,
+              {
+                top: appointmentWheelCenterPadding,
+                height: APPOINTMENT_WHEEL_OPTION_HEIGHT,
+              },
+            ]}
+          />
+          <Animated.ScrollView
+            ref={(ref) => { wheelScrollRefs.current[columnKey] = ref as unknown as ScrollView | null; }}
+            alwaysBounceVertical={false}
+            bounces={false}
+            contentContainerStyle={[
+              styles.appointmentWheelColumnContent,
+              {
+                paddingTop: appointmentWheelCenterPadding,
+                paddingBottom: appointmentWheelCenterPadding,
+              },
+            ]}
+            contentOffset={{ x: 0, y: selectedIndex * APPOINTMENT_WHEEL_OPTION_HEIGHT }}
+            decelerationRate="fast"
+            key={`${columnKey}-${options.length}`}
+            onLayout={() => {
+              requestAnimationFrame(() => scrollWheelColumnToIndex(columnKey, selectedIndex, false));
+            }}
+            onMomentumScrollEnd={(event) => commitFromOffset(event)}
+            onScroll={Animated.event(
+              [{ nativeEvent: { contentOffset: { y: scrollY } } }],
+              { useNativeDriver: false },
+            )}
+            onScrollEndDrag={(event) => {
+              const velocityY = event.nativeEvent.velocity?.y ?? 0;
+              if (Math.abs(velocityY) < 0.05) commitFromOffset(event, true);
+            }}
+            overScrollMode="never"
+            showsVerticalScrollIndicator={false}
+            snapToAlignment="start"
+            snapToInterval={APPOINTMENT_WHEEL_OPTION_HEIGHT}
+            scrollEventThrottle={16}
+            style={styles.appointmentWheelColumnScroller}
+          >
+            {options.map((option, index) => {
+              const selected = index === selectedIndex;
+              const distanceColor = scrollY.interpolate({
+                inputRange: [
+                  (index - 1) * APPOINTMENT_WHEEL_OPTION_HEIGHT,
+                  index * APPOINTMENT_WHEEL_OPTION_HEIGHT,
+                  (index + 1) * APPOINTMENT_WHEEL_OPTION_HEIGHT,
+                ],
+                outputRange: [COLORS.text, COLORS.accent, COLORS.text],
+                extrapolate: 'clamp',
+              });
+              return (
+                <Pressable
+                  key={option.key}
+                  accessibilityRole="button"
+                  onPress={() => {
+                    scrollWheelColumnToIndex(columnKey, index, true);
+                    if (option.value !== selectedValue) onSelect(option.value);
+                  }}
+                  style={({ pressed }) => [
+                    styles.appointmentWheelOption,
+                    selected && styles.appointmentWheelOptionActive,
+                    pressed && styles.pressed,
+                  ]}
+                >
+                  <Animated.Text
+                    style={[
+                      styles.appointmentWheelOptionText,
+                      selected && styles.appointmentWheelOptionTextActive,
+                      { color: distanceColor },
+                    ]}
+                  >
+                    {option.label}
+                  </Animated.Text>
+                </Pressable>
+              );
+            })}
+          </Animated.ScrollView>
+        </View>
+      </View>
+    );
+  };
+
+  const renderAdvancedPickerContent = () => {
     if (!advancedPicker) return null;
 
     if (advancedPicker === 'date') {
       return (
-        <View style={styles.appointmentAdvancedPanel}>
-          <View style={styles.appointmentPickerGroup}>
-            <Text style={styles.appointmentPickerTitle}>Día</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
-              {dateDayOptions.map((day) => renderPickerChip(String(day), selectedDateParts.day === day, () => applyDatePart({ day }), `day-${day}`))}
-            </ScrollView>
+        <View style={styles.appointmentWheelSheetBody}>
+          <View style={styles.appointmentWheelColumns}>
+            {renderWheelColumn(
+              'Día',
+              dateDayOptions.map((day) => ({ key: `day-${day}`, label: String(day), value: day })),
+              selectedDateParts.day,
+              (day) => applyDatePart({ day }),
+            )}
+            {renderWheelColumn(
+              'Mes',
+              APPOINTMENT_DATE_MONTH_OPTIONS.map((month) => ({
+                key: `month-${month.value}`,
+                label: month.label.slice(0, 3),
+                value: month.value,
+              })),
+              selectedDateParts.month,
+              (month) => applyDatePart({ month }),
+            )}
+            {renderWheelColumn(
+              'Año',
+              dateYearOptions.map((year) => ({ key: `year-${year}`, label: String(year), value: year })),
+              selectedDateParts.year,
+              (year) => applyDatePart({ year }),
+            )}
           </View>
-          <View style={styles.appointmentPickerGroup}>
-            <Text style={styles.appointmentPickerTitle}>Mes</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
-              {APPOINTMENT_DATE_MONTH_OPTIONS.map((month) => renderPickerChip(month.label, selectedDateParts.month === month.value, () => applyDatePart({ month: month.value }), `month-${month.value}`))}
-            </ScrollView>
-          </View>
-          <View style={styles.appointmentPickerGroup}>
-            <Text style={styles.appointmentPickerTitle}>Año</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
-              {dateYearOptions.map((year) => renderPickerChip(String(year), selectedDateParts.year === year, () => applyDatePart({ year }), `year-${year}`))}
-            </ScrollView>
-          </View>
+          <PrimaryButton label="Listo" onPress={() => setAdvancedPicker(null)} />
         </View>
       );
     }
 
     if (advancedPicker === 'time') {
       return (
-        <View style={styles.appointmentAdvancedPanel}>
-          <View style={styles.appointmentPickerGroup}>
-            <Text style={styles.appointmentPickerTitle}>Hora</Text>
-            <View style={styles.appointmentPickerWrap}>
-              {APPOINTMENT_TIME_HOUR_OPTIONS.map((hour) => renderPickerChip(String(hour), selectedTimeHour12 === hour, () => applyTimePart({ hour }), `hour-${hour}`))}
-            </View>
+        <View style={styles.appointmentWheelSheetBody}>
+          <View style={styles.appointmentWheelColumns}>
+            {renderWheelColumn(
+              'Hora',
+              APPOINTMENT_TIME_HOUR_OPTIONS.map((hour) => ({ key: `hour-${hour}`, label: String(hour), value: hour })),
+              selectedTimeHour12,
+              (hour) => applyTimePart({ hour }),
+            )}
+            {renderWheelColumn(
+              'Minutos',
+              APPOINTMENT_TIME_MINUTE_OPTIONS.map((minute) => ({
+                key: `minute-${minute}`,
+                label: String(minute).padStart(2, '0'),
+                value: minute,
+              })),
+              selectedTimeMinute,
+              (minute) => applyTimePart({ minute }),
+            )}
+            {renderWheelColumn(
+              'AM/PM',
+              (['AM', 'PM'] as const).map((period) => ({ key: period, label: period, value: period })),
+              selectedTimePeriod,
+              (period) => applyTimePart({ period }),
+            )}
           </View>
-          <View style={styles.appointmentPickerGroup}>
-            <Text style={styles.appointmentPickerTitle}>Minutos</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
-              {APPOINTMENT_TIME_MINUTE_OPTIONS.map((minute) => renderPickerChip(String(minute).padStart(2, '0'), selectedTimeMinute === minute, () => applyTimePart({ minute }), `minute-${minute}`))}
-            </ScrollView>
-          </View>
-          <View style={styles.appointmentPickerGroup}>
-            <Text style={styles.appointmentPickerTitle}>AM / PM</Text>
-            <View style={styles.appointmentPickerWrap}>
-              {(['AM', 'PM'] as const).map((period) => renderPickerChip(period, selectedTimePeriod === period, () => applyTimePart({ period }), period))}
-            </View>
-          </View>
+          <PrimaryButton label="Listo" onPress={() => setAdvancedPicker(null)} />
         </View>
       );
     }
 
     return (
-      <View style={styles.appointmentAdvancedPanel}>
-        <View style={styles.appointmentPickerGroup}>
-          <Text style={styles.appointmentPickerTitle}>Horas</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.appointmentPickerRow}>
-            {APPOINTMENT_DURATION_HOUR_OPTIONS.map((hours) => renderPickerChip(`${hours} h`, selectedDurationHours === hours, () => applyDurationPart(hours, selectedDurationMinutes), `duration-hour-${hours}`))}
-          </ScrollView>
+      <View style={styles.appointmentWheelSheetBody}>
+        <View style={styles.appointmentWheelColumns}>
+          {renderWheelColumn(
+            'Horas',
+            APPOINTMENT_DURATION_HOUR_OPTIONS.map((hours) => ({
+              key: `duration-hour-${hours}`,
+              label: String(hours),
+              value: hours,
+            })),
+            selectedDurationHours,
+            (hours) => applyDurationPart(hours, selectedDurationMinutes),
+          )}
+          {renderWheelColumn(
+            'Minutos',
+            APPOINTMENT_DURATION_MINUTE_OPTIONS.map((minutes) => ({
+              key: `duration-minute-${minutes}`,
+              label: String(minutes).padStart(2, '0'),
+              value: minutes,
+            })),
+            selectedDurationMinutes,
+            (minutes) => applyDurationPart(selectedDurationHours, minutes),
+          )}
         </View>
-        <View style={styles.appointmentPickerGroup}>
-          <Text style={styles.appointmentPickerTitle}>Minutos</Text>
-          <View style={styles.appointmentPickerWrap}>
-            {APPOINTMENT_DURATION_MINUTE_OPTIONS.map((minutes) => renderPickerChip(`${minutes} min`, selectedDurationMinutes === minutes, () => applyDurationPart(selectedDurationHours, minutes), `duration-minute-${minutes}`))}
-          </View>
-        </View>
+        <PrimaryButton label="Listo" onPress={() => setAdvancedPicker(null)} />
       </View>
+    );
+  };
+
+  const renderAdvancedPickerSheet = () => {
+    if (!advancedPicker) return null;
+    const title = advancedPicker === 'date' ? 'Fecha' : advancedPicker === 'time' ? 'Hora' : 'Duración';
+
+    return (
+      <BottomActionSheet open title={title} onClose={() => setAdvancedPicker(null)}>
+        {renderAdvancedPickerContent()}
+      </BottomActionSheet>
     );
   };
 
   const renderGuestsSection = () => (
     <View style={styles.appointmentGuestSection}>
       <View style={styles.appointmentGuestHeader}>
-        <AppointmentFieldLabel label="Invitados" />
+        <Text style={styles.appointmentSectionTitle}>Invitados</Text>
+        <View style={styles.appointmentGuestToggle}>
+          {[
+            { value: true, label: 'Sí' },
+            { value: false, label: 'No' },
+          ].map((option) => {
+            const selected = includeGuests === option.value;
+            return (
+              <Pressable
+                key={option.label}
+                accessibilityRole="button"
+                onPress={() => {
+                  setIncludeGuests(option.value);
+                  if (!option.value) updateDraft({ guests: [] });
+                }}
+                style={({ pressed }) => [
+                  styles.appointmentGuestToggleButton,
+                  selected && styles.appointmentGuestToggleButtonActive,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <LiquidControlBackground selected={selected} />
+                <Text style={[styles.appointmentGuestToggleText, selected && styles.appointmentGuestToggleTextActive]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
         {draft?.guests.length ? <Text style={styles.appointmentGuestCount}>{draft.guests.length}</Text> : null}
       </View>
-      <View style={styles.sheetSearchBox}>
-        <Search size={18} color={COLORS.muted} strokeWidth={2.4} />
-        <TextInput
-          value={guestSearchQuery}
-          onChangeText={setGuestSearchQuery}
-          placeholder="Buscar o crear invitado"
-          placeholderTextColor={COLORS.muted}
-          autoCapitalize="words"
-          autoCorrect={false}
-          style={styles.sheetSearchInput}
-        />
-      </View>
-      {guestSearching ? (
-        <View style={styles.appointmentInlineLoading}>
-          <ActivityIndicator color={COLORS.accent} />
-          <Text style={styles.caption}>Buscando contactos...</Text>
-        </View>
-      ) : guestContacts.length ? (
-        <View style={styles.appointmentGuestResults}>
-          {guestContacts.map((contact) => (
-            <ContactPickerRow
-              key={contact.id}
-              contact={contact}
-              showSendIcon={false}
-              onPress={() => selectGuestContact(contact)}
+      {!includeGuests ? null : (
+        <>
+          <Text style={styles.appointmentHint}>Busca un contacto guardado o agrega uno nuevo para esta cita.</Text>
+          <View style={styles.sheetSearchBox}>
+            <Search size={18} color={COLORS.muted} strokeWidth={2.4} />
+            <TextInput
+              value={guestSearchQuery}
+              onChangeText={setGuestSearchQuery}
+              placeholder="Buscar en contactos..."
+              placeholderTextColor={COLORS.muted}
+              autoCapitalize="words"
+              autoCorrect={false}
+              style={styles.sheetSearchInput}
             />
-          ))}
-        </View>
-      ) : guestSearchQuery.trim().length >= 2 ? (
-        <Text style={styles.appointmentHint}>No aparece en contactos. Créalo aquí mismo.</Text>
+          </View>
+          {guestSearching ? (
+            <View style={styles.appointmentInlineLoading}>
+              <ActivityIndicator color={COLORS.accent} />
+              <Text style={styles.caption}>Buscando contactos...</Text>
+            </View>
+          ) : guestContacts.length ? (
+            <View style={styles.appointmentGuestResults}>
+              {guestContacts.map((contact) => (
+                <ContactPickerRow
+                  key={contact.id}
+                  contact={contact}
+                  showSendIcon={false}
+                  onPress={() => selectGuestContact(contact)}
+                />
+              ))}
+            </View>
+          ) : guestSearchQuery.trim().length >= 2 ? (
+            <Text style={styles.appointmentHint}>No aparece en contactos. Créalo aquí mismo.</Text>
+          ) : null}
+          <View style={styles.appointmentGuestManual}>
+            <AppointmentTextField
+              compact
+              label="Nombre completo"
+              value={guestName}
+              placeholder="Ej. Ana López"
+              onChangeText={setGuestName}
+            />
+            <AppointmentTextField
+              compact
+              label="Num Whats o correo"
+              value={guestContact}
+              placeholder="Ej. +52 656 000 0000 o correo"
+              onChangeText={setGuestContact}
+            />
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            disabled={guestCreating}
+            onPress={createGuestContact}
+            style={({ pressed }) => [
+              styles.appointmentGuestAddButton,
+              guestCreating && styles.disabledButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            <LiquidControlBackground />
+            {guestCreating ? <ActivityIndicator color={COLORS.text} /> : <Plus size={18} color={COLORS.text} strokeWidth={2.6} />}
+            <Text style={styles.appointmentGuestAddText}>Agregar invitado</Text>
+          </Pressable>
+        </>
+      )}
+      {includeGuests && !draft?.guests.length ? (
+        <Text style={styles.appointmentHint}>Todavía no agregas invitados.</Text>
       ) : null}
-      <View style={styles.appointmentGuestManual}>
-        <AppointmentTextField
-          compact
-          label="Nombre"
-          value={guestName}
-          placeholder="Nombre del invitado"
-          onChangeText={setGuestName}
-        />
-        <AppointmentTextField
-          compact
-          label="Teléfono o correo"
-          value={guestContact}
-          placeholder="WhatsApp o email"
-          onChangeText={setGuestContact}
-        />
-      </View>
-      <Pressable
-        accessibilityRole="button"
-        disabled={guestCreating}
-        onPress={createGuestContact}
-        style={({ pressed }) => [
-          styles.appointmentGuestAddButton,
-          guestCreating && styles.disabledButton,
-          pressed && styles.pressed,
-        ]}
-      >
-        {guestCreating ? <ActivityIndicator color={COLORS.text} /> : <Plus size={18} color={COLORS.text} strokeWidth={2.6} />}
-        <Text style={styles.appointmentGuestAddText}>Agregar invitado</Text>
-      </Pressable>
       {draft?.guests.length ? (
         <View style={styles.appointmentGuestList}>
           {draft.guests.map((guest) => (
@@ -5684,6 +9414,7 @@ function AppointmentFormSheet({
                 onPress={() => removeGuest(guest.id)}
                 style={({ pressed }) => [styles.appointmentGuestRemove, pressed && styles.pressed]}
               >
+                <LiquidControlBackground />
                 <X size={16} color={COLORS.muted} strokeWidth={2.6} />
               </Pressable>
             </View>
@@ -5693,18 +9424,54 @@ function AppointmentFormSheet({
     </View>
   );
 
+  const headerContactName = draft?.contact ? getContactName(draft.contact) : '';
+  const advancedPickerTitle = advancedPicker === 'date'
+    ? 'Elige la fecha'
+    : advancedPicker === 'time'
+      ? 'Elige la hora'
+      : advancedPicker === 'duration'
+        ? 'Duración'
+        : '';
+  const activeCalendarId = getCalendarKey(activeDraftCalendar);
+  const selectDraftCalendar = useCallback((nextCalendar: CalendarItem) => {
+    updateDraft({ calendarId: getCalendarKey(nextCalendar) });
+    setSelectedSlot('');
+    setSelectedSlotDate('');
+    setCalendarPickerOpen(false);
+  }, [updateDraft]);
+  const sheetTitle = calendarPickerOpen
+    ? 'Calendarios'
+    : advancedPickerTitle || (mode === 'edit' ? 'Editar cita' : 'Agendar una cita');
+  const sheetSubtitle = calendarPickerOpen || advancedPickerTitle
+    ? undefined
+    : headerContactName || (activeDraftCalendar ? getCalendarTitle(activeDraftCalendar) : 'Mi calendario');
+  const closeActiveSheetPanel = calendarPickerOpen
+    ? () => setCalendarPickerOpen(false)
+    : advancedPickerTitle
+      ? () => setAdvancedPicker(null)
+      : onClose;
+
   return (
+    <>
     <BottomActionSheet
       closing={closing}
       open={open}
-      title={mode === 'edit' ? 'Editar cita' : 'Nueva cita'}
-      subtitle={calendar ? getCalendarTitle(calendar) : 'Calendario'}
-      onClose={onClose}
+      title={sheetTitle}
+      subtitle={sheetSubtitle}
+      onClose={closeActiveSheetPanel}
     >
       {!draft ? (
         <View style={styles.sheetInlineState}>
           <Text style={styles.caption}>No hay cita para editar.</Text>
         </View>
+      ) : calendarPickerOpen ? (
+        <AppointmentCalendarPickerList
+          calendars={calendars}
+          selectedCalendarId={activeCalendarId}
+          onSelect={selectDraftCalendar}
+        />
+      ) : advancedPicker ? (
+        renderAdvancedPickerContent()
       ) : (
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView
@@ -5712,6 +9479,16 @@ function AppointmentFormSheet({
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
+            <AppointmentSelectField
+              label="Calendario"
+              value={activeDraftCalendar ? getCalendarTitle(activeDraftCalendar) : 'Mi calendario'}
+              icon={CalendarDays}
+              onPress={() => {
+                setAdvancedPicker(null);
+                setCalendarPickerOpen(true);
+              }}
+            />
+
             {showAssignmentPicker && scheduleMode === 'custom' ? (
               <View style={styles.appointmentSection}>
                 <Text style={styles.appointmentFieldLabel}>
@@ -5734,6 +9511,7 @@ function AppointmentFormSheet({
                           pressed && styles.pressed,
                         ]}
                       >
+                        <LiquidControlBackground selected={!draft.assignedUserId} />
                         <Text style={[styles.appointmentChoiceText, !draft.assignedUserId && styles.appointmentChoiceTextActive]}>
                           Sin asignar
                         </Text>
@@ -5748,11 +9526,12 @@ function AppointmentFormSheet({
                           accessibilityRole="button"
                           onPress={() => updateDraft({ assignedUserId: id })}
                           style={({ pressed }) => [
-                            styles.appointmentChoiceChip,
-                            selected && styles.appointmentChoiceChipActive,
-                            pressed && styles.pressed,
-                          ]}
-                        >
+                          styles.appointmentChoiceChip,
+                          selected && styles.appointmentChoiceChipActive,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                          <LiquidControlBackground selected={selected} />
                           <Text numberOfLines={1} style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
                             {getCalendarUserLabel(user)}
                           </Text>
@@ -5790,6 +9569,7 @@ function AppointmentFormSheet({
                         pressed && styles.pressed,
                       ]}
                     >
+                      <LiquidControlBackground selected={selected} />
                       <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
                         {option.label}
                       </Text>
@@ -5831,11 +9611,12 @@ function AppointmentFormSheet({
                                 setSelectedSlot('');
                               }}
                               style={({ pressed }) => [
-                                styles.freeSlotDateChip,
-                                selected && styles.freeSlotDateChipActive,
-                                pressed && styles.pressed,
-                              ]}
-                            >
+                              styles.freeSlotDateChip,
+                              selected && styles.freeSlotDateChipActive,
+                              pressed && styles.pressed,
+                            ]}
+                          >
+                              <LiquidControlBackground selected={selected} />
                               <Text numberOfLines={1} style={[styles.freeSlotDate, selected && styles.freeSlotDateActive]}>
                                 {formatBusinessDayHeader(groupDate)}
                               </Text>
@@ -5851,7 +9632,7 @@ function AppointmentFormSheet({
                         {(selectedSlotGroup?.slots || []).slice(0, 18).map((slot) => {
                           const fields = isoToBusinessDateTimeFields(slot, timezone);
                           const selected = selectedSlot === slot;
-                          const durationMinutes = getCalendarSlotDurationMinutes(calendar);
+                          const durationMinutes = getCalendarSlotDurationMinutes(activeDraftCalendar);
                           const slotDateOnly = fields.dateOnly || selectedSlotDate || draft.dateOnly;
                           const slotStartTime = fields.time || draft.startTime;
                           const slotEndFields = addMinutesToBusinessDateTime(slotDateOnly, slotStartTime, durationMinutes);
@@ -5873,6 +9654,7 @@ function AppointmentFormSheet({
                                 pressed && styles.pressed,
                               ]}
                             >
+                              <LiquidControlBackground selected={selected} />
                               <Text numberOfLines={1} style={[styles.freeSlotTime, selected && styles.freeSlotTimeActive]}>
                                 {formatCalendarEventTime(slot, timezone)}
                               </Text>
@@ -5912,7 +9694,6 @@ function AppointmentFormSheet({
                   value={formatAppointmentDurationLabel(draft.durationMinutes)}
                   onPress={() => setAdvancedPicker((current) => (current === 'duration' ? null : 'duration'))}
                 />
-                {renderAdvancedPicker()}
               </View>
             ) : null}
 
@@ -5935,6 +9716,7 @@ function AppointmentFormSheet({
         </KeyboardAvoidingView>
       )}
     </BottomActionSheet>
+    </>
   );
 }
 
@@ -6015,15 +9797,26 @@ function AppointmentSelectField({
         onPress={onPress}
         style={({ pressed }) => [
           styles.appointmentSelectWrap,
+          compact && styles.appointmentSelectWrapCompact,
           !onPress && styles.appointmentSelectWrapStatic,
           pressed && styles.pressed,
         ]}
       >
-        {Icon ? <Icon size={20} color={COLORS.muted} strokeWidth={2.35} /> : null}
-        <Text numberOfLines={1} style={[styles.appointmentSelectValue, !content && styles.appointmentSelectPlaceholder]}>
+        {onPress ? <LiquidControlBackground /> : null}
+        {Icon ? <Icon size={compact ? 18 : 20} color={COLORS.muted} strokeWidth={2.35} /> : null}
+        <Text
+          adjustsFontSizeToFit={compact}
+          minimumFontScale={0.74}
+          numberOfLines={1}
+          style={[
+            styles.appointmentSelectValue,
+            compact && styles.appointmentSelectValueCompact,
+            !content && styles.appointmentSelectPlaceholder,
+          ]}
+        >
           {content || placeholder || ''}
         </Text>
-        {onPress ? <ChevronDown size={18} color={COLORS.muted} strokeWidth={2.45} /> : null}
+        {onPress ? <ChevronDown size={compact ? 16 : 18} color={COLORS.muted} strokeWidth={2.45} /> : null}
       </Pressable>
     </View>
   );
@@ -6177,14 +9970,16 @@ function formatChartDateLabel(label: string) {
 
 function getAnalyticsToneStyle(tone: AnalyticsMetricCardConfig['tone']) {
   if (tone === 'black') return styles.analyticsToneblack;
-  if (tone === 'blue') return styles.analyticsToneblue;
+  if (tone === 'neutral') return styles.analyticsToneneutral;
   if (tone === 'gold') return styles.analyticsTonegold;
   if (tone === 'red') return styles.analyticsTonered;
   return styles.analyticsTonegreen;
 }
 
 function getAnalyticsIconColor(tone: AnalyticsMetricCardConfig['tone']) {
-  return tone === 'black' || tone === 'green' ? COLORS.bg : COLORS.text;
+  if (tone === 'green') return COLORS.success;
+  if (tone === 'red') return COLORS.danger;
+  return COLORS.text;
 }
 
 function AnalyticsDualLineChart({
@@ -6222,7 +10017,7 @@ function AnalyticsDualLineChart({
       <Text style={styles.analyticsChartTopScale}>
         {meta.currency ? formatCompactCurrency(maxValue, currency) : formatCompactNumber(maxValue)}
       </Text>
-      <Svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
+      <NativeSvg width="100%" height={height} viewBox={`0 0 ${width} ${height}`}>
         {[0.25, 0.5, 0.75].map((step) => {
           const y = padding.top + plotHeight * step;
           return (
@@ -6286,7 +10081,7 @@ function AnalyticsDualLineChart({
             </SvgText>
           );
         })}
-      </Svg>
+      </NativeSvg>
     </View>
   );
 }
@@ -6398,6 +10193,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
         Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
       )));
     } catch (err) {
+      console.warn('[RistakNative][analytics] loadOverview failed', err);
       setMetrics(null);
       setOriginData(EMPTY_ORIGIN_DATA);
       setDetectedPhones([]);
@@ -6460,6 +10256,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
 
         if (active) setChartData(response);
       } catch {
+        console.warn('[RistakNative][analytics] loadChart failed');
         if (active) setChartData([]);
       } finally {
         if (active) setChartLoading(false);
@@ -6482,6 +10279,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
         if (active) setFunnelData(Array.isArray(response) ? response : []);
       })
       .catch(() => {
+        console.warn('[RistakNative][analytics] loadFunnel failed');
         if (active) setFunnelData([]);
       })
       .finally(() => {
@@ -6520,12 +10318,12 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
   const metricCards = useMemo<AnalyticsMetricCardConfig[]>(() => ([
     { key: 'ingresosNetos', title: 'Ingresos netos', Icon: DollarSign, tone: 'green', formatter: (value) => formatCurrency(value, accountCurrency) },
     { key: 'gastosPublicidad', title: 'Gastos publicidad', Icon: CreditCard, tone: 'black', formatter: (value) => formatCurrency(value, accountCurrency) },
-    { key: 'gananciaBruta', title: 'Ganancia bruta', Icon: TrendingUp, tone: 'blue', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'gananciaBruta', title: 'Ganancia bruta', Icon: TrendingUp, tone: 'neutral', formatter: (value) => formatCurrency(value, accountCurrency) },
     { key: 'roas', title: 'ROAS', Icon: Activity, tone: 'gold', formatter: formatRoas },
     { key: 'totalCostos', title: 'Gastos negocio', Icon: WalletCards, tone: 'black', formatter: (value) => formatCurrency(value, accountCurrency) },
     { key: 'gananciaNeta', title: 'Ganancia neta', Icon: CircleDollarSign, tone: 'green', formatter: (value) => formatCurrency(value, accountCurrency) },
     { key: 'reembolsos', title: 'Reembolsos', Icon: TrendingDown, tone: 'red', formatter: (value) => formatCurrency(value, accountCurrency) },
-    { key: 'ltvPromedio', title: 'Pago promedio', Icon: Users, tone: 'blue', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'ltvPromedio', title: 'Pago promedio', Icon: Users, tone: 'neutral', formatter: (value) => formatCurrency(value, accountCurrency) },
   ]), [accountCurrency]);
 
   const hasChartData = chartData.some((point) => point.value > 0 || point.value2 > 0);
@@ -6604,6 +10402,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
     <>
       <ScrollView
         refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
+        style={styles.analyticsScrollView}
         contentContainerStyle={styles.analyticsScroll}
         showsVerticalScrollIndicator={false}
       >
@@ -6617,6 +10416,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
               onPress={() => setPeriodMenuOpen((open) => !open)}
               style={({ pressed }) => [styles.analyticsPeriodToggle, periodMenuOpen && styles.analyticsPeriodToggleOpen, pressed && styles.pressed]}
             >
+              <LiquidControlBackground selected={periodMenuOpen} />
               <Text numberOfLines={1} style={styles.analyticsPeriodToggleText}>{activePeriodLabel}</Text>
               <ChevronDown size={16} color={COLORS.text} strokeWidth={2.6} />
             </Pressable>
@@ -6650,6 +10450,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
                       pressed && styles.pressed,
                     ]}
                   >
+                    <LiquidControlBackground selected={selected} />
                     <Text numberOfLines={1} adjustsFontSizeToFit style={[styles.analyticsPeriodOptionText, selected && styles.analyticsPeriodOptionTextActive]}>
                       {isCustom && customRangeLabel ? `${option.menuLabel} - ${customRangeLabel}` : option.menuLabel}
                     </Text>
@@ -6704,17 +10505,21 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
           style={styles.analyticsOptionScroll}
           contentContainerStyle={styles.analyticsOptionScroller}
         >
-          {chartOptions.map((option) => (
-            <Pressable
-              key={option.id}
-              accessibilityRole="button"
-              accessibilityState={{ selected: chartView === option.id }}
-              onPress={() => setChartView(option.id)}
-              style={({ pressed }) => [styles.analyticsChip, chartView === option.id && styles.analyticsChipActive, pressed && styles.pressed]}
-            >
-              <Text numberOfLines={1} style={[styles.analyticsChipText, chartView === option.id && styles.analyticsChipTextActive]}>{option.label}</Text>
-            </Pressable>
-          ))}
+          {chartOptions.map((option) => {
+            const selected = chartView === option.id;
+            return (
+              <Pressable
+                key={option.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => setChartView(option.id)}
+                style={({ pressed }) => [styles.analyticsChip, selected && styles.analyticsChipActive, pressed && styles.pressed]}
+              >
+                <LiquidControlBackground selected={selected} />
+                <Text numberOfLines={1} style={[styles.analyticsChipText, selected && styles.analyticsChipTextActive]}>{option.label}</Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
 
         {chartView === 'revenue-spend' ? (
@@ -6727,6 +10532,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
                 onPress={() => setFinancialScope(option.id)}
                 style={[styles.analyticsSegmentButton, financialScope === option.id && styles.analyticsSegmentButtonActive]}
               >
+                <LiquidControlBackground selected={financialScope === option.id} />
                 <Text numberOfLines={1} style={[styles.analyticsSegmentText, financialScope === option.id && styles.analyticsSegmentTextActive]}>
                   {option.label}
                 </Text>
@@ -6772,16 +10578,17 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
 
         <View style={styles.analyticsSegmentedControl}>
           {ANALYTICS_SCOPE_OPTIONS.map((option) => (
-            <Pressable
-              key={option.id}
-              accessibilityRole="button"
-              accessibilityState={{ selected: funnelScope === option.id }}
-              onPress={() => setFunnelScope(option.id)}
-              style={[styles.analyticsSegmentButton, funnelScope === option.id && styles.analyticsSegmentButtonActive]}
-            >
-              <Text numberOfLines={1} style={[styles.analyticsSegmentText, funnelScope === option.id && styles.analyticsSegmentTextActive]}>
-                {option.label}
-              </Text>
+              <Pressable
+                key={option.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected: funnelScope === option.id }}
+                onPress={() => setFunnelScope(option.id)}
+                style={[styles.analyticsSegmentButton, funnelScope === option.id && styles.analyticsSegmentButtonActive]}
+              >
+                <LiquidControlBackground selected={funnelScope === option.id} />
+                <Text numberOfLines={1} style={[styles.analyticsSegmentText, funnelScope === option.id && styles.analyticsSegmentTextActive]}>
+                  {option.label}
+                </Text>
             </Pressable>
           ))}
         </View>
@@ -6837,17 +10644,21 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
           style={styles.analyticsOptionScroll}
           contentContainerStyle={styles.analyticsOptionScroller}
         >
-          {originOptions.map((option) => (
-            <Pressable
-              key={option.id}
-              accessibilityRole="button"
-              accessibilityState={{ selected: originTab === option.id }}
-              onPress={() => setOriginTab(option.id)}
-              style={({ pressed }) => [styles.analyticsChip, originTab === option.id && styles.analyticsChipActive, pressed && styles.pressed]}
-            >
-              <Text numberOfLines={1} style={[styles.analyticsChipText, originTab === option.id && styles.analyticsChipTextActive]}>{option.label}</Text>
-            </Pressable>
-          ))}
+          {originOptions.map((option) => {
+            const selected = originTab === option.id;
+            return (
+              <Pressable
+                key={option.id}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                onPress={() => setOriginTab(option.id)}
+                style={({ pressed }) => [styles.analyticsChip, selected && styles.analyticsChipActive, pressed && styles.pressed]}
+              >
+                <LiquidControlBackground selected={selected} />
+                <Text numberOfLines={1} style={[styles.analyticsChipText, selected && styles.analyticsChipTextActive]}>{option.label}</Text>
+              </Pressable>
+            );
+          })}
         </ScrollView>
 
         {originLoading ? (
@@ -6988,17 +10799,66 @@ function coercePhoneThemePreference(value: unknown): PhoneThemePreference {
   return value === 'light' || value === 'dark' || value === 'auto' || value === 'system' ? value : 'system';
 }
 
-function getNativePhoneThemeTone(preference: PhoneThemePreference, systemTone: string | null | undefined = Appearance.getColorScheme()) {
+function coerceChatSortMode(value: unknown): MobileChatSettings['sortMode'] {
+  return value === 'unread' ? 'unread' : 'recent';
+}
+
+function normalizeMobileChatSettings(config: Record<string, ConfigValue>): MobileChatSettings {
+  return {
+    aiAgentEnabled: coerceConfigBoolean(config.mobile_chat_ai_agent_enabled, DEFAULT_MOBILE_CHAT_SETTINGS.aiAgentEnabled),
+    aiReplySuggestionsEnabled: coerceConfigBoolean(config.mobile_chat_ai_reply_suggestions_enabled, DEFAULT_MOBILE_CHAT_SETTINGS.aiReplySuggestionsEnabled),
+    showArchived: coerceConfigBoolean(config.mobile_chat_show_archived, DEFAULT_MOBILE_CHAT_SETTINGS.showArchived),
+    sortMode: coerceChatSortMode(config.mobile_chat_sort_mode),
+    showLastPreview: coerceConfigBoolean(config.mobile_chat_show_last_preview, DEFAULT_MOBILE_CHAT_SETTINGS.showLastPreview),
+    showUnreadIndicators: coerceConfigBoolean(config.mobile_chat_show_unread_indicators, DEFAULT_MOBILE_CHAT_SETTINGS.showUnreadIndicators),
+    themePreference: coercePhoneThemePreference(config.mobile_chat_theme_preference),
+    selectedWhatsAppPhoneId: coerceConfigString(config.mobile_chat_selected_whatsapp_phone_id, DEFAULT_MOBILE_CHAT_SETTINGS.selectedWhatsAppPhoneId),
+  };
+}
+
+function getNativePhoneThemeTone(preference: PhoneThemePreference, systemTone: string | null | undefined = Appearance.getColorScheme()): NativeThemeTone {
   if (preference === 'light' || preference === 'dark') return preference;
   if (preference === 'auto') {
     const hour = new Date().getHours();
     return hour >= 19 || hour < 6 ? 'dark' : 'light';
   }
-  return systemTone === 'light' ? 'light' : 'dark';
+  return systemTone === 'dark' ? 'dark' : 'light';
+}
+
+function getNativeKeyboardAppearance() {
+  return activeNativeThemeTone === 'light' ? 'light' : 'dark';
+}
+
+function getNativeConversationComposerBackground() {
+  return activeNativeThemeTone === 'light' ? CONVERSATION_COMPOSER_LIGHT_BACKGROUND : COLORS.panel;
+}
+
+function getNativeConversationKeyboardSurfaceBackground() {
+  return activeNativeThemeTone === 'light' ? CONVERSATION_KEYBOARD_LIGHT_BACKGROUND : CONVERSATION_KEYBOARD_DARK_BACKGROUND;
 }
 
 function getNativePhoneThemeBackground(tone: 'light' | 'dark') {
-  return tone === 'light' ? '#fbfaf6' : COLORS.bg;
+  return (tone === 'light' ? LIGHT_COLORS : DARK_COLORS).bg;
+}
+
+function getNativeThemePalette(tone: NativeThemeTone) {
+  return tone === 'light' ? LIGHT_COLORS : DARK_COLORS;
+}
+
+function applyNativePhoneThemePreference(preference: PhoneThemePreference, systemTone: string | null | undefined = Appearance.getColorScheme()) {
+  const tone = getNativePhoneThemeTone(preference, systemTone);
+  const palette = getNativeThemePalette(tone);
+  activeNativeThemeTone = tone;
+  Object.assign(COLORS, palette);
+  Object.assign(CONTACT_INFO_THEME, buildContactInfoTheme(palette));
+  styles = createAppStyles() as AppStyles;
+  const background = getNativePhoneThemeBackground(tone);
+  void SystemUI.setBackgroundColorAsync(background).catch(() => undefined);
+  StatusBar.setBarStyle(tone === 'light' ? 'dark-content' : 'light-content', true);
+  if (Platform.OS === 'android') {
+    StatusBar.setBackgroundColor(background, true);
+  }
+  return { tone, background };
 }
 
 function getThemeMeta(preference: PhoneThemePreference, tone: 'light' | 'dark' = getNativePhoneThemeTone(preference)) {
@@ -7063,16 +10923,25 @@ function getSettingsPanelTitle(panel: SettingsPanel) {
   if (panel === 'chats') return 'Lista de chats';
   if (panel === 'custom-fields') return 'Campos personalizados';
   if (panel === 'appearance') return 'Apariencia';
+  if (panel === 'privacy') return 'Privacidad';
   if (panel === 'notifications') return 'Notificaciones';
   return 'Ajustes';
 }
 
-function getSettingsIconToneStyle(tone: 'green' | 'black' | 'blue' | 'gold' | 'red') {
-  if (tone === 'green') return styles.settingsListIcon_green;
-  if (tone === 'black') return styles.settingsListIcon_black;
-  if (tone === 'gold') return styles.settingsListIcon_gold;
-  if (tone === 'red') return styles.settingsListIcon_red;
-  return styles.settingsListIcon_blue;
+function getSettingsIconToneStyle(tone: 'green' | 'black' | 'neutral' | 'gold' | 'red') {
+  return tone === 'red' ? styles.settingsListIcon_red : styles.settingsListIcon_neutral;
+}
+
+function getSettingsIconColor(tone: 'green' | 'black' | 'neutral' | 'gold' | 'red') {
+  return tone === 'red' ? COLORS.danger : COLORS.muted;
+}
+
+function getSettingsHeaderIconColor() {
+  return COLORS.accent;
+}
+
+function getSettingsChoiceIconColor(selected: boolean) {
+  return selected ? COLORS.accent : COLORS.muted;
 }
 
 function SettingsScreen({
@@ -7080,6 +10949,8 @@ function SettingsScreen({
   user,
   baseUrl,
   footer,
+  nativeThemeTone,
+  onAppConfigPatch,
   onLogout,
   onChangeServer,
 }: {
@@ -7087,6 +10958,8 @@ function SettingsScreen({
   user: RistakUser | null;
   baseUrl: string;
   footer?: React.ReactNode;
+  nativeThemeTone: NativeThemeTone;
+  onAppConfigPatch?: (patch: Record<string, ConfigValue>) => void;
   onLogout: () => Promise<void>;
   onChangeServer: () => Promise<void>;
 }) {
@@ -7110,9 +10983,6 @@ function SettingsScreen({
   const [savedBusinessContext, setSavedBusinessContext] = useState('');
   const [businessContextSaving, setBusinessContextSaving] = useState(false);
   const [businessContextMessage, setBusinessContextMessage] = useState('');
-  const [businessVoiceState, setBusinessVoiceState] = useState<BusinessVoiceState>('idle');
-  const businessVoiceRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const businessVoiceActiveRef = useRef(false);
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null);
   const [whatsappLoading, setWhatsappLoading] = useState(false);
   const [whatsappError, setWhatsappError] = useState('');
@@ -7120,7 +10990,11 @@ function SettingsScreen({
   const [pushPermissionStatus, setPushPermissionStatus] = useState<NativePushPermissionStatus>('prompt');
   const [pushStatusMessage, setPushStatusMessage] = useState('');
   const [requestingPush, setRequestingPush] = useState(false);
-  const [nativeThemeTone, setNativeThemeTone] = useState<'light' | 'dark'>(() => getNativePhoneThemeTone('system'));
+  const settingsMountedRef = useRef(true);
+
+  useEffect(() => () => {
+    settingsMountedRef.current = false;
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -7130,14 +11004,18 @@ function SettingsScreen({
         api.getConfig(SETTINGS_APP_CONFIG_KEYS),
         api.getUserConfig(SETTINGS_USER_CONFIG_KEYS),
       ]);
-      setAppConfig(unwrapConfigResponse(appConfig));
+      if (!settingsMountedRef.current) return;
+      const nextAppConfig = unwrapConfigResponse(appConfig);
+      setAppConfig(nextAppConfig);
+      onAppConfigPatch?.(nextAppConfig);
       setUserConfigState(unwrapConfigResponse(userConfig));
     } catch (err) {
+      if (!settingsMountedRef.current) return;
       setError(err instanceof Error ? err.message : 'No se pudieron cargar los ajustes.');
     } finally {
-      setLoading(false);
+      if (settingsMountedRef.current) setLoading(false);
     }
-  }, [api]);
+  }, [api, onAppConfigPatch]);
 
   useEffect(() => {
     void load();
@@ -7147,16 +11025,18 @@ function SettingsScreen({
     setAiAgentLoading(true);
     try {
       const status = await api.getAIAgentConfig();
+      if (!settingsMountedRef.current) return;
       const context = String(status.businessContext || '').trim();
       setAiAgentConfig(status);
       setBusinessContextDraft(context);
       setSavedBusinessContext(context);
     } catch {
+      if (!settingsMountedRef.current) return;
       setAiAgentConfig(null);
       setBusinessContextDraft('');
       setSavedBusinessContext('');
     } finally {
-      setAiAgentLoading(false);
+      if (settingsMountedRef.current) setAiAgentLoading(false);
     }
   }, [api]);
 
@@ -7165,12 +11045,14 @@ function SettingsScreen({
     setTemplatesError('');
     try {
       const response = await api.getWhatsAppTemplates(null);
+      if (!settingsMountedRef.current) return;
       setTemplates(Array.isArray(response.items) ? response.items : []);
     } catch (err) {
+      if (!settingsMountedRef.current) return;
       setTemplates([]);
       setTemplatesError(err instanceof Error ? err.message : 'No se pudieron cargar las plantillas.');
     } finally {
-      setTemplatesLoading(false);
+      if (settingsMountedRef.current) setTemplatesLoading(false);
     }
   }, [api]);
 
@@ -7179,12 +11061,14 @@ function SettingsScreen({
     setWhatsappError('');
     try {
       const status = refresh ? await api.refreshWhatsAppStatus() : await api.getWhatsAppStatus();
+      if (!settingsMountedRef.current) return;
       setWhatsappStatus(status);
     } catch (err) {
+      if (!settingsMountedRef.current) return;
       setWhatsappStatus(null);
       setWhatsappError(err instanceof Error ? err.message : 'No se pudieron cargar los números de WhatsApp.');
     } finally {
-      setWhatsappLoading(false);
+      if (settingsMountedRef.current) setWhatsappLoading(false);
     }
   }, [api]);
 
@@ -7193,17 +11077,20 @@ function SettingsScreen({
     setCustomFieldsError('');
     try {
       const definitions = await api.getCustomFieldDefinitions(false);
+      if (!settingsMountedRef.current) return;
       setCustomFields(Array.isArray(definitions) ? definitions.filter((definition) => !definition.archived) : []);
     } catch (err) {
+      if (!settingsMountedRef.current) return;
       setCustomFields([]);
       setCustomFieldsError(err instanceof Error ? err.message : 'No se pudieron cargar los campos personalizados.');
     } finally {
-      setCustomFieldsLoading(false);
+      if (settingsMountedRef.current) setCustomFieldsLoading(false);
     }
   }, [api]);
 
   const loadPushPermissionStatus = useCallback(async () => {
     const status = await getNativePushPermissionStatus();
+    if (!settingsMountedRef.current) return;
     setPushPermissionStatus(status);
   }, []);
 
@@ -7211,12 +11098,14 @@ function SettingsScreen({
     setCalendarsLoading(true);
     try {
       const response = await api.getCalendars();
+      if (!settingsMountedRef.current) return;
       const nextCalendars = Array.isArray(response) ? response : response.calendars || [];
       setCalendars(nextCalendars.filter((calendar) => calendar.isActive !== false));
     } catch {
+      if (!settingsMountedRef.current) return;
       setCalendars([]);
     } finally {
-      setCalendarsLoading(false);
+      if (settingsMountedRef.current) setCalendarsLoading(false);
     }
   }, [api]);
 
@@ -7235,13 +11124,6 @@ function SettingsScreen({
     if (activePanel === 'notifications') void loadPushPermissionStatus();
   }, [activePanel, loadAIAgentStatus, loadCustomFields, loadPushPermissionStatus, loadTemplates, loadWhatsAppStatus]);
 
-  useEffect(() => () => {
-    if (businessVoiceActiveRef.current || businessVoiceRecorder.isRecording) {
-      void businessVoiceRecorder.stop().catch(() => undefined);
-      businessVoiceActiveRef.current = false;
-    }
-  }, [businessVoiceRecorder]);
-
   const getAppBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(appConfig[key], fallback);
   const getUserBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(userConfig[key], fallback);
   const getUserStringArray = (key: string, fallback: string[] = []) => coerceConfigStringArray(userConfig[key], fallback);
@@ -7250,13 +11132,16 @@ function SettingsScreen({
     const previous = appConfig[key] ?? null;
     setSavingKey(key);
     setAppConfig((current) => ({ ...current, [key]: value }));
+    onAppConfigPatch?.({ [key]: value });
     try {
       await api.setConfig(key, value);
     } catch (err) {
+      if (!settingsMountedRef.current) return;
       setAppConfig((current) => ({ ...current, [key]: previous }));
+      onAppConfigPatch?.({ [key]: previous });
       Alert.alert('No se guardó el ajuste', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
-      setSavingKey((current) => (current === key ? null : current));
+      if (settingsMountedRef.current) setSavingKey((current) => (current === key ? null : current));
     }
   };
 
@@ -7267,10 +11152,11 @@ function SettingsScreen({
     try {
       await api.setUserConfig(key, value);
     } catch (err) {
+      if (!settingsMountedRef.current) return;
       setUserConfigState((current) => ({ ...current, [key]: previous }));
       Alert.alert('No se guardó el ajuste', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
-      setSavingKey((current) => (current === key ? null : current));
+      if (settingsMountedRef.current) setSavingKey((current) => (current === key ? null : current));
     }
   };
 
@@ -7280,6 +11166,7 @@ function SettingsScreen({
   const showArchivedChats = getAppBoolean('mobile_chat_show_archived', true);
   const showLastMessagePreview = getAppBoolean('mobile_chat_show_last_preview', true);
   const showUnreadIndicators = getAppBoolean('mobile_chat_show_unread_indicators', true);
+  const sendReadReceipts = getAppBoolean(CHAT_SEND_READ_RECEIPTS_CONFIG_KEY, true);
   const conversationSortMode = coerceConfigString(appConfig.mobile_chat_sort_mode, 'recent');
   const themePreference = coercePhoneThemePreference(appConfig.mobile_chat_theme_preference);
   const selectedWhatsAppPhoneId = coerceConfigString(appConfig.mobile_chat_selected_whatsapp_phone_id, 'all');
@@ -7316,33 +11203,6 @@ function SettingsScreen({
     paymentPushEnabled,
   ].filter(Boolean).length;
 
-  useEffect(() => {
-    const applyTheme = () => {
-      const tone = getNativePhoneThemeTone(themePreference, Appearance.getColorScheme());
-      setNativeThemeTone(tone);
-      const background = getNativePhoneThemeBackground(tone);
-      void SystemUI.setBackgroundColorAsync(background).catch(() => undefined);
-      StatusBar.setBarStyle(tone === 'light' ? 'dark-content' : 'light-content', true);
-      if (Platform.OS === 'android') {
-        StatusBar.setBackgroundColor(background, true);
-      }
-    };
-
-    applyTheme();
-
-    const appearanceSubscription = themePreference === 'system'
-      ? Appearance.addChangeListener(applyTheme)
-      : null;
-    const interval = themePreference === 'auto'
-      ? setInterval(applyTheme, 60 * 1000)
-      : null;
-
-    return () => {
-      appearanceSubscription?.remove();
-      if (interval) clearInterval(interval);
-    };
-  }, [themePreference]);
-
   const handleLogout = () => {
     Alert.alert(
       'Cerrar sesión',
@@ -7355,7 +11215,7 @@ function SettingsScreen({
     );
   };
 
-  const saveRefinedBusinessContext = async (answer: string, successMessage = 'Guardado.') => {
+  const saveRefinedBusinessContext = async (answer: string) => {
     const draft = answer.trim();
     if (!draft || businessContextSaving || !aiReady) {
       Alert.alert(
@@ -7368,116 +11228,22 @@ function SettingsScreen({
     setBusinessContextMessage('Puliendo y guardando...');
     try {
       const result = await api.saveAIAgentBusinessContext(draft);
+      if (!settingsMountedRef.current) return false;
       const next = String(result.text || result.status?.businessContext || draft).trim();
       setBusinessContextDraft(next);
       setSavedBusinessContext(next);
       setBusinessContextMessage('Guardado.');
       if (result.status) setAiAgentConfig(result.status);
-      if (successMessage !== 'Guardado.') {
-        Alert.alert('Descripción guardada', successMessage);
-      }
       return true;
     } catch (err) {
+      if (!settingsMountedRef.current) return false;
       const message = err instanceof Error ? err.message : 'No se pudo guardar la descripción.';
       setBusinessContextMessage(message);
       Alert.alert('No se guardó la descripción', message);
       return false;
     } finally {
-      setBusinessContextSaving(false);
+      if (settingsMountedRef.current) setBusinessContextSaving(false);
     }
-  };
-
-  const handleSaveBusinessContext = () => {
-    void saveRefinedBusinessContext(businessContextDraft, 'La descripción quedó pulida y guardada.');
-  };
-
-  const startBusinessVoiceDictation = async () => {
-    if (businessVoiceState !== 'idle' || businessContextSaving || aiAgentLoading) return;
-
-    if (!aiReady) {
-      const message = aiAgentConfig?.needsReconnect
-        ? 'Reconecta OpenAI para dictar la descripción.'
-        : 'Conecta OpenAI para dictar y pulir la descripción.';
-      setBusinessContextMessage(message);
-      Alert.alert('OpenAI no está listo', message);
-      return;
-    }
-
-    try {
-      const permission = await requestRecordingPermissionsAsync();
-      if (!permission.granted) {
-        const message = 'Este celular no permitió usar el micrófono.';
-        setBusinessContextMessage(message);
-        Alert.alert('Micrófono bloqueado', message);
-        return;
-      }
-
-      await setAudioModeAsync({
-        allowsRecording: true,
-        playsInSilentMode: true,
-      });
-
-      await businessVoiceRecorder.prepareToRecordAsync();
-      businessVoiceRecorder.record();
-      businessVoiceActiveRef.current = true;
-      setBusinessVoiceState('recording');
-      setBusinessContextMessage('Grabando... toca detener cuando termines.');
-    } catch (err) {
-      businessVoiceActiveRef.current = false;
-      void setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-      setBusinessVoiceState('idle');
-      const message = err instanceof Error ? err.message : 'No pude activar el micrófono.';
-      setBusinessContextMessage(message);
-      Alert.alert('Micrófono bloqueado', message);
-    }
-  };
-
-  const stopBusinessVoiceDictation = async () => {
-    if (businessVoiceState !== 'recording') return;
-
-    setBusinessVoiceState('processing');
-    setBusinessContextMessage('Transcribiendo audio...');
-
-    try {
-      if (!businessVoiceActiveRef.current && !businessVoiceRecorder.isRecording) throw new Error('No encontré la grabación activa.');
-      await businessVoiceRecorder.stop();
-      businessVoiceActiveRef.current = false;
-      await setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-
-      const audioUri = businessVoiceRecorder.uri;
-      if (!audioUri) throw new Error('No se grabó audio. Intenta otra vez.');
-
-      const transcription = await api.transcribeAIAgentAudio(audioUri, 'audio/m4a');
-      const transcript = String(transcription.text || '').trim();
-      if (!transcript) throw new Error('No se detectó texto en el audio.');
-
-      await saveRefinedBusinessContext(transcript, 'Tu dictado quedó pulido y guardado.');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'No pude transcribir el audio.';
-      setBusinessContextMessage(message);
-      Alert.alert('No se pudo usar el dictado', message);
-    } finally {
-      businessVoiceActiveRef.current = false;
-      void setAudioModeAsync({
-        allowsRecording: false,
-        playsInSilentMode: true,
-      }).catch(() => undefined);
-      setBusinessVoiceState('idle');
-    }
-  };
-
-  const handleBusinessVoiceButton = () => {
-    if (businessVoiceState === 'recording') {
-      void stopBusinessVoiceDictation();
-      return;
-    }
-    void startBusinessVoiceDictation();
   };
 
   const togglePushCalendar = (calendarId: string) => {
@@ -7530,6 +11296,7 @@ function SettingsScreen({
         { calendarIds: calendarPushEnabled ? pushCalendarIds : [] },
       );
       await loadPushPermissionStatus();
+      if (!settingsMountedRef.current) return;
       if (result.status === 'subscribed') {
         setPushStatusMessage('Alertas activas en este celular.');
         return;
@@ -7538,11 +11305,12 @@ function SettingsScreen({
       setPushStatusMessage(message);
       Alert.alert(result.status === 'not_configured' ? 'Falta preparar alertas' : 'No se activaron', message);
     } catch (err) {
+      if (!settingsMountedRef.current) return;
       const message = err instanceof Error ? err.message : 'Intenta otra vez.';
       setPushStatusMessage(message);
       Alert.alert('No se activaron las alertas', message);
     } finally {
-      setRequestingPush(false);
+      if (settingsMountedRef.current) setRequestingPush(false);
     }
   };
 
@@ -7553,14 +11321,15 @@ function SettingsScreen({
       description: string;
       meta: string;
       Icon: LucideIcon;
-      tone: 'green' | 'black' | 'blue' | 'gold' | 'red';
+      tone: 'green' | 'black' | 'neutral' | 'gold' | 'red';
     }> = [
       { id: 'numbers', title: 'Números de WhatsApp', description: 'Principal y bandejas por remitente.', meta: whatsAppPhones.length ? `${whatsAppPhones.length}` : 'Revisar', Icon: Smartphone, tone: 'green' },
       { id: 'templates', title: 'Plantillas', description: 'Crear y revisar estados de Meta.', meta: templates.length ? `${templates.length} guardadas` : 'Revisar', Icon: FileText, tone: 'black' },
-      { id: 'agent', title: AI_AGENT_CHAT_DISPLAY_NAME, description: 'Chat fijo y sugerencias.', meta: aiReady ? (aiAgentChatEnabled ? 'Activo' : 'Apagado') : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
+      { id: 'agent', title: AI_AGENT_CHAT_DISPLAY_NAME, description: 'Chat fijo y sugerencias.', meta: aiReady ? (aiAgentChatEnabled ? 'Activo' : 'Apagado') : 'Sin OpenAI', Icon: Bot, tone: 'neutral' },
       { id: 'chats', title: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: customFields.length ? `${customFields.length}` : 'Todos', Icon: ListChecks, tone: 'gold' },
-      { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: getThemeMeta(themePreference, nativeThemeTone), Icon: Sun, tone: 'blue' },
+      { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: getThemeMeta(themePreference, nativeThemeTone), Icon: Sun, tone: 'neutral' },
+      { id: 'privacy', title: 'Privacidad', description: 'Controla vistos de WhatsApp, Messenger e Instagram.', meta: sendReadReceipts ? 'Vistos activos' : 'Vistos apagados', Icon: CheckCheck, tone: 'neutral' },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: pushPermissionLabel, Icon: Bell, tone: 'red' },
     ];
 
@@ -7575,7 +11344,7 @@ function SettingsScreen({
               style={({ pressed }) => [styles.settingsListItem, pressed && styles.pressed]}
             >
               <View style={[styles.settingsListIcon, getSettingsIconToneStyle(tone)]}>
-                <Icon size={19} color={tone === 'black' ? COLORS.white : COLORS.bg} strokeWidth={2.35} />
+                <Icon size={19} color={getSettingsIconColor(tone)} strokeWidth={2.35} />
               </View>
               <View style={styles.settingsListText}>
                 <Text numberOfLines={2} style={styles.settingsListTitle}>{title}</Text>
@@ -7587,11 +11356,23 @@ function SettingsScreen({
               </View>
             </Pressable>
           ))}
+          <Pressable
+            accessibilityRole="button"
+            onPress={handleLogout}
+            style={({ pressed }) => [styles.settingsListItem, styles.settingsLogoutListItem, pressed && styles.pressed]}
+          >
+            <View style={[styles.settingsListIcon, styles.settingsListIcon_red]}>
+              <LogOut size={19} color={getSettingsIconColor('red')} strokeWidth={2.35} />
+            </View>
+            <View style={styles.settingsListText}>
+              <Text numberOfLines={1} style={[styles.settingsListTitle, styles.settingsLogoutText]}>Cerrar sesión</Text>
+              <Text numberOfLines={1} style={styles.settingsListSubtitle}>Salir de este dispositivo.</Text>
+            </View>
+            <View style={styles.settingsListMeta}>
+              <ChevronRight size={18} color={COLORS.muted} strokeWidth={2.6} />
+            </View>
+          </Pressable>
         </View>
-        <Pressable accessibilityRole="button" onPress={handleLogout} style={({ pressed }) => [styles.settingsLogoutButton, pressed && styles.pressed]}>
-          <LogOut size={18} color={COLORS.danger} strokeWidth={2.4} />
-          <Text style={styles.settingsLogoutText}>Cerrar sesión</Text>
-        </Pressable>
       </>
     );
   };
@@ -7621,6 +11402,7 @@ function SettingsScreen({
               onPress={() => selectWhatsAppNumbersMode('together')}
               style={[styles.settingsSegmentButton, whatsappNumbersMode === 'together' && styles.settingsSegmentButtonActive]}
             >
+              <LiquidControlBackground selected={whatsappNumbersMode === 'together'} />
               <Text style={[styles.settingsSegmentText, whatsappNumbersMode === 'together' && styles.settingsSegmentTextActive]}>Juntos</Text>
             </Pressable>
             <Pressable
@@ -7628,6 +11410,7 @@ function SettingsScreen({
               onPress={() => selectWhatsAppNumbersMode('separate')}
               style={[styles.settingsSegmentButton, whatsappNumbersMode === 'separate' && styles.settingsSegmentButtonActive]}
             >
+              <LiquidControlBackground selected={whatsappNumbersMode === 'separate'} />
               <Text style={[styles.settingsSegmentText, whatsappNumbersMode === 'separate' && styles.settingsSegmentTextActive]}>Separado</Text>
             </Pressable>
           </View>
@@ -7654,6 +11437,7 @@ function SettingsScreen({
                     onPress={() => selectChatWhatsAppPhone(phone)}
                     style={[styles.phoneNumberPill, selected && styles.phoneNumberPillActive]}
                   >
+                    <LiquidControlBackground selected={selected} />
                     <Text style={[styles.phoneNumberPillText, selected && styles.phoneNumberPillTextActive]}>{selected ? 'En chats' : 'Usar'}</Text>
                   </Pressable>
                   <Pressable
@@ -7662,6 +11446,7 @@ function SettingsScreen({
                     onPress={() => void handleSetDefaultWhatsAppPhone(phone)}
                     style={[styles.phoneNumberPill, phone.is_default_sender && styles.phoneNumberPillActive, (phone.is_default_sender || settingDefault) && styles.disabledButton]}
                   >
+                    <LiquidControlBackground selected={phone.is_default_sender} />
                     {settingDefault ? <ActivityIndicator color={COLORS.white} /> : <Text style={[styles.phoneNumberPillText, phone.is_default_sender && styles.phoneNumberPillTextActive]}>{phone.is_default_sender ? 'Principal' : 'Hacer principal'}</Text>}
                   </Pressable>
                 </View>
@@ -7694,7 +11479,7 @@ function SettingsScreen({
             const blocked = TEMPLATE_BLOCKED_STATUSES.has(status);
             return (
               <View key={`${template.id || template.name}-${template.language || index}`} style={styles.templateRow}>
-                <View style={styles.templateIcon}><FileText size={18} color={COLORS.white} strokeWidth={2.2} /></View>
+                <View style={styles.templateIcon}><FileText size={18} color={COLORS.text} strokeWidth={2.2} /></View>
                 <View style={styles.templateCopy}>
                   <Text numberOfLines={1} style={styles.templateTitle}>{template.name}</Text>
                   <Text numberOfLines={2} style={styles.templatePreview}>{getTemplatePreview(template)}</Text>
@@ -7714,85 +11499,28 @@ function SettingsScreen({
     </>
   );
 
-  const renderAgent = () => {
-    const descriptionChanged = businessContextDraft.trim() !== savedBusinessContext.trim();
-    const recording = businessVoiceState === 'recording';
-    const busyDescription = aiAgentLoading || businessContextSaving || businessVoiceState === 'processing';
-    const micLabel = recording ? 'Detener' : businessVoiceState === 'processing' ? 'Procesando' : 'Dictar';
-    return (
-      <>
-        <View style={styles.businessDescriptionPanel}>
-          {!aiReady ? (
-            <SettingsEmptyState label={aiAgentConfig?.needsReconnect ? 'Reconecta OpenAI para activar el agente en este celular.' : 'Conecta OpenAI para activar el agente en este celular.'} />
-          ) : null}
-          <View style={styles.businessDescriptionHeader}>
-            <View style={styles.businessDescriptionIcon}><Sparkles size={19} color={COLORS.white} strokeWidth={2.25} /></View>
-            <View style={styles.businessDescriptionCopy}>
-              <Text style={styles.businessDescriptionTitle}>Descripción del negocio</Text>
-              <Text style={styles.businessDescriptionSubtitle}>Dicta tu giro, servicios y clientes; la IA lo pule y lo guarda aquí.</Text>
-            </View>
-          </View>
-          <View style={styles.businessDescriptionField}>
-            <TextInput
-              value={businessContextDraft}
-              onChangeText={(text) => {
-                setBusinessContextDraft(text);
-                setBusinessContextMessage('');
-              }}
-              editable={!busyDescription && !recording}
-              multiline
-              placeholder="Ejemplo: Somos una clínica dental en Ciudad Juárez, atendemos familias..."
-              placeholderTextColor={COLORS.muted}
-              textAlignVertical="top"
-              style={styles.businessDescriptionInput}
-            />
-            <Pressable
-              accessibilityRole="button"
-              disabled={!aiReady || businessContextSaving || aiAgentLoading || businessVoiceState === 'processing'}
-              onPress={handleBusinessVoiceButton}
-              style={({ pressed }) => [
-                styles.businessVoiceButton,
-                recording && styles.businessVoiceButtonRecording,
-                (!aiReady || businessContextSaving || aiAgentLoading || businessVoiceState === 'processing') && styles.disabledButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              {businessVoiceState === 'processing' ? <ActivityIndicator color={COLORS.bg} /> : recording ? <Square size={15} color={COLORS.white} fill={COLORS.white} strokeWidth={2.4} /> : <Mic size={17} color={COLORS.bg} strokeWidth={2.4} />}
-              <Text style={[styles.businessVoiceButtonText, recording && styles.businessVoiceButtonTextRecording]}>{micLabel}</Text>
-            </Pressable>
-          </View>
-          <View style={styles.businessDescriptionActions}>
-            <Text numberOfLines={2} style={styles.businessDescriptionMessage}>
-              {aiAgentLoading ? '' : businessContextMessage || (aiReady ? 'El dictado se guarda automático al terminar.' : 'OpenAI debe estar conectado para dictar y pulir.')}
-            </Text>
-            <Pressable
-              accessibilityRole="button"
-              disabled={!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()}
-              onPress={handleSaveBusinessContext}
-              style={({ pressed }) => [styles.settingsSmallPrimaryButton, (!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()) && styles.disabledButton, pressed && styles.pressed]}
-            >
-              {businessContextSaving ? <ActivityIndicator color={COLORS.bg} /> : <Save size={16} color={COLORS.bg} strokeWidth={2.4} />}
-              <Text style={styles.settingsSmallPrimaryText}>Guardar</Text>
-            </Pressable>
-          </View>
-        </View>
-        <SettingsToggleRow
-          title="Mostrar como primer chat"
-          description="El agente aparece fijo arriba de tus conversaciones."
-          checked={aiReady && aiAgentChatEnabled}
-          disabled={!aiReady || savingKey === 'mobile_chat_ai_agent_enabled'}
-          onChange={(checked) => void saveAppPreference('mobile_chat_ai_agent_enabled', checked)}
-        />
-        <SettingsToggleRow
-          title="Sugerir respuestas"
-          description="El agente puede preparar un texto para responder en chats reales."
-          checked={aiReady && aiReplySuggestionsEnabled}
-          disabled={!aiReady || !aiAgentChatEnabled || savingKey === 'mobile_chat_ai_reply_suggestions_enabled'}
-          onChange={(checked) => void saveAppPreference('mobile_chat_ai_reply_suggestions_enabled', checked)}
-        />
-      </>
-    );
-  };
+  const renderAgent = () => (
+    <SettingsAgentPanel
+      api={api}
+      aiReady={aiReady}
+      aiAgentConfig={aiAgentConfig}
+      aiAgentLoading={aiAgentLoading}
+      aiAgentChatEnabled={aiAgentChatEnabled}
+      aiReplySuggestionsEnabled={aiReplySuggestionsEnabled}
+      businessContextDraft={businessContextDraft}
+      savedBusinessContext={savedBusinessContext}
+      businessContextSaving={businessContextSaving}
+      businessContextMessage={businessContextMessage}
+      savingKey={savingKey}
+      onBusinessContextDraftChange={(text) => {
+        setBusinessContextDraft(text);
+        setBusinessContextMessage('');
+      }}
+      onBusinessContextMessageChange={setBusinessContextMessage}
+      onSaveBusinessContext={saveRefinedBusinessContext}
+      onSaveAppPreference={(key, value) => void saveAppPreference(key, value)}
+    />
+  );
 
   const renderChats = () => (
     <>
@@ -7804,6 +11532,7 @@ function SettingsScreen({
             onPress={() => void saveAppPreference('mobile_chat_sort_mode', 'recent')}
             style={[styles.settingsSegmentButton, conversationSortMode === 'recent' && styles.settingsSegmentButtonActive]}
           >
+            <LiquidControlBackground selected={conversationSortMode === 'recent'} />
             <Text style={[styles.settingsSegmentText, conversationSortMode === 'recent' && styles.settingsSegmentTextActive]}>Más recientes</Text>
           </Pressable>
           <Pressable
@@ -7811,6 +11540,7 @@ function SettingsScreen({
             onPress={() => void saveAppPreference('mobile_chat_sort_mode', 'unread')}
             style={[styles.settingsSegmentButton, conversationSortMode === 'unread' && styles.settingsSegmentButtonActive]}
           >
+            <LiquidControlBackground selected={conversationSortMode === 'unread'} />
             <Text style={[styles.settingsSegmentText, conversationSortMode === 'unread' && styles.settingsSegmentTextActive]}>No leídas</Text>
           </Pressable>
         </View>
@@ -7854,7 +11584,7 @@ function SettingsScreen({
   const renderAppearance = () => (
     <View style={styles.settingsCard}>
       <View style={styles.settingsCardHeader}>
-        <View style={styles.settingsCardHeaderIcon}><Sun size={18} color={COLORS.white} strokeWidth={2.3} /></View>
+        <View style={styles.settingsCardHeaderIcon}><Sun size={18} color={getSettingsHeaderIconColor()} strokeWidth={2.3} /></View>
         <View style={styles.settingsCardHeaderCopy}>
           <Text style={styles.settingsCardTitle}>Color del chat</Text>
           <Text style={styles.settingsCardSubtitle}>Elige cómo quieres ver esta app en este celular.</Text>
@@ -7871,7 +11601,10 @@ function SettingsScreen({
               onPress={() => void saveAppPreference('mobile_chat_theme_preference', id)}
               style={({ pressed }) => [styles.settingsChoiceButton, selected && styles.settingsChoiceActive, pressed && styles.pressed]}
             >
-              <View style={styles.settingsChoiceIcon}><Icon size={18} color={COLORS.white} strokeWidth={2.35} /></View>
+              <LiquidControlBackground selected={selected} />
+              <View style={[styles.settingsChoiceIcon, selected && styles.settingsChoiceIconActive]}>
+                <Icon size={18} color={getSettingsChoiceIconColor(selected)} strokeWidth={2.35} />
+              </View>
               <View style={styles.settingsChoiceCopy}>
                 <Text style={styles.settingsChoiceTitle}>{label}</Text>
                 <Text style={styles.settingsChoiceSubtitle}>{description}</Text>
@@ -7882,6 +11615,30 @@ function SettingsScreen({
         })}
       </View>
       <Text style={styles.settingsHint}>Ahorita la app se ve en modo {getThemeMeta(themePreference, nativeThemeTone).toLowerCase()} y el fondo nativo del celular ya sigue esa preferencia.</Text>
+    </View>
+  );
+
+  const renderPrivacy = () => (
+    <View style={styles.settingsCard}>
+      <View style={styles.settingsCardHeader}>
+        <View style={styles.settingsCardHeaderIcon}><CheckCheck size={18} color={getSettingsHeaderIconColor()} strokeWidth={2.3} /></View>
+        <View style={styles.settingsCardHeaderCopy}>
+          <Text style={styles.settingsCardTitle}>Vistos de chat</Text>
+          <Text style={styles.settingsCardSubtitle}>Decide si Ristak le avisa al proveedor cuando ya viste un mensaje.</Text>
+        </View>
+      </View>
+      <SettingsToggleRow
+        embedded
+        title="Marcar mensajes como leídos o vistos"
+        description="Envía el visto real al abrir o marcar leído un chat."
+        checked={sendReadReceipts}
+        disabled={savingKey === CHAT_SEND_READ_RECEIPTS_CONFIG_KEY}
+        onChange={(checked) => void saveAppPreference(CHAT_SEND_READ_RECEIPTS_CONFIG_KEY, checked)}
+      />
+      <Text style={styles.settingsHint}>
+        Si lo apagas, Ristak limpia los no leídos dentro de la app, pero no manda doble check,
+        mark seen ni acuse externo a WhatsApp API, WhatsApp QR, Messenger o Instagram.
+      </Text>
     </View>
   );
 
@@ -7903,7 +11660,7 @@ function SettingsScreen({
           onPress={handleEnableNativePush}
           style={({ pressed }) => [styles.settingsPushActionButton, requestingPush && styles.disabledButton, pressed && styles.pressed]}
         >
-          {requestingPush ? <ActivityIndicator color={COLORS.bg} /> : <Bell size={15} color={COLORS.bg} strokeWidth={2.5} />}
+          {requestingPush ? <ActivityIndicator color={COLORS.white} /> : <Bell size={15} color={COLORS.white} strokeWidth={2.5} />}
           <Text style={styles.settingsPushActionText}>{pushPermissionStatus === 'granted' ? 'Actualizar' : 'Activar'}</Text>
         </Pressable>
       </View>
@@ -7920,6 +11677,7 @@ function SettingsScreen({
             onPress={() => void saveUserPreference('calendar_push_notification_calendar_ids', [])}
             style={[styles.calendarChip, pushCalendarIds.length === 0 && styles.calendarChipActive]}
           >
+            <LiquidControlBackground selected={pushCalendarIds.length === 0} />
             <Text style={[styles.calendarChipText, pushCalendarIds.length === 0 && styles.calendarChipTextActive]}>Todos los calendarios</Text>
           </Pressable>
           {calendarsLoading ? <SettingsInlineLoading label="Cargando calendarios..." /> : null}
@@ -7930,6 +11688,7 @@ function SettingsScreen({
                 const active = pushCalendarIds.includes(id);
                 return (
                   <Pressable key={id} accessibilityRole="button" onPress={() => togglePushCalendar(id)} style={[styles.calendarChip, active && styles.calendarChipActive]}>
+                    <LiquidControlBackground selected={active} />
                     <View style={[styles.calendarColorDot, { backgroundColor: calendar.eventColor || calendar.color || COLORS.accent }]} />
                     <Text numberOfLines={1} style={[styles.calendarChipText, active && styles.calendarChipTextActive]}>{calendar.name || calendar.title || 'Calendario'}</Text>
                   </Pressable>
@@ -7944,7 +11703,7 @@ function SettingsScreen({
       <SettingsToggleRow title="Pagos" description="Avísame cuando se registre un pago." checked={paymentPushEnabled} disabled={savingKey === 'payment_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('payment_push_notifications_enabled', checked)} />
       <View style={styles.settingsCard}>
         <View style={styles.settingsCardHeader}>
-          <View style={styles.settingsCardHeaderIcon}><BellRing size={18} color={COLORS.white} strokeWidth={2.3} /></View>
+          <View style={styles.settingsCardHeaderIcon}><BellRing size={18} color={getSettingsHeaderIconColor()} strokeWidth={2.3} /></View>
           <View style={styles.settingsCardHeaderCopy}>
             <Text style={styles.settingsCardTitle}>Sonido y vibración</Text>
             <Text style={styles.settingsCardSubtitle}>Controla cómo se sienten las alertas en este celular.</Text>
@@ -7963,6 +11722,7 @@ function SettingsScreen({
     if (activePanel === 'chats') return renderChats();
     if (activePanel === 'custom-fields') return renderCustomFields();
     if (activePanel === 'appearance') return renderAppearance();
+    if (activePanel === 'privacy') return renderPrivacy();
     if (activePanel === 'notifications') return renderNotifications();
     return renderMainList();
   };
@@ -7972,6 +11732,7 @@ function SettingsScreen({
       <ScrollView contentContainerStyle={styles.settingsFrame}>
         {activePanel ? (
           <Pressable accessibilityRole="button" onPress={() => setActivePanel(null)} style={({ pressed }) => [styles.settingsBackButton, pressed && styles.pressed]}>
+            <LiquidControlBackground />
             <ChevronLeft size={22} color={COLORS.text} strokeWidth={2.8} />
             <Text style={styles.settingsBackLabel}>Ajustes</Text>
           </Pressable>
@@ -7980,12 +11741,253 @@ function SettingsScreen({
           <Text style={styles.settingsKicker}>Ristak</Text>
           <Text numberOfLines={2} style={styles.settingsTitle}>{getSettingsPanelTitle(activePanel)}</Text>
           {activePanel === 'custom-fields' ? <Text style={styles.settingsHeaderSubtitle}>Elige qué datos quieres ver en la info de cada contacto.</Text> : null}
+          {activePanel === 'privacy' ? <Text style={styles.settingsHeaderSubtitle}>Ajustes que afectan lo que tus clientes pueden saber de tu lectura.</Text> : null}
         </View>
         <SectionState loading={loading} error={error} onRetry={load} />
         {!loading && !error ? <View style={styles.settingsContent}>{renderPanel()}</View> : null}
       </ScrollView>
       {footer}
     </AppFrame>
+  );
+}
+
+function SettingsAgentPanel({
+  api,
+  aiReady,
+  aiAgentConfig,
+  aiAgentLoading,
+  aiAgentChatEnabled,
+  aiReplySuggestionsEnabled,
+  businessContextDraft,
+  savedBusinessContext,
+  businessContextSaving,
+  businessContextMessage,
+  savingKey,
+  onBusinessContextDraftChange,
+  onBusinessContextMessageChange,
+  onSaveBusinessContext,
+  onSaveAppPreference,
+}: {
+  api: RistakApiClient;
+  aiReady: boolean;
+  aiAgentConfig: AIAgentConfigStatus | null;
+  aiAgentLoading: boolean;
+  aiAgentChatEnabled: boolean;
+  aiReplySuggestionsEnabled: boolean;
+  businessContextDraft: string;
+  savedBusinessContext: string;
+  businessContextSaving: boolean;
+  businessContextMessage: string;
+  savingKey: string | null;
+  onBusinessContextDraftChange: (text: string) => void;
+  onBusinessContextMessageChange: (message: string) => void;
+  onSaveBusinessContext: (answer: string) => Promise<boolean>;
+  onSaveAppPreference: (key: string, value: ConfigValue) => void;
+}) {
+  const [businessVoiceState, setBusinessVoiceState] = useState<BusinessVoiceState>('idle');
+  const businessVoiceRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
+  const businessVoiceActiveRef = useRef(false);
+  const panelMountedRef = useRef(true);
+
+  useEffect(() => () => {
+    panelMountedRef.current = false;
+    let recording = businessVoiceActiveRef.current;
+    try {
+      recording = recording || businessVoiceRecorder.isRecording;
+    } catch {
+      recording = businessVoiceActiveRef.current;
+    }
+    businessVoiceActiveRef.current = false;
+    if (recording) void businessVoiceRecorder.stop().catch(() => undefined);
+    void setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+    }).catch(() => undefined);
+  }, [businessVoiceRecorder]);
+
+  const saveCurrentBusinessContext = () => {
+    void onSaveBusinessContext(businessContextDraft);
+  };
+
+  const startBusinessVoiceDictation = async () => {
+    if (businessVoiceState !== 'idle' || businessContextSaving || aiAgentLoading) return;
+
+    if (!aiReady) {
+      const message = aiAgentConfig?.needsReconnect
+        ? 'Reconecta OpenAI para dictar la descripción.'
+        : 'Conecta OpenAI para dictar y pulir la descripción.';
+      onBusinessContextMessageChange(message);
+      Alert.alert('OpenAI no está listo', message);
+      return;
+    }
+
+    try {
+      const permission = await requestRecordingPermissionsAsync();
+      if (!permission.granted) {
+        const message = 'Este celular no permitió usar el micrófono.';
+        onBusinessContextMessageChange(message);
+        Alert.alert('Micrófono bloqueado', message);
+        return;
+      }
+
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
+
+      await businessVoiceRecorder.prepareToRecordAsync();
+      if (!panelMountedRef.current) {
+        void setAudioModeAsync({
+          allowsRecording: false,
+          playsInSilentMode: true,
+        }).catch(() => undefined);
+        return;
+      }
+      businessVoiceRecorder.record();
+      businessVoiceActiveRef.current = true;
+      setBusinessVoiceState('recording');
+      onBusinessContextMessageChange('Grabando... toca detener cuando termines.');
+    } catch (err) {
+      businessVoiceActiveRef.current = false;
+      void setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+      if (!panelMountedRef.current) return;
+      setBusinessVoiceState('idle');
+      const message = err instanceof Error ? err.message : 'No pude activar el micrófono.';
+      onBusinessContextMessageChange(message);
+      Alert.alert('Micrófono bloqueado', message);
+    }
+  };
+
+  const stopBusinessVoiceDictation = async () => {
+    if (businessVoiceState !== 'recording') return;
+
+    setBusinessVoiceState('processing');
+    onBusinessContextMessageChange('Transcribiendo audio...');
+
+    try {
+      let isRecording = businessVoiceActiveRef.current;
+      try {
+        isRecording = isRecording || businessVoiceRecorder.isRecording;
+      } catch {
+        isRecording = businessVoiceActiveRef.current;
+      }
+      if (!isRecording) throw new Error('No encontré la grabación activa.');
+      await businessVoiceRecorder.stop();
+      businessVoiceActiveRef.current = false;
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+
+      const audioUri = businessVoiceRecorder.uri;
+      if (!audioUri) throw new Error('No se grabó audio. Intenta otra vez.');
+
+      const transcription = await api.transcribeAIAgentAudio(audioUri, 'audio/m4a');
+      if (!panelMountedRef.current) return;
+      const transcript = String(transcription.text || '').trim();
+      if (!transcript) throw new Error('No se detectó texto en el audio.');
+
+      await onSaveBusinessContext(transcript);
+    } catch (err) {
+      if (!panelMountedRef.current) return;
+      const message = err instanceof Error ? err.message : 'No pude transcribir el audio.';
+      onBusinessContextMessageChange(message);
+      Alert.alert('No se pudo usar el dictado', message);
+    } finally {
+      businessVoiceActiveRef.current = false;
+      void setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+      if (panelMountedRef.current) setBusinessVoiceState('idle');
+    }
+  };
+
+  const handleBusinessVoiceButton = () => {
+    if (businessVoiceState === 'recording') {
+      void stopBusinessVoiceDictation();
+      return;
+    }
+    void startBusinessVoiceDictation();
+  };
+
+  const descriptionChanged = businessContextDraft.trim() !== savedBusinessContext.trim();
+  const recording = businessVoiceState === 'recording';
+  const busyDescription = aiAgentLoading || businessContextSaving || businessVoiceState === 'processing';
+  const micLabel = recording ? 'Detener' : businessVoiceState === 'processing' ? 'Procesando' : 'Dictar';
+
+  return (
+    <>
+      <View style={styles.businessDescriptionPanel}>
+        {!aiReady ? (
+          <SettingsEmptyState label={aiAgentConfig?.needsReconnect ? 'Reconecta OpenAI para activar el agente en este celular.' : 'Conecta OpenAI para activar el agente en este celular.'} />
+        ) : null}
+        <View style={styles.businessDescriptionHeader}>
+          <View style={styles.businessDescriptionIcon}><Sparkles size={19} color={COLORS.white} strokeWidth={2.25} /></View>
+          <View style={styles.businessDescriptionCopy}>
+            <Text style={styles.businessDescriptionTitle}>Descripción del negocio</Text>
+            <Text style={styles.businessDescriptionSubtitle}>Dicta tu giro, servicios y clientes; la IA lo pule y lo guarda aquí.</Text>
+          </View>
+        </View>
+        <View style={styles.businessDescriptionField}>
+          <TextInput
+            value={businessContextDraft}
+            onChangeText={onBusinessContextDraftChange}
+            editable={!busyDescription && !recording}
+            multiline
+            placeholder="Ejemplo: Somos una clínica dental en Ciudad Juárez, atendemos familias..."
+            placeholderTextColor={COLORS.muted}
+            textAlignVertical="top"
+            style={styles.businessDescriptionInput}
+          />
+          <Pressable
+            accessibilityRole="button"
+            disabled={!aiReady || businessContextSaving || aiAgentLoading || businessVoiceState === 'processing'}
+            onPress={handleBusinessVoiceButton}
+            style={({ pressed }) => [
+              styles.businessVoiceButton,
+              recording && styles.businessVoiceButtonRecording,
+              (!aiReady || businessContextSaving || aiAgentLoading || businessVoiceState === 'processing') && styles.disabledButton,
+              pressed && styles.pressed,
+            ]}
+          >
+            {businessVoiceState === 'processing' ? <ActivityIndicator color={COLORS.white} /> : recording ? <Square size={15} color={COLORS.white} fill={COLORS.white} strokeWidth={2.4} /> : <Mic size={17} color={COLORS.white} strokeWidth={2.4} />}
+            <Text style={[styles.businessVoiceButtonText, recording && styles.businessVoiceButtonTextRecording]}>{micLabel}</Text>
+          </Pressable>
+        </View>
+        <View style={styles.businessDescriptionActions}>
+          <Text numberOfLines={2} style={styles.businessDescriptionMessage}>
+            {aiAgentLoading ? '' : businessContextMessage || (aiReady ? 'El dictado se guarda automático al terminar.' : 'OpenAI debe estar conectado para dictar y pulir.')}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            disabled={!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()}
+            onPress={saveCurrentBusinessContext}
+            style={({ pressed }) => [styles.settingsSmallPrimaryButton, (!aiReady || busyDescription || recording || !descriptionChanged || !businessContextDraft.trim()) && styles.disabledButton, pressed && styles.pressed]}
+          >
+            {businessContextSaving ? <ActivityIndicator color={COLORS.white} /> : <Save size={16} color={COLORS.white} strokeWidth={2.4} />}
+            <Text style={styles.settingsSmallPrimaryText}>Guardar</Text>
+          </Pressable>
+        </View>
+      </View>
+      <SettingsToggleRow
+        title="Mostrar como primer chat"
+        description="El agente aparece fijo arriba de tus conversaciones."
+        checked={aiReady && aiAgentChatEnabled}
+        disabled={!aiReady || savingKey === 'mobile_chat_ai_agent_enabled'}
+        onChange={(checked) => onSaveAppPreference('mobile_chat_ai_agent_enabled', checked)}
+      />
+      <SettingsToggleRow
+        title="Sugerir respuestas"
+        description="El agente puede preparar un texto para responder en chats reales."
+        checked={aiReady && aiReplySuggestionsEnabled}
+        disabled={!aiReady || !aiAgentChatEnabled || savingKey === 'mobile_chat_ai_reply_suggestions_enabled'}
+        onChange={(checked) => onSaveAppPreference('mobile_chat_ai_reply_suggestions_enabled', checked)}
+      />
+    </>
   );
 }
 
@@ -8009,7 +12011,7 @@ function SettingsActionCard({
   return (
     <View style={styles.settingsActionCard}>
       <View style={styles.settingsActionIcon}>
-        <Icon size={18} color={COLORS.white} strokeWidth={2.3} />
+        <Icon size={18} color={COLORS.text} strokeWidth={2.3} />
       </View>
       <View style={styles.settingsActionCopy}>
         <Text numberOfLines={1} style={styles.settingsActionTitle}>{title}</Text>
@@ -8060,8 +12062,18 @@ function SettingsToggleRow({
         <Text style={styles.settingsToggleTitle}>{title}</Text>
         <Text numberOfLines={2} style={styles.settingsToggleSubtitle}>{description}</Text>
       </View>
-      <View style={[styles.settingsToggleControl, checked && styles.settingsToggleControlChecked]}>
-        {checked ? <Check size={18} color={COLORS.bg} strokeWidth={3} /> : null}
+      <View pointerEvents="none" style={styles.settingsNativeSwitchWrap}>
+        <Switch
+          accessibilityElementsHidden
+          importantForAccessibility="no"
+          ios_backgroundColor={COLORS.panelSoft}
+          thumbColor={Platform.OS === 'android' ? COLORS.white : undefined}
+          trackColor={{
+            false: COLORS.panelSoft,
+            true: COLORS.accent,
+          }}
+          value={checked}
+        />
       </View>
     </Pressable>
   );
@@ -8165,23 +12177,57 @@ const PAYMENT_METHOD_OPTIONS = [
   { value: 'other', label: 'Otro' },
 ];
 
-const PAYMENT_STATUS_OPTIONS = [
-  { value: 'paid', label: 'Pagado' },
-  { value: 'pending', label: 'Pendiente' },
-  { value: 'partial', label: 'Parcial' },
+const OFFLINE_PAYMENT_METHOD_OPTIONS = [
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'bank_transfer', label: 'Transferencia' },
+  { value: 'deposit', label: 'Depósito' },
+  { value: 'other', label: 'Otro' },
+];
+
+const PLAN_FIRST_PAYMENT_METHOD_OPTIONS = [
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'bank_transfer', label: 'Transferencia' },
+  { value: 'card', label: 'Tarjeta guardada' },
+];
+
+const PLAN_FIRST_PAYMENT_TIMING_OPTIONS = [
+  { value: 'immediate', label: 'Cobrar ahora' },
+  { value: 'scheduled', label: 'Fecha del primer pago' },
+];
+
+const PAYMENT_LINK_PROVIDER_OPTIONS = [
+  { value: 'stripe', label: 'Stripe' },
+  { value: 'conekta', label: 'Conekta' },
+  { value: 'mercadopago', label: 'Mercado Pago' },
+  { value: 'clip', label: 'CLIP' },
+  { value: 'rebill', label: 'Rebill' },
+];
+
+const PAYMENT_INSTALLMENT_OPTIONS = [
+  { value: 'disabled', label: 'Sin meses' },
+  { value: 'enabled', label: 'Meses sin intereses' },
 ];
 
 const PAYMENT_FREQUENCY_OPTIONS = [
+  { value: 'custom', label: 'Personalizada' },
+  { value: 'daily', label: 'Diaria' },
   { value: 'weekly', label: 'Semanal' },
   { value: 'biweekly', label: 'Quincenal' },
   { value: 'monthly', label: 'Mensual' },
+  { value: 'yearly', label: 'Anual' },
+];
+
+const PAYMENT_PLAN_PROVIDER_OPTIONS = [
+  { value: 'stripe', label: 'Stripe' },
+  { value: 'conekta', label: 'Conekta' },
+  { value: 'rebill', label: 'Rebill' },
 ];
 
 const SUBSCRIPTION_PROVIDER_OPTIONS = [
   { value: 'stripe', label: 'Stripe' },
   { value: 'conekta', label: 'Conekta' },
   { value: 'mercadopago', label: 'Mercado Pago' },
-  { value: 'clip', label: 'CLIP' },
+  { value: 'rebill', label: 'Rebill' },
 ];
 
 const SUBSCRIPTION_INTERVAL_OPTIONS = [
@@ -8190,6 +12236,62 @@ const SUBSCRIPTION_INTERVAL_OPTIONS = [
   { value: 'monthly', label: 'Mensual' },
   { value: 'yearly', label: 'Anual' },
 ];
+
+type MobilePaymentAccess = {
+  plan: string;
+  hasConnectedGateway: boolean;
+  offlineOnly: boolean;
+  canUsePaymentPlans: boolean;
+  canUseSubscriptions: boolean;
+};
+
+const DEFAULT_MOBILE_PAYMENT_ACCESS: MobilePaymentAccess = {
+  plan: '',
+  hasConnectedGateway: false,
+  offlineOnly: true,
+  canUsePaymentPlans: false,
+  canUseSubscriptions: false,
+};
+
+const PAYMENT_GATEWAY_STATUS_KEYS: PaymentGatewayProvider[] = ['stripe', 'conekta', 'mercadopago', 'clip', 'rebill'];
+
+function normalizeMobileLicensePlan(plan: unknown) {
+  const normalized = String(plan || '').trim().toLowerCase();
+  return normalized === 'pro' ? 'professional' : normalized;
+}
+
+function isLicenseFeatureEnabled(features: LicenseStatusResponse['features'] | undefined, featureKey: string) {
+  const value = features?.[featureKey];
+  if (value === false) return false;
+  if (value === true) return true;
+  return true;
+}
+
+function hasConnectedPaymentGateway(integrations: IntegrationsStatus | null | undefined) {
+  return PAYMENT_GATEWAY_STATUS_KEYS.some((key) => {
+    const status = integrations?.[key];
+    if (!status || typeof status !== 'object') return false;
+    const gateway = status as { connected?: unknown; configured?: unknown };
+    return gateway.connected === true || gateway.configured === true;
+  });
+}
+
+function resolveMobilePaymentAccess(
+  license: LicenseStatusResponse | null | undefined,
+  integrations: IntegrationsStatus | null | undefined,
+): MobilePaymentAccess {
+  const plan = normalizeMobileLicensePlan(license?.plan);
+  const isBasic = plan === 'basic';
+  const hasConnectedGateway = hasConnectedPaymentGateway(integrations);
+  const offlineOnly = isBasic || !hasConnectedGateway;
+  return {
+    plan,
+    hasConnectedGateway,
+    offlineOnly,
+    canUsePaymentPlans: !offlineOnly && isLicenseFeatureEnabled(license?.features, 'payment_plans'),
+    canUseSubscriptions: !offlineOnly && isLicenseFeatureEnabled(license?.features, 'subscriptions'),
+  };
+}
 
 function createEmptyProductForm() {
   return {
@@ -8241,6 +12343,14 @@ function getPriceAmount(price?: ProductPrice | null) {
   return Number(price?.amount ?? price?.price ?? 0) || 0;
 }
 
+function getProductPrices(product?: ProductItem | null) {
+  return Array.isArray(product?.prices) ? product.prices : [];
+}
+
+function getProductPriceCurrency(product?: ProductItem | null, price?: ProductPrice | null, fallback = DEFAULT_ACCOUNT_CURRENCY) {
+  return normalizeCurrencyCode(price?.currency || product?.currency || fallback, fallback);
+}
+
 function getTransactionId(transaction: TransactionItem) {
   return transaction.id || transaction._id || `${transaction.contactName || transaction.email || 'payment'}-${transaction.date || transaction.createdAt || transaction.paymentDate || ''}`;
 }
@@ -8283,11 +12393,17 @@ function getPaymentStatusLabel(status?: string | null) {
   return status || 'Sin estado';
 }
 
-function getSubscriptionPaymentMethod(provider: string) {
+function getSubscriptionPaymentMethod(provider: string, collectionMode: NativeSubscriptionCollectionMode) {
+  if (collectionMode === 'saved_card') {
+    if (provider === 'conekta') return 'conekta_subscription';
+    if (provider === 'rebill') return 'rebill_subscription';
+    return 'stripe_saved_card';
+  }
+  if (provider === 'stripe') return 'stripe_link';
+  if (provider === 'conekta') return 'conekta_link';
   if (provider === 'mercadopago') return 'mercadopago_subscription';
-  if (provider === 'conekta') return 'conekta_subscription';
-  if (provider === 'clip') return 'clip_link';
-  return 'stripe_saved_card';
+  if (provider === 'rebill') return 'rebill_subscription';
+  return 'stripe_link';
 }
 
 function getDateOnlyParts(value: string) {
@@ -8314,6 +12430,64 @@ function addDateOnlyDays(dateOnly: string, days: number) {
   return formatDateOnlyFromUTC(new Date(Date.UTC(parts.year, parts.month - 1, parts.day + days)));
 }
 
+function addDateOnlyMonths(dateOnly: string, months: number) {
+  const parts = getDateOnlyParts(dateOnly);
+  if (!parts) return dateOnly;
+  const originalDay = parts.day;
+  const next = new Date(Date.UTC(parts.year, parts.month - 1, 1));
+  next.setUTCMonth(next.getUTCMonth() + months);
+  const lastDay = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  next.setUTCDate(Math.min(originalDay, lastDay));
+  return formatDateOnlyFromUTC(next);
+}
+
+type NativePlanPaymentDraft = {
+  id: string;
+  amount: string;
+  dueDate: string;
+};
+
+function createNativePlanPaymentDraft(dueDate: string, amount = ''): NativePlanPaymentDraft {
+  return {
+    id: `native_plan_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    amount,
+    dueDate,
+  };
+}
+
+function getNextNativePlanDueDate(baseDate: string, frequency: string, index: number) {
+  if (frequency === 'daily') return addDateOnlyDays(baseDate, index);
+  if (frequency === 'weekly') return addDateOnlyDays(baseDate, index * 7);
+  if (frequency === 'biweekly') return addDateOnlyDays(baseDate, index * 14);
+  if (frequency === 'yearly') return addDateOnlyMonths(baseDate, index * 12);
+  return addDateOnlyMonths(baseDate, index);
+}
+
+function createDefaultNativePlanPayments(timezone: string, frequency = 'monthly', count = 2) {
+  const today = todayDateOnlyInTimezone(timezone);
+  return Array.from({ length: count }, (_, index) => (
+    createNativePlanPaymentDraft(getNextNativePlanDueDate(today, frequency, index + 1), '')
+  ));
+}
+
+function distributeNativePlanPayments(totalAmount: number, firstPaymentAmount: number, payments: NativePlanPaymentDraft[]) {
+  const remaining = Math.max(0, Math.round((totalAmount - firstPaymentAmount) * 100) / 100);
+  if (!payments.length || remaining <= 0) {
+    return payments.map((payment) => ({ ...payment, amount: '' }));
+  }
+  const base = Math.floor((remaining / payments.length) * 100) / 100;
+  return payments.map((payment, index) => ({
+    ...payment,
+    amount: formatPlainAmount(index === payments.length - 1
+      ? Math.round((remaining - base * (payments.length - 1)) * 100) / 100
+      : base),
+  }));
+}
+
+function formatPlainAmount(value: number) {
+  return String(Math.round(value * 100) / 100).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+}
+
 function todayDateOnlyInTimezone(timezone: string) {
   const date = new Date();
   try {
@@ -8332,8 +12506,17 @@ function todayDateOnlyInTimezone(timezone: string) {
   }
 }
 
-function getRecentPaymentRange(period: RecentPaymentsPeriod, timezone: string) {
-  const selected = RECENT_PAYMENT_PERIODS.find((option) => option.id === period) || RECENT_PAYMENT_PERIODS[2];
+function getRecentPaymentRange(period: RecentPaymentsPeriod, timezone: string, customStartDate = '', customEndDate = '') {
+  if (
+    period === 'custom'
+    && isValidDateOnly(customStartDate)
+    && isValidDateOnly(customEndDate)
+    && (getDateOnlyUtcTime(customStartDate) || 0) <= (getDateOnlyUtcTime(customEndDate) || 0)
+  ) {
+    return { startDate: customStartDate, endDate: customEndDate };
+  }
+
+  const selected = RECENT_PAYMENT_PERIODS.find((option) => option.id === period && option.id !== 'custom') || RECENT_PAYMENT_PERIODS[2];
   const endDate = todayDateOnlyInTimezone(timezone);
   const startDate = selected.days > 0 ? addDateOnlyDays(endDate, -(selected.days - 1)) : endDate;
   return { startDate, endDate };
@@ -8418,6 +12601,7 @@ function ChatFilterBar({
                 pressed && styles.pressed,
               ]}
             >
+              <LiquidControlBackground selected={selected} />
               <Text numberOfLines={1} style={[styles.filterChipText, selected && styles.filterChipTextActive]}>{filter.label}</Text>
               {count ? (
                 <View style={styles.filterChipCount}>
@@ -8433,6 +12617,7 @@ function ChatFilterBar({
         onPress={() => onChange(CHAT_FILTERS_MORE_VALUE)}
         style={({ pressed }) => [styles.filterChip, styles.filterChipMore, pressed && styles.pressed]}
       >
+        <LiquidControlBackground />
         <Plus size={17} color={COLORS.muted} strokeWidth={2.6} />
       </Pressable>
     </ScrollView>
@@ -8441,70 +12626,348 @@ function ChatFilterBar({
 
 function FilterManagerSheet({
   activeFilter,
-  visibleFilterIds,
+  availableFilters,
+  catalogLoading,
+  customFiltersById,
+  draft,
+  editingCustomFilterId,
+  fieldGroups,
+  fieldsByKey,
+  mode,
   open,
+  tags,
+  tagsLoading,
+  visibleFilterIds,
+  onAddRule,
   onClose,
+  onCreateCustom,
+  onDeleteCustom,
+  onEditCustom,
   onApply,
+  onPatchRule,
+  onRemoveRule,
+  onSaveCustom,
+  onSelectRuleField,
+  onSelectRuleOperator,
+  onSetDraft,
+  onSetMode,
   onToggleVisible,
 }: {
   activeFilter: ChatFilterId;
+  availableFilters: ChatFilterPreset[];
+  catalogLoading: boolean;
+  customFiltersById: Map<string, PhoneChatCustomFilterPreset>;
+  draft: PhoneChatCustomFilterDraft;
+  editingCustomFilterId: string;
+  fieldGroups: PhoneChatConditionFieldGroup[];
+  fieldsByKey: Map<string, PhoneChatConditionField>;
+  mode: 'list' | 'editor';
   visibleFilterIds: ChatFilterId[];
   open: boolean;
+  tags: ContactTag[];
+  tagsLoading: boolean;
+  onAddRule: () => void;
   onClose: () => void;
+  onCreateCustom: () => void;
+  onDeleteCustom: (filter: PhoneChatCustomFilterPreset) => void;
+  onEditCustom: (filter: PhoneChatCustomFilterPreset) => void;
   onApply: (filterId: ChatFilterId) => void;
+  onPatchRule: (ruleId: string, patch: Partial<PhoneChatCustomFilterRule>) => void;
+  onRemoveRule: (ruleId: string) => void;
+  onSaveCustom: () => void;
+  onSelectRuleField: (ruleId: string, fieldKey: string) => void;
+  onSelectRuleOperator: (ruleId: string, operator: ContactAdvancedOperator) => void;
+  onSetDraft: React.Dispatch<React.SetStateAction<PhoneChatCustomFilterDraft>>;
+  onSetMode: (mode: 'list' | 'editor') => void;
   onToggleVisible: (filterId: ChatFilterId) => void;
 }) {
   const sections = useMemo(() => {
     const grouped = new Map<string, ChatFilterPreset[]>();
-    CHAT_FILTER_LIBRARY.forEach((preset) => {
+    availableFilters.forEach((preset) => {
       grouped.set(preset.section, [...(grouped.get(preset.section) || []), preset]);
     });
     return Array.from(grouped.entries());
-  }, []);
+  }, [availableFilters]);
+  const visibleSet = useMemo(() => new Set(visibleFilterIds), [visibleFilterIds]);
+  const conditionFields = useMemo(() => fieldGroups.flatMap((group) => group.fields), [fieldGroups]);
+
+  const renderOptionChips = (
+    options: ContactAdvancedOption[],
+    value: string,
+    onSelect: (value: string) => void,
+  ) => (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterEditorChipRow}>
+      {options.map((option) => {
+        const selected = option.value === value;
+        return (
+          <Pressable
+            key={`${option.value}-${option.label}`}
+            accessibilityRole="button"
+            onPress={() => onSelect(option.value)}
+            style={({ pressed }) => [
+              styles.filterEditorChip,
+              selected && styles.filterEditorChipActive,
+              pressed && styles.pressed,
+            ]}
+          >
+            <LiquidControlBackground selected={selected} />
+            <Text numberOfLines={1} style={[styles.filterEditorChipText, selected && styles.filterEditorChipTextActive]}>
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </ScrollView>
+  );
+
+  const renderRuleValue = (rule: PhoneChatCustomFilterRule) => {
+    const field = fieldsByKey.get(rule.field);
+    if (!field || !operatorNeedsContactAdvancedValue(rule.operator)) {
+      return <Text style={styles.filterEditorEmptyValue}>Sin valor adicional</Text>;
+    }
+    const value = getConditionRuleScalarValue(rule.value);
+    const rangeValue = rule.valueTo === null || rule.valueTo === undefined ? '' : String(rule.valueTo);
+    const options = field.type === 'tags'
+      ? tags.map((tag) => ({ value: tag.id, label: tag.name }))
+      : field.options || [];
+
+    if (options.length) {
+      return renderOptionChips(options, value, (nextValue) => onPatchRule(rule.id, { value: nextValue }));
+    }
+
+    if (field.type === 'tags' && tagsLoading) {
+      return <Text style={styles.filterEditorEmptyValue}>Cargando etiquetas...</Text>;
+    }
+
+    if (operatorUsesContactAdvancedRange(rule.operator)) {
+      return (
+        <View style={styles.filterEditorValuePair}>
+          <TextInput
+            value={value}
+            onChangeText={(nextValue) => onPatchRule(rule.id, { value: nextValue })}
+            placeholder="Desde"
+            placeholderTextColor={COLORS.muted}
+            keyboardType={field.type === 'number' ? 'decimal-pad' : 'default'}
+            style={styles.filterEditorInput}
+          />
+          <TextInput
+            value={rangeValue}
+            onChangeText={(nextValue) => onPatchRule(rule.id, { valueTo: nextValue })}
+            placeholder="Hasta"
+            placeholderTextColor={COLORS.muted}
+            keyboardType={field.type === 'number' ? 'decimal-pad' : 'default'}
+            style={styles.filterEditorInput}
+          />
+        </View>
+      );
+    }
+
+    return (
+      <TextInput
+        value={value}
+        onChangeText={(nextValue) => onPatchRule(rule.id, { value: nextValue })}
+        placeholder={field.type === 'number' ? '0' : 'Valor'}
+        placeholderTextColor={COLORS.muted}
+        keyboardType={field.type === 'number' ? 'decimal-pad' : 'default'}
+        autoCapitalize="none"
+        autoCorrect={false}
+        style={styles.filterEditorInput}
+      />
+    );
+  };
+
+  const renderEditor = () => (
+    <ScrollView
+      contentContainerStyle={[styles.filterSheetBody, styles.sheetScrollableContentSafeEnd]}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.filterEditorTopbar}>
+        <Pressable accessibilityRole="button" onPress={() => onSetMode('list')} style={styles.filterEditorBackButton}>
+          <ChevronLeft size={18} color={COLORS.text} strokeWidth={2.6} />
+          <Text style={styles.filterEditorBackText}>Filtros</Text>
+        </Pressable>
+        <Text style={styles.filterEditorTopbarTitle}>{editingCustomFilterId ? 'Editar condicional' : 'Nuevo condicional'}</Text>
+      </View>
+
+      <View style={styles.filterEditorFieldBlock}>
+        <Text style={styles.filterEditorLabel}>Nombre</Text>
+        <TextInput
+          value={draft.label}
+          onChangeText={(label) => onSetDraft((current) => ({ ...current, label }))}
+          placeholder="Ej. Clientes de mi WhatsApp"
+          placeholderTextColor={COLORS.muted}
+          maxLength={40}
+          style={styles.filterEditorInput}
+        />
+      </View>
+
+      <View style={styles.filterEditorMatch}>
+        <Text style={styles.filterEditorLabel}>Coincidir</Text>
+        <View style={styles.filterEditorMatchButtons}>
+          {[
+            { value: 'all' as const, label: 'Todas' },
+            { value: 'any' as const, label: 'Cualquiera' },
+          ].map((option) => {
+            const selected = draft.match === option.value;
+            return (
+              <Pressable
+                key={option.value}
+                accessibilityRole="button"
+                onPress={() => onSetDraft((current) => ({ ...current, match: option.value }))}
+                style={[styles.filterEditorMatchButton, selected && styles.filterEditorMatchButtonActive]}
+              >
+                <LiquidControlBackground selected={selected} />
+                <Text style={[styles.filterEditorMatchText, selected && styles.filterEditorMatchTextActive]}>{option.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      {catalogLoading ? (
+        <View style={styles.filterEditorLoading}>
+          <ActivityIndicator color={COLORS.accent} />
+          <Text style={styles.filterEditorEmptyValue}>Cargando catálogo...</Text>
+        </View>
+      ) : null}
+
+      {draft.rules.map((rule, index) => {
+        const field = fieldsByKey.get(rule.field) || conditionFields[0];
+        const operators = getContactAdvancedOperators(field);
+        return (
+            <View key={rule.id} style={styles.filterEditorRule}>
+              <View style={styles.filterEditorRuleHeader}>
+                <Text style={styles.filterEditorRuleTitle}>Condición {index + 1}</Text>
+                <Pressable accessibilityRole="button" onPress={() => onRemoveRule(rule.id)} style={styles.filterEditorIconButton}>
+                  <LiquidControlBackground />
+                  <Trash2 size={15} color={COLORS.muted} strokeWidth={2.4} />
+                </Pressable>
+              </View>
+            <Text style={styles.filterEditorLabel}>Campo</Text>
+            {renderOptionChips(
+              conditionFields.map((item) => ({ value: item.key, label: item.label, description: item.section })),
+              field?.key || rule.field,
+              (nextValue) => onSelectRuleField(rule.id, nextValue),
+            )}
+            <Text style={styles.filterEditorLabel}>Condición</Text>
+            {renderOptionChips(
+              operators,
+              rule.operator,
+              (nextValue) => onSelectRuleOperator(rule.id, nextValue as ContactAdvancedOperator),
+            )}
+            <Text style={styles.filterEditorLabel}>Valor</Text>
+            {renderRuleValue(rule)}
+          </View>
+        );
+      })}
+
+      <Pressable accessibilityRole="button" onPress={onAddRule} style={styles.filterEditorAddRule}>
+        <LiquidControlBackground />
+        <Plus size={17} color={COLORS.text} strokeWidth={2.6} />
+        <Text style={styles.filterEditorAddRuleText}>Agregar condición</Text>
+      </Pressable>
+
+      <View style={styles.filterEditorFooter}>
+        <SecondaryButton label="Cancelar" onPress={() => onSetMode('list')} />
+        <PrimaryButton label="Guardar filtro" onPress={onSaveCustom} />
+      </View>
+    </ScrollView>
+  );
+
+  const renderList = () => (
+    <ScrollView contentContainerStyle={styles.filterSheetBody} showsVerticalScrollIndicator={false}>
+      <View style={styles.filterManagerSummary}>
+        <View style={styles.filterManagerSummaryCopy}>
+          <Text style={styles.filterManagerSummaryTitle}>
+            {visibleSet.size} filtro{visibleSet.size === 1 ? '' : 's'} visible{visibleSet.size === 1 ? '' : 's'}
+          </Text>
+          <Text style={styles.filterManagerSummaryText}>Agrega filtros a rápidos o crea uno condicional.</Text>
+        </View>
+      </View>
+      <Pressable accessibilityRole="button" onPress={onCreateCustom} style={styles.filterManagerCreateButton}>
+        <LiquidControlBackground />
+        <Plus size={17} color={COLORS.text} strokeWidth={2.6} />
+        <Text style={styles.filterManagerCreateText}>Crear filtro condicional</Text>
+      </Pressable>
+      {catalogLoading ? (
+        <View style={styles.filterEditorLoading}>
+          <ActivityIndicator color={COLORS.accent} />
+          <Text style={styles.filterEditorEmptyValue}>Actualizando filtros...</Text>
+        </View>
+      ) : null}
+      {sections.map(([section, presets]) => (
+        <View key={section} style={styles.filterManagerSection}>
+          <Text style={styles.filterManagerSectionTitle}>{section}</Text>
+          {presets.map((preset) => {
+            const selected = preset.id === activeFilter;
+            const visible = visibleSet.has(preset.id);
+            const customFilter = preset.customFilterId ? customFiltersById.get(preset.customFilterId) || null : null;
+            return (
+              <View key={preset.id} style={[styles.filterManagerRow, selected && styles.filterManagerRowActive]}>
+                <Pressable
+                  style={styles.filterManagerCopy}
+                  onPress={() => {
+                    if (visible) onApply(preset.id);
+                    else {
+                      onToggleVisible(preset.id);
+                      onApply(preset.id);
+                    }
+                  }}
+                >
+                  <Text numberOfLines={1} style={styles.filterManagerTitle}>{preset.label}</Text>
+                  <Text numberOfLines={2} style={styles.filterManagerDescription}>{preset.description}</Text>
+                </Pressable>
+                <View style={styles.filterManagerActions}>
+                  <Pressable
+                    accessibilityRole="button"
+                    disabled={preset.locked}
+                    onPress={() => onToggleVisible(preset.id)}
+                    style={[styles.filterManagerToggle, visible && styles.filterManagerToggleActive, preset.locked && styles.disabledButton]}
+                  >
+                    <LiquidControlBackground selected={visible} />
+                    <Text style={[styles.filterManagerToggleText, visible && styles.filterManagerToggleTextActive]}>
+                      {preset.locked ? 'Fijo' : visible ? 'Quitar' : 'Agregar'}
+                    </Text>
+                  </Pressable>
+                  {customFilter ? (
+                    <View style={styles.filterManagerCustomTools}>
+                      <Pressable accessibilityRole="button" onPress={() => onEditCustom(customFilter)} style={styles.filterManagerToolButton}>
+                        <LiquidControlBackground />
+                        <Pencil size={14} color={COLORS.muted} strokeWidth={2.4} />
+                      </Pressable>
+                      <Pressable accessibilityRole="button" onPress={() => onDeleteCustom(customFilter)} style={styles.filterManagerToolButton}>
+                        <LiquidControlBackground />
+                        <Trash2 size={14} color={COLORS.danger} strokeWidth={2.4} />
+                      </Pressable>
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            );
+          })}
+        </View>
+      ))}
+    </ScrollView>
+  );
 
   return (
     <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.sheetBackdrop}>
         <Pressable style={styles.sheetScrim} onPress={onClose} />
         <View style={styles.filterSheet}>
+          <View pointerEvents="none" style={styles.filterSheetSurface} />
           <View style={styles.filterSheetHeader}>
             <View>
               <Text style={styles.filterSheetTitle}>Filtros</Text>
-              <Text style={styles.filterSheetSubtitle}>Rápidos, canales y actividad</Text>
+              <Text style={styles.filterSheetSubtitle}>Rápidos, canales, números y condicionales</Text>
             </View>
             <Pressable accessibilityRole="button" onPress={onClose} style={styles.sheetCloseButton}>
+              <LiquidControlBackground />
               <X size={18} color={COLORS.text} strokeWidth={2.5} />
             </Pressable>
           </View>
-          <ScrollView contentContainerStyle={styles.filterSheetBody}>
-            {sections.map(([section, presets]) => (
-              <View key={section} style={styles.filterManagerSection}>
-                <Text style={styles.filterManagerSectionTitle}>{section}</Text>
-                {presets.map((preset) => {
-                  const selected = preset.id === activeFilter;
-                  const visible = visibleFilterIds.includes(preset.id);
-                  return (
-                    <View key={preset.id} style={[styles.filterManagerRow, selected && styles.filterManagerRowActive]}>
-                      <Pressable style={styles.filterManagerCopy} onPress={() => onApply(preset.id)}>
-                        <Text numberOfLines={1} style={styles.filterManagerTitle}>{preset.label}</Text>
-                        <Text numberOfLines={2} style={styles.filterManagerDescription}>{preset.description}</Text>
-                      </Pressable>
-                      <Pressable
-                        accessibilityRole="button"
-                        disabled={preset.locked}
-                        onPress={() => onToggleVisible(preset.id)}
-                        style={[styles.filterManagerToggle, visible && styles.filterManagerToggleActive, preset.locked && styles.disabledButton]}
-                      >
-                        <Text style={[styles.filterManagerToggleText, visible && styles.filterManagerToggleTextActive]}>
-                          {visible ? 'Quitar' : 'Agregar'}
-                        </Text>
-                      </Pressable>
-                    </View>
-                  );
-                })}
-              </View>
-            ))}
-          </ScrollView>
+          {mode === 'editor' ? renderEditor() : renderList()}
         </View>
       </View>
     </Modal>
@@ -8514,6 +12977,7 @@ function FilterManagerSheet({
 function BottomActionSheet({
   children,
   closing = false,
+  floatingOverlay,
   open,
   title,
   subtitle,
@@ -8521,6 +12985,7 @@ function BottomActionSheet({
 }: {
   children: React.ReactNode;
   closing?: boolean;
+  floatingOverlay?: React.ReactNode;
   open: boolean;
   title: string;
   subtitle?: string;
@@ -8528,13 +12993,20 @@ function BottomActionSheet({
 }) {
   const sheetProgress = useRef(new Animated.Value(1)).current;
   const dimmerOpacity = useRef(new Animated.Value(0)).current;
+  const dragTranslateY = useRef(new Animated.Value(0)).current;
+  const keyboardInset = useKeyboardInset(open && !closing);
+  const keyboardSheetStyle = keyboardInset > 0
+    ? { maxHeight: '96%' as const, paddingBottom: keyboardInset + 16 }
+    : null;
 
   useEffect(() => {
     if (!open) {
       sheetProgress.setValue(1);
       dimmerOpacity.setValue(0);
+      dragTranslateY.setValue(0);
       return;
     }
+    if (!closing) dragTranslateY.setValue(0);
 
     Animated.parallel([
       Animated.timing(dimmerOpacity, {
@@ -8550,31 +13022,98 @@ function BottomActionSheet({
         useNativeDriver: true,
       }),
     ]).start();
-  }, [closing, dimmerOpacity, open, sheetProgress]);
+  }, [closing, dimmerOpacity, dragTranslateY, open, sheetProgress]);
 
-  const translateY = sheetProgress.interpolate({
+  const baseTranslateY = sheetProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [0, CHAT_SHEET_HIDDEN_TRANSLATE_Y],
   });
+  const clampedDragTranslateY = dragTranslateY.interpolate({
+    inputRange: [0, CHAT_SHEET_HIDDEN_TRANSLATE_Y],
+    outputRange: [0, CHAT_SHEET_HIDDEN_TRANSLATE_Y],
+    extrapolate: 'clamp',
+  });
+  const translateY = Animated.add(baseTranslateY, clampedDragTranslateY);
+  const sheetOpacity = sheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.88],
+  });
+  const sheetScale = sheetProgress.interpolate({
+    inputRange: [0, 1],
+    outputRange: [1, 0.985],
+  });
+  const dragHandlePanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) => {
+      if (!open || closing) return false;
+      const absDx = Math.abs(gestureState.dx);
+      const absDy = Math.abs(gestureState.dy);
+      return gestureState.dy > 5 && absDy > absDx * 1.15;
+    },
+    onPanResponderGrant: () => {
+      dragTranslateY.stopAnimation();
+      dragTranslateY.setValue(0);
+    },
+    onPanResponderMove: (_, gestureState) => {
+      dragTranslateY.setValue(Math.max(0, gestureState.dy));
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      const shouldClose = gestureState.dy > 70 || gestureState.vy > 0.72;
+      if (shouldClose) {
+        onClose();
+        return;
+      }
+      Animated.spring(dragTranslateY, {
+        toValue: 0,
+        damping: 22,
+        mass: 0.8,
+        stiffness: 240,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(dragTranslateY, {
+        toValue: 0,
+        damping: 22,
+        mass: 0.8,
+        stiffness: 240,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminationRequest: () => true,
+  }), [closing, dragTranslateY, onClose, open]);
 
   return (
     <Modal visible={open} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.sheetModalRoot}>
         <Animated.View pointerEvents="none" style={[styles.sheetDimmer, { opacity: dimmerOpacity }]} />
         <Pressable style={styles.sheetScrim} onPress={onClose} />
-        <Animated.View style={[styles.actionSheet, { transform: [{ translateY }] }]}>
-          <View style={styles.actionSheetHandle} />
-          <View style={styles.actionSheetHeader}>
-            <View style={styles.actionSheetHeaderCopy}>
-              <Text style={styles.actionSheetTitle}>{title}</Text>
-              {subtitle ? <Text numberOfLines={1} style={styles.actionSheetSubtitle}>{subtitle}</Text> : null}
+        <Animated.View
+          style={[
+            styles.actionSheet,
+            keyboardSheetStyle,
+            {
+              opacity: sheetOpacity,
+              transform: [{ translateY }, { scale: sheetScale }],
+            },
+          ]}
+        >
+          <View pointerEvents="none" style={styles.actionSheetSurface} />
+          <View style={styles.actionSheetDragRegion} {...dragHandlePanResponder.panHandlers}>
+            <View style={styles.actionSheetHandle} />
+            <View style={styles.actionSheetHeader}>
+              <View style={styles.actionSheetHeaderCopy}>
+                <Text style={styles.actionSheetTitle}>{title}</Text>
+                {subtitle ? <Text numberOfLines={1} style={styles.actionSheetSubtitle}>{subtitle}</Text> : null}
+              </View>
+              <Pressable accessibilityRole="button" onPress={onClose} style={styles.sheetCloseButton}>
+                <LiquidControlBackground />
+                <X size={18} color={COLORS.text} strokeWidth={2.5} />
+              </Pressable>
             </View>
-            <Pressable accessibilityRole="button" onPress={onClose} style={styles.sheetCloseButton}>
-              <X size={18} color={COLORS.text} strokeWidth={2.5} />
-            </Pressable>
           </View>
           {children}
         </Animated.View>
+        {floatingOverlay}
       </View>
     </Modal>
   );
@@ -8673,6 +13212,12 @@ function ChatMoreSheet({
       {contact ? (
         <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
           <SheetActionRow
+            Icon={ListChecks}
+            title="Seleccionar"
+            subtitle="Activa selección múltiple desde esta conversación."
+            onPress={() => onSelect(contact)}
+          />
+          <SheetActionRow
             Icon={CalendarDays}
             title="Agendar cita"
             subtitle="Crear una cita para este contacto."
@@ -8681,13 +13226,13 @@ function ChatMoreSheet({
           <SheetActionRow
             Icon={CircleDollarSign}
             title="Registrar pagos"
-            subtitle="Elegir pago único, plan o suscripción."
+            subtitle="Registrar un cobro para este contacto."
             onPress={() => onPayment(contact)}
           />
           <SheetActionRow
             Icon={Clock}
             title="Programar mensaje"
-            subtitle="Escribe un mensaje para enviarlo en una hora."
+            subtitle="Elige fecha y hora exacta de envío."
             onPress={() => onSchedule(contact)}
           />
           <SheetActionRow
@@ -8748,12 +13293,6 @@ function ChatMoreSheet({
             subtitle={archived ? 'Devuelve la conversación a la bandeja principal.' : 'Mueve la conversación a Archivados.'}
             onPress={() => onArchiveToggle(contact)}
           />
-          <SheetActionRow
-            Icon={Check}
-            title="Seleccionar"
-            subtitle="Activa selección múltiple desde esta conversación."
-            onPress={() => onSelect(contact)}
-          />
         </ScrollView>
       ) : null}
     </BottomActionSheet>
@@ -8801,7 +13340,7 @@ function ContactTagSheet({
     >
       {contact ? (
         <View style={styles.contactPickerBody}>
-          <View style={styles.sheetSearchBox}>
+          <View style={[styles.sheetSearchBox, styles.contactPickerSearchBox]}>
             <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
             <TextInput
               value={query}
@@ -8819,7 +13358,7 @@ function ContactTagSheet({
               <Text style={styles.caption}>Cargando etiquetas...</Text>
             </View>
           ) : (
-            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled">
+            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {filteredTags.map((tag) => (
                 <SheetActionRow
                   key={tag.id}
@@ -8855,8 +13394,13 @@ function ScheduleMessageSheet({
   busy,
   closing,
   contact,
+  draft,
+  editing = false,
+  error,
   open,
   text,
+  timezone,
+  onChangeDraft,
   onChangeText,
   onClose,
   onSubmit,
@@ -8864,39 +13408,257 @@ function ScheduleMessageSheet({
   busy: boolean;
   closing?: boolean;
   contact: ChatContact | null;
+  draft: ScheduleDraft;
+  editing?: boolean;
+  error?: string;
   open: boolean;
   text: string;
+  timezone: string;
+  onChangeDraft: (patch: Partial<ScheduleDraft>) => void;
   onChangeText: (value: string) => void;
   onClose: () => void;
   onSubmit: (contact: ChatContact) => void;
 }) {
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [datePickerMonth, setDatePickerMonth] = useState(() => draft.date || todayDateOnlyInBusinessTimezone(timezone));
+  const previewDate = getScheduleDateFromDraft(draft, timezone);
+  const canSubmit = Boolean(text.trim() && previewDate && !busy);
+
+  useEffect(() => {
+    if (draft.date) setDatePickerMonth(draft.date);
+  }, [draft.date]);
+
+  useEffect(() => {
+    if (!open) setDatePickerOpen(false);
+  }, [open]);
+
   return (
     <BottomActionSheet
       closing={closing}
+      floatingOverlay={(
+        <ScheduleDatePickerPanel
+          monthDateOnly={datePickerMonth}
+          open={datePickerOpen}
+          selectedDateOnly={draft.date}
+          timezone={timezone}
+          onChangeMonth={setDatePickerMonth}
+          onClose={() => setDatePickerOpen(false)}
+          onReset={() => {
+            const today = todayDateOnlyInBusinessTimezone(timezone);
+            setDatePickerMonth(today);
+            onChangeDraft({ date: today });
+          }}
+          onSelect={(dateOnly) => {
+            onChangeDraft({ date: dateOnly });
+            setDatePickerMonth(dateOnly);
+            setDatePickerOpen(false);
+          }}
+        />
+      )}
       open={open && Boolean(contact)}
-      title="Programar mensaje"
-      subtitle={contact ? `${getContactName(contact)} - En 1 hora` : ''}
+      title={editing ? 'Editar programación' : 'Programar mensaje'}
+      subtitle={contact ? getContactName(contact) : ''}
       onClose={onClose}
     >
       {contact ? (
-        <View style={styles.scheduleSheetBody}>
-          <TextInput
-            value={text}
-            onChangeText={onChangeText}
-            placeholder="Escribe el mensaje"
-            placeholderTextColor={COLORS.muted}
-            multiline
-            textAlignVertical="top"
-            style={styles.scheduleTextInput}
-          />
-          <PrimaryButton
-            label="Programar en 1 hora"
-            busy={busy}
-            onPress={() => onSubmit(contact)}
-          />
-        </View>
+        <>
+          <ScrollView contentContainerStyle={styles.scheduleSheetBody} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <TextInput
+              value={text}
+              onChangeText={onChangeText}
+              placeholder="Escribe el mensaje"
+              placeholderTextColor={COLORS.muted}
+              multiline
+              keyboardAppearance={getNativeKeyboardAppearance()}
+              textAlignVertical="top"
+              style={styles.scheduleTextInput}
+            />
+
+            <View style={styles.scheduleFields}>
+              <View style={styles.scheduleField}>
+                <Text style={styles.scheduleFieldLabel}>Fecha</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() => {
+                    setDatePickerMonth(draft.date || todayDateOnlyInBusinessTimezone(timezone));
+                    setDatePickerOpen(true);
+                  }}
+                  style={({ pressed }) => [styles.scheduleFieldButton, pressed && styles.pressed]}
+                >
+                  <LiquidControlBackground />
+                  <Text numberOfLines={1} style={styles.scheduleFieldButtonText}>{formatCompactBusinessDate(draft.date)}</Text>
+                  <ChevronDown size={18} color={COLORS.meta} strokeWidth={2.45} />
+                </Pressable>
+                <Text numberOfLines={1} style={styles.scheduleFieldHint}>{formatScheduleDateDisplay(draft.date)}</Text>
+              </View>
+
+              <View style={styles.scheduleTimeRow}>
+                <View style={[styles.scheduleField, styles.scheduleTimeField]}>
+                  <Text style={styles.scheduleFieldLabel}>Hora</Text>
+                  <TextInput
+                    value={draft.hour}
+                    onChangeText={(value) => onChangeDraft({ hour: cleanScheduleNumber(value) })}
+                    onEndEditing={() => {
+                      const hour = Math.min(12, Math.max(1, Number(draft.hour) || 1));
+                      onChangeDraft({ hour: String(hour) });
+                    }}
+                    placeholder="9"
+                    placeholderTextColor={COLORS.muted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardAppearance={getNativeKeyboardAppearance()}
+                    keyboardType="number-pad"
+                    style={[styles.scheduleFieldInput, styles.scheduleNumericInput]}
+                  />
+                </View>
+
+                <View style={[styles.scheduleField, styles.scheduleTimeField]}>
+                  <Text style={styles.scheduleFieldLabel}>Min</Text>
+                  <TextInput
+                    value={draft.minute}
+                    onChangeText={(value) => onChangeDraft({ minute: cleanScheduleNumber(value) })}
+                    onEndEditing={() => {
+                      const minute = Math.min(59, Math.max(0, Number(draft.minute) || 0));
+                      onChangeDraft({ minute: padSchedulePart(minute) });
+                    }}
+                    placeholder="00"
+                    placeholderTextColor={COLORS.muted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardAppearance={getNativeKeyboardAppearance()}
+                    keyboardType="number-pad"
+                    style={[styles.scheduleFieldInput, styles.scheduleNumericInput]}
+                  />
+                </View>
+
+                <View style={styles.schedulePeriodToggle}>
+                  {(['AM', 'PM'] as SchedulePeriod[]).map((period) => {
+                    const active = draft.period === period;
+                    return (
+                      <Pressable
+                        key={period}
+                        accessibilityRole="button"
+                        onPress={() => onChangeDraft({ period })}
+                        style={({ pressed }) => [
+                          styles.schedulePeriodButton,
+                          active && styles.schedulePeriodButtonActive,
+                          pressed && styles.pressed,
+                        ]}
+                      >
+                        <LiquidControlBackground selected={active} />
+                        <Text style={[styles.schedulePeriodText, active && styles.schedulePeriodTextActive]}>{period}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            </View>
+
+            <View style={styles.schedulePreview}>
+              <Clock size={16} color={COLORS.accent} strokeWidth={2.4} />
+              <Text style={styles.schedulePreviewText}>{formatSchedulePreviewLabel(previewDate?.toISOString(), timezone)}</Text>
+            </View>
+
+            {error ? <Text style={styles.scheduleErrorText}>{error}</Text> : null}
+
+            <PrimaryButton
+              label={editing ? 'Actualizar programación' : 'Enviar programación'}
+              busy={busy}
+              disabled={!canSubmit}
+              onPress={() => onSubmit(contact)}
+            />
+          </ScrollView>
+        </>
       ) : null}
     </BottomActionSheet>
+  );
+}
+
+function ScheduleDatePickerPanel({
+  monthDateOnly,
+  onChangeMonth,
+  onClose,
+  onReset,
+  onSelect,
+  open,
+  selectedDateOnly,
+  timezone,
+}: {
+  monthDateOnly: string;
+  onChangeMonth: (value: string) => void;
+  onClose: () => void;
+  onReset: () => void;
+  onSelect: (dateOnly: string) => void;
+  open: boolean;
+  selectedDateOnly: string;
+  timezone: string;
+}) {
+  const today = todayDateOnlyInBusinessTimezone(timezone);
+  const cells = useMemo(() => buildBusinessMonthCells(monthDateOnly, today), [monthDateOnly, today]);
+  if (!open) return null;
+
+  return (
+    <View style={styles.schedulePickerLayer}>
+      <Pressable style={styles.schedulePickerBackdrop} onPress={onClose} />
+      <View style={styles.schedulePickerCard}>
+        <View pointerEvents="none" style={styles.schedulePickerSurface} />
+        <View style={styles.actionSheetHandle} />
+        <View style={styles.schedulePickerHeader}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Mes anterior" onPress={() => onChangeMonth(addBusinessDateOnlyMonths(monthDateOnly, -1))} style={styles.schedulePickerIconButton}>
+            <LiquidControlBackground />
+            <ChevronLeft size={24} color={COLORS.text} strokeWidth={2.6} />
+          </Pressable>
+          <Text style={styles.schedulePickerTitle}>{formatSchedulePickerMonthLabel(monthDateOnly)}</Text>
+          <Pressable accessibilityRole="button" accessibilityLabel="Mes siguiente" onPress={() => onChangeMonth(addBusinessDateOnlyMonths(monthDateOnly, 1))} style={styles.schedulePickerIconButton}>
+            <LiquidControlBackground />
+            <ChevronRight size={24} color={COLORS.text} strokeWidth={2.6} />
+          </Pressable>
+        </View>
+        <View style={styles.schedulePickerWeekRow}>
+          {SCHEDULE_PICKER_WEEKDAYS.map((day) => <Text key={day} style={styles.schedulePickerWeekday}>{day}</Text>)}
+        </View>
+        <View style={styles.schedulePickerGrid}>
+          {cells.map((cell) => {
+            const selected = cell.dateOnly === selectedDateOnly;
+            const disabled = cell.dateOnly < today;
+            return (
+              <Pressable
+                key={cell.dateOnly}
+                accessibilityRole="button"
+                accessibilityLabel={`Elegir ${formatScheduleDateDisplay(cell.dateOnly)}`}
+                disabled={disabled}
+                onPress={() => onSelect(cell.dateOnly)}
+                style={({ pressed }) => [
+                  styles.schedulePickerDay,
+                  selected && styles.schedulePickerDaySelected,
+                  disabled && styles.schedulePickerDayDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <Text style={[
+                  styles.schedulePickerDayText,
+                  !cell.isCurrentMonth && styles.schedulePickerDayTextMuted,
+                  disabled && styles.schedulePickerDayTextDisabled,
+                  selected && styles.schedulePickerDayTextSelected,
+                ]}
+                >
+                  {cell.day}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+        <View style={styles.schedulePickerFooter}>
+          <Pressable accessibilityRole="button" onPress={onReset} style={({ pressed }) => [styles.schedulePickerReset, pressed && styles.pressed]}>
+            <LiquidControlBackground />
+            <Text style={styles.schedulePickerResetText}>Restablecer</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [styles.schedulePickerDone, pressed && styles.pressed]}>
+            <Check size={30} color={COLORS.white} strokeWidth={2.7} />
+          </Pressable>
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -8935,7 +13697,7 @@ function NativeTemplatesSheet({
               <Text style={styles.caption}>Cargando plantillas...</Text>
             </View>
           ) : (
-            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled">
+            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {templates.map((template, index) => {
                 const body = getTemplateBody(template);
                 const key = template.id || template.name || body || `template-${index}`;
@@ -9008,7 +13770,7 @@ function NativeClabeSheet({
                 onChangeText={(value) => onChangeDraft((current) => ({ ...current, alias: value }))}
                 placeholder="Alias"
                 placeholderTextColor={COLORS.muted}
-                keyboardAppearance="dark"
+                keyboardAppearance={getNativeKeyboardAppearance()}
                 style={styles.sheetInput}
               />
               <TextInput
@@ -9016,7 +13778,7 @@ function NativeClabeSheet({
                 onChangeText={(value) => onChangeDraft((current) => ({ ...current, clabe: normalizeClabe(value) }))}
                 placeholder="CLABE de 18 dígitos"
                 placeholderTextColor={COLORS.muted}
-                keyboardAppearance="dark"
+                keyboardAppearance={getNativeKeyboardAppearance()}
                 keyboardType="number-pad"
                 style={styles.sheetInput}
               />
@@ -9025,7 +13787,7 @@ function NativeClabeSheet({
                 onChangeText={(value) => onChangeDraft((current) => ({ ...current, bank: value }))}
                 placeholder="Banco"
                 placeholderTextColor={COLORS.muted}
-                keyboardAppearance="dark"
+                keyboardAppearance={getNativeKeyboardAppearance()}
                 style={styles.sheetInput}
               />
               <TextInput
@@ -9033,7 +13795,7 @@ function NativeClabeSheet({
                 onChangeText={(value) => onChangeDraft((current) => ({ ...current, accountHolder: value }))}
                 placeholder="Titular"
                 placeholderTextColor={COLORS.muted}
-                keyboardAppearance="dark"
+                keyboardAppearance={getNativeKeyboardAppearance()}
                 style={styles.sheetInput}
               />
               <PrimaryButton label="Guardar CLABE" busy={Boolean(busyId)} onPress={onSave} />
@@ -9045,7 +13807,7 @@ function NativeClabeSheet({
               <Text style={styles.caption}>Cargando cuentas...</Text>
             </View>
           ) : (
-            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled">
+            <ScrollView contentContainerStyle={styles.sheetActionList} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
               {accounts.map((account) => (
                 <SheetActionRow
                   key={account.id}
@@ -9102,38 +13864,45 @@ function PaymentEntrySheet({
       onClose={onClose}
     >
       {contact ? (
-        <View style={styles.paymentSheetBody}>
-          <TextInput
-            value={draft.amount}
-            onChangeText={(value) => onChangeDraft((current) => ({ ...current, amount: value.replace(/[^\d.,]/g, '') }))}
-            placeholder="Monto"
-            placeholderTextColor={COLORS.muted}
-            keyboardAppearance="dark"
-            keyboardType="decimal-pad"
-            style={styles.sheetInput}
-          />
-          <TextInput
-            value={draft.concept}
-            onChangeText={(value) => onChangeDraft((current) => ({ ...current, concept: value }))}
-            placeholder="Concepto"
-            placeholderTextColor={COLORS.muted}
-            keyboardAppearance="dark"
-            style={styles.sheetInput}
-          />
-          <View style={styles.sheetPillRow}>
-            {methods.map((method) => (
-              <Pressable
-                key={method.id}
-                accessibilityRole="button"
-                onPress={() => onChangeDraft((current) => ({ ...current, method: method.id }))}
-                style={[styles.sheetPill, draft.method === method.id && styles.sheetPillActive]}
-              >
-                <Text style={[styles.sheetPillText, draft.method === method.id && styles.sheetPillTextActive]}>{method.label}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <PrimaryButton label="Registrar pago" busy={busy} onPress={onSubmit} />
-        </View>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            contentContainerStyle={[styles.paymentSheetBody, styles.sheetScrollableContentSafeEnd]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
+            <TextInput
+              value={draft.amount}
+              onChangeText={(value) => onChangeDraft((current) => ({ ...current, amount: value.replace(/[^\d.,]/g, '') }))}
+              placeholder="Monto"
+              placeholderTextColor={COLORS.muted}
+              keyboardAppearance={getNativeKeyboardAppearance()}
+              keyboardType="decimal-pad"
+              style={styles.sheetInput}
+            />
+            <TextInput
+              value={draft.concept}
+              onChangeText={(value) => onChangeDraft((current) => ({ ...current, concept: value }))}
+              placeholder="Concepto"
+              placeholderTextColor={COLORS.muted}
+              keyboardAppearance={getNativeKeyboardAppearance()}
+              style={styles.sheetInput}
+            />
+            <View style={styles.sheetPillRow}>
+              {methods.map((method) => (
+                <Pressable
+                  key={method.id}
+                  accessibilityRole="button"
+                  onPress={() => onChangeDraft((current) => ({ ...current, method: method.id }))}
+                  style={[styles.sheetPill, draft.method === method.id && styles.sheetPillActive]}
+                >
+                  <LiquidControlBackground selected={draft.method === method.id} />
+                  <Text style={[styles.sheetPillText, draft.method === method.id && styles.sheetPillTextActive]}>{method.label}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <PrimaryButton label="Registrar pago" busy={busy} onPress={onSubmit} />
+          </ScrollView>
+        </KeyboardAvoidingView>
       ) : null}
     </BottomActionSheet>
   );
@@ -9169,54 +13938,60 @@ function AppointmentEntrySheet({
       onClose={onClose}
     >
       {contact ? (
-        <View style={styles.appointmentSheetBody}>
-          <TextInput
-            value={draft.title}
-            onChangeText={(value) => onChangeDraft((current) => ({ ...current, title: value }))}
-            placeholder={`Cita con ${getContactName(contact)}`}
-            placeholderTextColor={COLORS.muted}
-            keyboardAppearance="dark"
-            style={styles.sheetInput}
-          />
-          <View style={styles.sheetInlineInputs}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <ScrollView
+            contentContainerStyle={[styles.appointmentSheetBody, styles.sheetScrollableContentSafeEnd]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             <TextInput
-              value={draft.date}
-              onChangeText={(value) => onChangeDraft((current) => ({ ...current, date: value }))}
-              placeholder="YYYY-MM-DD"
+              value={draft.title}
+              onChangeText={(value) => onChangeDraft((current) => ({ ...current, title: value }))}
+              placeholder={`Cita con ${getContactName(contact)}`}
               placeholderTextColor={COLORS.muted}
-              keyboardAppearance="dark"
-              style={[styles.sheetInput, styles.sheetInputFlex]}
+              keyboardAppearance={getNativeKeyboardAppearance()}
+              style={styles.sheetInput}
+            />
+            <View style={styles.sheetInlineInputs}>
+              <TextInput
+                value={draft.date}
+                onChangeText={(value) => onChangeDraft((current) => ({ ...current, date: value }))}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={COLORS.muted}
+                keyboardAppearance={getNativeKeyboardAppearance()}
+                style={[styles.sheetInput, styles.sheetInputFlex]}
+              />
+              <TextInput
+                value={draft.time}
+                onChangeText={(value) => onChangeDraft((current) => ({ ...current, time: value }))}
+                placeholder="HH:mm"
+                placeholderTextColor={COLORS.muted}
+                keyboardAppearance={getNativeKeyboardAppearance()}
+                style={[styles.sheetInput, styles.sheetInputShort]}
+              />
+            </View>
+            <TextInput
+              value={draft.durationMinutes}
+              onChangeText={(value) => onChangeDraft((current) => ({ ...current, durationMinutes: value.replace(/\D+/g, '') }))}
+              placeholder="Duración en minutos"
+              placeholderTextColor={COLORS.muted}
+              keyboardAppearance={getNativeKeyboardAppearance()}
+              keyboardType="number-pad"
+              style={styles.sheetInput}
             />
             <TextInput
-              value={draft.time}
-              onChangeText={(value) => onChangeDraft((current) => ({ ...current, time: value }))}
-              placeholder="HH:mm"
+              value={draft.notes}
+              onChangeText={(value) => onChangeDraft((current) => ({ ...current, notes: value }))}
+              placeholder="Notas"
               placeholderTextColor={COLORS.muted}
-              keyboardAppearance="dark"
-              style={[styles.sheetInput, styles.sheetInputShort]}
+              keyboardAppearance={getNativeKeyboardAppearance()}
+              multiline
+              textAlignVertical="top"
+              style={styles.sheetTextArea}
             />
-          </View>
-          <TextInput
-            value={draft.durationMinutes}
-            onChangeText={(value) => onChangeDraft((current) => ({ ...current, durationMinutes: value.replace(/\D+/g, '') }))}
-            placeholder="Duración en minutos"
-            placeholderTextColor={COLORS.muted}
-            keyboardAppearance="dark"
-            keyboardType="number-pad"
-            style={styles.sheetInput}
-          />
-          <TextInput
-            value={draft.notes}
-            onChangeText={(value) => onChangeDraft((current) => ({ ...current, notes: value }))}
-            placeholder="Notas"
-            placeholderTextColor={COLORS.muted}
-            keyboardAppearance="dark"
-            multiline
-            textAlignVertical="top"
-            style={styles.sheetTextArea}
-          />
-          <PrimaryButton label="Agendar cita" busy={busy} onPress={onSubmit} />
-        </View>
+            <PrimaryButton label="Agendar cita" busy={busy} onPress={onSubmit} />
+          </ScrollView>
+        </KeyboardAvoidingView>
       ) : null}
     </BottomActionSheet>
   );
@@ -9224,41 +13999,157 @@ function AppointmentEntrySheet({
 
 
 function ContactPickerSheet({
-  asset,
+  caption = '',
   closing,
   contacts,
   loading,
+  media,
   open,
   query,
+  selectedIds,
+  sending = false,
   title,
+  onChangeCaption,
   onChangeQuery,
   onClose,
   onSelect,
+  onSubmit,
 }: {
-  asset?: ImagePicker.ImagePickerAsset | null;
+  caption?: string;
   closing?: boolean;
   contacts: ChatContact[];
   loading: boolean;
+  media?: ConversationDraftAttachment | null;
   open: boolean;
   query: string;
+  selectedIds?: Set<string>;
+  sending?: boolean;
   title: string;
+  onChangeCaption?: (value: string) => void;
   onChangeQuery: (value: string) => void;
   onClose: () => void;
   onSelect: (contact: ChatContact) => void;
+  onSubmit?: () => void;
 }) {
+  const isCameraShare = Boolean(media);
+  const selectedCount = selectedIds?.size || 0;
+
+  if (isCameraShare && media) {
+    return (
+      <Modal visible={open} animationType="slide" presentationStyle="fullScreen" onRequestClose={onClose}>
+        <View style={styles.cameraShareScreen}>
+          <StatusBar barStyle={activeNativeThemeTone === 'light' ? 'dark-content' : 'light-content'} backgroundColor="transparent" translucent />
+          <View style={styles.cameraSharePreviewPane}>
+            <View style={styles.cameraShareTopChrome}>
+              <View style={styles.cameraShareTitleBlock}>
+                <Text style={styles.cameraShareTitle}>{title}</Text>
+                <Text numberOfLines={1} style={styles.cameraShareSubtitle}>
+                  {selectedCount ? `${selectedCount} seleccionado${selectedCount === 1 ? '' : 's'}` : 'Elige destinatarios y agrega un mensaje'}
+                </Text>
+              </View>
+              <Pressable accessibilityRole="button" onPress={onClose} style={styles.cameraShareCloseButton}>
+                <LiquidControlBackground />
+                <X size={24} color={COLORS.white} strokeWidth={2.7} />
+              </Pressable>
+            </View>
+            <View style={styles.cameraSharePreviewCard}>
+              <CameraShareMediaPreview media={media} />
+            </View>
+          </View>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.cameraSharePanel}>
+            <View style={styles.cameraShareSearchArea}>
+              <View style={styles.sheetSearchBox}>
+                <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
+                <TextInput
+                  value={query}
+                  onChangeText={onChangeQuery}
+                  placeholder="Buscar contacto"
+                  placeholderTextColor={COLORS.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardAppearance={getNativeKeyboardAppearance()}
+                  style={styles.sheetSearchInput}
+                />
+                {query ? (
+                  <Pressable accessibilityRole="button" onPress={() => onChangeQuery('')} style={styles.clearSearchButton}>
+                    <X size={17} color={COLORS.muted} strokeWidth={2.45} />
+                  </Pressable>
+                ) : null}
+              </View>
+            </View>
+            {loading ? (
+              <View style={styles.sheetInlineState}>
+                <ActivityIndicator color={COLORS.accent} />
+                <Text style={styles.caption}>Buscando contactos...</Text>
+              </View>
+            ) : (
+              <ScrollView
+                alwaysBounceHorizontal={false}
+                style={styles.cameraShareContactList}
+                contentContainerStyle={styles.cameraShareContactListContent}
+                directionalLockEnabled
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {contacts.length ? contacts.slice(0, 40).map((contact) => (
+                  <ContactPickerRow
+                    key={contact.id}
+                    checklist
+                    contact={contact}
+                    fullBleed
+                    selected={Boolean(selectedIds?.has(contact.id))}
+                    showSendIcon={false}
+                    onPress={() => onSelect(contact)}
+                  />
+                )) : (
+                  <Text style={styles.contactPickerEmpty}>No hay contactos para mostrar.</Text>
+                )}
+              </ScrollView>
+            )}
+            <View style={styles.cameraShareFooter}>
+              <TextInput
+                value={caption}
+                onChangeText={onChangeCaption}
+                placeholder="Agregar mensaje..."
+                placeholderTextColor={COLORS.muted}
+                multiline
+                keyboardAppearance={getNativeKeyboardAppearance()}
+                style={styles.cameraCaptionInput}
+              />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={selectedCount ? `Enviar media a ${selectedCount} destinatarios` : 'Selecciona destinatarios para enviar'}
+                disabled={!selectedCount || sending}
+                onPress={() => onSubmit?.()}
+                style={({ pressed }) => [
+                  styles.cameraShareSendButton,
+                  (!selectedCount || sending) && styles.cameraShareSendButtonDisabled,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {sending ? (
+                  <ActivityIndicator color={COLORS.white} />
+                ) : (
+                  <Send size={21} color={COLORS.white} strokeWidth={2.7} />
+                )}
+              </Pressable>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <BottomActionSheet
       closing={closing}
       open={open}
       title={title}
-      subtitle={asset ? 'Elige a quién enviar la foto' : 'Busca por nombre, número o correo'}
+      subtitle={isCameraShare ? 'Elige destinatarios y agrega un mensaje opcional' : 'Busca por nombre, número o correo'}
       onClose={onClose}
     >
       <View style={styles.contactPickerBody}>
-        {asset ? (
-          <Image source={{ uri: asset.uri }} style={styles.cameraPreview as ImageStyle} />
-        ) : null}
-        <View style={styles.sheetSearchBox}>
+        <View style={[styles.sheetSearchBox, styles.contactPickerSearchBox]}>
           <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
           <TextInput
             value={query}
@@ -9281,9 +14172,20 @@ function ContactPickerSheet({
             <Text style={styles.caption}>Buscando contactos...</Text>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={styles.contactPickerList} keyboardShouldPersistTaps="handled">
+          <ScrollView
+            alwaysBounceHorizontal={false}
+            contentContainerStyle={styles.contactPickerList}
+            directionalLockEnabled
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+          >
             {contacts.length ? contacts.slice(0, 40).map((contact) => (
-              <ContactPickerRow key={contact.id} contact={contact} onPress={() => onSelect(contact)} />
+              <ContactPickerRow
+                key={contact.id}
+                contact={contact}
+                showSendIcon={false}
+                onPress={() => onSelect(contact)}
+              />
             )) : (
               <Text style={styles.contactPickerEmpty}>No hay contactos para mostrar.</Text>
             )}
@@ -9294,19 +14196,67 @@ function ContactPickerSheet({
   );
 }
 
-function ContactPickerRow({ contact, showSendIcon = true, onPress }: { contact: ChatContact; showSendIcon?: boolean; onPress: () => void }) {
-  const avatar = getContactAvatar(contact);
-  const channelKind = getContactChannelKind(contact);
-  const channelColor = CHANNEL_BADGE_COLORS[channelKind];
+function CameraShareMediaPreview({ media }: { media: ConversationDraftAttachment }) {
+  if (media.kind === 'image') {
+    return <Image source={{ uri: media.uri }} resizeMode="contain" style={styles.cameraShareMediaImage as ImageStyle} />;
+  }
+
+  return <CameraShareVideoPreview media={media} />;
+}
+
+function CameraShareVideoPreview({ media }: { media: ConversationDraftAttachment }) {
+  const player = useVideoPlayer(media.uri, (instance) => {
+    instance.loop = true;
+    instance.muted = true;
+    instance.play();
+  });
+
   return (
-    <Pressable onPress={onPress} style={({ pressed }) => [styles.contactPickerRow, pressed && styles.pressed]}>
-      <View style={[styles.contactPickerAvatar, { borderColor: channelColor }]}>
-        {avatar ? <Image source={{ uri: avatar }} style={styles.contactPickerAvatarImage as ImageStyle} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
+    <View style={styles.cameraShareVideoStage}>
+      <VideoView player={player} style={styles.cameraShareVideo} contentFit="contain" nativeControls />
+      <View style={styles.cameraShareVideoBadge}>
+        <Video size={14} color={COLORS.white} strokeWidth={2.6} />
+        <Text style={styles.cameraShareVideoBadgeText}>{formatDurationMs(media.durationMs)}</Text>
+      </View>
+    </View>
+  );
+}
+
+function ContactPickerRow({
+  checklist = false,
+  contact,
+  fullBleed = false,
+  selected = false,
+  showSendIcon = true,
+  onPress,
+}: {
+  checklist?: boolean;
+  contact: ChatContact;
+  fullBleed?: boolean;
+  selected?: boolean;
+  showSendIcon?: boolean;
+  onPress: () => void;
+}) {
+  const avatar = getContactAvatar(contact);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Seleccionar ${getContactName(contact)}`}
+      onPress={onPress}
+      style={({ pressed }) => [styles.contactPickerRow, fullBleed && styles.contactPickerRowFullBleed, selected && styles.contactPickerRowSelected, pressed && styles.pressed]}
+    >
+      <View style={styles.contactPickerAvatar}>
+        {avatar ? <Image source={{ uri: avatar }} style={styles.contactPickerAvatarImage as ImageStyle} /> : <Text style={styles.avatarText}>{getContactInitials(contact)}</Text>}
       </View>
       <View style={styles.contactPickerCopy}>
         <Text numberOfLines={1} style={styles.contactPickerName}>{getContactName(contact)}</Text>
         <Text numberOfLines={1} style={styles.contactPickerSubtitle}>{contact.phone || contact.email || getChatPreview(contact)}</Text>
       </View>
+      {checklist ? (
+        <View style={[styles.contactPickerCheck, selected && styles.contactPickerCheckActive]}>
+          {selected ? <Check size={15} color={COLORS.white} strokeWidth={3} /> : null}
+        </View>
+      ) : null}
       {showSendIcon ? <Send size={18} color={COLORS.accent} strokeWidth={2.5} /> : null}
     </Pressable>
   );
@@ -9336,9 +14286,9 @@ function AssistantChatRow({ onPress }: { onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.aiChatRow, pressed && styles.pressed]}>
       <View pointerEvents="none" style={styles.aiChatDivider} />
-      <View style={styles.aiChatAvatarSlot}>
-        <View style={styles.aiChatAvatar}>
-          <Bot size={23} color={COLORS.accent} strokeWidth={2.4} />
+      <View style={styles.avatar}>
+        <View style={[styles.avatarCircle, styles.aiChatAvatarCircle]}>
+          <Bot size={23} color={COLORS.text} strokeWidth={2.4} />
         </View>
       </View>
       <View style={styles.aiChatBody}>
@@ -9352,32 +14302,744 @@ function AssistantChatRow({ onPress }: { onPress: () => void }) {
   );
 }
 
-function AssistantConversationScreen({ onBack }: { onBack: () => void }) {
+function createAssistantConversationMessage(
+  role: AIAgentMessage['role'],
+  content: string,
+  patch: Partial<AssistantConversationMessage> = {},
+): AssistantConversationMessage {
+  assistantConversationMessageCounter += 1;
+  return {
+    id: `${AI_AGENT_CHAT_ID}-${role}-${assistantConversationMessageCounter}`,
+    role,
+    content,
+    ...patch,
+  };
+}
+
+function getNativeAIAgentViewContext() {
+  return {
+    path: '/mobile/chat/ai-agent',
+    title: AI_AGENT_CHAT_DISPLAY_NAME,
+    routeLabel: 'App móvil · Chats · Asistente Personal AI',
+    visibleText: [
+      'Usuario usando la app móvil nativa de Ristak.',
+      'Está dentro de la bandeja de chats y abrió el Asistente Personal AI.',
+      'Esta conversación no corresponde a un contacto externo y no debe agendar citas ni registrar pagos por sí sola.',
+    ].join(' '),
+  };
+}
+
+function getAssistantAttachmentKind(mimeType: string, fallbackName = ''): AIAgentAttachmentKind {
+  const mime = mimeType.toLowerCase();
+  const name = fallbackName.toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  if (mime.startsWith('text/') || name.endsWith('.txt') || name.endsWith('.md') || name.endsWith('.csv')) return 'text';
+  return 'file';
+}
+
+function getAssistantAttachmentName(uri: string, fallback = 'archivo') {
+  const cleanUri = uri.split('?')[0] || uri;
+  const filename = decodeURIComponent(cleanUri.split('/').filter(Boolean).pop() || '').trim();
+  return filename || fallback;
+}
+
+function getAssistantAttachmentPromptText(attachments: AIAgentAttachment[]) {
+  if (!attachments.length) return '';
+  if (attachments.length === 1) {
+    const attachment = attachments[0];
+    if (attachment.kind === 'image') return 'Analiza esta imagen y dime qué ves.';
+    if (attachment.kind === 'video') return 'Analiza este video adjunto y dime qué puedes inferir.';
+    return `Analiza este archivo adjunto: ${attachment.name}.`;
+  }
+  return `Analiza estos ${attachments.length} archivos adjuntos y dime qué encuentras.`;
+}
+
+function formatMegabytes(bytes: number) {
+  const value = bytes / 1024 / 1024;
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function getAssistantAttachmentPayloadBytes(attachment: Pick<AIAgentAttachment, 'dataUrl' | 'text' | 'thumbnailDataUrl' | 'size'>) {
+  if (!attachment.dataUrl && !attachment.text && !attachment.thumbnailDataUrl) return 0;
+  return Math.max(0, Number(attachment.size || 0));
+}
+
+function waitForAssistantPickerPresentation() {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, AI_AGENT_PICKER_PRESENTATION_DELAY_MS);
+  });
+}
+
+async function createAssistantAttachmentDraft({
+  uri,
+  name,
+  mimeType,
+  size,
+}: {
+  uri: string;
+  name?: string | null;
+  mimeType?: string | null;
+  size?: number | null;
+}): Promise<AssistantAttachmentDraft> {
+  const resolvedMimeType = String(mimeType || 'application/octet-stream');
+  const resolvedName = String(name || getAssistantAttachmentName(uri)).trim() || 'archivo';
+  let resolvedSize = Math.max(0, Number(size || 0));
+  let sizeKnown = size !== null && size !== undefined && Number.isFinite(Number(size));
+  if (!sizeKnown) {
+    try {
+      const info = await FileSystem.getInfoAsync(uri);
+      if (info.exists && !info.isDirectory && typeof info.size === 'number') {
+        resolvedSize = Math.max(0, info.size);
+        sizeKnown = true;
+      }
+    } catch {
+      sizeKnown = false;
+    }
+  }
+  const kind = getAssistantAttachmentKind(resolvedMimeType, resolvedName);
+
+  if (!sizeKnown) {
+    throw new Error(`No pude validar el tamaño de ${resolvedName}. Intenta con otro archivo.`);
+  }
+
+  if (kind === 'video') {
+    throw new Error('El asistente móvil todavía no analiza videos. Sube una imagen o documento.');
+  }
+
+  if (kind === 'text' && resolvedSize > AI_AGENT_TEXT_ATTACHMENT_MAX_BYTES) {
+    throw new Error(`${resolvedName} pesa ${formatMegabytes(resolvedSize)} MB. El asistente móvil acepta textos de hasta ${formatMegabytes(AI_AGENT_TEXT_ATTACHMENT_MAX_BYTES)} MB.`);
+  }
+
+  if (kind !== 'text' && resolvedSize > AI_AGENT_DIRECT_ATTACHMENT_MAX_BYTES) {
+    throw new Error(`${resolvedName} pesa ${formatMegabytes(resolvedSize)} MB. El asistente móvil acepta archivos de hasta ${formatMegabytes(AI_AGENT_DIRECT_ATTACHMENT_MAX_BYTES)} MB.`);
+  }
+
+  const attachment: AssistantAttachmentDraft = {
+    id: `assistant-attachment-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    uri,
+    name: resolvedName,
+    mimeType: resolvedMimeType,
+    size: resolvedSize,
+    kind,
+  };
+
+  if (kind === 'text' && resolvedSize <= AI_AGENT_TEXT_ATTACHMENT_MAX_BYTES) {
+    const text = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.UTF8 });
+    attachment.text = text.length > AI_AGENT_TEXT_ATTACHMENT_CHAR_LIMIT
+      ? `${text.slice(0, AI_AGENT_TEXT_ATTACHMENT_CHAR_LIMIT)}\n\n[Archivo truncado para el agente: ${resolvedSize} bytes]`
+      : text;
+    return attachment;
+  }
+
+  const base64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+  attachment.dataUrl = `data:${resolvedMimeType};base64,${base64}`;
+
+  return attachment;
+}
+
+function prepareAssistantMessagesForApi(messages: AssistantConversationMessage[]) {
+  return messages
+    .filter((message) => message.role === 'user' || message.role === 'assistant')
+    .filter((message) => message.content.trim())
+    .slice(-24)
+    .map((message) => ({
+      role: message.role,
+      content: message.content,
+      ...(message.attachments?.length ? {
+        attachments: message.attachments.map((attachment) => ({
+          id: attachment.id,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          size: attachment.size,
+          kind: attachment.kind,
+          ...(attachment.dataUrl ? { dataUrl: attachment.dataUrl } : {}),
+          ...(attachment.text ? { text: attachment.text } : {}),
+          ...(attachment.thumbnailDataUrl ? { thumbnailDataUrl: attachment.thumbnailDataUrl } : {}),
+        })),
+      } : {}),
+      ...(message.selectedClarificationOption ? { selectedClarificationOption: message.selectedClarificationOption } : {}),
+    }));
+}
+
+type AssistantConversationScreenProps = {
+  api: RistakApiClient;
+  onBack: () => void;
+};
+
+function AssistantConversationScreen({ api, onBack }: AssistantConversationScreenProps) {
+  const listRef = useRef<FlatList<AssistantConversationMessage>>(null);
+  const inputRef = useRef<TextInput>(null);
+  const messagesRef = useRef<AssistantConversationMessage[]>([]);
+  const mountedRef = useRef(true);
+  const [messages, setMessages] = useState<AssistantConversationMessage[]>(() => [
+    createAssistantConversationMessage('assistant', 'Listo. Soy tu Asistente Personal AI en Ristak. Pregúntame lo que necesites revisar, decidir o preparar dentro del negocio.'),
+  ]);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [status, setStatus] = useState<AIAgentConfigStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [attachments, setAttachments] = useState<AssistantAttachmentDraft[]>([]);
+  const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
+  const [voiceState, setVoiceState] = useState<AssistantVoiceState>('idle');
+  const audioRecorder = useAudioRecorder({ ...RecordingPresets.LOW_QUALITY, isMeteringEnabled: true });
+  const audioRecorderState = useAudioRecorderState(audioRecorder, 250);
+  const hasDraft = Boolean(draft.trim());
+  const hasAssistantContent = hasDraft || attachments.length > 0;
+  const voiceRecordingVisible = voiceState === 'recording' || voiceState === 'paused' || voiceState === 'processing';
+  const conversationFrameBackground = keyboardVisible
+    ? getNativeConversationKeyboardSurfaceBackground()
+    : getNativeConversationComposerBackground();
+
+  useEffect(() => {
+    messagesRef.current = messages;
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToEnd({ animated: true });
+    });
+  }, [messages]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    api.getAIAgentConfig()
+      .then((nextStatus) => {
+        if (mountedRef.current) setStatus(nextStatus);
+      })
+      .catch(() => {
+        if (mountedRef.current) setStatus(null);
+      })
+      .finally(() => {
+        if (mountedRef.current) setStatusLoading(false);
+      });
+
+    const show = Keyboard.addListener('keyboardWillShow', () => setKeyboardVisible(true));
+    const showDid = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardVisible(false));
+    const hideDid = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => {
+      mountedRef.current = false;
+      show.remove();
+      showDid.remove();
+      hide.remove();
+      hideDid.remove();
+    };
+  }, [api]);
+
+  const sendAssistantMessage = useCallback(async (
+    overrideText?: string,
+    selectedClarificationOption?: AIAgentMessage['selectedClarificationOption'],
+  ) => {
+    const messageAttachments = overrideText === undefined ? [...attachments] : [];
+    const text = (overrideText ?? draft).trim();
+    const messageText = text || getAssistantAttachmentPromptText(messageAttachments);
+    if ((!messageText && !messageAttachments.length) || sending) return;
+
+    const userMessage = createAssistantConversationMessage('user', messageText, {
+      attachments: messageAttachments.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        size: attachment.size,
+        kind: attachment.kind,
+        dataUrl: attachment.dataUrl,
+        text: attachment.text,
+        thumbnailDataUrl: attachment.thumbnailDataUrl,
+      })),
+      selectedClarificationOption,
+    });
+    const nextMessages = [...messagesRef.current, userMessage];
+    setDraft('');
+    if (overrideText === undefined) setAttachments([]);
+    setMessages(nextMessages);
+    inputRef.current?.focus();
+
+    if (status && !status.configured) {
+      setMessages((current) => [
+        ...current,
+        createAssistantConversationMessage(
+          'assistant',
+          status.needsReconnect
+            ? 'OpenAI necesita reconectarse en Configuración para que pueda responder desde este chat.'
+            : 'Primero conecta OpenAI en Configuración > Asistente Personal AI. Después este chat responde igual que el asistente de escritorio.',
+          { failed: true },
+        ),
+      ]);
+      return;
+    }
+
+    setSending(true);
+    try {
+      const result = await api.sendAIAgentMessage(
+        prepareAssistantMessagesForApi(nextMessages),
+        getNativeAIAgentViewContext(),
+        'auto',
+      );
+      if (!mountedRef.current) return;
+      setMessages((current) => [
+        ...current,
+        createAssistantConversationMessage('assistant', result.reply || 'Listo. ¿Qué más revisamos?', {
+          sources: result.sources,
+          clarificationOptions: result.clarificationOptions,
+          trace: result.trace,
+        }),
+      ]);
+    } catch (err) {
+      if (!mountedRef.current) return;
+      const message = err instanceof Error ? err.message : 'Revisa la configuración del asistente e inténtalo otra vez.';
+      setMessages((current) => [
+        ...current,
+        createAssistantConversationMessage('assistant', `No pude responder ahorita. ${message}`, { failed: true }),
+      ]);
+    } finally {
+      if (mountedRef.current) {
+        setSending(false);
+        inputRef.current?.focus();
+      }
+    }
+  }, [api, attachments, draft, sending, status]);
+
+  const addAssistantAttachments = useCallback(async (nextAttachments: AssistantAttachmentDraft[]) => {
+    if (!nextAttachments.length) return;
+    const available = Math.max(0, CONVERSATION_ATTACHMENT_LIMIT - attachments.length);
+    if (available <= 0) {
+      Alert.alert('Archivos', `Puedes adjuntar hasta ${CONVERSATION_ATTACHMENT_LIMIT} archivos por mensaje.`);
+      return;
+    }
+
+    const currentPayloadBytes = attachments.reduce((total, attachment) => total + getAssistantAttachmentPayloadBytes(attachment), 0);
+    const accepted: AssistantAttachmentDraft[] = [];
+    let totalPayloadBytes = currentPayloadBytes;
+    let rejectedByTotal = false;
+
+    for (const attachment of nextAttachments.slice(0, available)) {
+      const payloadBytes = getAssistantAttachmentPayloadBytes(attachment);
+      if (totalPayloadBytes + payloadBytes > AI_AGENT_DIRECT_ATTACHMENTS_MAX_TOTAL_BYTES) {
+        rejectedByTotal = true;
+        continue;
+      }
+      accepted.push(attachment);
+      totalPayloadBytes += payloadBytes;
+    }
+
+    if (accepted.length) {
+      setAttachments([...attachments, ...accepted]);
+    }
+
+    if (rejectedByTotal) {
+      Alert.alert('Archivos', `El asistente móvil acepta hasta ${formatMegabytes(AI_AGENT_DIRECT_ATTACHMENTS_MAX_TOTAL_BYTES)} MB por mensaje. Quita un archivo o sube uno más ligero.`);
+    }
+  }, [attachments]);
+
+  const pickAssistantMedia = useCallback(async () => {
+    setAttachmentSheetOpen(false);
+    await waitForAssistantPickerPresentation();
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      const accessPrivileges = (permission as { accessPrivileges?: string }).accessPrivileges;
+      if (!permission.granted && accessPrivileges !== 'limited') {
+        throw new Error('Activa el acceso a tus fotos para adjuntarlas al asistente.');
+      }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsMultipleSelection: true,
+        quality: 0.88,
+      });
+      if (result.canceled) return;
+      const drafts = await Promise.all((result.assets || []).slice(0, CONVERSATION_ATTACHMENT_LIMIT).map((asset) => (
+        createAssistantAttachmentDraft({
+          uri: asset.uri,
+          name: asset.fileName || getAssistantAttachmentName(asset.uri, 'foto.jpg'),
+          mimeType: asset.mimeType || 'image/jpeg',
+          size: asset.fileSize,
+        })
+      )));
+      await addAssistantAttachments(drafts);
+    } catch (err) {
+      Alert.alert('Archivos', err instanceof Error ? err.message : 'No pude abrir tus fotos.');
+    }
+  }, [addAssistantAttachments]);
+
+  const pickAssistantDocument = useCallback(async () => {
+    setAttachmentSheetOpen(false);
+    await waitForAssistantPickerPresentation();
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: true,
+        type: '*/*',
+      });
+      if (result.canceled) return;
+      const drafts = await Promise.all((result.assets || []).slice(0, CONVERSATION_ATTACHMENT_LIMIT).map((asset) => (
+        createAssistantAttachmentDraft({
+          uri: asset.uri,
+          name: asset.name,
+          mimeType: asset.mimeType,
+          size: asset.size,
+        })
+      )));
+      await addAssistantAttachments(drafts);
+    } catch (err) {
+      Alert.alert('Documentos', err instanceof Error ? err.message : 'No pude abrir tus documentos.');
+    }
+  }, [addAssistantAttachments]);
+
+  const removeAssistantAttachment = useCallback((id: string) => {
+    setAttachments((current) => current.filter((attachment) => attachment.id !== id));
+  }, []);
+
+  const startAssistantVoiceRecording = useCallback(async () => {
+    if (sending || voiceState !== 'idle') return;
+    try {
+      const permission = await requestRecordingPermissionsAsync();
+      if (!permission.granted) throw new Error('Activa el micrófono para mandar notas de voz al asistente.');
+      await setAudioModeAsync({
+        allowsRecording: true,
+        playsInSilentMode: true,
+      });
+      await audioRecorder.prepareToRecordAsync();
+      audioRecorder.record();
+      setVoiceState('recording');
+    } catch (err) {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+      Alert.alert('Micrófono', err instanceof Error ? err.message : 'No pude iniciar la grabación.');
+      setVoiceState('idle');
+    }
+  }, [audioRecorder, sending, voiceState]);
+
+  const cancelAssistantVoiceRecording = useCallback(async () => {
+    try {
+      if (voiceState === 'recording' || voiceState === 'paused') {
+        await audioRecorder.stop();
+      }
+    } catch {
+      // La grabación puede estar demasiado corta; cancelarla no debe romper el chat.
+    } finally {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+      setVoiceState('idle');
+    }
+  }, [audioRecorder, voiceState]);
+
+  const finishAssistantVoiceRecording = useCallback(async () => {
+    if (voiceState !== 'recording' && voiceState !== 'paused') return;
+    setVoiceState('processing');
+    try {
+      await audioRecorder.stop();
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+      const audioUri = audioRecorder.uri;
+      if (!audioUri) throw new Error('No se grabó audio. Intenta otra vez.');
+      const transcription = await api.transcribeAIAgentAudio(audioUri, 'audio/m4a');
+      const transcript = String(transcription.text || '').trim();
+      if (!transcript) throw new Error('No detecté texto en la nota de voz.');
+      setVoiceState('idle');
+      await sendAssistantMessage(transcript);
+    } catch (err) {
+      await setAudioModeAsync({
+        allowsRecording: false,
+        playsInSilentMode: true,
+      }).catch(() => undefined);
+      setVoiceState('idle');
+      Alert.alert('Nota de voz', err instanceof Error ? err.message : 'No pude interpretar el audio.');
+    }
+  }, [api, audioRecorder, sendAssistantMessage, voiceState]);
+
+  const toggleAssistantVoicePause = useCallback(() => {
+    if (voiceState === 'recording') {
+      audioRecorder.pause();
+      setVoiceState('paused');
+      return;
+    }
+    if (voiceState === 'paused') {
+      audioRecorder.record();
+      setVoiceState('recording');
+    }
+  }, [audioRecorder, voiceState]);
+
+  const renderAssistantMessage = useCallback(({ item }: { item: AssistantConversationMessage }) => (
+    <AssistantMessageBubble message={item} onOptionPress={(option) => {
+      void sendAssistantMessage(option.label, {
+        label: option.label,
+        value: option.value,
+        ...(option.description ? { description: option.description } : {}),
+        assistantMessageId: item.id,
+      });
+    }} />
+  ), [sendAssistantMessage]);
+
   return (
-    <AppFrame>
+    <AppFrame backgroundColor={conversationFrameBackground} keyboardAvoiding={false}>
       <View style={styles.conversationHeader}>
         <Pressable onPress={onBack} style={styles.backButton}>
-          <Text style={styles.backLabel}>{'<'}</Text>
+          <ChevronLeft size={30} color={COLORS.text} strokeWidth={2} />
         </Pressable>
+        <View style={styles.aiConversationHeaderAvatar}>
+          <Bot size={20} color={COLORS.accent} strokeWidth={2.45} />
+        </View>
         <View style={styles.conversationTitleWrap}>
           <Text numberOfLines={1} style={styles.headerTitle}>{AI_AGENT_CHAT_DISPLAY_NAME}</Text>
-          <Text numberOfLines={1} style={styles.caption}>{AI_AGENT_CHAT_SUBTITLE}</Text>
-        </View>
-      </View>
-      <View style={styles.aiConversationBody}>
-        <View style={styles.aiWelcomeBubble}>
-          <Bot size={25} color={COLORS.accent} strokeWidth={2.4} />
-          <Text style={styles.aiWelcomeTitle}>Chat fijo listo</Text>
-          <Text style={styles.aiWelcomeCopy}>
-            Esta entrada nativa ya queda en la bandeja. La conexión completa con el asistente de `/movil` sigue pendiente para usar el mismo historial y proveedor.
+          <Text numberOfLines={1} style={styles.caption}>
+            {statusLoading ? 'Conectando...' : status?.configured === false ? 'Configura OpenAI para activarlo' : AI_AGENT_CHAT_SUBTITLE}
           </Text>
         </View>
       </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'height' : undefined}
+        keyboardVerticalOffset={0}
+        style={[styles.conversationBody, keyboardVisible && styles.conversationBodyKeyboardActive]}
+      >
+        <View pointerEvents="none" style={styles.conversationWallpaper}>
+          {CONVERSATION_WALLPAPER_DOTS.map((dot, index) => (
+            <View
+              key={`ai-chat-wallpaper-dot-${index}`}
+              style={[
+                styles.conversationWallpaperDot,
+                {
+                  left: dot.left,
+                  top: dot.top,
+                  width: dot.size,
+                  height: dot.size,
+                  borderRadius: dot.size / 2,
+                  opacity: dot.opacity,
+                },
+              ]}
+            />
+          ))}
+        </View>
+        <FlatList
+          ref={listRef}
+          data={messages}
+          keyExtractor={(item) => item.id}
+          renderItem={renderAssistantMessage}
+          style={styles.aiAssistantMessageList}
+          contentContainerStyle={styles.messageList}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          ListFooterComponent={sending ? (
+            <View style={[styles.messageRow, styles.messageRowInbound]}>
+              <View style={styles.aiTypingBubble}>
+                <ActivityIndicator color={COLORS.accent} size="small" />
+                <Text style={styles.aiTypingText}>Pensando...</Text>
+              </View>
+            </View>
+          ) : null}
+        />
+        {attachments.length && !voiceRecordingVisible ? (
+          <AssistantAttachmentTray attachments={attachments} onRemove={removeAssistantAttachment} />
+        ) : null}
+        {voiceRecordingVisible ? (
+          voiceState === 'processing' ? (
+            <View style={styles.aiVoiceProcessingPanel}>
+              <ActivityIndicator color={COLORS.accent} />
+              <Text style={styles.aiTypingText}>Interpretando audio...</Text>
+            </View>
+          ) : (
+            <NativeVoiceRecordingPanel
+              durationMs={Math.max(0, Number(audioRecorderState.durationMillis || 0))}
+              metering={audioRecorderState.metering}
+              paused={voiceState === 'paused' || !audioRecorderState.isRecording}
+              onCancel={() => void cancelAssistantVoiceRecording()}
+              onSend={() => void finishAssistantVoiceRecording()}
+              onTogglePause={toggleAssistantVoicePause}
+            />
+          )
+        ) : (
+        <View style={[styles.composer, hasAssistantContent && styles.composerHasContent, styles.aiAssistantComposer, keyboardVisible && styles.composerKeyboardActive]}>
+          <Pressable accessibilityRole="button" accessibilityLabel="Agregar archivo" onPress={() => setAttachmentSheetOpen(true)} style={styles.composerPlus}>
+            <Plus size={28} color={COLORS.text} strokeWidth={1.9} />
+          </Pressable>
+          <View style={styles.messageInputWrap}>
+            <TextInput
+              ref={inputRef}
+              value={draft}
+              onChangeText={setDraft}
+              multiline
+              editable={!sending}
+              autoCapitalize="sentences"
+              autoCorrect
+              placeholder="Pregúntale a tu asistente"
+              placeholderTextColor={COLORS.muted}
+              keyboardAppearance={getNativeKeyboardAppearance()}
+              textAlignVertical="center"
+              style={styles.composerInput}
+            />
+          </View>
+          <View style={[styles.composerTrailingActions, styles.composerTrailingActionsCompact]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={hasAssistantContent ? 'Enviar mensaje al asistente' : 'Grabar nota de voz para el asistente'}
+              disabled={sending}
+              onPress={() => {
+                if (hasAssistantContent) {
+                  void sendAssistantMessage();
+                  return;
+                }
+                void startAssistantVoiceRecording();
+              }}
+              style={[styles.composerSendButton, hasAssistantContent && styles.composerSendButtonActive, sending && styles.disabledButton]}
+            >
+              {sending ? <ActivityIndicator color={COLORS.white} /> : hasAssistantContent ? <ArrowRight size={18} color={COLORS.white} strokeWidth={2.55} /> : <Mic size={26} color={COLORS.text} strokeWidth={1.9} />}
+            </Pressable>
+          </View>
+        </View>
+        )}
+      </KeyboardAvoidingView>
+      <AssistantAttachmentSheet
+        open={attachmentSheetOpen}
+        onClose={() => setAttachmentSheetOpen(false)}
+        onDocument={() => void pickAssistantDocument()}
+        onMedia={() => void pickAssistantMedia()}
+      />
     </AppFrame>
   );
 }
 
+function AssistantMessageBubble({
+  message,
+  onOptionPress,
+}: {
+  message: AssistantConversationMessage;
+  onOptionPress: (option: AIAgentClarificationOption) => void;
+}) {
+  const outbound = message.role === 'user';
+  return (
+    <View style={[styles.messageRow, outbound ? styles.messageRowOutbound : styles.messageRowInbound]}>
+      <View style={[styles.messageBubble, styles.aiMessageBubble, outbound ? styles.outboundBubble : styles.inboundBubble, message.failed && styles.failedBubble]}>
+        {message.attachments?.length ? (
+          <View style={styles.aiMessageAttachmentGrid}>
+            {message.attachments.slice(0, 4).map((attachment) => (
+              <View key={attachment.id} style={styles.aiMessageAttachmentPreview}>
+                <AssistantAttachmentPreview attachment={{
+                  dataUrl: attachment.dataUrl,
+                  kind: attachment.kind,
+                  name: attachment.name,
+                }} />
+              </View>
+            ))}
+          </View>
+        ) : null}
+        <Text style={[styles.aiMessageText, message.failed && styles.failedMessageText]}>{message.content}</Text>
+        {message.sources?.length ? (
+          <View style={styles.aiMessageSources}>
+            <Link2 size={12} color={COLORS.meta} strokeWidth={2.4} />
+            <Text numberOfLines={1} style={styles.aiMessageSourcesText}>{message.sources.length} fuente{message.sources.length === 1 ? '' : 's'}</Text>
+          </View>
+        ) : null}
+        {message.clarificationOptions?.length ? (
+          <View style={styles.aiMessageOptions}>
+            {message.clarificationOptions.slice(0, 4).map((option) => (
+              <Pressable
+                key={`${message.id}-${option.value}-${option.label}`}
+                accessibilityRole="button"
+                onPress={() => onOptionPress(option)}
+                style={({ pressed }) => [styles.aiMessageOption, pressed && styles.pressed]}
+              >
+                <Text numberOfLines={2} style={styles.aiMessageOptionText}>{option.label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function AssistantAttachmentTray({
+  attachments,
+  onRemove,
+}: {
+  attachments: AssistantAttachmentDraft[];
+  onRemove: (id: string) => void;
+}) {
+  return (
+    <View style={styles.aiAttachmentTray}>
+      <ScrollView
+        horizontal
+        keyboardShouldPersistTaps="handled"
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.aiAttachmentStrip}
+      >
+        {attachments.map((attachment) => (
+          <View key={attachment.id} style={styles.aiAttachmentCard}>
+            <AssistantAttachmentPreview attachment={attachment} />
+            <Pressable accessibilityRole="button" accessibilityLabel={`Quitar ${attachment.name}`} onPress={() => onRemove(attachment.id)} style={styles.draftAttachmentRemove}>
+              <X size={14} color={COLORS.white} strokeWidth={2.6} />
+            </Pressable>
+          </View>
+        ))}
+      </ScrollView>
+      <Text numberOfLines={1} style={styles.aiAttachmentHint}>
+        {attachments.length === 1 ? '1 archivo listo para el asistente' : `${attachments.length} archivos listos para el asistente`}
+      </Text>
+    </View>
+  );
+}
+
+function AssistantAttachmentPreview({ attachment }: { attachment: Pick<AssistantAttachmentDraft, 'dataUrl' | 'kind' | 'name'> }) {
+  if (attachment.kind === 'image' && attachment.dataUrl) {
+    return <Image source={{ uri: attachment.dataUrl }} resizeMode="cover" style={styles.aiAttachmentImage as ImageStyle} />;
+  }
+  const Icon = attachment.kind === 'video' ? Video : attachment.kind === 'pdf' || attachment.kind === 'text' ? FileText : FilePlus;
+  return (
+    <View style={styles.aiAttachmentFile}>
+      <Icon size={22} color={COLORS.accent} strokeWidth={2.4} />
+      <Text numberOfLines={2} style={styles.aiAttachmentName}>{attachment.name}</Text>
+    </View>
+  );
+}
+
+function AssistantAttachmentSheet({
+  open,
+  onClose,
+  onDocument,
+  onMedia,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onDocument: () => void;
+  onMedia: () => void;
+}) {
+  return (
+    <BottomActionSheet
+      closing={false}
+      open={open}
+      title="Enviar al asistente"
+      subtitle="Puede interpretar fotos y documentos."
+      onClose={onClose}
+    >
+      <View style={styles.sheetActionList}>
+        <SheetActionRow Icon={ImageIcon} title="Fotos" subtitle="El asistente las analiza como contexto del mensaje." onPress={onMedia} />
+        <SheetActionRow Icon={FileText} title="Documento" subtitle="PDF, texto, CSV u otros archivos compatibles." onPress={onDocument} />
+      </View>
+    </BottomActionSheet>
+  );
+}
+
+function isOutboundMessageDirection(value?: string | null) {
+  return [
+    'outbound',
+    'outgoing',
+    'sent',
+    'business',
+    'api',
+    'app',
+    'business_echo',
+    'smb_echo',
+    'echo',
+    'message_echo',
+  ].includes(normalizeProbe(value));
+}
+
 function getUnreadCount(contact: ChatContact) {
+  if (isOutboundMessageDirection(contact.lastMessageDirection)) return 0;
   return Math.max(0, Number(contact.unreadCount || 0));
 }
 
@@ -9428,6 +15090,19 @@ function getBackendChannelForComposer(channel: NativeMessageChannel) {
   if (channel === 'messenger') return 'messenger';
   if (channel === 'instagram') return 'instagram';
   return 'whatsapp_api';
+}
+
+function getScheduleChannelUnavailableReason(channel: NativeMessageChannel, contact?: ChatContact) {
+  if (channel === 'messenger' || channel === 'instagram') {
+    return 'La programación para Messenger e Instagram todavía no está disponible. Puedes enviarlo al momento desde Ristak.';
+  }
+  if (channel === 'email') {
+    return 'La programación por correo todavía no está disponible desde la app móvil.';
+  }
+  if ((channel === 'whatsapp' || channel === 'sms') && contact && !contact.phone) {
+    return 'Este contacto necesita teléfono para programar por WhatsApp o SMS.';
+  }
+  return '';
 }
 
 function contactProbeIncludes(contact: ChatContact, value: string) {
@@ -9504,6 +15179,842 @@ function formatContactMoney(value: number, accountCurrency: string) {
   return amount.toLocaleString('es-MX', { maximumFractionDigits: 2 });
 }
 
+type ContactInfoPayment = {
+  id: string;
+  amount: number;
+  currency?: string | null;
+  status?: string | null;
+  date: string;
+  title?: string | null;
+};
+
+type ContactInfoAppointment = {
+  id: string;
+  title: string;
+  status?: string | null;
+  startTime: string;
+  endTime?: string | null;
+  notes?: string | null;
+};
+
+type ContactInfoArchiveItem = {
+  id: string;
+  tab: ContactInfoArchiveTab;
+  type: 'image' | 'video' | 'document' | 'file' | 'link';
+  url: string;
+  title: string;
+  caption: string;
+  date: string;
+  direction: 'inbound' | 'outbound' | 'system';
+  mimeType?: string;
+};
+
+type ContactInfoTimelineItem = {
+  id: string;
+  type: string;
+  title: string;
+  subtitle?: string;
+  date: string;
+  Icon: LucideIcon;
+  accent?: string;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+function getReadableContactValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map(getReadableContactValue).filter(Boolean).join(', ');
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return String(record.name || record.label || record.title || record.value || '').trim();
+  }
+  return String(value).trim();
+}
+
+function parseSortableDateValue(value?: string | null) {
+  if (!value) return 0;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getContactInfoDateTime(value?: string | null, timezone?: string | null) {
+  if (!value) return '';
+  const parts = getBusinessDateTimeParts(value, timezone);
+  if (!parts) return '';
+  const month = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][parts.month - 1] || '';
+  const hour = parts.hour % 12 || 12;
+  const suffix = parts.hour >= 12 ? 'PM' : 'AM';
+  return `${parts.day} ${month} ${parts.year}, ${hour}:${String(parts.minute).padStart(2, '0')} ${suffix}`;
+}
+
+function getContactInfoDateShort(value?: string | null, timezone?: string | null) {
+  if (!value) return '';
+  const parts = getBusinessDateTimeParts(value, timezone);
+  if (!parts) return '';
+  const month = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'][parts.month - 1] || '';
+  return `${parts.day} ${month} ${parts.year}`;
+}
+
+function formatPlainStatus(value?: string | null) {
+  const normalized = String(value || '').trim();
+  if (!normalized) return 'Confirmado';
+  const lower = normalized.toLowerCase();
+  if (lower === 'paid') return 'Pagado';
+  if (lower === 'confirmed') return 'Confirmado';
+  if (lower === 'cancelled' || lower === 'canceled') return 'Cancelado';
+  if (lower === 'pending') return 'Pendiente';
+  if (lower === 'completed') return 'Completado';
+  return normalized
+    .replace(/[_-]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function getContactInfoPayments(contact?: ChatContact | null, journey: JourneyEvent[] = []): ContactInfoPayment[] {
+  const contactPayments = getContactExtraValue((contact || {}) as ChatContact, 'payments');
+  if (Array.isArray(contactPayments) && contactPayments.length) {
+    return contactPayments.map((payment, index) => {
+      const record = asRecord(payment);
+      return {
+        id: String(record.id || record.transactionId || `${contact?.id || 'contact'}-payment-${index}`),
+        amount: Number(record.amount || record.total || record.value || 0),
+        currency: getReadableContactValue(record.currency),
+        status: getReadableContactValue(record.status),
+        date: getReadableContactValue(record.date || record.createdAt || record.created_at || contact?.createdAt || new Date().toISOString()),
+        title: getReadableContactValue(record.title || record.description || record.concept),
+      };
+    }).sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date));
+  }
+
+  return journey
+    .filter((event) => event.type === 'payment')
+    .map((event, index) => {
+      const data = asRecord(event.data);
+      return {
+        id: String(data.id || `${contact?.id || 'contact'}-journey-payment-${index}`),
+        amount: Number(data.amount || data.total || data.value || 0),
+        currency: getReadableContactValue(data.currency),
+        status: getReadableContactValue(data.status),
+        date: event.date,
+        title: getReadableContactValue(data.title || data.type || data.description),
+      };
+    })
+    .sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date));
+}
+
+function getContactInfoAppointments(contact?: ChatContact | null, journey: JourneyEvent[] = []): ContactInfoAppointment[] {
+  const contactAppointments = getContactExtraValue((contact || {}) as ChatContact, 'appointments');
+  if (Array.isArray(contactAppointments) && contactAppointments.length) {
+    return contactAppointments.map((appointment, index) => {
+      const record = asRecord(appointment);
+      return {
+        id: String(record.id || record.eventId || `${contact?.id || 'contact'}-appointment-${index}`),
+        title: getReadableContactValue(record.title || record.name) || 'Cita',
+        status: getReadableContactValue(record.appointment_status || record.status),
+        startTime: getReadableContactValue(record.start_time || record.startTime || record.date || record.createdAt || contact?.createdAt || new Date().toISOString()),
+        endTime: getReadableContactValue(record.end_time || record.endTime),
+        notes: getReadableContactValue(record.notes || record.description),
+      };
+    }).sort((left, right) => parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime));
+  }
+
+  return journey
+    .filter((event) => event.type === 'appointment' || event.type === 'appointment_confirmation')
+    .map((event, index) => {
+      const data = asRecord(event.data);
+      return {
+        id: String(data.id || data.appointment_id || `${contact?.id || 'contact'}-journey-appointment-${index}`),
+        title: getReadableContactValue(data.title || data.name) || 'Cita',
+        status: getReadableContactValue(data.status || data.appointment_status) || (event.type === 'appointment_confirmation' ? 'confirmed' : ''),
+        startTime: getReadableContactValue(data.start_time || data.startTime || event.date),
+        endTime: getReadableContactValue(data.end_time || data.endTime),
+        notes: getReadableContactValue(data.notes || data.summary || data.description),
+      };
+    })
+    .sort((left, right) => parseSortableDateValue(left.startTime) - parseSortableDateValue(right.startTime));
+}
+
+function isActiveContactAppointment(appointment: ContactInfoAppointment) {
+  const status = String(appointment.status || '').toLowerCase();
+  return !['cancelled', 'canceled', 'cancelado', 'no_show', 'no asistio'].includes(status);
+}
+
+function isSuccessfulContactPayment(payment: ContactInfoPayment) {
+  const status = String(payment.status || '').trim().toLowerCase();
+  return payment.amount > 0 && (!status || SUCCESS_PAYMENT_STATUSES.has(status));
+}
+
+function extractLinksFromText(text?: string | null) {
+  return Array.from(new Set(String(text || '').match(/https?:\/\/[^\s)]+/gi) || []));
+}
+
+function getArchiveLinkTitle(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url.replace(/^https?:\/\//, '').split('/')[0] || 'Enlace';
+  }
+}
+
+function getContactArchiveItems(messages: ChatMessage[], journey: JourneyEvent[] = []): ContactInfoArchiveItem[] {
+  const items: ContactInfoArchiveItem[] = [];
+  const pushMessage = (message: ChatMessage, index: number) => {
+    const attachment = message.attachment;
+    if (attachment?.type && attachment.type !== 'audio') {
+      const type = attachment.type === 'file' ? 'document' : attachment.type;
+      const tab: ContactInfoArchiveTab = type === 'image' || type === 'video' ? 'media' : 'documents';
+      const url = attachment.url || attachment.dataUrl || '';
+      if (url || attachment.name) {
+        items.push({
+          id: `${message.id || index}-${tab}-${items.length}`,
+          tab,
+          type,
+          url,
+          title: attachment.name || getAttachmentLabel(attachment.type),
+          caption: message.text || attachment.caption || '',
+          date: message.date,
+          direction: message.direction,
+          mimeType: attachment.mimeType,
+        });
+      }
+    }
+    extractLinksFromText(message.text).forEach((url, linkIndex) => {
+      items.push({
+        id: `${message.id || index}-link-${linkIndex}`,
+        tab: 'links',
+        type: 'link',
+        url,
+        title: getArchiveLinkTitle(url),
+        caption: url,
+        date: message.date,
+        direction: message.direction,
+      });
+    });
+  };
+
+  messages.forEach(pushMessage);
+
+  journey.forEach((event, eventIndex) => {
+    const data = asRecord(event.data);
+    const text = getReadableContactValue(data.message_text || data.message || data.body);
+    extractLinksFromText(text).forEach((url, linkIndex) => {
+      const id = `${event.type}-${event.date}-journey-link-${eventIndex}-${linkIndex}`;
+      if (items.some((item) => item.id === id || item.url === url)) return;
+      items.push({
+        id,
+        tab: 'links',
+        type: 'link',
+        url,
+        title: getArchiveLinkTitle(url),
+        caption: url,
+        date: event.date,
+        direction: String(data.direction || '').toLowerCase().includes('out') ? 'outbound' : 'inbound',
+      });
+    });
+  });
+
+  return items.sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date));
+}
+
+function getTrackingData(contact?: ChatContact | null, journey: JourneyEvent[] = []) {
+  const firstSession = asRecord(getContactExtraValue((contact || {}) as ChatContact, 'firstSession'));
+  const firstPageVisit = journey.find((event) => event.type === 'page_visit');
+  const pageData = asRecord(firstPageVisit?.data);
+  const attributionSource = contact?.whatsappAttributionPlatform || contact?.attribution_session_source || contact?.source || '';
+  return {
+    startedAt: getReadableContactValue(firstSession.started_at || firstPageVisit?.date || contact?.createdAt),
+    pageUrl: getReadableContactValue(firstSession.page_url || firstSession.landing_page || pageData.page_url || pageData.landing_page || getContactExtraValue((contact || {}) as ChatContact, 'attribution_url')),
+    source: getReadableContactValue(firstSession.source_platform || firstSession.site_source_name || pageData.source_platform || pageData.site_source_name || attributionSource),
+    campaign: getReadableContactValue(firstSession.campaign_name || pageData.campaign_name || firstSession.utm_campaign || pageData.utm_campaign),
+    ad: getReadableContactValue(firstSession.ad_name || pageData.ad_name || getContactExtraValue((contact || {}) as ChatContact, 'ad_name')),
+    device: [firstSession.device_type, firstSession.browser].map(getReadableContactValue).filter(Boolean).join(' · '),
+    location: [firstSession.geo_city, firstSession.geo_region, firstSession.geo_country, pageData.geo_city, pageData.geo_region, pageData.geo_country].map(getReadableContactValue).filter(Boolean).slice(0, 3).join(', '),
+  };
+}
+
+function getPageNameFromUrl(pageUrl?: string | null) {
+  if (!pageUrl) return '';
+  try {
+    const url = new URL(pageUrl);
+    return url.pathname.split('/').filter(Boolean).pop() || url.hostname;
+  } catch {
+    return String(pageUrl).split('?')[0].split('/').filter(Boolean).pop() || String(pageUrl);
+  }
+}
+
+function getCompactPageUrlLabel(pageUrl?: string | null) {
+  const rawUrl = String(pageUrl || '').trim();
+  if (!rawUrl) return '';
+  try {
+    const url = new URL(rawUrl);
+    const pathname = url.pathname.replace(/\/+$/, '');
+    return `${url.hostname}${pathname && pathname !== '/' ? pathname : ''}`;
+  } catch {
+    return rawUrl.replace(/^https?:\/\//, '').split('?')[0].replace(/\/+$/, '');
+  }
+}
+
+function joinContactInfoJourneyDetails(parts: Array<string | false | null | undefined>) {
+  return parts
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' · ');
+}
+
+const GENERIC_JOURNEY_SOURCES = new Set(['directo', 'desconocido', 'otro']);
+const MESSAGE_JOURNEY_EVENT_TYPES = new Set(['whatsapp_message', 'meta_message', 'email_message']);
+const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i;
+const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i;
+const INSTAGRAM_META_MESSAGE_PATTERN = /(instagram|ig)/i;
+const MESSENGER_META_MESSAGE_PATTERN = /(messenger|facebook|fb)/i;
+const META_COMMENT_MESSAGE_TYPES = new Set(['comment', 'comment_reply_public', 'comment_reply_private']);
+
+function hasMeaningfulJourneyValue(value: unknown) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    return Boolean(trimmed) && !['null', 'undefined', 'nan'].includes(trimmed);
+  }
+  return true;
+}
+
+function isTruthyJourneyFlag(value: unknown) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  const normalized = normalizeProbe(getReadableContactValue(value));
+  return Boolean(normalized) && !['false', '0', 'no', 'null', 'undefined'].includes(normalized);
+}
+
+function isGenericJourneySource(source?: string | null) {
+  return GENERIC_JOURNEY_SOURCES.has(String(source || '').trim().toLowerCase());
+}
+
+function journeySourceLooksWhatsApp(source?: string | null) {
+  return WHATSAPP_JOURNEY_SOURCE_PATTERN.test(String(source || '').trim().toLowerCase());
+}
+
+function isOutboundJourneyMessage(event?: JourneyEvent | null) {
+  const data = asRecord(event?.data);
+  return isOutboundMessageDirection(getReadableContactValue(data.direction || data.message_direction || data.from_type));
+}
+
+function isBusinessAuthoredJourneyMessage(event?: JourneyEvent | null) {
+  return Boolean(event && MESSAGE_JOURNEY_EVENT_TYPES.has(event.type) && isOutboundJourneyMessage(event));
+}
+
+function getJourneySourceLabelFromData(data: Record<string, unknown> = {}) {
+  const explicitSource = getReadableContactValue(data.conversion_source);
+  if (explicitSource && !isGenericJourneySource(explicitSource)) return explicitSource;
+
+  const candidates = [
+    data.source_platform,
+    data.ad_platform,
+    data.site_source_name,
+    data.referral_source_app,
+    data.utm_source,
+    data.referral_source_type,
+    data.referral_entry_point,
+    data.source,
+  ];
+  for (const candidate of candidates) {
+    const source = getReadableContactValue(candidate);
+    if (source && !isGenericJourneySource(source)) return source;
+  }
+
+  const referrer = getReadableContactValue(data.referrer_url || data.referral_source_url || data.source_url);
+  if (WEB_JOURNEY_SOURCE_PATTERN.test(referrer)) {
+    return getPageNameFromUrl(referrer) || referrer;
+  }
+
+  return '';
+}
+
+function hasWebJourneySignal(event?: JourneyEvent | null) {
+  if (!event) return false;
+  if (event.type === 'page_visit') return true;
+  if (event.type !== 'contact_created') return false;
+
+  const data = asRecord(event.data);
+  const conversionChannel = getReadableContactValue(data.conversion_channel).toLowerCase();
+  const eventName = getReadableContactValue(data.event_name).toLowerCase();
+  const conversionType = getReadableContactValue(data.conversion_type).toLowerCase();
+  const source = getReadableContactValue(data.source).toLowerCase();
+  const sourceLabel = getJourneySourceLabelFromData(data);
+
+  if (conversionChannel === 'web') return true;
+  if (data.submission_id || data.form_site_id || data.form_site_name) return true;
+  if (getReadableContactValue(data.tracking_source).toLowerCase() === 'native_site' || data.site_id || data.public_page_id) return true;
+  if (eventName.includes('form') || eventName.includes('conversion')) return true;
+  if (conversionType.includes('form') || conversionType.includes('conversion')) return true;
+  if (WEB_JOURNEY_SOURCE_PATTERN.test(source)) return true;
+
+  return Boolean(sourceLabel && !journeySourceLooksWhatsApp(sourceLabel));
+}
+
+function isWhatsAppJourneyEvent(event?: JourneyEvent | null) {
+  if (!event) return false;
+  const data = asRecord(event.data);
+  const conversionChannel = getReadableContactValue(data.conversion_channel).toLowerCase();
+
+  if (event.type === 'whatsapp_message') return !isOutboundJourneyMessage(event);
+  if (event.type !== 'contact_created') return false;
+  if (hasWebJourneySignal(event)) return false;
+  if (conversionChannel === 'web') return false;
+  if (conversionChannel === 'whatsapp') return true;
+
+  const source = getReadableContactValue(data.source || data.referral_source_app || data.referral_entry_point).toLowerCase();
+  return source.includes('whatsapp');
+}
+
+function getMetaMessagePlatformText(event?: JourneyEvent | null) {
+  const data = asRecord(event?.data);
+  return [
+    data.source,
+    data.social_platform,
+    data.transport,
+    data.channel,
+  ].map(getReadableContactValue).filter(Boolean).join(' ');
+}
+
+function getMetaMessagePlatformKey(event?: JourneyEvent | null) {
+  const platformText = getMetaMessagePlatformText(event);
+  if (INSTAGRAM_META_MESSAGE_PATTERN.test(platformText)) return 'instagram';
+  if (MESSENGER_META_MESSAGE_PATTERN.test(platformText)) return 'messenger';
+  return 'meta';
+}
+
+function getMetaMessageTitle(event?: JourneyEvent | null) {
+  const platform = getMetaMessagePlatformKey(event);
+  if (platform === 'instagram') return 'Instagram';
+  if (platform === 'messenger') return 'Messenger';
+  return 'Meta';
+}
+
+function isMetaMessageJourneyEvent(event?: JourneyEvent | null) {
+  return Boolean(event?.type === 'meta_message' && !isOutboundJourneyMessage(event));
+}
+
+function getMetaMessageType(event?: JourneyEvent | null) {
+  return getReadableContactValue(asRecord(event?.data).message_type).toLowerCase();
+}
+
+function isMetaCommentJourneyEvent(event?: JourneyEvent | null) {
+  const data = asRecord(event?.data);
+  return Boolean(data.comment_id || META_COMMENT_MESSAGE_TYPES.has(getMetaMessageType(event)));
+}
+
+function getMetaMessageDailyKind(event?: JourneyEvent | null): 'comment' | 'message' {
+  return isMetaCommentJourneyEvent(event) ? 'comment' : 'message';
+}
+
+function getMetaMessageSurfaceLabel(event?: JourneyEvent | null) {
+  if (isMetaCommentJourneyEvent(event)) {
+    const platform = getMetaMessagePlatformKey(event);
+    if (platform === 'instagram') return 'Comentario de Instagram';
+    if (platform === 'messenger') return 'Comentario de Messenger';
+    return 'Comentario social';
+  }
+  const source = getReadableContactValue(asRecord(event?.data).source);
+  if (source) return source;
+  const title = getMetaMessageTitle(event);
+  return title === 'Meta' ? 'Mensaje social' : `Mensaje privado de ${title}`;
+}
+
+function isDailyContactJourneyEvent(event?: JourneyEvent | null) {
+  return Boolean(event && (event.type === 'contact_created' || isWhatsAppJourneyEvent(event) || isMetaMessageJourneyEvent(event)));
+}
+
+function isAdAttributedJourneyEvent(event: JourneyEvent) {
+  const data = asRecord(event.data);
+  if (event.type === 'whatsapp_message' && isOutboundJourneyMessage(event)) return false;
+  return Boolean(
+    isTruthyJourneyFlag(data.is_ad_attributed) ||
+    hasMeaningfulJourneyValue(data.attribution_ad_id) ||
+    hasMeaningfulJourneyValue(data.referral_source_id) ||
+    hasMeaningfulJourneyValue(data.referral_ctwa_clid)
+  );
+}
+
+function getJourneyEventTime(event: JourneyEvent) {
+  const time = parseSortableDateValue(event.date);
+  return time > 0 ? time : null;
+}
+
+function getFirstSuccessfulJourneyPaymentTime(events: JourneyEvent[]) {
+  const paymentTimes = events
+    .filter((event) => event.type === 'payment')
+    .filter((event) => {
+      const data = asRecord(event.data);
+      const status = normalizeProbe(getReadableContactValue(data.status));
+      const amount = Number(data.amount || data.total || data.value || 0);
+      return amount > 0 && (!status || SUCCESS_PAYMENT_STATUSES.has(status));
+    })
+    .map(getJourneyEventTime)
+    .filter((time): time is number => time !== null)
+    .sort((left, right) => left - right);
+
+  return paymentTimes[0] ?? null;
+}
+
+function shouldShowWhatsAppInContactInfoJourney(event: JourneyEvent, firstPaymentTime: number | null) {
+  if (firstPaymentTime === null) return true;
+  const eventTime = getJourneyEventTime(event);
+  if (eventTime === null || eventTime < firstPaymentTime) return true;
+  return isAdAttributedJourneyEvent(event);
+}
+
+function getWhatsAppJourneyEventScore(event: JourneyEvent) {
+  const data = asRecord(event.data);
+  const completenessFields = [
+    'campaign_name',
+    'adset_name',
+    'attribution_ad_name',
+    'attribution_ad_id',
+    'ad_platform',
+    'referral_source_url',
+    'referral_source_type',
+    'referral_source_id',
+    'referral_ctwa_clid',
+    'referral_headline',
+    'referral_body',
+    'message_text',
+  ];
+  const completeness = completenessFields.reduce(
+    (score, field) => score + (hasMeaningfulJourneyValue(data[field]) ? 1 : 0),
+    0
+  );
+
+  return (isAdAttributedJourneyEvent(event) ? 1000 : 0) + (event.type === 'whatsapp_message' ? 10 : 0) + completeness;
+}
+
+function getMetaMessageEventScore(event: JourneyEvent) {
+  const data = asRecord(event.data);
+  const completenessFields = [
+    'message_text',
+    'message_type',
+    'profile_name',
+    'username',
+    'media_url',
+    'postback_payload',
+    'comment_id',
+    'post_message',
+    'post_permalink',
+    'post_image_url',
+    'post_type',
+    'media_id',
+    'parent_comment_id',
+    'permalink',
+    'meta_message_id',
+    'meta_social_message_id',
+    'status',
+  ];
+  const completeness = completenessFields.reduce(
+    (score, field) => score + (hasMeaningfulJourneyValue(data[field]) ? 1 : 0),
+    0
+  );
+
+  return 10 + completeness;
+}
+
+function getDailyJourneyEventScore(event: JourneyEvent) {
+  if (isMetaMessageJourneyEvent(event)) return getMetaMessageEventScore(event);
+  return getWhatsAppJourneyEventScore(event);
+}
+
+const contactInfoJourneyDayFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function getContactInfoJourneyDayKey(date: string, timezone: string) {
+  const parsed = new Date(date);
+  if (Number.isNaN(parsed.getTime())) return String(date || '');
+
+  let formatter = contactInfoJourneyDayFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    contactInfoJourneyDayFormatters.set(timezone, formatter);
+  }
+
+  return formatter.format(parsed);
+}
+
+function getContactInfoJourneyGroupKey(event: JourneyEvent, timezone: string) {
+  const dayKey = getContactInfoJourneyDayKey(event.date, timezone);
+  if (isWhatsAppJourneyEvent(event)) return `${dayKey}:whatsapp:${isAdAttributedJourneyEvent(event) ? 'ad' : 'direct'}`;
+  if (isMetaMessageJourneyEvent(event)) return `${dayKey}:meta:${getMetaMessagePlatformKey(event)}:${getMetaMessageDailyKind(event)}`;
+  if (hasWebJourneySignal(event)) return `${dayKey}:contact:web`;
+  return `${dayKey}:contact`;
+}
+
+function buildContactInfoDisplayJourney(events: JourneyEvent[], timezone: string) {
+  const dailyJourneyEvents: JourneyEvent[] = [];
+  const otherEvents: JourneyEvent[] = [];
+  const firstPaymentTime = getFirstSuccessfulJourneyPaymentTime(events);
+
+  events.forEach((event) => {
+    if (!event?.date) return;
+    if (isBusinessAuthoredJourneyMessage(event)) return;
+    if (isDailyContactJourneyEvent(event)) {
+      if (isWhatsAppJourneyEvent(event) && !shouldShowWhatsAppInContactInfoJourney(event, firstPaymentTime)) return;
+      dailyJourneyEvents.push(event);
+    } else {
+      otherEvents.push(event);
+    }
+  });
+
+  const byGroup = new Map<string, JourneyEvent[]>();
+  dailyJourneyEvents.forEach((event) => {
+    const key = getContactInfoJourneyGroupKey(event, timezone);
+    const bucket = byGroup.get(key);
+    if (bucket) {
+      bucket.push(event);
+    } else {
+      byGroup.set(key, [event]);
+    }
+  });
+
+  const mergedDailyJourneyEvents: JourneyEvent[] = [];
+  byGroup.forEach((dayEvents) => {
+    const sorted = [...dayEvents].sort((left, right) => getDailyJourneyEventScore(right) - getDailyJourneyEventScore(left));
+    const primary = sorted[0];
+    const hasWhatsAppEvent = dayEvents.some(isWhatsAppJourneyEvent);
+    const isWhatsAppAdAttributed = dayEvents.some((event) => isWhatsAppJourneyEvent(event) && isAdAttributedJourneyEvent(event));
+    const mergedData: Record<string, unknown> = {};
+
+    sorted.forEach((event) => {
+      const data = asRecord(event.data);
+      Object.entries(data).forEach(([key, value]) => {
+        if (!hasMeaningfulJourneyValue(mergedData[key]) && hasMeaningfulJourneyValue(value)) {
+          mergedData[key] = value;
+        }
+      });
+    });
+
+    if (hasWhatsAppEvent) {
+      mergedData.is_ad_attributed = isWhatsAppAdAttributed;
+    }
+
+    mergedDailyJourneyEvents.push({
+      ...primary,
+      type: hasWhatsAppEvent ? 'whatsapp_message' : primary.type,
+      data: mergedData,
+    });
+  });
+
+  return [...otherEvents, ...mergedDailyJourneyEvents].sort(
+    (left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date)
+  );
+}
+
+function getJourneyPlatformLabel(event?: JourneyEvent | null) {
+  if (!event) return '';
+  const data = asRecord(event.data);
+  const webSource = hasWebJourneySignal(event) ? getJourneySourceLabelFromData(data) : '';
+  if (webSource) return webSource;
+  if (event.type === 'meta_message') return getReadableContactValue(data.source) || getMetaMessageTitle(event);
+  const platform = getReadableContactValue(data.ad_platform);
+  if (platform) return platform;
+  return getJourneySourceLabelFromData(data);
+}
+
+function getContactInfoJourneyDescription(event: JourneyEvent, timezone: string) {
+  const data = asRecord(event.data);
+
+  if (event.type === 'page_visit') {
+    const source = getJourneyPlatformLabel(event);
+    const pageUrl = getCompactPageUrlLabel(getReadableContactValue(data.page_url || data.landing_page || data.referrer_url));
+    const pageName = getReadableContactValue(data.form_site_name || data.public_page_title) || pageUrl || getPageNameFromUrl(getReadableContactValue(data.page_url || data.landing_page));
+    const campaign = getReadableContactValue(data.campaign_name || data.utm_campaign);
+    return joinContactInfoJourneyDetails([
+      getReadableContactValue(data.event_name).toLowerCase().includes('form') ? 'Formulario enviado' : source,
+      pageName,
+      campaign ? `Campaña ${campaign}` : '',
+    ]) || 'Visita registrada';
+  }
+
+  if (event.type === 'contact_created') {
+    if (hasWebJourneySignal(event)) {
+      const source = getJourneyPlatformLabel(event) || 'Sitio web';
+      const pageUrl = getCompactPageUrlLabel(getReadableContactValue(data.page_url || data.landing_page || data.referrer_url));
+      const pageName = getReadableContactValue(data.form_site_name || data.public_page_title) || pageUrl || getPageNameFromUrl(getReadableContactValue(data.page_url || data.landing_page));
+      const campaign = getReadableContactValue(data.campaign_name || data.utm_campaign);
+      return joinContactInfoJourneyDetails([source, pageName, campaign ? `Campaña ${campaign}` : '']) || 'Sitio web';
+    }
+    const source = getReadableContactValue(data.source) || 'Contacto guardado en Ristak';
+    const campaign = getReadableContactValue(data.campaign_name);
+    const adName = getReadableContactValue(data.attribution_ad_name || data.meta_ad_name);
+    return joinContactInfoJourneyDetails([source, campaign || adName]);
+  }
+
+  if (event.type === 'whatsapp_message') {
+    const platform = getJourneyPlatformLabel(event) || (isTruthyJourneyFlag(data.is_ad_attributed) ? 'Meta Ads' : 'WhatsApp');
+    const campaign = getReadableContactValue(data.campaign_name);
+    const adName = getReadableContactValue(data.attribution_ad_name || data.ad_name);
+
+    if (isTruthyJourneyFlag(data.is_ad_attributed)) {
+      return joinContactInfoJourneyDetails([
+        `Anuncio ${platform}`,
+        campaign ? `Campaña ${campaign}` : '',
+        !campaign && adName ? adName : '',
+      ]);
+    }
+
+    const mediaLabel = getMessageTypeLabel(getReadableContactValue(data.message_type), '');
+    return mediaLabel && mediaLabel !== 'Mensaje' ? `${mediaLabel} por WhatsApp` : '';
+  }
+
+  if (event.type === 'meta_message') {
+    const sender = getReadableContactValue(data.profile_name || data.username);
+    const mediaLabel = getMessageTypeLabel(getReadableContactValue(data.message_type), '');
+    return joinContactInfoJourneyDetails([
+      getMetaMessageSurfaceLabel(event),
+      sender,
+      mediaLabel && mediaLabel !== 'Mensaje' ? mediaLabel : '',
+    ]);
+  }
+
+  if (event.type === 'email_message') {
+    return getReadableContactValue(data.subject) || 'Correo recibido';
+  }
+
+  return getReadableContactValue(data.summary || data.description || data.title) || getContactInfoDateTime(event.date, timezone);
+}
+
+function getContactJourneyItems(journey: JourneyEvent[], timezone: string): ContactInfoTimelineItem[] {
+  return buildContactInfoDisplayJourney(journey, timezone)
+    .map((event, index) => {
+      const data = asRecord(event.data);
+      const type = String(event.type || 'activity');
+      if (type === 'whatsapp_message') {
+        return {
+          id: `${type}-${event.date}-${index}`,
+          type,
+          title: 'WhatsApp',
+          subtitle: getContactInfoJourneyDescription(event, timezone),
+          date: event.date,
+          Icon: Smartphone,
+          accent: CONTACT_INFO_THEME.success,
+        };
+      }
+      if (type === 'meta_message') {
+        return {
+          id: `${type}-${event.date}-${index}`,
+          type,
+          title: getMetaMessageTitle(event),
+          subtitle: getContactInfoJourneyDescription(event, timezone),
+          date: event.date,
+          Icon: Sparkles,
+          accent: CONTACT_INFO_THEME.success,
+        };
+      }
+      if (type === 'email_message') {
+        return {
+          id: `${type}-${event.date}-${index}`,
+          type,
+          title: 'Correo',
+          subtitle: getContactInfoJourneyDescription(event, timezone),
+          date: event.date,
+          Icon: Mail,
+          accent: CONTACT_INFO_THEME.accent,
+        };
+      }
+      if (type === 'payment') {
+        const amount = Number(data.amount || data.total || 0);
+        const status = getReadableContactValue(data.status);
+        return {
+          id: `${type}-${event.date}-${index}`,
+          type,
+          title: amount > 0 ? `Pago ${formatContactMoney(amount, getReadableContactValue(data.currency))}` : 'Pago registrado',
+          subtitle: status ? formatPlainStatus(status) : '',
+          date: event.date,
+          Icon: DollarSign,
+          accent: CONTACT_INFO_THEME.success,
+        };
+      }
+      if (type === 'appointment' || type === 'appointment_confirmation') {
+        const status = getReadableContactValue(data.status || data.appointment_status);
+        return {
+          id: `${type}-${event.date}-${index}`,
+          type,
+          title: type === 'appointment_confirmation' ? 'Cita agendada' : 'Cita',
+          subtitle: joinContactInfoJourneyDetails([
+            getReadableContactValue(data.title || data.summary),
+            status ? formatPlainStatus(status) : '',
+          ]),
+          date: event.date,
+          Icon: CalendarDays,
+          accent: CONTACT_INFO_THEME.accent,
+        };
+      }
+      if (type === 'contact_created') {
+        const webContact = hasWebJourneySignal(event);
+        return {
+          id: `${type}-${event.date}-${index}`,
+          type,
+          title: webContact ? 'Contacto' : 'Contacto creado',
+          subtitle: getContactInfoJourneyDescription(event, timezone),
+          date: event.date,
+          Icon: User,
+          accent: CONTACT_INFO_THEME.muted,
+        };
+      }
+      if (type === 'page_visit') {
+        return {
+          id: `${type}-${event.date}-${index}`,
+          type,
+          title: 'Visita',
+          subtitle: getContactInfoJourneyDescription(event, timezone),
+          date: event.date,
+          Icon: Target,
+          accent: CONTACT_INFO_THEME.muted,
+        };
+      }
+      return {
+        id: `${type}-${event.date}-${index}`,
+        type,
+        title: getReadableContactValue(data.title) || 'Actividad',
+        subtitle: getContactInfoJourneyDescription(event, timezone),
+        date: event.date,
+        Icon: Activity,
+        accent: CONTACT_INFO_THEME.muted,
+      };
+    })
+    .sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date));
+}
+
+function getPlainJourneyDate(value?: string | null, timezone?: string | null) {
+  return getContactInfoDateShort(value, timezone);
+}
+
+function getAgentHistoryItems(journey: JourneyEvent[], timezone: string): ContactInfoTimelineItem[] {
+  return journey
+    .filter((event) => {
+      const type = String(event.type || '').toLowerCase();
+      return type.includes('agent') || type === 'appointment_confirmation';
+    })
+    .map((event, index) => {
+      const data = asRecord(event.data);
+      const isAppointment = event.type === 'appointment_confirmation';
+      return {
+        id: `agent-${event.date}-${index}`,
+        type: event.type,
+        title: getReadableContactValue(data.title) || (isAppointment ? 'Cita agendada' : 'Actividad del agente'),
+        subtitle: getReadableContactValue(data.actionSummary || data.action_summary || data.summary || data.description || data.message) || (isAppointment ? 'El agente agendó una cita.' : 'Actividad registrada.'),
+        date: event.date,
+        Icon: isAppointment ? CalendarDays : Bot,
+        accent: CONTACT_INFO_THEME.accent,
+      };
+    })
+    .sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date));
+}
+
 
 function getMessageTypeLabel(type?: string, fallback = 'Mensaje') {
   const normalized = normalizeProbe(type);
@@ -9512,7 +16023,7 @@ function getMessageTypeLabel(type?: string, fallback = 'Mensaje') {
   if (normalized.includes('video')) return 'Video';
   if (normalized.includes('audio') || normalized.includes('voice')) return 'Audio';
   if (normalized.includes('document') || normalized.includes('file')) return 'Documento';
-  if (normalized.includes('location')) return 'Ubicación';
+  if (normalized.includes('location')) return '📍 Ubicación';
   if (normalized.includes('comment')) return 'Comentario';
   return fallback;
 }
@@ -9529,10 +16040,656 @@ function getChannelFallback(contact: ChatContact) {
 function getChatPreview(contact: ChatContact) {
   const text = String(contact.lastMessageText || '').trim();
   const typeLabel = text || getMessageTypeLabel(contact.lastMessageType, getChannelFallback(contact));
-  return normalizeProbe(contact.lastMessageDirection) === 'outbound' ? `Tú: ${typeLabel}` : typeLabel;
+  return isOutboundMessageDirection(contact.lastMessageDirection) ? `Tú: ${typeLabel}` : typeLabel;
 }
 
-function chatMatchesFilter(contact: ChatContact, filter: ChatFilterId) {
+function getChatPreviewParts(contact: ChatContact) {
+  const text = String(contact.lastMessageText || '').trim();
+  return {
+    prefix: isOutboundMessageDirection(contact.lastMessageDirection) ? 'Tú: ' : '',
+    text: text || getMessageTypeLabel(contact.lastMessageType, getChannelFallback(contact)),
+  };
+}
+
+function makePhoneChatPhoneFilterId(phoneId: string) {
+  return `${PHONE_CHAT_PHONE_FILTER_PREFIX}${phoneId}`;
+}
+
+function makePhoneChatAdvancedFilterId(group: AdvancedFilterGroupId, value: string) {
+  return `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}${group}:${value}`;
+}
+
+function makePhoneChatCustomFilterPresetId(filterId: string) {
+  return `${PHONE_CHAT_CUSTOM_FILTER_PREFIX}${filterId}`;
+}
+
+function makePhoneChatCustomFilterId() {
+  return `filter_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function makePhoneChatCustomFilterRuleId() {
+  return `rule_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getDefaultOperatorForContactAdvancedField(field?: PhoneChatConditionField): ContactAdvancedOperator {
+  return (getContactAdvancedOperators(field)[0]?.value || 'contains') as ContactAdvancedOperator;
+}
+
+function getContactAdvancedOperators(field?: PhoneChatConditionField): ContactAdvancedOption[] {
+  if (!field) return PHONE_CHAT_TEXT_OPERATORS;
+  if (field.type === 'number') return PHONE_CHAT_NUMBER_OPERATORS;
+  if (field.type === 'boolean') return PHONE_CHAT_BOOLEAN_OPERATORS;
+  if (field.type === 'tags') return PHONE_CHAT_TAG_OPERATORS;
+  if (field.type === 'select') return PHONE_CHAT_SELECT_OPERATORS;
+  return PHONE_CHAT_TEXT_OPERATORS;
+}
+
+function operatorNeedsContactAdvancedValue(operator: ContactAdvancedOperator) {
+  return !['empty', 'not_empty', 'yes', 'no'].includes(operator);
+}
+
+function operatorUsesContactAdvancedRange(operator: ContactAdvancedOperator) {
+  return operator === 'between';
+}
+
+function normalizePhoneChatCustomFilterRule(value: unknown, index = 0): PhoneChatCustomFilterRule | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Partial<PhoneChatCustomFilterRule>;
+  const field = String(raw.field || '').trim();
+  if (!field) return null;
+  const operator = PHONE_CHAT_CONDITION_OPERATORS.has(raw.operator as ContactAdvancedOperator)
+    ? raw.operator as ContactAdvancedOperator
+    : 'contains';
+  return {
+    id: String(raw.id || `rule_${index}_${Math.random().toString(36).slice(2, 7)}`),
+    field,
+    operator,
+    value: raw.value ?? '',
+    valueTo: raw.valueTo ?? '',
+  };
+}
+
+function normalizePhoneChatCustomFilterPresets(value: unknown): PhoneChatCustomFilterPreset[] {
+  let source = value;
+  if (typeof source === 'string' && source.trim()) {
+    try {
+      source = JSON.parse(source);
+    } catch {
+      source = [];
+    }
+  }
+  if (source && typeof source === 'object' && !Array.isArray(source) && Array.isArray((source as { filters?: unknown }).filters)) {
+    source = (source as { filters?: unknown }).filters;
+  }
+  if (!Array.isArray(source)) return [];
+
+  return source
+    .map((item, index): PhoneChatCustomFilterPreset | null => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return null;
+      const raw = item as Partial<PhoneChatCustomFilterPreset>;
+      const id = String(raw.id || '').trim() || `filter_${index}`;
+      const label = String(raw.label || '').trim();
+      const rules = Array.isArray(raw.rules)
+        ? raw.rules
+            .map((rule, ruleIndex) => normalizePhoneChatCustomFilterRule(rule, ruleIndex))
+            .filter((rule): rule is PhoneChatCustomFilterRule => Boolean(rule))
+        : [];
+      if (!label || !rules.length) return null;
+      return {
+        id,
+        label,
+        match: raw.match === 'any' ? 'any' : 'all',
+        rules,
+        createdAt: raw.createdAt,
+        updatedAt: raw.updatedAt,
+      };
+    })
+    .filter((filter): filter is PhoneChatCustomFilterPreset => Boolean(filter));
+}
+
+function createPhoneChatConditionRule(field?: PhoneChatConditionField): PhoneChatCustomFilterRule {
+  const targetField = field || {
+    key: PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD,
+    label: 'Segmento del chat',
+    type: 'select' as const,
+    section: 'Chat',
+  };
+  return {
+    id: makePhoneChatCustomFilterRuleId(),
+    field: targetField.key,
+    operator: getDefaultOperatorForContactAdvancedField(targetField),
+    value: '',
+    valueTo: '',
+  };
+}
+
+function createPhoneChatCustomFilterDraft(field?: PhoneChatConditionField): PhoneChatCustomFilterDraft {
+  return {
+    id: '',
+    label: '',
+    match: 'all',
+    rules: [createPhoneChatConditionRule(field)],
+  };
+}
+
+function getCustomFieldDefinitionKey(field: Partial<ContactCustomFieldDefinition> | null | undefined) {
+  return String(field?.definitionId || field?.key || field?.fieldKey || field?.name || field?.label || '').trim();
+}
+
+function getCustomFieldDefinitionLabel(field: Partial<ContactCustomFieldDefinition> | null | undefined) {
+  return String(field?.label || field?.name || field?.fieldKey || field?.key || field?.definitionId || 'Campo personalizado').trim();
+}
+
+function getCustomFieldOptionValue(option: unknown) {
+  if (!option || typeof option !== 'object' || Array.isArray(option)) return String(option || '').trim();
+  const raw = option as { value?: unknown; label?: unknown; name?: unknown };
+  return String(raw.value || raw.label || raw.name || '').trim();
+}
+
+function getCustomFieldOptionLabel(option: unknown) {
+  if (!option || typeof option !== 'object' || Array.isArray(option)) return String(option || '').trim();
+  const raw = option as { label?: unknown; name?: unknown; value?: unknown };
+  return String(raw.label || raw.name || raw.value || '').trim();
+}
+
+function getCustomFieldSelectOptions(field: Partial<ContactCustomFieldDefinition>): ContactAdvancedOption[] {
+  const options = (field as { options?: unknown }).options;
+  if (!Array.isArray(options)) return [];
+  return options
+    .map((option) => ({
+      value: getCustomFieldOptionValue(option),
+      label: getCustomFieldOptionLabel(option),
+    }))
+    .filter((option) => option.value && option.label);
+}
+
+function mapCustomFieldDataTypeToAdvancedType(field: Partial<ContactCustomFieldDefinition>): ContactAdvancedFieldType {
+  const dataType = String(field.dataType || '').toLowerCase();
+  if (dataType === 'number' || dataType === 'currency') return 'number';
+  if (dataType === 'checkbox' || dataType === 'boolean') return 'boolean';
+  if (getCustomFieldSelectOptions(field).length > 0) return 'select';
+  return 'text';
+}
+
+function buildPhoneChatConditionFieldGroups(
+  businessPhones: WhatsAppApiPhoneNumber[],
+  customFields: ContactCustomFieldDefinition[],
+): PhoneChatConditionFieldGroup[] {
+  const phoneOptions: ContactAdvancedOption[] = businessPhones.map((phone, index) => ({
+    value: phone.id,
+    label: getBusinessPhoneLabel(phone) || `Numero ${index + 1}`,
+  }));
+  const activeCustomFields = customFields.reduce<PhoneChatConditionField[]>((fields, field) => {
+    if (field.archived) return fields;
+    const identity = getCustomFieldDefinitionKey(field);
+    if (!identity) return fields;
+    const options = getCustomFieldSelectOptions(field);
+    fields.push({
+      key: `custom:${identity}`,
+      label: getCustomFieldDefinitionLabel(field),
+      type: mapCustomFieldDataTypeToAdvancedType(field),
+      options: options.length ? options : undefined,
+      section: 'Etiquetas y campos',
+    });
+    return fields;
+  }, []);
+
+  return [
+    {
+      label: 'Chat',
+      fields: [
+        {
+          key: 'chat_segment',
+          label: 'Segmento del chat',
+          type: 'select',
+          options: [
+            { value: 'customers', label: 'Clientes' },
+            { value: 'leads', label: 'Leads' },
+            { value: 'appointments', label: 'Agendados' },
+            { value: 'unread', label: 'No leídos' },
+            { value: 'comments', label: 'Comentarios' },
+          ],
+          section: 'Chat',
+        },
+        { key: 'business_phone', label: 'Número de WhatsApp', type: 'select', options: phoneOptions, section: 'Chat' },
+        { key: 'channel', label: 'Canal', type: 'select', options: CHANNEL_FILTER_OPTIONS.filter((option) => option.value !== 'all'), section: 'Chat' },
+        { key: 'origin', label: 'Origen', type: 'select', options: ORIGIN_FILTER_OPTIONS.filter((option) => option.value !== 'all'), section: 'Chat' },
+        { key: 'social', label: 'Red social', type: 'select', options: SOCIAL_FILTER_OPTIONS.filter((option) => option.value !== 'all'), section: 'Chat' },
+        { key: 'activity', label: 'Actividad', type: 'select', options: ACTIVITY_FILTER_OPTIONS.filter((option) => option.value !== 'all'), section: 'Chat' },
+      ],
+    },
+    {
+      label: 'Contacto',
+      fields: [
+        { key: 'full_name', label: 'Nombre', type: 'text', section: 'Contacto' },
+        { key: 'phone', label: 'Teléfono', type: 'text', section: 'Contacto' },
+        { key: 'email', label: 'Email', type: 'text', section: 'Contacto' },
+        {
+          key: 'status',
+          label: 'Etapa comercial',
+          type: 'select',
+          options: [
+            { value: 'lead', label: 'Lead' },
+            { value: 'appointment', label: 'Con cita' },
+            { value: 'customer', label: 'Cliente' },
+          ],
+          section: 'Contacto',
+        },
+        { key: 'source', label: 'Fuente', type: 'text', section: 'Contacto' },
+        { key: 'unread', label: 'Tiene mensajes no leídos', type: 'boolean', section: 'Contacto' },
+      ],
+    },
+    {
+      label: 'Etiquetas y campos',
+      fields: [
+        { key: 'tags', label: 'Etiquetas', type: 'tags', section: 'Etiquetas y campos' },
+        ...activeCustomFields,
+      ],
+    },
+  ];
+}
+
+function buildAvailableChatFilterPresets(
+  businessPhones: WhatsAppApiPhoneNumber[],
+  customFilters: PhoneChatCustomFilterPreset[],
+) {
+  const phonePresets: ChatFilterPreset[] = businessPhones.map((phone, index) => {
+    const label = getBusinessPhoneLabel(phone) || `Numero ${index + 1}`;
+    const value = getBusinessPhoneValue(phone);
+    return {
+      id: makePhoneChatPhoneFilterId(phone.id),
+      label: `Numero: ${label}`,
+      description: value || phone.verified_name || 'Filtra por este WhatsApp conectado.',
+      section: 'Números',
+      kind: 'phone',
+      phoneId: phone.id,
+    };
+  });
+  const customPresets: ChatFilterPreset[] = customFilters.map((filter) => ({
+    id: makePhoneChatCustomFilterPresetId(filter.id),
+    label: filter.label,
+    description: `${filter.rules.length} condicion${filter.rules.length === 1 ? '' : 'es'} · ${filter.match === 'all' ? 'todas' : 'cualquiera'}`,
+    section: 'Condicionales',
+    kind: 'custom',
+    customFilterId: filter.id,
+  }));
+  return [...CHAT_FILTER_LIBRARY, ...phonePresets, ...customPresets];
+}
+
+function getConditionRuleScalarValue(value: PhoneChatCustomFilterRule['value']) {
+  if (Array.isArray(value)) return value[0] || '';
+  if (value === null || value === undefined) return '';
+  return String(value);
+}
+
+function isPhoneChatConditionRuleComplete(rule: PhoneChatCustomFilterRule, field?: PhoneChatConditionField) {
+  if (!field) return false;
+  if (!operatorNeedsContactAdvancedValue(rule.operator)) return true;
+  if (operatorUsesContactAdvancedRange(rule.operator)) {
+    return Boolean(getConditionRuleScalarValue(rule.value)) && Boolean(rule.valueTo);
+  }
+  return Boolean(getConditionRuleScalarValue(rule.value));
+}
+
+function normalizeConditionText(value: unknown) {
+  return conditionValueToText(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function conditionValueToText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) return value.map(conditionValueToText).filter(Boolean).join(' ');
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).map(conditionValueToText).filter(Boolean).join(' ');
+  return String(value);
+}
+
+function conditionValueToArray(value: unknown): string[] {
+  if (value === null || value === undefined) return [];
+  if (Array.isArray(value)) return value.flatMap(conditionValueToArray);
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).flatMap(conditionValueToArray);
+  const text = String(value).trim();
+  return text ? [text] : [];
+}
+
+function isConditionValueEmpty(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (Array.isArray(value)) return value.length === 0 || value.every(isConditionValueEmpty);
+  if (typeof value === 'object') return Object.values(value as Record<string, unknown>).every(isConditionValueEmpty);
+  return String(value).trim() === '';
+}
+
+function conditionTextMatches(value: unknown, operator: ContactAdvancedOperator, expectedValue: unknown) {
+  const actual = normalizeConditionText(value);
+  const expected = normalizeConditionText(expectedValue);
+  if (operator === 'empty') return isConditionValueEmpty(value);
+  if (operator === 'not_empty') return !isConditionValueEmpty(value);
+  if (!expected) return false;
+  if (operator === 'is' || operator === 'eq') return actual === expected;
+  if (operator === 'is_not' || operator === 'neq') return actual !== expected;
+  if (operator === 'not_contains') return !actual.includes(expected);
+  if (operator === 'starts_with') return actual.startsWith(expected);
+  if (operator === 'ends_with') return actual.endsWith(expected);
+  return actual.includes(expected);
+}
+
+function conditionNumberMatches(value: unknown, operator: ContactAdvancedOperator, expectedValue: unknown, expectedValueTo: unknown) {
+  if (operator === 'empty') return isConditionValueEmpty(value);
+  if (operator === 'not_empty') return !isConditionValueEmpty(value);
+  const actual = Number(conditionValueToArray(value)[0] ?? value);
+  const expected = Number(expectedValue);
+  const expectedTo = Number(expectedValueTo);
+  if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false;
+  if (operator === 'neq' || operator === 'is_not') return actual !== expected;
+  if (operator === 'gt') return actual > expected;
+  if (operator === 'gte') return actual >= expected;
+  if (operator === 'lt') return actual < expected;
+  if (operator === 'lte') return actual <= expected;
+  if (operator === 'between') return Number.isFinite(expectedTo) && actual >= Math.min(expected, expectedTo) && actual <= Math.max(expected, expectedTo);
+  return actual === expected;
+}
+
+function conditionBooleanMatches(value: unknown, operator: ContactAdvancedOperator) {
+  const text = normalizeConditionText(value);
+  const actual = value === true || text === 'true' || text === 'si' || text === 'yes' || text === '1';
+  if (operator === 'no') return !actual;
+  if (operator === 'empty') return isConditionValueEmpty(value);
+  if (operator === 'not_empty') return !isConditionValueEmpty(value);
+  return actual;
+}
+
+function conditionArrayMatches(actualValues: string[], operator: ContactAdvancedOperator, expectedValue: unknown) {
+  const actual = new Set(actualValues.map(normalizeConditionText).filter(Boolean));
+  const expected = conditionValueToArray(expectedValue).map(normalizeConditionText).filter(Boolean);
+  if (operator === 'empty') return actual.size === 0;
+  if (operator === 'not_empty') return actual.size > 0;
+  if (!expected.length) return false;
+  const hasAny = expected.some((value) => actual.has(value));
+  const hasAll = expected.every((value) => actual.has(value));
+  if (operator === 'all') return hasAll;
+  if (operator === 'none' || operator === 'not_contains' || operator === 'is_not' || operator === 'neq') return !hasAny;
+  return hasAny;
+}
+
+function normalizeFilterProbe(values: unknown[]) {
+  return values.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean).join(' ');
+}
+
+function getContactExtraValue(contact: ChatContact, key: string) {
+  return (contact as unknown as Record<string, unknown>)[key];
+}
+
+function getPhoneContactChannelKind(contact: ChatContact): AdvancedChannelFilter | '' {
+  const badge = getContactChannelKind(contact);
+  if (badge === 'whatsapp') return 'whatsapp';
+  if (badge === 'messenger' || badge === 'facebook_comment') return 'messenger';
+  if (badge === 'instagram' || badge === 'instagram_comment') return 'instagram';
+  if (badge === 'email') return 'email';
+  if (badge === 'sms') return 'sms';
+  const firstSession = getContactExtraValue(contact, 'firstSession') as Record<string, unknown> | undefined;
+  const probe = normalizeFilterProbe([
+    contact.lastMessageChannel,
+    contact.lastMessageTransport,
+    contact.source,
+    contact.attribution_session_source,
+    firstSession?.source_platform,
+    firstSession?.site_source_name,
+    firstSession?.page_url,
+    firstSession?.landing_page,
+  ]);
+  if (probe.includes('webchat') || probe.includes('site') || probe.includes('form') || probe.includes('landing')) return 'webchat';
+  return '';
+}
+
+function getPhoneContactSocialKind(contact: ChatContact): AdvancedSocialFilter | '' {
+  const firstSession = getContactExtraValue(contact, 'firstSession') as Record<string, unknown> | undefined;
+  const probe = normalizeFilterProbe([
+    contact.lastMessageChannel,
+    contact.source,
+    contact.whatsappAttributionPlatform,
+    contact.attribution_session_source,
+    getContactExtraValue(contact, 'ad_name'),
+    getContactExtraValue(contact, 'ad_id'),
+    getContactExtraValue(contact, 'attribution_url'),
+    firstSession?.utm_source,
+    firstSession?.source_platform,
+    firstSession?.site_source_name,
+    firstSession?.placement,
+  ]);
+  if (!probe) return 'unknown';
+  if (probe.includes('instagram') || probe.includes('ig_')) return 'instagram';
+  if (probe.includes('messenger')) return 'messenger';
+  if (probe.includes('facebook') || probe.includes('fb_')) return 'facebook';
+  if (probe.includes('whatsapp') || probe.includes('ctwa')) return 'whatsapp';
+  if (probe.includes('google') || probe.includes('gclid')) return 'google';
+  return '';
+}
+
+function getPhoneContactOriginKind(contact: ChatContact): AdvancedOriginFilter | '' {
+  const firstSession = getContactExtraValue(contact, 'firstSession') as Record<string, unknown> | undefined;
+  const probe = normalizeFilterProbe([
+    contact.source,
+    contact.attribution_session_source,
+    contact.whatsappAttributionPlatform,
+    getContactExtraValue(contact, 'ad_name'),
+    getContactExtraValue(contact, 'ad_id'),
+    getContactExtraValue(contact, 'attribution_url'),
+    firstSession?.utm_source,
+    firstSession?.utm_medium,
+    firstSession?.utm_campaign,
+    firstSession?.source_platform,
+    firstSession?.page_url,
+    firstSession?.landing_page,
+  ]);
+  if (!probe) return 'unknown';
+  if (probe.includes('trigger') || probe.includes('disparo') || probe.includes('public_id')) return 'trigger';
+  if (probe.includes('facebook') || probe.includes('instagram') || probe.includes('meta') || probe.includes('ctwa') || probe.includes('ad_') || probe.includes('campaign')) return 'meta';
+  if (probe.includes('web') || probe.includes('site') || probe.includes('landing') || probe.includes('form') || probe.includes('page')) return 'site';
+  if (probe.includes('organic') || probe.includes('direct') || probe.includes('google') || probe.includes('referral')) return 'organic';
+  return '';
+}
+
+function phoneContactHasSource(contact: ChatContact) {
+  return Boolean(
+    contact.source ||
+    contact.attribution_session_source ||
+    contact.whatsappAttributionPlatform ||
+    getContactExtraValue(contact, 'ad_name') ||
+    getContactExtraValue(contact, 'firstSession')
+  );
+}
+
+function contactHasSuccessfulPayment(contact: ChatContact) {
+  const payments = getContactExtraValue(contact, 'payments');
+  return Array.isArray(payments) && payments.some((payment) => {
+    const raw = payment as { amount?: unknown; total?: unknown; status?: unknown };
+    const amount = Number(raw.amount || raw.total || 0);
+    const status = String(raw.status || '').toLowerCase();
+    return amount > 0 && (!status || SUCCESS_PAYMENT_STATUSES.has(status));
+  });
+}
+
+function getPhoneDigits(value?: string | null) {
+  return String(value || '').replace(/\D+/g, '');
+}
+
+function phoneLooksSame(left?: string | null, right?: string | null) {
+  const leftDigits = getPhoneDigits(left);
+  const rightDigits = getPhoneDigits(right);
+  if (!leftDigits || !rightDigits) return false;
+  return leftDigits === rightDigits || leftDigits.endsWith(rightDigits) || rightDigits.endsWith(leftDigits);
+}
+
+function contactMatchesBusinessPhoneFilter(contact: ChatContact, phone?: WhatsAppApiPhoneNumber | null) {
+  if (!phone) return false;
+  if (contact.lastBusinessPhoneNumberId && contact.lastBusinessPhoneNumberId === phone.id) return true;
+  return phoneLooksSame(contact.lastBusinessPhone, getBusinessPhoneValue(phone));
+}
+
+function contactMatchesAdvancedFilter(contact: ChatContact, group: AdvancedFilterGroupId, value: string) {
+  const status = normalizeProbe(contact.status);
+  const hasAppointmentSignal = status === 'appointment' || Boolean(contact.hasAppointments || contact.nextAppointmentDate);
+  if (group === 'channel') return getPhoneContactChannelKind(contact) === value;
+  if (group === 'social') return getPhoneContactSocialKind(contact) === value;
+  if (group === 'origin') return getPhoneContactOriginKind(contact) === value;
+  if (group === 'stage') {
+    if (value === 'appointment') return hasAppointmentSignal;
+    if (value === 'customer') return status === 'customer' || Number(contact.purchases || 0) > 0 || Number(contact.ltv || 0) > 0;
+    if (value === 'lead') return !hasAppointmentSignal && status === 'lead';
+    return status === value;
+  }
+  if (group === 'activity') {
+    if (value === 'payments') return Number(contact.ltv || 0) > 0 || Number(contact.purchases || 0) > 0 || contactHasSuccessfulPayment(contact);
+    if (value === 'appointments') return hasAppointmentSignal;
+    if (value === 'with_source') return phoneContactHasSource(contact);
+    if (value === 'no_phone') return !contact.phone;
+  }
+  return true;
+}
+
+function getPhoneChatConditionSegmentValues(contact: ChatContact) {
+  const values: string[] = [];
+  const status = normalizeProbe(contact.status);
+  const hasCustomerSignal = status === 'customer' || Number(contact.purchases || 0) > 0 || Number(contact.ltv || 0) > 0;
+  const hasAppointmentSignal = status === 'appointment' || Boolean(contact.hasAppointments || contact.nextAppointmentDate);
+  if (hasCustomerSignal) values.push('customers');
+  if (hasAppointmentSignal) values.push('appointments');
+  if (!hasCustomerSignal && !hasAppointmentSignal && (!status || status === 'lead')) values.push('leads');
+  if (getUnreadCount(contact) > 0) values.push('unread');
+  if (contactHasCommentActivity(contact)) values.push('comments');
+  return values;
+}
+
+function getPhoneChatConditionActivityValues(contact: ChatContact) {
+  const values: string[] = [];
+  if (Number(contact.ltv || 0) > 0 || Number(contact.purchases || 0) > 0 || contactHasSuccessfulPayment(contact)) values.push('payments');
+  if (contact.hasAppointments || contact.nextAppointmentDate) values.push('appointments');
+  if (phoneContactHasSource(contact)) values.push('with_source');
+  if (!contact.phone) values.push('no_phone');
+  return values;
+}
+
+function getContactTagConditionValues(contact: ChatContact, context: PhoneChatConditionEvalContext) {
+  return (contact.tags || []).flatMap((tagValue) => {
+    const clean = String(tagValue || '').trim();
+    if (!clean) return [];
+    const tag = context.contactTagsById.get(clean);
+    return tag?.name ? [clean, tag.name] : [clean];
+  });
+}
+
+function findContactCustomFieldValue(contact: ChatContact, identity: string) {
+  const target = normalizeConditionText(identity);
+  if (!target) return '';
+  const field = (contact.customFields || []).find((item) => {
+    const raw = item as Record<string, unknown>;
+    const candidates = [
+      raw.definitionId,
+      raw.key,
+      raw.fieldKey,
+      raw.id,
+      raw.fieldId,
+      raw.field_id,
+      raw.label,
+      raw.name,
+    ].map((value) => normalizeConditionText(value || ''));
+    return candidates.includes(target);
+  });
+  return field?.value ?? '';
+}
+
+function getPhoneChatConditionValue(contact: ChatContact, fieldKey: string, context: PhoneChatConditionEvalContext): unknown {
+  if (fieldKey.startsWith('custom:')) return findContactCustomFieldValue(contact, fieldKey.slice('custom:'.length));
+  switch (fieldKey) {
+    case 'chat_segment':
+      return getPhoneChatConditionSegmentValues(contact);
+    case 'business_phone':
+      return [contact.lastBusinessPhoneNumberId, contact.lastBusinessPhone].filter(Boolean);
+    case 'channel':
+      return getPhoneContactChannelKind(contact);
+    case 'origin':
+      return getPhoneContactOriginKind(contact);
+    case 'social':
+      return getPhoneContactSocialKind(contact);
+    case 'activity':
+      return getPhoneChatConditionActivityValues(contact);
+    case 'status':
+      return contact.status;
+    case 'full_name':
+      return getContactName(contact);
+    case 'email':
+      return contact.email || '';
+    case 'phone':
+      return [contact.phone].filter(Boolean);
+    case 'source':
+      return contact.source || '';
+    case 'unread':
+      return getUnreadCount(contact) > 0;
+    case 'tags':
+      return getContactTagConditionValues(contact, context);
+    default:
+      return '';
+  }
+}
+
+function contactBusinessPhoneMatchesCondition(
+  contact: ChatContact,
+  rule: PhoneChatCustomFilterRule,
+  context: PhoneChatConditionEvalContext,
+) {
+  const ids = [contact.lastBusinessPhoneNumberId].map((value) => String(value || '').trim()).filter(Boolean);
+  const phoneValues = [contact.lastBusinessPhone].map((value) => String(value || '').trim()).filter(Boolean);
+  if (rule.operator === 'empty') return ids.length === 0 && phoneValues.length === 0;
+  if (rule.operator === 'not_empty') return ids.length > 0 || phoneValues.length > 0;
+  const expected = getConditionRuleScalarValue(rule.value);
+  if (!expected) return false;
+  const expectedPhone = context.businessPhones.find((phone) => phone.id === expected);
+  const expectedPhoneValue = getBusinessPhoneValue(expectedPhone) || expected;
+  const matches = ids.includes(expected) || phoneValues.some((value) => phoneLooksSame(value, expectedPhoneValue));
+  if (rule.operator === 'is_not' || rule.operator === 'not_contains' || rule.operator === 'neq' || rule.operator === 'none') return !matches;
+  return matches;
+}
+
+function contactMatchesPhoneChatCustomRule(
+  contact: ChatContact,
+  rule: PhoneChatCustomFilterRule,
+  context: PhoneChatConditionEvalContext,
+) {
+  const field = context.fieldsByKey.get(rule.field);
+  if (!field) return false;
+  if (field.key === 'business_phone') return contactBusinessPhoneMatchesCondition(contact, rule, context);
+  const value = getPhoneChatConditionValue(contact, field.key, context);
+  if (field.type === 'tags' || Array.isArray(value)) return conditionArrayMatches(conditionValueToArray(value), rule.operator, rule.value);
+  if (field.type === 'number') return conditionNumberMatches(value, rule.operator, rule.value, rule.valueTo);
+  if (field.type === 'boolean') return conditionBooleanMatches(value, rule.operator);
+  return conditionTextMatches(value, rule.operator, rule.value);
+}
+
+function contactMatchesPhoneChatCustomFilter(
+  contact: ChatContact,
+  preset: PhoneChatCustomFilterPreset,
+  context: PhoneChatConditionEvalContext,
+) {
+  const rules = preset.rules.filter((rule) => context.fieldsByKey.has(rule.field));
+  if (!rules.length) return false;
+  return preset.match === 'any'
+    ? rules.some((rule) => contactMatchesPhoneChatCustomRule(contact, rule, context))
+    : rules.every((rule) => contactMatchesPhoneChatCustomRule(contact, rule, context));
+}
+
+function parseAdvancedFilterId(filter: ChatFilterId): { group: AdvancedFilterGroupId; value: string } | null {
+  if (!filter.startsWith(PHONE_CHAT_ADVANCED_FILTER_PREFIX)) return null;
+  const rest = filter.slice(PHONE_CHAT_ADVANCED_FILTER_PREFIX.length);
+  const [group, ...valueParts] = rest.split(':');
+  const value = valueParts.join(':');
+  if (!value) return null;
+  if (group !== 'channel' && group !== 'origin' && group !== 'social' && group !== 'stage' && group !== 'activity') return null;
+  return { group, value };
+}
+
+function chatMatchesFilter(contact: ChatContact, filter: ChatFilterId, context: PhoneChatConditionEvalContext) {
   if (filter === 'all') return true;
   if (filter === 'unread') return getUnreadCount(contact) > 0;
   if (filter === 'comments') return contactHasCommentActivity(contact);
@@ -9544,15 +16701,21 @@ function chatMatchesFilter(contact: ChatContact, filter: ChatFilterId) {
   if (filter === 'appointments') return hasAppointmentSignal;
   if (filter === 'customers') return hasCustomerSignal;
   if (filter === 'leads') return !hasCustomerSignal && !hasAppointmentSignal && (!status || status === 'lead');
-  if (filter === 'advanced:channel:whatsapp') return getContactChannelKind(contact) === 'whatsapp';
-  if (filter === 'advanced:channel:messenger') return getContactChannelKind(contact) === 'messenger' || getContactChannelKind(contact) === 'facebook_comment';
-  if (filter === 'advanced:channel:instagram') return getContactChannelKind(contact) === 'instagram' || getContactChannelKind(contact) === 'instagram_comment';
-  if (filter === 'advanced:channel:email') return getContactChannelKind(contact) === 'email';
-  if (filter === 'advanced:channel:sms') return getContactChannelKind(contact) === 'sms';
-  if (filter === 'advanced:activity:payments') return Number(contact.purchases || 0) > 0 || Number(contact.ltv || 0) > 0;
-  if (filter === 'advanced:activity:appointments') return hasAppointmentSignal;
-  if (filter === 'advanced:activity:with_source') return Boolean(normalizeProbe(contact.source) || normalizeProbe(contact.attribution_session_source) || normalizeProbe(contact.whatsappAttributionPlatform));
-  if (filter === 'advanced:activity:no_phone') return !contact.phone;
+
+  if (filter.startsWith(PHONE_CHAT_PHONE_FILTER_PREFIX)) {
+    const phoneId = filter.slice(PHONE_CHAT_PHONE_FILTER_PREFIX.length);
+    return contactMatchesBusinessPhoneFilter(contact, context.businessPhones.find((phone) => phone.id === phoneId));
+  }
+
+  const advancedFilter = parseAdvancedFilterId(filter);
+  if (advancedFilter) return contactMatchesAdvancedFilter(contact, advancedFilter.group, advancedFilter.value);
+
+  if (filter.startsWith(PHONE_CHAT_CUSTOM_FILTER_PREFIX)) {
+    const customFilterId = filter.slice(PHONE_CHAT_CUSTOM_FILTER_PREFIX.length);
+    const customFilter = context.customFiltersById.get(customFilterId);
+    return customFilter ? contactMatchesPhoneChatCustomFilter(contact, customFilter, context) : false;
+  }
+
   return true;
 }
 
@@ -9565,66 +16728,58 @@ function isInactiveAgentStatus(status?: string | null) {
   return ['paused', 'human', 'skipped', 'completed', 'discarded'].includes(String(status || '').toLowerCase());
 }
 
-function getAgentActionSuccess(action: AgentAction, contactName: string) {
-  if (action === 'activate') return `El agente volvió a atender a ${contactName}.`;
-  if (action === 'pause') return `El agente quedó pausado por 24hrs en ${contactName}.`;
-  if (action === 'take_over') return `Tomaste la conversación de ${contactName}.`;
-  return `El agente quedó omitido en ${contactName}.`;
+function ChannelBadgeIcon({ color = COLORS.white, kind, size = 15 }: { color?: string; kind: ChannelBadgeKind; size?: number }) {
+  const iconSize = Math.round(size);
+  if (kind === 'whatsapp') return <FontAwesome6 name="whatsapp" iconStyle="brand" size={iconSize} color={color} />;
+  if (kind === 'instagram' || kind === 'instagram_comment') return <FontAwesome6 name="instagram" iconStyle="brand" size={iconSize} color={color} />;
+  if (kind === 'messenger') return <FontAwesome6 name="facebook-messenger" iconStyle="brand" size={iconSize} color={color} />;
+  if (kind === 'facebook_comment') return <FontAwesome6 name="facebook-f" iconStyle="brand" size={Math.round(size * 0.94)} color={color} />;
+  if (kind === 'email') return <FontAwesome6 name="envelope" iconStyle="solid" size={Math.round(size * 0.92)} color={color} />;
+  if (kind === 'sms' || kind === 'unknown') return <FontAwesome6 name="comment" iconStyle="solid" size={Math.round(size * 0.94)} color={color} />;
+  return <FontAwesome6 name="comment" iconStyle="solid" size={Math.round(size * 0.94)} color={color} />;
 }
 
-function ChannelBadgeIcon({ kind, size = 15 }: { kind: ChannelBadgeKind; size?: number }) {
-  if (kind === 'email') return <Mail size={size} color={COLORS.white} strokeWidth={2.7} />;
-  if (kind === 'sms' || kind === 'unknown') return <MessageCircle size={size} color={COLORS.white} strokeWidth={2.7} />;
-
-  if (kind === 'instagram' || kind === 'instagram_comment') {
+function ChannelAvatarBadgeIcon({ kind, size }: { kind: ChannelBadgeKind; size: number }) {
+  const asset = CHANNEL_AVATAR_BADGE_ASSETS[kind];
+  if (asset) {
     return (
-      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <Rect x="4" y="4" width="16" height="16" rx="5" stroke={COLORS.white} strokeWidth="2.6" />
-        <Circle cx="12" cy="12" r="3.8" stroke={COLORS.white} strokeWidth="2.6" />
-        <Circle cx="17.2" cy="6.8" r="1.35" fill={COLORS.white} />
-      </Svg>
-    );
-  }
-
-  if (kind === 'messenger') {
-    return (
-      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <Path
-          d="M12 4.5c-4.6 0-8 3.18-8 7.28 0 2.34 1.1 4.38 2.86 5.72v2.72l2.62-1.45c.79.22 1.63.34 2.52.34 4.6 0 8-3.18 8-7.33S16.6 4.5 12 4.5Z"
-          stroke={COLORS.white}
-          strokeWidth="2.2"
-          strokeLinejoin="round"
-        />
-        <Path d="m7.7 13.38 3.02-3.2 2.25 2.38 3.38-3.15-3.02 4.73-2.31-2.37-3.32 1.61Z" fill={COLORS.white} />
-      </Svg>
-    );
-  }
-
-  if (kind === 'facebook_comment') {
-    return (
-      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-        <Path
-          d="M14.2 8.05h2.02V4.62c-.35-.05-1.55-.15-2.94-.15-2.9 0-4.88 1.82-4.88 5.18v2.92H5.1v3.84h3.3v7.1h4.05v-7.1h3.18l.5-3.84h-3.68V10.03c0-1.11.3-1.98 1.75-1.98Z"
-          fill={COLORS.white}
-        />
-      </Svg>
+      <Image
+        source={asset}
+        resizeMode="contain"
+        style={{ width: size, height: size }}
+      />
     );
   }
 
   return (
-    <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-      <Path
-        d="M19.1 4.9A9.7 9.7 0 0 0 3.8 16.62L2.9 21.1l4.6-1.08A9.7 9.7 0 0 0 21.7 11.5a9.6 9.6 0 0 0-2.6-6.6Z"
-        stroke={COLORS.white}
-        strokeWidth="2.05"
-        strokeLinejoin="round"
-      />
-      <Path
-        d="M8.68 8.05c.2-.45.4-.46.6-.46h.52c.16 0 .39.06.6.47.2.41.7 1.62.76 1.73.06.12.1.26.02.42-.08.17-.12.27-.25.42l-.38.45c-.13.13-.26.27-.11.53.14.27.65 1.07 1.4 1.73.96.86 1.78 1.13 2.04 1.27.26.13.42.11.57-.07.16-.18.66-.77.84-1.03.17-.26.35-.22.6-.13.24.09 1.54.73 1.8.86.27.13.45.2.52.31.07.12.07.69-.16 1.35-.23.66-1.34 1.26-1.87 1.34-.5.08-1.15.12-1.86-.12-.43-.14-.98-.32-1.69-.63-2.96-1.28-4.9-4.26-5.05-4.46-.15-.2-1.2-1.6-1.2-3.05 0-1.45.76-2.16 1.03-2.46.27-.3.59-.38.79-.38Z"
-        fill={COLORS.white}
-      />
-    </Svg>
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: CHANNEL_BADGE_COLORS[kind] || COLORS.accent,
+      }}
+    >
+      <ChannelBadgeIcon kind={kind} size={Math.round(size * 0.62)} />
+    </View>
   );
+}
+
+function getContactInitials(contact: ChatContact) {
+  const label = getContactName(contact);
+  const tokens = String(label || '')
+    .trim()
+    .split(/[\s._@+\-]+/)
+    .map((part) => part.replace(/[^A-Za-zÀ-ÖØ-öø-ÿ0-9]/g, ''))
+    .filter(Boolean);
+
+  const initials = tokens.length >= 2
+    ? `${tokens[0][0]}${tokens[1][0]}`
+    : (tokens[0] || '').slice(0, 2);
+
+  return initials.toUpperCase() || '?';
 }
 
 function ChatSelectionPanel({
@@ -9651,32 +16806,35 @@ function ChatSelectionPanel({
   onToggleVisible: () => void;
 }) {
   return (
-    <View style={styles.chatSelectionPanel}>
-      <View style={styles.chatSelectionPanelTop}>
-        <Text numberOfLines={1} style={styles.chatSelectionCount}>
-          {count} seleccionado{count === 1 ? '' : 's'}
-        </Text>
-        <Pressable accessibilityRole="button" onPress={onClear} style={styles.chatSelectionClearButton}>
-          <X size={17} color={COLORS.text} strokeWidth={2.5} />
+      <View style={styles.chatSelectionPanel}>
+        <View style={styles.chatSelectionPanelTop}>
+          <Pressable accessibilityRole="button" onPress={onClear} style={styles.chatSelectionClearButton}>
+            <LiquidControlBackground />
+            <X size={17} color={COLORS.text} strokeWidth={2.5} />
+          </Pressable>
+        <View style={styles.chatSelectionCountBlock}>
+          <Text numberOfLines={1} style={styles.chatSelectionCount}>
+            {count} seleccionado{count === 1 ? '' : 's'}
+          </Text>
+          <Text numberOfLines={1} style={styles.chatSelectionHint}>Selección</Text>
+        </View>
+        <Pressable accessibilityRole="button" accessibilityState={{ selected: allVisibleSelected }} onPress={onToggleVisible} style={styles.chatSelectionSelectAll}>
+          <LiquidControlBackground selected={allVisibleSelected} />
+          <ListChecks size={16} color={COLORS.text} strokeWidth={2.6} />
+          <Text numberOfLines={1} style={styles.chatSelectionSelectAllText}>
+            {allVisibleSelected ? 'Quitar' : 'Visibles'}
+          </Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          disabled={busy}
+          onPress={onToggleMenu}
+          style={[styles.chatSelectionMoreButton, busy && styles.disabledButton]}
+        >
+          <LiquidControlBackground selected={menuOpen} />
+          <MoreHorizontal size={24} color={COLORS.text} strokeWidth={2.55} />
         </Pressable>
       </View>
-      <Pressable accessibilityRole="button" onPress={onToggleVisible} style={styles.chatSelectionSelectAll}>
-        <View style={[styles.chatSelectionMiniCheck, allVisibleSelected && styles.chatSelectionMiniCheckActive]}>
-          {allVisibleSelected ? <Check size={13} color={COLORS.white} strokeWidth={3} /> : null}
-        </View>
-        <Text numberOfLines={1} style={styles.chatSelectionSelectAllText}>
-          {allVisibleSelected ? 'Quitar visibles' : 'Seleccionar visibles'}
-        </Text>
-      </Pressable>
-      <Pressable
-        accessibilityRole="button"
-        disabled={busy}
-        onPress={onToggleMenu}
-        style={[styles.chatSelectionMoreButton, busy && styles.disabledButton]}
-      >
-        <MoreHorizontal size={19} color={COLORS.white} strokeWidth={2.8} />
-        <Text style={styles.chatSelectionMoreButtonText}>Más acciones</Text>
-      </Pressable>
       {menuOpen ? (
         <View style={styles.chatSelectionActionsMenu}>
           <Pressable disabled={busy} onPress={onMarkRead} style={({ pressed }) => [styles.chatSelectionActionRow, pressed && styles.pressed]}>
@@ -9708,192 +16866,93 @@ function ChatRow({
   archived,
   selected,
   selectionActive,
-  swipeOpen,
+  showLastPreview,
+  showUnreadIndicators,
   timezone,
-  onArchiveToggle,
   onPress,
   onLongPress,
-  onMore,
-  onSwipeClose,
-  onSwipeOpen,
-  onSwipeStart,
 }: {
   contact: ChatContact;
   archived?: boolean;
   selected: boolean;
   selectionActive: boolean;
-  swipeOpen: boolean;
+  showLastPreview: boolean;
+  showUnreadIndicators: boolean;
   timezone: string;
-  onArchiveToggle: () => void;
   onPress: () => void;
   onLongPress?: () => void;
-  onMore: () => void;
-  onSwipeClose: () => void;
-  onSwipeOpen: () => void;
-  onSwipeStart: () => void;
 }) {
   const avatar = getContactAvatar(contact);
   const unread = getUnreadCount(contact);
+  const showUnread = showUnreadIndicators && unread > 0;
   const channelKind = getContactChannelKind(contact);
-  const channelColor = CHANNEL_BADGE_COLORS[channelKind];
-  const translateX = useRef(new Animated.Value(0)).current;
-  const offsetRef = useRef(0);
-  const dragStartOffsetRef = useRef(0);
-
-  const animateSwipeTo = useCallback((toValue: number) => {
-    offsetRef.current = toValue;
-    Animated.timing(translateX, {
-      toValue,
-      useNativeDriver: true,
-      duration: toValue < 0 ? CHAT_SWIPE_OPEN_DURATION_MS : CHAT_SWIPE_CLOSE_DURATION_MS,
-      easing: Easing.out(Easing.cubic),
-    }).start();
-  }, [translateX]);
-
-  useEffect(() => {
-    animateSwipeTo(swipeOpen && !selectionActive ? -CHAT_SWIPE_ACTION_WIDTH : 0);
-  }, [animateSwipeTo, selectionActive, swipeOpen]);
-
-  const panResponder = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_, gestureState) => {
-      if (selectionActive) return false;
-      return Math.abs(gestureState.dx) > CHAT_SWIPE_GESTURE_START_DISTANCE
-        && Math.abs(gestureState.dx) > Math.abs(gestureState.dy) + 2;
-    },
-    onPanResponderGrant: () => {
-      onSwipeStart();
-      translateX.stopAnimation((value) => {
-        const currentOffset = Math.max(-CHAT_SWIPE_ACTION_WIDTH, Math.min(0, Number(value) || 0));
-        offsetRef.current = currentOffset;
-        dragStartOffsetRef.current = currentOffset;
-      });
-    },
-    onPanResponderMove: (_, gestureState) => {
-      const nextOffset = Math.max(
-        -CHAT_SWIPE_ACTION_WIDTH,
-        Math.min(0, dragStartOffsetRef.current + gestureState.dx),
-      );
-      offsetRef.current = nextOffset;
-      translateX.setValue(nextOffset);
-    },
-    onPanResponderRelease: (_, gestureState) => {
-      const startedOpen = dragStartOffsetRef.current <= -CHAT_SWIPE_ACTION_WIDTH + 1;
-      const movedLeft = gestureState.dx <= -CHAT_SWIPE_OPEN_TRIGGER_DISTANCE || gestureState.vx < -0.03;
-      const movedRight = gestureState.dx >= CHAT_SWIPE_CLOSE_TRIGGER_DISTANCE || gestureState.vx > 0.03;
-      if (startedOpen) {
-        if (movedRight) {
-          onSwipeClose();
-          animateSwipeTo(0);
-          return;
-        }
-        onSwipeOpen();
-        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
-        return;
-      }
-      if (movedLeft || offsetRef.current <= -CHAT_SWIPE_OPEN_TRIGGER_DISTANCE) {
-        onSwipeOpen();
-        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
-        return;
-      }
-      onSwipeClose();
-      animateSwipeTo(0);
-    },
-    onPanResponderTerminationRequest: () => false,
-    onPanResponderTerminate: () => {
-      if (offsetRef.current <= -CHAT_SWIPE_ACTION_WIDTH / 2) {
-        onSwipeOpen();
-        animateSwipeTo(-CHAT_SWIPE_ACTION_WIDTH);
-        return;
-      }
-      onSwipeClose();
-      animateSwipeTo(0);
-    },
-  }), [animateSwipeTo, onSwipeClose, onSwipeOpen, onSwipeStart, selectionActive, swipeOpen, translateX]);
-
-  const handlePress = () => {
-    if (swipeOpen && !selectionActive) {
-      onSwipeClose();
-      return;
-    }
-    onPress();
-  };
 
   return (
-    <View style={[styles.chatSwipeRow, selected && styles.chatSwipeRowSelected]} {...panResponder.panHandlers}>
-      {!selectionActive ? (
-        <View style={styles.chatSwipeActions}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Cerrar acciones del chat"
-            onPress={onSwipeClose}
-            style={styles.chatSwipeClosePlate}
-          />
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              onMore();
-            }}
-            style={({ pressed }) => [styles.chatSwipeAction, styles.chatSwipeMore, pressed && styles.pressed]}
-          >
-            <MoreHorizontal size={30} color={COLORS.bg} strokeWidth={2.7} />
-            <Text numberOfLines={1} style={[styles.chatSwipeActionText, styles.chatSwipeMoreText]}>Más</Text>
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => {
-              onArchiveToggle();
-            }}
-            style={({ pressed }) => [styles.chatSwipeAction, styles.chatSwipeArchive, pressed && styles.pressed]}
-          >
-            <Archive size={30} color={COLORS.white} strokeWidth={2.7} />
-            <Text numberOfLines={1} style={styles.chatSwipeActionText}>{archived ? 'Restaurar' : 'Archivar'}</Text>
-          </Pressable>
+    <Pressable
+      style={({ pressed }) => [
+        styles.chatRow,
+        selectionActive && styles.chatRowSelecting,
+        selected && styles.chatRowSelected,
+        showUnread && styles.chatRowUnread,
+        archived && styles.chatRowArchived,
+        pressed && styles.pressed,
+      ]}
+      onPress={onPress}
+      onLongPress={selectionActive ? undefined : onLongPress}
+      delayLongPress={310}
+    >
+      {selectionActive ? (
+        <View style={[styles.chatSelectionCheck, selected && styles.chatSelectionCheckActive]}>
+          {selected ? <Check size={17} color={COLORS.white} strokeWidth={3} /> : null}
         </View>
       ) : null}
-      <Animated.View
-        style={[styles.chatSwipeContent, { transform: [{ translateX }] }]}
-      >
-        <Pressable
-          style={({ pressed }) => [
-            styles.chatRow,
-            selectionActive && styles.chatRowSelecting,
-            selected && styles.chatRowSelected,
-            unread > 0 && styles.chatRowUnread,
-            archived && styles.chatRowArchived,
-            pressed && styles.pressed,
+      <View style={styles.avatar}>
+        <View style={styles.avatarCircle}>
+          {avatar ? <Image source={{ uri: avatar }} style={styles.avatarImage as ImageStyle} /> : <Text style={[styles.avatarText, styles.chatAvatarText]}>{getContactInitials(contact)}</Text>}
+        </View>
+        {channelKind !== 'unknown' ? (
+          <View style={styles.avatarChannelBadge}>
+            <ChannelAvatarBadgeIcon kind={channelKind} size={CHAT_CHANNEL_ICON_BOX_SIZE} />
+          </View>
+        ) : null}
+      </View>
+      <View style={styles.chatRowBody}>
+        <View style={styles.rowHeader}>
+          <Text numberOfLines={1} style={[styles.chatName, showUnread && styles.chatNameUnread]}>{getContactName(contact)}</Text>
+          <Text style={[styles.rowTime, showUnread && styles.rowTimeUnread]}>{formatChatListDate(contact.lastMessageDate, timezone)}</Text>
+        </View>
+        {showLastPreview || showUnread ? (
+          <View style={styles.rowFooter}>
+            {showLastPreview ? <FormattedChatPreview contact={contact} unread={showUnread} /> : <View style={styles.lastMessageHiddenSpacer} />}
+            {showUnread ? <View style={styles.unreadPill}><Text style={styles.unreadText}>{unread > 9 ? '9+' : unread}</Text></View> : null}
+          </View>
+        ) : null}
+      </View>
+    </Pressable>
+  );
+}
+
+function FormattedChatPreview({ contact, unread }: { contact: ChatContact; unread?: boolean }) {
+  const { prefix, text } = getChatPreviewParts(contact);
+  const segments = useMemo(() => parseWhatsAppFormattedText(text), [text]);
+
+  return (
+    <Text numberOfLines={1} style={[styles.lastMessage, unread && styles.lastMessageUnread]}>
+      {prefix ? <Text style={styles.lastMessagePrefix}>{prefix}</Text> : null}
+      {segments.map((segment, index) => (
+        <Text
+          key={`${segment.text}-${index}`}
+          style={[
+            segment.bold && styles.lastMessageBold,
+            segment.italic && styles.lastMessageItalic,
+            segment.strike && styles.lastMessageStrike,
+            segment.mono && styles.lastMessageMono,
           ]}
-          onPress={handlePress}
-          onLongPress={selectionActive ? undefined : onLongPress}
-          delayLongPress={310}
         >
-          {selectionActive ? (
-            <View style={[styles.chatSelectionCheck, selected && styles.chatSelectionCheckActive]}>
-              {selected ? <Check size={17} color={COLORS.white} strokeWidth={3} /> : null}
-            </View>
-          ) : null}
-          <View style={[styles.avatar, { borderColor: channelColor }]}>
-            <View style={styles.avatarCircle}>
-              {avatar ? <Image source={{ uri: avatar }} style={styles.avatarImage as ImageStyle} /> : <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>}
-            </View>
-            {channelKind !== 'unknown' ? (
-              <View style={[styles.avatarChannelBadge, { backgroundColor: channelColor }]}>
-                <ChannelBadgeIcon kind={channelKind} />
-              </View>
-            ) : null}
-          </View>
-          <View style={styles.chatRowBody}>
-            <View style={styles.rowHeader}>
-              <Text numberOfLines={1} style={[styles.chatName, unread > 0 && styles.chatNameUnread]}>{getContactName(contact)}</Text>
-              <Text style={[styles.rowTime, unread > 0 && styles.rowTimeUnread]}>{formatChatListDate(contact.lastMessageDate, timezone)}</Text>
-            </View>
-            <View style={styles.rowFooter}>
-              <Text numberOfLines={1} style={[styles.lastMessage, unread > 0 && styles.lastMessageUnread]}>{getChatPreview(contact)}</Text>
-              {unread > 0 ? <View style={styles.unreadPill}><Text style={styles.unreadText}>{unread > 9 ? '9+' : unread}</Text></View> : null}
-            </View>
-          </View>
-        </Pressable>
-      </Animated.View>
-    </View>
+          {segment.text}
+        </Text>
+      ))}
+    </Text>
   );
 }
 
@@ -9928,8 +16987,8 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   return (
     <View style={[styles.messageRow, outbound ? styles.messageRowOutbound : styles.messageRowInbound]}>
       <View style={[styles.messageBubble, outbound ? styles.outboundBubble : styles.inboundBubble, message.failed && styles.failedBubble]}>
-        <Text style={styles.messageText}>{message.text}</Text>
-        <Text style={styles.messageMeta}>
+        <Text style={[styles.messageText, outbound && !message.failed && styles.messageTextOnAccent, message.failed && styles.failedMessageText]}>{message.text}</Text>
+        <Text style={[styles.messageMeta, outbound && !message.failed && styles.messageMetaOnAccent]}>
           {formatShortDate(message.date)}
           {message.pending ? ' - enviando' : ''}
           {message.failed ? ' - error' : ''}
@@ -9939,10 +16998,16 @@ function MessageBubble({ message }: { message: ChatMessage }) {
   );
 }
 
+function ContactInfoText(props: React.ComponentProps<typeof Text>) {
+  return <Text {...props} allowFontScaling={false} />;
+}
+
 function NativeContactDetailScreen({
   accountCurrency,
+  businessPhones = [],
   contact,
   error,
+  journeyEvents,
   journeyMessages,
   loading,
   saving,
@@ -9950,11 +17015,14 @@ function NativeContactDetailScreen({
   onAppointment,
   onBack,
   onPayment,
+  onSearchChat,
   onSave,
 }: {
   accountCurrency: string;
+  businessPhones?: WhatsAppApiPhoneNumber[];
   contact: ChatContact;
   error?: string;
+  journeyEvents: JourneyEvent[];
   journeyMessages: ChatMessage[];
   loading?: boolean;
   saving?: boolean;
@@ -9962,29 +17030,69 @@ function NativeContactDetailScreen({
   onAppointment: () => void;
   onBack: () => void;
   onPayment: () => void;
+  onSearchChat: () => void;
   onSave: (patch: Partial<ChatContact>) => void;
 }) {
   const [nameDraft, setNameDraft] = useState(getContactName(contact));
   const [phoneDraft, setPhoneDraft] = useState(contact.phone || '');
+  const [nameEditing, setNameEditing] = useState(false);
+  const [phoneEditing, setPhoneEditing] = useState(false);
+  const [panel, setPanel] = useState<ContactInfoPanel>('main');
+  const [recordDetail, setRecordDetail] = useState<ContactInfoRecordDetail>(null);
+  const [archiveTab, setArchiveTab] = useState<ContactInfoArchiveTab>('media');
+  const [ourNumberOpen, setOurNumberOpen] = useState(false);
+  const [changingOurNumberId, setChangingOurNumberId] = useState<string | null>(null);
 
   useEffect(() => {
     setNameDraft(getContactName(contact));
     setPhoneDraft(contact.phone || '');
+    setNameEditing(false);
+    setPhoneEditing(false);
+    setPanel('main');
+    setRecordDetail(null);
   }, [contact]);
 
-  const mediaCount = journeyMessages.filter((message) => message.attachment?.type === 'image' || message.attachment?.type === 'video').length;
-  const documentCount = journeyMessages.filter((message) => message.attachment?.type === 'document' || message.attachment?.type === 'file').length;
-  const linkCount = journeyMessages.filter((message) => /https?:\/\//i.test(message.text || '')).length;
+  const payments = useMemo(() => getContactInfoPayments(contact, journeyEvents), [contact, journeyEvents]);
+  const successfulPayments = useMemo(() => payments.filter(isSuccessfulContactPayment), [payments]);
+  const appointments = useMemo(() => getContactInfoAppointments(contact, journeyEvents), [contact, journeyEvents]);
+  const activeAppointments = useMemo(() => appointments.filter(isActiveContactAppointment), [appointments]);
+  const archiveItems = useMemo(() => getContactArchiveItems(journeyMessages, journeyEvents), [journeyEvents, journeyMessages]);
+  const journeyItems = useMemo(() => getContactJourneyItems(journeyEvents, timezone), [journeyEvents, timezone]);
+  const agentHistoryItems = useMemo(() => getAgentHistoryItems(journeyEvents, timezone), [journeyEvents, timezone]);
+  const tracking = useMemo(() => getTrackingData(contact, journeyEvents), [contact, journeyEvents]);
+  const archiveCounts = useMemo(() => ({
+    media: archiveItems.filter((item) => item.tab === 'media').length,
+    documents: archiveItems.filter((item) => item.tab === 'documents').length,
+    links: archiveItems.filter((item) => item.tab === 'links').length,
+  }), [archiveItems]);
+  const visibleArchiveItems = useMemo(() => archiveItems.filter((item) => item.tab === archiveTab), [archiveItems, archiveTab]);
   const customFields = getContactCustomFieldRows(contact);
+  const revenueTotal = successfulPayments.reduce((sum, payment) => sum + payment.amount, 0);
+  const displayedRevenue = Number(contact.ltv || 0) || revenueTotal;
+  const paymentsCount = payments.length || Number(contact.purchases || 0) || successfulPayments.length;
+  const nextAppointment = activeAppointments.find((appointment) => parseSortableDateValue(appointment.startTime) >= Date.now()) || activeAppointments[0];
+  const firstSuccessfulPayment = [...successfulPayments].sort((left, right) => parseSortableDateValue(left.date) - parseSortableDateValue(right.date))[0];
+  const leadDate = journeyEvents.find((event) => event.type === 'contact_created')?.date || contact.createdAt;
+  const statusLabel = normalizeProbe(contact.status) === 'customer' || Number(contact.purchases || 0) > 0 || displayedRevenue > 0 ? 'Cliente' : formatPlainStatus(contact.status || 'lead');
+  const automaticPhone = businessPhones.find((phone) => phone.id === contact.lastBusinessPhoneNumberId) || businessPhones[0] || null;
+  const preferredPhoneId = contact.preferredWhatsAppPhoneNumberId || contact.preferred_whatsapp_phone_number_id || '';
+  const selectedBusinessPhone = businessPhones.find((phone) => phone.id === preferredPhoneId) || automaticPhone;
+  const archiveSummary = [
+    archiveCounts.media ? `${archiveCounts.media} fotos/videos` : '',
+    archiveCounts.documents ? `${archiveCounts.documents} documento${archiveCounts.documents === 1 ? '' : 's'}` : '',
+    archiveCounts.links ? `${archiveCounts.links} enlace${archiveCounts.links === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ') || 'Aún no hay archivos guardados';
 
   const saveName = () => {
     const nextName = nameDraft.trim();
+    setNameEditing(false);
     if (!nextName || nextName === getContactName(contact)) return;
     onSave({ name: nextName, full_name: nextName });
   };
 
   const savePhone = () => {
     const nextPhone = phoneDraft.trim();
+    setPhoneEditing(false);
     if (nextPhone === (contact.phone || '')) return;
     Alert.alert(
       'Actualizar teléfono',
@@ -9996,105 +17104,649 @@ function NativeContactDetailScreen({
     );
   };
 
-  return (
-    <AppFrame>
-      <View style={styles.contactDetailHeader}>
-        <Pressable accessibilityRole="button" onPress={onBack} style={styles.backButton}>
-          <ChevronLeft size={30} color={COLORS.text} strokeWidth={2.5} />
-        </Pressable>
-        <View style={styles.contactDetailHeaderTitle}>
-          <Text style={styles.contactDetailTitle}>Contacto</Text>
-          <Text numberOfLines={1} style={styles.contactDetailSubtitle}>{getContactName(contact)}</Text>
-        </View>
-        {loading ? <ActivityIndicator color={COLORS.accent} /> : <View style={styles.contactDetailHeaderSpacer} />}
+  const openPanel = (nextPanel: ContactInfoPanel) => {
+    setRecordDetail(null);
+    setPanel(nextPanel);
+  };
+
+  const goBackFromPanel = () => {
+    if (recordDetail) {
+      setRecordDetail(null);
+      return;
+    }
+    if (panel !== 'main') {
+      setPanel('main');
+      return;
+    }
+    onBack();
+  };
+
+  const selectBusinessPhone = async (phone: WhatsAppApiPhoneNumber | null) => {
+    if (changingOurNumberId) return;
+    const nextId = phone?.id || '';
+    setChangingOurNumberId(nextId || '__automatic__');
+    try {
+      onSave({
+        preferredWhatsAppPhoneNumberId: nextId || undefined,
+        preferred_whatsapp_phone_number_id: nextId || undefined,
+      });
+      setOurNumberOpen(false);
+    } finally {
+      setChangingOurNumberId(null);
+    }
+  };
+
+  const renderHeader = (title: string, onBackPress = goBackFromPanel) => (
+    <View style={styles.contactInfoLightHeader}>
+      <Pressable accessibilityRole="button" onPress={onBackPress} style={styles.contactInfoLightBackButton}>
+        <ChevronLeft size={phoneCompact(34)} color={CONTACT_INFO_THEME.text} strokeWidth={2.8} />
+      </Pressable>
+      <ContactInfoText numberOfLines={1} style={styles.contactInfoLightHeaderTitle}>{title}</ContactInfoText>
+      <View style={styles.contactInfoLightHeaderSpacer}>
+        {loading ? <ActivityIndicator color={CONTACT_INFO_THEME.accent} /> : null}
       </View>
-      <ScrollView contentContainerStyle={styles.contactDetailBody} showsVerticalScrollIndicator={false}>
-        <View style={styles.contactDetailHero}>
-          <View style={[styles.contactDetailAvatar, { borderColor: CHANNEL_BADGE_COLORS[getContactChannelKind(contact)] }]}>
-            {getContactAvatar(contact) ? (
-              <Image source={{ uri: getContactAvatar(contact) }} style={styles.contactDetailAvatarImage} />
+    </View>
+  );
+
+  const renderRow = (
+    key: string,
+    Icon: LucideIcon,
+    label: string,
+    value?: string | number | null,
+    detail?: string | null,
+    onPress?: () => void,
+  ) => (
+    <ContactInfoLightRow
+      key={key}
+      Icon={Icon}
+      label={label}
+      value={value}
+      detail={detail}
+      onPress={onPress}
+    />
+  );
+
+  const renderPaymentDetail = () => {
+    const selected = recordDetail?.type === 'payment'
+      ? payments.find((payment) => payment.id === recordDetail.id)
+      : null;
+    if (!selected) return null;
+    return (
+      <ContactInfoLightPage title="Detalle de pago" onBack={goBackFromPanel}>
+        <View style={styles.contactInfoLightSection}>
+          {renderRow('payment-amount', CircleDollarSign, 'Monto', formatContactMoney(selected.amount, selected.currency || accountCurrency))}
+          {renderRow('payment-date', Clock, 'Fecha', getContactInfoDateTime(selected.date, timezone))}
+          {renderRow('payment-status', Check, 'Estado', formatPlainStatus(selected.status))}
+          {renderRow('payment-title', FileText, 'Concepto', selected.title || 'Pago')}
+        </View>
+      </ContactInfoLightPage>
+    );
+  };
+
+  const renderAppointmentDetail = () => {
+    const selected = recordDetail?.type === 'appointment'
+      ? appointments.find((appointment) => appointment.id === recordDetail.id)
+      : null;
+    if (!selected) return null;
+    return (
+      <ContactInfoLightPage title="Detalle de cita" onBack={goBackFromPanel}>
+        <View style={styles.contactInfoLightSection}>
+          {renderRow('appointment-title', CalendarDays, 'Cita', selected.title)}
+          {renderRow('appointment-start', Clock, 'Inicio', getContactInfoDateTime(selected.startTime, timezone))}
+          {renderRow('appointment-end', Clock, 'Fin', selected.endTime ? getContactInfoDateTime(selected.endTime, timezone) : 'Sin fin guardado')}
+          {renderRow('appointment-status', Check, 'Estado', formatPlainStatus(selected.status))}
+          {renderRow('appointment-notes', FileText, 'Notas', selected.notes || 'Sin notas')}
+        </View>
+      </ContactInfoLightPage>
+    );
+  };
+
+  if (recordDetail?.type === 'payment') {
+    const detail = renderPaymentDetail();
+    if (detail) return detail;
+  }
+
+  if (recordDetail?.type === 'appointment') {
+    const detail = renderAppointmentDetail();
+    if (detail) return detail;
+  }
+
+  if (panel === 'payments') {
+    return (
+      <ContactInfoLightPage title="Pagos totales" onBack={goBackFromPanel}>
+        <View style={styles.contactInfoLightSection}>
+          {renderRow('payments-total', CircleDollarSign, 'Total pagado', formatContactMoney(displayedRevenue, accountCurrency), `${paymentsCount} pagos registrados`)}
+          {payments.length ? payments.map((payment) => renderRow(
+            `payment-${payment.id}`,
+            CreditCard,
+            getContactInfoDateShort(payment.date, timezone),
+            formatContactMoney(payment.amount, payment.currency || accountCurrency),
+            formatPlainStatus(payment.status),
+            () => setRecordDetail({ type: 'payment', id: payment.id }),
+          )) : <ContactInfoText style={styles.contactInfoLightEmpty}>Aún no hay pagos guardados para este contacto.</ContactInfoText>}
+        </View>
+      </ContactInfoLightPage>
+    );
+  }
+
+  if (panel === 'appointments') {
+    return (
+      <ContactInfoLightPage title="Citas" onBack={goBackFromPanel}>
+        <View style={styles.contactInfoLightSection}>
+          {appointments.length ? appointments.map((appointment) => renderRow(
+            `appointment-${appointment.id}`,
+            CalendarDays,
+            appointment.title,
+            getContactInfoDateTime(appointment.startTime, timezone),
+            formatPlainStatus(appointment.status),
+            () => setRecordDetail({ type: 'appointment', id: appointment.id }),
+          )) : <ContactInfoText style={styles.contactInfoLightEmpty}>Aún no hay citas guardadas para este contacto.</ContactInfoText>}
+        </View>
+      </ContactInfoLightPage>
+    );
+  }
+
+  if (panel === 'archives') {
+    const archiveEmptyText = archiveTab === 'media'
+      ? 'Aún no hay fotos ni videos guardados en este chat.'
+      : archiveTab === 'documents'
+        ? 'Aún no hay documentos compartidos en este chat.'
+        : 'Aún no hay enlaces compartidos en este chat.';
+    return (
+      <ContactInfoLightPage title="Archivos del chat" onBack={goBackFromPanel}>
+        <View style={styles.contactInfoArchiveTabs}>
+          {([
+            { id: 'media' as const, label: 'Fotos y vid...', count: archiveCounts.media },
+            { id: 'documents' as const, label: 'Documentos', count: archiveCounts.documents },
+            { id: 'links' as const, label: 'Enlaces', count: archiveCounts.links },
+          ]).map((tab) => (
+            <Pressable key={tab.id} onPress={() => setArchiveTab(tab.id)} style={[styles.contactInfoArchiveTab, archiveTab === tab.id && styles.contactInfoArchiveTabActive]}>
+              <LiquidControlBackground selected={archiveTab === tab.id} />
+              <ContactInfoText numberOfLines={1} style={[styles.contactInfoArchiveTabLabel, archiveTab === tab.id && styles.contactInfoArchiveTabLabelActive]}>{tab.label}</ContactInfoText>
+              <ContactInfoText style={[styles.contactInfoArchiveTabCount, archiveTab === tab.id && styles.contactInfoArchiveTabLabelActive]}>{tab.count}</ContactInfoText>
+            </Pressable>
+          ))}
+        </View>
+        {visibleArchiveItems.length ? (
+          archiveTab === 'media' ? (
+            <View style={styles.contactInfoMediaGrid}>
+              {visibleArchiveItems.map((item) => (
+                <Pressable key={item.id} onPress={() => item.url && Linking.openURL(item.url).catch(() => undefined)} style={styles.contactInfoMediaTile}>
+                  {item.url && item.type === 'image' ? (
+                    <Image source={{ uri: item.url }} style={styles.contactInfoMediaImage as ImageStyle} />
+                  ) : (
+                    <View style={styles.contactInfoMediaFallback}>
+                      {item.type === 'video' ? <Play size={phoneCompact(25)} color={CONTACT_INFO_THEME.text} strokeWidth={2.3} /> : <ImageIcon size={phoneCompact(25)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.3} />}
+                    </View>
+                  )}
+                  {item.type === 'video' ? (
+                    <View style={styles.contactInfoMediaPlay}>
+                      <Play size={phoneCompact(18)} color={CONTACT_INFO_THEME.surface} fill={CONTACT_INFO_THEME.surface} strokeWidth={2.1} />
+                    </View>
+                  ) : null}
+                </Pressable>
+              ))}
+            </View>
+          ) : (
+            <View style={styles.contactInfoLightSection}>
+              {visibleArchiveItems.map((item) => renderRow(
+                item.id,
+                item.tab === 'links' ? Link2 : FileText,
+                item.title,
+                item.direction === 'outbound' ? 'Enviado por ti' : 'Enviado por el contacto',
+                [getContactInfoDateShort(item.date, timezone), item.caption].filter(Boolean).join(' · '),
+                () => item.url && Linking.openURL(item.url).catch(() => undefined),
+              ))}
+            </View>
+          )
+        ) : <ContactInfoText style={styles.contactInfoLightEmpty}>{archiveEmptyText}</ContactInfoText>}
+      </ContactInfoLightPage>
+    );
+  }
+
+  if (panel === 'journey') {
+    return (
+      <ContactInfoLightPage title="Viaje de cliente" onBack={goBackFromPanel}>
+        {journeyItems.length ? (
+          <View style={styles.contactInfoJourneyPanel}>
+            <View style={styles.contactInfoJourneyHeader}>
+              <View style={styles.contactInfoJourneyHeaderIcon}>
+                <MousePointerClick size={phoneCompact(21)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.35} />
+              </View>
+              <View style={styles.contactInfoJourneyHeaderCopy}>
+                <ContactInfoText style={styles.contactInfoJourneyHeaderTitle}>Recorrido del contacto</ContactInfoText>
+                <ContactInfoText style={styles.contactInfoJourneyHeaderSubtitle}>
+                  {journeyItems.length} {journeyItems.length === 1 ? 'evento' : 'eventos'} · De más nuevo a más viejo
+                </ContactInfoText>
+              </View>
+            </View>
+            <View style={styles.contactInfoTimeline}>
+              {journeyItems.map((item, index) => (
+                <ContactInfoTimelineRow
+                  key={item.id}
+                  item={item}
+                  timezone={timezone}
+                  isFirst={index === 0}
+                  isLast={index === journeyItems.length - 1}
+                />
+              ))}
+            </View>
+          </View>
+        ) : (
+          <View style={[styles.contactInfoJourneyPanel, styles.contactInfoJourneyEmptyPanel]}>
+            <View style={styles.contactInfoJourneyEmptyIcon}>
+              <MousePointerClick size={phoneCompact(26)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.35} />
+            </View>
+            <ContactInfoText style={styles.contactInfoJourneyEmptyTitle}>Sin actividad todavía</ContactInfoText>
+            <ContactInfoText style={styles.contactInfoJourneyEmptyText}>Aún no hay hitos guardados para este contacto.</ContactInfoText>
+          </View>
+        )}
+      </ContactInfoLightPage>
+    );
+  }
+
+  if (panel === 'agent_history') {
+    return (
+      <ContactInfoLightPage title="Historial del agente" onBack={goBackFromPanel}>
+        {agentHistoryItems.length ? (
+          <View style={styles.contactInfoAgentCards}>
+            {agentHistoryItems.map((item) => {
+              const AgentIcon = item.Icon;
+              return (
+              <View key={item.id} style={styles.contactInfoAgentCard}>
+                <View style={styles.contactInfoAgentCardIcon}>
+                  <AgentIcon size={phoneCompact(28)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.5} />
+                </View>
+                <View style={styles.contactInfoAgentCardCopy}>
+                  <ContactInfoText style={styles.contactInfoAgentCardTitle}>{item.title}</ContactInfoText>
+                  <ContactInfoText style={styles.contactInfoAgentCardText}>{item.subtitle}</ContactInfoText>
+                  <ContactInfoText style={styles.contactInfoAgentCardDate}>{getContactInfoDateTime(item.date, timezone)}</ContactInfoText>
+                </View>
+              </View>
+              );
+            })}
+          </View>
+        ) : <ContactInfoText style={styles.contactInfoLightEmpty}>Aún no hay metas concretadas por el agente.</ContactInfoText>}
+      </ContactInfoLightPage>
+    );
+  }
+
+  return (
+    <AppFrame backgroundColor={CONTACT_INFO_THEME.conversationBg}>
+      <View style={styles.contactInfoLightScreen}>
+        {renderHeader('Info del contacto', onBack)}
+        <ScrollView contentContainerStyle={styles.contactInfoLightContent} showsVerticalScrollIndicator={false}>
+          <View style={styles.contactInfoHeroLight}>
+            <View style={styles.contactInfoAvatarLight}>
+              <View style={styles.contactInfoAvatarInnerLight}>
+                {getContactAvatar(contact) ? (
+                  <Image source={{ uri: getContactAvatar(contact) }} resizeMode="cover" style={styles.contactInfoAvatarImageLight as ImageStyle} />
+                ) : (
+                  <ContactInfoText style={styles.contactInfoAvatarTextLight}>{getContactName(contact).slice(0, 1).toUpperCase()}</ContactInfoText>
+                )}
+              </View>
+            </View>
+            {nameEditing ? (
+              <View style={styles.contactInfoNameEditWrap}>
+                <TextInput
+                  value={nameDraft}
+                  onChangeText={setNameDraft}
+                  autoFocus
+                  allowFontScaling={false}
+                  returnKeyType="done"
+                  onSubmitEditing={saveName}
+                  onBlur={saveName}
+                  style={styles.contactInfoNameInputLight}
+                />
+              </View>
             ) : (
-              <Text style={styles.contactDetailAvatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>
+              <View style={styles.contactInfoNameRowLight}>
+                <ContactInfoText numberOfLines={1} style={styles.contactInfoNameLight}>{getContactName(contact)}</ContactInfoText>
+                <Pressable disabled={saving} onPress={() => setNameEditing(true)} style={styles.contactInfoInlineEdit}>
+                  {saving ? <ActivityIndicator color={CONTACT_INFO_THEME.muted} /> : <Pencil size={phoneCompact(20)} color={CONTACT_INFO_THEME.muted} strokeWidth={2.3} />}
+                </Pressable>
+              </View>
             )}
+            <ContactInfoText numberOfLines={1} style={styles.contactInfoMetaLight}>{getContactDetail(contact)}</ContactInfoText>
+            <View style={styles.contactInfoBadgeLight}>
+              <ContactInfoText style={styles.contactInfoBadgeTextLight}>{statusLabel}</ContactInfoText>
+            </View>
+            {businessPhones.length > 0 && contact.phone ? (
+              <Pressable onPress={() => setOurNumberOpen(true)} style={styles.contactInfoOurNumberPillLight}>
+                <Smartphone size={phoneCompact(18)} color={CONTACT_INFO_THEME.muted} strokeWidth={2.2} />
+                <View style={styles.contactInfoOurNumberCopyLight}>
+                  <ContactInfoText style={styles.contactInfoOurNumberLabelLight}>CONTACTANDO DESDE</ContactInfoText>
+                  <ContactInfoText numberOfLines={1} style={styles.contactInfoOurNumberValueLight}>
+                    {preferredPhoneId ? getBusinessPhoneDisplay(selectedBusinessPhone) : `Auto · ${getBusinessPhoneDisplay(selectedBusinessPhone)}`}
+                  </ContactInfoText>
+                </View>
+                <ChevronDown size={phoneCompact(20)} color={CONTACT_INFO_THEME.muted} strokeWidth={2.4} />
+              </Pressable>
+            ) : null}
+            {error ? <ContactInfoText style={styles.contactInfoLightError}>{error}</ContactInfoText> : null}
           </View>
-          <View style={styles.contactDetailNameEditor}>
-            <TextInput
-              value={nameDraft}
-              onChangeText={setNameDraft}
-              keyboardAppearance="dark"
-              returnKeyType="done"
-              onSubmitEditing={saveName}
-              style={styles.contactDetailNameInput}
-            />
-            <Pressable disabled={saving || !nameDraft.trim() || nameDraft.trim() === getContactName(contact)} onPress={saveName} style={[styles.contactDetailSaveButton, (saving || !nameDraft.trim() || nameDraft.trim() === getContactName(contact)) && styles.disabledButton]}>
-              {saving ? <ActivityIndicator color={COLORS.white} /> : <Save size={16} color={COLORS.white} strokeWidth={2.55} />}
-            </Pressable>
-          </View>
-          <Text numberOfLines={1} style={styles.contactDetailHeroMeta}>{getContactDetail(contact)}</Text>
-          {error ? <Text style={styles.contactDetailError}>{error}</Text> : null}
+
+        <View style={styles.contactInfoLightSection}>
+          {renderRow('search-chat', Search, 'Chat', 'Buscar en el chat', 'Encuentra mensajes dentro de esta conversación', onSearchChat)}
         </View>
 
-        <View style={styles.contactDetailQuickActions}>
-          <Pressable onPress={onAppointment} style={({ pressed }) => [styles.contactDetailQuickAction, pressed && styles.pressed]}>
-            <CalendarDays size={20} color={COLORS.accent} strokeWidth={2.45} />
-            <Text style={styles.contactDetailQuickActionText}>Agendar cita</Text>
+        <View style={styles.contactInfoMetricLightSection}>
+          <Pressable onPress={() => openPanel('payments')} style={styles.contactInfoMetricLightCard}>
+            <ContactInfoText style={styles.contactInfoMetricLightTitle}>Total</ContactInfoText>
+            <ContactInfoText numberOfLines={1} adjustsFontSizeToFit style={styles.contactInfoMetricLightValue}>{formatContactMoney(displayedRevenue, accountCurrency)}</ContactInfoText>
+            <ContactInfoText style={styles.contactInfoMetricLightHint}>{paymentsCount} pagos</ContactInfoText>
+            <View style={styles.contactInfoMetricLightAction}><ContactInfoText style={styles.contactInfoMetricLightActionText}>Ver</ContactInfoText><ChevronRight size={phoneCompact(18)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.5} /></View>
           </Pressable>
-          <Pressable onPress={onPayment} style={({ pressed }) => [styles.contactDetailQuickAction, pressed && styles.pressed]}>
-            <CircleDollarSign size={20} color={COLORS.accent} strokeWidth={2.45} />
-            <Text style={styles.contactDetailQuickActionText}>Cobrar</Text>
+          <View style={styles.contactInfoMetricDivider} />
+          <Pressable onPress={() => openPanel('appointments')} style={styles.contactInfoMetricLightCard}>
+            <ContactInfoText style={styles.contactInfoMetricLightTitle}>Citas</ContactInfoText>
+            <ContactInfoText style={styles.contactInfoMetricLightValue}>{appointments.length || (contact.hasAppointments ? 1 : 0)}</ContactInfoText>
+            <ContactInfoText style={styles.contactInfoMetricLightHint}>{activeAppointments.length || (contact.hasAppointments ? 1 : 0)} activas</ContactInfoText>
+            <View style={styles.contactInfoMetricLightAction}><ContactInfoText style={styles.contactInfoMetricLightActionText}>Ver</ContactInfoText><ChevronRight size={phoneCompact(18)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.5} /></View>
           </Pressable>
         </View>
 
-        <View style={styles.contactDetailSection}>
-          <Text style={styles.contactDetailSectionTitle}>Datos principales</Text>
-          <View style={styles.contactDetailEditableRow}>
-            <Phone size={17} color={COLORS.accent} strokeWidth={2.4} />
-            <TextInput
-              value={phoneDraft}
-              onChangeText={setPhoneDraft}
-              keyboardAppearance="dark"
-              keyboardType="phone-pad"
-              placeholder="Sin número"
-              placeholderTextColor={COLORS.muted}
-              style={styles.contactDetailRowInput}
-            />
-            <Pressable disabled={saving || phoneDraft.trim() === (contact.phone || '')} onPress={savePhone} style={[styles.contactDetailMiniButton, (saving || phoneDraft.trim() === (contact.phone || '')) && styles.disabledButton]}>
-              <Edit3 size={15} color={COLORS.accent} strokeWidth={2.45} />
-            </Pressable>
-          </View>
-          <ContactDetailRow Icon={Mail} label="Correo" value={contact.email || 'Sin correo'} />
-          <ContactDetailRow Icon={Tag} label="Estado" value={contact.status || 'Lead'} />
-          <ContactDetailRow Icon={Info} label="Origen" value={contact.source || contact.attribution_session_source || 'Sin origen guardado'} />
+        <View style={styles.contactInfoLightSection}>
+          <ContactInfoSummaryRow Icon={ImageIcon} title="Archivos del chat" subtitle={archiveSummary} action="Ver más" onPress={() => openPanel('archives')} />
         </View>
 
-        <View style={styles.contactDetailMetrics}>
-          <View style={styles.contactDetailMetric}>
-            <Text style={styles.contactDetailMetricLabel}>Total</Text>
-            <Text style={styles.contactDetailMetricValue}>{formatContactMoney(Number(contact.ltv || 0), accountCurrency)}</Text>
-            <Text style={styles.contactDetailMetricHint}>{Number(contact.purchases || 0)} pago(s)</Text>
-          </View>
-          <View style={styles.contactDetailMetric}>
-            <Text style={styles.contactDetailMetricLabel}>Citas</Text>
-            <Text style={styles.contactDetailMetricValue}>{contact.hasAppointments ? 'Activa' : '0'}</Text>
-            <Text style={styles.contactDetailMetricHint}>{contact.nextAppointmentDate ? formatConversationDayLabel(contact.nextAppointmentDate, timezone) : 'Sin cita'}</Text>
-          </View>
+        <View style={styles.contactInfoLightSection}>
+          <ContactInfoText style={styles.contactInfoSectionHeadingLight}>DATOS PRINCIPALES</ContactInfoText>
+          {phoneEditing ? (
+            <View style={styles.contactInfoPhoneEditRowLight}>
+              <TextInput
+                value={phoneDraft}
+                onChangeText={setPhoneDraft}
+                autoFocus
+                allowFontScaling={false}
+                keyboardType="phone-pad"
+                returnKeyType="done"
+                onSubmitEditing={savePhone}
+                style={styles.contactInfoPhoneInputLight}
+              />
+              <Pressable onPress={savePhone} style={styles.contactInfoPhoneSaveLight}>
+                <Check size={phoneCompact(19)} color={CONTACT_INFO_THEME.surface} strokeWidth={2.8} />
+              </Pressable>
+            </View>
+          ) : (
+            <ContactInfoLightRow Icon={Phone} label="Número" value={contact.phone || 'Sin número'} onPress={() => setPhoneEditing(true)} actionIcon={Pencil} />
+          )}
+          {renderRow('email', Mail, 'Correo', contact.email || 'Sin correo')}
+          {renderRow('created', User, 'Contacto creado', getContactInfoDateTime(leadDate, timezone) || 'Sin fecha')}
+          {renderRow('stage', Tag, 'Estado', statusLabel)}
         </View>
 
-        <View style={styles.contactDetailSection}>
-          <Text style={styles.contactDetailSectionTitle}>Archivo del chat</Text>
-          <ContactDetailRow Icon={ImageIcon} label="Fotos y videos" value={`${mediaCount}`} />
-          <ContactDetailRow Icon={FileText} label="Documentos" value={`${documentCount}`} />
-          <ContactDetailRow Icon={MapPin} label="Enlaces" value={`${linkCount}`} />
+        <View style={styles.contactInfoLightSection}>
+          <ContactInfoText style={styles.contactInfoSectionHeadingLight}>ORIGEN Y CONVERSIÓN</ContactInfoText>
+          {renderRow('source', Activity, 'Llegó desde', tracking.source || contact.source || contact.attribution_session_source || 'Sin origen guardado')}
+          {renderRow('first-visit', Target, 'Primera visita', getContactInfoDateTime(tracking.startedAt, timezone) || 'Sin visita guardada')}
+          {renderRow('page', FileText, 'Página', getPageNameFromUrl(tracking.pageUrl) || tracking.pageUrl || 'Sin página')}
+          {renderRow('campaign', Package, 'Campaña', tracking.campaign || 'Sin campaña')}
+          {renderRow('ad', Sparkles, 'Anuncio', tracking.ad || 'Sin anuncio')}
+          {renderRow('device', Smartphone, 'Dispositivo', tracking.device || 'Sin dispositivo')}
+          {renderRow('location', MapPin, 'Ubicación', tracking.location || 'Sin ubicación')}
+          {firstSuccessfulPayment
+            ? renderRow('converted-payment', DollarSign, 'Convirtió', `${formatContactMoney(firstSuccessfulPayment.amount, firstSuccessfulPayment.currency || accountCurrency)} · ${getContactInfoDateTime(firstSuccessfulPayment.date, timezone)}`, tracking.source || 'Pago')
+            : nextAppointment
+              ? renderRow('converted-appointment', CalendarDays, 'Convirtió', `${nextAppointment.title} · ${getContactInfoDateTime(nextAppointment.startTime, timezone)}`, tracking.source || 'Cita')
+              : renderRow('converted-empty', DollarSign, 'Convirtió', 'Aún sin conversión registrada')}
+          <ContactInfoSummaryRow Icon={MousePointerClick} title="Viaje de cliente" subtitle={`${journeyItems.length} eventos · De más nuevo a más viejo`} action="Ver" onPress={() => openPanel('journey')} />
         </View>
 
-        <View style={styles.contactDetailSection}>
-          <Text style={styles.contactDetailSectionTitle}>Campos personalizados</Text>
-          {customFields.length ? customFields.map((field) => (
-            <ContactDetailRow key={field.id} Icon={FileText} label={field.label} value={field.value} />
-          )) : <Text style={styles.contactDetailEmpty}>No hay campos personalizados guardados para este contacto.</Text>}
+        {(nextAppointment || payments.length) ? (
+          <View style={styles.contactInfoLightSection}>
+            <ContactInfoText style={styles.contactInfoSectionHeadingLight}>SEGUIMIENTO</ContactInfoText>
+            {nextAppointment ? renderRow('next-appointment', Clock, 'Próxima cita', getContactInfoDateTime(nextAppointment.startTime, timezone), `${nextAppointment.title} · ${formatPlainStatus(nextAppointment.status)}`) : null}
+            {payments.slice(0, 3).map((payment) => renderRow(`follow-payment-${payment.id}`, CreditCard, 'Pago', `${formatContactMoney(payment.amount, payment.currency || accountCurrency)} · ${getContactInfoDateShort(payment.date, timezone)}`, formatPlainStatus(payment.status)))}
+          </View>
+        ) : null}
+
+        <View style={styles.contactInfoLightSection}>
+          <ContactInfoText style={styles.contactInfoSectionHeadingLight}>HISTORIAL DEL AGENTE</ContactInfoText>
+          <ContactInfoSummaryRow
+            Icon={Bot}
+            title={agentHistoryItems[0]?.title || 'Sin actividad del agente'}
+            subtitle={agentHistoryItems[0]?.subtitle || 'Aún no hay metas concretadas por el agente'}
+            action="Ver"
+            onPress={() => openPanel('agent_history')}
+          />
         </View>
-      </ScrollView>
+
+        <View style={styles.contactInfoLightSection}>
+          <ContactInfoText style={styles.contactInfoSectionHeadingLight}>CAMPOS PERSONALIZADOS</ContactInfoText>
+          {customFields.length ? customFields.map((field) => renderRow(field.id, FileText, field.label, field.value)) : <ContactInfoText style={styles.contactInfoLightEmpty}>No hay campos personalizados guardados para este contacto.</ContactInfoText>}
+        </View>
+
+        <View style={styles.contactInfoLightSection}>
+          <ContactInfoText style={styles.contactInfoSectionHeadingLight}>INTEGRACIÓN</ContactInfoText>
+          {renderRow('integration-channel', Activity, 'Canal', getMessageChannelLabel(contact.lastMessageChannel || contact.lastMessageTransport || contact.source))}
+          {renderRow('integration-origin', Target, 'Origen', contact.source || contact.attribution_session_source || 'Sin origen')}
+        </View>
+        </ScrollView>
+        <ContactInfoOurNumberSheet
+          contactName={getContactName(contact)}
+          open={ourNumberOpen}
+          phones={businessPhones}
+          preferredPhoneId={preferredPhoneId}
+          changingId={changingOurNumberId}
+          automaticText={`Usar el número por donde llegó la conversación${automaticPhone ? `: ${getBusinessPhoneDisplay(automaticPhone)}` : ''}`}
+          onClose={() => setOurNumberOpen(false)}
+          onSelect={selectBusinessPhone}
+        />
+      </View>
     </AppFrame>
+  );
+}
+
+function ContactInfoLightPage({
+  children,
+  title,
+  onBack,
+}: {
+  children: React.ReactNode;
+  title: string;
+  onBack: () => void;
+}) {
+  return (
+    <AppFrame backgroundColor={CONTACT_INFO_THEME.conversationBg}>
+      <View style={styles.contactInfoLightScreen}>
+        <View style={styles.contactInfoLightHeader}>
+          <Pressable accessibilityRole="button" onPress={onBack} style={styles.contactInfoLightBackButton}>
+            <ChevronLeft size={phoneCompact(34)} color={CONTACT_INFO_THEME.text} strokeWidth={2.8} />
+          </Pressable>
+          <ContactInfoText numberOfLines={1} style={styles.contactInfoLightHeaderTitle}>{title}</ContactInfoText>
+          <View style={styles.contactInfoLightHeaderSpacer} />
+        </View>
+        <ScrollView contentContainerStyle={styles.contactInfoLightContent} showsVerticalScrollIndicator={false}>
+          {children}
+        </ScrollView>
+      </View>
+    </AppFrame>
+  );
+}
+
+function ContactInfoLightRow({
+  Icon,
+  actionIcon: ActionIcon,
+  detail,
+  label,
+  onPress,
+  value,
+}: {
+  Icon: LucideIcon;
+  actionIcon?: LucideIcon;
+  detail?: string | null;
+  label: string;
+  onPress?: () => void;
+  value?: string | number | null;
+}) {
+  const content = (
+    <>
+      <View style={styles.contactInfoLightRowIcon}>
+        <Icon size={phoneCompact(22)} color={CONTACT_INFO_THEME.success} strokeWidth={2.35} />
+      </View>
+      <View style={styles.contactInfoLightRowCopy}>
+        <ContactInfoText style={styles.contactInfoLightRowLabel}>{label}</ContactInfoText>
+        <ContactInfoText numberOfLines={2} style={styles.contactInfoLightRowValue}>{value || 'Sin dato'}</ContactInfoText>
+        {detail ? <ContactInfoText numberOfLines={2} style={styles.contactInfoLightRowDetail}>{detail}</ContactInfoText> : null}
+      </View>
+      {ActionIcon ? (
+        <View style={styles.contactInfoLightRoundAction}>
+          <ActionIcon size={phoneCompact(21)} color={CONTACT_INFO_THEME.text} strokeWidth={2.35} />
+        </View>
+      ) : onPress ? (
+        <ChevronRight size={phoneCompact(28)} color={CONTACT_INFO_THEME.muted} strokeWidth={2.35} />
+      ) : null}
+    </>
+  );
+
+  if (onPress) {
+    return (
+      <View style={styles.contactInfoLightRowFrame}>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onPress}
+          style={({ pressed }) => [
+            styles.contactInfoLightRow,
+            pressed && styles.pressed,
+          ]}
+        >
+          {content}
+        </Pressable>
+        <View style={styles.contactInfoLightRowSeparator} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.contactInfoLightRowFrame}>
+      <View style={styles.contactInfoLightRow}>{content}</View>
+      <View style={styles.contactInfoLightRowSeparator} />
+    </View>
+  );
+}
+
+function ContactInfoSummaryRow({
+  Icon,
+  action,
+  onPress,
+  subtitle,
+  title,
+}: {
+  Icon: LucideIcon;
+  action: string;
+  onPress: () => void;
+  subtitle: string;
+  title: string;
+}) {
+  return (
+    <View style={styles.contactInfoSummaryRowFrame}>
+      <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.contactInfoSummaryRow, pressed && styles.pressed]}>
+        <View style={styles.contactInfoSummaryIcon}>
+          <Icon size={phoneCompact(24)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.35} />
+        </View>
+        <View style={styles.contactInfoSummaryCopy}>
+          <ContactInfoText numberOfLines={1} style={styles.contactInfoSummaryTitle}>{title}</ContactInfoText>
+          <ContactInfoText numberOfLines={1} style={styles.contactInfoSummarySubtitle}>{subtitle}</ContactInfoText>
+        </View>
+        <View style={styles.contactInfoSummaryAction}>
+          <ContactInfoText numberOfLines={1} style={styles.contactInfoSummaryActionText}>{action}</ContactInfoText>
+          <ChevronRight size={phoneCompact(21)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.5} />
+        </View>
+      </Pressable>
+      <View style={styles.contactInfoSummaryRowSeparator} />
+    </View>
+  );
+}
+
+function ContactInfoTimelineRow({
+  isFirst,
+  isLast,
+  item,
+  timezone,
+}: {
+  isFirst: boolean;
+  isLast: boolean;
+  item: ContactInfoTimelineItem;
+  timezone: string;
+}) {
+  const Icon = item.Icon;
+  return (
+    <View style={styles.contactInfoTimelineRow}>
+      <View style={styles.contactInfoTimelineRail}>
+        {!isFirst ? <View style={styles.contactInfoTimelineConnectorTop} /> : null}
+        {!isLast ? <View style={styles.contactInfoTimelineConnectorBottom} /> : null}
+        <View style={styles.contactInfoTimelineIcon}>
+          <Icon size={phoneCompact(18)} color={item.accent || CONTACT_INFO_THEME.muted} strokeWidth={2.35} />
+        </View>
+      </View>
+      <View style={styles.contactInfoTimelineCopy}>
+        <ContactInfoText style={styles.contactInfoTimelineTitle}>{item.title}</ContactInfoText>
+        {item.subtitle ? <ContactInfoText style={styles.contactInfoTimelineSubtitle}>{item.subtitle}</ContactInfoText> : null}
+        <ContactInfoText style={styles.contactInfoTimelineDate}>{getContactInfoDateTime(item.date, timezone)}</ContactInfoText>
+      </View>
+    </View>
+  );
+}
+
+function ContactInfoOurNumberSheet({
+  automaticText,
+  changingId,
+  contactName,
+  onClose,
+  onSelect,
+  open,
+  phones,
+  preferredPhoneId,
+}: {
+  automaticText: string;
+  changingId: string | null;
+  contactName: string;
+  onClose: () => void;
+  onSelect: (phone: WhatsAppApiPhoneNumber | null) => void;
+  open: boolean;
+  phones: WhatsAppApiPhoneNumber[];
+  preferredPhoneId: string;
+}) {
+  return (
+    <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.contactInfoSheetRoot}>
+        <Pressable style={styles.contactInfoSheetScrim} onPress={onClose} />
+        <View style={styles.contactInfoNumberSheet}>
+          <View style={styles.contactInfoNumberSheetHandle} />
+          <ContactInfoText numberOfLines={1} style={styles.contactInfoNumberSheetSubtitle}>{contactName}</ContactInfoText>
+          <ContactInfoText style={styles.contactInfoNumberSheetTitle}>Contactar desde</ContactInfoText>
+          <Pressable
+            disabled={Boolean(changingId)}
+            onPress={() => onSelect(null)}
+            style={styles.contactInfoNumberOption}
+          >
+            <View style={styles.contactInfoNumberOptionCopy}>
+              <ContactInfoText style={[styles.contactInfoNumberOptionTitle, !preferredPhoneId && styles.contactInfoNumberOptionActiveText]}>Automático</ContactInfoText>
+              <ContactInfoText numberOfLines={1} style={styles.contactInfoNumberOptionSubtitle}>{automaticText}</ContactInfoText>
+            </View>
+            {changingId === '__automatic__' ? <ActivityIndicator color={CONTACT_INFO_THEME.accent} /> : !preferredPhoneId ? <Check size={phoneCompact(25)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.8} /> : null}
+          </Pressable>
+          {phones.map((phone) => {
+            const active = preferredPhoneId === phone.id;
+            return (
+              <Pressable
+                key={phone.id}
+                disabled={Boolean(changingId)}
+                onPress={() => onSelect(phone)}
+                style={styles.contactInfoNumberOption}
+              >
+                <View style={styles.contactInfoNumberOptionCopy}>
+                  <ContactInfoText style={[styles.contactInfoNumberOptionTitle, active && styles.contactInfoNumberOptionActiveText]}>{getBusinessPhoneDisplay(phone)}</ContactInfoText>
+                  <ContactInfoText numberOfLines={1} style={styles.contactInfoNumberOptionSubtitle}>{getBusinessPhoneStatusLabel(phone)}</ContactInfoText>
+                </View>
+                {changingId === phone.id ? <ActivityIndicator color={CONTACT_INFO_THEME.accent} /> : active ? <Check size={phoneCompact(25)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.8} /> : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -10124,6 +17776,7 @@ function NativeConversationScreen({
   accountCurrency,
   api,
   archived,
+  businessPhones = [],
   contact,
   muted,
   timezone,
@@ -10131,12 +17784,16 @@ function NativeConversationScreen({
   onBack,
   onContactPatch,
   onNavigate,
+  onNavigateToContactTool,
+  onPendingDraftHandled,
   onRefreshChats,
   onToggleMute,
+  pendingDraft,
 }: {
   accountCurrency: string;
   api: RistakApiClient;
   archived: boolean;
+  businessPhones?: WhatsAppApiPhoneNumber[];
   contact: ChatContact;
   muted: boolean;
   timezone: string;
@@ -10144,12 +17801,19 @@ function NativeConversationScreen({
   onBack: () => void;
   onContactPatch: (contactId: string, patch: Partial<ChatContact>) => void;
   onNavigate?: (section: PhoneSection) => void;
+  onNavigateToContactTool?: (contact: ChatContact, section: PhoneSection) => void;
+  onPendingDraftHandled?: (id: string) => void;
   onRefreshChats: () => void;
   onToggleMute: (contact: ChatContact) => void;
+  pendingDraft?: PendingChatDraft | null;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [journeyEvents, setJourneyEvents] = useState<JourneyEvent[]>([]);
+  const [localActivityMarkers, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
+  const [completionNotice, setCompletionNotice] = useState<NativeConversationSuccessNotice | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -10163,6 +17827,7 @@ function NativeConversationScreen({
   const [closingSheet, setClosingSheet] = useState<ConversationSheetMode>(null);
   const [contactInfoOpen, setContactInfoOpen] = useState(false);
   const [contactInfo, setContactInfo] = useState<ChatContact | null>(null);
+  const [contactInfoJourneyEvents, setContactInfoJourneyEvents] = useState<JourneyEvent[] | null>(null);
   const [contactInfoLoading, setContactInfoLoading] = useState(false);
   const [contactInfoSaving, setContactInfoSaving] = useState(false);
   const [contactInfoError, setContactInfoError] = useState('');
@@ -10171,6 +17836,9 @@ function NativeConversationScreen({
   const [tagQuery, setTagQuery] = useState('');
   const [tagBusy, setTagBusy] = useState(false);
   const [scheduleText, setScheduleText] = useState('');
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>(() => createDefaultScheduleDraft(timezone));
+  const [scheduleEditingMessageId, setScheduleEditingMessageId] = useState<string | null>(null);
+  const [scheduleError, setScheduleError] = useState('');
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [agentStates, setAgentStates] = useState<ConversationAgentState[]>([]);
   const [agentLoading, setAgentLoading] = useState(false);
@@ -10188,14 +17856,131 @@ function NativeConversationScreen({
   const [appointmentDraft, setAppointmentDraft] = useState(() => createDefaultAppointmentDraft(timezone));
   const [appointmentBusy, setAppointmentBusy] = useState(false);
   const [scheduledMessages, setScheduledMessages] = useState<ChatMessage[]>([]);
+  const [scheduledCountdownNow, setScheduledCountdownNow] = useState(Date.now());
   const [starredMessageIds, setStarredMessageIds] = useState<string[]>([]);
-  const audioRecorder = useAudioRecorder(RecordingPresets.LOW_QUALITY);
+  const [paymentLinkDraftPreview, setPaymentLinkDraftPreview] = useState<PendingChatDraftPaymentPreview | null>(null);
+  const [voiceRecordingActive, setVoiceRecordingActive] = useState(false);
+  const [voiceRecordingPaused, setVoiceRecordingPaused] = useState(false);
+  const audioRecorder = useAudioRecorder({ ...RecordingPresets.LOW_QUALITY, isMeteringEnabled: true });
   const audioRecorderState = useAudioRecorderState(audioRecorder, 250);
   const listRef = useRef<FlatList<ConversationListItem>>(null);
+  const composerInputRef = useRef<TextInput>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dateHeaderHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const dateHeaderOpacity = useRef(new Animated.Value(0)).current;
+  const conversationParallaxX = useRef(new Animated.Value(0)).current;
+  const conversationParallaxY = useRef(new Animated.Value(0)).current;
   const loadRequestRef = useRef(0);
+  const activeConversationContactIdRef = useRef(contact.id);
   const onContactPatchRef = useRef(onContactPatch);
   const unreadCountRef = useRef(contact.unreadCount);
+  const conversationAtLatestRef = useRef(true);
+  const pendingConversationInitialScrollRef = useRef(true);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const olderMessagesLoadingRef = useRef(false);
+  const conversationHasOlderMessagesRef = useRef(false);
+  const conversationHistoryExhaustedContactIdRef = useRef<string | null>(null);
+  const conversationManualScrollActiveRef = useRef(false);
+  const conversationManualScrollReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearConversationManualScrollReleaseTimer = useCallback(() => {
+    if (conversationManualScrollReleaseTimerRef.current) {
+      clearTimeout(conversationManualScrollReleaseTimerRef.current);
+      conversationManualScrollReleaseTimerRef.current = null;
+    }
+  }, []);
+
+  const markConversationManualScrollActive = useCallback(() => {
+    clearConversationManualScrollReleaseTimer();
+    conversationManualScrollActiveRef.current = true;
+    pendingConversationInitialScrollRef.current = false;
+  }, [clearConversationManualScrollReleaseTimer]);
+
+  const releaseConversationManualScrollSoon = useCallback(() => {
+    clearConversationManualScrollReleaseTimer();
+    conversationManualScrollReleaseTimerRef.current = setTimeout(() => {
+      conversationManualScrollReleaseTimerRef.current = null;
+      conversationManualScrollActiveRef.current = false;
+    }, 420);
+  }, [clearConversationManualScrollReleaseTimer]);
+
+  const scrollConversationToLatest = useCallback((animated: boolean) => {
+    if (conversationManualScrollActiveRef.current) return;
+    requestAnimationFrame(() => {
+      listRef.current?.scrollToOffset({ offset: 0, animated });
+      conversationAtLatestRef.current = true;
+    });
+  }, []);
+
+  const trackConversationScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const atLatest = event.nativeEvent.contentOffset.y <= CONVERSATION_LATEST_SCROLL_THRESHOLD;
+    conversationAtLatestRef.current = atLatest;
+    if (!atLatest) pendingConversationInitialScrollRef.current = false;
+  }, []);
+
+  const clearDateHeaderHideTimer = useCallback(() => {
+    if (dateHeaderHideTimerRef.current) {
+      clearTimeout(dateHeaderHideTimerRef.current);
+      dateHeaderHideTimerRef.current = null;
+    }
+  }, []);
+
+  const showConversationDateHeaders = useCallback(() => {
+    clearDateHeaderHideTimer();
+    Animated.timing(dateHeaderOpacity, {
+      toValue: 1,
+      duration: 90,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [clearDateHeaderHideTimer, dateHeaderOpacity]);
+
+  const hideConversationDateHeaders = useCallback(() => {
+    clearDateHeaderHideTimer();
+    dateHeaderHideTimerRef.current = setTimeout(() => {
+      dateHeaderHideTimerRef.current = null;
+      Animated.timing(dateHeaderOpacity, {
+        toValue: 0,
+        duration: 260,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+    }, 380);
+  }, [clearDateHeaderHideTimer, dateHeaderOpacity]);
+
+  useEffect(() => {
+    let disposed = false;
+    let subscription: { remove: () => void } | null = null;
+    if (Platform.OS === 'web') return undefined;
+
+    DeviceMotion.setUpdateInterval(110);
+    void DeviceMotion.isAvailableAsync().then((available) => {
+      if (disposed || !available) return;
+      subscription = DeviceMotion.addListener((motion) => {
+        const gamma = Number(motion.rotation?.gamma || 0);
+        const beta = Number(motion.rotation?.beta || 0);
+        const nextX = Math.max(-CONVERSATION_PARALLAX_MAX_OFFSET, Math.min(CONVERSATION_PARALLAX_MAX_OFFSET, gamma * 9));
+        const nextY = Math.max(-CONVERSATION_PARALLAX_MAX_OFFSET, Math.min(CONVERSATION_PARALLAX_MAX_OFFSET, beta * -5));
+        Animated.timing(conversationParallaxX, {
+          toValue: nextX,
+          duration: 140,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+        Animated.timing(conversationParallaxY, {
+          toValue: nextY,
+          duration: 140,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: true,
+        }).start();
+      });
+    }).catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      subscription?.remove();
+    };
+  }, [conversationParallaxX, conversationParallaxY]);
 
   useEffect(() => {
     onContactPatchRef.current = onContactPatch;
@@ -10206,14 +17991,37 @@ function NativeConversationScreen({
   }, [contact.unreadCount]);
 
   useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    activeConversationContactIdRef.current = contact.id;
+    conversationAtLatestRef.current = true;
+    pendingConversationInitialScrollRef.current = true;
+    conversationManualScrollActiveRef.current = false;
+    olderMessagesLoadingRef.current = false;
+    conversationHasOlderMessagesRef.current = false;
+    conversationHistoryExhaustedContactIdRef.current = null;
+    setOlderMessagesLoading(false);
+    setPaymentLinkDraftPreview(null);
+    clearConversationManualScrollReleaseTimer();
+  }, [contact.id]);
+
+  useEffect(() => {
     setSelectedSendChannel(getDefaultComposerChannel(contact));
   }, [contact.id, contact.lastMessageChannel, contact.lastMessageTransport, contact.source]);
 
   useEffect(() => {
-    const show = Keyboard.addListener('keyboardWillShow', () => setKeyboardVisible(true));
-    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardVisible(false));
-    const showDid = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
-    const hideDid = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    const handleKeyboardShow = () => {
+      setKeyboardVisible(true);
+    };
+    const handleKeyboardDidHide = () => {
+      setKeyboardVisible(false);
+    };
+    const show = Keyboard.addListener('keyboardWillShow', handleKeyboardShow);
+    const hide = Keyboard.addListener('keyboardWillHide', handleKeyboardDidHide);
+    const showDid = Keyboard.addListener('keyboardDidShow', handleKeyboardShow);
+    const hideDid = Keyboard.addListener('keyboardDidHide', handleKeyboardDidHide);
     return () => {
       show.remove();
       hide.remove();
@@ -10231,17 +18039,23 @@ function NativeConversationScreen({
       setLoading(true);
     }
     try {
-      const [journey, scheduled] = await Promise.all([
-        api.getConversation(contact.id, 100),
+      const [journey, fullJourney, scheduled] = await Promise.all([
+        api.getConversation(contact.id, CHAT_CONVERSATION_MESSAGE_LIMIT),
+        api.getContactJourney(contact.id).catch(() => []),
         api.getScheduledMessages(contact.id).catch(() => []),
       ]);
       if (requestId !== loadRequestRef.current) return;
+      setJourneyEvents(Array.isArray(fullJourney) ? fullJourney : Array.isArray(journey) ? journey : []);
       const journeyMessages = buildMessagesFromJourney(contact.id, journey);
+      const receivedFullPage = journeyMessages.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
+      conversationHasOlderMessagesRef.current = receivedFullPage && conversationHistoryExhaustedContactIdRef.current !== contact.id;
+      if (!receivedFullPage) {
+        conversationHistoryExhaustedContactIdRef.current = contact.id;
+      }
       const scheduledItems = buildScheduledMessages(contact.id, scheduled);
+      const nextMessages = mergeNativeChatMessages(journeyMessages, scheduledItems);
       setScheduledMessages(scheduledItems);
-      setMessages([...journeyMessages, ...scheduledItems].sort((left, right) => (
-        new Date(left.date).getTime() - new Date(right.date).getTime()
-      )));
+      setMessages((current) => (silent ? mergeNativeChatMessages(current, nextMessages) : nextMessages));
       void api.markChatRead(contact.id).catch(() => undefined);
       if (Number(unreadCountRef.current || 0) > 0) {
         unreadCountRef.current = 0;
@@ -10258,12 +18072,50 @@ function NativeConversationScreen({
     }
   }, [api, contact.id]);
 
+  const loadOlderConversationMessages = useCallback(async () => {
+    if (loading || olderMessagesLoadingRef.current || !conversationHasOlderMessagesRef.current) return;
+    const contactId = contact.id;
+    const beforeMessageDate = getOldestNativeConversationMessageDate(messagesRef.current);
+    if (!beforeMessageDate) {
+      conversationHasOlderMessagesRef.current = false;
+      conversationHistoryExhaustedContactIdRef.current = contactId;
+      return;
+    }
+
+    olderMessagesLoadingRef.current = true;
+    setOlderMessagesLoading(true);
+    try {
+      const olderJourney = await api.getConversation(contactId, CHAT_CONVERSATION_MESSAGE_LIMIT, beforeMessageDate);
+      if (activeConversationContactIdRef.current !== contactId) return;
+      const olderMessages = buildMessagesFromJourney(contactId, olderJourney);
+      const receivedFullPage = olderMessages.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
+      conversationHasOlderMessagesRef.current = receivedFullPage;
+      if (!receivedFullPage) {
+        conversationHistoryExhaustedContactIdRef.current = contactId;
+      }
+      if (!olderMessages.length) return;
+      setMessages((current) => mergeNativeChatMessages(olderMessages, current));
+      setJourneyEvents((current) => mergeNativeJourneyEvents(olderJourney, current));
+    } catch {
+      if (activeConversationContactIdRef.current === contactId) {
+        conversationHasOlderMessagesRef.current = true;
+      }
+    } finally {
+      if (activeConversationContactIdRef.current === contactId) {
+        olderMessagesLoadingRef.current = false;
+        setOlderMessagesLoading(false);
+      }
+    }
+  }, [api, contact.id, loading]);
+
   useEffect(() => {
     void loadConversation();
   }, [loadConversation]);
 
   useEffect(() => () => {
     if (sheetCloseTimerRef.current) clearTimeout(sheetCloseTimerRef.current);
+    if (dateHeaderHideTimerRef.current) clearTimeout(dateHeaderHideTimerRef.current);
+    if (conversationManualScrollReleaseTimerRef.current) clearTimeout(conversationManualScrollReleaseTimerRef.current);
   }, []);
 
   const clearSheetCloseTimer = useCallback(() => {
@@ -10282,6 +18134,7 @@ function NativeConversationScreen({
   const closeSheet = useCallback(() => {
     if (!activeSheet) return;
     const sheet = activeSheet;
+    const closeDuration = sheet === 'messageActions' ? MESSAGE_ACTION_CLOSE_DURATION_MS : CHAT_SHEET_CLOSE_DURATION_MS;
     clearSheetCloseTimer();
     setClosingSheet(sheet);
     setActiveSheet(null);
@@ -10289,7 +18142,7 @@ function NativeConversationScreen({
       sheetCloseTimerRef.current = null;
       setClosingSheet(null);
       if (sheet === 'messageActions') setSelectedMessage(null);
-    }, CHAT_SHEET_CLOSE_DURATION_MS + 40);
+    }, closeDuration + 40);
   }, [activeSheet, clearSheetCloseTimer]);
 
   const filteredMessages = useMemo(() => {
@@ -10304,35 +18157,133 @@ function NativeConversationScreen({
     ].filter(Boolean).join(' ').toLowerCase().includes(needle));
   }, [messages, searchQuery]);
 
+  const activityMarkers = useMemo(() => (
+    mergeConversationActivityMarkers(
+      buildConversationActivityMarkers(contact.id, journeyEvents, timezone, accountCurrency),
+      localActivityMarkers,
+    )
+  ), [accountCurrency, contact.id, journeyEvents, localActivityMarkers, timezone]);
+
+  const filteredActivityMarkers = useMemo(() => {
+    const needle = searchQuery.trim().toLowerCase();
+    if (!needle) return activityMarkers;
+    return activityMarkers.filter((marker) => [
+      marker.title,
+      marker.subtitle,
+      marker.amountLabel,
+    ].join(' ').toLowerCase().includes(needle));
+  }, [activityMarkers, searchQuery]);
+
   const conversationItems = useMemo<ConversationListItem[]>(() => {
     const items: ConversationListItem[] = [];
     let previousDay = '';
-    filteredMessages.forEach((message) => {
-      const key = getConversationDayKey(message.date, timezone);
+    const timelineItems = [
+      ...filteredMessages.map((message) => ({ kind: 'message' as const, date: message.date, message })),
+      ...filteredActivityMarkers.map((marker) => ({ kind: 'activity' as const, date: marker.date, marker })),
+    ].sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+    timelineItems.forEach((item) => {
+      const key = getConversationDayKey(item.date, timezone);
       if (key !== previousDay) {
         items.push({
           type: 'day',
           id: `day-${key}`,
-          label: formatConversationDayLabel(message.date, timezone) || key,
+          label: formatConversationDayLabel(item.date, timezone) || key,
         });
         previousDay = key;
       }
-      items.push({ type: 'message', id: message.id, message });
+      if (item.kind === 'message') {
+        items.push({ type: 'message', id: item.message.id, message: item.message });
+      } else {
+        items.push({ type: 'activity', id: item.marker.id, marker: item.marker });
+      }
     });
     return items;
-  }, [filteredMessages, timezone]);
+  }, [filteredActivityMarkers, filteredMessages, timezone]);
+
+  const conversationRenderItems = useMemo<ConversationListItem[]>(
+    () => {
+      const latestItems = [...conversationItems].reverse();
+      return completionNotice
+        ? [{ type: 'completionNotice', id: `completion-notice-${completionNotice.kind}`, notice: completionNotice }, ...latestItems]
+        : latestItems;
+    },
+    [completionNotice, conversationItems],
+  );
+
+  const conversationStickyHeaderIndices = useMemo(() => (
+    conversationRenderItems.reduce<number[]>((indices, item, index) => {
+      if (item.type === 'day') indices.push(index);
+      return indices;
+    }, [])
+  ), [conversationRenderItems]);
+
+  const conversationHasItems = conversationRenderItems.length > 0;
+  const conversationHasScheduledMessages = useMemo(() => (
+    messages.some((message) => isScheduledMessage(message))
+  ), [messages]);
+
+  const handleConversationContentSizeChange = useCallback(() => {
+    if (!conversationHasItems) return;
+    if (conversationManualScrollActiveRef.current) return;
+    if (pendingConversationInitialScrollRef.current) {
+      pendingConversationInitialScrollRef.current = false;
+      scrollConversationToLatest(false);
+      return;
+    }
+    if (!conversationAtLatestRef.current) return;
+    scrollConversationToLatest(false);
+  }, [conversationHasItems, scrollConversationToLatest]);
+
+  useEffect(() => {
+    if (!conversationHasScheduledMessages) return undefined;
+    setScheduledCountdownNow(Date.now());
+    const interval = setInterval(() => setScheduledCountdownNow(Date.now()), 30000);
+    return () => clearInterval(interval);
+  }, [conversationHasScheduledMessages]);
 
   const channelKind = getContactChannelKind(contact);
-  const channelColor = CHANNEL_BADGE_COLORS[channelKind];
   const composerChannelOptions = useMemo(() => getComposerChannelOptions(contact), [contact]);
   const selectedChannelOption = composerChannelOptions.find((option) => option.value === selectedSendChannel) || composerChannelOptions[0];
   const selectedChannelKind = selectedChannelOption?.kind || channelKind;
   const selectedChannelColor = CHANNEL_BADGE_COLORS[selectedChannelKind] || COLORS.accent;
   const selectedChannelCanSend = Boolean(selectedChannelOption && !selectedChannelOption.disabledReason);
-  const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0);
-  const composerPlaceholder = selectedChannelCanSend
-    ? ''
-    : selectedChannelOption?.disabledReason || 'Canal no disponible';
+  const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0 || paymentLinkDraftPreview);
+  const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
+  const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
+  const voiceRecordingDurationMs = Math.round(audioRecorderState.durationMillis || audioRecorder.currentTime * 1000 || 0);
+  const composerPlaceholder = '';
+  const conversationFrameBackground = keyboardVisible
+    ? getNativeConversationKeyboardSurfaceBackground()
+    : getNativeConversationComposerBackground();
+  useEffect(() => {
+    if (!pendingDraft || pendingDraft.contact.id !== contact.id || (!pendingDraft.text.trim() && !pendingDraft.paymentPreview && !pendingDraft.activityMarker && !pendingDraft.successNotice)) return;
+    const pendingActivityMarker = pendingDraft.activityMarker;
+    if (pendingActivityMarker) {
+      setLocalActivityMarkers((current) => mergeConversationActivityMarkers(current, [pendingActivityMarker]));
+    }
+    if (pendingDraft.successNotice) {
+      setCompletionNotice(pendingDraft.successNotice);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+    }
+    if (!pendingDraft.text.trim() && !pendingDraft.paymentPreview) {
+      onPendingDraftHandled?.(pendingDraft.id);
+      requestAnimationFrame(() => scrollConversationToLatest(true));
+      return;
+    }
+    setDraft(pendingDraft.text || '');
+    setDraftAttachments([]);
+    setPaymentLinkDraftPreview(pendingDraft.paymentPreview || null);
+    setReplyingToMessage(null);
+    const requestedChannel = pendingDraft.channel || getDefaultComposerChannel(contact);
+    const enabledRequestedChannel = composerChannelOptions.find((option) => option.value === requestedChannel && !option.disabledReason);
+    const firstEnabledChannel = composerChannelOptions.find((option) => !option.disabledReason);
+    setSelectedSendChannel((enabledRequestedChannel || firstEnabledChannel)?.value || requestedChannel);
+    onPendingDraftHandled?.(pendingDraft.id);
+    requestAnimationFrame(() => {
+      composerInputRef.current?.focus();
+      scrollConversationToLatest(false);
+    });
+  }, [composerChannelOptions, contact, onPendingDraftHandled, pendingDraft, scrollConversationToLatest]);
 
   const updateContactPreview = useCallback((text: string, sentAt: string, channel?: string) => {
     onContactPatch(contact.id, {
@@ -10341,6 +18292,7 @@ function NativeConversationScreen({
       lastMessageDirection: 'outbound',
       lastMessageChannel: channel || contact.lastMessageChannel,
       messageCount: Number(contact.messageCount || 0) + 1,
+      unreadCount: 0,
     });
   }, [contact.id, contact.lastMessageChannel, contact.messageCount, onContactPatch]);
 
@@ -10373,12 +18325,10 @@ function NativeConversationScreen({
       ? await ImagePicker.launchCameraAsync({
         mediaTypes: ['images', 'videos'],
         quality: 0.86,
-        base64: true,
       })
       : await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
         quality: 0.86,
-        base64: true,
         allowsMultipleSelection: remaining > 1,
         selectionLimit: remaining,
       });
@@ -10411,8 +18361,93 @@ function NativeConversationScreen({
     }
   };
 
+  const sendCurrentLocation = async () => {
+    if (sending) return;
+    if (!selectedChannelCanSend) {
+      Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
+      return;
+    }
+    if (selectedSendChannel !== 'whatsapp') {
+      Alert.alert('Ubicación', 'La ubicación se envía por WhatsApp API/QR. Cambia el canal a WhatsApp para mandarla.');
+      return;
+    }
+    if (replyingToMessage) {
+      Alert.alert('Respuesta solo con texto', 'Para compartir ubicación, cancela primero la respuesta activa.');
+      return;
+    }
+    if (!contact.phone) {
+      Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para recibir la ubicación.');
+      return;
+    }
+
+    closeSheet();
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Ubicación bloqueada', 'Activa el permiso de ubicación para compartir dónde estás.');
+        return;
+      }
+
+      setSending(true);
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const sentAt = new Date().toISOString();
+      const optimisticId = `location-${Date.now()}`;
+      const locationPayload = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        name: 'Ubicación actual',
+        address: '',
+        url: buildNativeLocationUrl(position.coords.latitude, position.coords.longitude, 'Ubicación actual'),
+      };
+      setMessages((current) => [...current, {
+        id: optimisticId,
+        contactId: contact.id,
+        date: sentAt,
+        direction: 'outbound',
+        text: '',
+        channel: 'whatsapp_api',
+        transport: 'native',
+        status: 'enviando',
+        pending: true,
+        location: locationPayload,
+      }]);
+      updateContactPreview('📍 Ubicación', sentAt, 'whatsapp_api');
+
+      const response = await api.sendLocation(
+        contact,
+        locationPayload.latitude,
+        locationPayload.longitude,
+        locationPayload.name,
+        locationPayload.address,
+      );
+      setMessages((current) => current.map((message) => (
+        message.id === optimisticId
+          ? {
+            ...message,
+            pending: false,
+            status: response.status || 'sent',
+            channel: response.transport || message.channel,
+            transport: response.transport || message.transport,
+          }
+          : message
+      )));
+      onRefreshChats();
+      void loadConversation(true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No pude enviar la ubicación.';
+      setMessages((current) => current.map((item) => (
+        item.id.startsWith('location-') && item.pending
+          ? { ...item, pending: false, failed: true, status: 'error', errorReason: message }
+          : item
+      )));
+      Alert.alert('Ubicación', message);
+    } finally {
+      setSending(false);
+    }
+  };
+
   const startVoiceRecording = async () => {
-    if (audioRecorderState.isRecording) return;
+    if (voiceRecordingActive || audioRecorderState.isRecording) return;
     const permission = await requestRecordingPermissionsAsync();
     if (!permission.granted) {
       Alert.alert('Audio', 'Necesito permiso de micrófono para grabar notas de voz.');
@@ -10422,35 +18457,87 @@ function NativeConversationScreen({
       await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
       await audioRecorder.prepareToRecordAsync();
       audioRecorder.record();
+      setVoiceRecordingActive(true);
+      setVoiceRecordingPaused(false);
     } catch (err) {
+      setVoiceRecordingActive(false);
+      setVoiceRecordingPaused(false);
       Alert.alert('Audio', err instanceof Error ? err.message : 'No pude iniciar la grabación.');
     }
   };
 
   const finishVoiceRecording = async () => {
-    if (!audioRecorderState.isRecording) return;
+    if (!voiceRecordingActive && !audioRecorderState.isRecording) return;
     try {
       await audioRecorder.stop();
       await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true });
       const uri = audioRecorder.uri;
       if (!uri) throw new Error('La grabación terminó sin archivo.');
       const durationMs = Math.round((audioRecorderState.durationMillis || audioRecorder.currentTime * 1000 || 0));
+      setVoiceRecordingActive(false);
+      setVoiceRecordingPaused(false);
       appendDraftAttachments([await prepareVoiceAttachment(uri, durationMs)]);
     } catch (err) {
+      setVoiceRecordingActive(false);
+      setVoiceRecordingPaused(false);
       Alert.alert('Audio', err instanceof Error ? err.message : 'No pude preparar la nota de voz.');
+    }
+  };
+
+  const cancelVoiceRecording = async () => {
+    if (!voiceRecordingActive && !audioRecorderState.isRecording) return;
+    try {
+      await audioRecorder.stop();
+    } catch {
+      // The recorder can already be stopped when iOS finishes the session.
+    } finally {
+      setVoiceRecordingActive(false);
+      setVoiceRecordingPaused(false);
+      await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => undefined);
+    }
+  };
+
+  const toggleVoiceRecordingPause = () => {
+    if (!voiceRecordingActive && !audioRecorderState.isRecording) return;
+    try {
+      if (voiceRecordingPaused || !audioRecorderState.isRecording) {
+        audioRecorder.record();
+        setVoiceRecordingPaused(false);
+      } else {
+        audioRecorder.pause();
+        setVoiceRecordingPaused(true);
+      }
+    } catch (err) {
+      Alert.alert('Audio', err instanceof Error ? err.message : 'No pude pausar la grabación.');
     }
   };
 
   const send = async () => {
     const text = draft.trim();
+    const paymentPreviewToSend = paymentLinkDraftPreview;
+    const textToSend = paymentPreviewToSend
+      ? text
+        ? text.includes(paymentPreviewToSend.url)
+          ? text
+          : `${text}\n${paymentPreviewToSend.url}`
+        : paymentPreviewToSend.url
+      : text;
     const attachmentsToSend = draftAttachments;
-    if ((!text && attachmentsToSend.length === 0) || sending) return;
+    if ((!textToSend && attachmentsToSend.length === 0) || sending) return;
     if (!selectedChannelCanSend) {
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
       return;
     }
     if (attachmentsToSend.length > 0 && selectedSendChannel !== 'whatsapp') {
       Alert.alert('Adjuntos', 'Los adjuntos nativos se envían por WhatsApp API/QR. Cambia el canal a WhatsApp para mandar este archivo.');
+      return;
+    }
+    if (replyingToMessage && attachmentsToSend.length > 0) {
+      Alert.alert('Respuesta solo con texto', 'Para contestar un globo específico, manda texto. Para archivos, ubicación o notas de voz, cancela la respuesta primero.');
+      return;
+    }
+    if (replyingToMessage && selectedSendChannel === 'sms') {
+      Alert.alert('Respuesta no disponible', 'Las respuestas a un globo específico sólo viajan con WhatsApp, Messenger o Instagram. Cambia el canal o cancela la respuesta.');
       return;
     }
     if ((selectedSendChannel === 'whatsapp' || selectedSendChannel === 'sms') && !contact.phone) {
@@ -10461,18 +18548,21 @@ function NativeConversationScreen({
     const optimisticId = `local-${Date.now()}`;
     const sentAt = new Date().toISOString();
     const optimisticChannel = getBackendChannelForComposer(selectedSendChannel);
+    const replyPayload = replyingToMessage ? getNativeMessageReferencePayload(replyingToMessage) : undefined;
     const optimisticMessages: ChatMessage[] = attachmentsToSend.length
       ? attachmentsToSend.map((attachment, index) => ({
         id: `${optimisticId}-attachment-${index}`,
         contactId: contact.id,
         date: sentAt,
         direction: 'outbound',
-        text: index === 0 ? text : '',
+        text: index === 0 ? textToSend : '',
         channel: optimisticChannel,
         transport: 'native',
         status: 'enviando',
         pending: true,
-        replyToMessageId: replyingToMessage?.id,
+        paymentPreview: index === 0 ? paymentPreviewToSend || undefined : undefined,
+        replyToMessageId: replyPayload?.replyToMessageId,
+        replyToProviderMessageId: replyPayload?.replyToProviderMessageId,
         attachment: {
           type: attachment.kind,
           dataUrl: attachment.dataUrl,
@@ -10488,24 +18578,27 @@ function NativeConversationScreen({
         contactId: contact.id,
         date: sentAt,
         direction: 'outbound',
-        text,
+        text: textToSend,
         channel: optimisticChannel,
         transport: 'native',
         status: 'enviando',
         pending: true,
-        replyToMessageId: replyingToMessage?.id,
+        paymentPreview: paymentPreviewToSend || undefined,
+        replyToMessageId: replyPayload?.replyToMessageId,
+        replyToProviderMessageId: replyPayload?.replyToProviderMessageId,
       }];
 
     setDraft('');
     setDraftAttachments([]);
+    setPaymentLinkDraftPreview(null);
     setReplyingToMessage(null);
     setMessages((current) => [...current, ...optimisticMessages]);
-    updateContactPreview(attachmentsToSend.length ? (text || getAttachmentLabel(attachmentsToSend[0]?.kind)) : text, sentAt, optimisticChannel);
+    updateContactPreview(attachmentsToSend.length ? (textToSend || getAttachmentLabel(attachmentsToSend[0]?.kind)) : textToSend, sentAt, optimisticChannel);
     setSending(true);
     try {
       if (attachmentsToSend.length > 0) {
         const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          sendDraftAttachment(api, contact, attachment, index === 0 ? text : '')
+          sendDraftAttachment(api, contact, attachment, index === 0 ? textToSend : '')
         )));
         setMessages((current) => current.map((message) => {
           if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
@@ -10520,7 +18613,7 @@ function NativeConversationScreen({
           };
         }));
       } else {
-        const response = await api.sendText(contact, text, selectedSendChannel);
+        const response = await api.sendText(contact, textToSend, selectedSendChannel, replyPayload);
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
             ? {
@@ -10545,6 +18638,7 @@ function NativeConversationScreen({
       )));
       setDraft(text);
       setDraftAttachments(attachmentsToSend);
+      setPaymentLinkDraftPreview(paymentPreviewToSend);
       Alert.alert('No se envió', errorMessage);
     } finally {
       setSending(false);
@@ -10553,28 +18647,65 @@ function NativeConversationScreen({
 
   const openMessageActions = (message: ChatMessage) => {
     if (message.direction === 'system') return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+    Keyboard.dismiss();
     setSelectedMessage(message);
     openSheet('messageActions');
   };
 
   const reactToMessage = async (message: ChatMessage, emoji: string) => {
+    if (message.direction !== 'inbound') {
+      closeSheet();
+      Alert.alert('Solo mensajes recibidos', 'Las APIs oficiales reaccionan a mensajes que te mandó el contacto.');
+      return;
+    }
+
+    if (message.isComment || isNativeHighLevelMessageTransport(message) || isNativeEmailOrSmsMessage(message)) {
+      closeSheet();
+      Alert.alert('Canal sin reacción nativa', 'Ese canal no expone una reacción real al globo desde su API.');
+      return;
+    }
+
+    const providerMessageId = getNativeMessageProviderMessageId(message);
+    const metaPlatform = getNativeMetaPlatformForMessage(message);
+    if (metaPlatform && emoji !== '❤️') {
+      closeSheet();
+      Alert.alert('Reacción no disponible', 'Meta solo permite reaccionar con corazón desde la API.');
+      return;
+    }
+
+    if (!providerMessageId) {
+      closeSheet();
+      Alert.alert('Falta ID del mensaje', 'Este mensaje no tiene el ID remoto necesario para reaccionar.');
+      return;
+    }
+
+    const localReactionId = `local-reaction-${Date.now()}`;
     closeSheet();
     setMessages((current) => current.map((item) => (
       item.id === message.id
         ? {
           ...item,
           reactions: [
-            ...(item.reactions || []).filter((reaction) => reaction.id !== `local-reaction-${message.id}`),
-            { id: `local-reaction-${message.id}`, emoji, direction: 'outbound' },
+            ...(item.reactions || []).filter((reaction) => reaction.direction !== 'outbound'),
+            { id: localReactionId, emoji, direction: 'outbound' },
           ],
         }
         : item
     )));
 
     try {
-      await api.sendReaction(contact, message, emoji);
+      await api.sendReaction(contact, message, emoji, localReactionId);
       void loadConversation(true);
     } catch (err) {
+      setMessages((current) => current.map((item) => (
+        item.id === message.id
+          ? {
+            ...item,
+            reactions: (item.reactions || []).filter((reaction) => reaction.id !== localReactionId),
+          }
+          : item
+      )));
       Alert.alert('Reacción', err instanceof Error ? err.message : 'No se pudo mandar la reacción.');
     }
   };
@@ -10582,7 +18713,6 @@ function NativeConversationScreen({
   const copyMessage = async (message: ChatMessage) => {
     await Clipboard.setStringAsync(getMessagePreviewText(message));
     closeSheet();
-    Alert.alert('Copiado', 'El mensaje quedó copiado.');
   };
 
   const toggleStarMessage = (message: ChatMessage) => {
@@ -10608,8 +18738,8 @@ function NativeConversationScreen({
         id: `retry-${message.id}`,
         uri: message.attachment.url || message.attachment.dataUrl || '',
         dataUrl: message.attachment.dataUrl || message.attachment.url || '',
-        kind: normalizeDraftAttachmentKind(message.attachment.type),
-        name: message.attachment.name || getAttachmentLabel(message.attachment.type),
+        kind: getNativeAttachmentKind(message.attachment),
+        name: message.attachment.name || getAttachmentLabel(message.attachment),
         mimeType: message.attachment.mimeType || '',
         durationMs: message.attachment.durationMs,
         size: message.attachment.size,
@@ -10618,15 +18748,37 @@ function NativeConversationScreen({
     closeSheet();
   };
 
+  const editScheduledMessage = (message: ChatMessage) => {
+    const scheduledId = message.scheduledMessageId || message.providerMessageId || message.id.replace(/^scheduled-/, '');
+    if (!scheduledId) {
+      Alert.alert('Programado', 'No encontré el ID de esta programación.');
+      return;
+    }
+    setScheduleEditingMessageId(scheduledId);
+    setScheduleText(message.text || '');
+    setScheduleDraft(createScheduleDraftFromDate(message.scheduledAt || message.date, timezone));
+    setScheduleError('');
+    setSelectedMessage(null);
+    openSheet('schedule');
+  };
+
   const cancelScheduledMessage = async (message: ChatMessage) => {
     const scheduledId = message.scheduledMessageId || message.providerMessageId || message.id.replace(/^scheduled-/, '');
     if (!scheduledId) return;
     closeSheet();
     try {
       await api.cancelScheduledMessage(scheduledId, contact.id);
-      setMessages((current) => current.filter((item) => item.id !== message.id));
-      setScheduledMessages((current) => current.filter((item) => item.id !== message.id));
-      Alert.alert('Mensaje cancelado', 'El mensaje programado ya no se enviará.');
+      setMessages((current) => current.filter((item) => (
+        item.id !== message.id
+        && item.scheduledMessageId !== scheduledId
+        && item.providerMessageId !== scheduledId
+      )));
+      setScheduledMessages((current) => current.filter((item) => (
+        item.id !== message.id
+        && item.scheduledMessageId !== scheduledId
+        && item.providerMessageId !== scheduledId
+      )));
+      setScheduleEditingMessageId((current) => (current === scheduledId ? null : current));
     } catch (err) {
       Alert.alert('Programado', err instanceof Error ? err.message : 'No se pudo cancelar el mensaje.');
     }
@@ -10792,23 +18944,41 @@ function NativeConversationScreen({
     }
     setPaymentBusy(true);
     try {
+      const paidAt = new Date().toISOString();
+      const concept = paymentDraft.concept.trim() || 'Pago';
       await api.createTransaction({
         amount,
         currency: accountCurrency,
         status: 'paid',
         paymentMethod: paymentDraft.method || 'cash',
         paymentMode: 'single',
-        title: paymentDraft.concept.trim() || 'Pago',
-        description: paymentDraft.concept.trim() || 'Pago',
+        title: concept,
+        description: concept,
+        date: paidAt,
         contactId: contact.id,
         contactName: getContactName(contact),
         email: contact.email,
         phone: contact.phone,
         metadata: { source: 'native_mobile_chat' },
       });
+      const amountLabel = formatCurrency(amount, accountCurrency);
+      setLocalActivityMarkers((current) => mergeConversationActivityMarkers(current, [{
+        id: `local-payment-${Date.now()}`,
+        kind: 'payment',
+        date: paidAt,
+        title: 'Pago completado',
+        subtitle: concept,
+        amountLabel,
+      }]));
+      setCompletionNotice({
+        kind: 'payment',
+        title: 'Pago confirmado',
+        subtitle: `${amountLabel} · ${concept}`,
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       closeSheet();
-      Alert.alert('Pago registrado', `Se registró ${formatContactMoney(amount, accountCurrency)} para ${getContactName(contact)}.`);
       onRefreshChats();
+      requestAnimationFrame(() => scrollConversationToLatest(true));
     } catch (err) {
       Alert.alert('Registrar pago', err instanceof Error ? err.message : 'No se pudo registrar el pago.');
     } finally {
@@ -10832,6 +19002,7 @@ function NativeConversationScreen({
     const endTime = new Date(new Date(startTime).getTime() + durationMinutes * 60000).toISOString();
     setAppointmentBusy(true);
     try {
+      const bookedAt = new Date().toISOString();
       await api.createAppointment({
         title,
         contactId: contact.id,
@@ -10841,10 +19012,24 @@ function NativeConversationScreen({
         notes: appointmentDraft.notes.trim(),
         appointmentStatus: 'confirmed',
       });
+      const appointmentLabel = formatSchedulePreviewLabel(startTime, timezone);
+      setLocalActivityMarkers((current) => mergeConversationActivityMarkers(current, [{
+        id: `local-appointment-${Date.now()}`,
+        kind: 'appointment',
+        date: bookedAt,
+        title: 'Cita agendada',
+        subtitle: joinContactInfoJourneyDetails([title, appointmentLabel]),
+      }]));
+      setCompletionNotice({
+        kind: 'appointment',
+        title: 'Cita agendada',
+        subtitle: appointmentLabel,
+      });
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
       closeSheet();
-      Alert.alert('Cita agendada', `${title} quedó en la agenda.`);
       onContactPatch(contact.id, { hasAppointments: true, nextAppointmentDate: startTime });
       onRefreshChats();
+      requestAnimationFrame(() => scrollConversationToLatest(true));
     } catch (err) {
       Alert.alert('Agendar cita', err instanceof Error ? err.message : 'No se pudo crear la cita.');
     } finally {
@@ -10855,7 +19040,6 @@ function NativeConversationScreen({
   const applyTagToContact = async (target: ChatContact, tag: ContactTag) => {
     if (tagBusy) return;
     if ((target.tags || []).includes(tag.id)) {
-      Alert.alert('Etiqueta', `${getContactName(target)} ya tiene ${tag.name}.`);
       return;
     }
 
@@ -10865,7 +19049,6 @@ function NativeConversationScreen({
       const nextTags = Array.from(new Set([...(target.tags || []), tag.id]));
       onContactPatch(target.id, { tags: nextTags });
       closeSheet();
-      Alert.alert('Etiqueta agregada', `${tag.name} quedó en ${getContactName(target)}.`);
     } catch (err) {
       Alert.alert('Etiqueta', err instanceof Error ? err.message : 'No se pudo agregar la etiqueta.');
     } finally {
@@ -10884,7 +19067,6 @@ function NativeConversationScreen({
       const nextTags = Array.from(new Set([...(target.tags || []), tag.id]));
       onContactPatch(target.id, { tags: nextTags });
       closeSheet();
-      Alert.alert('Etiqueta creada', `${tag.name} quedó en ${getContactName(target)}.`);
     } catch (err) {
       Alert.alert('Etiqueta', err instanceof Error ? err.message : 'No se pudo crear la etiqueta.');
     } finally {
@@ -10894,17 +19076,41 @@ function NativeConversationScreen({
 
   const scheduleMessageForContact = async (target: ChatContact) => {
     const text = scheduleText.trim();
-    if (!text || scheduleBusy) return;
-    const scheduledAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    if (scheduleBusy) return;
+    if (!text) {
+      setScheduleError('Escribe el mensaje que quieres programar.');
+      return;
+    }
+    const scheduledDate = getScheduleDateFromDraft(scheduleDraft, timezone);
+    if (!scheduledDate) {
+      setScheduleError('Revisa la fecha y la hora.');
+      return;
+    }
+    if (scheduledDate.getTime() < Date.now() + 10 * 1000) {
+      setScheduleError('Elige una hora futura para programar el mensaje.');
+      return;
+    }
+    const channelUnavailableReason = getScheduleChannelUnavailableReason(selectedSendChannel, target);
+    if (channelUnavailableReason) {
+      setScheduleError(channelUnavailableReason);
+      Alert.alert('Programar mensaje', channelUnavailableReason);
+      return;
+    }
     setScheduleBusy(true);
+    setScheduleError('');
     try {
-      await api.scheduleText(target, text, scheduledAt, selectedSendChannel);
+      const editingId = scheduleEditingMessageId;
+      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedSendChannel, editingId || undefined);
       closeSheet();
       setScheduleText('');
-      Alert.alert('Mensaje programado', `Se programó para enviarse en 1 hora a ${getContactName(target)}.`);
+      setScheduleDraft(createDefaultScheduleDraft(timezone));
+      setScheduleEditingMessageId(null);
+      if (draft.trim() === text) setDraft('');
       void loadConversation(true);
     } catch (err) {
-      Alert.alert('Programar mensaje', err instanceof Error ? err.message : 'No se pudo programar el mensaje.');
+      const message = err instanceof Error ? err.message : 'No se pudo programar el mensaje.';
+      setScheduleError(message);
+      Alert.alert('Programar mensaje', message);
     } finally {
       setScheduleBusy(false);
     }
@@ -10917,7 +19123,6 @@ function NativeConversationScreen({
       const state = await api.updateAgentState(target.id, action);
       setAgentStates([state]);
       closeSheet();
-      Alert.alert('Agente conversacional', getAgentActionSuccess(action, getContactName(target)));
     } catch (err) {
       Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudo actualizar el agente.');
     } finally {
@@ -10928,12 +19133,31 @@ function NativeConversationScreen({
   const openContactInfo = async () => {
     setContactInfoOpen(true);
     setContactInfo((current) => current?.id === contact.id ? current : contact);
+    setContactInfoJourneyEvents([]);
     setContactInfoError('');
     setContactInfoLoading(true);
     try {
-      const details = await api.getContact(contact.id);
-      setContactInfo({ ...contact, ...details });
-      onContactPatch(contact.id, details);
+      const [detailsResult, journeyResult] = await Promise.allSettled([
+        api.getContact(contact.id),
+        api.getContactJourney(contact.id),
+      ]);
+
+      if (detailsResult.status === 'fulfilled') {
+        setContactInfo({ ...contact, ...detailsResult.value });
+        onContactPatch(contact.id, detailsResult.value);
+      }
+
+      if (journeyResult.status === 'fulfilled' && Array.isArray(journeyResult.value)) {
+        setContactInfoJourneyEvents(journeyResult.value);
+      }
+
+      if (detailsResult.status === 'rejected' && journeyResult.status === 'rejected') {
+        throw detailsResult.reason || journeyResult.reason;
+      }
+
+      if (journeyResult.status === 'rejected') {
+        setContactInfoError('No se pudo cargar el viaje completo. Te muestro el detalle disponible.');
+      }
     } catch (err) {
       setContactInfoError(err instanceof Error ? err.message : 'No se pudo cargar todo el detalle. Te muestro lo que ya está guardado.');
     } finally {
@@ -10959,6 +19183,10 @@ function NativeConversationScreen({
 
   const navigateToContactTool = (target: ChatContact, section: PhoneSection) => {
     closeSheet();
+    if (onNavigateToContactTool) {
+      onNavigateToContactTool(target, section);
+      return;
+    }
     onNavigate?.(section);
   };
 
@@ -10973,7 +19201,6 @@ function NativeConversationScreen({
   const toggleArchiveFromSheet = (target: ChatContact) => {
     onArchiveToggle(target);
     closeSheet();
-    Alert.alert(archived ? 'Chat restaurado' : 'Chat archivado', getContactName(target));
   };
 
   const toggleMuteFromSheet = (target: ChatContact) => {
@@ -10986,6 +19213,8 @@ function NativeConversationScreen({
       <NativeContactDetailScreen
         contact={contactInfo || contact}
         accountCurrency={accountCurrency}
+        businessPhones={businessPhones}
+        journeyEvents={contactInfoJourneyEvents ?? journeyEvents}
         journeyMessages={messages}
         loading={contactInfoLoading}
         saving={contactInfoSaving}
@@ -10993,12 +19222,16 @@ function NativeConversationScreen({
         timezone={timezone}
         onAppointment={() => {
           setContactInfoOpen(false);
-          setTimeout(openAppointmentSheet, 0);
+          setTimeout(() => navigateToContactTool(contact, 'calendar'), 0);
         }}
         onBack={() => setContactInfoOpen(false)}
         onPayment={() => {
           setContactInfoOpen(false);
-          setTimeout(openPaymentSheet, 0);
+          setTimeout(() => navigateToContactTool(contact, 'payments'), 0);
+        }}
+        onSearchChat={() => {
+          setContactInfoOpen(false);
+          setSearchOpen(true);
         }}
         onSave={saveContactInfoPatch}
       />
@@ -11006,23 +19239,23 @@ function NativeConversationScreen({
   }
 
   return (
-    <AppFrame>
+    <AppFrame backgroundColor={conversationFrameBackground} keyboardAvoiding={false}>
       <View style={styles.conversationHeader}>
         <Pressable onPress={onBack} style={styles.backButton}>
-          <ChevronLeft size={30} color={COLORS.text} strokeWidth={2.5} />
+          <ChevronLeft size={30} color={COLORS.text} strokeWidth={2} />
         </Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel="Ver información del contacto" onPress={openContactInfo} style={({ pressed }) => [styles.conversationContactButton, pressed && styles.pressed]}>
-          <View style={[styles.conversationAvatar, { borderColor: channelColor }]}>
+          <View style={styles.conversationAvatar}>
             <View style={styles.conversationAvatarCircle}>
               {getContactAvatar(contact) ? (
                 <Image source={{ uri: getContactAvatar(contact) }} style={styles.conversationAvatarImage} />
               ) : (
-                <Text style={styles.avatarText}>{getContactName(contact).slice(0, 1).toUpperCase()}</Text>
+                <Text style={styles.avatarText}>{getContactInitials(contact)}</Text>
               )}
             </View>
             {channelKind !== 'unknown' ? (
-              <View style={[styles.conversationAvatarBadge, { backgroundColor: channelColor }]}>
-                <ChannelBadgeIcon kind={channelKind} size={13} />
+              <View style={styles.conversationAvatarBadge}>
+                <ChannelAvatarBadgeIcon kind={channelKind} size={17} />
               </View>
             ) : null}
           </View>
@@ -11032,11 +19265,13 @@ function NativeConversationScreen({
           </View>
         </Pressable>
         <View style={styles.conversationCallActions}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Agendar cita" onPress={openAppointmentSheet} style={({ pressed }) => [styles.conversationCallButton, pressed && styles.pressed]}>
-            <CalendarDays size={23} color={COLORS.text} strokeWidth={2.35} />
+          <LiquidControlBackground />
+          <Pressable accessibilityRole="button" accessibilityLabel="Agendar cita" onPress={() => navigateToContactTool(contact, 'calendar')} style={({ pressed }) => [styles.conversationCallButton, pressed && styles.pressed]}>
+            <CalendarDays size={21} color={COLORS.text} strokeWidth={1.95} />
           </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Cobrar" onPress={openPaymentSheet} style={({ pressed }) => [styles.conversationCallButton, pressed && styles.pressed]}>
-            <CircleDollarSign size={23} color={COLORS.text} strokeWidth={2.35} />
+          <View pointerEvents="none" style={styles.conversationCallDivider} />
+          <Pressable accessibilityRole="button" accessibilityLabel="Cobrar" onPress={() => navigateToContactTool(contact, 'payments')} style={({ pressed }) => [styles.conversationCallButton, pressed && styles.pressed]}>
+            <CircleDollarSign size={21} color={COLORS.text} strokeWidth={1.95} />
           </Pressable>
         </View>
       </View>
@@ -11063,7 +19298,12 @@ function NativeConversationScreen({
         </View>
       ) : null}
 
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0} style={[styles.conversationBody, keyboardVisible && styles.conversationBodyKeyboardActive]}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'height' : undefined}
+        keyboardVerticalOffset={0}
+        style={[styles.conversationBody, keyboardVisible && styles.conversationBodyKeyboardActive]}
+      >
+        <ChatWallpaper parallaxX={conversationParallaxX} parallaxY={conversationParallaxY} />
         {loading ? (
           <View style={styles.centerState}>
             <ActivityIndicator color={COLORS.accent} />
@@ -11071,12 +19311,46 @@ function NativeConversationScreen({
         ) : (
           <FlatList
             ref={listRef}
-            data={conversationItems}
+            data={conversationRenderItems}
+            inverted={conversationHasItems}
             keyExtractor={(item) => item.id}
+            alwaysBounceVertical={false}
+            bounces={false}
             contentContainerStyle={styles.messageList}
             keyboardShouldPersistTaps="handled"
+            overScrollMode="never"
             refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={() => void loadConversation(true)} />}
-            onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+            removeClippedSubviews={false}
+            onContentSizeChange={handleConversationContentSizeChange}
+            onEndReached={() => void loadOlderConversationMessages()}
+            onEndReachedThreshold={CHAT_CONVERSATION_OLDER_THRESHOLD}
+            ListFooterComponent={olderMessagesLoading ? (
+              <View style={styles.olderMessagesLoader}>
+                <ActivityIndicator color={COLORS.accent} size="small" />
+              </View>
+            ) : null}
+            stickyHeaderIndices={conversationStickyHeaderIndices}
+            scrollEventThrottle={16}
+            onScroll={trackConversationScroll}
+            onScrollBeginDrag={(event) => {
+              markConversationManualScrollActive();
+              trackConversationScroll(event);
+              showConversationDateHeaders();
+            }}
+            onMomentumScrollBegin={() => {
+              markConversationManualScrollActive();
+              showConversationDateHeaders();
+            }}
+            onScrollEndDrag={(event) => {
+              trackConversationScroll(event);
+              releaseConversationManualScrollSoon();
+              hideConversationDateHeaders();
+            }}
+            onMomentumScrollEnd={(event) => {
+              trackConversationScroll(event);
+              releaseConversationManualScrollSoon();
+              hideConversationDateHeaders();
+            }}
             ListEmptyComponent={(
               <View style={styles.emptyConversation}>
                 <MessageCircle size={30} color={COLORS.accent} strokeWidth={2.4} />
@@ -11087,19 +19361,25 @@ function NativeConversationScreen({
             renderItem={({ item }) => (
               item.type === 'day'
                 ? (
-                  <View style={styles.messageDaySeparator}>
+                  <Animated.View style={[styles.messageDaySeparator, { opacity: dateHeaderOpacity }]}>
                     <Text style={styles.messageDayLabel}>{item.label}</Text>
-                  </View>
+                  </Animated.View>
                 )
+                : item.type === 'completionNotice'
+                  ? <NativeConversationCompletionNotice notice={item.notice} onDone={() => setCompletionNotice(null)} />
+                : item.type === 'activity'
+                  ? <NativeConversationActivityMarker marker={item.marker} timezone={timezone} />
                 : (
-                  <NativeMessageBubble
-                    contact={contact}
-                    message={item.message}
-                    replyTarget={item.message.replyToMessageId ? messages.find((message) => message.id === item.message.replyToMessageId) : null}
-                    searchActive={Boolean(searchQuery)}
-                    starred={starredMessageIds.includes(item.message.id)}
-                    timezone={timezone}
+	                  <NativeMessageBubble
+	                    contact={contact}
+	                    message={item.message}
+	                    replyTarget={findNativeReplyTarget(messages, item.message)}
+	                    searchActive={Boolean(searchQuery)}
+	                    scheduledCountdownNow={scheduledCountdownNow}
+	                    starred={starredMessageIds.includes(item.message.id)}
+	                    timezone={timezone}
                     onLongPress={() => openMessageActions(item.message)}
+                    onReplySwipe={() => setReplyingToMessage(item.message)}
                   />
                 )
             )}
@@ -11114,114 +19394,163 @@ function NativeConversationScreen({
               <Text numberOfLines={1} style={styles.replyPreviewText}>{getMessagePreviewText(replyingToMessage)}</Text>
             </View>
             <Pressable accessibilityRole="button" onPress={() => setReplyingToMessage(null)} style={styles.replyPreviewClose}>
+              <LiquidControlBackground />
               <X size={16} color={COLORS.muted} strokeWidth={2.45} />
             </Pressable>
           </View>
         ) : null}
 
-        {draftAttachments.length ? (
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.draftAttachmentStrip}>
-            {draftAttachments.map((attachment) => (
-              <View key={attachment.id} style={styles.draftAttachment}>
-                <NativeDraftAttachmentPreview attachment={attachment} />
-                <Pressable accessibilityRole="button" onPress={() => removeDraftAttachment(attachment.id)} style={styles.draftAttachmentRemove}>
-                  <X size={14} color={COLORS.white} strokeWidth={2.6} />
-                </Pressable>
-              </View>
-            ))}
-          </ScrollView>
-        ) : null}
-
-        {audioRecorderState.isRecording ? (
-          <View style={styles.voiceRecordingBar}>
-            <View style={styles.voiceRecordingIcon}>
-              <Mic size={16} color={COLORS.white} strokeWidth={2.55} />
-            </View>
-            <Text style={styles.voiceRecordingText}>Grabando nota de voz · {formatDurationMs(audioRecorderState.durationMillis)}</Text>
-            <Pressable accessibilityRole="button" onPress={() => void finishVoiceRecording()} style={styles.voiceRecordingDone}>
-              <Check size={17} color={COLORS.white} strokeWidth={2.7} />
-            </Pressable>
-          </View>
-        ) : null}
-
-        <View style={[styles.composer, keyboardVisible && styles.composerKeyboardActive, hasComposerContent && styles.composerHasContent]}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Canal de envío: ${selectedChannelOption?.label || 'WhatsApp'}`}
-            onPress={() => openSheet('channel')}
-            style={({ pressed }) => [
-              styles.composerChannelButton,
-              { borderColor: selectedChannelColor },
-              pressed && styles.pressed,
-            ]}
-          >
-            <ChannelBadgeIcon kind={selectedChannelKind} size={17} />
-          </Pressable>
-          <Pressable accessibilityRole="button" onPress={() => openSheet('attachments')} style={styles.composerPlus}>
-            <Plus size={22} color={COLORS.accent} strokeWidth={2.55} />
-          </Pressable>
-          <View style={[styles.messageInputWrap, draft.trim() && styles.messageInputWrapWithSchedule]}>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              multiline
-              editable={selectedChannelCanSend}
-              placeholder={composerPlaceholder}
-              placeholderTextColor={COLORS.muted}
-              keyboardAppearance="dark"
-              textAlignVertical="center"
-              style={[styles.composerInput, !selectedChannelCanSend && styles.composerInputDisabled]}
-            />
-            {draft.trim() && !draftAttachments.length ? (
-              <Pressable accessibilityRole="button" onPress={() => {
-                setScheduleText(draft);
-                openSheet('schedule');
-              }} style={styles.composerScheduleButton}>
-                <Clock size={17} color={COLORS.accent} strokeWidth={2.45} />
-              </Pressable>
-            ) : null}
-          </View>
-          <View style={[styles.composerTrailingActions, hasComposerContent && styles.composerTrailingActionsCompact]}>
-            {!hasComposerContent ? (
-              <Pressable accessibilityRole="button" onPress={() => void pickMedia('camera')} style={styles.composerIconButton}>
-                <Camera size={20} color={COLORS.accent} strokeWidth={2.55} />
-              </Pressable>
-            ) : null}
-            <Pressable
-              disabled={sending || !selectedChannelCanSend}
-              onPress={() => {
-                if (hasComposerContent) {
-                  void send();
-                  return;
-                }
-                if (audioRecorderState.isRecording) {
-                  void finishVoiceRecording();
-                  return;
-                }
-                void startVoiceRecording();
-              }}
-              style={[styles.composerSendButton, (sending || !selectedChannelCanSend) && styles.disabledButton, audioRecorderState.isRecording && styles.composerRecordingButton]}
+        {draftAttachments.length && !voiceDraftAttachment ? (
+          <View style={styles.draftAttachmentTray}>
+            <ScrollView
+              horizontal
+              keyboardShouldPersistTaps="handled"
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.draftAttachmentStrip}
             >
-              {sending ? <ActivityIndicator color={COLORS.white} /> : hasComposerContent ? <Send size={17} color={COLORS.white} strokeWidth={2.65} /> : <Mic size={19} color={COLORS.white} strokeWidth={2.5} />}
-            </Pressable>
+              {draftAttachments.map((attachment, index) => (
+                <View
+                  key={attachment.id}
+                  style={[
+                    styles.draftAttachment,
+                    attachment.kind === 'image' || attachment.kind === 'video' ? styles.draftAttachmentMediaCard : styles.draftAttachmentFileCard,
+                  ]}
+                >
+                  <NativeDraftAttachmentPreview attachment={attachment} />
+                  <View style={styles.draftAttachmentIndexBadge}>
+                    <Text style={styles.draftAttachmentIndexText}>{index + 1}</Text>
+                  </View>
+                  <Pressable accessibilityRole="button" onPress={() => removeDraftAttachment(attachment.id)} style={styles.draftAttachmentRemove}>
+                    <X size={14} color={COLORS.white} strokeWidth={2.6} />
+                  </Pressable>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={styles.draftAttachmentTrayFooter}>
+              <Text numberOfLines={1} style={styles.draftAttachmentTrayText}>
+                {draftAttachments.length === 1 ? '1 archivo listo' : `${draftAttachments.length} archivos listos`}
+              </Text>
+              <Text numberOfLines={1} style={styles.draftAttachmentTrayHint}>Agrega texto o envía directo.</Text>
+            </View>
           </View>
-        </View>
+        ) : null}
+
+        {voiceRecordingVisible ? (
+          <NativeVoiceRecordingPanel
+            durationMs={voiceRecordingDurationMs}
+            metering={audioRecorderState.metering}
+            paused={voiceRecordingPaused || !audioRecorderState.isRecording}
+            onCancel={() => void cancelVoiceRecording()}
+            onSend={() => void finishVoiceRecording()}
+            onTogglePause={toggleVoiceRecordingPause}
+          />
+        ) : null}
+
+        {voiceDraftAttachment && !voiceRecordingVisible ? (
+          <NativeVoicePreviewPanel
+            attachment={voiceDraftAttachment}
+            sending={sending}
+            onCancel={() => removeDraftAttachment(voiceDraftAttachment.id)}
+            onSend={() => void send()}
+          />
+        ) : null}
+
+        {paymentLinkDraftPreview && !voiceRecordingVisible && !voiceDraftAttachment ? (
+          <NativePaymentLinkDraftPreview
+            preview={paymentLinkDraftPreview}
+            onClose={() => setPaymentLinkDraftPreview(null)}
+          />
+        ) : null}
+
+        {!voiceRecordingVisible && !voiceDraftAttachment ? (
+          <View style={[styles.composer, hasComposerContent && styles.composerHasContent, styles.aiAssistantComposer, keyboardVisible && styles.composerKeyboardActive]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Canal de envío: ${selectedChannelOption?.label || 'WhatsApp'}`}
+              onPress={() => openSheet('channel')}
+              style={({ pressed }) => [
+                styles.composerChannelButton,
+                pressed && styles.pressed,
+              ]}
+            >
+              <ChannelBadgeIcon color={selectedChannelColor} kind={selectedChannelKind} size={22} />
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={() => openSheet('attachments')} style={styles.composerPlus}>
+              <Plus size={28} color={COLORS.text} strokeWidth={1.9} />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Escribir mensaje"
+              onPress={() => composerInputRef.current?.focus()}
+              style={[styles.messageInputWrap, draft.trim() && styles.messageInputWrapWithSchedule]}
+            >
+              <TextInput
+                ref={composerInputRef}
+                value={draft}
+                onChangeText={setDraft}
+                multiline
+                editable={!sending}
+                placeholder={composerPlaceholder}
+                placeholderTextColor={COLORS.muted}
+                keyboardAppearance={getNativeKeyboardAppearance()}
+                textAlignVertical="center"
+                style={styles.composerInput}
+              />
+              {draft.trim() && !draftAttachments.length ? (
+                <Pressable accessibilityRole="button" onPress={() => {
+                  setScheduleEditingMessageId(null);
+                  setScheduleText(draft);
+                  setScheduleDraft(createDefaultScheduleDraft(timezone));
+                  setScheduleError('');
+                  openSheet('schedule');
+                }} style={styles.composerScheduleButton}>
+                  <LiquidControlBackground />
+                  <Clock size={17} color={COLORS.accent} strokeWidth={2.45} />
+                </Pressable>
+              ) : null}
+            </Pressable>
+            <View style={[styles.composerTrailingActions, hasComposerContent && styles.composerTrailingActionsCompact]}>
+              {!hasComposerContent ? (
+                <Pressable accessibilityRole="button" onPress={() => void pickMedia('camera')} style={styles.composerIconButton}>
+                  <Camera size={24} color={COLORS.text} strokeWidth={1.9} />
+                </Pressable>
+              ) : null}
+              <Pressable
+                disabled={sending}
+                onPress={() => {
+                  if (hasComposerContent) {
+                    void send();
+                    return;
+                  }
+                  void startVoiceRecording();
+                }}
+                style={[styles.composerSendButton, hasComposerContent && styles.composerSendButtonActive, sending && styles.disabledButton]}
+              >
+                {sending ? <ActivityIndicator color={COLORS.white} /> : hasComposerContent ? <ArrowRight size={18} color={COLORS.white} strokeWidth={2.55} /> : <Mic size={26} color={COLORS.text} strokeWidth={1.9} />}
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
       </KeyboardAvoidingView>
 
       <NativeConversationAttachmentSheet
         closing={activeSheet !== 'attachments' && closingSheet === 'attachments'}
         contact={contact}
         open={activeSheet === 'attachments' || closingSheet === 'attachments'}
-        onAppointment={openAppointmentSheet}
+        onAppointment={() => navigateToContactTool(contact, 'calendar')}
         onCamera={() => void pickMedia('camera')}
         onClose={closeSheet}
         onClabe={openClabeSheet}
         onDocument={() => void pickDocument()}
         onLibrary={() => void pickMedia('library')}
+        onLocation={() => void sendCurrentLocation()}
         onMore={openChatMore}
-        onPayment={openPaymentSheet}
+        onPayment={() => navigateToContactTool(contact, 'payments')}
         onSchedule={() => {
+          setScheduleEditingMessageId(null);
           setScheduleText(draft);
+          setScheduleDraft(createDefaultScheduleDraft(timezone));
+          setScheduleError('');
           openSheet('schedule');
         }}
         onSearch={() => {
@@ -11252,6 +19581,7 @@ function NativeConversationScreen({
 
       <NativeMessageActionSheet
         closing={activeSheet !== 'messageActions' && closingSheet === 'messageActions'}
+        contact={contact}
         message={selectedMessage}
         open={activeSheet === 'messageActions' || closingSheet === 'messageActions'}
         starred={selectedMessage ? starredMessageIds.includes(selectedMessage.id) : false}
@@ -11259,6 +19589,7 @@ function NativeConversationScreen({
         onClose={closeSheet}
         onCancelScheduled={cancelScheduledMessage}
         onCopy={(message) => void copyMessage(message)}
+        onEditScheduled={editScheduledMessage}
         onForward={forwardMessage}
         onInfo={(message) => {
           Alert.alert('Mensaje', [
@@ -11288,13 +19619,16 @@ function NativeConversationScreen({
         open={activeSheet === 'chatMore' || closingSheet === 'chatMore'}
         unread={getUnreadCount(contact)}
         onAgentAction={runAgentAction}
-        onAppointment={() => openAppointmentSheet()}
+        onAppointment={() => navigateToContactTool(contact, 'calendar')}
         onArchiveToggle={toggleArchiveFromSheet}
         onClose={closeSheet}
         onMarkRead={markChatAsRead}
-        onPayment={() => openPaymentSheet()}
+        onPayment={() => navigateToContactTool(contact, 'payments')}
         onSchedule={() => {
+          setScheduleEditingMessageId(null);
           setScheduleText('');
+          setScheduleDraft(createDefaultScheduleDraft(timezone));
+          setScheduleError('');
           openSheet('schedule');
         }}
         onSelect={() => {
@@ -11323,9 +19657,20 @@ function NativeConversationScreen({
         busy={scheduleBusy}
         closing={activeSheet !== 'schedule' && closingSheet === 'schedule'}
         contact={contact}
+        draft={scheduleDraft}
+        editing={Boolean(scheduleEditingMessageId)}
+        error={scheduleError}
         open={activeSheet === 'schedule' || closingSheet === 'schedule'}
         text={scheduleText}
-        onChangeText={setScheduleText}
+        timezone={timezone}
+        onChangeDraft={(patch) => {
+          setScheduleDraft((current) => ({ ...current, ...patch }));
+          setScheduleError('');
+        }}
+        onChangeText={(value) => {
+          setScheduleText(value);
+          setScheduleError('');
+        }}
         onClose={closeSheet}
         onSubmit={scheduleMessageForContact}
       />
@@ -11422,16 +19767,16 @@ function NativeComposerChannelSheet({
               style={({ pressed }) => [
                 styles.channelOptionRow,
                 active && styles.channelOptionRowActive,
-                disabled && styles.disabledButton,
+                disabled && styles.channelOptionRowDisabled,
                 pressed && styles.pressed,
               ]}
             >
-              <View style={[styles.channelOptionIcon, { backgroundColor: CHANNEL_BADGE_COLORS[channel.kind] || COLORS.panelSoft }]}>
+              <View style={[styles.channelOptionIcon, disabled && styles.channelOptionIconDisabled, { backgroundColor: CHANNEL_BADGE_COLORS[channel.kind] || COLORS.panelSoft }]}>
                 <ChannelBadgeIcon kind={channel.kind} size={18} />
               </View>
               <View style={styles.channelOptionCopy}>
-                <Text style={styles.channelOptionTitle}>{channel.label}</Text>
-                <Text numberOfLines={2} style={styles.channelOptionSubtitle}>{channel.disabledReason || channel.description}</Text>
+                <Text style={[styles.channelOptionTitle, disabled && styles.channelOptionTitleDisabled]}>{channel.label}</Text>
+                <Text numberOfLines={2} style={[styles.channelOptionSubtitle, disabled && styles.channelOptionSubtitleDisabled]}>{channel.disabledReason || channel.description}</Text>
               </View>
               {active ? <Check size={18} color={COLORS.accent} strokeWidth={2.6} /> : null}
             </Pressable>
@@ -11452,6 +19797,7 @@ function NativeConversationAttachmentSheet({
   onClose,
   onDocument,
   onLibrary,
+  onLocation,
   onMore,
   onPayment,
   onSchedule,
@@ -11468,6 +19814,7 @@ function NativeConversationAttachmentSheet({
   onClose: () => void;
   onDocument: () => void;
   onLibrary: () => void;
+  onLocation: () => void;
   onMore: () => void;
   onPayment: () => void;
   onSchedule: () => void;
@@ -11487,6 +19834,7 @@ function NativeConversationAttachmentSheet({
         <SheetActionRow Icon={Camera} title="Cámara" subtitle="Toma foto o graba video para enviarlo por WhatsApp." onPress={onCamera} />
         <SheetActionRow Icon={ImageIcon} title="Fotos y videos" subtitle="Adjunta media desde tu galería." onPress={onLibrary} />
         <SheetActionRow Icon={FilePlus} title="Documento" subtitle="Adjunta PDF, Word, Excel o archivo compatible." onPress={onDocument} />
+        <SheetActionRow Icon={MapPin} title="Ubicación" subtitle="Comparte tu ubicación actual por WhatsApp." onPress={onLocation} />
         <SheetActionRow Icon={Search} title="Buscar en este chat" subtitle="Encuentra mensajes dentro de la conversación." onPress={onSearch} />
         <View style={styles.sheetSectionDivider}>
           <Text style={styles.sheetSectionLabel}>Herramientas</Text>
@@ -11494,8 +19842,8 @@ function NativeConversationAttachmentSheet({
         <SheetActionRow Icon={MessageCircle} title="Plantillas" subtitle="Enviar una plantilla aprobada o insertar una respuesta guardada." onPress={onTemplates} />
         <SheetActionRow Icon={Banknote} title="Enviar CLABE" subtitle="Comparte una cuenta bancaria guardada." onPress={onClabe} />
         <SheetActionRow Icon={CalendarDays} title="Agendar cita" subtitle="Crear una cita para este contacto." onPress={onAppointment} />
-        <SheetActionRow Icon={CircleDollarSign} title="Registrar pagos" subtitle="Elegir pago único, plan o suscripción." onPress={onPayment} />
-        <SheetActionRow Icon={Clock} title="Programar mensaje" subtitle="Prepara un envío en una hora." onPress={onSchedule} />
+        <SheetActionRow Icon={CircleDollarSign} title="Registrar pagos" subtitle="Registrar un cobro para este contacto." onPress={onPayment} />
+        <SheetActionRow Icon={Clock} title="Programar mensaje" subtitle="Elige fecha y hora exacta de envío." onPress={onSchedule} />
         <SheetActionRow Icon={Tag} title="Agregar etiqueta" subtitle="Clasificar este chat con una etiqueta." onPress={onTag} />
         <SheetActionRow Icon={MoreHorizontal} title="Más acciones" subtitle="Silenciar, archivar o controlar agente." onPress={onMore} />
       </ScrollView>
@@ -11504,7 +19852,8 @@ function NativeConversationAttachmentSheet({
 }
 
 function NativeMessageActionSheet({
-  closing,
+  closing = false,
+  contact,
   message,
   open,
   starred,
@@ -11512,6 +19861,7 @@ function NativeMessageActionSheet({
   onCancelScheduled,
   onClose,
   onCopy,
+  onEditScheduled,
   onForward,
   onInfo,
   onReact,
@@ -11520,6 +19870,7 @@ function NativeMessageActionSheet({
   onStar,
 }: {
   closing?: boolean;
+  contact: ChatContact;
   message: ChatMessage | null;
   open: boolean;
   starred?: boolean;
@@ -11527,6 +19878,7 @@ function NativeMessageActionSheet({
   onCancelScheduled: (message: ChatMessage) => void;
   onClose: () => void;
   onCopy: (message: ChatMessage) => void;
+  onEditScheduled: (message: ChatMessage) => void;
   onForward: (message: ChatMessage) => void;
   onInfo: (message: ChatMessage) => void;
   onReact: (message: ChatMessage, emoji: string) => void;
@@ -11534,41 +19886,151 @@ function NativeMessageActionSheet({
   onRetry: (message: ChatMessage) => void;
   onStar: (message: ChatMessage) => void;
 }) {
+  const scheduled = message ? isScheduledMessage(message) : false;
+  const transportBadge = message ? getNativeMessageTransportBadge(message) : '';
+  const reactionEmojis = !message || transportBadge === 'EMAIL'
+    ? []
+    : transportBadge === 'FB' || transportBadge === 'IG'
+      ? ['❤️']
+      : MESSAGE_REACTION_EMOJIS;
+  const actionAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (!open || !message) return;
+    actionAnim.stopAnimation();
+    if (closing) {
+      Animated.timing(actionAnim, {
+        toValue: 0,
+        duration: MESSAGE_ACTION_CLOSE_DURATION_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+      return;
+    }
+    actionAnim.setValue(0);
+    Animated.spring(actionAnim, {
+      toValue: 1,
+      damping: 14,
+      stiffness: 260,
+      mass: 0.65,
+      useNativeDriver: true,
+    }).start();
+  }, [actionAnim, closing, message?.id, open]);
+
+  const stageAnimatedStyle = {
+    opacity: actionAnim,
+    transform: [
+      {
+        translateY: actionAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [64, 0],
+        }),
+      },
+      {
+        scale: actionAnim.interpolate({
+          inputRange: [0, 1],
+          outputRange: [0.96, 1],
+        }),
+      },
+    ],
+  };
+  const reactionAnimatedStyle = {
+    opacity: actionAnim,
+    transform: [
+      {
+        scale: actionAnim.interpolate({
+          inputRange: [0, 0.72, 1],
+          outputRange: [0.78, 1.08, 1],
+        }),
+      },
+    ],
+  };
+  const overlayAnimatedStyle = {
+    opacity: actionAnim,
+  };
+
   return (
-    <BottomActionSheet
-      closing={closing}
-      open={open && Boolean(message)}
-      title="Acciones del mensaje"
-      subtitle={message ? formatMessageTime(message.date, timezone) : ''}
-      onClose={onClose}
-    >
+    <Modal visible={open && Boolean(message)} transparent animationType="none" onRequestClose={onClose}>
       {message ? (
-        <View style={styles.messageActionSheetBody}>
-          <View style={styles.messageActionPreview}>
-            <Text numberOfLines={2} style={styles.messageActionPreviewText}>{getMessagePreviewText(message)}</Text>
-          </View>
-          <View style={styles.reactionRow}>
-            {MESSAGE_REACTION_EMOJIS.map((emoji) => (
-              <Pressable key={emoji} accessibilityRole="button" onPress={() => onReact(message, emoji)} style={styles.reactionButton}>
-                <Text style={styles.reactionEmoji}>{emoji}</Text>
-              </Pressable>
-            ))}
-          </View>
-          <SheetActionRow Icon={Reply} title="Responder" subtitle="Cita este mensaje en tu siguiente respuesta." onPress={() => onReply(message)} />
-          <SheetActionRow Icon={Copy} title="Copiar" subtitle="Copia texto, caption o resumen del mensaje." onPress={() => onCopy(message)} />
-          <SheetActionRow Icon={Star} title={starred ? 'Quitar destacado' : 'Destacar'} subtitle={starred ? 'Quita este mensaje de destacados locales.' : 'Marca este mensaje como importante en esta sesión.'} onPress={() => onStar(message)} />
-          <SheetActionRow Icon={Forward} title="Reenviar" subtitle="Pasa el contenido al compositor para enviarlo." onPress={() => onForward(message)} />
-          {message.failed ? (
-            <SheetActionRow Icon={RefreshCw} title="Reintentar" subtitle="Devuelve el mensaje al compositor para mandarlo de nuevo." onPress={() => onRetry(message)} />
-          ) : null}
-          {isScheduledMessage(message) ? (
-            <SheetActionRow Icon={X} title="Cancelar programado" subtitle="Cancela este mensaje antes de que se envíe." danger onPress={() => onCancelScheduled(message)} />
-          ) : null}
-          <SheetActionRow Icon={Smile} title="Reaccionar" subtitle="Usa los emojis rápidos de arriba." onPress={() => undefined} disabled />
-          <SheetActionRow Icon={Info} title="Información" subtitle="Ver canal, estado y hora del mensaje." onPress={() => onInfo(message)} />
+        <View style={styles.messageActionOverlayRoot}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Cerrar acciones del mensaje"
+            onPress={onClose}
+            onPressIn={onClose}
+            style={styles.messageActionOverlayBackdrop}
+          />
+          <Animated.View pointerEvents="none" style={[styles.messageActionOverlayGlass, overlayAnimatedStyle]}>
+            <LiquidGlassLayer
+              colorScheme={activeNativeThemeTone}
+              fallbackStyle={styles.messageActionOverlayGlassFallback}
+              glassEffectStyle="regular"
+              style={styles.messageActionOverlayGlass}
+              tintColor={activeNativeThemeTone === 'light' ? 'rgba(255,255,255,0.24)' : 'rgba(10,10,12,0.34)'}
+            />
+          </Animated.View>
+          <Animated.View pointerEvents="none" style={[styles.messageActionOverlayDimmer, overlayAnimatedStyle]} />
+          <Animated.View pointerEvents="box-none" style={[styles.messageActionFocusedStage, stageAnimatedStyle]}>
+            {reactionEmojis.length ? (
+              <Animated.View style={[styles.messageReactionFloatingRow, reactionAnimatedStyle]}>
+                {reactionEmojis.map((emoji) => (
+                  <Pressable key={emoji} accessibilityRole="button" onPress={() => onReact(message, emoji)} style={({ pressed }) => [styles.messageReactionFloatingButton, pressed && styles.pressed]}>
+                    <Text style={styles.messageReactionFloatingEmoji}>{emoji}</Text>
+                  </Pressable>
+                ))}
+              </Animated.View>
+            ) : null}
+
+            <View style={styles.messageActionFocusedBubble}>
+              <NativeMessageBubble
+                contact={contact}
+                message={message}
+                searchActive={false}
+                starred={starred}
+                timezone={timezone}
+              />
+            </View>
+
+            <View style={styles.messageActionDropdown}>
+              {scheduled ? (
+                <>
+                  <NativeMessageActionDropdownRow Icon={Pencil} title="Editar programación" onPress={() => onEditScheduled(message)} />
+                  <NativeMessageActionDropdownRow danger Icon={Trash2} title="Eliminar programación" onPress={() => onCancelScheduled(message)} />
+                </>
+              ) : (
+                <>
+                  <NativeMessageActionDropdownRow Icon={Reply} title="Responder" onPress={() => onReply(message)} />
+                  <NativeMessageActionDropdownRow Icon={Copy} title="Copiar" onPress={() => onCopy(message)} />
+                  <NativeMessageActionDropdownRow Icon={Star} title={starred ? 'Quitar destacado' : 'Destacar'} onPress={() => onStar(message)} />
+                  <NativeMessageActionDropdownRow Icon={Forward} title="Reenviar" onPress={() => onForward(message)} />
+                  {message.failed ? <NativeMessageActionDropdownRow Icon={RefreshCw} title="Reintentar" onPress={() => onRetry(message)} /> : null}
+                  <NativeMessageActionDropdownRow Icon={Info} title="Info del mensaje" onPress={() => onInfo(message)} />
+                </>
+              )}
+            </View>
+          </Animated.View>
         </View>
       ) : null}
-    </BottomActionSheet>
+    </Modal>
+  );
+}
+
+function NativeMessageActionDropdownRow({
+  danger,
+  Icon,
+  title,
+  onPress,
+}: {
+  danger?: boolean;
+  Icon: LucideIcon;
+  title: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.messageActionDropdownRow, pressed && styles.pressed]}>
+      <Icon size={19} color={danger ? COLORS.danger : COLORS.text} strokeWidth={2.35} />
+      <Text style={[styles.messageActionDropdownText, danger && styles.messageActionDropdownDangerText]}>{title}</Text>
+    </Pressable>
   );
 }
 
@@ -11577,22 +20039,84 @@ function NativeMessageBubble({
   message,
   replyTarget,
   searchActive,
+  scheduledCountdownNow,
   starred,
   timezone,
   onLongPress,
+  onReplySwipe,
 }: {
   contact: ChatContact;
   message: ChatMessage;
   replyTarget?: ChatMessage | null;
   searchActive?: boolean;
+  scheduledCountdownNow?: number;
   starred?: boolean;
   timezone: string;
   onLongPress?: () => void;
+  onReplySwipe?: () => void;
 }) {
   const outbound = message.direction === 'outbound';
   const system = message.direction === 'system';
   const attachment = message.attachment;
+  const attachmentKind = attachment ? getNativeAttachmentKind(attachment) : null;
   const status = getMessageReceiptStatus(message);
+  const scheduled = isScheduledMessage(message);
+  const linkPreview = useMemo(() => getNativeMessageLinkPreview(message), [message]);
+  const visibleMessageText = linkPreview?.displayText ?? message.text;
+  const scheduledCountdown = scheduled ? formatNativeScheduledCountdown(message.scheduledAt || message.date, scheduledCountdownNow) : '';
+  const metaLabel = scheduled
+    ? `Programado para ${formatMessageTime(message.scheduledAt || message.date, timezone)}`
+    : `${formatMessageTime(message.date, timezone)}${message.pending ? ' · enviando' : ''}${message.failed ? ' · error' : ''}`;
+  const transportBadge = getNativeMessageTransportBadge(message);
+  const replySwipeX = useRef(new Animated.Value(0)).current;
+  const [replySwipeActive, setReplySwipeActive] = useState(false);
+  const [replySwipeDirection, setReplySwipeDirection] = useState<'left' | 'right' | null>(null);
+  const resetReplySwipe = useCallback(() => {
+    Animated.spring(replySwipeX, {
+      toValue: 0,
+      damping: 15,
+      stiffness: 180,
+      mass: 0.8,
+      useNativeDriver: true,
+    }).start();
+  }, [replySwipeX]);
+  const replySwipeResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gesture) => Boolean(
+      onReplySwipe
+      && !system
+      && Math.abs(gesture.dx) > 4
+      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.72,
+    ),
+    onMoveShouldSetPanResponderCapture: (_, gesture) => Boolean(
+      onReplySwipe
+      && !system
+      && Math.abs(gesture.dx) > 4
+      && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 0.66,
+    ),
+    onPanResponderGrant: () => setReplySwipeActive(true),
+    onPanResponderMove: (_, gesture) => {
+      const nextDirection = gesture.dx < 0 ? 'left' : 'right';
+      setReplySwipeActive(true);
+      setReplySwipeDirection(nextDirection);
+      replySwipeX.setValue(Math.max(-72, Math.min(72, gesture.dx)));
+    },
+    onPanResponderRelease: (_, gesture) => {
+      const shouldReply = Math.abs(gesture.dx) > 38;
+      setReplySwipeActive(false);
+      setReplySwipeDirection(null);
+      resetReplySwipe();
+      if (shouldReply) {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
+        onReplySwipe?.();
+      }
+    },
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderTerminate: () => {
+      setReplySwipeActive(false);
+      setReplySwipeDirection(null);
+      resetReplySwipe();
+    },
+  }), [onReplySwipe, outbound, replySwipeX, resetReplySwipe, system]);
 
   if (system) {
     return (
@@ -11606,18 +20130,37 @@ function NativeMessageBubble({
 
   return (
     <View style={[styles.messageRow, outbound ? styles.messageRowOutbound : styles.messageRowInbound]}>
-      <Pressable
-        delayLongPress={260}
-        onLongPress={onLongPress}
-        style={({ pressed }) => [
+      {scheduled && outbound ? (
+        <View style={styles.messageScheduleTimer}>
+          <Clock size={19} color={COLORS.meta} strokeWidth={2.4} />
+          {scheduledCountdown ? <Text style={styles.messageScheduleTimerText}>{scheduledCountdown}</Text> : null}
+        </View>
+      ) : null}
+      <View style={styles.messageSwipeWrap} {...replySwipeResponder.panHandlers}>
+        {onReplySwipe && replySwipeActive && replySwipeDirection ? (
+          <View pointerEvents="none" style={[styles.messageReplySwipeCue, replySwipeDirection === 'left' ? styles.messageReplySwipeCueOutbound : styles.messageReplySwipeCueInbound]}>
+            <View style={styles.messageReplySwipeCueGlyph}>
+              <Forward size={20} color={COLORS.accent} strokeWidth={2.55} style={replySwipeDirection === 'right' ? styles.messageReplySwipeCueIconInbound : undefined} />
+            </View>
+          </View>
+        ) : null}
+        <Animated.View style={{ transform: [{ translateX: replySwipeX }] }}>
+          <Pressable
+            delayLongPress={260}
+            onLongPress={onLongPress}
+            onPress={scheduled ? onLongPress : undefined}
+            style={({ pressed }) => [
           styles.messageBubble,
           outbound ? styles.outboundBubble : styles.inboundBubble,
-          attachment?.type === 'image' && styles.imageMessageBubble,
+          attachmentKind === 'image' && styles.imageMessageBubble,
+          attachmentKind === 'audio' && styles.audioMessageBubble,
+          message.location && styles.locationMessageBubble,
+          scheduled && styles.messageBubbleScheduled,
           message.failed && styles.failedBubble,
           searchActive && styles.messageSearchMatch,
           pressed && styles.pressed,
         ]}
-      >
+          >
         {replyTarget ? (
           <View style={styles.quotedMessage}>
             <View style={styles.quotedMessageMarker} />
@@ -11627,7 +20170,17 @@ function NativeMessageBubble({
             </View>
           </View>
         ) : null}
-        {attachment ? <NativeMessageAttachment attachment={attachment} /> : null}
+        {attachment ? (
+          <NativeMessageAttachment
+            attachment={attachment}
+            contact={contact}
+            direction={message.direction}
+            failed={Boolean(message.failed)}
+            metaLabel={metaLabel}
+            pending={Boolean(message.pending)}
+            status={status}
+          />
+        ) : null}
         {message.location ? <NativeMessageLocation location={message.location} /> : null}
         {message.isComment ? (
           <View style={styles.commentContext}>
@@ -11637,7 +20190,18 @@ function NativeMessageBubble({
             </Text>
           </View>
         ) : null}
-        {message.text ? <Text style={styles.messageText}>{message.text}</Text> : null}
+        {message.emailDetails ? (
+          <NativeEmailMessageCard
+            direction={message.direction}
+            email={message.emailDetails}
+            failed={Boolean(message.failed)}
+            outbound={outbound && !scheduled}
+          />
+        ) : null}
+        {visibleMessageText && !message.location && !message.emailDetails ? <NativeFormattedMessageText failed={Boolean(message.failed)} outbound={outbound && !scheduled} text={visibleMessageText} /> : null}
+        {linkPreview && !message.location ? (
+          <NativeMessageLinkPreviewCard failed={Boolean(message.failed)} outbound={outbound && !scheduled} preview={linkPreview.preview} />
+        ) : null}
         {starred ? (
           <View style={styles.messageStarredFlag}>
             <Star size={11} color={COLORS.meta} fill={COLORS.meta} strokeWidth={2.2} />
@@ -11645,14 +20209,14 @@ function NativeMessageBubble({
           </View>
         ) : null}
         {message.routingReason ? <Text numberOfLines={2} style={styles.messageRoutingNote}>{message.routingReason}</Text> : null}
-        <View style={styles.messageMetaRow}>
-          <Text style={styles.messageMeta}>
-            {formatMessageTime(message.date, timezone)}
-            {message.pending ? ' · enviando' : ''}
-            {message.failed ? ' · error' : ''}
-          </Text>
-          {outbound ? <NativeMessageReceipt status={status} failed={Boolean(message.failed)} pending={Boolean(message.pending)} /> : null}
-        </View>
+        {attachmentKind !== 'audio' ? (
+          <View style={styles.messageMetaRow}>
+            {scheduled ? <Clock size={11} color={COLORS.meta} strokeWidth={2.5} /> : null}
+            {transportBadge ? <Text style={styles.messageTransport}>{transportBadge}</Text> : null}
+            <Text style={[styles.messageMeta, outbound && !message.failed && !scheduled && styles.messageMetaOnAccent]}>{metaLabel}</Text>
+            {outbound && !scheduled ? <NativeMessageReceipt status={status} failed={Boolean(message.failed)} pending={Boolean(message.pending)} /> : null}
+          </View>
+        ) : null}
         {message.reactions?.length ? (
           <View style={styles.messageReactions}>
             {message.reactions.slice(-3).map((reaction) => (
@@ -11660,28 +20224,387 @@ function NativeMessageBubble({
             ))}
           </View>
         ) : null}
-      </Pressable>
+          </Pressable>
+        </Animated.View>
+      </View>
     </View>
   );
 }
 
-function NativeMessageAttachment({ attachment }: { attachment: ChatAttachment }) {
-  const imageUri = attachment.dataUrl || attachment.url;
-  if (attachment.type === 'image' && imageUri) {
-    return (
-      <Pressable accessibilityRole="imagebutton" onPress={() => void Linking.openURL(imageUri).catch(() => undefined)}>
-        <Image source={{ uri: imageUri }} style={styles.messageImage} />
+function NativeFormattedMessageText({ failed, outbound, text }: { failed?: boolean; outbound?: boolean; text: string }) {
+  const segments = useMemo(() => parseWhatsAppFormattedText(text), [text]);
+  return (
+    <Text style={[styles.messageText, outbound && !failed && styles.messageTextOnAccent, failed && styles.failedMessageText]}>
+      {segments.map((segment, index) => (
+        <Text
+          key={`${segment.text}-${index}`}
+          style={[
+            outbound && !failed && styles.messageTextOnAccent,
+            failed && styles.failedMessageText,
+            segment.bold && styles.messageTextBold,
+            segment.italic && styles.messageTextItalic,
+            segment.strike && styles.messageTextStrike,
+            segment.mono && styles.messageTextMono,
+          ]}
+        >
+          {segment.text}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+function NativeEmailMessageCard({
+  direction,
+  email,
+  failed,
+  outbound,
+}: {
+  direction: ChatMessage['direction'];
+  email: NonNullable<ChatMessage['emailDetails']>;
+  failed?: boolean;
+  outbound?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const directionLabel =
+    direction === 'outbound' ? 'Correo enviado' : direction === 'inbound' ? 'Correo recibido' : 'Correo electrónico';
+  const subject = String(email.subject || '').trim() || 'Sin asunto';
+  const routeLine =
+    direction === 'outbound'
+      ? String(email.toEmail || email.fromEmail || '').trim()
+      : String(email.fromEmail || email.toEmail || '').trim();
+  const body = String(email.body || '').trim() || 'Sin cuerpo';
+  const rows = [
+    ['Asunto', subject],
+    ['Remitente', email.fromEmail],
+    ['Destinatarios', email.toEmail],
+    ['CC', email.ccEmail],
+    ['BCC', email.bccEmail],
+    ['Responder a', email.replyTo],
+    ['Estado', email.status],
+    ['Transporte', email.transport || 'email'],
+  ].filter(([, value]) => Boolean(String(value || '').trim()));
+
+  return (
+    <View style={styles.messageEmailCard}>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => setOpen((current) => !current)}
+        style={({ pressed }) => [styles.messageEmailSummary, pressed && styles.pressed]}
+      >
+        <View style={styles.messageEmailIcon}>
+          <Mail size={15} color={COLORS.accent} strokeWidth={2.35} />
+        </View>
+        <View style={styles.messageEmailHeadline}>
+          <Text
+            numberOfLines={1}
+            style={[styles.messageEmailKicker, outbound && !failed && styles.messageMetaOnAccent, failed && styles.failedMessageText]}
+          >
+            {directionLabel}
+          </Text>
+          <Text
+            numberOfLines={1}
+            style={[styles.messageEmailSubject, outbound && !failed && styles.messageTextOnAccent, failed && styles.failedMessageText]}
+          >
+            {subject}
+          </Text>
+          {routeLine ? (
+            <Text
+              numberOfLines={1}
+              style={[styles.messageEmailRoute, outbound && !failed && styles.messageMetaOnAccent, failed && styles.failedMessageText]}
+            >
+              {routeLine}
+            </Text>
+          ) : null}
+        </View>
+        <ChevronDown
+          size={15}
+          color={COLORS.meta}
+          strokeWidth={2.45}
+          style={[styles.messageEmailChevron, open && styles.messageEmailChevronOpen]}
+        />
       </Pressable>
+      {open ? (
+        <View style={styles.messageEmailDetails}>
+          {rows.map(([label, value]) => (
+            <View key={label} style={styles.messageEmailMetaRow}>
+              <Text style={[styles.messageEmailMetaLabel, outbound && !failed && styles.messageMetaOnAccent, failed && styles.failedMessageText]}>
+                {label}:
+              </Text>
+              <Text style={[styles.messageEmailMetaValue, outbound && !failed && styles.messageTextOnAccent, failed && styles.failedMessageText]}>
+                {String(value || '').trim()}
+              </Text>
+            </View>
+          ))}
+          <View style={styles.messageEmailBodyBlock}>
+            <Text style={[styles.messageEmailMetaLabel, outbound && !failed && styles.messageMetaOnAccent, failed && styles.failedMessageText]}>
+              Cuerpo:
+            </Text>
+            <Text style={[styles.messageEmailBodyText, outbound && !failed && styles.messageTextOnAccent, failed && styles.failedMessageText]}>
+              {body}
+            </Text>
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function NativeMessageLinkPreviewCard({
+  failed,
+  outbound,
+  preview,
+}: {
+  failed?: boolean;
+  outbound?: boolean;
+  preview: NativeMessageLinkPreviewData;
+}) {
+  const [metadata, setMetadata] = useState<NativeUrlPreviewMetadata | null | undefined>(() => nativeUrlPreviewCache.get(preview.url));
+  const host = getPaymentLinkPreviewHost(preview.url);
+  const title = metadata?.title || preview.title;
+  const subtitle = metadata?.description || metadata?.siteName || preview.subtitle;
+  const imageUrl = metadata?.imageUrl || '';
+
+  useEffect(() => {
+    let cancelled = false;
+    if (nativeUrlPreviewCache.has(preview.url)) {
+      setMetadata(nativeUrlPreviewCache.get(preview.url));
+      return () => {
+        cancelled = true;
+      };
+    }
+    setMetadata(undefined);
+    fetchNativeUrlPreviewMetadata(preview.url)
+      .then((result) => {
+        nativeUrlPreviewCache.set(preview.url, result);
+        if (!cancelled) setMetadata(result);
+      })
+      .catch(() => {
+        nativeUrlPreviewCache.set(preview.url, null);
+        if (!cancelled) setMetadata(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [preview.url]);
+
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel={preview.kind === 'payment_link' ? 'Abrir link de pago' : 'Abrir enlace'}
+      onPress={() => void Linking.openURL(preview.url).catch(() => undefined)}
+      style={({ pressed }) => [
+        styles.messageLinkPreviewCard,
+        outbound && !failed && styles.messageLinkPreviewCardOutbound,
+        failed && styles.messageLinkPreviewCardFailed,
+        pressed && styles.pressed,
+      ]}
+    >
+      {imageUrl ? (
+        <Image source={{ uri: imageUrl }} resizeMode="cover" style={styles.messageLinkPreviewImage as ImageStyle} />
+      ) : (
+        <View style={styles.messageLinkPreviewImageFallback}>
+          <Link2 size={20} color={COLORS.meta} strokeWidth={2.45} />
+          <Text numberOfLines={1} style={styles.messageLinkPreviewFallbackHost}>{host}</Text>
+        </View>
+      )}
+      <View style={styles.messageLinkPreviewBody}>
+        <View style={styles.messageLinkPreviewCopy}>
+          <Text numberOfLines={2} style={styles.messageLinkPreviewTitle}>{title}</Text>
+          <Text numberOfLines={2} style={styles.messageLinkPreviewSubtitle}>{subtitle}</Text>
+          <View style={styles.messageLinkPreviewMetaRow}>
+            {preview.amountLabel ? <Text numberOfLines={1} style={styles.messageLinkPreviewAmount}>{preview.amountLabel}</Text> : null}
+            <Text numberOfLines={1} style={styles.messageLinkPreviewHost}>{host}</Text>
+          </View>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+function NativeConversationActivityMarker({
+  marker,
+  timezone,
+}: {
+  marker: ConversationActivityMarker;
+  timezone: string;
+}) {
+  const Icon = marker.kind === 'payment' ? CircleDollarSign : CalendarDays;
+  return (
+    <View style={styles.conversationActivityMarkerRow}>
+      <View style={styles.conversationActivityMarkerLine} />
+      <View style={styles.conversationActivityMarkerPill}>
+        <View style={styles.conversationActivityMarkerIcon}>
+          <Icon size={14} color={COLORS.accent} strokeWidth={2.55} />
+        </View>
+        <View style={styles.conversationActivityMarkerCopy}>
+          <Text numberOfLines={1} style={styles.conversationActivityMarkerTitle}>
+            {marker.title}{marker.amountLabel ? ` · ${marker.amountLabel}` : ''}
+          </Text>
+          <Text numberOfLines={1} style={styles.conversationActivityMarkerSubtitle}>
+            {marker.subtitle} · {formatMessageTime(marker.date, timezone)}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.conversationActivityMarkerLine} />
+    </View>
+  );
+}
+
+function NativeConversationCompletionNotice({
+  notice,
+  onDone,
+}: {
+  notice: NativeConversationSuccessNotice;
+  onDone: () => void;
+}) {
+  const opacity = useRef(new Animated.Value(0)).current;
+  const scale = useRef(new Animated.Value(0.82)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 150,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(scale, {
+        toValue: 1,
+        damping: 12,
+        stiffness: 220,
+        mass: 0.72,
+        useNativeDriver: true,
+      }),
+    ]).start();
+    const timer = setTimeout(() => {
+      Animated.timing(opacity, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }).start(onDone);
+    }, 1350);
+    return () => clearTimeout(timer);
+  }, [onDone, opacity, scale]);
+
+  return (
+    <View pointerEvents="none" style={styles.completionNoticeRow}>
+      <Animated.View style={[styles.completionNoticeCard, { opacity, transform: [{ scale }] }]}>
+        <View style={styles.completionNoticeCheck}>
+          <Check size={18} color={COLORS.white} strokeWidth={3} />
+        </View>
+        <View style={styles.completionNoticeCopy}>
+          <Text numberOfLines={1} style={styles.completionNoticeTitle}>{notice.title}</Text>
+          <Text numberOfLines={1} style={styles.completionNoticeSubtitle}>{notice.subtitle}</Text>
+        </View>
+      </Animated.View>
+    </View>
+  );
+}
+
+function NativeMessageAttachment({
+  attachment,
+  contact,
+  direction,
+  failed,
+  metaLabel,
+  pending,
+  status,
+  transportBadge,
+}: {
+  attachment: ChatAttachment;
+  contact: ChatContact;
+  direction: ChatMessage['direction'];
+  failed?: boolean;
+  metaLabel: string;
+  pending?: boolean;
+  status: 'sent' | 'delivered' | 'read' | 'pending' | 'failed';
+  transportBadge?: string;
+}) {
+  const kind = getNativeAttachmentKind(attachment);
+  const uri = kind === 'audio'
+    ? getNativeAudioAttachmentUri(attachment)
+    : (attachment.dataUrl || attachment.url);
+  if (kind === 'image' && uri) {
+    return <NativeImageAttachment uri={uri} />;
+  }
+
+  if (kind === 'video' && uri) {
+    return <NativeVideoAttachment attachment={attachment} uri={uri} />;
+  }
+
+  if (kind === 'audio') {
+    if (!uri) return <NativeAudioUnavailableAttachment direction={direction} />;
+    return (
+      <NativeAudioAttachment
+        attachment={attachment}
+        contact={contact}
+        direction={direction}
+        failed={failed}
+        metaLabel={metaLabel}
+        pending={pending}
+        receiptStatus={status}
+        transportBadge={transportBadge}
+        uri={uri}
+      />
     );
   }
 
-  if (attachment.type === 'audio' && imageUri) {
-    return <NativeAudioAttachment attachment={attachment} uri={imageUri} />;
-  }
+  return <NativeDocumentAttachment attachment={attachment} uri={uri} />;
+}
 
-  const isVideo = attachment.type === 'video';
-  const uri = imageUri;
-  const Icon = isVideo ? Video : FileText;
+function NativeImageAttachment({ uri }: { uri: string }) {
+  const [size, setSize] = useState(() => ({ width: MESSAGE_IMAGE_MAX_WIDTH, height: Math.round(MESSAGE_IMAGE_MAX_WIDTH * 0.75) }));
+
+  useEffect(() => {
+    let mounted = true;
+    Image.getSize(
+      uri,
+      (width, height) => {
+        if (!mounted) return;
+        setSize(getBoundedMediaSize(width, height, MESSAGE_IMAGE_MAX_WIDTH, MESSAGE_IMAGE_MAX_HEIGHT));
+      },
+      () => {
+        if (mounted) setSize({ width: MESSAGE_IMAGE_MAX_WIDTH, height: Math.round(MESSAGE_IMAGE_MAX_WIDTH * 0.75) });
+      },
+    );
+    return () => {
+      mounted = false;
+    };
+  }, [uri]);
+
+  return (
+    <Pressable
+      accessibilityRole="imagebutton"
+      onPress={() => void Linking.openURL(uri).catch(() => undefined)}
+      style={({ pressed }) => [styles.messageMediaCard, { width: size.width, height: size.height }, pressed && styles.pressed]}
+    >
+      <Image source={{ uri }} resizeMode="contain" style={styles.messageImage} />
+    </Pressable>
+  );
+}
+
+function NativeVideoAttachment({ attachment, uri }: { attachment: ChatAttachment; uri: string }) {
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.loop = false;
+    instance.muted = false;
+  });
+  return (
+    <View style={styles.messageVideoCard}>
+      <VideoView player={player} style={styles.messageVideo} contentFit="cover" nativeControls />
+      <View style={styles.messageVideoInfo}>
+        <View style={styles.messageVideoPlayBadge}>
+          <Play size={13} color={COLORS.white} fill={COLORS.white} strokeWidth={2.4} />
+        </View>
+        <Text numberOfLines={1} style={styles.messageVideoLabel}>{attachment.name || 'Video'}</Text>
+        {attachment.durationMs ? <Text style={styles.messageVideoDuration}>{formatDurationMs(attachment.durationMs)}</Text> : null}
+      </View>
+    </View>
+  );
+}
+
+function NativeDocumentAttachment({ attachment, uri }: { attachment: ChatAttachment; uri?: string }) {
   return (
     <Pressable
       accessibilityRole="button"
@@ -11690,75 +20613,453 @@ function NativeMessageAttachment({ attachment }: { attachment: ChatAttachment })
       style={({ pressed }) => [styles.messageFileCard, pressed && styles.pressed]}
     >
       <View style={styles.messageFileIcon}>
-        <Icon size={18} color={COLORS.accent} strokeWidth={2.5} />
+        <FileText size={18} color={COLORS.accent} strokeWidth={2.5} />
       </View>
       <View style={styles.messageFileCopy}>
         <Text numberOfLines={1} style={styles.messageFileTitle}>{attachment.name || getAttachmentLabel(attachment.type)}</Text>
-        <Text numberOfLines={1} style={styles.messageFileSubtitle}>{[
-          attachment.mimeType || getAttachmentLabel(attachment.type),
-          attachment.durationMs ? formatDurationMs(attachment.durationMs) : '',
-        ].filter(Boolean).join(' · ')}</Text>
+        <Text numberOfLines={1} style={styles.messageFileSubtitle}>{getNativeAttachmentSubtitle(attachment)}</Text>
       </View>
-      {isVideo ? <Play size={18} color={COLORS.text} strokeWidth={2.5} /> : null}
+      <ChevronRight size={18} color={COLORS.meta} strokeWidth={2.45} />
     </Pressable>
   );
 }
 
-function NativeAudioAttachment({ attachment, uri }: { attachment: ChatAttachment; uri: string }) {
-  const player = useAudioPlayer(uri);
+function NativeAudioAttachment({
+  attachment,
+  contact,
+  direction,
+  failed,
+  metaLabel,
+  pending,
+  receiptStatus,
+  transportBadge,
+  uri,
+}: {
+  attachment: ChatAttachment;
+  contact: ChatContact;
+  direction: ChatMessage['direction'];
+  failed?: boolean;
+  metaLabel: string;
+  pending?: boolean;
+  receiptStatus: 'sent' | 'delivered' | 'read' | 'pending' | 'failed';
+  transportBadge?: string;
+  uri: string;
+}) {
+  const [playbackSpeed, setPlaybackSpeed] = useState<typeof CONVERSATION_AUDIO_PLAYBACK_SPEEDS[number]>(1);
+  const audioSource = useMemo<AudioSource>(() => buildNativeAudioSource(uri, attachment), [attachment.name, uri]);
+  const player = useAudioPlayer(audioSource, {
+    updateInterval: 80,
+    keepAudioSessionActive: true,
+    preferredForwardBufferDuration: 4,
+  });
   const status = useAudioPlayerStatus(player);
   const playing = Boolean(status.playing);
+  const durationSeconds = Number(status.duration || 0);
+  const currentSeconds = Number(status.currentTime || 0);
+  const progress = durationSeconds > 0 ? Math.min(1, Math.max(0, currentSeconds / durationSeconds)) : 0;
+  const durationMs = attachment.durationMs || Math.round(durationSeconds * 1000);
+  const avatar = getContactAvatar(contact);
+  const initial = getContactName(contact).slice(0, 1).toUpperCase();
+  const micCutoutColor = direction === 'outbound'
+    ? (activeNativeThemeTone === 'light' ? '#e9eaee' : 'rgba(58,58,60,0.92)')
+    : (activeNativeThemeTone === 'light' ? COLORS.white : 'rgba(28,28,30,0.96)');
+  const micFillColor = COLORS.muted;
+  const playbackRateLabel = `${playbackSpeed}x`;
+  const applyPlaybackSpeed = useCallback((speed: number) => {
+    const fallbackRate = Math.min(speed, CONVERSATION_AUDIO_MAX_MOBILE_RATE);
+    try {
+      player.shouldCorrectPitch = true;
+      player.setPlaybackRate(speed, 'high');
+    } catch {
+      try {
+        player.setPlaybackRate(fallbackRate, 'high');
+      } catch {
+        player.playbackRate = fallbackRate;
+      }
+    }
+  }, [player]);
+  const cyclePlaybackSpeed = useCallback(() => {
+    setPlaybackSpeed((current) => {
+      const index = CONVERSATION_AUDIO_PLAYBACK_SPEEDS.indexOf(current);
+      const next = CONVERSATION_AUDIO_PLAYBACK_SPEEDS[(index + 1) % CONVERSATION_AUDIO_PLAYBACK_SPEEDS.length] || 1;
+      applyPlaybackSpeed(next);
+      void Haptics.selectionAsync().catch(() => {
+        Vibration.vibrate(8);
+      });
+      return next;
+    });
+  }, [applyPlaybackSpeed]);
+
+  useEffect(() => {
+    player.muted = false;
+    player.volume = 1;
+    applyPlaybackSpeed(playbackSpeed);
+  }, [applyPlaybackSpeed, playbackSpeed, player]);
+
+  const audioAvatar = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Cambiar velocidad del audio. Actual ${playbackRateLabel}`}
+      hitSlop={8}
+      onPress={cyclePlaybackSpeed}
+      style={({ pressed }) => [styles.messageAudioAvatar, pressed && styles.pressed]}
+    >
+      {avatar ? (
+        <Image source={{ uri: avatar }} style={styles.messageAudioAvatarImage} />
+      ) : (
+        <Text style={styles.messageAudioAvatarText}>{initial}</Text>
+      )}
+      {playbackSpeed > 1 ? (
+        <View style={styles.messageAudioSpeedBadge}>
+          <Text style={styles.messageAudioSpeedText}>{playbackRateLabel}</Text>
+        </View>
+      ) : null}
+      <View style={styles.messageAudioMicBadge}>
+        <NativeSvg width={22} height={24} viewBox="0 0 24 24" style={styles.messageAudioMicSvg}>
+          <Path
+            d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3Zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.49 6-3.31 6-6.72h-1.7Z"
+            fill="none"
+            stroke={micCutoutColor}
+            strokeWidth={4}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          <Path
+            d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3Zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.49 6-3.31 6-6.72h-1.7Z"
+            fill={micFillColor}
+          />
+        </NativeSvg>
+      </View>
+    </Pressable>
+  );
   return (
     <Pressable
       accessibilityRole="button"
-      onPress={() => {
+      onPress={async () => {
         if (playing) {
           player.pause();
           return;
         }
+        await setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => undefined);
+        applyPlaybackSpeed(playbackSpeed);
+        player.muted = false;
+        player.volume = 1;
         if (status.currentTime && status.duration && status.currentTime >= status.duration - 0.2) {
           player.seekTo(0);
         }
-        player.play();
+        try {
+          if (!status.isLoaded) player.replace(audioSource);
+          player.play();
+        } catch (error) {
+          Alert.alert('Audio', error instanceof Error ? error.message : 'No pude reproducir esta nota de voz.');
+        }
       }}
-      style={({ pressed }) => [styles.messageFileCard, pressed && styles.pressed]}
+      style={({ pressed }) => [styles.messageAudioCard, pressed && styles.pressed]}
     >
-      <View style={styles.messageFileIcon}>
-        {playing ? <Pause size={18} color={COLORS.accent} strokeWidth={2.5} /> : <Mic size={18} color={COLORS.accent} strokeWidth={2.5} />}
+      <View style={styles.messageAudioTopRow}>
+        {direction === 'outbound' ? audioAvatar : null}
+        <View style={styles.messageAudioPlayButton}>
+          {playing ? (
+            <Ionicons name="pause" size={20} style={styles.messageAudioPlayIcon} />
+          ) : (
+            <Ionicons name="play" size={28} style={styles.messageAudioPlayIcon} />
+          )}
+        </View>
+        <View style={styles.messageAudioMain}>
+          <NativeAttachmentWaveform progress={progress} />
+        </View>
+        {direction === 'outbound' ? null : audioAvatar}
       </View>
-      <View style={styles.messageFileCopy}>
-        <Text numberOfLines={1} style={styles.messageFileTitle}>{attachment.name || 'Nota de voz'}</Text>
-        <Text numberOfLines={1} style={styles.messageFileSubtitle}>{formatDurationMs(attachment.durationMs || Number(status.duration || 0) * 1000)}</Text>
+      <View style={[styles.messageAudioFooter, direction === 'outbound' ? styles.messageAudioFooterOutbound : styles.messageAudioFooterInbound]}>
+        <Text style={styles.messageAudioDuration}>{formatDurationMs(durationMs)}</Text>
+        <View style={styles.messageAudioMetaRow}>
+          {transportBadge ? <Text style={styles.messageTransport}>{transportBadge}</Text> : null}
+          <Text numberOfLines={1} style={styles.messageAudioMeta}>{metaLabel}</Text>
+          {direction === 'outbound' ? <NativeMessageReceipt status={receiptStatus} failed={failed} pending={pending} /> : null}
+        </View>
       </View>
-      <Text style={styles.messageAudioState}>{playing ? 'Pausar' : 'Reproducir'}</Text>
     </Pressable>
+  );
+}
+
+function NativeAudioUnavailableAttachment({ direction }: { direction: ChatMessage['direction'] }) {
+  return (
+    <View style={styles.messageAudioUnavailable}>
+      <View style={styles.messageAudioUnavailableIcon}>
+        <Mic size={17} color={COLORS.meta} strokeWidth={2.45} />
+      </View>
+      <Text style={styles.messageAudioUnavailableText}>{direction === 'outbound' ? 'Nota de voz enviada' : 'Nota de voz'}</Text>
+    </View>
+  );
+}
+
+function NativeAttachmentWaveform({ progress = 0 }: { progress?: number }) {
+  const activeBars = Math.round(progress * CONVERSATION_AUDIO_WAVE_BAR_HEIGHTS.length);
+  const progressAnim = useRef(new Animated.Value(progress)).current;
+
+  useEffect(() => {
+    Animated.timing(progressAnim, {
+      toValue: progress,
+      duration: 160,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [progress, progressAnim]);
+
+  const dotLeft = progressAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['8%', '92%'],
+  });
+
+  return (
+    <View style={styles.messageAudioWaveform}>
+      {CONVERSATION_AUDIO_WAVE_BAR_HEIGHTS.map((height, index) => (
+        <View
+          key={`${height}-${index}`}
+          style={[
+            styles.messageAudioWaveBar,
+            { height },
+            index <= activeBars && styles.messageAudioWaveBarActive,
+          ]}
+        />
+      ))}
+      <Animated.View style={[styles.messageAudioProgressDot, { left: dotLeft }]} />
+    </View>
+  );
+}
+
+function NativeVoiceRecordingPanel({
+  durationMs,
+  metering,
+  paused,
+  onCancel,
+  onSend,
+  onTogglePause,
+}: {
+  durationMs: number;
+  metering?: number;
+  paused?: boolean;
+  onCancel: () => void;
+  onSend: () => void;
+  onTogglePause: () => void;
+}) {
+  return (
+    <View style={styles.voiceComposerPanel}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Eliminar nota de voz" onPress={onCancel} style={({ pressed }) => [styles.voiceComposerDeleteButton, pressed && styles.pressed]}>
+        <Trash2 size={22} color={COLORS.text} strokeWidth={2.25} />
+      </Pressable>
+      <View style={styles.voiceComposerTrack}>
+        <NativeVoiceRecordingWaveform durationMs={durationMs} metering={metering} paused={Boolean(paused)} />
+        <Text style={styles.voiceComposerTime}>{formatDurationMs(durationMs)}</Text>
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel={paused ? 'Continuar grabación' : 'Pausar grabación'} onPress={onTogglePause} style={({ pressed }) => [styles.voiceComposerPauseButton, pressed && styles.pressed]}>
+        {paused ? <Play size={17} color={COLORS.text} fill={COLORS.text} strokeWidth={2.45} /> : <Pause size={17} color={COLORS.text} fill={COLORS.text} strokeWidth={2.45} />}
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Enviar nota de voz" onPress={onSend} style={({ pressed }) => [styles.voiceComposerSendButton, pressed && styles.pressed]}>
+        <ArrowRight size={24} color={COLORS.white} strokeWidth={2.75} />
+      </Pressable>
+    </View>
+  );
+}
+
+function NativeVoicePreviewPanel({
+  attachment,
+  sending,
+  onCancel,
+  onSend,
+}: {
+  attachment: ConversationDraftAttachment;
+  sending?: boolean;
+  onCancel: () => void;
+  onSend: () => void;
+}) {
+  const player = useAudioPlayer(attachment.uri);
+  const status = useAudioPlayerStatus(player);
+  const playing = Boolean(status.playing);
+  const durationSeconds = Number(status.duration || 0);
+  const currentSeconds = Number(status.currentTime || 0);
+  const progress = durationSeconds > 0 ? Math.min(1, Math.max(0, currentSeconds / durationSeconds)) : 0;
+  const durationMs = attachment.durationMs || Math.round(durationSeconds * 1000);
+
+  const togglePreview = () => {
+    if (playing) {
+      player.pause();
+      return;
+    }
+    if (status.currentTime && status.duration && status.currentTime >= status.duration - 0.2) {
+      player.seekTo(0);
+    }
+    player.play();
+  };
+
+  return (
+    <View style={styles.voicePreviewPanel}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Eliminar nota de voz" onPress={onCancel} style={({ pressed }) => [styles.voicePreviewDeleteButton, pressed && styles.pressed]}>
+        <Trash2 size={22} color={COLORS.text} strokeWidth={2.25} />
+      </Pressable>
+      <View style={styles.voicePreviewTrack}>
+        <NativeAttachmentWaveform progress={progress} />
+        <Text style={styles.voicePreviewTime}>{formatDurationMs(durationMs)}</Text>
+      </View>
+      <Pressable accessibilityRole="button" accessibilityLabel={playing ? 'Pausar nota de voz' : 'Reproducir nota de voz'} onPress={togglePreview} style={({ pressed }) => [styles.voicePreviewPlayButton, pressed && styles.pressed]}>
+        {playing ? <Pause size={17} color={COLORS.text} fill={COLORS.text} strokeWidth={2.45} /> : <Play size={18} color={COLORS.text} fill={COLORS.text} strokeWidth={2.45} />}
+      </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Enviar nota de voz" disabled={sending} onPress={onSend} style={({ pressed }) => [styles.voicePreviewSendButton, sending && styles.disabledButton, pressed && styles.pressed]}>
+        {sending ? <ActivityIndicator color={COLORS.white} /> : <ArrowRight size={24} color={COLORS.white} strokeWidth={2.75} />}
+      </Pressable>
+    </View>
+  );
+}
+
+function NativeVoiceRecordingWaveform({ durationMs, metering, paused }: { durationMs: number; metering?: number; paused?: boolean }) {
+  const [smoothClockMs, setSmoothClockMs] = useState(0);
+  useEffect(() => {
+    if (paused) return undefined;
+    const interval = setInterval(() => {
+      setSmoothClockMs((value) => (value + 80) % 120000);
+    }, 80);
+    return () => clearInterval(interval);
+  }, [paused]);
+  const normalizedMetering = typeof metering === 'number'
+    ? Math.max(0, Math.min(1, (metering + 60) / 42))
+    : 0.5;
+  const meteringBoost = 0.72 + normalizedMetering * 0.26;
+  const phase = smoothClockMs / 1150;
+  return (
+    <View style={styles.voiceComposerWaveform}>
+      {CONVERSATION_AUDIO_WAVE_BAR_HEIGHTS.map((height, index) => {
+        const wave = Math.sin(index * 0.62 - phase);
+        const liveBoost = paused ? 0.44 : 0.72 + ((wave + 1) / 2) * 0.24;
+        const barHeight = Math.max(3, Math.round(height * liveBoost * meteringBoost * 0.72));
+        return (
+          <View
+            key={`recording-wave-${index}`}
+            style={[
+              styles.voiceComposerWaveBar,
+              { height: barHeight },
+              !paused && styles.voiceComposerWaveBarLive,
+            ]}
+          />
+        );
+      })}
+    </View>
   );
 }
 
 function NativeDraftAttachmentPreview({ attachment }: { attachment: ConversationDraftAttachment }) {
   if (attachment.kind === 'image') {
-    return <Image source={{ uri: attachment.uri }} style={styles.draftAttachmentImage} />;
+    return <Image source={{ uri: attachment.uri }} resizeMode="cover" style={styles.draftAttachmentMedia} />;
   }
-  const Icon = attachment.kind === 'video' ? Video : attachment.kind === 'audio' ? Mic : FileText;
+  if (attachment.kind === 'video') {
+    return <NativeDraftVideoPreview attachment={attachment} />;
+  }
+  return <NativeDraftAttachmentFilePreview attachment={attachment} />;
+}
+
+function NativePaymentLinkDraftPreview({
+  preview,
+  onClose,
+}: {
+  preview: PendingChatDraftPaymentPreview;
+  onClose: () => void;
+}) {
+  const host = getPaymentLinkPreviewHost(preview.url);
   return (
-    <View style={styles.draftAttachmentFile}>
-      <Icon size={21} color={COLORS.accent} strokeWidth={2.55} />
-      <Text numberOfLines={2} style={styles.draftAttachmentFileText}>{attachment.kind === 'audio' ? formatDurationMs(attachment.durationMs) : attachment.name}</Text>
+    <View style={styles.paymentLinkDraftPreviewTray}>
+      <View style={styles.paymentLinkDraftPreviewCard}>
+        <Pressable
+          accessibilityRole="link"
+          accessibilityLabel="Abrir vista previa del link de pago"
+          onPress={() => void Linking.openURL(preview.url).catch(() => undefined)}
+          style={({ pressed }) => [styles.paymentLinkDraftPreviewMain, pressed && styles.pressed]}
+        >
+          <View style={styles.paymentLinkDraftPreviewIcon}>
+            <CircleDollarSign size={22} color={COLORS.accent} strokeWidth={2.45} />
+          </View>
+          <View style={styles.paymentLinkDraftPreviewCopy}>
+            <Text numberOfLines={1} style={styles.paymentLinkDraftPreviewTitle}>{preview.title || 'Link de pago'}</Text>
+            <Text numberOfLines={1} style={styles.paymentLinkDraftPreviewSubtitle}>{preview.subtitle || 'Vista previa del cobro'}</Text>
+            <View style={styles.paymentLinkDraftPreviewMetaRow}>
+              {preview.amountLabel ? <Text numberOfLines={1} style={styles.paymentLinkDraftPreviewAmount}>{preview.amountLabel}</Text> : null}
+              <Text numberOfLines={1} style={styles.paymentLinkDraftPreviewHost}>{host}</Text>
+            </View>
+          </View>
+        </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="Quitar vista previa" onPress={onClose} style={styles.paymentLinkDraftPreviewClose}>
+          <LiquidControlBackground />
+          <X size={16} color={COLORS.muted} strokeWidth={2.6} />
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function NativeDraftVideoPreview({ attachment }: { attachment: ConversationDraftAttachment }) {
+  const player = useVideoPlayer(attachment.uri, (instance) => {
+    instance.loop = false;
+    instance.muted = true;
+  });
+  return (
+    <>
+      <VideoView player={player} style={styles.draftAttachmentMedia} contentFit="cover" />
+      <View style={styles.draftAttachmentVideoBadge}>
+        <Play size={12} color={COLORS.white} fill={COLORS.white} strokeWidth={2.4} />
+      </View>
+    </>
+  );
+}
+
+function NativeDraftAttachmentFilePreview({ attachment }: { attachment: ConversationDraftAttachment }) {
+  const Icon = attachment.kind === 'audio' ? Mic : FileText;
+  const label = attachment.kind === 'audio' ? 'Nota de voz' : 'Documento';
+  const detail = attachment.kind === 'audio'
+    ? formatDurationMs(attachment.durationMs)
+    : formatNativeAttachmentSize(attachment.size);
+  return (
+    <View style={styles.draftAttachmentFileContent}>
+      <View style={styles.draftAttachmentFileIcon}>
+        <Icon size={20} color={COLORS.accent} strokeWidth={2.55} />
+      </View>
+      <View style={styles.draftAttachmentFileCopy}>
+        <Text numberOfLines={1} style={styles.draftAttachmentFileTitle}>{attachment.name || label}</Text>
+        <Text numberOfLines={1} style={styles.draftAttachmentFileSubtitle}>{label} · {detail}</Text>
+      </View>
     </View>
   );
 }
 
 function NativeMessageLocation({ location }: { location: NonNullable<ChatMessage['location']> }) {
+  const url = getNativeLocationUrl(location);
+  const tiles = useMemo(() => getNativeLocationMapTiles(location), [location.latitude, location.longitude]);
   return (
-    <View style={styles.messageLocationCard}>
-      <View style={styles.messageLocationIcon}>
-        <MapPin size={20} color={COLORS.white} fill={COLORS.accent} strokeWidth={2.4} />
+    <Pressable accessibilityRole="button" onPress={() => void Linking.openURL(url).catch(() => undefined)} style={({ pressed }) => [styles.messageLocationCard, pressed && styles.pressed]}>
+      <View style={styles.messageLocationMap}>
+        {tiles.length ? (
+          <>
+            {tiles.map((tile) => (
+              <Image
+                key={tile.key}
+                source={{ uri: tile.url }}
+                style={[
+                  styles.messageLocationTile,
+                  {
+                    left: LOCATION_MAP_WIDTH / 2 + tile.left,
+                    top: LOCATION_MAP_HEIGHT / 2 + tile.top,
+                  },
+                ]}
+              />
+            ))}
+            <View style={styles.messageLocationMapDim} />
+          </>
+        ) : (
+          <View style={styles.messageLocationMapFallback} />
+        )}
+        <MapPin size={42} color={LOCATION_PIN_COLOR} fill={LOCATION_PIN_COLOR} strokeWidth={2.2} style={styles.messageLocationPinIcon} />
+        <View pointerEvents="none" style={styles.messageLocationTypeBadge}>
+          <Text style={styles.messageLocationTypeText}>📍 Ubicación</Text>
+        </View>
       </View>
-      <View style={styles.messageLocationCopy}>
-        <Text numberOfLines={1} style={styles.messageLocationTitle}>{location.name || 'Ubicación'}</Text>
-        <Text numberOfLines={1} style={styles.messageLocationSubtitle}>{location.address || `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`}</Text>
-      </View>
-    </View>
+    </Pressable>
   );
 }
 
@@ -11766,28 +21067,263 @@ function NativeMessageReceipt({ status, failed, pending }: { status: 'sent' | 'd
   if (failed) return <X size={13} color={COLORS.danger} strokeWidth={2.7} />;
   if (pending || status === 'pending') return <ActivityIndicator color={COLORS.meta} size="small" />;
   if (status === 'delivered' || status === 'read') {
-    return <CheckCheck size={14} color={status === 'read' ? COLORS.accent : COLORS.meta} strokeWidth={2.45} />;
+    return <CheckCheck size={15} color={status === 'read' ? COLORS.accent : COLORS.muted} strokeWidth={2.45} />;
   }
-  return <Check size={14} color={COLORS.meta} strokeWidth={2.45} />;
+  return <Check size={15} color={COLORS.muted} strokeWidth={2.45} />;
 }
 
 function getContactDetail(contact: ChatContact) {
   return contact.phone || contact.email || contact.source || 'Sin teléfono';
 }
 
-function getAttachmentLabel(type?: string) {
-  if (type === 'image') return 'Foto';
-  if (type === 'video') return 'Video';
-  if (type === 'audio') return 'Audio';
-  if (type === 'document' || type === 'file') return 'Documento';
+function resolveNativeAttachmentKindFromValues(
+  type?: string | null,
+  mimeType?: string | null,
+  name?: string | null,
+  url?: string | null,
+  dataUrl?: string | null,
+  explicitKind?: NativeAttachmentKind | null,
+): NativeAttachmentKind {
+  if (explicitKind) return explicitKind;
+  const normalizedType = normalizeProbe(type);
+  const normalizedMime = String(mimeType || '').trim().toLowerCase();
+  const rawProbe = [type, mimeType, name, url, dataUrl].filter(Boolean).join(' ');
+  const probe = normalizeProbe(rawProbe);
+
+  if (normalizedType === 'image' || normalizedMime.startsWith('image/') || IMAGE_ATTACHMENT_PATTERN.test(rawProbe)) return 'image';
+  if (normalizedType === 'video' || normalizedMime.startsWith('video/') || VIDEO_ATTACHMENT_PATTERN.test(rawProbe)) return 'video';
+  if (
+    normalizedType === 'audio'
+    || normalizedMime.startsWith('audio/')
+    || probe.includes('audio')
+    || probe.includes('voice')
+    || probe.includes('voicenote')
+    || probe.includes('ptt')
+    || AUDIO_ATTACHMENT_PATTERN.test(rawProbe)
+  ) {
+    return 'audio';
+  }
+  return 'document';
+}
+
+function getNativeAttachmentKind(attachment: Partial<ChatAttachment> & { kind?: NativeAttachmentKind; uri?: string }): NativeAttachmentKind {
+  return resolveNativeAttachmentKindFromValues(
+    attachment.type,
+    attachment.mimeType,
+    attachment.name,
+    attachment.url || attachment.uri,
+    attachment.dataUrl,
+    attachment.kind,
+  );
+}
+
+function getAttachmentLabel(value?: string | (Partial<ChatAttachment> & { kind?: NativeAttachmentKind; uri?: string })) {
+  const kind = typeof value === 'string'
+    ? resolveNativeAttachmentKindFromValues(value)
+    : value
+      ? getNativeAttachmentKind(value)
+      : 'document';
+  if (kind === 'image') return 'Foto';
+  if (kind === 'video') return 'Video';
+  if (kind === 'audio') return 'Audio';
+  if (kind === 'document') return 'Documento';
   return 'Adjunto';
+}
+
+function formatNativeAttachmentSize(size?: number) {
+  if (!size || size <= 0) return 'Archivo';
+  if (size >= 1024 * 1024) {
+    const mb = size / 1024 / 1024;
+    return `${mb >= 10 ? Math.round(mb) : mb.toFixed(1)} MB`;
+  }
+  if (size >= 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+  return `${size} B`;
+}
+
+function getReadableMimeLabel(mimeType?: string) {
+  if (!mimeType) return '';
+  const normalized = mimeType.toLowerCase();
+  if (normalized.includes('pdf')) return 'PDF';
+  if (normalized.includes('word')) return 'Word';
+  if (normalized.includes('excel') || normalized.includes('spreadsheet')) return 'Excel';
+  if (normalized.startsWith('image/')) return 'Imagen';
+  if (normalized.startsWith('video/')) return 'Video';
+  if (normalized.startsWith('audio/')) return 'Audio';
+  return mimeType.split('/').pop()?.toUpperCase() || mimeType;
+}
+
+function getNativeAttachmentSubtitle(attachment: ChatAttachment) {
+  const kind = getNativeAttachmentKind(attachment);
+  const parts = [
+    getReadableMimeLabel(attachment.mimeType) || getAttachmentLabel(attachment),
+    formatNativeAttachmentSize(attachment.size),
+    kind === 'audio' && attachment.durationMs ? formatDurationMs(attachment.durationMs) : '',
+  ].filter(Boolean);
+  return parts.join(' · ');
+}
+
+function isNativePlayableAudioCandidate(value?: string | null, mimeType?: string | null) {
+  const probe = `${mimeType || ''} ${value || ''}`.toLowerCase();
+  return probe.includes('audio/mp4')
+    || probe.includes('audio/m4a')
+    || probe.includes('audio/aac')
+    || probe.includes('audio/mpeg')
+    || probe.includes('audio/mp3')
+    || probe.includes('audio/wav')
+    || /\.(m4a|mp4|aac|mp3|wav|caf)(?:[?#].*)?$/i.test(value || '')
+    || /^data:audio\/(mp4|m4a|aac|mpeg|mp3|wav|x-wav|caf)/i.test(value || '');
+}
+
+function getNativeAudioAttachmentUri(attachment: ChatAttachment) {
+  const candidates = [attachment.dataUrl, attachment.url].filter((value): value is string => Boolean(String(value || '').trim()));
+  return candidates.find((value) => isNativePlayableAudioCandidate(value, attachment.mimeType)) || candidates[0] || '';
+}
+
+function buildNativeAudioSource(uri: string, attachment: ChatAttachment): AudioSource {
+  return {
+    uri,
+    name: attachment.name || 'Nota de voz',
+  };
+}
+
+function formatNativeLocationCoordinates(location: NonNullable<ChatMessage['location']>) {
+  return `${location.latitude.toFixed(5)}, ${location.longitude.toFixed(5)}`;
+}
+
+function buildNativeLocationUrl(latitude: number, longitude: number, label = 'Ubicación') {
+  const encodedLabel = encodeURIComponent(label || 'Ubicación');
+  if (Platform.OS === 'ios') {
+    return `https://maps.apple.com/?ll=${latitude},${longitude}&q=${encodedLabel}`;
+  }
+  return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
+}
+
+function getNativeLocationUrl(location: NonNullable<ChatMessage['location']>) {
+  return location.url || buildNativeLocationUrl(location.latitude, location.longitude, location.name || 'Ubicación');
+}
+
+function getNativeLocationSubtitle(location: NonNullable<ChatMessage['location']>) {
+  return location.address || formatNativeLocationCoordinates(location);
 }
 
 function getMessagePreviewText(message: ChatMessage) {
   if (message.text) return message.text;
-  if (message.attachment) return getAttachmentLabel(message.attachment.type);
-  if (message.location) return 'Ubicación';
+  if (message.attachment) return getAttachmentLabel(message.attachment);
+  if (message.location) return '📍 Ubicación';
   return 'Mensaje';
+}
+
+function getNativeMessageLinkPreview(message: ChatMessage): NativeMessageLinkPreviewResult | null {
+  const explicitPreview = message.paymentPreview || message.linkPreview;
+  const explicitUrl = String(explicitPreview?.url || '').trim();
+  const extracted = extractNativeFirstUrl(message.text);
+  const url = explicitUrl || extracted?.url || '';
+  if (!url) return null;
+
+  const paymentLink = explicitPreview?.kind === 'payment_link' || isNativePaymentLinkUrl(url);
+  const host = getPaymentLinkPreviewHost(url);
+  const displayText = extracted ? stripNativePreviewUrl(message.text, extracted.raw) : message.text;
+  return {
+    displayText,
+    preview: {
+      kind: paymentLink ? 'payment_link' : 'link',
+      title: String(explicitPreview?.title || (paymentLink ? 'Link de pago' : host)).trim(),
+      subtitle: String(explicitPreview?.subtitle || (paymentLink ? 'Vista previa del cobro' : 'Toca para abrir el enlace')).trim(),
+      amountLabel: explicitPreview?.amountLabel,
+      providerLabel: explicitPreview?.providerLabel,
+      url,
+    },
+  };
+}
+
+async function fetchNativeUrlPreviewMetadata(url: string): Promise<NativeUrlPreviewMetadata | null> {
+  const response = await Promise.race([
+    fetch(url, {
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      },
+    }),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('preview_timeout')), 4500);
+    }),
+  ]);
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.ok || (contentType && !contentType.toLowerCase().includes('text/html'))) return null;
+  const html = await response.text();
+  if (!html.trim()) return null;
+  const metadata: NativeUrlPreviewMetadata = {
+    title: readNativeHtmlMeta(html, ['og:title', 'twitter:title']) || readNativeHtmlTitle(html),
+    description: readNativeHtmlMeta(html, ['og:description', 'twitter:description', 'description']),
+    imageUrl: resolveNativePreviewUrl(readNativeHtmlMeta(html, ['og:image', 'og:image:url', 'twitter:image', 'twitter:image:src']), url),
+    siteName: readNativeHtmlMeta(html, ['og:site_name', 'application-name']),
+  };
+  return metadata.title || metadata.description || metadata.imageUrl || metadata.siteName ? metadata : null;
+}
+
+function readNativeHtmlMeta(html: string, keys: string[]) {
+  for (const key of keys) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const propertyMatch = new RegExp(`<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`, 'i').exec(html)
+      || new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${escaped}["'][^>]*>`, 'i').exec(html);
+    if (propertyMatch?.[1]) return decodeNativeHtmlEntities(propertyMatch[1]).trim();
+  }
+  return '';
+}
+
+function readNativeHtmlTitle(html: string) {
+  const match = /<title[^>]*>([^<]+)<\/title>/i.exec(html);
+  return match?.[1] ? decodeNativeHtmlEntities(match[1]).trim() : '';
+}
+
+function resolveNativePreviewUrl(value: string, baseUrl: string) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  try {
+    return new URL(trimmed, baseUrl).toString();
+  } catch {
+    return trimmed.startsWith('http') ? trimmed : '';
+  }
+}
+
+function decodeNativeHtmlEntities(value: string) {
+  return value
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>');
+}
+
+function extractNativeFirstUrl(text?: string) {
+  const match = String(text || '').match(/https?:\/\/[^\s<>"'()[\]{}]+/i);
+  if (!match?.[0]) return null;
+  const raw = match[0];
+  const url = raw.replace(/[.,;:!?]+$/g, '');
+  return { raw, url };
+}
+
+function stripNativePreviewUrl(text: string, rawUrl: string) {
+  return text
+    .replace(rawUrl, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function isNativePaymentLinkUrl(url: string) {
+  const normalized = url.toLowerCase();
+  return normalized.includes('payment')
+    || normalized.includes('checkout')
+    || normalized.includes('invoice')
+    || normalized.includes('pay.')
+    || normalized.includes('/pay')
+    || normalized.includes('stripe.com')
+    || normalized.includes('conekta')
+    || normalized.includes('mercadopago')
+    || normalized.includes('clip.mx')
+    || normalized.includes('rebill');
 }
 
 function getMessageChannelLabel(value?: string) {
@@ -11801,6 +21337,39 @@ function getMessageChannelLabel(value?: string) {
   return value || 'Ristak';
 }
 
+function getNativeMessageTransportBadge(message: ChatMessage) {
+  const probe = `${message.transport || ''} ${message.channel || ''}`.trim().toLowerCase();
+  if (!probe) return '';
+  if (probe.includes('qr') || probe.includes('baileys') || probe.includes('web')) return 'QR';
+  if (probe.includes('whatsapp') || probe.includes('api') || probe.includes('native')) return 'API';
+  if (probe.includes('instagram')) return 'IG';
+  if (probe.includes('messenger') || probe.includes('facebook')) return 'FB';
+  if (probe.includes('sms')) return 'SMS';
+  if (probe.includes('email')) return 'EMAIL';
+  return '';
+}
+
+function getNativeMessageProviderMessageId(message: ChatMessage) {
+  return String(message.providerMessageId || '').trim();
+}
+
+function getNativeMetaPlatformForMessage(message: ChatMessage): 'messenger' | 'instagram' | null {
+  const transport = String(message.transport || message.channel || '').trim().toLowerCase();
+  if (transport === 'instagram' || transport === 'ig' || transport.includes('instagram')) return 'instagram';
+  if (transport === 'messenger' || transport === 'facebook' || transport === 'facebook_messenger' || transport.includes('messenger') || transport.includes('facebook')) return 'messenger';
+  return null;
+}
+
+function isNativeHighLevelMessageTransport(message: ChatMessage) {
+  const transport = String(message.transport || message.channel || '').trim().toLowerCase();
+  return transport.startsWith('ghl_') || transport === 'sms_qr' || transport.includes('highlevel');
+}
+
+function isNativeEmailOrSmsMessage(message: ChatMessage) {
+  const badge = getNativeMessageTransportBadge(message);
+  return badge === 'EMAIL' || badge === 'SMS';
+}
+
 function getMessageReceiptStatus(message: ChatMessage): 'sent' | 'delivered' | 'read' | 'pending' | 'failed' {
   if (message.failed || String(message.status || '').toLowerCase() === 'error') return 'failed';
   if (message.pending || ['pending', 'queued', 'enviando', 'sending'].includes(String(message.status || '').toLowerCase())) return 'pending';
@@ -11809,12 +21378,8 @@ function getMessageReceiptStatus(message: ChatMessage): 'sent' | 'delivered' | '
   return 'sent';
 }
 
-function normalizeDraftAttachmentKind(type?: string): ConversationDraftAttachment['kind'] {
-  const normalized = normalizeProbe(type);
-  if (normalized.includes('video')) return 'video';
-  if (normalized.includes('audio') || normalized.includes('voice')) return 'audio';
-  if (normalized.includes('document') || normalized.includes('file') || normalized.includes('pdf')) return 'document';
-  return 'image';
+function normalizeDraftAttachmentKind(type?: string, mimeType?: string, name?: string, uri?: string): ConversationDraftAttachment['kind'] {
+  return resolveNativeAttachmentKindFromValues(type, mimeType, name, uri);
 }
 
 function getFilenameFromUri(uri: string, fallback: string) {
@@ -11836,8 +21401,31 @@ async function readFileAsDataUrl(uri: string, mimeType: string) {
   return buildDataUrl(base64, mimeType);
 }
 
-function assertAttachmentSize(size: number | undefined, maxBytes: number, label: string) {
-  if (!size || size <= maxBytes) return;
+async function getLocalFileSize(uri: string, knownSize?: number | null) {
+  if (knownSize !== null && knownSize !== undefined && Number.isFinite(Number(knownSize))) {
+    return Math.max(0, Number(knownSize));
+  }
+
+  try {
+    const info = await FileSystem.getInfoAsync(uri);
+    if (info.exists && !info.isDirectory && typeof info.size === 'number') {
+      return Math.max(0, info.size);
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function assertAttachmentSize(size: number | undefined, maxBytes: number, label: string, requireKnown = false) {
+  if (size === undefined) {
+    if (requireKnown) {
+      throw new Error(`No pude validar el tamaño de ${label.toLowerCase()}. Intenta con otro archivo.`);
+    }
+    return;
+  }
+  if (size <= maxBytes) return;
   const sizeMb = (size / 1024 / 1024).toFixed(1);
   const maxMb = Math.round(maxBytes / 1024 / 1024);
   throw new Error(`${label} pesa ${sizeMb} MB. El máximo permitido aquí es ${maxMb} MB.`);
@@ -11846,8 +21434,8 @@ function assertAttachmentSize(size: number | undefined, maxBytes: number, label:
 async function preparePickedMediaAttachment(asset: ImagePicker.ImagePickerAsset, index: number): Promise<ConversationDraftAttachment> {
   const kind: ConversationDraftAttachment['kind'] = asset.type === 'video' ? 'video' : 'image';
   const mimeType = asset.mimeType || (kind === 'video' ? 'video/mp4' : 'image/jpeg');
-  const size = asset.fileSize;
-  assertAttachmentSize(size, kind === 'video' ? VIDEO_ATTACHMENT_MAX_BYTES : MEDIA_ATTACHMENT_MAX_BYTES, kind === 'video' ? 'El video' : 'La imagen');
+  const size = await getLocalFileSize(asset.uri, asset.fileSize);
+  assertAttachmentSize(size, kind === 'video' ? VIDEO_ATTACHMENT_MAX_BYTES : MEDIA_ATTACHMENT_MAX_BYTES, kind === 'video' ? 'El video' : 'La imagen', true);
   const name = asset.fileName || getFilenameFromUri(asset.uri, `${kind}-${Date.now()}-${index}.${kind === 'video' ? 'mp4' : 'jpg'}`);
   const dataUrl = asset.base64 ? buildDataUrl(asset.base64, mimeType) : await readFileAsDataUrl(asset.uri, mimeType);
   return {
@@ -11864,7 +21452,8 @@ async function preparePickedMediaAttachment(asset: ImagePicker.ImagePickerAsset,
 
 async function preparePickedDocumentAttachment(asset: DocumentPicker.DocumentPickerAsset, index: number): Promise<ConversationDraftAttachment> {
   const mimeType = asset.mimeType || 'application/octet-stream';
-  assertAttachmentSize(asset.size, DOCUMENT_ATTACHMENT_MAX_BYTES, 'El documento');
+  const size = await getLocalFileSize(asset.uri, asset.size);
+  assertAttachmentSize(size, DOCUMENT_ATTACHMENT_MAX_BYTES, 'El documento', true);
   return {
     id: `document-${Date.now()}-${index}`,
     uri: asset.uri,
@@ -11872,7 +21461,7 @@ async function preparePickedDocumentAttachment(asset: DocumentPicker.DocumentPic
     kind: 'document',
     name: asset.name || getFilenameFromUri(asset.uri, `documento-${index + 1}`),
     mimeType,
-    size: asset.size,
+    size,
   };
 }
 
@@ -11880,7 +21469,7 @@ async function prepareVoiceAttachment(uri: string, durationMs?: number): Promise
   const info = await FileSystem.getInfoAsync(uri);
   const size = info.exists && 'size' in info ? info.size : undefined;
   assertAttachmentSize(size, MEDIA_ATTACHMENT_MAX_BYTES, 'El audio');
-  const mimeType = Platform.OS === 'ios' ? 'audio/m4a' : 'audio/mp4';
+  const mimeType = 'audio/mp4';
   return {
     id: `audio-${Date.now()}`,
     uri,
@@ -11927,8 +21516,218 @@ function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessa
     });
 }
 
+function getNativeMessageSortTime(value?: string | null) {
+  const timestamp = value ? new Date(value).getTime() : NaN;
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function getOldestNativeConversationMessageDate(messages: ChatMessage[]) {
+  let oldestDate = '';
+  messages.forEach((message) => {
+    if (!message || isScheduledMessage(message) || message.direction === 'system') return;
+    if (!message.date) return;
+    if (!oldestDate || getNativeMessageSortTime(message.date) < getNativeMessageSortTime(oldestDate)) {
+      oldestDate = message.date;
+    }
+  });
+  return oldestDate;
+}
+
+function mergeNativeChatMessages(...groups: ChatMessage[][]) {
+  const byId = new Map<string, ChatMessage>();
+  groups.forEach((group) => {
+    group.forEach((message) => {
+      if (!message?.id) return;
+      byId.set(message.id, { ...(byId.get(message.id) || {}), ...message });
+    });
+  });
+  return Array.from(byId.values()).sort((left, right) => getNativeMessageSortTime(left.date) - getNativeMessageSortTime(right.date));
+}
+
+function getNativeJourneyEventKey(event: JourneyEvent) {
+  const data = event?.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {};
+  const explicitId = [
+    data.whatsapp_api_message_id,
+    data.whatsapp_message_id,
+    data.meta_social_message_id,
+    data.meta_message_id,
+    data.email_message_id,
+    data.attribution_record_id,
+    data.id,
+  ].map((value) => String(value || '').trim()).find(Boolean);
+  return explicitId ? `${event.type}-${explicitId}` : `${event.type}-${event.date}-${JSON.stringify(data).slice(0, 180)}`;
+}
+
+function mergeNativeJourneyEvents(...groups: JourneyEvent[][]) {
+  const byKey = new Map<string, JourneyEvent>();
+  groups.forEach((group) => {
+    group.forEach((event) => {
+      if (!event?.date) return;
+      byKey.set(getNativeJourneyEventKey(event), event);
+    });
+  });
+  return Array.from(byKey.values()).sort((left, right) => getNativeMessageSortTime(left.date) - getNativeMessageSortTime(right.date));
+}
+
 function isScheduledMessage(message: ChatMessage) {
   return Boolean(message.scheduledAt || message.scheduledMessageId || String(message.status || '').toLowerCase() === 'scheduled');
+}
+
+function isWhatsAppTextBoundaryBefore(text: string, index: number) {
+  if (index <= 0) return true;
+  return /[\s([{"'¿¡]/.test(text[index - 1]);
+}
+
+function isWhatsAppTextBoundaryAfter(text: string, index: number) {
+  if (index >= text.length) return true;
+  return /[\s.,;:!?)}\]"']/.test(text[index]);
+}
+
+function findWhatsAppMarkerClose(text: string, marker: string, fromIndex: number) {
+  let cursor = fromIndex;
+  while (cursor < text.length) {
+    const close = text.indexOf(marker, cursor);
+    if (close < 0) return -1;
+    const inner = text.slice(fromIndex, close);
+    if (inner.trim() && !/\s$/.test(inner) && isWhatsAppTextBoundaryAfter(text, close + marker.length)) {
+      return close;
+    }
+    cursor = close + marker.length;
+  }
+  return -1;
+}
+
+function pushWhatsAppTextSegment(segments: WhatsAppTextSegment[], segment: WhatsAppTextSegment) {
+  if (!segment.text) return;
+  const previous = segments[segments.length - 1];
+  if (
+    previous
+    && previous.bold === segment.bold
+    && previous.italic === segment.italic
+    && previous.strike === segment.strike
+    && previous.mono === segment.mono
+  ) {
+    previous.text += segment.text;
+    return;
+  }
+  segments.push({ ...segment });
+}
+
+function parseWhatsAppFormattedText(text: string, active: Omit<WhatsAppTextSegment, 'text'> = {}): WhatsAppTextSegment[] {
+  const markers: WhatsAppTextMarker[] = [
+    { marker: '```', style: { mono: true } },
+    { marker: '**', style: { bold: true } },
+    { marker: '*', style: { bold: true } },
+    { marker: '_', style: { italic: true } },
+    { marker: '~', style: { strike: true } },
+  ];
+  const segments: WhatsAppTextSegment[] = [];
+  let index = 0;
+
+  while (index < text.length) {
+    let next: WhatsAppTextMarkerMatch | null = null;
+    for (const { marker, style } of markers) {
+      let start = text.indexOf(marker, index);
+      while (start >= 0 && !isWhatsAppTextBoundaryBefore(text, start)) {
+        start = text.indexOf(marker, start + marker.length);
+      }
+      if (start < 0) continue;
+      const close = findWhatsAppMarkerClose(text, marker, start + marker.length);
+      if (close < 0) continue;
+      if (!next || start < next.start || (start === next.start && marker.length > next.marker.length)) {
+        next = { start, close, marker, style };
+      }
+    }
+
+    if (!next) {
+      pushWhatsAppTextSegment(segments, { text: text.slice(index), ...active });
+      break;
+    }
+
+    if (next.start > index) {
+      pushWhatsAppTextSegment(segments, { text: text.slice(index, next.start), ...active });
+    }
+
+    const inner = text.slice(next.start + next.marker.length, next.close);
+    const nestedStyle = { ...active, ...next.style };
+    if (next.style.mono) {
+      pushWhatsAppTextSegment(segments, { text: inner, ...nestedStyle });
+    } else {
+      parseWhatsAppFormattedText(inner, nestedStyle).forEach((segment) => pushWhatsAppTextSegment(segments, segment));
+    }
+    index = next.close + next.marker.length;
+  }
+
+  return segments.length ? segments : [{ text, ...active }];
+}
+
+function getBoundedMediaSize(width: number, height: number, maxWidth: number, maxHeight: number) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return { width: maxWidth, height: Math.round(maxWidth * 0.72) };
+  }
+  const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+  return {
+    width: Math.max(96, Math.round(width * scale)),
+    height: Math.max(96, Math.round(height * scale)),
+  };
+}
+
+function getNativeLocationTilePosition(latitude: number, longitude: number, zoom = LOCATION_MAP_TILE_ZOOM) {
+  const lat = Math.max(-LOCATION_MAP_MAX_LATITUDE, Math.min(LOCATION_MAP_MAX_LATITUDE, latitude));
+  const lon = Math.max(-180, Math.min(180, longitude));
+  const latRad = (lat * Math.PI) / 180;
+  const scale = 2 ** zoom;
+  const x = ((lon + 180) / 360) * scale;
+  const y = ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale;
+  return { x, y };
+}
+
+function getNativeLocationMapTiles(location: NonNullable<ChatMessage['location']>) {
+  const latitude = Number(location.latitude);
+  const longitude = Number(location.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+
+  const center = getNativeLocationTilePosition(latitude, longitude);
+  const centerTileX = Math.floor(center.x);
+  const centerTileY = Math.floor(center.y);
+  const fractionX = center.x - centerTileX;
+  const fractionY = center.y - centerTileY;
+  const scale = 2 ** LOCATION_MAP_TILE_ZOOM;
+  const tiles: NativeLocationMapTile[] = [];
+
+  for (let dx = -1; dx <= 1; dx += 1) {
+    for (let dy = -1; dy <= 1; dy += 1) {
+      const tileX = ((centerTileX + dx) % scale + scale) % scale;
+      const tileY = centerTileY + dy;
+      if (tileY < 0 || tileY >= scale) continue;
+      tiles.push({
+        key: `${LOCATION_MAP_TILE_ZOOM}-${tileX}-${tileY}`,
+        url: `https://tile.openstreetmap.org/${LOCATION_MAP_TILE_ZOOM}/${tileX}/${tileY}.png`,
+        left: Math.round((dx - fractionX) * LOCATION_MAP_TILE_SIZE),
+        top: Math.round((dy - fractionY) * LOCATION_MAP_TILE_SIZE),
+      });
+    }
+  }
+
+  return tiles;
+}
+
+function formatNativeScheduledCountdown(value?: string | null, nowMs = Date.now()) {
+  if (!value) return '';
+  const targetMs = new Date(value).getTime();
+  if (!Number.isFinite(targetMs)) return '';
+  const diffMinutes = Math.max(0, Math.ceil((targetMs - nowMs) / 60000));
+  if (diffMinutes < 60) return `${diffMinutes}m`;
+  const diffHours = Math.ceil(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h`;
+  return `${Math.ceil(diffHours / 24)}d`;
+}
+
+function formatSchedulePickerMonthLabel(value: string) {
+  const month = formatBusinessMonthTitle(value);
+  const year = formatBusinessYear(value);
+  if (!month || !year) return 'Calendario';
+  return `${month.slice(0, 1).toUpperCase()}${month.slice(1)} de ${year}`;
 }
 
 function normalizeNativeTemplates(whatsappTemplates: WhatsAppTemplate[], localTemplates: MessageTemplate[]) {
@@ -11969,6 +21768,165 @@ function buildClabeMessage(account: BankClabeAccount) {
     account.bank ? `Banco: ${account.bank}` : '',
     `CLABE: ${formatClabe(account.clabe)}`,
   ].filter(Boolean).join('\n');
+}
+
+function padSchedulePart(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function cleanScheduleNumber(value: string, maxLength = 2) {
+  return value.replace(/\D+/g, '').slice(0, maxLength);
+}
+
+function createDefaultScheduleDraft(timezone?: string | null): ScheduleDraft {
+  let { dateOnly, time } = isoToBusinessDateTimeFields(new Date(Date.now() + 15 * 60 * 1000).toISOString(), timezone);
+  if (!dateOnly) dateOnly = todayDateOnlyInBusinessTimezone(timezone);
+  if (!time) time = '09:00';
+
+  const minute = Number(time.split(':')[1] || 0);
+  const roundDelta = (5 - (minute % 5)) % 5;
+  if (roundDelta > 0) {
+    const rounded = addMinutesToBusinessDateTime(dateOnly, time, roundDelta);
+    dateOnly = rounded.dateOnly;
+    time = rounded.time;
+  }
+
+  const hour24 = Number(time.split(':')[0] || 9);
+  return {
+    date: dateOnly,
+    hour: String(hour24 % 12 || 12),
+    minute: padSchedulePart(Number(time.split(':')[1] || 0)),
+    period: hour24 >= 12 ? 'PM' : 'AM',
+  };
+}
+
+function createScheduleDraftFromDate(value?: string | null, timezone?: string | null): ScheduleDraft {
+  if (!value) return createDefaultScheduleDraft(timezone);
+  const { dateOnly, time } = isoToBusinessDateTimeFields(value, timezone);
+  if (!dateOnly || !time) return createDefaultScheduleDraft(timezone);
+  const hour24 = Number(time.split(':')[0] || 9);
+  const minute = Number(time.split(':')[1] || 0);
+  return {
+    date: dateOnly,
+    hour: String(hour24 % 12 || 12),
+    minute: padSchedulePart(minute),
+    period: hour24 >= 12 ? 'PM' : 'AM',
+  };
+}
+
+function getScheduleDateFromDraft(draft: ScheduleDraft, timezone?: string | null) {
+  const dateOnly = draft.date.trim();
+  const calendarDate = dateOnlyToCalendarDate(dateOnly);
+  if (!calendarDate || dateOnlyFromCalendarDate(calendarDate) !== dateOnly) return null;
+
+  const hour = Number(draft.hour);
+  const minute = Number(draft.minute);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  if (hour < 1 || hour > 12 || minute < 0 || minute > 59) return null;
+
+  const hour24 = draft.period === 'PM'
+    ? (hour === 12 ? 12 : hour + 12)
+    : (hour === 12 ? 0 : hour);
+  const scheduledAt = localBusinessDateTimeToUTCISOString(
+    dateOnly,
+    `${padSchedulePart(hour24)}:${padSchedulePart(minute)}`,
+    timezone,
+  );
+  const date = scheduledAt ? new Date(scheduledAt) : null;
+  return date && !Number.isNaN(date.getTime()) ? date : null;
+}
+
+function formatScheduleDateDisplay(value: string) {
+  const label = formatBusinessDayHeader(value);
+  const year = formatBusinessYear(value);
+  return label && year ? `${label} de ${year}` : 'Elige una fecha';
+}
+
+function formatSchedulePreviewLabel(value?: string | null, timezone?: string | null) {
+  if (!value) return 'Revisa la fecha y hora.';
+  const day = formatConversationDayLabel(value, timezone);
+  const time = formatCalendarEventTime(value, timezone);
+  return day && time ? `${day} · ${time}` : 'Revisa la fecha y hora.';
+}
+
+function getNativeMessageReferencePayload(message: ChatMessage) {
+  const providerMessageId = message.replyToProviderMessageId
+    || message.providerMessageId
+    || (isScheduledMessage(message) ? message.scheduledMessageId : '')
+    || message.id;
+  return {
+    replyToMessageId: message.id,
+    replyToProviderMessageId: providerMessageId,
+  };
+}
+
+function findNativeReplyTarget(messages: ChatMessage[], message: ChatMessage) {
+  const targetIds = new Set([
+    message.replyToMessageId,
+    message.replyToProviderMessageId,
+  ].filter(Boolean));
+  if (!targetIds.size) return null;
+  return messages.find((candidate) => (
+    targetIds.has(candidate.id)
+    || Boolean(candidate.providerMessageId && targetIds.has(candidate.providerMessageId))
+    || Boolean(candidate.scheduledMessageId && targetIds.has(candidate.scheduledMessageId))
+  )) || null;
+}
+
+function buildConversationActivityMarkers(contactId: string, events: JourneyEvent[], timezone: string, accountCurrency: string): ConversationActivityMarker[] {
+  return events
+    .map((event, index): ConversationActivityMarker | null => {
+      const data = asRecord(event.data);
+      if (event.type === 'payment') {
+        const amount = Number(data.amount || data.total || data.value || 0);
+        const status = normalizeProbe(getReadableContactValue(data.status));
+        if (amount <= 0 || (status && !SUCCESS_PAYMENT_STATUSES.has(status))) return null;
+        const currency = normalizeCurrencyCode(getReadableContactValue(data.currency), accountCurrency);
+        const concept = getReadableContactValue(data.title || data.description || data.concept || data.type) || 'Cobro registrado';
+        return {
+          id: String(data.id || data.transactionId || `${contactId}-payment-marker-${event.date}-${index}`),
+          kind: 'payment',
+          date: event.date,
+          title: 'Pago completado',
+          subtitle: concept,
+          amountLabel: formatCurrency(amount, currency),
+        };
+      }
+
+      if (event.type === 'appointment' || event.type === 'appointment_confirmation') {
+        const startTime = getReadableContactValue(data.start_time || data.startTime || data.date || event.date);
+        const appointmentTitle = getReadableContactValue(data.title || data.name) || 'Cita';
+        const scheduleLabel = formatSchedulePreviewLabel(startTime, timezone);
+        return {
+          id: String(data.id || data.appointment_id || `${contactId}-appointment-marker-${event.date}-${index}`),
+          kind: 'appointment',
+          date: event.date,
+          title: event.type === 'appointment_confirmation' ? 'Cita confirmada' : 'Cita agendada',
+          subtitle: joinContactInfoJourneyDetails([appointmentTitle, scheduleLabel]),
+        };
+      }
+
+      return null;
+    })
+    .filter((marker): marker is ConversationActivityMarker => Boolean(marker));
+}
+
+function mergeConversationActivityMarkers(...groups: ConversationActivityMarker[][]) {
+  const merged: ConversationActivityMarker[] = [];
+  groups.flat().forEach((marker) => {
+    const markerTime = parseSortableDateValue(marker.date);
+    const duplicate = merged.some((item) => {
+      if (item.id === marker.id) return true;
+      if (item.kind !== marker.kind) return false;
+      const itemTime = parseSortableDateValue(item.date);
+      const closeInTime = Math.abs(itemTime - markerTime) < 120000;
+      if (!closeInTime) return false;
+      if (marker.kind === 'payment') return item.amountLabel === marker.amountLabel;
+      return normalizeProbe(item.subtitle) === normalizeProbe(marker.subtitle);
+    });
+    if (!duplicate) merged.push(marker);
+  });
+  return merged.sort((left, right) => parseSortableDateValue(left.date) - parseSortableDateValue(right.date));
 }
 
 function formatDurationMs(durationMs?: number) {
@@ -12017,9 +21975,19 @@ function createDefaultAppointmentDraft(timezone: string) {
   };
 }
 
-function PrimaryButton({ label, busy, onPress }: { label: string; busy?: boolean; onPress: () => void }) {
+function PrimaryButton({
+  label,
+  busy,
+  disabled = false,
+  onPress,
+}: {
+  label: string;
+  busy?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
   return (
-    <Pressable disabled={busy} onPress={onPress} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, busy && styles.disabledButton]}>
+    <Pressable disabled={busy || disabled} onPress={onPress} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, (busy || disabled) && styles.disabledButton]}>
       {busy ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.primaryButtonLabel}>{label}</Text>}
     </Pressable>
   );
@@ -12028,56 +21996,421 @@ function PrimaryButton({ label, busy, onPress }: { label: string; busy?: boolean
 function SecondaryButton({ label, onPress }: { label: string; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
+      <LiquidControlBackground />
       <Text style={styles.secondaryButtonLabel}>{label}</Text>
     </Pressable>
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: {
+type NativeLiquidGlassStyle = React.ComponentProps<typeof GlassView>['glassEffectStyle'];
+type NativeLiquidGlassColorScheme = React.ComponentProps<typeof GlassView>['colorScheme'];
+
+function canRenderNativeLiquidGlass() {
+  if (Platform.OS !== 'ios') return false;
+  try {
+    return isGlassEffectAPIAvailable();
+  } catch {
+    return false;
+  }
+}
+
+function LiquidGlassLayer({
+  colorScheme = activeNativeThemeTone,
+  fallbackStyle,
+  glassEffectStyle = 'regular',
+  style,
+  tintColor,
+}: {
+  colorScheme?: NativeLiquidGlassColorScheme;
+  fallbackStyle?: StyleProp<ViewStyle>;
+  glassEffectStyle?: NativeLiquidGlassStyle;
+  style: StyleProp<ViewStyle>;
+  tintColor?: string;
+}) {
+  if (canRenderNativeLiquidGlass()) {
+    return (
+      <GlassView
+        colorScheme={colorScheme}
+        glassEffectStyle={glassEffectStyle}
+        pointerEvents="none"
+        style={style}
+        tintColor={tintColor}
+      />
+    );
+  }
+
+  return <View pointerEvents="none" style={[style, fallbackStyle]} />;
+}
+
+function LiquidControlSurface({ selected = false }: { selected?: boolean }) {
+  return (
+    <>
+      <LiquidGlassLayer
+        colorScheme={activeNativeThemeTone}
+        fallbackStyle={[styles.liquidControlSurfaceFallback, selected && styles.liquidControlSurfaceFallbackSelected]}
+        glassEffectStyle="regular"
+        style={styles.liquidControlSurface}
+        tintColor={activeNativeThemeTone === 'light' ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.08)'}
+      />
+      <View pointerEvents="none" style={[styles.liquidControlSurfaceStroke, selected && styles.liquidControlSurfaceStrokeSelected]} />
+    </>
+  );
+}
+
+function LiquidControlBackground({ selected = false }: { selected?: boolean }) {
+  return <LiquidControlSurface selected={selected} />;
+}
+
+const APP_FONT_FAMILY = Platform.select({
+  ios: undefined,
+  android: 'sans-serif',
+  default: undefined,
+});
+const APP_FONT_WEIGHT_MAP: Record<string, string> = {
+  '100': '400',
+  '200': '400',
+  '300': '400',
+  '400': '400',
+  '500': '400',
+  '600': '600',
+  '700': '600',
+  '750': '600',
+  '800': '600',
+  '850': '600',
+  '900': '600',
+  normal: '400',
+  bold: '600',
+};
+const APP_TITLE_FONT_WEIGHT_MAP: Record<string, string> = {
+  '700': '700',
+  '750': '800',
+  '800': '800',
+  '850': '900',
+  '900': '900',
+  bold: '900',
+};
+const APP_STRONG_TITLE_STYLE_KEYS = new Set([
+  'analyticsTitle',
+  'calendarTitle',
+  'chatTitle',
+  'paymentsSelectTitle',
+  'settingsTitle',
+  'sheetTitle',
+  'title',
+]);
+const APP_TITLE_STYLE_KEY_BLOCKLIST = /(avatar|badge|caption|count|dot|icon|kicker|label|meta|subtitle|time)/i;
+
+function shouldPreserveStrongTitleWeight(styleKey: string, style: Record<string, unknown>) {
+  if (APP_STRONG_TITLE_STYLE_KEYS.has(styleKey)) return true;
+  const fontSize = style.fontSize;
+  return (
+    typeof fontSize === 'number'
+    && fontSize >= 30
+    && /title/i.test(styleKey)
+    && !APP_TITLE_STYLE_KEY_BLOCKLIST.test(styleKey)
+  );
+}
+
+function softenAppFontWeight(weight: unknown, preserveStrongTitleWeight = false) {
+  if (typeof weight === 'number') {
+    const key = String(weight);
+    if (preserveStrongTitleWeight && APP_TITLE_FONT_WEIGHT_MAP[key]) {
+      return APP_TITLE_FONT_WEIGHT_MAP[key];
+    }
+    return APP_FONT_WEIGHT_MAP[key] || String(Math.min(weight, 600));
+  }
+  if (typeof weight === 'string') {
+    if (preserveStrongTitleWeight && APP_TITLE_FONT_WEIGHT_MAP[weight]) {
+      return APP_TITLE_FONT_WEIGHT_MAP[weight];
+    }
+    return APP_FONT_WEIGHT_MAP[weight] || weight;
+  }
+  return weight;
+}
+
+type AppStyle = ViewStyle | TextStyle | ImageStyle;
+type AppStyleSheet<T> = { [P in keyof T]: AppStyle };
+
+function applyAppTypography<T extends AppStyleSheet<T>>(styleMap: T): T {
+  const nextStyles: Partial<T> = {};
+  Object.entries(styleMap).forEach(([key, style]) => {
+    if (!style || Array.isArray(style) || typeof style !== 'object') {
+      nextStyles[key as keyof T] = style as T[keyof T];
+      return;
+    }
+    const nextStyle = { ...(style as AppStyle) } as AppStyle & Record<string, unknown>;
+    const isTextStyle = (
+      'fontSize' in nextStyle ||
+      'fontWeight' in nextStyle ||
+      'lineHeight' in nextStyle ||
+      'letterSpacing' in nextStyle ||
+      'textAlign' in nextStyle
+    );
+    if (isTextStyle) {
+      if (APP_FONT_FAMILY && !('fontFamily' in nextStyle)) {
+        nextStyle.fontFamily = APP_FONT_FAMILY;
+      }
+      if ('fontWeight' in nextStyle) {
+        nextStyle.fontWeight = softenAppFontWeight(
+          nextStyle.fontWeight,
+          shouldPreserveStrongTitleWeight(key, nextStyle),
+        );
+      }
+      if ('letterSpacing' in nextStyle && typeof nextStyle.letterSpacing === 'number' && nextStyle.letterSpacing < 0) {
+        nextStyle.letterSpacing = 0;
+      }
+    }
+    nextStyles[key as keyof T] = nextStyle as unknown as T[keyof T];
+  });
+  return nextStyles as T;
+}
+
+function createAppStyles() {
+  const isLight = activeNativeThemeTone === 'light';
+  const liquidSurface = isLight ? 'rgba(255,255,255,0.56)' : 'rgba(28,28,30,0.62)';
+  const liquidSurfaceSelected = isLight ? 'rgba(255,255,255,0.72)' : 'rgba(58,58,60,0.66)';
+  const liquidBorder = isLight ? 'rgba(60,60,67,0.16)' : 'rgba(245,245,247,0.18)';
+  const liquidBorderSelected = isLight ? 'rgba(60,60,67,0.24)' : 'rgba(245,245,247,0.28)';
+  const liquidShadowColor = isLight ? 'rgba(29,29,31,0.16)' : 'rgba(0,0,0,0.54)';
+  const dockBackground = isLight ? 'rgba(255,255,255,0.64)' : 'rgba(28,28,30,0.62)';
+  const neutralSelectedSurface = isLight ? 'rgba(118,118,128,0.10)' : 'rgba(255,255,255,0.075)';
+  const neutralSelectedBorder = isLight ? 'rgba(60,60,67,0.16)' : 'rgba(245,245,247,0.20)';
+  const liquidControlShadow = {
+    shadowColor: liquidShadowColor,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: isLight ? 0.12 : 0.34,
+    shadowRadius: 18,
+    elevation: 7,
+  };
+  const liquidControlBase: ViewStyle = {
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    overflow: 'visible',
+    position: 'relative',
+  };
+  const liquidControlSelected: ViewStyle = {
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+  };
+  const dockPanelShadow = {
+    shadowColor: isLight ? '#0f172a' : '#000000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: isLight ? 0.16 : 0.36,
+    shadowRadius: 22,
+    elevation: 10,
+  };
+  const subtleSurface = isLight ? COLORS.panelSoft : 'rgba(255,255,255,0.055)';
+  const elevatedSurface = isLight ? COLORS.panel : 'rgba(28,28,30,0.72)';
+  const messageDayBackground = isLight ? 'rgba(245,245,247,0.92)' : 'rgba(44,44,46,0.82)';
+  const conversationWallpaperBackground = isLight ? '#f5f5f7' : COLORS.bg;
+  const conversationWallpaperDotColor = isLight ? 'rgba(60,60,67,0.16)' : 'rgba(235,235,245,0.18)';
+  const chatWallpaperTint = isLight ? COLORS.muted : COLORS.meta;
+  const chatWallpaperOpacity = isLight ? 0.82 : 0.5;
+  const composerShellBackground = getNativeConversationComposerBackground();
+  const keyboardSurfaceBackground = getNativeConversationKeyboardSurfaceBackground();
+  const composerInputBackground = isLight ? COLORS.white : 'rgba(28,28,30,0.72)';
+  const composerInputBorder = isLight ? 'rgba(60,60,67,0.13)' : 'rgba(235,235,245,0.16)';
+  const avatarFallbackBackground = isLight ? 'rgba(60,60,67,0.10)' : 'rgba(255,255,255,0.12)';
+  const avatarInitialTextColor = COLORS.text;
+  const replySwipeGlyphBackground = isLight ? 'rgba(60,60,67,0.09)' : 'rgba(255,255,255,0.12)';
+  const inboundBubbleBackground = isLight ? COLORS.white : 'rgba(28,28,30,0.96)';
+  const outboundBubbleBackground = isLight ? '#e9eaee' : 'rgba(58,58,60,0.92)';
+  const messageBubbleTextColor = isLight ? COLORS.text : '#f5f5f7';
+  const messageBubbleMetaColor = isLight ? COLORS.muted : 'rgba(235,235,245,0.78)';
+  const messageBubbleShadowColor = isLight ? 'rgba(60,60,67,0.28)' : '#000000';
+  const scheduledBubbleBackground = isLight ? '#f0f1f4' : 'rgba(72,72,74,0.48)';
+  const scheduledBubbleBorder = isLight ? 'rgba(60,60,67,0.18)' : 'rgba(235,235,245,0.22)';
+  const failedBubbleBackground = isLight ? COLORS.dangerSoft : 'rgba(127,29,29,0.58)';
+  const starredBackground = isLight ? 'rgba(118,118,128,0.10)' : 'rgba(255,255,255,0.08)';
+  const voiceComposerBackground = composerShellBackground;
+  const voiceComposerTrackBackground = composerInputBackground;
+  const voiceWaveBackground = isLight ? 'rgba(60,60,67,0.20)' : 'rgba(235,235,245,0.34)';
+  const voiceWaveActive = isLight ? 'rgba(29,29,31,0.78)' : COLORS.text;
+  const voiceProgressDot = isLight ? 'rgba(29,29,31,0.88)' : 'rgba(28,28,30,0.92)';
+  const voiceProgressBorder = COLORS.accent;
+  const voicePreviewBackground = composerShellBackground;
+  const voicePreviewTrackBackground = composerInputBackground;
+  const voicePreviewControlBackground = 'transparent';
+  const softSelectionBorder = isLight ? COLORS.border : 'rgba(235,235,245,0.32)';
+  const sheetBackdropBackground = isLight ? 'rgba(29,29,31,0.28)' : 'rgba(0,0,0,0.48)';
+  const sheetDimmerBackground = isLight ? 'rgba(29,29,31,0.34)' : 'rgba(0,0,0,0.56)';
+  const sheetHandleBackground = isLight ? 'rgba(60,60,67,0.18)' : 'rgba(235,235,245,0.34)';
+  const sheetRowSurface = isLight ? COLORS.panel : 'rgba(28,28,30,0.72)';
+  const sheetRowSurfaceSoft = isLight ? COLORS.panelSoft : 'rgba(255,255,255,0.05)';
+  const sheetRowSurfaceMuted = isLight ? '#f5f5f7' : 'rgba(255,255,255,0.035)';
+  const sheetSelectedBorder = neutralSelectedBorder;
+  const sheetSegmentActiveSurface = isLight ? COLORS.panel : 'rgba(255,255,255,0.14)';
+  const sheetDisabledSurface = isLight ? 'rgba(60,60,67,0.12)' : 'rgba(235,235,245,0.10)';
+  const sheetDisabledBorder = isLight ? 'rgba(60,60,67,0.20)' : 'rgba(235,235,245,0.14)';
+  const sheetDisabledText = isLight ? 'rgba(60,60,67,0.52)' : 'rgba(235,235,245,0.46)';
+  const sheetFormBottomInset = Platform.OS === 'ios' ? DEFAULT_IOS_BOTTOM_SAFE_AREA + 56 : 52;
+  return StyleSheet.create(applyAppTypography({
+  appFrame: {
     flex: 1,
     backgroundColor: COLORS.bg,
   },
+  appFrameContent: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  appFrameBleed: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: COLORS.bg,
+  },
+  phoneShellRoot: {
+    flex: 1,
+    position: 'relative',
+    overflow: 'hidden',
+    backgroundColor: COLORS.bg,
+  },
+  phoneShellPage: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: COLORS.bg,
+  },
+  screenErrorState: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 12,
+    paddingHorizontal: 26,
+  },
+  screenErrorIcon: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.dangerSoft,
+  },
+  screenErrorTitle: {
+    color: COLORS.text,
+    fontSize: 24,
+    lineHeight: 29,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  screenErrorCopy: {
+    color: COLORS.muted,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  screenErrorButton: {
+    minHeight: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 6,
+    paddingHorizontal: 20,
+    backgroundColor: COLORS.accent,
+  },
+  screenErrorButtonText: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  conversationRouteLayer: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: COLORS.bg,
+    zIndex: 40,
+  },
+  chatRouteListPage: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+  phoneShellPageHidden: {
+    display: 'none',
+  },
   phoneDockWrap: {
     position: 'absolute',
-    left: 10,
-    right: 10,
-    bottom: 10,
+    left: 14,
+    right: 14,
+    bottom: PHONE_DOCK_BOTTOM_OFFSET,
     zIndex: 10,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.26,
-    shadowRadius: 26,
-    elevation: 12,
+    ...dockPanelShadow,
   },
   phoneDock: {
-    minHeight: 62,
-    borderRadius: 31,
-    borderWidth: 1,
-    borderColor: 'rgba(199,226,255,0.19)',
-    backgroundColor: 'rgba(10, 31, 92, 0.91)',
+    minHeight: 56,
+    borderRadius: 28,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
     flexDirection: 'row',
     paddingHorizontal: PHONE_DOCK_HORIZONTAL_PADDING,
-    paddingVertical: 6,
+    paddingVertical: 3,
     overflow: 'visible',
   },
   phoneDockSwiping: {
-    shadowOpacity: 0.34,
+    shadowOpacity: 0,
+  },
+  phoneDockSurface: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: 28,
+  },
+  phoneDockSurfaceFallback: {
+    backgroundColor: dockBackground,
+  },
+  phoneDockSurfaceStroke: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: 28,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: liquidBorder,
   },
   phoneDockIndicator: {
     position: 'absolute',
-    top: 6,
-    bottom: 6,
-    left: PHONE_DOCK_HORIZONTAL_PADDING,
+    top: 3,
+    left: 0,
+    width: PHONE_DOCK_INDICATOR_WIDTH,
+    height: PHONE_DOCK_INDICATOR_HEIGHT,
+    borderRadius: PHONE_DOCK_INDICATOR_HEIGHT / 2,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    shadowColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
+    overflow: 'hidden',
+  },
+  phoneDockIndicatorSurface: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: PHONE_DOCK_INDICATOR_HEIGHT / 2,
+  },
+  phoneDockIndicatorSurfaceFallback: {
+    backgroundColor: liquidSurfaceSelected,
+  },
+  phoneDockIndicatorSurfaceStroke: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: PHONE_DOCK_INDICATOR_HEIGHT / 2,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: liquidBorderSelected,
+  },
+  liquidControlSurface: {
+    ...StyleSheet.absoluteFill,
     borderRadius: 999,
-    backgroundColor: 'rgba(0,168,248,0.18)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,168,248,0.42)',
-    shadowColor: COLORS.accent,
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    elevation: 2,
+    ...liquidControlShadow,
+  },
+  liquidControlSurfaceFallback: {
+    backgroundColor: liquidSurface,
+  },
+  liquidControlSurfaceFallbackSelected: {
+    backgroundColor: liquidSurfaceSelected,
+  },
+  liquidControlSurfaceStroke: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: 999,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: liquidBorder,
+  },
+  liquidControlSurfaceStrokeSelected: {
+    borderColor: liquidBorderSelected,
   },
   phoneDockItem: {
     flex: 1,
@@ -12088,30 +22421,28 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 1,
   },
-  phoneDockItemActive: {
-    transform: [{ translateY: -1 }],
-  },
+  phoneDockItemActive: {},
   phoneDockIconWrap: {
-    minWidth: 34,
-    minHeight: 34,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
-  phoneDockIconWrapActive: {
-    transform: [{ translateY: -1 }],
-  },
+  phoneDockIconWrapActive: {},
   phoneDockIcon: {
     color: COLORS.muted,
     fontSize: 15,
     fontWeight: '900',
   },
   phoneDockIconActive: {
-    color: COLORS.accent,
+    color: COLORS.text,
   },
   phoneDockBadge: {
     position: 'absolute',
-    top: -7,
-    right: -11,
+    top: 1,
+    right: 1,
     minWidth: 19,
     height: 19,
     borderRadius: 10,
@@ -12123,7 +22454,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.panel,
   },
   phoneDockBadgeText: {
-    color: COLORS.bg,
+    color: COLORS.white,
     fontSize: 10,
     lineHeight: 12,
     fontWeight: '900',
@@ -12142,11 +22473,14 @@ const styles = StyleSheet.create({
   },
   settingsBackButton: {
     alignSelf: 'flex-start',
-    minHeight: 34,
+    minHeight: 38,
+    borderRadius: 19,
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
-    paddingRight: 8,
+    paddingLeft: 5,
+    paddingRight: 10,
   },
   settingsBackLabel: {
     color: COLORS.text,
@@ -12199,21 +22533,22 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  settingsListIcon_neutral: {
+    backgroundColor: 'transparent',
   },
   settingsListIcon_green: {
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: 'transparent',
   },
   settingsListIcon_black: {
-    backgroundColor: COLORS.text,
-  },
-  settingsListIcon_blue: {
-    backgroundColor: 'rgba(70,185,255,0.22)',
+    backgroundColor: 'transparent',
   },
   settingsListIcon_gold: {
-    backgroundColor: 'rgba(245,158,11,0.22)',
+    backgroundColor: 'transparent',
   },
   settingsListIcon_red: {
-    backgroundColor: 'rgba(248,113,113,0.2)',
+    backgroundColor: 'transparent',
   },
   settingsListText: {
     flex: 1,
@@ -12245,27 +22580,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
-  settingsLogoutButton: {
-    minHeight: 52,
-    marginTop: 12,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 9,
+  settingsLogoutListItem: {
+    borderBottomWidth: 0,
   },
   settingsLogoutText: {
     color: COLORS.danger,
-    fontSize: 15,
-    fontWeight: '700',
   },
   settingsCard: {
     borderRadius: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(10,31,92,0.58)',
+    backgroundColor: elevatedSurface,
     padding: 16,
     gap: 14,
   },
@@ -12283,22 +22608,22 @@ const styles = StyleSheet.create({
   settingsSegmented: {
     minHeight: 46,
     borderRadius: 23,
-    backgroundColor: COLORS.panelSoft,
+    backgroundColor: 'transparent',
     flexDirection: 'row',
     padding: 5,
     gap: 5,
+    overflow: 'visible',
   },
   settingsSegmentButton: {
     flex: 1,
     minHeight: 36,
     borderRadius: 18,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
   },
   settingsSegmentButtonActive: {
-    backgroundColor: COLORS.panel,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    ...liquidControlSelected,
   },
   settingsSegmentText: {
     color: COLORS.muted,
@@ -12313,7 +22638,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(10,31,92,0.58)',
+    backgroundColor: elevatedSurface,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -12325,7 +22650,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.text,
+    backgroundColor: isLight ? 'rgba(60,60,67,0.09)' : 'rgba(255,255,255,0.09)',
   },
   settingsActionCopy: {
     flex: 1,
@@ -12381,7 +22706,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(10,31,92,0.5)',
+    backgroundColor: elevatedSurface,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
@@ -12396,7 +22721,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(10,31,92,0.5)',
+    backgroundColor: elevatedSurface,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 14,
@@ -12441,12 +22766,17 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     fontWeight: '600',
   },
+  settingsNativeSwitchWrap: {
+    minWidth: 52,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
   settingsToggleControl: {
     width: 28,
     height: 28,
     borderRadius: 7,
     borderWidth: 2,
-    borderColor: 'rgba(170,192,231,0.44)',
+    borderColor: softSelectionBorder,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -12462,15 +22792,15 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(10,31,92,0.58)',
+    backgroundColor: elevatedSurface,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     padding: 12,
   },
   phoneNumberRowActive: {
-    borderColor: 'rgba(0,168,248,0.45)',
-    backgroundColor: COLORS.accentSoft,
+    borderColor: sheetSelectedBorder,
+    backgroundColor: neutralSelectedSurface,
   },
   phoneNumberAvatar: {
     width: 52,
@@ -12508,16 +22838,13 @@ const styles = StyleSheet.create({
   phoneNumberPill: {
     minHeight: 30,
     borderRadius: 15,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panelSoft,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
   },
   phoneNumberPillActive: {
-    borderColor: 'rgba(0,168,248,0.45)',
-    backgroundColor: COLORS.accent,
+    ...liquidControlSelected,
   },
   phoneNumberPillText: {
     color: COLORS.muted,
@@ -12525,14 +22852,14 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   phoneNumberPillTextActive: {
-    color: COLORS.bg,
+    color: COLORS.text,
   },
   templateRow: {
     minHeight: 76,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(10,31,92,0.58)',
+    backgroundColor: elevatedSurface,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -12544,7 +22871,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.text,
+    backgroundColor: isLight ? 'rgba(60,60,67,0.09)' : 'rgba(255,255,255,0.09)',
   },
   templateCopy: {
     flex: 1,
@@ -12603,7 +22930,7 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(10,31,92,0.58)',
+    backgroundColor: elevatedSurface,
     padding: 16,
     gap: 12,
   },
@@ -12753,7 +23080,9 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.text,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    backgroundColor: neutralSelectedSurface,
   },
   settingsCardHeaderCopy: {
     flex: 1,
@@ -12777,17 +23106,14 @@ const styles = StyleSheet.create({
   settingsChoiceButton: {
     minHeight: 74,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(6,18,58,0.44)',
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     padding: 12,
   },
   settingsChoiceActive: {
-    borderColor: 'rgba(0,168,248,0.45)',
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   settingsChoiceIcon: {
     width: 48,
@@ -12795,7 +23121,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.text,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+  },
+  settingsChoiceIconActive: {
+    borderColor: sheetSelectedBorder,
+    backgroundColor: neutralSelectedSurface,
   },
   settingsChoiceCopy: {
     flex: 1,
@@ -12830,8 +23162,8 @@ const styles = StyleSheet.create({
     padding: 14,
   },
   settingsPushCardNeedsAction: {
-    backgroundColor: 'rgba(70,185,255,0.14)',
-    borderColor: 'rgba(70,185,255,0.24)',
+    backgroundColor: neutralSelectedSurface,
+    borderColor: neutralSelectedBorder,
   },
   settingsPushCopy: {
     flex: 1,
@@ -12887,17 +23219,14 @@ const styles = StyleSheet.create({
     minHeight: 38,
     maxWidth: '100%',
     borderRadius: 19,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panelSoft,
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
     paddingHorizontal: 12,
   },
   calendarChipActive: {
-    borderColor: 'rgba(0,168,248,0.45)',
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   calendarChipText: {
     color: COLORS.muted,
@@ -12998,88 +23327,69 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
   },
-  paymentChoiceIcon: {
-    width: 38,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   paymentChoiceCopy: {
     flex: 1,
     minWidth: 0,
     gap: 4,
   },
-  paymentChoiceTitle: {
-    color: COLORS.text,
-    fontSize: 19,
-    lineHeight: 22,
-    fontWeight: '800',
-  },
-  paymentChoiceSubtitle: {
-    color: COLORS.muted,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: '600',
-  },
   recentPaymentsSection: {
-    marginTop: 12,
-    paddingTop: 8,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: COLORS.border,
-    gap: 9,
+    marginTop: 18,
+    gap: 11,
   },
-  recentPaymentsToggle: {
-    minHeight: 54,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
+  recentPaymentsHeader: {
+    gap: 4,
     paddingHorizontal: 4,
-    paddingVertical: 8,
   },
-  recentPaymentsToggleCopy: {
-    flex: 1,
-    minWidth: 0,
-    gap: 3,
-  },
-  recentPaymentsToggleTitle: {
+  recentPaymentsTitle: {
     color: COLORS.text,
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: '900',
   },
-  recentPaymentsToggleSubtitle: {
+  recentPaymentsSubtitle: {
     color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  recentPaymentsChevronOpen: {
-    transform: [{ rotate: '180deg' }],
+    fontSize: 13,
+    fontWeight: '800',
   },
   recentPaymentsPanel: {
-    gap: 8,
+    gap: 9,
   },
   recentPeriodPicker: {
-    flexDirection: 'row',
-    gap: 6,
+    marginHorizontal: -16,
+    minHeight: 56,
+    overflow: 'visible',
+  },
+  recentPeriodRow: {
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 9,
   },
   recentPeriodButton: {
-    flex: 1,
-    minHeight: 36,
+    minHeight: 38,
     borderRadius: 18,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.panel,
+    paddingHorizontal: 14,
   },
   recentPeriodButtonActive: {
-    backgroundColor: COLORS.text,
+    ...liquidControlSelected,
+  },
+  recentPeriodSeparator: {
+    alignSelf: 'center',
+    width: 1,
+    height: 24,
+    marginHorizontal: 2,
+    borderRadius: 999,
+    backgroundColor: COLORS.border,
   },
   recentPeriodText: {
     color: COLORS.muted,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '900',
   },
   recentPeriodTextActive: {
-    color: COLORS.bg,
+    color: COLORS.text,
   },
   recentPaymentsState: {
     minHeight: 72,
@@ -13117,7 +23427,7 @@ const styles = StyleSheet.create({
     borderTopColor: COLORS.border,
   },
   recentPaymentItemSelected: {
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: neutralSelectedSurface,
   },
   recentPaymentMain: {
     flex: 1,
@@ -13163,11 +23473,11 @@ const styles = StyleSheet.create({
   paymentsBackButton: {
     minHeight: 40,
     borderRadius: 20,
+    ...liquidControlBase,
     paddingHorizontal: 10,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
-    backgroundColor: COLORS.panel,
   },
   paymentsBackText: {
     color: COLORS.text,
@@ -13205,9 +23515,9 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.panel,
   },
   productPrimaryButton: {
     minHeight: 44,
@@ -13228,11 +23538,9 @@ const styles = StyleSheet.create({
     minHeight: 44,
     borderRadius: 22,
     paddingHorizontal: 13,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panel,
   },
   productSecondaryButtonText: {
     color: COLORS.text,
@@ -13355,22 +23663,34 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.panelSoft,
   },
   productDeleteButton: {
-    backgroundColor: COLORS.dangerSoft,
+    ...liquidControlSelected,
+  },
+  paymentFormScreen: {
+    flex: 1,
+    position: 'relative',
   },
   paymentFormHost: {
     paddingTop: 16,
     paddingHorizontal: 16,
     paddingBottom: 132,
-    gap: 14,
+    gap: 16,
   },
   paymentFormHeader: {
     gap: 5,
     paddingHorizontal: 2,
+  },
+  paymentFormStep: {
+    alignSelf: 'flex-start',
+    color: COLORS.accent,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
   },
   paymentFormTitle: {
     color: COLORS.text,
@@ -13380,8 +23700,8 @@ const styles = StyleSheet.create({
   },
   paymentFormSubtitle: {
     color: COLORS.muted,
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 15,
+    lineHeight: 21,
     fontWeight: '700',
   },
   paymentFormBlock: {
@@ -13389,37 +23709,165 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.panel,
-    padding: 14,
-    gap: 12,
+    padding: 16,
+    gap: 14,
   },
   paymentFormBlockTitle: {
     color: COLORS.text,
-    fontSize: 17,
+    fontSize: 18,
     fontWeight: '900',
+  },
+  paymentLinkReadyCard: {
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 16,
+    gap: 14,
+  },
+  paymentLinkReadyIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  paymentLinkReadyCopy: {
+    gap: 4,
+  },
+  paymentLinkReadyTitle: {
+    color: COLORS.text,
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: '900',
+  },
+  paymentLinkReadySubtitle: {
+    color: COLORS.muted,
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '800',
+  },
+  paymentLinkReadyUrl: {
+    color: COLORS.text,
+    fontSize: 15,
+    lineHeight: 22,
+    fontWeight: '800',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+  },
+  paymentLinkResultActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  paymentLinkActionButton: {
+    flex: 1,
+    minHeight: 48,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+  },
+  paymentLinkActionPrimary: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accent,
+  },
+  paymentLinkActionText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  paymentLinkActionTextPrimary: {
+    color: COLORS.white,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  paymentLinkContactLine: {
+    color: COLORS.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '800',
+  },
+  paymentLinkChannelList: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    overflow: 'hidden',
+  },
+  paymentLinkChannelRow: {
+    minHeight: 66,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  paymentLinkChannelIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   paymentField: {
     gap: 6,
   },
   paymentFieldLabel: {
     color: COLORS.text,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '900',
   },
   paymentFieldInput: {
-    minHeight: 44,
-    borderRadius: 14,
+    minHeight: 50,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
     backgroundColor: COLORS.panelSoft,
     color: COLORS.text,
-    paddingHorizontal: 12,
-    paddingVertical: 9,
-    fontSize: 15,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    fontSize: 17,
     fontWeight: '700',
   },
   paymentFieldInputMultiline: {
     minHeight: 84,
     textAlignVertical: 'top',
+  },
+  paymentDateButton: {
+    minHeight: 50,
+    borderRadius: 16,
+    ...liquidControlBase,
+    paddingHorizontal: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  paymentDateButtonText: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  paymentDateHint: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
   },
   paymentOptionGrid: {
     flexDirection: 'row',
@@ -13427,37 +23875,78 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   paymentOptionPill: {
-    minHeight: 36,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    paddingHorizontal: 12,
+    minHeight: 42,
+    borderRadius: 21,
+    ...liquidControlBase,
+    paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.panelSoft,
   },
   paymentOptionPillActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   paymentOptionText: {
     color: COLORS.muted,
-    fontSize: 12,
+    fontSize: 14,
     fontWeight: '900',
   },
   paymentOptionTextActive: {
     color: COLORS.text,
   },
-  selectedContactCard: {
-    minHeight: 62,
+  paymentTabList: {
+    minHeight: 48,
+    borderRadius: 24,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 4,
+    gap: 4,
+    overflow: 'visible',
+  },
+  paymentTabItem: {
+    flex: 1,
+    minHeight: 38,
+    borderRadius: 20,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+  },
+  paymentTabItemActive: {
+    ...liquidControlSelected,
+  },
+  paymentTabText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  paymentTabTextActive: {
+    color: COLORS.text,
+  },
+  paymentSelectButton: {
+    minHeight: 66,
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panelSoft,
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  paymentSelectButtonOpen: {
+    ...liquidControlSelected,
+  },
+  selectedContactCard: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 2,
+    paddingVertical: 2,
   },
   selectedContactIcon: {
     width: 38,
@@ -13465,7 +23954,12 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: neutralSelectedSurface,
+    overflow: 'hidden',
+  },
+  selectedContactAvatarImage: {
+    width: '100%',
+    height: '100%',
   },
   selectedContactCopy: {
     flex: 1,
@@ -13474,12 +23968,12 @@ const styles = StyleSheet.create({
   },
   selectedContactName: {
     color: COLORS.text,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '900',
   },
   selectedContactDetail: {
     color: COLORS.muted,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '700',
   },
   contactSearchResults: {
@@ -13495,19 +23989,174 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
+  paymentChoiceList: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    overflow: 'hidden',
+  },
+  paymentChoiceEmpty: {
+    minHeight: 64,
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  paymentChoiceRow: {
+    minHeight: 66,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+  },
+  paymentChoiceRowActive: {
+    backgroundColor: neutralSelectedSurface,
+  },
+  paymentChoiceIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panel,
+  },
+  paymentChoiceText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 3,
+  },
+  paymentChoiceTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  paymentChoiceSubtitle: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  paymentChoiceMeta: {
+    maxWidth: 110,
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  paymentSummaryRow: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingHorizontal: 13,
+  },
+  paymentSummaryLabel: {
+    color: COLORS.muted,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  paymentSummaryValue: {
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  paymentWarningText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
+  },
+  paymentPlanList: {
+    gap: 10,
+  },
+  paymentFlatSectionHeader: {
+    gap: 4,
+    marginTop: 6,
+  },
+  paymentPlanRow: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    padding: 12,
+    gap: 10,
+  },
+  paymentPlanFirstCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    padding: 12,
+    gap: 12,
+  },
+  paymentPlanRowHeader: {
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  paymentPlanRowTitle: {
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  paymentPlanDeleteButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.dangerSoft,
+  },
+  paymentInlineActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  paymentSecondaryAction: {
+    minHeight: 42,
+    borderRadius: 21,
+    ...liquidControlBase,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 13,
+  },
+  paymentSecondaryActionText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
   paymentSubmitButton: {
-    minHeight: 52,
-    borderRadius: 26,
+    minHeight: 56,
+    borderRadius: 28,
     backgroundColor: COLORS.accent,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
     gap: 8,
+    paddingHorizontal: 20,
   },
   paymentSubmitText: {
+    flexShrink: 1,
     color: COLORS.white,
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '900',
+    textAlign: 'center',
+  },
+  paymentSubmitTextCompact: {
+    flex: 1,
+    fontSize: 16,
   },
   paymentsBottomSpacer: {
     height: 26,
@@ -13515,7 +24164,7 @@ const styles = StyleSheet.create({
   segmentWrap: {
     minHeight: 44,
     borderRadius: 22,
-    borderWidth: 1,
+    borderWidth: StyleSheet.hairlineWidth,
     borderColor: COLORS.border,
     backgroundColor: COLORS.panel,
     flexDirection: 'row',
@@ -13526,8 +24175,10 @@ const styles = StyleSheet.create({
   segmentActive: {
     flex: 1,
     color: COLORS.text,
-    backgroundColor: COLORS.panelSoft,
+    backgroundColor: neutralSelectedSurface,
     borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: neutralSelectedBorder,
     overflow: 'hidden',
     textAlign: 'center',
     paddingVertical: 9,
@@ -13541,6 +24192,11 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     fontSize: 12,
     fontWeight: '800',
+  },
+  analyticsScrollView: {
+    flex: 1,
+    alignSelf: 'stretch',
+    backgroundColor: COLORS.bg,
   },
   analyticsScroll: {
     paddingHorizontal: 14,
@@ -13577,9 +24233,7 @@ const styles = StyleSheet.create({
   analyticsPeriodToggle: {
     minHeight: 36,
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panel,
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     flexShrink: 0,
@@ -13589,8 +24243,7 @@ const styles = StyleSheet.create({
     maxWidth: 138,
   },
   analyticsPeriodToggleOpen: {
-    borderColor: 'rgba(0,168,248,0.36)',
-    backgroundColor: COLORS.panelSoft,
+    ...liquidControlSelected,
   },
   analyticsPeriodToggleText: {
     color: COLORS.text,
@@ -13620,16 +24273,16 @@ const styles = StyleSheet.create({
     width: '48.5%',
     minHeight: 38,
     borderRadius: 14,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
-    backgroundColor: 'transparent',
   },
   analyticsPeriodOptionWide: {
     width: '100%',
   },
   analyticsPeriodOptionActive: {
-    backgroundColor: COLORS.text,
+    ...liquidControlSelected,
   },
   analyticsPeriodOptionText: {
     color: COLORS.muted,
@@ -13638,11 +24291,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   analyticsPeriodOptionTextActive: {
-    color: COLORS.bg,
+    color: COLORS.text,
     fontWeight: '900',
   },
   analyticsCustomSheetBody: {
     padding: 14,
+    paddingBottom: sheetFormBottomInset,
     gap: 12,
   },
   analyticsCustomHint: {
@@ -13713,13 +24367,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   analyticsTonegreen: {
-    backgroundColor: COLORS.accent,
+    backgroundColor: isLight ? 'rgba(24,182,111,0.12)' : 'rgba(24,182,111,0.16)',
   },
   analyticsToneblack: {
-    backgroundColor: COLORS.text,
+    backgroundColor: isLight ? 'rgba(60,60,67,0.09)' : 'rgba(255,255,255,0.09)',
   },
-  analyticsToneblue: {
-    backgroundColor: 'rgba(70,185,255,0.24)',
+  analyticsToneneutral: {
+    backgroundColor: isLight ? 'rgba(60,60,67,0.09)' : 'rgba(255,255,255,0.09)',
   },
   analyticsTonegold: {
     backgroundColor: 'rgba(255,209,102,0.22)',
@@ -13792,16 +24446,13 @@ const styles = StyleSheet.create({
   analyticsChip: {
     minHeight: 34,
     borderRadius: 17,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.bg,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 13,
   },
   analyticsChipActive: {
-    borderColor: 'rgba(0,168,248,0.34)',
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   analyticsChipText: {
     color: COLORS.muted,
@@ -13814,23 +24465,23 @@ const styles = StyleSheet.create({
   analyticsSegmentedControl: {
     minHeight: 39,
     borderRadius: 20,
-    backgroundColor: COLORS.panelSoft,
+    backgroundColor: 'transparent',
     flexDirection: 'row',
     padding: 4,
     gap: 4,
+    overflow: 'visible',
   },
   analyticsSegmentButton: {
     flex: 1,
     minWidth: 0,
     borderRadius: 16,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 5,
   },
   analyticsSegmentButtonActive: {
-    backgroundColor: COLORS.panel,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    ...liquidControlSelected,
   },
   analyticsSegmentText: {
     color: COLORS.muted,
@@ -13948,9 +24599,7 @@ const styles = StyleSheet.create({
     minHeight: 42,
     width: 96,
     borderRadius: 21,
-    borderWidth: 1,
-    borderColor: 'rgba(183,207,255,0.18)',
-    backgroundColor: 'rgba(255,255,255,0.055)',
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -13966,29 +24615,32 @@ const styles = StyleSheet.create({
     minHeight: 42,
     width: 174,
     borderRadius: 21,
-    borderWidth: 1,
-    borderColor: 'rgba(183,207,255,0.18)',
-    backgroundColor: 'rgba(255,255,255,0.055)',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 5,
+    overflow: 'visible',
+    position: 'relative',
+    ...liquidControlShadow,
   },
   calendarCapsuleIconButton: {
     width: 38,
     height: 38,
     borderRadius: 19,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent',
   },
   calendarCapsuleTodayButton: {
     minWidth: 62,
     height: 38,
     borderRadius: 19,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'transparent',
   },
   calendarTitleRow: {
     minHeight: 48,
@@ -14087,15 +24739,15 @@ const styles = StyleSheet.create({
   analyticsSourceTitle: {
     flex: 1,
     minWidth: 0,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: subtleSurface,
   },
   calendarTodayButton: {
     minHeight: 34,
     borderRadius: 17,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
-    backgroundColor: COLORS.panelSoft,
   },
   calendarTodayButtonText: {
     color: COLORS.text,
@@ -14179,6 +24831,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
+    position: 'relative',
   },
   calendarDayNumberToday: {
     borderWidth: 0,
@@ -14205,18 +24858,24 @@ const styles = StyleSheet.create({
   calendarDayNumberSelectedText: {
     color: COLORS.white,
   },
-  calendarDayMarkers: {
-    minHeight: 6,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 3,
-  },
   calendarDayMarker: {
     width: 4,
     height: 4,
     borderRadius: 3,
     backgroundColor: COLORS.accent,
+  },
+  calendarDayMarkerSelected: {
+    backgroundColor: COLORS.white,
+  },
+  calendarDayInlineMarkers: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 3,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
   },
   calendarAgendaHeader: {
     minHeight: 46,
@@ -14272,9 +24931,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
     paddingVertical: 7,
     borderWidth: 1,
-    borderColor: 'rgba(183,207,255,0.18)',
+    borderColor: COLORS.border,
     borderRadius: 14,
-    backgroundColor: 'rgba(255,255,255,0.03)',
+    backgroundColor: sheetRowSurfaceMuted,
   },
   calendarEventAccent: {
     width: 4,
@@ -14358,12 +25017,12 @@ const styles = StyleSheet.create({
     width: '33.3333%',
     minHeight: 86,
     borderRadius: 18,
+    ...liquidControlBase,
     padding: 11,
     justifyContent: 'space-between',
-    backgroundColor: 'transparent',
   },
   calendarYearMonthSelected: {
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   calendarYearMonthTitle: {
     color: COLORS.text,
@@ -14401,7 +25060,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   calendarSheetList: {
-    paddingHorizontal: 12,
     paddingTop: 8,
     paddingBottom: 18,
   },
@@ -14412,11 +25070,11 @@ const styles = StyleSheet.create({
     gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
-    paddingHorizontal: 6,
+    paddingHorizontal: 22,
     paddingVertical: 9,
   },
   calendarSheetRowSelected: {
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: neutralSelectedSurface,
   },
   calendarSheetDot: {
     width: 13,
@@ -14508,7 +25166,7 @@ const styles = StyleSheet.create({
   appointmentFormBody: {
     paddingHorizontal: 18,
     paddingTop: 12,
-    paddingBottom: 26,
+    paddingBottom: sheetFormBottomInset,
     gap: 14,
   },
   appointmentContactCard: {
@@ -14526,7 +25184,7 @@ const styles = StyleSheet.create({
     width: 38,
     height: 38,
     borderRadius: 19,
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: neutralSelectedSurface,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -14607,16 +25265,13 @@ const styles = StyleSheet.create({
   appointmentChoiceChip: {
     minHeight: 34,
     borderRadius: 17,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(16,42,120,0.58)',
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
   appointmentChoiceChipActive: {
-    borderColor: 'rgba(0,168,248,0.46)',
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   appointmentChoiceText: {
     color: COLORS.muted,
@@ -14642,6 +25297,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '800',
   },
+  appointmentSelectValueCompact: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
   appointmentSelectWrap: {
     minHeight: 56,
     borderRadius: 18,
@@ -14652,6 +25311,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
     paddingHorizontal: 16,
+  },
+  appointmentSelectWrapCompact: {
+    minHeight: 52,
+    gap: 6,
+    paddingHorizontal: 11,
   },
   appointmentSelectWrapStatic: {
     opacity: 0.98,
@@ -14721,16 +25385,16 @@ const styles = StyleSheet.create({
   chatListHeader: {
     paddingTop: 8,
     paddingHorizontal: 14,
-    paddingBottom: 8,
+    paddingBottom: 10,
     backgroundColor: COLORS.bg,
     borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: 'rgba(255,255,255,0.05)',
+    borderBottomColor: COLORS.border,
   },
   chatTopActionRow: {
     minHeight: 42,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-end',
     marginBottom: 4,
   },
   chatHeaderActions: {
@@ -14738,32 +25402,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 10,
   },
-  agentRoundButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(6,18,58,0.72)',
-    borderWidth: 1,
-    borderColor: 'rgba(39,199,216,0.26)',
-  },
   headerIconButton: {
-    minWidth: 38,
-    height: 38,
-    borderRadius: 19,
-    paddingHorizontal: 10,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(6,18,58,0.72)',
   },
   newChatButton: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.accent,
   },
   chatTitleRow: {
     minHeight: 48,
@@ -14779,9 +25432,9 @@ const styles = StyleSheet.create({
   },
   chatTitle: {
     color: COLORS.text,
-    fontSize: 38,
-    lineHeight: 43,
-    fontWeight: '900',
+    fontSize: 42,
+    lineHeight: 47,
+    fontWeight: '800',
   },
   searchBox: {
     minHeight: 38,
@@ -14798,7 +25451,8 @@ const styles = StyleSheet.create({
     color: COLORS.text,
     paddingHorizontal: 0,
     paddingVertical: 0,
-    fontSize: 15,
+    fontSize: 17,
+    fontWeight: '400',
   },
   clearSearchButton: {
     width: 28,
@@ -14807,35 +25461,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  chatFilterFloatingBand: {
+    backgroundColor: 'transparent',
+    paddingTop: 4,
+    paddingBottom: 6,
+    marginBottom: 2,
+    zIndex: 1,
+    elevation: 0,
+    shadowColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    overflow: 'visible',
+  },
   filterChipScroll: {
-    marginHorizontal: -14,
+    marginHorizontal: 0,
+    minHeight: 58,
+    backgroundColor: 'transparent',
+    overflow: 'visible',
   },
   filterChipRow: {
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 14,
-    paddingTop: 9,
-    paddingBottom: 2,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 14,
   },
   filterChip: {
-    minHeight: 34,
-    borderRadius: 17,
-    paddingHorizontal: 12,
+    minHeight: 36,
+    borderRadius: 18,
+    paddingHorizontal: 13,
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     maxWidth: 210,
-    backgroundColor: COLORS.panel,
-    borderWidth: 1,
-    borderColor: COLORS.border,
   },
   filterChipActive: {
-    backgroundColor: COLORS.accentSoft,
-    borderColor: 'rgba(0,168,248,0.28)',
+    ...liquidControlSelected,
   },
   filterChipComments: {
-    borderColor: '#38bdf8',
+    borderColor: 'transparent',
   },
   filterChipSeparator: {
     alignSelf: 'center',
@@ -14851,8 +25518,8 @@ const styles = StyleSheet.create({
   },
   filterChipText: {
     color: COLORS.muted,
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '600',
   },
   filterChipTextActive: {
     color: COLORS.text,
@@ -14867,14 +25534,14 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.accent,
   },
   filterChipCountText: {
-    color: COLORS.white,
+    color: isLight ? COLORS.text : COLORS.white,
     fontSize: 11,
-    fontWeight: '900',
+    fontWeight: '600',
   },
   sheetBackdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(1,8,28,0.42)',
+    backgroundColor: sheetBackdropBackground,
   },
   sheetModalRoot: {
     flex: 1,
@@ -14886,7 +25553,7 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     left: 0,
-    backgroundColor: 'rgba(1,8,28,0.52)',
+    backgroundColor: sheetDimmerBackground,
   },
   sheetScrim: {
     position: 'absolute',
@@ -14899,10 +25566,16 @@ const styles = StyleSheet.create({
     maxHeight: '82%',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panel,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
     overflow: 'hidden',
+  },
+  filterSheetSurface: {
+    ...StyleSheet.absoluteFill,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    backgroundColor: COLORS.panel,
   },
   filterSheetHeader: {
     minHeight: 72,
@@ -14929,9 +25602,9 @@ const styles = StyleSheet.create({
     width: 36,
     height: 36,
     borderRadius: 18,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.panelSoft,
   },
   filterSheetBody: {
     padding: 14,
@@ -14954,7 +25627,7 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(16,42,120,0.48)',
+    backgroundColor: sheetRowSurface,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -14962,8 +25635,8 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
   },
   filterManagerRowActive: {
-    borderColor: 'rgba(0,168,248,0.42)',
-    backgroundColor: COLORS.accentSoft,
+    borderColor: sheetSelectedBorder,
+    backgroundColor: neutralSelectedSurface,
   },
   filterManagerCopy: {
     flex: 1,
@@ -14985,13 +25658,13 @@ const styles = StyleSheet.create({
     minWidth: 76,
     minHeight: 34,
     borderRadius: 17,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
-    backgroundColor: COLORS.panelSoft,
   },
   filterManagerToggleActive: {
-    backgroundColor: COLORS.text,
+    ...liquidControlSelected,
   },
   filterManagerToggleText: {
     color: COLORS.text,
@@ -14999,24 +25672,253 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   filterManagerToggleTextActive: {
-    color: COLORS.bg,
+    color: COLORS.text,
+  },
+  filterManagerSummary: {
+    minHeight: 64,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: sheetRowSurfaceSoft,
+    paddingHorizontal: 13,
+    paddingVertical: 11,
+    justifyContent: 'center',
+  },
+  filterManagerSummaryCopy: {
+    gap: 3,
+  },
+  filterManagerSummaryTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  filterManagerSummaryText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  filterManagerCreateButton: {
+    minHeight: 48,
+    borderRadius: 18,
+    ...liquidControlBase,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  filterManagerCreateText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  filterManagerActions: {
+    alignItems: 'flex-end',
+    gap: 7,
+  },
+  filterManagerCustomTools: {
+    flexDirection: 'row',
+    gap: 7,
+  },
+  filterManagerToolButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterEditorTopbar: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  filterEditorBackButton: {
+    minHeight: 36,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingRight: 8,
+  },
+  filterEditorBackText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  filterEditorTopbarTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  filterEditorFieldBlock: {
+    gap: 7,
+  },
+  filterEditorLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+    paddingHorizontal: 3,
+  },
+  filterEditorInput: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '800',
+    paddingHorizontal: 13,
+  },
+  filterEditorMatch: {
+    gap: 8,
+  },
+  filterEditorMatchButtons: {
+    minHeight: 46,
+    borderRadius: 18,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    padding: 4,
+    flexDirection: 'row',
+    overflow: 'visible',
+  },
+  filterEditorMatchButton: {
+    flex: 1,
+    borderRadius: 14,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterEditorMatchButtonActive: {
+    ...liquidControlSelected,
+  },
+  filterEditorMatchText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  filterEditorMatchTextActive: {
+    color: COLORS.text,
+  },
+  filterEditorLoading: {
+    minHeight: 40,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  filterEditorRule: {
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: sheetRowSurface,
+    padding: 12,
+    gap: 9,
+  },
+  filterEditorRuleHeader: {
+    minHeight: 32,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  filterEditorRuleTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  filterEditorIconButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterEditorChipRow: {
+    gap: 8,
+    paddingRight: 10,
+  },
+  filterEditorChip: {
+    minHeight: 34,
+    maxWidth: 220,
+    borderRadius: 17,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  filterEditorChipActive: {
+    ...liquidControlSelected,
+  },
+  filterEditorChipText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  filterEditorChipTextActive: {
+    color: COLORS.text,
+  },
+  filterEditorEmptyValue: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  filterEditorValuePair: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  filterEditorAddRule: {
+    minHeight: 44,
+    borderRadius: 18,
+    ...liquidControlBase,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  filterEditorAddRuleText: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  filterEditorFooter: {
+    gap: 10,
+    paddingTop: 2,
   },
   actionSheet: {
+    position: 'relative',
     maxHeight: '88%',
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panel,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
     overflow: 'hidden',
     paddingBottom: 16,
+  },
+  actionSheetSurface: {
+    ...StyleSheet.absoluteFill,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: COLORS.panel,
+  },
+  actionSheetDragRegion: {
+    position: 'relative',
+    zIndex: 1,
   },
   actionSheetHandle: {
     alignSelf: 'center',
     width: 48,
     height: 5,
     borderRadius: 999,
-    backgroundColor: 'rgba(170,192,231,0.38)',
+    backgroundColor: sheetHandleBackground,
     marginTop: 8,
     marginBottom: 3,
   },
@@ -15046,7 +25948,6 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   sheetActionList: {
-    paddingHorizontal: 12,
     paddingTop: 8,
     paddingBottom: 12,
   },
@@ -15055,7 +25956,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 6,
+    paddingHorizontal: 18,
     paddingTop: 10,
   },
   sheetSectionLabel: {
@@ -15071,7 +25972,7 @@ const styles = StyleSheet.create({
     gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
-    paddingHorizontal: 6,
+    paddingHorizontal: 18,
     paddingVertical: 10,
   },
   sheetActionIcon: {
@@ -15080,7 +25981,7 @@ const styles = StyleSheet.create({
     borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: neutralSelectedSurface,
   },
   sheetActionIconDanger: {
     backgroundColor: COLORS.dangerSoft,
@@ -15101,14 +26002,185 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   contactPickerBody: {
-    padding: 14,
+    paddingTop: 14,
+    paddingBottom: 14,
     gap: 12,
+  },
+  contactPickerSearchBox: {
+    marginHorizontal: 14,
+  },
+  cameraShareScreen: {
+    flex: 1,
+    backgroundColor: COLORS.bg,
+  },
+  cameraSharePreviewPane: {
+    backgroundColor: COLORS.bg,
+    paddingTop: Platform.OS === 'ios' ? DEFAULT_IOS_TOP_SAFE_AREA + 8 : (StatusBar.currentHeight || 16) + 8,
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    gap: 10,
+  },
+  cameraSharePreviewCard: {
+    height: 136,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.black,
+    overflow: 'hidden',
+  },
+  cameraShareMediaImage: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: COLORS.black,
+  },
+  cameraShareVideoStage: {
+    flex: 1,
+    backgroundColor: COLORS.black,
+  },
+  cameraShareVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  cameraShareVideoBadge: {
+    position: 'absolute',
+    left: 10,
+    bottom: 10,
+    minHeight: 30,
+    borderRadius: 15,
+    paddingHorizontal: 11,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(1, 10, 36, 0.72)',
+  },
+  cameraShareVideoBadgeText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  cameraShareTopChrome: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  cameraShareTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  cameraShareTitle: {
+    color: COLORS.white,
+    fontSize: 27,
+    fontWeight: '900',
+    letterSpacing: 0,
+  },
+  cameraShareSubtitle: {
+    color: COLORS.white,
+    opacity: 0.78,
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  cameraShareCloseButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  cameraSharePanel: {
+    flex: 1,
+    marginTop: 0,
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    overflow: 'hidden',
+    backgroundColor: COLORS.panel,
+    borderTopWidth: 1,
+    borderColor: COLORS.border,
+  },
+  cameraShareSearchArea: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 8,
+  },
+  cameraShareContactList: {
+    flex: 1,
+  },
+  cameraShareContactListContent: {
+    paddingBottom: 8,
+  },
+  cameraShareFooter: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 9,
+    paddingHorizontal: 14,
+    paddingTop: 9,
+    paddingBottom: Platform.OS === 'ios' ? 18 : 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+  },
+  cameraPreviewCard: {
+    width: '100%',
+    minHeight: 130,
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.bg,
   },
   cameraPreview: {
     width: '100%',
-    height: 170,
-    borderRadius: 20,
+    height: 150,
     backgroundColor: COLORS.bg,
+  },
+  cameraVideoPreview: {
+    minHeight: 130,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: COLORS.panel,
+  },
+  cameraVideoTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  cameraVideoMeta: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  cameraShareComposer: {
+    gap: 10,
+    paddingTop: 2,
+  },
+  cameraCaptionInput: {
+    flex: 1,
+    minHeight: 46,
+    maxHeight: 92,
+    borderRadius: 23,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    fontSize: 15,
+    lineHeight: 20,
+    paddingHorizontal: 15,
+    paddingTop: 12,
+    paddingBottom: 10,
+  },
+  cameraShareSendButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  cameraShareSendButtonDisabled: {
+    opacity: 0.38,
   },
   sheetSearchBox: {
     minHeight: 42,
@@ -15133,8 +26205,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 10,
   },
+  sheetScrollableContentSafeEnd: {
+    paddingBottom: sheetFormBottomInset,
+  },
   contactPickerList: {
+    alignSelf: 'stretch',
     paddingBottom: 8,
+    width: '100%',
   },
   contactPickerRow: {
     minHeight: 66,
@@ -15143,21 +26220,27 @@ const styles = StyleSheet.create({
     gap: 12,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
+    paddingHorizontal: 18,
+  },
+  contactPickerRowFullBleed: {
+    paddingHorizontal: 18,
+  },
+  contactPickerRowSelected: {
+    backgroundColor: neutralSelectedSurface,
   },
   contactPickerAvatar: {
     width: 46,
     height: 46,
     borderRadius: 23,
-    borderWidth: 2,
-    backgroundColor: COLORS.primary,
+    backgroundColor: avatarFallbackBackground,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   contactPickerAvatarImage: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
   },
   contactPickerCopy: {
     flex: 1,
@@ -15173,6 +26256,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
+  contactPickerCheck: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panel,
+  },
+  contactPickerCheckActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accent,
+  },
   contactPickerEmpty: {
     color: COLORS.muted,
     fontSize: 14,
@@ -15181,6 +26278,7 @@ const styles = StyleSheet.create({
   },
   scheduleSheetBody: {
     padding: 14,
+    paddingBottom: sheetFormBottomInset,
     gap: 12,
   },
   scheduleTextInput: {
@@ -15194,6 +26292,239 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 15,
     lineHeight: 20,
+  },
+  scheduleFields: {
+    gap: 10,
+  },
+  scheduleField: {
+    gap: 6,
+  },
+  scheduleFieldLabel: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    textTransform: 'uppercase',
+  },
+  scheduleFieldInput: {
+    minHeight: 48,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 14,
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  scheduleFieldButton: {
+    minHeight: 48,
+    borderRadius: 16,
+    ...liquidControlBase,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  scheduleFieldButtonText: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  scheduleFieldHint: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  scheduleTimeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+  },
+  scheduleTimeField: {
+    flex: 1,
+  },
+  scheduleNumericInput: {
+    textAlign: 'center',
+  },
+  schedulePeriodToggle: {
+    minHeight: 48,
+    flexDirection: 'row',
+    borderRadius: 16,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    overflow: 'visible',
+    gap: 6,
+  },
+  schedulePeriodButton: {
+    width: 58,
+    minHeight: 34,
+    borderRadius: 17,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  schedulePeriodButtonActive: {
+    ...liquidControlSelected,
+  },
+  schedulePeriodText: {
+    color: COLORS.muted,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  schedulePeriodTextActive: {
+    color: COLORS.text,
+  },
+  schedulePreview: {
+    minHeight: 42,
+    borderRadius: 15,
+    backgroundColor: COLORS.accentSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+  },
+  schedulePreviewText: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  schedulePickerLayer: {
+    ...StyleSheet.absoluteFill,
+    zIndex: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  schedulePickerBackdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.52)',
+  },
+  schedulePickerCard: {
+    width: '100%',
+    maxWidth: 372,
+    borderRadius: 28,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
+    overflow: 'hidden',
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 24,
+    gap: 14,
+  },
+  schedulePickerSurface: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: 28,
+    backgroundColor: COLORS.panel,
+  },
+  schedulePickerHeader: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  schedulePickerIconButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  schedulePickerTitle: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  schedulePickerWeekRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+  },
+  schedulePickerWeekday: {
+    width: `${100 / 7}%`,
+    color: COLORS.meta,
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  schedulePickerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    rowGap: 8,
+  },
+  schedulePickerDay: {
+    width: `${100 / 7}%`,
+    height: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  schedulePickerDaySelected: {
+    borderRadius: 21,
+    backgroundColor: COLORS.accent,
+  },
+  schedulePickerDayDisabled: {
+    opacity: 0.36,
+  },
+  schedulePickerDayText: {
+    color: COLORS.text,
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  schedulePickerDayTextMuted: {
+    color: COLORS.meta,
+    opacity: 0.52,
+  },
+  schedulePickerDayTextDisabled: {
+    color: COLORS.meta,
+  },
+  schedulePickerDayTextSelected: {
+    color: COLORS.white,
+    fontWeight: '900',
+  },
+  schedulePickerFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginTop: 4,
+  },
+  schedulePickerReset: {
+    flex: 1,
+    minHeight: 54,
+    borderRadius: 27,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  schedulePickerResetText: {
+    color: COLORS.text,
+    fontSize: 17,
+    fontWeight: '900',
+  },
+  schedulePickerDone: {
+    width: 62,
+    height: 62,
+    borderRadius: 31,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  scheduleErrorText: {
+    color: COLORS.danger,
+    fontSize: 13,
+    fontWeight: '800',
   },
   primaryButton: {
     minHeight: 52,
@@ -15210,8 +26541,7 @@ const styles = StyleSheet.create({
   secondaryButton: {
     minHeight: 44,
     borderRadius: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 16,
@@ -15255,11 +26585,9 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.panel,
   },
   roundButtonLabel: {
     color: COLORS.text,
@@ -15273,9 +26601,24 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 24,
   },
+  chatListScroller: {
+    flex: 1,
+    alignSelf: 'stretch',
+    backgroundColor: COLORS.bg,
+  },
   chatList: {
     paddingTop: 2,
     paddingBottom: PHONE_DOCK_RESERVED_SPACE,
+    backgroundColor: COLORS.bg,
+  },
+  chatListHeaderWrap: {
+    alignSelf: 'stretch',
+    width: '100%',
+  },
+  chatListLoadingMore: {
+    minHeight: 46,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   emptyList: {
     flexGrow: 1,
@@ -15283,6 +26626,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
     paddingBottom: PHONE_DOCK_RESERVED_SPACE,
+    backgroundColor: COLORS.bg,
+  },
+  archivedEmptyBody: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
+    paddingBottom: PHONE_DOCK_RESERVED_SPACE,
+    backgroundColor: COLORS.bg,
   },
   emptyChats: {
     alignItems: 'center',
@@ -15311,97 +26663,88 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   chatSelectionPanel: {
-    gap: 9,
-    marginHorizontal: 12,
-    marginTop: 8,
-    marginBottom: 10,
-    padding: 10,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(16,42,120,0.88)',
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 14 },
-    shadowOpacity: 0.1,
-    shadowRadius: 30,
-    elevation: 2,
+    position: 'relative',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    backgroundColor: elevatedSurface,
   },
   chatSelectionPanelTop: {
-    minHeight: 36,
+    minHeight: 58,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 10,
+    gap: 9,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
   },
-  chatSelectionCount: {
+  chatSelectionCountBlock: {
     flex: 1,
     minWidth: 0,
+  },
+  chatSelectionCount: {
     color: COLORS.text,
-    fontSize: 15,
+    fontSize: 17,
     fontWeight: '900',
   },
+  chatSelectionHint: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 1,
+  },
   chatSelectionClearButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(255,255,255,0.06)',
   },
   chatSelectionSelectAll: {
-    alignSelf: 'flex-start',
-    minHeight: 36,
-    maxWidth: '100%',
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    minHeight: 38,
+    maxWidth: 112,
+    borderRadius: 19,
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 7,
-    paddingHorizontal: 11,
+    paddingHorizontal: 10,
   },
   chatSelectionSelectAllText: {
     color: COLORS.text,
-    fontSize: 13,
-    fontWeight: '800',
+    fontSize: 12,
+    fontWeight: '900',
   },
   chatSelectionMiniCheck: {
     width: 20,
     height: 20,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: 'rgba(170,192,231,0.52)',
+    borderColor: softSelectionBorder,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.07)',
+    backgroundColor: subtleSurface,
   },
   chatSelectionMiniCheckActive: {
     borderColor: COLORS.accent,
     backgroundColor: COLORS.accent,
   },
   chatSelectionMoreButton: {
-    minHeight: 40,
-    borderRadius: 20,
-    backgroundColor: COLORS.accent,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-  },
-  chatSelectionMoreButtonText: {
-    color: COLORS.white,
-    fontSize: 14,
-    fontWeight: '900',
   },
   chatSelectionActionsMenu: {
+    marginHorizontal: 13,
+    marginBottom: 10,
     overflow: 'hidden',
     borderRadius: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(6,18,58,0.58)',
+    backgroundColor: elevatedSurface,
   },
   chatSelectionActionRow: {
     minHeight: 58,
@@ -15419,7 +26762,7 @@ const styles = StyleSheet.create({
     borderRadius: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: neutralSelectedSurface,
   },
   chatSelectionActionCopy: {
     flex: 1,
@@ -15446,7 +26789,7 @@ const styles = StyleSheet.create({
     borderBottomColor: COLORS.border,
   },
   archiveRowActive: {
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: neutralSelectedSurface,
   },
   archiveRowIcon: {
     width: 48,
@@ -15457,25 +26800,25 @@ const styles = StyleSheet.create({
   archiveRowTitle: {
     flex: 1,
     color: COLORS.muted,
-    fontSize: 17,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '600',
   },
   archiveRowTitleActive: {
     color: COLORS.text,
   },
   archiveRowCount: {
     color: COLORS.muted,
-    fontSize: 15,
-    fontWeight: '800',
+    fontSize: 17,
+    fontWeight: '600',
   },
   aiChatRow: {
     position: 'relative',
-    height: 74,
+    minHeight: CHAT_ROW_MIN_HEIGHT,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 13,
-    paddingVertical: 8,
+    gap: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
     backgroundColor: COLORS.bg,
   },
   aiChatDivider: {
@@ -15486,21 +26829,8 @@ const styles = StyleSheet.create({
     height: StyleSheet.hairlineWidth,
     backgroundColor: COLORS.border,
   },
-  aiChatAvatarSlot: {
-    width: 52,
-    height: 58,
-    alignItems: 'flex-start',
-    justifyContent: 'center',
-  },
-  aiChatAvatar: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 1,
-    borderColor: 'rgba(39,199,216,0.38)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(39,199,216,0.12)',
+  aiChatAvatarCircle: {
+    backgroundColor: avatarFallbackBackground,
   },
   aiChatBody: {
     flex: 1,
@@ -15510,15 +26840,15 @@ const styles = StyleSheet.create({
   },
   aiChatName: {
     color: COLORS.text,
-    fontSize: 16,
-    lineHeight: 19,
-    fontWeight: '800',
+    fontSize: 17,
+    lineHeight: 20,
+    fontWeight: '600',
   },
   aiChatSubtitle: {
     color: COLORS.muted,
-    fontSize: 14,
-    lineHeight: 18,
-    fontWeight: '500',
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '400',
   },
   aiChatMeta: {
     alignSelf: 'flex-start',
@@ -15529,7 +26859,17 @@ const styles = StyleSheet.create({
   aiChatPinned: {
     color: COLORS.accent,
     fontSize: 11,
-    fontWeight: '900',
+    fontWeight: '600',
+  },
+  aiConversationHeaderAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: neutralSelectedBorder,
+    backgroundColor: neutralSelectedSurface,
   },
   aiConversationBody: {
     flex: 1,
@@ -15555,57 +26895,144 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 20,
   },
-  chatSwipeRow: {
-    position: 'relative',
-    minHeight: CHAT_ROW_MIN_HEIGHT,
-    overflow: 'hidden',
-    backgroundColor: COLORS.bg,
-  },
-  chatSwipeRowSelected: {
-    backgroundColor: COLORS.accentSoft,
-  },
-  chatSwipeActions: {
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    bottom: 0,
-    left: 0,
-    minHeight: CHAT_ROW_MIN_HEIGHT,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    zIndex: 0,
-  },
-  chatSwipeClosePlate: {
+  aiAssistantMessageList: {
     flex: 1,
-    minWidth: 0,
+    zIndex: 1,
   },
-  chatSwipeAction: {
+  aiAssistantComposer: {
+    zIndex: 4,
+    elevation: 4,
+  },
+  aiMessageBubble: {
+    maxWidth: '84%',
+  },
+  aiMessageText: {
+    color: COLORS.text,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  aiMessageAttachmentGrid: {
+    gap: 6,
+  },
+  aiMessageAttachmentPreview: {
+    overflow: 'hidden',
+    borderRadius: 12,
+    backgroundColor: COLORS.panelSoft,
+  },
+  aiMessageSources: {
+    minHeight: 22,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    borderRadius: 11,
+    backgroundColor: COLORS.panelSoft,
+  },
+  aiMessageSourcesText: {
+    color: COLORS.meta,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  aiMessageOptions: {
+    gap: 6,
+    paddingTop: 2,
+  },
+  aiMessageOption: {
+    minHeight: 38,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  aiMessageOptionText: {
+    color: COLORS.text,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '800',
+  },
+  aiTypingBubble: {
+    maxWidth: '58%',
+    minHeight: 36,
+    borderRadius: 18,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    backgroundColor: inboundBubbleBackground,
+    shadowColor: messageBubbleShadowColor,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isLight ? 0.12 : 0.24,
+    shadowRadius: 1,
+    elevation: 1,
+  },
+  aiTypingText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  aiAttachmentTray: {
+    zIndex: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: composerShellBackground,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 6,
+    gap: 6,
+  },
+  aiAttachmentStrip: {
+    gap: 8,
+    paddingRight: 10,
+  },
+  aiAttachmentCard: {
+    width: 78,
+    height: 78,
+    overflow: 'hidden',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+  },
+  aiAttachmentImage: {
+    width: '100%',
+    height: '100%',
+  },
+  aiAttachmentFile: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 3,
-    minHeight: CHAT_ROW_MIN_HEIGHT,
+    gap: 5,
+    padding: 7,
   },
-  chatSwipeMore: {
-    width: CHAT_SWIPE_MORE_WIDTH,
-    backgroundColor: 'rgba(243,248,255,0.72)',
+  aiAttachmentName: {
+    color: COLORS.text,
+    fontSize: 10,
+    lineHeight: 12,
+    fontWeight: '800',
+    textAlign: 'center',
   },
-  chatSwipeArchive: {
-    width: CHAT_SWIPE_ARCHIVE_WIDTH,
-    backgroundColor: COLORS.accent,
+  aiAttachmentHint: {
+    color: COLORS.muted,
+    fontSize: 12,
+    fontWeight: '800',
   },
-  chatSwipeActionText: {
-    color: COLORS.white,
-    fontSize: 13,
-    fontWeight: '900',
-  },
-  chatSwipeMoreText: {
-    color: COLORS.bg,
-  },
-  chatSwipeContent: {
-    position: 'relative',
-    zIndex: 1,
-    width: '100%',
-    backgroundColor: COLORS.bg,
+  aiVoiceProcessingPanel: {
+    minHeight: 58,
+    zIndex: 4,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: composerShellBackground,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 9,
+    paddingHorizontal: 12,
+    paddingBottom: CONVERSATION_COMPOSER_SAFE_BOTTOM,
   },
   chatRow: {
     width: '100%',
@@ -15617,14 +27044,14 @@ const styles = StyleSheet.create({
     borderRadius: 0,
   },
   chatRowUnread: {
-    backgroundColor: 'rgba(39,199,216,0.07)',
+    backgroundColor: neutralSelectedSurface,
   },
   chatRowSelecting: {
     gap: 10,
     paddingLeft: 10,
   },
   chatRowSelected: {
-    backgroundColor: COLORS.accentSoft,
+    backgroundColor: neutralSelectedSurface,
   },
   chatRowArchived: {
     opacity: 0.86,
@@ -15634,10 +27061,10 @@ const styles = StyleSheet.create({
     height: 25,
     borderRadius: 13,
     borderWidth: 1,
-    borderColor: 'rgba(170,192,231,0.52)',
+    borderColor: softSelectionBorder,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.07)',
+    backgroundColor: subtleSurface,
   },
   chatSelectionCheckActive: {
     borderColor: COLORS.accent,
@@ -15648,51 +27075,51 @@ const styles = StyleSheet.create({
     width: CHAT_AVATAR_SIZE,
     height: CHAT_AVATAR_SIZE,
     borderRadius: CHAT_AVATAR_SIZE / 2,
-    borderWidth: 2,
+    borderWidth: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.bg,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 7 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 2,
+    backgroundColor: 'transparent',
   },
   avatarCircle: {
-    width: CHAT_AVATAR_INNER_SIZE,
-    height: CHAT_AVATAR_INNER_SIZE,
-    borderRadius: CHAT_AVATAR_INNER_SIZE / 2,
-    backgroundColor: COLORS.primary,
+    width: CHAT_AVATAR_SIZE,
+    height: CHAT_AVATAR_SIZE,
+    borderRadius: CHAT_AVATAR_SIZE / 2,
+    backgroundColor: avatarFallbackBackground,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
   },
   avatarImage: {
-    width: CHAT_AVATAR_INNER_SIZE,
-    height: CHAT_AVATAR_INNER_SIZE,
+    width: CHAT_AVATAR_SIZE,
+    height: CHAT_AVATAR_SIZE,
   },
   avatarText: {
-    color: COLORS.text,
+    color: avatarInitialTextColor,
     fontWeight: '900',
     fontSize: 18,
+  },
+  chatAvatarText: {
+    fontSize: 17,
   },
   avatarChannelBadge: {
     position: 'absolute',
     right: -4,
-    bottom: -2,
-    minWidth: CHAT_CHANNEL_BADGE_SIZE,
-    height: CHAT_CHANNEL_BADGE_SIZE,
-    borderRadius: CHAT_CHANNEL_BADGE_SIZE / 2,
-    paddingHorizontal: 4,
+    bottom: -3,
+    width: CHAT_CHANNEL_ICON_BOX_SIZE,
+    height: CHAT_CHANNEL_ICON_BOX_SIZE,
+    borderRadius: 0,
+    paddingHorizontal: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.bg,
-    shadowColor: '#000000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.28,
-    shadowRadius: 5,
-    elevation: 3,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    overflow: 'visible',
+    shadowColor: 'transparent',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    elevation: 0,
   },
   chatRowBody: {
     flex: 1,
@@ -15711,20 +27138,20 @@ const styles = StyleSheet.create({
   chatName: {
     flex: 1,
     color: COLORS.text,
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 17,
+    fontWeight: '600',
   },
   chatNameUnread: {
-    fontWeight: '900',
+    fontWeight: '700',
   },
   rowTime: {
     color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: '800',
+    fontSize: 14,
+    fontWeight: '400',
   },
   rowTimeUnread: {
     color: COLORS.accent,
-    fontWeight: '900',
+    fontWeight: '600',
   },
   rowFooter: {
     marginTop: 4,
@@ -15735,11 +27162,32 @@ const styles = StyleSheet.create({
   lastMessage: {
     flex: 1,
     color: COLORS.muted,
-    fontSize: 15,
+    fontSize: 16,
+    fontWeight: '400',
+  },
+  lastMessagePrefix: {
+    fontWeight: '400',
+  },
+  lastMessageBold: {
+    fontWeight: '700',
+  },
+  lastMessageItalic: {
+    fontStyle: 'italic',
+  },
+  lastMessageStrike: {
+    textDecorationLine: 'line-through',
+  },
+  lastMessageMono: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontWeight: '600',
+  },
+  lastMessageHiddenSpacer: {
+    flex: 1,
+    minWidth: 0,
   },
   lastMessageUnread: {
     color: COLORS.meta,
-    fontWeight: '700',
+    fontWeight: '400',
   },
   unreadPill: {
     minWidth: 24,
@@ -15751,19 +27199,19 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   unreadText: {
-    color: COLORS.bg,
+    color: isLight ? '#07140d' : COLORS.bg,
     fontSize: 13,
-    fontWeight: '900',
+    fontWeight: '600',
   },
   conversationHeader: {
     minHeight: 72,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 10,
+    paddingHorizontal: 8,
     paddingVertical: 7,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: COLORS.border,
-    gap: 8,
+    gap: 6,
   },
   backButton: {
     width: 40,
@@ -15771,7 +27219,11 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(16,42,120,0.68)',
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    overflow: 'visible',
+    position: 'relative',
   },
   backLabel: {
     color: COLORS.text,
@@ -15784,14 +27236,13 @@ const styles = StyleSheet.create({
     minHeight: 50,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 9,
+    gap: 7,
   },
   conversationAvatar: {
     position: 'relative',
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    borderWidth: 2,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: COLORS.bg,
@@ -15800,7 +27251,7 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: COLORS.primary,
+    backgroundColor: avatarFallbackBackground,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -15811,16 +27262,18 @@ const styles = StyleSheet.create({
   },
   conversationAvatarBadge: {
     position: 'absolute',
-    right: -4,
-    bottom: -2,
-    minWidth: 20,
-    height: 20,
-    borderRadius: 10,
-    paddingHorizontal: 4,
+    right: -1,
+    bottom: -1,
+    width: 17,
+    height: 17,
+    borderRadius: 0,
+    paddingHorizontal: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.bg,
+    backgroundColor: 'transparent',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    overflow: 'visible',
   },
   conversationTitleWrap: {
     flex: 1,
@@ -15848,12 +27301,12 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(16,42,120,0.68)',
   },
   conversationHeaderIconButtonActive: {
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   conversationSearchBar: {
     minHeight: 48,
@@ -15885,7 +27338,37 @@ const styles = StyleSheet.create({
   },
   conversationBody: {
     flex: 1,
+    overflow: 'hidden',
+    backgroundColor: conversationWallpaperBackground,
+  },
+  conversationBodyKeyboardActive: {
+    backgroundColor: keyboardSurfaceBackground,
+  },
+  chatWallpaper: {
+    position: 'absolute',
+    top: -CHAT_WALLPAPER_PARALLAX_PADDING,
+    right: -CHAT_WALLPAPER_PARALLAX_PADDING,
+    bottom: -CHAT_WALLPAPER_PARALLAX_PADDING,
+    left: -CHAT_WALLPAPER_PARALLAX_PADDING,
     backgroundColor: COLORS.bg,
+  },
+  chatWallpaperImage: {
+    width: '100%',
+    height: '100%',
+    opacity: chatWallpaperOpacity,
+    tintColor: chatWallpaperTint,
+  },
+  conversationWallpaper: {
+    position: 'absolute',
+    top: -18,
+    right: -18,
+    bottom: -18,
+    left: -18,
+    backgroundColor: conversationWallpaperBackground,
+  },
+  conversationWallpaperDot: {
+    position: 'absolute',
+    backgroundColor: conversationWallpaperDotColor,
   },
   messageList: {
     flexGrow: 1,
@@ -15893,6 +27376,12 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 12,
     gap: 8,
+  },
+  olderMessagesLoader: {
+    minHeight: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
   },
   emptyConversation: {
     flex: 1,
@@ -15922,16 +27411,67 @@ const styles = StyleSheet.create({
   messageDayLabel: {
     overflow: 'hidden',
     borderRadius: 999,
-    backgroundColor: 'rgba(16,42,120,0.72)',
+    backgroundColor: messageDayBackground,
     color: COLORS.meta,
     fontSize: 11,
     fontWeight: '900',
     paddingHorizontal: 11,
     paddingVertical: 5,
   },
+  conversationActivityMarkerRow: {
+    minHeight: 42,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  conversationActivityMarkerLine: {
+    flex: 1,
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: COLORS.border,
+  },
+  conversationActivityMarkerPill: {
+    maxWidth: '78%',
+    minHeight: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: isLight ? 'rgba(255,255,255,0.86)' : 'rgba(28,28,30,0.84)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  conversationActivityMarkerIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  conversationActivityMarkerCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  conversationActivityMarkerTitle: {
+    color: COLORS.text,
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '900',
+  },
+  conversationActivityMarkerSubtitle: {
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '800',
+    marginTop: 1,
+  },
   messageRow: {
     flexDirection: 'row',
-    marginVertical: 1,
+    marginVertical: 2,
   },
   messageRowInbound: {
     justifyContent: 'flex-start',
@@ -15939,67 +27479,564 @@ const styles = StyleSheet.create({
   messageRowOutbound: {
     justifyContent: 'flex-end',
   },
-  messageBubble: {
+  messageSwipeWrap: {
+    position: 'relative',
     maxWidth: '84%',
-    borderRadius: 18,
-    paddingVertical: 8,
-    paddingHorizontal: 11,
-    gap: 5,
+    minWidth: 0,
+  },
+  messageReplySwipeCue: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  messageReplySwipeCueInbound: {
+    left: -46,
+  },
+  messageReplySwipeCueOutbound: {
+    right: -46,
+  },
+  messageReplySwipeCueGlyph: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: replySwipeGlyphBackground,
+  },
+  messageReplySwipeCueIconInbound: {
+    transform: [{ scaleX: -1 }],
+  },
+  messageScheduleTimer: {
+    width: 38,
+    alignSelf: 'flex-end',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 1,
+    marginRight: 6,
+    marginBottom: 9,
+  },
+  messageScheduleTimerText: {
+    color: COLORS.meta,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  messageBubble: {
+    maxWidth: '100%',
+    borderRadius: 11,
+    paddingTop: 7,
+    paddingHorizontal: 9,
+    paddingBottom: 5,
+    gap: 6,
+    shadowColor: messageBubbleShadowColor,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: isLight ? 0.12 : 0.24,
+    shadowRadius: 1,
+    elevation: 1,
   },
   inboundBubble: {
-    backgroundColor: 'rgba(16,42,120,0.88)',
-    borderTopLeftRadius: 6,
+    backgroundColor: inboundBubbleBackground,
+    borderBottomLeftRadius: 4,
   },
   outboundBubble: {
-    backgroundColor: 'rgba(0,168,248,0.92)',
-    borderTopRightRadius: 6,
+    backgroundColor: outboundBubbleBackground,
+    borderBottomRightRadius: 4,
+  },
+  messageBubbleScheduled: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: scheduledBubbleBorder,
+    backgroundColor: scheduledBubbleBackground,
   },
   imageMessageBubble: {
     paddingHorizontal: 6,
     paddingTop: 6,
   },
+  audioMessageBubble: {
+    width: 264,
+    maxWidth: '100%',
+    borderRadius: 18,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 6,
+  },
+  locationMessageBubble: {
+    width: MESSAGE_IMAGE_MAX_WIDTH,
+    maxWidth: '100%',
+    paddingHorizontal: 6,
+    paddingTop: 6,
+    paddingBottom: 6,
+  },
   failedBubble: {
-    backgroundColor: COLORS.dangerSoft,
+    backgroundColor: failedBubbleBackground,
   },
   messageSearchMatch: {
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.26)',
+    borderColor: isLight ? 'rgba(60,60,67,0.28)' : 'rgba(255,255,255,0.26)',
   },
   messageText: {
-    color: COLORS.text,
-    fontSize: 15,
-    lineHeight: 20,
+    color: messageBubbleTextColor,
+    fontSize: 17,
+    lineHeight: 22,
     fontWeight: '500',
   },
-  messageMeta: {
+  messageTextOnAccent: {
+    color: messageBubbleTextColor,
+  },
+  failedMessageText: {
+    color: messageBubbleTextColor,
+  },
+  messageTextBold: {
+    fontWeight: '900',
+  },
+  messageTextItalic: {
+    fontStyle: 'italic',
+  },
+  messageTextStrike: {
+    textDecorationLine: 'line-through',
+  },
+  messageTextMono: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontWeight: '600',
+  },
+  messageEmailCard: {
+    minWidth: 0,
+    gap: 8,
+  },
+  messageEmailSummary: {
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+  },
+  messageEmailIcon: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: isLight ? 'rgba(0,122,255,0.10)' : 'rgba(10,132,255,0.18)',
+    borderWidth: 1,
+    borderColor: isLight ? 'rgba(0,122,255,0.18)' : 'rgba(10,132,255,0.26)',
+  },
+  messageEmailHeadline: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  messageEmailKicker: {
+    color: messageBubbleMetaColor,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  messageEmailSubject: {
+    color: messageBubbleTextColor,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '800',
+  },
+  messageEmailRoute: {
+    color: messageBubbleMetaColor,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  messageEmailChevron: {
+    transform: [{ rotate: '0deg' }],
+  },
+  messageEmailChevronOpen: {
+    transform: [{ rotate: '180deg' }],
+  },
+  messageEmailDetails: {
+    gap: 7,
+    paddingTop: 9,
+    marginTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: isLight ? 'rgba(60,60,67,0.18)' : 'rgba(235,235,245,0.18)',
+  },
+  messageEmailMetaRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-start',
+  },
+  messageEmailMetaLabel: {
+    width: 88,
+    color: messageBubbleMetaColor,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  messageEmailMetaValue: {
+    flex: 1,
+    color: messageBubbleTextColor,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '600',
+  },
+  messageEmailBodyBlock: {
+    gap: 4,
+  },
+  messageEmailBodyText: {
+    color: messageBubbleTextColor,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '500',
+  },
+  messageLinkPreviewCard: {
+    width: 254,
+    maxWidth: '100%',
+    minHeight: 164,
+    borderRadius: 14,
+    backgroundColor: COLORS.panel,
+    overflow: 'hidden',
+  },
+  messageLinkPreviewCardOutbound: {
+    backgroundColor: isLight ? 'rgba(255,255,255,0.78)' : 'rgba(17,17,20,0.86)',
+  },
+  messageLinkPreviewCardFailed: {
+    borderWidth: 1,
+    borderColor: COLORS.danger,
+  },
+  messageLinkPreviewImage: {
+    width: '100%',
+    height: 118,
+    backgroundColor: COLORS.panelSoft,
+  },
+  messageLinkPreviewImageFallback: {
+    height: 76,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: COLORS.panelSoft,
+  },
+  messageLinkPreviewFallbackHost: {
+    maxWidth: '86%',
     color: COLORS.meta,
     fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '900',
+  },
+  messageLinkPreviewBody: {
+    minHeight: 78,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  messageLinkPreviewCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  messageLinkPreviewTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '900',
+  },
+  messageLinkPreviewSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 1,
     fontWeight: '800',
+  },
+  messageLinkPreviewMetaRow: {
+    minHeight: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 5,
+  },
+  messageLinkPreviewAmount: {
+    color: COLORS.accent,
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '900',
+  },
+  messageLinkPreviewHost: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '800',
+  },
+  messageMeta: {
+    color: messageBubbleMetaColor,
+    fontSize: 11,
+    fontWeight: '700',
     textAlign: 'right',
+  },
+  messageMetaOnAccent: {
+    color: messageBubbleMetaColor,
   },
   messageMetaRow: {
     alignSelf: 'flex-end',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 5,
     marginTop: 1,
   },
+  messageTransport: {
+    color: messageBubbleMetaColor,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.4,
+  },
+  messageMediaCard: {
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: 'transparent',
+  },
   messageImage: {
-    width: 214,
-    height: 228,
-    borderRadius: 14,
+    width: '100%',
+    height: '100%',
+  },
+  messageVideoCard: {
+    width: 236,
+    height: 214,
+    borderRadius: 15,
+    overflow: 'hidden',
     backgroundColor: COLORS.bg,
   },
+  messageVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  messageVideoInfo: {
+    position: 'absolute',
+    left: 8,
+    right: 8,
+    bottom: 8,
+    minHeight: 34,
+    borderRadius: 17,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 9,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+  },
+  messageVideoPlayBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  messageVideoLabel: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  messageVideoDuration: {
+    color: COLORS.meta,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  messageAudioCard: {
+    width: '100%',
+    minHeight: 62,
+    borderRadius: 18,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    justifyContent: 'center',
+    gap: 3,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    backgroundColor: 'transparent',
+  },
+  messageAudioAvatar: {
+    position: 'relative',
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: avatarFallbackBackground,
+    overflow: 'visible',
+  },
+  messageAudioAvatarImage: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+  },
+  messageAudioAvatarText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  messageAudioSpeedBadge: {
+    position: 'absolute',
+    left: -4,
+    top: -5,
+    minWidth: 28,
+    height: 18,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 5,
+    borderWidth: 1,
+    borderColor: elevatedSurface,
+    backgroundColor: COLORS.accent,
+  },
+  messageAudioSpeedText: {
+    color: COLORS.white,
+    fontSize: 9,
+    lineHeight: 11,
+    fontWeight: '900',
+  },
+  messageAudioMicBadge: {
+    position: 'absolute',
+    right: -5,
+    bottom: -3,
+    width: 24,
+    height: 25,
+    borderRadius: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+    overflow: 'visible',
+  },
+  messageAudioMicSvg: {
+    width: 22,
+    height: 24,
+    transform: [{ translateY: -1 }],
+  },
+  messageAudioTopRow: {
+    width: '100%',
+    minHeight: 32,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+  },
+  messageAudioPlayButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    transform: [{ translateY: 3 }],
+  },
+  messageAudioPlayIcon: {
+    color: messageBubbleMetaColor,
+    marginLeft: 1,
+  },
+  messageAudioMain: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  messageAudioWaveform: {
+    height: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 2,
+    overflow: 'visible',
+    position: 'relative',
+    paddingHorizontal: 2,
+    transform: [{ translateY: 3 }],
+  },
+  messageAudioWaveBar: {
+    width: 2.5,
+    borderRadius: 999,
+    backgroundColor: isLight ? '#c6c9cb' : '#bcc4cc',
+  },
+  messageAudioWaveBarActive: {
+    backgroundColor: isLight ? '#c6c9cb' : '#bcc4cc',
+  },
+  messageAudioProgressDot: {
+    position: 'absolute',
+    top: 5.5,
+    width: 13,
+    height: 13,
+    marginLeft: -6.5,
+    borderRadius: 7,
+    backgroundColor: COLORS.accent,
+    borderWidth: 0,
+  },
+  messageAudioFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 17,
+    gap: 8,
+    transform: [{ translateY: 4 }],
+  },
+  messageAudioFooterOutbound: {
+    marginLeft: 88,
+    justifyContent: 'space-between',
+  },
+  messageAudioFooterInbound: {
+    marginRight: 58,
+    paddingLeft: 37,
+    justifyContent: 'space-between',
+  },
+  messageAudioDuration: {
+    color: messageBubbleMetaColor,
+    fontSize: 13,
+    lineHeight: 15,
+    fontWeight: '600',
+  },
+  messageAudioMetaRow: {
+    flex: 0,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
+  },
+  messageAudioMeta: {
+    flexShrink: 1,
+    color: messageBubbleMetaColor,
+    fontSize: 11,
+    lineHeight: 13,
+    textAlign: 'right',
+    fontWeight: '600',
+  },
+  messageAudioUnavailable: {
+    minWidth: 230,
+    minHeight: 56,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    backgroundColor: isLight ? 'rgba(60,60,67,0.10)' : 'rgba(58,58,60,0.70)',
+  },
+  messageAudioUnavailableIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  messageAudioUnavailableText: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
+  },
   messageFileCard: {
-    minWidth: 214,
-    maxWidth: 248,
-    minHeight: 54,
-    borderRadius: 14,
+    minWidth: 224,
+    maxWidth: 264,
+    minHeight: 62,
+    borderRadius: 15,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
     padding: 10,
-    backgroundColor: 'rgba(6,18,58,0.32)',
+    backgroundColor: isLight ? COLORS.panelSoft : 'rgba(58,58,60,0.42)',
   },
   messageFileIcon: {
     width: 34,
@@ -16025,38 +28062,62 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   messageLocationCard: {
-    minWidth: 214,
-    maxWidth: 248,
-    minHeight: 58,
-    borderRadius: 15,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    padding: 10,
-    backgroundColor: 'rgba(6,18,58,0.32)',
+    width: '100%',
+    maxWidth: MESSAGE_IMAGE_MAX_WIDTH,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: COLORS.panelSoft,
   },
-  messageLocationIcon: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  messageLocationMap: {
+    width: '100%',
+    height: LOCATION_MAP_HEIGHT,
+    position: 'relative',
+    overflow: 'hidden',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.accent,
+    backgroundColor: COLORS.panelSoft,
   },
-  messageLocationCopy: {
-    flex: 1,
-    minWidth: 0,
+  messageLocationTile: {
+    position: 'absolute',
+    width: LOCATION_MAP_TILE_SIZE,
+    height: LOCATION_MAP_TILE_SIZE,
   },
-  messageLocationTitle: {
-    color: COLORS.text,
-    fontSize: 13,
+  messageLocationMapDim: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: isLight ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.18)',
+  },
+  messageLocationMapFallback: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0,
+    backgroundColor: COLORS.panelSoft,
+  },
+  messageLocationTypeBadge: {
+    position: 'absolute',
+    left: 10,
+    top: 10,
+    minHeight: 26,
+    borderRadius: 13,
+    paddingHorizontal: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: isLight ? 'rgba(255,255,255,0.88)' : 'rgba(5,5,7,0.72)',
+    zIndex: 4,
+  },
+  messageLocationTypeText: {
+    color: isLight ? '#111827' : COLORS.white,
+    fontSize: 12,
+    lineHeight: 15,
     fontWeight: '900',
   },
-  messageLocationSubtitle: {
-    color: COLORS.muted,
-    fontSize: 11,
-    marginTop: 2,
-    fontWeight: '700',
+  messageLocationPinIcon: {
+    zIndex: 3,
   },
   quotedMessage: {
     minWidth: 190,
@@ -16064,7 +28125,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     flexDirection: 'row',
     overflow: 'hidden',
-    backgroundColor: 'rgba(6,18,58,0.3)',
+    backgroundColor: isLight ? COLORS.panelSoft : 'rgba(58,58,60,0.38)',
   },
   quotedMessageMarker: {
     width: 3,
@@ -16095,7 +28156,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    backgroundColor: 'rgba(6,18,58,0.28)',
+    backgroundColor: isLight ? COLORS.panelSoft : 'rgba(58,58,60,0.36)',
   },
   commentContextText: {
     color: COLORS.meta,
@@ -16134,7 +28195,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     paddingHorizontal: 10,
     paddingVertical: 6,
-    backgroundColor: 'rgba(16,42,120,0.62)',
+    backgroundColor: isLight ? COLORS.panelSoft : 'rgba(44,44,46,0.72)',
   },
   systemMessageText: {
     color: COLORS.meta,
@@ -16179,26 +28240,123 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.panelSoft,
   },
   draftAttachmentStrip: {
-    gap: 9,
+    alignItems: 'center',
+    gap: 8,
     paddingHorizontal: 12,
-    paddingVertical: 9,
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  draftAttachmentTray: {
+    minHeight: 128,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
     backgroundColor: COLORS.panel,
   },
+  draftAttachmentTrayFooter: {
+    minHeight: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingBottom: 7,
+  },
+  draftAttachmentTrayText: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  draftAttachmentTrayHint: {
+    flex: 1,
+    color: COLORS.muted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
   draftAttachment: {
-    width: 74,
-    height: 74,
-    borderRadius: 16,
+    position: 'relative',
+    flexShrink: 0,
     overflow: 'hidden',
     backgroundColor: COLORS.bg,
   },
-  draftAttachmentImage: {
-    width: 74,
+  draftAttachmentMediaCard: {
+    width: 92,
+    height: 92,
+    borderRadius: 16,
+  },
+  draftAttachmentFileCard: {
+    width: 190,
     height: 74,
+    borderRadius: 15,
+    backgroundColor: COLORS.panelSoft,
+  },
+  draftAttachmentIndexBadge: {
+    position: 'absolute',
+    right: 6,
+    bottom: 6,
+    minWidth: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+    backgroundColor: COLORS.accent,
+    borderWidth: 1,
+    borderColor: COLORS.white,
+  },
+  draftAttachmentIndexText: {
+    color: COLORS.white,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  draftAttachmentMedia: {
+    width: '100%',
+    height: '100%',
+  },
+  draftAttachmentVideoBadge: {
+    position: 'absolute',
+    left: 7,
+    bottom: 7,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.58)',
+  },
+  draftAttachmentFileContent: {
+    height: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingLeft: 9,
+    paddingRight: 32,
+  },
+  draftAttachmentFileIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  draftAttachmentFileCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  draftAttachmentFileTitle: {
+    color: COLORS.text,
+    fontSize: 12,
+    fontWeight: '900',
+  },
+  draftAttachmentFileSubtitle: {
+    color: COLORS.muted,
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: '800',
   },
   draftAttachmentRemove: {
     position: 'absolute',
@@ -16211,23 +28369,220 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: 'rgba(0,0,0,0.62)',
   },
-  messageActionSheetBody: {
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 12,
+  paymentLinkDraftPreviewTray: {
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: composerShellBackground,
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 6,
   },
-  messageActionPreview: {
-    borderRadius: 18,
-    padding: 12,
-    backgroundColor: COLORS.bg,
+  paymentLinkDraftPreviewCard: {
+    minHeight: 74,
+    borderRadius: 20,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: composerInputBorder,
+    backgroundColor: composerInputBackground,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    padding: 8,
   },
-  messageActionPreviewText: {
+  paymentLinkDraftPreviewMain: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  paymentLinkDraftPreviewIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  paymentLinkDraftPreviewCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  paymentLinkDraftPreviewTitle: {
     color: COLORS.text,
     fontSize: 14,
-    lineHeight: 19,
+    lineHeight: 18,
+    fontWeight: '900',
+  },
+  paymentLinkDraftPreviewSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    marginTop: 1,
     fontWeight: '800',
+  },
+  paymentLinkDraftPreviewMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    marginTop: 5,
+  },
+  paymentLinkDraftPreviewAmount: {
+    color: COLORS.accent,
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '900',
+  },
+  paymentLinkDraftPreviewHost: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: '800',
+  },
+  paymentLinkDraftPreviewClose: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  completionNoticeRow: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 4,
+  },
+  completionNoticeCard: {
+    width: '88%',
+    maxWidth: 360,
+    minHeight: 54,
+    borderRadius: 27,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: isLight ? 'rgba(255,255,255,0.92)' : 'rgba(28,28,30,0.94)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    shadowColor: COLORS.black,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: isLight ? 0.12 : 0.28,
+    shadowRadius: 18,
+    elevation: 7,
+  },
+  completionNoticeCheck: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.success,
+  },
+  completionNoticeCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  completionNoticeTitle: {
+    color: COLORS.text,
+    fontSize: 14,
+    lineHeight: 18,
+    fontWeight: '900',
+  },
+  completionNoticeSubtitle: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+    marginTop: 1,
+  },
+  messageActionOverlayRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 34,
+  },
+  messageActionOverlayBackdrop: {
+    ...StyleSheet.absoluteFill,
+  },
+  messageActionOverlayGlass: {
+    ...StyleSheet.absoluteFill,
+  },
+  messageActionOverlayGlassFallback: {
+    backgroundColor: isLight ? 'rgba(255,255,255,0.34)' : 'rgba(18,18,20,0.56)',
+  },
+  messageActionOverlayDimmer: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: isLight ? 'rgba(15,23,42,0.36)' : 'rgba(0,0,0,0.64)',
+  },
+  messageActionFocusedStage: {
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 366,
+    alignItems: 'center',
+    gap: 10,
+    zIndex: 1,
+  },
+  messageReactionFloatingRow: {
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 318,
+    minHeight: 48,
+    borderRadius: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    backgroundColor: isLight ? 'rgba(255,255,255,0.92)' : 'rgba(28,28,30,0.88)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+  },
+  messageReactionFloatingButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  messageReactionFloatingEmoji: {
+    fontSize: 22,
+    lineHeight: 26,
+  },
+  messageActionFocusedBubble: {
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: '100%',
+    alignItems: 'center',
+  },
+  messageActionDropdown: {
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 318,
+    borderRadius: 18,
+    overflow: 'hidden',
+    backgroundColor: isLight ? 'rgba(255,255,255,0.96)' : 'rgba(28,28,30,0.94)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+  },
+  messageActionDropdownRow: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  messageActionDropdownText: {
+    flex: 1,
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '800',
+  },
+  messageActionDropdownDangerText: {
+    color: COLORS.danger,
   },
   reactionRow: {
     minHeight: 58,
@@ -16249,42 +28604,51 @@ const styles = StyleSheet.create({
     fontSize: 24,
   },
   composer: {
+    position: 'relative',
     flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 6,
-    paddingHorizontal: 7,
-    paddingTop: 5,
-    paddingBottom: 6,
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: 9,
+    paddingTop: 4,
+    paddingBottom: CONVERSATION_COMPOSER_SAFE_BOTTOM,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.border,
-    backgroundColor: COLORS.panel,
+    backgroundColor: composerShellBackground,
+    overflow: 'hidden',
   },
   composerHasContent: {
-    backgroundColor: COLORS.panel,
+    backgroundColor: composerShellBackground,
+  },
+  composerKeyboardActive: {
+    paddingBottom: CONVERSATION_COMPOSER_KEYBOARD_BOTTOM,
+    backgroundColor: keyboardSurfaceBackground,
   },
   composerChannelButton: {
-    width: 32,
-    height: 36,
+    width: 31,
+    height: 38,
     borderRadius: 16,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
   },
   composerPlus: {
-    width: 32,
-    height: 36,
-    borderRadius: 16,
+    width: 34,
+    height: 38,
+    borderRadius: 17,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
   },
   messageInputWrap: {
     flex: 1,
     minHeight: 36,
     maxHeight: 112,
     borderRadius: 18,
+    borderWidth: 1,
+    borderColor: composerInputBorder,
     flexDirection: 'row',
     alignItems: 'flex-end',
-    backgroundColor: COLORS.panelSoft,
+    backgroundColor: composerInputBackground,
     overflow: 'hidden',
   },
   messageInputWrapWithSchedule: {
@@ -16292,12 +28656,12 @@ const styles = StyleSheet.create({
   },
   composerInput: {
     flex: 1,
-    minHeight: 36,
+    minHeight: 34,
     maxHeight: 106,
     color: COLORS.text,
-    paddingHorizontal: 11,
-    paddingTop: 8,
-    paddingBottom: 8,
+    paddingHorizontal: 12,
+    paddingTop: 6,
+    paddingBottom: 6,
     fontSize: 15,
     lineHeight: 20,
   },
@@ -16305,28 +28669,29 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 1,
   },
   composerTrailingActions: {
-    minWidth: 74,
-    height: 36,
+    minWidth: 72,
+    height: 38,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    gap: 5,
+    gap: 8,
   },
   composerTrailingActionsCompact: {
-    minWidth: 36,
+    minWidth: 42,
   },
   composerIconButton: {
-    width: 34,
-    height: 36,
-    borderRadius: 17,
+    width: 32,
+    height: 38,
+    borderRadius: 18,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.05)',
   },
   composerSendButton: {
     width: 36,
@@ -16334,6 +28699,9 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+  composerSendButtonActive: {
     backgroundColor: COLORS.accent,
   },
   sendButton: {
@@ -16362,28 +28730,30 @@ const styles = StyleSheet.create({
     flex: 1,
     minWidth: 0,
     borderRadius: 20,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 10,
   },
   appointmentSegmentedTabActive: {
-    backgroundColor: 'rgba(255,255,255,0.09)',
+    ...liquidControlSelected,
   },
   appointmentSegmentedTabs: {
     minHeight: 56,
     borderRadius: 22,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(255,255,255,0.035)',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
     flexDirection: 'row',
     padding: 5,
     gap: 5,
+    overflow: 'visible',
   },
   appointmentAdvancedPanel: {
     borderRadius: 18,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(255,255,255,0.025)',
+    backgroundColor: sheetRowSurfaceMuted,
     padding: 12,
     gap: 14,
   },
@@ -16408,16 +28778,13 @@ const styles = StyleSheet.create({
     minHeight: 34,
     minWidth: 48,
     borderRadius: 17,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(16,42,120,0.58)',
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 12,
   },
   appointmentPickerChipActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   appointmentPickerText: {
     color: COLORS.muted,
@@ -16426,6 +28793,78 @@ const styles = StyleSheet.create({
   },
   appointmentPickerTextActive: {
     color: COLORS.text,
+  },
+  appointmentWheelSheetBody: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: sheetFormBottomInset,
+    gap: 16,
+  },
+  appointmentWheelColumns: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  appointmentWheelColumn: {
+    flex: 1,
+    minWidth: 0,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: sheetRowSurface,
+    overflow: 'hidden',
+  },
+  appointmentWheelColumnScrollerFrame: {
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  appointmentWheelColumnScroller: {
+    flex: 1,
+  },
+  appointmentWheelColumnContent: {
+    paddingTop: 0,
+    paddingBottom: 0,
+  },
+  appointmentWheelCenterHighlight: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderColor: softSelectionBorder,
+    backgroundColor: COLORS.accentSoft,
+    zIndex: 0,
+  },
+  appointmentWheelOption: {
+    height: APPOINTMENT_WHEEL_OPTION_HEIGHT,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  appointmentWheelOptionActive: {
+    backgroundColor: 'transparent',
+  },
+  appointmentWheelOptionText: {
+    color: COLORS.text,
+    fontSize: 19,
+    lineHeight: 24,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  appointmentWheelOptionTextActive: {
+    color: COLORS.accent,
+  },
+  appointmentWheelColumnLabel: {
+    minHeight: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    backgroundColor: sheetRowSurfaceSoft,
+  },
+  appointmentWheelColumnLabelText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '900',
   },
   appointmentInlineLoading: {
     minHeight: 38,
@@ -16442,6 +28881,37 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+  },
+  appointmentSectionTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.text,
+    fontSize: 18,
+    fontWeight: '900',
+  },
+  appointmentGuestToggle: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  appointmentGuestToggleButton: {
+    minWidth: 54,
+    minHeight: 36,
+    borderRadius: 18,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  appointmentGuestToggleButtonActive: {
+    ...liquidControlSelected,
+  },
+  appointmentGuestToggleText: {
+    color: COLORS.muted,
+    fontSize: 14,
+    fontWeight: '900',
+  },
+  appointmentGuestToggleTextActive: {
+    color: COLORS.text,
   },
   appointmentGuestCount: {
     minWidth: 25,
@@ -16468,9 +28938,7 @@ const styles = StyleSheet.create({
   appointmentGuestAddButton: {
     minHeight: 42,
     borderRadius: 21,
-    borderWidth: 1,
-    borderColor: 'rgba(0,168,248,0.45)',
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -16490,7 +28958,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(255,255,255,0.025)',
+    backgroundColor: sheetRowSurfaceMuted,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -16501,7 +28969,7 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: COLORS.primary,
+    backgroundColor: avatarFallbackBackground,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -16524,9 +28992,9 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
   },
   calendarMiniDay: {
     width: '14.2857%',
@@ -16569,10 +29037,14 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   calendarMonthSwipePage: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
     backgroundColor: COLORS.bg,
   },
   calendarMonthSwipeTrack: {
-    flexDirection: 'row',
+    position: 'relative',
+    backgroundColor: COLORS.bg,
   },
   calendarMonthSwipeViewport: {
     overflow: 'hidden',
@@ -16595,9 +29067,8 @@ const styles = StyleSheet.create({
     right: 8,
     minHeight: 36,
     borderRadius: 12,
-    borderLeftWidth: 5,
     borderWidth: 1,
-    borderColor: 'rgba(183,207,255,0.18)',
+    borderColor: COLORS.border,
     backgroundColor: COLORS.panelSoft,
     paddingHorizontal: 8,
     paddingVertical: 6,
@@ -16683,15 +29154,19 @@ const styles = StyleSheet.create({
     left: 4,
     right: 4,
     borderRadius: 12,
-    backgroundColor: 'rgba(70,185,255,0.2)',
-    borderWidth: 1,
-    borderColor: 'rgba(70,185,255,0.48)',
+    backgroundColor: neutralSelectedSurface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: neutralSelectedBorder,
   },
   calendarTitleSwipePage: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
     minWidth: 0,
   },
   calendarTitleSwipeTrack: {
-    flexDirection: 'row',
+    position: 'relative',
+    overflow: 'hidden',
   },
   calendarTitleSwipeViewport: {
     overflow: 'hidden',
@@ -16702,22 +29177,24 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     minHeight: 38,
     borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(255,255,255,0.035)',
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
     flexDirection: 'row',
     padding: 4,
     gap: 4,
+    overflow: 'visible',
   },
   calendarViewPickerButton: {
     flex: 1,
     minWidth: 0,
     borderRadius: 16,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
   },
   calendarViewPickerButtonActive: {
-    backgroundColor: COLORS.panelSoft,
+    ...liquidControlSelected,
   },
   calendarViewPickerText: {
     color: COLORS.muted,
@@ -16731,12 +29208,13 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 50,
     borderRadius: 18,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 1,
   },
   calendarWeekDayButtonSelected: {
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   calendarWeekDayCount: {
     minWidth: 16,
@@ -16777,12 +29255,13 @@ const styles = StyleSheet.create({
   calendarYearButton: {
     width: '33.3333%',
     minHeight: 72,
+    borderRadius: 20,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    borderRadius: 20,
   },
   calendarYearButtonSelected: {
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   calendarYearButtonSelectedText: {
     color: COLORS.text,
@@ -16808,15 +29287,12 @@ const styles = StyleSheet.create({
     width: '31%',
     minHeight: 46,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: 'rgba(255,255,255,0.035)',
   },
   freeSlotChipActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   freeSlotCount: {
     color: COLORS.muted,
@@ -16836,16 +29312,13 @@ const styles = StyleSheet.create({
     width: 132,
     minHeight: 48,
     borderRadius: 12,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(255,255,255,0.035)',
+    ...liquidControlBase,
     justifyContent: 'center',
     paddingHorizontal: 12,
     paddingVertical: 7,
   },
   freeSlotDateChipActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   freeSlotDateRow: {
     gap: 8,
@@ -16856,7 +29329,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(255,255,255,0.025)',
+    backgroundColor: sheetRowSurfaceMuted,
     padding: 10,
   },
   freeSlotStack: {
@@ -16891,12 +29364,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  channelOptionIconDisabled: {
+    opacity: 0.62,
+  },
   channelOptionRow: {
     minHeight: 58,
     borderRadius: 16,
     borderWidth: 1,
     borderColor: COLORS.border,
-    backgroundColor: 'rgba(6,18,58,0.48)',
+    backgroundColor: sheetRowSurface,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 10,
@@ -16904,8 +29380,12 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   channelOptionRowActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentSoft,
+    borderColor: sheetSelectedBorder,
+    backgroundColor: neutralSelectedSurface,
+  },
+  channelOptionRowDisabled: {
+    borderColor: sheetDisabledBorder,
+    backgroundColor: sheetDisabledSurface,
   },
   channelOptionSubtitle: {
     color: COLORS.muted,
@@ -16914,10 +29394,16 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '700',
   },
+  channelOptionSubtitleDisabled: {
+    color: sheetDisabledText,
+  },
   channelOptionTitle: {
     color: COLORS.text,
     fontSize: 14,
     fontWeight: '900',
+  },
+  channelOptionTitleDisabled: {
+    color: sheetDisabledText,
   },
   channelSheetBody: {
     gap: 7,
@@ -16932,10 +29418,6 @@ const styles = StyleSheet.create({
   composerInputDisabled: {
     color: COLORS.muted,
   },
-  composerKeyboardActive: {
-    paddingBottom: 4,
-    backgroundColor: COLORS.panel,
-  },
   composerRecordingButton: {
     backgroundColor: COLORS.danger,
   },
@@ -16946,7 +29428,7 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.primary,
+    backgroundColor: avatarFallbackBackground,
     overflow: 'hidden',
   },
   contactDetailAvatarImage: {
@@ -16954,7 +29436,7 @@ const styles = StyleSheet.create({
     height: 78,
   },
   contactDetailAvatarText: {
-    color: COLORS.white,
+    color: avatarInitialTextColor,
     fontSize: 30,
     fontWeight: '900',
   },
@@ -16970,7 +29452,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 9,
     paddingHorizontal: 10,
-    backgroundColor: 'rgba(6,18,58,0.42)',
+    backgroundColor: sheetRowSurfaceMuted,
   },
   contactDetailEmpty: {
     color: COLORS.muted,
@@ -17011,7 +29493,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 14,
-    backgroundColor: 'rgba(16,42,120,0.62)',
+    backgroundColor: sheetRowSurface,
   },
   contactDetailHeroMeta: {
     color: COLORS.muted,
@@ -17025,7 +29507,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 11,
-    backgroundColor: 'rgba(16,42,120,0.58)',
+    backgroundColor: sheetRowSurface,
   },
   contactDetailMetricHint: {
     color: COLORS.muted,
@@ -17052,9 +29534,9 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: COLORS.accentSoft,
   },
   contactDetailNameEditor: {
     width: '100%',
@@ -17078,9 +29560,7 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 48,
     borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: 'rgba(16,42,120,0.62)',
+    ...liquidControlBase,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -17103,7 +29583,7 @@ const styles = StyleSheet.create({
     gap: 9,
     paddingHorizontal: 10,
     paddingVertical: 8,
-    backgroundColor: 'rgba(6,18,58,0.32)',
+    backgroundColor: sheetRowSurfaceMuted,
   },
   contactDetailRowCopy: {
     flex: 1,
@@ -17151,7 +29631,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 10,
-    backgroundColor: 'rgba(16,42,120,0.48)',
+    backgroundColor: sheetRowSurface,
   },
   contactDetailSectionTitle: {
     color: COLORS.text,
@@ -17170,28 +29650,730 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '900',
   },
-  conversationBodyKeyboardActive: {
-    backgroundColor: COLORS.panel,
-  },
-  conversationCallActions: {
-    width: 84,
-    minWidth: 84,
-    height: 40,
-    borderRadius: 20,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    overflow: 'hidden',
-    backgroundColor: 'rgba(16,42,120,0.72)',
+  contactInfoAgentCard: {
+    minHeight: phoneCompact(136),
+    borderRadius: phoneCompact(20),
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: CONTACT_INFO_THEME.border,
+    backgroundColor: CONTACT_INFO_THEME.surface,
+    flexDirection: 'row',
+    gap: phoneCompact(14),
+    padding: phoneCompact(16),
   },
-  conversationCallButton: {
-    width: 41,
-    height: 38,
+  contactInfoAgentCardCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactInfoAgentCardDate: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(15),
+    fontWeight: '900',
+    marginTop: phoneCompact(14),
+  },
+  contactInfoAgentCardIcon: {
+    width: phoneCompact(50),
+    height: phoneCompact(50),
+    borderRadius: phoneCompact(25),
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.accentSoft,
+  },
+  contactInfoAgentCards: {
+    gap: phoneCompact(16),
+    paddingHorizontal: phoneCompact(18),
+  },
+  contactInfoAgentCardText: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(17),
+    lineHeight: phoneCompact(23),
+    marginTop: phoneCompact(6),
+    fontWeight: '800',
+  },
+  contactInfoAgentCardTitle: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(20),
+    lineHeight: phoneCompact(25),
+    fontWeight: '900',
+  },
+  contactInfoArchiveTab: {
+    flex: 1,
+    minHeight: phoneCompact(72),
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: phoneCompact(8),
+    borderRadius: phoneCompact(18),
+    overflow: 'visible',
+    position: 'relative',
+  },
+  contactInfoArchiveTabActive: {
+    backgroundColor: 'transparent',
+  },
+  contactInfoArchiveTabCount: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(15),
+    marginTop: phoneCompact(5),
+    fontWeight: '900',
+  },
+  contactInfoArchiveTabLabel: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(17),
+    fontWeight: '900',
+  },
+  contactInfoArchiveTabLabelActive: {
+    color: CONTACT_INFO_THEME.text,
+  },
+  contactInfoArchiveTabs: {
+    marginHorizontal: phoneCompact(18),
+    marginBottom: phoneCompact(22),
+    borderWidth: 1,
+    borderColor: CONTACT_INFO_THEME.border,
+    borderRadius: phoneCompact(16),
+    overflow: 'hidden',
+    flexDirection: 'row',
+  },
+  contactInfoAvatarImageLight: {
+    width: '100%',
+    height: '100%',
+  },
+  contactInfoAvatarInnerLight: {
+    width: '100%',
+    height: '100%',
+    borderRadius: phoneCompact(54),
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+    backgroundColor: CONTACT_INFO_THEME.primary,
+  },
+  contactInfoAvatarLight: {
+    width: phoneCompact(112),
+    height: phoneCompact(112),
+    borderRadius: phoneCompact(56),
+    padding: 2,
+    backgroundColor: CONTACT_INFO_THEME.avatarBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contactInfoAvatarTextLight: {
+    color: CONTACT_INFO_THEME.surface,
+    fontSize: phoneCompact(39),
+    fontWeight: '900',
+  },
+  contactInfoBadgeLight: {
+    minHeight: phoneCompact(34),
+    borderRadius: phoneCompact(17),
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: phoneCompact(16),
+    backgroundColor: CONTACT_INFO_THEME.successSoft,
+  },
+  contactInfoBadgeTextLight: {
+    color: CONTACT_INFO_THEME.success,
+    fontSize: phoneCompact(16),
+    fontWeight: '900',
+  },
+  contactInfoHeroLight: {
+    alignItems: 'center',
+    gap: phoneCompact(8),
+    paddingHorizontal: phoneCompact(22),
+    paddingBottom: phoneCompact(24),
+  },
+  contactInfoInlineEdit: {
+    width: phoneCompact(36),
+    height: phoneCompact(36),
+    borderRadius: phoneCompact(18),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contactInfoLightBackButton: {
+    width: phoneCompact(54),
+    height: phoneCompact(54),
+    borderRadius: phoneCompact(27),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+    overflow: 'visible',
+    position: 'relative',
+  },
+  contactInfoLightContent: {
+    paddingBottom: phoneCompact(38),
+  },
+  contactInfoLightEmpty: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(17),
+    lineHeight: phoneCompact(24),
+    fontWeight: '800',
+    textAlign: 'center',
+    paddingHorizontal: phoneCompact(24),
+    paddingVertical: phoneCompact(34),
+  },
+  contactInfoLightError: {
+    color: COLORS.danger,
+    fontSize: phoneCompact(13),
+    fontWeight: '900',
+    marginTop: phoneCompact(4),
+    textAlign: 'center',
+  },
+  contactInfoLightHeader: {
+    minHeight: phoneCompact(102),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(10),
+    paddingHorizontal: phoneCompact(18),
+    paddingTop: phoneCompact(6),
+    backgroundColor: CONTACT_INFO_THEME.conversationBg,
+  },
+  contactInfoLightHeaderSpacer: {
+    width: phoneCompact(54),
+    height: phoneCompact(54),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  contactInfoLightHeaderTitle: {
+    flex: 1,
+    minWidth: 0,
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(24),
+    lineHeight: phoneCompact(29),
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  contactInfoLightRoundAction: {
+    width: phoneCompact(46),
+    height: phoneCompact(46),
+    borderRadius: phoneCompact(23),
+    borderWidth: 1,
+    borderColor: CONTACT_INFO_THEME.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.surface,
+  },
+  contactInfoLightRow: {
+    minHeight: phoneCompact(76),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(12),
+    paddingVertical: phoneCompact(10),
+  },
+  contactInfoLightRowCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactInfoLightRowDetail: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(16),
+    lineHeight: phoneCompact(22),
+    marginTop: phoneCompact(3),
+    fontWeight: '500',
+  },
+  contactInfoLightRowFrame: {
+    width: '100%',
+  },
+  contactInfoLightRowIcon: {
+    width: phoneCompact(48),
+    height: phoneCompact(48),
+    borderRadius: phoneCompact(13),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.successSoft,
+  },
+  contactInfoLightRowLabel: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(16),
+    lineHeight: phoneCompact(21),
+    fontWeight: '900',
+  },
+  contactInfoLightRowValue: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(20),
+    lineHeight: phoneCompact(25),
+    marginTop: phoneCompact(3),
+    fontWeight: '900',
+  },
+  contactInfoLightRowSeparator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: phoneCompact(60),
+    backgroundColor: CONTACT_INFO_THEME.border,
+  },
+  contactInfoLightScreen: {
+    flex: 1,
+    backgroundColor: CONTACT_INFO_THEME.conversationBg,
+  },
+  contactInfoLightSection: {
+    backgroundColor: CONTACT_INFO_THEME.surface,
+    marginTop: phoneCompact(10),
+    marginHorizontal: phoneCompact(18),
+    borderWidth: 1,
+    borderColor: CONTACT_INFO_THEME.border,
+    borderRadius: phoneCompact(22),
+    overflow: 'hidden',
+    paddingHorizontal: phoneCompact(18),
+    paddingVertical: phoneCompact(17),
+  },
+  contactInfoMediaFallback: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.accentSoft,
+  },
+  contactInfoMediaGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: phoneCompact(4),
+    paddingHorizontal: phoneCompact(18),
+  },
+  contactInfoMediaImage: {
+    width: '100%',
+    height: '100%',
+  },
+  contactInfoMediaPlay: {
+    position: 'absolute',
+    right: phoneCompact(10),
+    bottom: phoneCompact(10),
+    width: phoneCompact(40),
+    height: phoneCompact(40),
+    borderRadius: phoneCompact(20),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.mediaOverlay,
+  },
+  contactInfoMediaTile: {
+    width: '32.6%',
+    aspectRatio: 1,
+    overflow: 'hidden',
+    backgroundColor: CONTACT_INFO_THEME.surface,
+  },
+  contactInfoMetaLight: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(20),
+    lineHeight: phoneCompact(25),
+    fontWeight: '500',
+  },
+  contactInfoMetricDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: '72%',
+    alignSelf: 'center',
+    backgroundColor: CONTACT_INFO_THEME.border,
+  },
+  contactInfoMetricLightAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(3),
+    marginTop: phoneCompact(10),
+  },
+  contactInfoMetricLightActionText: {
+    color: CONTACT_INFO_THEME.accent,
+    fontSize: phoneCompact(17),
+    fontWeight: '900',
+  },
+  contactInfoMetricLightCard: {
+    flex: 1,
+    minWidth: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: phoneCompact(10),
+  },
+  contactInfoMetricLightHint: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(18),
+    fontStyle: 'italic',
+    fontWeight: '900',
+  },
+  contactInfoMetricLightSection: {
+    minHeight: phoneCompact(194),
+    flexDirection: 'row',
+    backgroundColor: CONTACT_INFO_THEME.surface,
+    marginTop: phoneCompact(10),
+    marginHorizontal: phoneCompact(18),
+    borderWidth: 1,
+    borderColor: CONTACT_INFO_THEME.border,
+    borderRadius: phoneCompact(22),
+    overflow: 'hidden',
+    paddingVertical: phoneCompact(18),
+  },
+  contactInfoMetricLightTitle: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(18),
+    fontWeight: '900',
+  },
+  contactInfoMetricLightValue: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(31),
+    lineHeight: phoneCompact(37),
+    fontWeight: '900',
+  },
+  contactInfoNameEditWrap: {
+    width: '92%',
+    minHeight: phoneCompact(50),
+    borderRadius: phoneCompact(25),
+    borderWidth: 1,
+    borderColor: CONTACT_INFO_THEME.border,
+    backgroundColor: CONTACT_INFO_THEME.surface,
+    paddingHorizontal: phoneCompact(18),
+  },
+  contactInfoNameInputLight: {
+    minHeight: phoneCompact(50),
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(27),
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  contactInfoNameLight: {
+    flexShrink: 1,
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(31),
+    lineHeight: phoneCompact(37),
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  contactInfoNameRowLight: {
+    maxWidth: '96%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: phoneCompact(10),
+  },
+  contactInfoNumberOption: {
+    minHeight: phoneCompact(78),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(14),
+    paddingVertical: phoneCompact(14),
+  },
+  contactInfoNumberOptionActiveText: {
+    color: CONTACT_INFO_THEME.accent,
+  },
+  contactInfoNumberOptionCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactInfoNumberOptionSubtitle: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(16),
+    lineHeight: phoneCompact(22),
+    marginTop: phoneCompact(4),
+    fontWeight: '800',
+  },
+  contactInfoNumberOptionTitle: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(21),
+    lineHeight: phoneCompact(26),
+    fontWeight: '900',
+  },
+  contactInfoNumberSheet: {
+    maxHeight: '72%',
+    borderTopLeftRadius: phoneCompact(32),
+    borderTopRightRadius: phoneCompact(32),
+    paddingHorizontal: phoneCompact(22),
+    paddingTop: phoneCompact(14),
+    paddingBottom: phoneCompact(34),
+    backgroundColor: CONTACT_INFO_THEME.surface,
+  },
+  contactInfoNumberSheetHandle: {
+    alignSelf: 'center',
+    width: phoneCompact(82),
+    height: phoneCompact(8),
+    borderRadius: phoneCompact(4),
+    marginBottom: phoneCompact(18),
+    backgroundColor: CONTACT_INFO_THEME.sheetHandle,
+  },
+  contactInfoNumberSheetSubtitle: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(17),
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  contactInfoNumberSheetTitle: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(28),
+    lineHeight: phoneCompact(34),
+    fontWeight: '900',
+    textAlign: 'center',
+    marginBottom: phoneCompact(18),
+  },
+  contactInfoOurNumberCopyLight: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactInfoOurNumberLabelLight: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(12),
+    letterSpacing: 1,
+    fontWeight: '900',
+  },
+  contactInfoOurNumberPillLight: {
+    width: '100%',
+    minHeight: phoneCompact(64),
+    borderRadius: phoneCompact(32),
+    borderWidth: 1,
+    borderColor: CONTACT_INFO_THEME.border,
+    backgroundColor: CONTACT_INFO_THEME.surface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(13),
+    paddingHorizontal: phoneCompact(17),
+    marginTop: phoneCompact(12),
+  },
+  contactInfoOurNumberValueLight: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(19),
+    lineHeight: phoneCompact(24),
+    fontWeight: '900',
+  },
+  contactInfoPhoneEditRowLight: {
+    minHeight: phoneCompact(64),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(10),
+    paddingVertical: phoneCompact(10),
+  },
+  contactInfoPhoneInputLight: {
+    flex: 1,
+    minHeight: phoneCompact(48),
+    borderRadius: phoneCompact(18),
+    borderWidth: 1,
+    borderColor: CONTACT_INFO_THEME.border,
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(19),
+    fontWeight: '900',
+    paddingHorizontal: phoneCompact(14),
+    backgroundColor: CONTACT_INFO_THEME.surfaceSoft,
+  },
+  contactInfoPhoneSaveLight: {
+    width: phoneCompact(48),
+    height: phoneCompact(48),
+    borderRadius: phoneCompact(24),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.accent,
+  },
+  contactInfoSectionHeadingLight: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(18),
+    letterSpacing: 1.25,
+    fontWeight: '900',
+    marginBottom: phoneCompact(16),
+  },
+  contactInfoSheetRoot: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  contactInfoSheetScrim: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: CONTACT_INFO_THEME.scrim,
+    opacity: 0.62,
+  },
+  contactInfoSummaryAction: {
+    maxWidth: phoneCompact(128),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(4),
+  },
+  contactInfoSummaryActionText: {
+    color: CONTACT_INFO_THEME.accent,
+    fontSize: phoneCompact(17),
+    fontWeight: '900',
+  },
+  contactInfoSummaryCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactInfoSummaryIcon: {
+    width: phoneCompact(54),
+    height: phoneCompact(54),
+    borderRadius: phoneCompact(14),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.accentSoft,
+  },
+  contactInfoSummaryRow: {
+    minHeight: phoneCompact(76),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(12),
+  },
+  contactInfoSummaryRowFrame: {
+    width: '100%',
+  },
+  contactInfoSummaryRowSeparator: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: phoneCompact(66),
+    backgroundColor: CONTACT_INFO_THEME.border,
+  },
+  contactInfoSummarySubtitle: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(16),
+    lineHeight: phoneCompact(21),
+    marginTop: phoneCompact(4),
+    fontWeight: '800',
+  },
+  contactInfoSummaryTitle: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(20),
+    lineHeight: phoneCompact(25),
+    fontWeight: '900',
+  },
+  contactInfoJourneyEmptyIcon: {
+    width: phoneCompact(58),
+    height: phoneCompact(58),
+    borderRadius: phoneCompact(19),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.accentSoft,
+    marginBottom: phoneCompact(14),
+  },
+  contactInfoJourneyEmptyPanel: {
+    alignItems: 'center',
+    paddingHorizontal: phoneCompact(22),
+    paddingVertical: phoneCompact(34),
+  },
+  contactInfoJourneyEmptyText: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(16),
+    lineHeight: phoneCompact(21),
+    fontWeight: '700',
+    textAlign: 'center',
+    marginTop: phoneCompact(7),
+  },
+  contactInfoJourneyEmptyTitle: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(21),
+    lineHeight: phoneCompact(26),
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  contactInfoJourneyHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(12),
+    paddingHorizontal: phoneCompact(16),
+    paddingTop: phoneCompact(16),
+    paddingBottom: phoneCompact(14),
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: CONTACT_INFO_THEME.border,
+  },
+  contactInfoJourneyHeaderCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contactInfoJourneyHeaderIcon: {
+    width: phoneCompact(38),
+    height: phoneCompact(38),
+    borderRadius: phoneCompact(13),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: CONTACT_INFO_THEME.accentSoft,
+  },
+  contactInfoJourneyHeaderSubtitle: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(14),
+    lineHeight: phoneCompact(19),
+    fontWeight: '800',
+    marginTop: phoneCompact(2),
+  },
+  contactInfoJourneyHeaderTitle: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(18),
+    lineHeight: phoneCompact(23),
+    fontWeight: '900',
+  },
+  contactInfoJourneyPanel: {
+    marginHorizontal: phoneCompact(18),
+    marginTop: phoneCompact(10),
+    marginBottom: phoneCompact(22),
+    borderRadius: phoneCompact(24),
+    borderWidth: 1,
+    borderColor: CONTACT_INFO_THEME.border,
+    backgroundColor: CONTACT_INFO_THEME.surface,
+    overflow: 'hidden',
+  },
+  contactInfoTimeline: {
+    paddingHorizontal: phoneCompact(16),
+    paddingTop: phoneCompact(22),
+    paddingBottom: phoneCompact(12),
+  },
+  contactInfoTimelineConnectorBottom: {
+    position: 'absolute',
+    top: phoneCompact(19),
+    bottom: 0,
+    width: 1,
+    backgroundColor: CONTACT_INFO_THEME.border,
+  },
+  contactInfoTimelineConnectorTop: {
+    position: 'absolute',
+    top: 0,
+    height: phoneCompact(19),
+    width: 1,
+    backgroundColor: CONTACT_INFO_THEME.border,
+  },
+  contactInfoTimelineCopy: {
+    flex: 1,
+    minWidth: 0,
+    paddingBottom: phoneCompact(22),
+  },
+  contactInfoTimelineDate: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(14),
+    lineHeight: phoneCompact(18),
+    fontWeight: '900',
+    marginTop: phoneCompact(7),
+  },
+  contactInfoTimelineIcon: {
+    width: phoneCompact(38),
+    height: phoneCompact(38),
+    borderRadius: phoneCompact(13),
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: CONTACT_INFO_THEME.border,
+    backgroundColor: CONTACT_INFO_THEME.accentSoft,
+    zIndex: 1,
+  },
+  contactInfoTimelineRail: {
+    width: phoneCompact(42),
+    alignItems: 'center',
+    position: 'relative',
+  },
+  contactInfoTimelineRow: {
+    minHeight: phoneCompact(76),
+    flexDirection: 'row',
+    columnGap: phoneCompact(14),
+  },
+  contactInfoTimelineSubtitle: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(15),
+    lineHeight: phoneCompact(20),
+    marginTop: phoneCompact(4),
+    fontWeight: '500',
+  },
+  contactInfoTimelineTitle: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(18),
+    lineHeight: phoneCompact(23),
+    fontWeight: '900',
+  },
+  conversationCallActions: {
+    width: 92,
+    minWidth: 92,
+    height: 42,
+    borderRadius: 21,
+    ...liquidControlBase,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 2,
+  },
+  conversationCallButton: {
+    width: 38,
+    height: 38,
     borderRadius: 19,
+    ...liquidControlBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  conversationCallDivider: {
+    width: StyleSheet.hairlineWidth,
+    height: 22,
+    backgroundColor: isLight ? 'rgba(60,60,67,0.10)' : 'rgba(235,235,245,0.12)',
   },
   draftAttachmentFile: {
     width: 74,
@@ -17222,7 +30404,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 7,
     paddingVertical: 3,
-    backgroundColor: 'rgba(6,18,58,0.24)',
+    backgroundColor: starredBackground,
   },
   messageStarredText: {
     color: COLORS.meta,
@@ -17269,16 +30451,13 @@ const styles = StyleSheet.create({
     flex: 1,
     minHeight: 42,
     borderRadius: 21,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panelSoft,
+    ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 8,
   },
   sheetPillActive: {
-    borderColor: COLORS.accent,
-    backgroundColor: COLORS.accentSoft,
+    ...liquidControlSelected,
   },
   sheetPillRow: {
     flexDirection: 'row',
@@ -17308,6 +30487,164 @@ const styles = StyleSheet.create({
   },
   templatesSheetBody: {
     minHeight: 160,
+  },
+  voicePreviewPanel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 0,
+    marginBottom: 0,
+    marginTop: 0,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: voicePreviewBackground,
+    paddingHorizontal: 9,
+    paddingTop: 4,
+    paddingBottom: CONVERSATION_COMPOSER_SAFE_BOTTOM,
+  },
+  voicePreviewTrack: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: composerInputBorder,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    backgroundColor: voicePreviewTrackBackground,
+  },
+  voicePreviewTime: {
+    color: COLORS.text,
+    minWidth: 36,
+    textAlign: 'right',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  voicePreviewActions: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  voicePreviewDeleteButton: {
+    width: 34,
+    height: 38,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: voicePreviewControlBackground,
+  },
+  voicePreviewPlayButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+  },
+  voicePreviewSendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
+  },
+  voiceComposerPanel: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 0,
+    marginBottom: 0,
+    marginTop: 0,
+    paddingHorizontal: 9,
+    paddingTop: 4,
+    paddingBottom: CONVERSATION_COMPOSER_SAFE_BOTTOM,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: voiceComposerBackground,
+  },
+  voiceComposerActions: {
+    minHeight: 54,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  voiceComposerDeleteButton: {
+    width: 34,
+    height: 38,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: voicePreviewControlBackground,
+  },
+  voiceComposerTrack: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 38,
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: composerInputBorder,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    backgroundColor: voiceComposerTrackBackground,
+  },
+  voiceComposerTimeWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+  },
+  voiceComposerRecordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.danger,
+  },
+  voiceComposerTime: {
+    color: COLORS.text,
+    minWidth: 36,
+    textAlign: 'right',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  voiceComposerWaveform: {
+    flex: 1,
+    minWidth: 0,
+    height: 22,
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 2,
+    overflow: 'hidden',
+  },
+  voiceComposerWaveBar: {
+    width: 2,
+    borderRadius: 999,
+    backgroundColor: voiceWaveBackground,
+  },
+  voiceComposerWaveBarLive: {
+    backgroundColor: voiceWaveActive,
+  },
+  voiceComposerPauseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 0,
+    backgroundColor: 'transparent',
+  },
+  voiceComposerSendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accent,
   },
   voiceRecordingBar: {
     minHeight: 44,
@@ -17342,4 +30679,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '900',
   },
-});
+  }));
+}
+
+type PaymentLinkStyleOverrides = {
+  chatWallpaper: ViewStyle;
+  chatWallpaperImage: ImageStyle;
+  paymentLinkActionButton: ViewStyle;
+  paymentLinkActionPrimary: ViewStyle;
+  paymentLinkActionText: TextStyle;
+  paymentLinkActionTextPrimary: TextStyle;
+  paymentLinkChannelIcon: ViewStyle;
+  paymentLinkChannelList: ViewStyle;
+  paymentLinkChannelRow: ViewStyle;
+  paymentLinkContactLine: TextStyle;
+  paymentLinkReadyCard: ViewStyle;
+  paymentLinkReadyCopy: ViewStyle;
+  paymentLinkReadyIcon: ViewStyle;
+  paymentLinkReadySubtitle: TextStyle;
+  paymentLinkReadyTitle: TextStyle;
+  paymentLinkReadyUrl: TextStyle;
+  paymentLinkResultActions: ViewStyle;
+};
+
+type AppStyles = ReturnType<typeof createAppStyles> & PaymentLinkStyleOverrides;
+
+let styles = createAppStyles() as AppStyles;

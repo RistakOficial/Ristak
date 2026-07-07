@@ -2901,6 +2901,77 @@ async function resolveQrMessageReference({ messageId, providerMessageId, recipie
   return getStoredBaileysMessageFromRow(row, recipientJid)
 }
 
+export async function markLatestInboundWhatsAppQrMessageReadForContact({ contactId } = {}) {
+  const cleanContactId = cleanString(contactId)
+  if (!cleanContactId) {
+    return { attempted: false, reason: 'missing_contact' }
+  }
+
+  const row = await db.get(`
+    SELECT id, ycloud_message_id, meta_message_id, wamid, business_phone_number_id,
+           phone, from_phone, to_phone, business_phone, direction, message_type,
+           message_text, raw_payload_json
+    FROM whatsapp_api_messages
+    WHERE contact_id = ?
+      AND LOWER(COALESCE(direction, '')) = 'inbound'
+      AND LOWER(COALESCE(transport, '')) = 'qr'
+      AND LOWER(COALESCE(status, '')) NOT IN ('read', 'failed')
+    ORDER BY COALESCE(message_timestamp, updated_at, created_at) DESC
+    LIMIT 1
+  `, [cleanContactId]).catch(() => null)
+
+  if (!row) {
+    return { attempted: false, reason: 'no_unread_inbound_message' }
+  }
+
+  const contactPhone = normalizePhoneForStorage(row.phone || row.from_phone) || cleanString(row.phone || row.from_phone)
+  if (!contactPhone) {
+    return { attempted: false, reason: 'missing_contact_phone' }
+  }
+
+  const phone = await resolveQrPhone({
+    phoneNumberId: row.business_phone_number_id,
+    from: row.business_phone || row.to_phone
+  })
+  if (await markMissingAuthStateIfNeeded(phone)) {
+    throw new Error('El QR necesita reconectarse. Abre Configuración > WhatsApp y genera un QR nuevo.')
+  }
+
+  const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'marcar mensaje como leído' })
+  if (!sock?.readMessages) {
+    throw new Error('La conexión QR no puede marcar mensajes como leídos en este momento')
+  }
+
+  const recipient = await resolveRecipientJid(sock, contactPhone)
+  const storedMessage = getStoredBaileysMessageFromRow(row, recipient.jid)
+  const key = storedMessage?.key
+  if (!key?.id) {
+    return { attempted: false, reason: 'missing_message_key' }
+  }
+
+  const readKey = {
+    remoteJid: normalizeJid(key.remoteJid || recipient.jid),
+    id: key.id,
+    fromMe: Boolean(key.fromMe)
+  }
+  await sock.readMessages([readKey])
+
+  await db.run(`
+    UPDATE whatsapp_api_messages
+    SET status = 'read',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `, [row.id]).catch(() => undefined)
+
+  return {
+    attempted: true,
+    provider: 'baileys',
+    messageId: row.id,
+    providerMessageId: getQrTargetMessageId(row),
+    jid: readKey.remoteJid
+  }
+}
+
 async function sendProtectedQrMessage({ sock, phone, recipient, type, payload, options = {}, skipQrSendProtection = false } = {}) {
   if (!sock?.sendMessage) {
     throw new Error('La conexión QR no puede enviar mensajes en este momento')

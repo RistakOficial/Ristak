@@ -412,6 +412,20 @@ seleccionada. El journey debe exponer `provider_message_id`,
 `reaction_target_provider_message_id` para que las burbujas de `/movil` pinten
 el quote y peguen el emoji al globo correcto.
 
+Cuando el usuario abre o marca como leida una conversacion movil, el estado local
+se actualiza en `chat_read_states` y el backend debe encolar en background el
+acuse externo del canal cuando exista soporte nativo: WhatsApp API/YCloud usa
+`/whatsapp/inboundMessages/{id}/markAsRead` con `wamid` o id de YCloud,
+WhatsApp QR/Baileys usa `sock.readMessages([{ remoteJid, id, fromMe }])`, y
+Messenger/Instagram usan `sender_action='mark_seen'`. Correo no participa en
+este contrato porque no es chat conversacional. El acuse externo puede tardar,
+fallar o agotar timeout sin bloquear la respuesta local del chat, pero debe
+quedar registrado en logs porque no equivale a visto real del proveedor.
+Configuracion > Privacidad guarda
+`app_config.chat_send_read_receipts_enabled`: si esta apagado, Ristak conserva
+el marcado local como leido, pero no manda acuses externos de visto a WhatsApp
+API/YCloud, WhatsApp QR/Baileys, Messenger ni Instagram.
+
 ### Correo electronico
 
 Configuracion > Integraciones > Correos conecta envio por SMTP y recepcion por
@@ -550,6 +564,12 @@ rechazadas, pausadas, archivadas, pendientes o en apelacion pueden mostrarse en
 las vistas de revision/estado, pero no deben aparecer como opcion seleccionable
 en el flujo de envio.
 
+Los mensajes programados del chat deben guardar proveedor/canal de forma
+explicita. En movil, WhatsApp usa `provider='whatsapp_api'` con `transport='api'`
+y SMS usa `provider='highlevel'` con `channel='sms_qr'`; Messenger, Instagram y
+correo no se programan desde la app nativa hasta tener scheduler real para esos
+canales.
+
 En Configuracion > WhatsApp > Plantillas y en las burbujas del chat desktop,
 modal de contacto, preview telefonico y chat movil, el texto debe respetar la
 sintaxis visual que WhatsApp aplica al mensaje: `*negritas*`, `_italicas_`,
@@ -669,10 +689,12 @@ cambiando el envio puntual, incluyendo cada WhatsApp conectado como opcion
 separada, pero el panel/info del contacto es la fuente visible para decidir el
 remitente preferido del contacto.
 
-En las listas y separadores del chat, los mensajes del dia actual muestran hora
-o `Hoy`, los del dia anterior muestran `Ayer`, del anteayer hasta antes de una
-semana muestran el dia de la semana, y a partir de 7 dias muestran fecha larga
-en espanol (`29 de junio`, agregando año solo si no pertenece al año actual).
+En las listas de chat, los mensajes del dia actual muestran la hora exacta en la
+zona horaria del negocio; no muestran `Hoy` en la fila. Los del dia anterior
+muestran `Ayer`, del anteayer hasta antes de una semana muestran el dia de la
+semana, y a partir de 7 dias muestran fecha larga en espanol (`29 de junio`,
+agregando año solo si no pertenece al año actual). Los separadores dentro del
+historial de conversacion pueden seguir usando `Hoy` para agrupar el dia actual.
 La bandeja desktop marca mensajes no leidos con el contador numerico y el resaltado
 del renglon, sin punto adicional antes del numero.
 
@@ -756,6 +778,27 @@ Ristak soporta:
 - Payment flows con estados y reparaciones.
 - Automatizaciones al completarse pagos.
 
+En app movil nativa, la disponibilidad de flujos de pago depende de licencia e
+integraciones conectadas. Plan `basic` solo puede registrar pagos unicos offline
+como efectivo, transferencia, deposito u otro pago confirmado. Planes de pago y
+suscripciones no deben mostrarse en Basic. En planes `professional`/`pro`, si no
+hay ninguna pasarela de pago conectada, la app movil tambien debe limitarse al
+pago unico offline; los flujos avanzados aparecen solo cuando la licencia permite
+`payment_plans`/`subscriptions` y existe al menos una pasarela conectada.
+
+En el flujo movil, cualquier pago unico, plan de pagos o suscripcion que genere
+un link/autorizacion debe regresar al chat del contacto con el preview del link
+preparado para enviar. Las suscripciones deben usar la URL devuelta por el
+backend en `subscriptionStartUrl` o en las URL especificas de la pasarela
+(`stripeCheckoutUrl`, `conektaCheckoutUrl`, `mercadoPagoInitPoint`,
+`mercadoPagoSandboxInitPoint`, `rebillPaymentLinkUrl`, `rebillCheckoutUrl`). Los
+cobros directos con tarjeta guardada o registros offline deben volver al chat con
+el marcador/notificacion de cobro completado cuando exista cobro inmediato.
+Para suscripciones moviles por autorizacion, el frontend debe enviar
+`paymentMethod=stripe_link` en Stripe y `paymentMethod=conekta_link` en Conekta.
+Para tarjeta guardada, debe enviar el metodo de suscripcion directa que espera la
+pasarela (`stripe_saved_card`, `conekta_subscription` o `rebill_subscription`).
+
 El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
 real.
@@ -765,6 +808,35 @@ suscripcion, el backend emite un evento por `/api/payment-events/stream`. Las
 pantallas de Transacciones, Planes de pago y Suscripciones escuchan ese stream y
 recargan solo la vista abierta. No se usa polling periodico para mantener esas
 tablas vivas; la actualizacion depende del evento que dispara el cambio real.
+
+En el cliente nativo movil, registrar pago unico, plan de pagos y suscripcion se
+configura como wizard. En pago unico y suscripcion, el primer paso define
+cliente, producto o monto y el segundo paso elige la ruta de cobro. En planes de
+pago, el primer paso ya configura todo el plan: producto o monto, primer pago,
+cuando cobrarlo, metodo del primer pago, frecuencia y pagos restantes con
+distribucion automatica del saldo. En el movil, los pagos se muestran como una
+sola lista numerada (`Pago 1`, `Pago 2`, `Pago 3`, etc.); `Pago 1` contiene el
+metodo y momento de cobro. El reparto automatico ocurre al capturar el monto
+total o cambiar la cantidad de pagos mientras no se hayan editado montos
+manualmente; en cuanto el usuario cambia un monto de una cajita, Ristak deja de
+mover los demas hasta que el usuario pulse `Distribuir`. Al continuar, el ultimo paso solo resuelve la
+pasarela o tarjeta: si el primer pago es efectivo o transferencia, pide pasarela
+para enviar domiciliacion; si el primer pago es tarjeta, pide pasarela y tarjeta
+guardada de esa pasarela. Los links de pago vuelven al chat del contacto con
+previsualizacion lista y caja de texto vacia; al enviarse, el globo del chat
+intenta cargar la previsualizacion real de la URL con metadata Open Graph
+(`og:image`, titulo y descripcion) en vez de pintar un componente generico de la
+app. Si la pagina no entrega metadata, el chat cae a una preview minima con host.
+Los cobros con tarjeta guardada usan el endpoint de la pasarela elegida, no se
+registran como pagos manuales.
+
+Cuando se registra un pago manual, se cobra una tarjeta guardada o se agenda una
+cita desde la app nativa, el contacto vuelve a su conversacion y el chat muestra
+un marcador inline en la linea de mensajes. Ese marcador no es un globo del
+cliente ni del negocio: es una anotacion de conversacion que indica que en ese
+punto se completo un cobro o se agendo una cita. La accion tambien muestra una
+confirmacion breve con check animado dentro del area del chat, sin cubrir el
+header ni la informacion del contacto.
 
 Un pago exitoso en modo `test` puede clasificar al contacto como `Cliente` dentro
 del CRM y del filtro de Contactos para validar flujos sandbox. Ese mismo pago no

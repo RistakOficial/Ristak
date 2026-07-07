@@ -251,7 +251,12 @@ export async function transcribeVoice(req, res) {
   try {
     const apiKey = req.openAIApiKey || await requireOpenAIApiKey()
 
-    const audioBuffer = Buffer.isBuffer(req.body) ? req.body : null
+    const uploadedAudio = req.file
+    const audioBuffer = uploadedAudio?.buffer?.length
+      ? uploadedAudio.buffer
+      : Buffer.isBuffer(req.body)
+        ? req.body
+        : null
 
     if (!audioBuffer?.length) {
       return res.status(400).json({
@@ -263,7 +268,7 @@ export async function transcribeVoice(req, res) {
     const result = await transcribeVoiceAudio({
       apiKey,
       audioBuffer,
-      mimeType: req.headers['content-type'] || 'audio/webm'
+      mimeType: uploadedAudio?.mimetype || req.headers['content-type'] || 'audio/webm'
     })
 
     res.json({

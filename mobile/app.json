@@ -26,8 +26,14 @@
         "com.apple.developer.usernotifications.communication": true
       },
       "infoPlist": {
+        "CFBundleDevelopmentRegion": "es",
+        "CFBundleLocalizations": [
+          "es",
+          "en"
+        ],
         "ITSAppUsesNonExemptEncryption": false,
         "NSCameraUsageDescription": "Ristak usa la cámara para tomar fotos y enviarlas desde el chat móvil.",
+        "NSLocationWhenInUseUsageDescription": "Ristak usa tu ubicación para compartirla en el chat cuando tú lo solicitas.",
         "NSMicrophoneUsageDescription": "Ristak usa el micrófono para grabar notas de voz y videos desde el chat móvil.",
         "NSPhotoLibraryUsageDescription": "Ristak puede acceder a fotos para compartir contenido desde el chat móvil."
       }
@@ -37,6 +43,8 @@
       "icon": "./assets/ristak-light-mode-icon.png",
       "permissions": [
         "CAMERA",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
         "RECORD_AUDIO"
       ],
       "adaptiveIcon": {
@@ -58,7 +66,9 @@
         {
           "enableBackgroundRemoteNotifications": true
         }
-      ]
+      ],
+      "expo-location",
+      "expo-video"
     ]
   }
 }

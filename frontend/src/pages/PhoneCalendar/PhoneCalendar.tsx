@@ -1519,7 +1519,6 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
         ...(locationId ? { locationId } : {}),
         ...payload
       }, accessToken || undefined)
-      showToast('success', 'Cita agendada', 'La cita se guardó en el calendario.')
       setIsCreateModalOpen(false)
       await loadEvents()
     } catch {
@@ -1534,7 +1533,6 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
     try {
       await calendarsService.updateAppointment(eventId, updates, accessToken || undefined)
-      showToast('success', 'Cita actualizada', 'Tus cambios se guardaron.')
       await loadEvents()
     } catch (error) {
       showToast('error', 'No se pudo guardar', 'Intenta otra vez.')
@@ -1545,7 +1543,6 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   const handleDeleteAppointment = async (eventId: string) => {
     try {
       await calendarsService.deleteEvent(eventId, accessToken || undefined)
-      showToast('success', 'Cita eliminada', 'Ya no aparece en el calendario.')
       setIsEventModalOpen(false)
       setSelectedEvent(null)
       await loadEvents()

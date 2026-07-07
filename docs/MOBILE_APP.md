@@ -35,6 +35,60 @@ animacion `slide`: se ve como un bloque sombreado subiendo. El cierre debe
 mantener el contenido vivo hasta terminar la animacion para poder reabrir el
 mismo sheet/contacto sin que se trabe.
 
+Los bottom sheets nativos que contienen formularios, pickers o contenido con
+boton final deben reservar un margen inferior de seguridad dentro del contenido
+scrollable para que el ultimo control quede visible por encima del indicador
+inferior de iOS/Android. Esta regla no aplica a sheets de lista pura
+(`contactos`, `calendarios`, `Mas acciones`, listas de filas): esas filas deben
+mantenerse full-bleed, con separadores y estados seleccionados llegando al borde
+del sheet y sin safe-zone lateral falsa.
+
+Todos los bottom sheets nativos que usen `BottomActionSheet` deben poder cerrarse
+arrastrando hacia abajo desde la zona superior del sheet (la manija y el header).
+Ese gesto debe seguir el dedo, rebotar si el arrastre es corto y cerrar con la
+misma animacion del sheet si el usuario baja lo suficiente o hace un flick hacia
+abajo. No implementes este comportamiento por sheet individual.
+
+Regla movil de movimiento: la navegacion entre pantallas nativas no debe
+aparecer/desaparecer en seco. Las secciones principales de `mobile/` usan una
+transicion direccional corta con `transform`/`opacity`; entrar a una conversacion
+desde la bandeja de chats monta la conversacion como capa superior y la desliza
+desde la derecha, y volver mantiene la capa viva hasta que termina la salida.
+Los dropdowns, bottom sheets y pickers reutilizables deben expandirse/contraerse
+con la primitiva compartida, no con animaciones locales por pantalla. Mantén las
+duraciones alrededor de 220-300 ms, con entrada ease-out y salida ligeramente más
+rapida para que se sienta nativo e interruptible.
+
+Regla global de teclado en `mobile/`: cualquier pantalla, panel, submenu,
+bottom-sheet o modal que permita escribir texto debe quedar visualmente por
+encima del teclado al enfocar un campo. Las pantallas normales deben vivir dentro
+de `AppFrame` con avoidance activo y los paneles deben usar `BottomActionSheet`,
+que extiende el fondo del sheet detras del teclado y agrega padding interno con
+la altura real del teclado. No uses `marginBottom` para separar el sheet del
+teclado: crea un corte visual entre panel y teclado. No crees formularios con
+`TextInput` fuera de esas primitivas salvo que implementen el mismo contrato de
+keyboard avoidance local y continuidad visual.
+
+En conversaciones nativas, el area de mensajes + composer no debe usar
+`KeyboardAvoidingView` con `padding` en iOS porque crea una franja artificial
+entre composer y teclado y hace que el panel inferior parezca estirarse. La
+conversacion debe reducir su altura disponible (`behavior="height"`) y el
+`AppFrame` de esa pantalla debe usar el mismo fondo que el composer, para que el
+teclado parezca salir integrado desde el panel inferior sin un separador de color.
+Cuando el teclado esta abierto, el composer debe apagar el safe-area inferior
+normal y usar el color de la superficie superior del teclado iOS; si mantiene el
+padding de home indicator o el fondo normal del chat, aparece un margen falso
+entre la barra de escritura y el teclado.
+
+Regla movil de avisos: las acciones exitosas normales no deben abrir
+`Alert.alert`, `window.alert`, toasts ni popups flotantes en `/movil` ni en
+`mobile/`. Registrar pagos, crear/editar citas, programar o cancelar mensajes,
+archivar/restaurar chats, copiar contenido, crear etiquetas o cambiar estados
+del agente deben confirmarse con el cambio visible en la pantalla: cierre del
+sheet, actualizacion de lista, estado inline o nuevo contenido renderizado. Solo
+se permiten avisos intrusivos para errores, permisos del sistema, validaciones
+que bloquean continuar y confirmaciones destructivas.
+
 El sheet nativo `Mas acciones` debe mantenerse como espejo operativo del sheet
 de `PhoneChat`: agendar cita, registrar pagos, programar mensaje, agregar
 etiqueta, silenciar/quitar silencio y controles del agente. Si una accion aun
@@ -62,9 +116,51 @@ login y notificaciones. Antes de crear otro worktree movil, parte de esta carpet
 unificada y revisa el checklist de paridad. Ajustes nativo ya incluye numeros de
 WhatsApp, selector de numero para la bandeja, dictado de la descripcion del
 agente con `expo-audio` y `/api/ai-agent/transcribe`, activacion de push nativo
-con `expo-notifications`, y tema claro/noche que actualiza el fondo nativo del
-celular. Si una funcion se cambia en `/movil`, valida si tambien debe cambiar en
-`mobile/` en la misma rama.
+con `expo-notifications`, y Ajustes reales de apariencia/chat. La preferencia
+`mobile_chat_theme_preference` soporta sistema, claro, noche y horario; el shell
+nativo debe aplicarla como paleta global, no solo como fondo de `StatusBar`.
+Para que `sistema` funcione en iOS, `mobile/app.json` debe mantenerse con
+`userInterfaceStyle: "automatic"` y `mobile/ios/RistakNative/Info.plist` no debe
+declarar `UIUserInterfaceStyle=Dark`; si se vuelve a forzar oscuro ahi, el iPhone
+reporta la app como nocturna aunque Ajustes pida el sistema. Los botones flotantes,
+dock inferior, burbujas de chat, composer e iconos de Ajustes deben tomar colores
+desde la paleta activa (`COLORS`) y no desde azules nocturnos hardcodeados.
+La pantalla de Ajustes debe forzar un render del shell cuando cambia
+`mobile_chat_theme_preference` o cuando iOS notifica un cambio de apariencia. En
+la lista principal de Ajustes, los iconos de filas son glyph-only: no llevan
+circulo, fondo ni color por categoria; todos usan el mismo tono neutral de la
+paleta activa y solo `Cerrar sesion` puede usar rojo destructivo. Los iconos de
+cards y opciones de apariencia siguen usando colores semanticos de la paleta
+activa con contraste real en claro y noche.
+Las preferencias de chat guardadas en `app_config` (`mobile_chat_ai_agent_enabled`,
+`mobile_chat_show_archived`, `mobile_chat_sort_mode`,
+`mobile_chat_show_last_preview`, `mobile_chat_show_unread_indicators` y
+`mobile_chat_selected_whatsapp_phone_id`) deben afectar la bandeja viva sin
+reiniciar la app. Si una funcion se cambia en `/movil`, valida si tambien debe
+cambiar en `mobile/` en la misma rama.
+Cuando `mobile_chat_ai_agent_enabled` esta activo, la fila fija `Asistente
+Personal AI` abre un chat nativo real conectado a `/api/ai-agent/chat` con el
+mismo proveedor/configuracion del asistente de escritorio. Ese chat usa el layout
+de conversacion nativa, pero no muestra acciones de contacto: no agenda citas,
+no registra pagos y no permite acciones de WhatsApp; solo conversa con el
+asistente personal. El composer del asistente mantiene `+` para enviar fotos y
+documentos como attachments al agente; los videos se bloquean en movil hasta que
+la app genere miniatura/contenido visual legible para el backend. El microfono
+graba nota de voz, la transcribe con `/api/ai-agent/transcribe` y manda el texto
+resultante al mismo chat.
+
+En la conversacion nativa, el composer inferior debe replicar la referencia
+visual de la app original: panel azul muy claro, campo de texto blanco,
+iconos de canal/adjuntos/camara/microfono sin disco ni fondo propio, avatar del
+contacto compacto para no comerse el nombre, y acciones de calendario/cobro del
+header fusionadas dentro de una sola capsula compacta. El boton de canal puede
+colorear el glifo segun el canal, pero no debe volver a meterlo en un circulo
+solido.
+
+El fondo de la conversacion nativa usa una textura sutil detras de los globos y
+un parallax real con `expo-sensors`/`DeviceMotion`: la inclinacion del iPhone
+desplaza solo la textura unos pixeles; los mensajes, header y composer no deben
+moverse ni redimensionarse.
 
 El avance por fases de esa paridad vive en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`. Antes de retomar la migracion nativa,
@@ -348,10 +444,14 @@ AppIcon instalado.
 
 ## Tema visual móvil
 
-El tema de producto de `/movil` usa la paleta del isotipo móvil de Ristak: azul
-profundo para modo oscuro, azul Ristak como primario y cian como acento. El verde
-ya no debe usarse como acento global de la app porque hace que la experiencia se
-sienta como WhatsApp.
+La app nativa en `mobile/` debe sentirse como una experiencia iOS/Apple neutral,
+no como una piel azul encima de React Native. La base visual usa superficies
+blancas/grises en claro y negros/grises de sistema en oscuro. El azul queda
+reservado para acentos funcionales puntuales: CTA principal, badges, links,
+checks, puntos de calendario o estados que realmente necesitan destacar. No uses
+azul/cian como relleno de navegación, tabs, chips, filtros, icon buttons,
+bottom sheets ni segmented controls. El verde ya no debe usarse como acento
+global de la app porque hace que la experiencia se sienta como WhatsApp.
 
 Tokens principales:
 
@@ -366,13 +466,37 @@ El dock inferior nativo en `mobile/src/App.tsx` debe mantenerse en paridad con
 `frontend/src/components/phone/PhoneEcosystemNav.*`: mismos items, orden,
 sin texto visible bajo los iconos, gesto horizontal entre secciones, indicador
 animado que persigue la coordenada real del dedo, badge de Chats y espacio
-inferior reservado para que las listas no queden cortadas detras del panel.
+inferior reservado para que las listas no queden cortadas detras del panel. En
+iOS 26+ el dock, botones flotantes/iconograficos y las superficies flotantes
+reutilizables (bottom sheets, filtros, chips y pickers) pueden usar
+`expo-glass-effect`/`GlassView` para Liquid Glass, siempre con fallback
+translucido para plataformas sin soporte. El material no
+debe prenderse solo en un estado de scroll: permanece activo en tamano normal y
+compacto; al hacer scroll hacia abajo el dock se compacta suavemente y al volver
+hacia arriba regresa a su tamano normal sin perder el centrado de iconos ni del
+indicador. Evita contornos duros, rellenos opacos y elevaciones pesadas en
+superficies Liquid Glass: los controles flotantes e iconograficos deben comportarse como `clear`
+Liquid Glass de Apple, con fondo practicamente transparente, borde/material
+sutil y una sombra externa ligera para separarse del contenido. No pintes
+rellenos azules o cian para simular vidrio; los estados seleccionados de
+tablists, filtros y segmented controls se leen por material neutral, sombra,
+contraste y texto, no por pintura azul. Los botones de navegacion, cerrar,
+volver, filtros, chips y acciones iconograficas deben usar vidrio
+claro/transparente. Los iconos de navegacion y toolbar deben mantenerse finos
+(`strokeWidth` aproximado 1.75-2.0); reserva trazos mas gruesos solo para badges
+o estados muy pequenos donde la legibilidad lo exija. El indicador activo del
+dock es una unica capsula Liquid Glass que se mueve con `translateX` siguiendo
+el dedo; no debe convertirse en un circulo solido azul. En tema claro, los
+iconos del dock son negros; en tema oscuro, claros.
 
 Regla de criterio: el verde se reserva para marca WhatsApp
 (`--phone-channel-whatsapp`, `PhoneMessageChannelIcon`, iconos/canal WhatsApp) o
-para estados semánticos de éxito. Botones, tabs, badges, loaders, inputs,
-gráficas y defaults visuales de la app deben usar el azul/cian de Ristak.
-Las acciones laterales por swipe y los menús/bottom sheets móviles también deben
+para estados semánticos de éxito. Botones secundarios, tabs, filtros, inputs,
+menus y defaults visuales de la app deben heredar la paleta neutral activa.
+Badges, loaders, gráficas, links y CTAs principales pueden usar el azul de
+sistema cuando aporten jerarquia funcional, pero nunca como relleno decorativo
+global.
+Las acciones contextuales, menús y bottom sheets móviles también deben
 usar `--phone-chat-primary`, `--phone-chat-text-on-primary`,
 `--phone-chat-surface`, `--phone-chat-panel`, `--phone-chat-border` y
 `--phone-chat-sheet-shadow`; no uses verdes heredados ni fondos beige/verdosos
@@ -384,16 +508,27 @@ En `mobile/`, la lista de chats debe mantener paridad visual y tactil con
 `/movil`: los filtros horizontales arrancan pegados al margen util de la
 pantalla y no deben auto-centrarse dejando chips cortados en los laterales. Las
 filas deben ser suficientemente altas para lectura tactil, con avatar grande y
-acciones laterales del mismo alto real de la fila.
+separadores/alineacion propios de la fila.
 
-El swipe de una fila debe responder con umbral bajo: un arrastre corto hacia la
-izquierda abre `Mas` y `Archivar/Restaurar`; si la fila ya esta abierta, un
-arrastre corto hacia la derecha la cierra. La animacion debe ser suave y no debe
-rebotar a abierto/cerrado por un umbral grande despues de soltar.
+La bandeja nativa ya no usa swipe horizontal para acciones de fila. Tocar una
+fila abre el chat; mantenerla presionada abre el sheet `Mas acciones` con feedback
+haptico. En ese sheet, `Seleccionar` debe ser la primera accion, antes de
+agendar, registrar pagos o cualquier otra herramienta. Al tocar `Seleccionar`,
+la lista entra en seleccion multiple y desde ahi se pueden marcar leidos,
+archivar/restaurar o seleccionar visibles. No reintroduzcas `Mas`/`Archivar`
+como botones laterales por swipe.
 
 Las fechas de la lista de chats se formatean con la zona horaria del negocio:
-`Hoy`, `Ayer`, dia de la semana para los ultimos 2 a 6 dias, y despues fecha
-corta como `04-jul`. No uses una fecha fija para mensajes de hoy.
+los mensajes del dia actual muestran la hora exacta (`7:47 p.m.`), los del dia
+anterior muestran `Ayer`, del anteayer hasta antes de una semana muestran el dia
+de la semana, y despues fecha corta como `04-jul`. No uses `Hoy` en filas de
+chat con mensaje del dia actual.
+
+La bandeja nativa no debe quedarse limitada al primer bloque de conversaciones.
+`mobile/` consume `/contacts/chats` con `limit`/`offset`, carga el primer lote de
+50 chats y al llegar al final del scroll pide el siguiente bloque. Los lotes se
+fusionan por `contact.id` para evitar duplicados y preservar avatares ya
+hidratados.
 
 ## Remitente de WhatsApp en chat movil
 
@@ -411,6 +546,83 @@ numero mostrado por automatico coincide con el que el usuario toca, igual debe
 guardarse como fijo; no cierres el sheet solo porque visualmente ya era el
 numero activo.
 
+## Info del contacto nativa
+
+La pantalla `Info del contacto` en `mobile/` debe mantenerse como espejo de la
+pantalla web movil de `/movil` en estructura y comportamiento, pero dentro del
+tema nativo oscuro de Ristak: avatar, nombre editable, telefono/estado, selector
+`Contactando desde`, busqueda dentro del chat, resumen de pagos/citas, archivos
+del chat, datos principales, origen y conversion, seguimiento, historial del
+agente, campos personalizados e integracion. No debe introducir una paleta clara
+local ni colores hardcodeados fuera de los tokens moviles compartidos.
+
+Esta pantalla usa una escala compacta comun para textos, iconos, filas, tabs,
+metricas y sheets. Si se ajusta el tamano visual, modifica la escala o los tokens
+compartidos de esta familia de componentes; no agrandes cada elemento por
+separado ni permitas que iOS Dynamic Type infle la pantalla hasta romper la
+paridad visual.
+
+Las filas de `Info del contacto` pueden usar separadores sutiles, pero solo si
+son parte real del componente de fila. La linea debe quedar al fondo de la fila y
+arrancar donde inicia el bloque de texto, no desde el borde completo ni como
+hairline decorativo flotante. Las filas normales y las filas resumen usan insets
+distintos porque sus iconos tienen tamanos distintos.
+
+Las secciones de `Info del contacto` deben verse como categorias reales, no como
+una pagina blanca/plana con filas acumuladas. Cada bloque principal (`Chat`,
+metricas, `Archivos del chat`, `Datos principales`, `Origen y conversion`,
+`Seguimiento`, `Historial del agente`, `Campos personalizados` e `Integracion`)
+usa su propio contenedor sutil con margen horizontal, radio, borde de tema y
+fondo tokenizado. El fondo exterior de la pantalla y el fondo interior de las
+secciones no deben ser el mismo color: en tema claro el exterior usa la superficie
+suave y las secciones quedan sobre superficie principal; en tema oscuro el
+exterior conserva el fondo profundo y las secciones usan superficie elevada. No
+elimines esa separación ni la sustituyas por espaciado decorativo sin contenedor.
+El selector `Contactando desde` debe compartir el mismo tipo de borde y
+superficie que estas secciones.
+
+El fondo exterior de `Info del contacto` debe cubrir toda la ventana nativa,
+incluida la zona detras de la hora, Wi-Fi y bateria. El contenido superior sigue
+respetando el inset del status bar, pero el fondo full-bleed se pinta desde el
+root de `AppFrame` con `CONTACT_INFO_THEME.conversationBg`; no metas el safe area
+en la misma vista que pinta el fondo.
+
+El avatar de `Info del contacto` usa aro exterior separado del recorte de imagen:
+el contenedor exterior pinta el borde/aro y el contenedor interior redondo hace
+el clipping de la foto o iniciales. No mezcles borde y `overflow: hidden` en la
+misma capa porque la foto puede verse recortada como cuadro o no llegar bien al
+circulo.
+
+El bloque `Viaje de cliente` de `Info del contacto` no debe renderizar el
+historial de chat crudo. La app nativa debe pedir el journey completo del
+contacto y aplicar las mismas reglas de escritorio/web movil antes de pintar:
+filtrar mensajes salientes del negocio, agrupar eventos diarios por la zona
+horaria del negocio, elegir el evento de WhatsApp/Meta con mas metadata util y
+ocultar conversaciones directas de WhatsApp posteriores al primer pago exitoso
+salvo que tengan atribucion de anuncio. Los mensajes individuales siguen
+perteneciendo a la conversacion; el viaje muestra hitos del cliente.
+
+La pagina nativa `Viaje de cliente` debe mostrarse como timeline conectado: cada
+evento tiene el mismo estilo de icono que las filas de `Info del contacto` y una
+linea vertical de tema une el centro de los iconos. La linea no debe empezar
+antes del primer evento ni continuar despues del ultimo.
+El timeline completo vive dentro de un contenedor de superficie elevada, con
+encabezado compacto, resumen de cantidad de eventos y separacion interior real.
+No debe pintarse directo sobre el fondo exterior porque la pagina pierde
+jerarquia visual y se siente como una sabana plana de color.
+Las filas del timeline no deben mostrar cuerpos de mensajes de chat como
+descripcion principal. Para WhatsApp directo basta canal y fecha; si hay
+atribucion, muestra fuente/campana/anuncio. Para web muestra pagina o URL limpia;
+para pagos muestra monto/estado; para citas muestra titulo/estado y fecha.
+
+Los bloques `Total`, `Citas`, `Archivos del chat`, `Viaje de cliente` e
+`Historial del agente` abren paginas nativas propias con boton de regreso, no
+alertas ni modales genericos. `Archivos del chat` separa `Fotos y videos`,
+`Documentos` y `Enlaces`; las fotos/videos se muestran como grid y los
+documentos/enlaces como filas tocables. `Contactando desde` abre un sheet con
+`Automatico` y todos los numeros de WhatsApp disponibles; elegir una opcion debe
+guardar la preferencia del contacto igual que `/movil`.
+
 ## Agenda de citas desde el chat movil
 
 El sheet de `Agendar cita` dentro de una conversacion puede abrirse en dos modos:
@@ -418,6 +630,12 @@ formulario completo o calendario mensual. El boton de calendario del encabezado
 del sheet cambia entre ambos modos y guarda la preferencia por usuario en
 `user_config.mobile_chat_appointment_entry_mode`, con valores `form` o
 `calendar`.
+El acceso rapido de calendario del header del chat ya no abre una accion aislada:
+redirige a la pagina nativa de Agenda y abre el formulario de nueva cita con el
+contacto de esa conversacion precargado y bloqueado.
+Dentro del formulario completo, el selector de calendario debe abrir una subvista
+del mismo bottom sheet, no un segundo modal encima: iOS puede bloquear o esconder
+modales apilados y el usuario termina tocando un dropdown que no muestra nada.
 
 El modo calendario solo aparece cuando hay un contacto activo bloqueado para la
 cita. Mantiene el selector de calendario arriba, pinta una vista mensual unica
@@ -466,6 +684,9 @@ seleccion; la bolita puede conservar mayor presencia que el texto. El swipe
 entre meses no debe mostrar de regreso el mes anterior en frames intermedios. En
 el sheet `Nueva cita`, la lista de contactos no debe mostrar icono de enviar
 mensaje porque la accion es agendar, no mandar chat.
+En la vista Hoy/Semana, las tarjetas de citas del timeline usan un solo campo
+suave con borde tenue; no deben agregar una franja ni borde izquierdo intenso por
+calendario.
 Al aparecer la seleccion del timeline, la app dispara haptic y bloquea el scroll
 del listado hasta soltar el dedo para que el rango se estire verticalmente sin
 mezclarse con el desplazamiento. Brecha pendiente: replicar validacion avanzada
@@ -501,75 +722,277 @@ comparaciones numericas para campos numericos.
 
 Los avatares de contacto son parte de la identidad de Ristak: si el contacto
 tiene foto real de la red social, se respeta esa foto; si no tiene foto, el
-fallback muestra iniciales sobre `--phone-chat-avatar-fill` azul/cian Ristak. El
-origen social del contacto sólo debe vivir en el aro exterior del avatar
-(`--avatar-ring-color`) y en el badge/icono de canal (`.avatarChannelBadge*`).
+fallback muestra iniciales sobre una superficie gris del tema, no sobre azul/cian
+Ristak. El
+origen social del contacto no debe vivir en un aro, contorno ni relleno del
+avatar; debe mostrarse únicamente como badge compacto de canal
+(`.avatarChannelBadge*` o el equivalente nativo).
 No vuelvas a usar verde WhatsApp, rosa Instagram o azul Messenger como relleno
 completo del avatar de iniciales.
+En la app nativa (`mobile/src/App.tsx`), las filas de chat, cabeceras y modales
+de contacto no usan aro exterior de canal: el avatar se muestra limpio y el
+origen queda únicamente en el badge de red social. Ese badge debe salir de los
+assets recortados y optimizados en `mobile/assets/channel-badges/`: WebP
+transparente, 72x72, con el logo de marca ya relleno. No uses iconos outline
+transparentes sobre el avatar porque pierden contraste. Cuando no hay foto, las
+iniciales deben intentar usar nombre
+y apellido (`Raul Gomez` -> `RG`); si solo
+hay una palabra o identificador, usa hasta dos caracteres utiles.
+Las iniciales deben elegir color por contraste contra el relleno del avatar: si
+el fondo es oscuro/azul, el texto va claro; si el fondo es claro, el texto va
+navy oscuro. Los botones de accion de la app nativa (camara, crear, volver,
+cerrar, agendar, cobrar y menus de mas acciones) deben usar la capa comun de
+Liquid Glass: `GlassView` real cuando iOS lo soporte y fallback transparente con
+borde hairline, brillo superior y sombra externa ligera. No uses relleno azul en
+estos botones salvo que sean CTA primario o estado seleccionado real. El tinte
+debe contrastar con el fondo visible (nada de vidrio blanco puro sobre fondo
+blanco) y el icono o texto siempre debe renderizar encima del material para no
+verse opaco.
 
 La bandeja nativa en `mobile/src/App.tsx` debe seguir esta misma regla de paridad:
 header de chats con acciones superiores, buscador tipo pill, chips horizontales
 (`Todos`, `No leídos`, `Citas`, `Clientes`, `Leads`, `Comentarios`, `+`) y filas
-planas con separador desde el bloque de texto. Los filtros se calculan con los
-mismos campos que `/movil` recibe de `/api/contacts/chats`: `unreadCount`,
+planas con separador desde el bloque de texto. La tira de filtros no debe quedar
+encerrada en un panel de fondo ni vivir como banda flotante entre buscador y
+filas: debe renderizarse dentro del `ListHeaderComponent` de la lista, sin fondo,
+sombra, elevacion ni margen negativo; solo los chips individuales pueden tener
+Liquid Glass. En tema claro, la paleta nativa usa base neutral tipo Apple:
+fondo blanco, superficies gris muy claro, texto navy/negro de alta legibilidad,
+bordes grises suaves y tipografia del sistema tipo SF Pro, no familias custom
+como Avenir. La jerarquia de grosor debe ser corta:
+solo los titulos principales de pantalla o seccion (`Chats`, `Ajustes`, meses
+de calendario, `Analiticas`, `Elige como quieres pagar`) usan peso pesado;
+subtitulos/labels van en semibold y texto normal va delgado. No uses negrita
+pesada en previews, fechas, contadores secundarios ni copys de fila. Los
+filtros se calculan con los mismos campos que `/movil` recibe de
+`/api/contacts/chats`: `unreadCount`,
 `status`, `purchases`/`ltv`, `hasAppointments`/`nextAppointmentDate`,
 `lastMessageType`, `hasCommentMessage`, `lastMessageChannel`,
 `lastMessageTransport` y señales de origen. El preview debe respetar el texto del
 último mensaje, caer a labels de media (`Foto`, `Video`, `Audio`, `Documento`,
 `Ubicación`, `Comentario`) y prefijar mensajes salientes con `Tú:` en la
-superficie final. El avatar nativo debe mantener iniciales/foto en relleno
+superficie final. El badge y filtro de `No leídos` solo deben activarse para
+mensajes entrantes pendientes; si el ultimo mensaje es saliente, aunque el
+backend mande `unreadCount`, la UI nativa no debe mostrarlo como notificacion.
+El avatar nativo debe mantener iniciales/foto en relleno
 Ristak y reservar el color de red social para aro/badge, igual que
-`PhoneChat.module.css`.
+`PhoneChat.module.css`. El asistente personal AI se abre desde su fila fija en
+la bandeja; el header de chats no debe mostrar un icono/boton de robot duplicado.
 
-La lista de chats nativa tambien debe replicar los gestos principales de
-`PhoneChat`: deslizar una fila hacia la izquierda revela `Mas` y
-`Archivar`/`Restaurar`; mantener presionada una fila entra en seleccion
-multiple; durante seleccion se ocultan los chips de filtro, aparece un panel con
-conteo, `Seleccionar visibles`, cancelar y `Mas acciones`; y las acciones
-masivas minimas son marcar como leidos via `/contacts/chats/read` y
-archivar/restaurar la seleccion. Si `Mas` aun usa un menu nativo temporal en
-`mobile/`, el sheet completo de `/movil` debe quedar registrado como brecha en
-`docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
+La lista de chats nativa usa una interaccion simplificada respecto a `PhoneChat`:
+mantener presionada una fila abre `Mas acciones` con feedback haptico. La primera
+accion del sheet es `Seleccionar`, que activa seleccion multiple y debe quedarse
+activa al soltar/cerrar el sheet. Durante seleccion se ocultan los chips de filtro
+y el control compacto de seleccion reemplaza la fila de `Archivados`, debajo del
+asistente personal AI, con conteo, cancelar, `Seleccionar visibles` y `Mas
+acciones`; las acciones masivas minimas son marcar como leidos via
+`/contacts/chats/read` y archivar/restaurar la seleccion. El sheet completo debe
+mantener agendar cita, registrar pagos, programar mensaje, agregar etiqueta,
+silenciar/quitar silencio, controles del agente, marcar como leido y
+archivar/restaurar. No debe existir swipe lateral de fila para estas acciones.
 
 El cliente React Native debe usar bottom sheets nativos para acciones de bandeja,
 no `Alert.alert`, cuando el flujo existe como sheet en `/movil`: `Mas` de la
 fila, `+` de nuevo chat y selector de destinatarios despues de tomar foto o
-video. La camara nativa usa `expo-image-picker`, requiere
-`NSCameraUsageDescription` y `NSMicrophoneUsageDescription`, limita video a una
-duracion corta enviable, muestra preview y abre un sheet de destinatarios. Para
+video. En `Nuevo chat`, la lista de contactos no debe mostrar un boton/avion de
+enviar por fila: tocar cualquier punto de la fila abre o crea la conversacion
+directamente. La camara nativa usa `expo-image-picker`, requiere
+`NSCameraUsageDescription` y `NSMicrophoneUsageDescription`, permite tomar foto o
+video corto y abre una pantalla completa de envio: la previsualizacion real del
+contenido queda arriba en una tarjeta compacta con imagen/video completo sin
+recorte, y abajo queda la busqueda de contactos con checklist multi-seleccion.
+El composer inferior replica el chat: campo de caption opcional y flecha circular
+de envio a la derecha; no debe mostrarse un boton grande de "Selecciona
+destinatarios". Las listas de seleccion que salgan desde estos sheets/pantallas deben
+ocultar la barra desplazadora y pintar las filas seleccionadas a todo el ancho,
+sin recortes laterales. Para
 WhatsApp, `mobile/` convierte el archivo local a data URL con `expo-file-system`
 y envia por `/api/whatsapp-api/messages/image` o
-`/api/whatsapp-api/messages/video`; si el contacto no tiene telefono o se debe
+`/api/whatsapp-api/messages/video`; si algun contacto no tiene telefono o se debe
 enviar por otro canal, esa brecha debe quedar en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
 
 La pagina nativa de Pagos vive en `mobile/src/App.tsx` (`PaymentsSection`) y debe
 mantener paridad visual con `frontend/src/pages/PhonePayments/PhonePayments.tsx`:
 primer viewport sin header generico de usuario, titulo `Elige como quieres
-pagar`, opciones `Registrar pago unico`, `Planes de pago`, `Suscripcion` y
-`Precios Guardados`, panel desplegable de ultimos pagos con periodos `Hoy`, `7
-dias`, `30 dias`, `90 dias`, y vista de productos con crear/editar/eliminar. La
+pagar`, opciones segun licencia y pasarelas disponibles, seccion fija `Pagos`
+con chips horizontales `Hoy`, `7 dias`, `30 dias`, `90 dias` y `Personalizado`
+separado visualmente al final; el
+rango personalizado captura `startDate/endDate` en formato `YYYY-MM-DD` y filtra
+por `/api/transactions`. Tambien incluye vista de productos con crear/editar/eliminar. La
 app nativa lee `account_currency` via `/api/config`, zona horaria via
 `/api/settings/timezone`, transacciones via `/api/transactions` con
 `startDate/endDate` y productos via `/api/products`; cualquier importe visible
 debe formatearse con la moneda del registro o de la cuenta, no con una moneda
-hardcodeada. El formulario nativo actual cubre registro manual de pago unico y
-creacion basica de parcialidades/suscripciones contra los endpoints existentes;
-si se porta el flujo completo de links, tarjetas guardadas, MSI, impuestos o
-pasarelas de `RecordPaymentModal`, esa brecha debe cerrarse tambien en
-`mobile/` y registrarse en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
+hardcodeada. La app lee `/api/license/status` e `/api/integrations/status` para
+definir capacidades: plan `basic` solo muestra pago unico offline, y cualquier
+plan sin Stripe, Conekta, Mercado Pago, CLIP o Rebill conectado tambien queda en
+modo pago unico offline. `Planes de pago` y `Suscripcion` solo aparecen cuando
+la licencia permite `payment_plans`/`subscriptions` y existe al menos una
+pasarela conectada. Si Pagos se abre desde el boton de cobro del header de una
+conversacion y la cuenta esta en modo offline, salta directo al wizard de pago
+unico con ese contacto precargado. En cuentas con pagos avanzados, la pagina
+muestra el contacto asignado y `Registrar pago unico`, `Planes de pago` o
+`Suscripcion` saltan directo al wizard de cobro con ese contacto precargado. Al
+tocar `Registrar pago unico`, `Planes de pago` o `Suscripcion`
+desde Pagos sin contexto de chat,
+la app nativa debe abrir primero el mismo bottom-sheet de seleccion de contacto
+que Calendario usa para `Nueva cita`; despues de elegir contacto abre el wizard
+del cobro con ese contacto precargado. El wizard nativo cubre datos base,
+registro manual, link de pago con pasarela/MSI basico, parcialidades y
+suscripciones contra los endpoints existentes. En el wizard, los tres tipos de
+cobro deben permitir elegir entre `Precio personalizado` y `Producto guardado`;
+si se elige producto, el monto, moneda y `lineItems` salen del precio guardado
+pero el monto puede ajustarse antes de cobrar. El selector `Precio personalizado`
+/ `Producto guardado` debe ser un tab list; al elegir producto, la seleccion de
+producto y precio se hace con campos desplegables, no con una lista abierta.
+Cuando una suscripcion se crea por autorizacion/link de pasarela y el backend
+devuelve `subscriptionStartUrl`, `stripeCheckoutUrl`, `conektaCheckoutUrl`,
+`mercadoPagoInitPoint`, `mercadoPagoSandboxInitPoint`, `rebillPaymentLinkUrl` o
+`rebillCheckoutUrl`, el movil debe regresar al chat del contacto con el preview
+del link preparado en el composer. Cuando la suscripcion se activa con tarjeta
+guardada, debe regresar al chat con el marcador/notificacion de cobro completado
+cuando aplique, sin inventar un link.
+Para suscripciones por autorizacion, el movil debe enviar `paymentMethod`
+`stripe_link` en Stripe y `conekta_link` en Conekta; para tarjeta guardada debe
+enviar `stripe_saved_card`, `conekta_subscription` o `rebill_subscription` segun
+la tarjeta seleccionada.
+permanente. `Registrar pago unico` manual no debe preguntar estado: al registrar
+un pago recibido, el estado se manda siempre como `paid`/confirmado. Cuando
+`Registrar pago unico` crea un link de pago, la app nativa debe abrir la
+conversacion del contacto usando por default el ultimo canal disponible del
+contacto. El campo de texto debe quedar vacio para que el usuario escriba su
+mensaje libremente, pero encima del campo debe mostrar una tarjeta local de vista
+previa del link con titulo, monto, pasarela y dominio para que el usuario vea que
+esta enviando un cobro, no un URL pelon. Si el usuario no escribe texto, el envio
+usa la URL del link como texto minimo. El usuario revisa el texto y lo envia
+manualmente desde el chat; la app no debe auto-enviar links de cobro sin
+confirmacion humana. El boton final del wizard debe nombrar la accion real:
+`Registrar pago` para pagos offline recibidos, `Enviar enlace de pago` para
+links o domiciliacion, y `Cobrar tarjeta` para cobros directos con tarjeta
+guardada.
+Los planes de pago deben agrupar el primer pago en su propio bloque con monto,
+fecha y metodo; los pagos restantes solo capturan monto y fecha, porque la
+domiciliacion o tarjeta guardada define como se cobran los futuros cargos. La
+app nativa debe permitir link de domiciliacion por pasarela o cobro directo con
+tarjeta guardada cuando el contacto tenga una disponible. Toda fecha especifica
+del wizard movil debe abrir el calendario nativo compartido y mostrar una fecha
+legible, no un campo crudo `YYYY-MM-DD`. Las suscripciones deben pedir inicio,
+pasarela, frecuencia y cada cuantos periodos, usando el mismo monto/producto
+seleccionado. Si se porta el flujo completo de
+tarjetas guardadas, impuestos, validaciones avanzadas de MSI o todos los caminos
+de `RecordPaymentModal`, esa brecha debe cerrarse tambien en `mobile/` y
+registrarse en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
 
 La conversacion nativa en `mobile/src/App.tsx` debe cargar el mismo journey
 recortado que `/movil` (`/contacts/:id/journey` con `chatMessagesOnly` y
 `messageLimit`), agrupar mensajes por dia usando la zona horaria del negocio,
 mostrar avatar/badge de canal en el header y exponer acciones equivalentes por
-bottom sheet: adjuntos/camara, agendar cita, registrar pagos, programar mensaje,
-agregar etiqueta, silenciar, archivar/restaurar y controles de agente. El
-composer nativo manda texto por `/whatsapp-api/messages/text` y fotos por
-`/whatsapp-api/messages/image`; cualquier canal pendiente (QR, HighLevel,
-Messenger, Instagram, email/SMS, audio/video/documentos completos) debe quedar
-marcado como brecha en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md` hasta que use el
-mismo contrato que `/movil`.
+bottom sheet: adjuntos/camara, ubicacion, agendar cita, registrar pagos,
+programar mensaje, agregar etiqueta, silenciar, archivar/restaurar y controles
+de agente. El composer nativo manda texto por `/whatsapp-api/messages/text`,
+fotos por `/whatsapp-api/messages/image`, videos por
+`/whatsapp-api/messages/video`, documentos por
+`/whatsapp-api/messages/document`, notas de voz por
+`/whatsapp-api/messages/audio` y ubicacion por
+`/whatsapp-api/messages/location`. Las previews nativas deben diferenciar cada
+tipo como `/movil`: fotos con proporcion real y `contain` sin marco fijo,
+video reproducible, waveform de nota de voz con avatar/microfono/progreso,
+tarjeta abrible para documento y mini-mapa con tiles de OpenStreetMap para
+ubicaciones. El auto-scroll de la conversacion solo debe llevar al ultimo
+mensaje durante la carga inicial o cuando el usuario ya esta abajo; si el
+usuario esta arrastrando o navegando el historial, ningun recalculo de contenido
+debe devolverlo forzosamente al ultimo mensaje.
+ubicacion. Los globos de texto deben interpretar el formato estilo WhatsApp
+(`*negrita*`, `_italica_`, `~tachado~` y monospace con backticks) sin romper URLs
+ni identificadores con guion bajo. Cualquier canal pendiente
+(QR, HighLevel, Messenger, Instagram, email/SMS) debe quedar marcado como brecha
+en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md` hasta que use el mismo contrato que
+`/movil`.
+
+El sheet nativo de `Programar mensaje` debe mantener paridad con `/movil`: no
+programa automaticamente a una hora fija, sino que pide texto, fecha,
+hora, minuto y AM/PM. La fecha/hora se interpreta en la zona horaria del negocio,
+se valida como futura y se envia al backend como `scheduledAt` UTC usando el
+endpoint `/whatsapp-api/messages/scheduled`. La fecha se elige desde un mini
+calendario modal dentro del sheet; en la conversacion, los mensajes programados
+se pintan con borde punteado, reloj, countdown lateral y meta `Programado para`,
+no como mensajes enviados normales con palomitas. Al tocar o mantener presionado
+un globo programado, las acciones deben permitir editar la programacion o
+eliminarla antes del envio. El calendario no debe permitir seleccionar dias ya
+vencidos y debe cerrar al elegir fecha para evitar capas/gestos trabados en iOS.
+En nativo, WhatsApp programado debe mandar `provider='whatsapp_api'` y
+`transport='api'`; SMS programado debe mandar `provider='highlevel'` y
+`channel='sms_qr'`. Messenger, Instagram y correo no tienen programacion movil
+activa todavia: la UI debe avisar que se pueden enviar al momento, pero no
+programar.
+
+Los globos de la conversacion nativa pueden deslizarse a la derecha para activar
+`Responder` cuando son entrantes y a la izquierda cuando son salientes. En
+entrantes, el cue de respuesta aparece a la izquierda del globo y apunta hacia la
+izquierda; en salientes, aparece a la derecha y apunta hacia la derecha. El cue
+usa el icono visual de reenviar/forward dentro de una capsula suave y solo
+aparece durante el gesto, desde que el dedo empieza a arrastrar, no despues de
+soltar. El composer muestra la barra `Respondiendo a...` y el envio de texto
+manda `replyToMessageId`/`replyToProviderMessageId` al backend para que
+WhatsApp/Messenger/Instagram conserven la referencia real. No prometas respuesta
+contextual para adjuntos, ubicacion, notas de voz o SMS si el proveedor no lo
+soporta; en esos casos el usuario debe cancelar la respuesta activa antes de
+enviar ese tipo de contenido.
+
+Al dejar presionado un globo, la conversacion nativa debe disparar haptic y abrir
+acciones estilo WhatsApp: el fondo se atenúa/vidria, el globo seleccionado se
+presenta centrado para dejar espacio, las reacciones quedan en una tira separada
+y las acciones aparecen como dropdown debajo del globo. La entrada debe sentirse
+inmediata: el conjunto sube desde abajo hacia el centro y las reacciones hacen
+un bombeo corto. El globo enfocado debe contener todo su contenido, incluidos
+adjuntos, notas de voz, ubicacion, meta y reacciones, sin desbordar por los
+lados. No uses bottom sheet para acciones de mensaje.
+
+Los globos nativos deben conservar el estilo de la app original y responder al
+modo claro/oscuro: inbound/outbound, programados, fallidos, audio, ubicacion y
+adjuntos deben tener fondo, texto, meta y controles legibles para el tema
+activo, con sombra mínima, radios compactos, meta alineada con chip
+`API`/`QR`/`IG`/`FB`, hora y palomitas. Las notas de voz
+deben verse dentro de burbujas compactas y legibles en claro y oscuro, con play
+plano gris relleno sin círculo, waveform gris sin contorno azul, punto de
+progreso con acento funcional, textos de duración/hora del mismo tamaño que la meta de
+mensajes, composición de dos filas como la web original, avatar en el lado que
+corresponda segun direccion y micrófono solido pequeño superpuesto, sin badge
+circular, usando el mismo SVG/path para el contorno y el relleno: primero stroke
+del color del globo y encima fill gris, como la web original; nunca recortes la
+foto del avatar. Si el audio trae origen `API`, `QR`, `IG` o `FB`,
+la etiqueta debe mostrarse junto a la hora, alineada al extremo derecho del
+globo, mientras la duracion queda debajo del inicio de la waveform. Tocar el
+avatar de la nota de voz alterna velocidad `1x`/`2x`/`4x` y muestra el badge de
+velocidad sobre el avatar; en movil el motor nativo puede capar la velocidad
+real al maximo soportado por la plataforma.
+Las razones tecnicas de ruteo como `Capturado desde la sesión de WhatsApp Web.`
+o `Capturado desde la sesión API.` no deben renderizarse como texto ni como nota
+del globo, porque el canal visible ya vive en el chip `API`/`QR` junto a la
+hora.
+
+Los mensajes de ubicacion en la conversacion nativa deben renderizarse como un
+embebido de mapa dentro del globo, contenido al ancho del bubble, con un badge
+compacto `📍 Ubicación` que marque claramente el tipo de mensaje y sin paneles de
+texto, subtitulos o botones adicionales. El mapa debe responder al tema
+claro/oscuro y nunca salirse del borde del globo.
+
+Las notas de voz grabadas desde el composer nativo no deben caer como archivo
+generico en la bandeja de adjuntos. Mientras se graba, el composer debe mostrar
+una barra compacta al mismo nivel del panel inferior: papelera sin fondo,
+waveform dentro del campo, contador, pausar/reanudar y enviar. La waveform de
+grabacion debe sentirse como entrada suave y lenta de derecha a izquierda, con
+barras finas y sin saltos tipo frame por frame. El boton de enviar del composer
+de texto y de voz usa la misma flecha simple hacia la derecha; no debe cambiar a
+avion de papel en uno y flecha en otro. Al detener la grabacion, el preview conserva
+el mismo alto compacto con waveform, contador, papelera, reproducir/pausar y
+enviar; el audio se envia como payload compatible de WhatsApp (`audio/mp4`) y
+las burbujas de audio deben poder reproducirse con progreso suave tanto en
+claro como en oscuro. Cuando el teclado esta abierto, el composer debe sentirse
+pegado al teclado como una sola superficie inferior: mismo tono base del teclado,
+sin borde rectangular superior y con esquinas superiores redondeadas tipo sheet,
+no como una franja externa que empuja visualmente el chat.
 
 En la conversación móvil no uses rails/barras verticales pegadas al lado
 izquierdo como indicador visual de foco, comentario o chat no leído. Los estados
@@ -595,9 +1018,21 @@ con `context.message_id`, WhatsApp QR/Baileys con `quoted`,
 Messenger/Instagram con `reply_to.mid`. La UI debe mostrar el quote dentro del
 globo enviado y debe bloquear respuestas con media/ubicacion hasta que esos
 canales tengan soporte nativo completo. Las reacciones se muestran como chips
-pegados al globo original: WhatsApp acepta emoji, Meta solo debe
-ofrecer/aceptar corazon (`love`) por contrato, y HighLevel/email/comentarios
-deben avisar que no hay reaccion nativa en vez de crear un mensaje falso.
+pegados al globo original: WhatsApp API/YCloud y WhatsApp QR/Baileys aceptan
+emoji, Meta Messenger/Instagram solo debe ofrecer/aceptar corazon (`love`) por
+contrato, y HighLevel/email/comentarios deben avisar que no hay reaccion nativa
+en vez de crear un mensaje falso. El cliente nativo debe mandar reacciones Meta
+a `/whatsapp-api/meta/social/messages/reaction`, no al endpoint de WhatsApp.
+Al abrir o marcar como leido un chat, el cliente nativo debe usar
+`/contacts/chats/:id/read`; el backend actualiza el unread local y, segun el
+ultimo inbound pendiente, encola en background el visto real del proveedor:
+YCloud `markAsRead`, QR/Baileys `readMessages` y Meta Messenger/Instagram
+`sender_action='mark_seen'`. Correo queda fuera porque no es chat. Si el
+proveedor se tarda o falla, la UI local no debe esperarlo ni trabarse; el backend
+debe registrar el fallo. El switch Ajustes nativos > Privacidad y Configuracion
+> Privacidad >
+`chat_send_read_receipts_enabled` permite apagar solo el acuse externo: el chat
+se limpia como leido dentro de Ristak, pero no se manda visto al proveedor.
 
 El feedback haptico de interaccion movil vive en `mobileAppService`. Al dejar
 pulsado un chat, `/movil` debe disparar haptic cuando entra a seleccion; al
@@ -711,13 +1146,17 @@ Hay **dos** íconos de WhatsApp distintos, con estilos separados. No los confund
 - Tamaño: `.composerChannelButton .channelIconGlyph` en `PhoneChat.module.css` (20px).
 - ⚠️ **NO** le pongas `stroke-width` en `.composerChannelButton svg`: engrosa el contorno del glifo relleno y se ve "ancho/pixelado" (ver `docs/DESIGN_SYSTEM.md` §5 #12).
 
-**2. Icono de WhatsApp de los avatares** (badge en la esquina inferior del avatar, en la lista de chats y en el header).
+**2. Icono de WhatsApp de los avatares** (asset optimizado en la esquina inferior del avatar, en la lista de chats y en el header).
 
 - Componente: `PhoneMessageChannelIcon` (`frontend/src/components/phone/PhoneMessageChannelIcon.tsx`).
-- Se usa en `renderChannelBadgeIcon` dentro de `PhoneChat.tsx`; el badge recibe
+- Se usa en `renderChannelBadgeIcon` dentro de `PhoneChat.tsx`; el icono recibe
   `avatarChannelBadgeWhatsapp`.
 - El relleno del avatar no debe ser verde. El verde vive sólo en el aro social
-  (`avatarWhatsapp` -> `--avatar-ring-color`) y en el badge de canal.
+  (`avatarWhatsapp` -> `--avatar-ring-color`) y en el badge compacto de canal.
+- En la app nativa, el badge de avatar debe usar
+  `mobile/assets/channel-badges/whatsapp.webp`, recortado por transparencia y
+  reducido para pesar unos pocos KB. No uses un glifo transparente/outline
+  directo sobre el avatar: se pierde en avatares claros, fotos y fondos cian.
 
 Perillas (todas con sus valores actuales):
 
@@ -730,10 +1169,12 @@ Perillas (todas con sus valores actuales):
 
 Reglas al tocarlo:
 
-- El tamaño necesita selectores más específicos por dispositivo/header porque
-  `.avatarChannelBadge svg` define el tamaño base.
-- El badge de WhatsApp conserva color de canal; el relleno del avatar conserva
-  identidad Ristak.
+- En `mobile/src/App.tsx`, `ChannelAvatarBadgeIcon` es el renderer de assets para
+  avatares. `ChannelBadgeIcon` queda para composer/sheets, donde conviene seguir
+  usando iconografía vectorial simple.
+- El badge de WhatsApp conserva el logo de canal; el relleno del avatar conserva
+  identidad Ristak. El badge no debe tener sombra pesada ni cambiar el color del
+  avatar completo.
 - Verifícalo corriendo la app en la **lista de chats** (no solo el header: el header
   no tiene las reglas por dispositivo, así que puede engañar). Si la lista local está
   vacía, revisa al menos el header + los tamaños computados.
