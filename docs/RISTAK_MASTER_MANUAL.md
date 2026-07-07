@@ -161,7 +161,9 @@ Rutas publicas:
   y contexto de inicio de sesion. Los estados de carga inicial del CRM en
   escritorio y movil usan `AppStartupLoader`/`PhoneStartupLoader` sin logo ni
   nombre visible: solo un indicador minimo y accesible sobre el fondo del tema.
-  La app nativa en `mobile/` usa el mismo criterio en `BootScreen`.
+  La app nativa en `mobile/` es la excepcion: `BootScreen` y el login nativo
+  muestran el logo oficial transparente de modo noche, y `mobile/app.json` usa
+  los iconos oficiales light/dark para el launcher iOS/Android.
 - `/license-blocked`.
 - `/pay/success` y `/pay/:publicPaymentId`.
 - Las superficies publicas de cliente no aplican el selector global de vista

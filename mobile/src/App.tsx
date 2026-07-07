@@ -25,7 +25,7 @@ import {
   Vibration,
   useWindowDimensions,
 } from 'react-native';
-import type { GestureResponderEvent, ImageStyle, LayoutChangeEvent } from 'react-native';
+import type { GestureResponderEvent, ImageSourcePropType, ImageStyle, LayoutChangeEvent } from 'react-native';
 import * as SystemUI from 'expo-system-ui';
 import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
@@ -214,6 +214,8 @@ const COLORS = {
   meta: '#bddcff',
   white: '#ffffff',
 };
+
+const RISTAK_NIGHT_MODE_LOGO: ImageSourcePropType = require('../assets/ristak-night-mode-sin-fondo.webp');
 
 type SessionState = {
   baseUrl: string;
@@ -975,6 +977,12 @@ function BootScreen() {
   return (
     <AppFrame>
       <View style={styles.centerScreen}>
+        <Image
+          source={RISTAK_NIGHT_MODE_LOGO}
+          style={styles.bootLogo}
+          resizeMode="contain"
+          accessibilityLabel="Ristak"
+        />
         <ActivityIndicator color={COLORS.accent} accessibilityLabel="Cargando" />
       </View>
     </AppFrame>
@@ -1013,9 +1021,12 @@ function LoginScreen({
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.authWrap}>
         <ScrollView contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
           <View style={styles.authPanel}>
-            <View style={styles.logoMark}>
-              <Text style={styles.logoText}>R</Text>
-            </View>
+            <Image
+              source={RISTAK_NIGHT_MODE_LOGO}
+              style={styles.authLogo}
+              resizeMode="contain"
+              accessibilityLabel="Ristak"
+            />
             <Text style={styles.kicker}>Ristak</Text>
             <Text style={styles.title}>Iniciar sesion</Text>
             <Text style={styles.bodyText}>
@@ -14652,18 +14663,14 @@ const styles = StyleSheet.create({
     gap: 16,
     padding: 24,
   },
-  logoMark: {
-    width: 64,
-    height: 64,
-    borderRadius: 20,
-    backgroundColor: COLORS.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+  bootLogo: {
+    width: 132,
+    height: 132,
   },
-  logoText: {
-    color: COLORS.white,
-    fontSize: 30,
-    fontWeight: '900',
+  authLogo: {
+    width: 82,
+    height: 82,
+    alignSelf: 'flex-start',
   },
   authWrap: {
     flex: 1,

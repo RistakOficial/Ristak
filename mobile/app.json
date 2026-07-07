@@ -6,7 +6,7 @@
     "description": "Native React Native mobile client for Ristak chat.",
     "scheme": "ristak-native",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/ristak-light-mode-icon.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#07111f",
     "primaryColor": "#3278ff",
@@ -16,6 +16,10 @@
     ],
     "ios": {
       "bundleIdentifier": "com.ristak.native",
+      "icon": {
+        "light": "./assets/ristak-light-mode-icon.png",
+        "dark": "./assets/ristak-night-mode-icon.png"
+      },
       "supportsTablet": true,
       "entitlements": {
         "aps-environment": "$(APS_ENVIRONMENT)",
@@ -30,15 +34,15 @@
     },
     "android": {
       "package": "com.ristak.native",
+      "icon": "./assets/ristak-light-mode-icon.png",
       "permissions": [
         "CAMERA",
         "RECORD_AUDIO"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#07111f",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "backgroundColor": "#050505",
+        "foregroundImage": "./assets/ristak-night-mode-icon.png",
+        "monochromeImage": "./assets/ristak-monochrome-icon.png"
       },
       "predictiveBackGestureEnabled": false
     },

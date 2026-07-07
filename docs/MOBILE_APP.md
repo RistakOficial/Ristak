@@ -253,6 +253,13 @@ inicio":
   muestran logo ni nombre visible.
 - Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
   `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
+- App nativa Expo (`mobile/`): `mobile/assets/ristak-light-mode-icon.png`,
+  `mobile/assets/ristak-night-mode-icon.png` y
+  `mobile/assets/ristak-monochrome-icon.png` alimentan `mobile/app.json` para
+  iOS/Android. La pantalla `BootScreen` y el login nativo usan los WebP
+  transparentes `mobile/assets/ristak-*-mode-sin-fondo.webp`, generados desde
+  los logos oficiales de modo claro/noche. En `mobile/` si debe verse marca al
+  cargar; en `/movil` la carga web sigue sin logo ni nombre visible.
 
 Las push de mensajes, citas y pagos deben mostrar identidad de contacto cuando
 el payload pertenece a exactamente un contacto. Si existe una foto publica, esa
