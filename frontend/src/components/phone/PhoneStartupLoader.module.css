@@ -7,7 +7,7 @@
   inset: 0;
   z-index: 1;
   display: grid;
-  grid-template-rows: 1fr auto;
+  place-items: center;
   width: 100vw;
   min-height: 100dvh;
   padding: calc(var(--phone-safe-area-top) + 24px) 24px calc(var(--phone-safe-area-bottom) + 24px);
@@ -15,28 +15,40 @@
   background: var(--phone-loader-bg);
 }
 
-.brandStage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.loadingIndicator {
+  display: grid;
+  place-items: center;
   min-width: 0;
-}
-
-.brandMark {
-  --ristak-app-mark-size: clamp(106px, 28vw, 142px);
-}
-
-.brandName {
-  margin: 0;
   color: var(--phone-loader-accent);
-  font-size: 1.05rem;
-  font-weight: 650;
-  letter-spacing: 0;
-  line-height: 1;
-  text-align: center;
 }
 
-:global(body.dark) .brandName,
-:global(body[data-phone-chat-tone='dark']) .brandName {
-  color: var(--phone-loader-text);
+.spinner {
+  width: 28px;
+  height: 28px;
+  animation: spin 0.9s linear infinite;
+}
+
+.accessibleMessage {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  white-space: nowrap;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
 }

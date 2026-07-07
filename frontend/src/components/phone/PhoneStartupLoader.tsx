@@ -1,5 +1,5 @@
 import React from 'react'
-import { RistakAppMark } from '@/components/common/RistakAppMark'
+import { Loader2 } from 'lucide-react'
 import styles from './PhoneStartupLoader.module.css'
 
 interface PhoneStartupLoaderProps {
@@ -7,12 +7,16 @@ interface PhoneStartupLoaderProps {
 }
 
 export const PhoneStartupLoader: React.FC<PhoneStartupLoaderProps> = ({
-  message = 'Abriendo Ristak'
-}) => (
-  <main className={styles.loader} role="status" aria-live="polite" aria-label={message}>
-    <div className={styles.brandStage}>
-      <RistakAppMark size="xl" className={styles.brandMark} decorative />
-    </div>
-    <p className={styles.brandName}>Ristak</p>
-  </main>
-)
+  message = 'Cargando'
+}) => {
+  const ariaMessage = message.trim() || 'Cargando'
+
+  return (
+    <main className={styles.loader} role="status" aria-live="polite" aria-label={ariaMessage}>
+      <div className={styles.loadingIndicator} aria-hidden="true">
+        <Loader2 className={styles.spinner} aria-hidden="true" focusable="false" />
+      </div>
+      <span className={styles.accessibleMessage}>{ariaMessage}</span>
+    </main>
+  )
+}

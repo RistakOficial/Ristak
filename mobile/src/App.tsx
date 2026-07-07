@@ -975,11 +975,7 @@ function BootScreen() {
   return (
     <AppFrame>
       <View style={styles.centerScreen}>
-        <View style={styles.logoMark}>
-          <Text style={styles.logoText}>R</Text>
-        </View>
-        <Text style={styles.title}>Ristak</Text>
-        <ActivityIndicator color={COLORS.accent} />
+        <ActivityIndicator color={COLORS.accent} accessibilityLabel="Cargando" />
       </View>
     </AppFrame>
   );

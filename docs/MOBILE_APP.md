@@ -249,7 +249,8 @@ inicio":
 - Web/PWA general: `frontend/public/ristak-icon-192.png`,
   `frontend/public/ristak-icon-512.png`, `frontend/public/apple-touch-icon.png`
   y las variantes transparentes `frontend/public/ristak-app-mark-*.webp` usadas
-  por login y pantallas de carga.
+  por login y superficies de marca explicitas. Las pantallas de carga inicial no
+  muestran logo ni nombre visible.
 - Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
   `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
 
