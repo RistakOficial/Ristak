@@ -16,6 +16,7 @@ export type AgentReplyDeliveryMode = 'single' | 'split'
 export type AgentFollowUpUnit = 'minutes' | 'hours'
 
 export const CONVERSATIONAL_AGENT_ENTRY_CONFLICT_CODE = 'CONVERSATIONAL_AGENT_ENTRY_CONFLICT'
+export const CONVERSATIONAL_AGENT_LIMIT_REACHED_CODE = 'CONVERSATIONAL_AGENT_LIMIT_REACHED'
 
 export interface ConversationalAIProviderStatus {
   id: ConversationalAIProviderId
@@ -52,6 +53,7 @@ export interface ConversationalAgentEntryConflict {
 export class ConversationalAgentRequestError extends Error {
   code?: string
   conflicts?: ConversationalAgentEntryConflict[]
+  limit?: { maxAgents?: number | null; currentTotal?: number | null }
   businessPromptStatus?: ConversationalBusinessPromptStatus
 
   constructor(message: string, payload: Record<string, any> | null = null) {
@@ -59,6 +61,7 @@ export class ConversationalAgentRequestError extends Error {
     this.name = 'ConversationalAgentRequestError'
     this.code = payload?.code
     this.conflicts = Array.isArray(payload?.conflicts) ? payload.conflicts : undefined
+    this.limit = payload?.limit && typeof payload.limit === 'object' ? payload.limit : undefined
     this.businessPromptStatus = payload?.businessPromptStatus
   }
 }

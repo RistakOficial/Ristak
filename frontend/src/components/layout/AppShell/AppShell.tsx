@@ -10,7 +10,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { InitializationProvider } from '@/contexts/InitializationContext'
 import { useAIAgentAvailability, useAppConfig, useDomainFeatureSync, useRouteDataLoadGate } from '@/hooks'
 import { requestAIAgentClose } from '@/utils/aiAgentEvents'
-import { hasModuleAccess } from '@/utils/accessControl'
+import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
 import { apiUrl } from '@/services/apiBaseUrl'
 import { HIGHLEVEL_SYNC_STARTED_EVENT } from '@/services/highLevelService'
 import styles from './AppShell.module.css'
@@ -84,7 +84,7 @@ export const AppShell: React.FC = () => {
   const [sitesEditorActive, setSitesEditorActive] = useState(false)
   const aiAgentAvailability = useAIAgentAvailability()
   const routeDataLoadGate = useRouteDataLoadGate(`${location.pathname}${location.search}`)
-  const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read') && aiAgentAvailability.configured
+  const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read') && hasLicenseFeature(user, ['app_assistant_ai', 'ai']) && aiAgentAvailability.configured
   const aiAgentRouteSuppressed = isAIAgentSuppressedRoute(location.pathname)
   const shouldShowAIAgent = canUseAIAgent && !sitesEditorActive && !aiAgentRouteSuppressed
   const resizePointerIdRef = useRef<number | null>(null)

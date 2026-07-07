@@ -48,6 +48,12 @@ const DEFAULT_FEATURES = {
 
 const DEFAULT_EXTERNAL_MODULES = {}
 
+const DEFAULT_LIMITS = {
+  conversational_agents: {
+    max_agents: null
+  }
+}
+
 // (LIC-003) Features de pago que el backend candaduea con requireFeature(...). Si el
 // portal responde enforced 'allowed' pero SIN un objeto features válido, NO se abren
 // éstas (fail-closed): la base del CRM sigue, el premium queda apagado hasta que el
@@ -343,6 +349,7 @@ function allowedWithoutEnforcement() {
     enforced: false,
     plan: null,
     features: { ...DEFAULT_FEATURES },
+    limits: normalizeLicenseLimits(DEFAULT_LIMITS),
     externalModules: { ...DEFAULT_EXTERNAL_MODULES },
     expiresAt: null
   }
@@ -365,6 +372,28 @@ function normalizeExternalModules(externalModules = {}) {
   }
 
   return normalized
+}
+
+function normalizePositiveIntegerLimit(value) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) return null
+  return Math.floor(number)
+}
+
+function normalizeLicenseLimits(limits = {}) {
+  const source = limits && typeof limits === 'object' ? limits : {}
+  const conversationalAgents = source.conversational_agents || source.conversationalAgents || {}
+
+  return {
+    ...DEFAULT_LIMITS,
+    conversational_agents: {
+      ...DEFAULT_LIMITS.conversational_agents,
+      max_agents: normalizePositiveIntegerLimit(
+        conversationalAgents.max_agents ?? conversationalAgents.maxAgents
+      )
+    }
+  }
 }
 
 function normalizeLicenseFeatures(features = {}) {
@@ -398,7 +427,7 @@ function normalizeLicenseFeatures(features = {}) {
     }
   }
 
-  normalized.ai = normalized.ai_agent === true
+  normalized.ai = normalized.app_assistant_ai === true && normalized.conversational_ai === true
 
   return normalized
 }
@@ -478,6 +507,7 @@ export async function verifyLicenseWithServer(email) {
       enforced: true,
       plan: data.plan || null,
       features: hasValidFeatures ? normalizeLicenseFeatures(data.features) : closedRemoteFeatures(),
+      limits: normalizeLicenseLimits(data.limits),
       externalModules: normalizeExternalModules(data.external_modules),
       licenseToken: data.license_token || null,
       expiresAt: data.expires_at || null,
@@ -562,6 +592,12 @@ export async function getLicenseState({ email = null, forceRefresh = false } = {
   }
 
   return verifyLicenseWithServer(email)
+}
+
+export async function getConversationalAgentMaxAgents() {
+  if (!isLicenseEnforced()) return null
+  const state = await getLicenseState()
+  return normalizePositiveIntegerLimit(state?.limits?.conversational_agents?.max_agents)
 }
 
 /**

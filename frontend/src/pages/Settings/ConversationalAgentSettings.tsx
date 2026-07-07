@@ -21,6 +21,7 @@ import {
   getKnownConversationalModel,
   type ConversationalAIProviderId
 } from '@/constants/conversationalAIProviders'
+import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability, useAppConfig } from '@/hooks'
 import {
@@ -457,6 +458,13 @@ function formatMetricInteger(value: unknown) {
 function formatMetricPercent(value: unknown) {
   const percent = Math.max(0, Math.min(100, Math.round(toMetricNumber(value))))
   return `${percent}%`
+}
+
+function normalizePositivePlanLimit(value: unknown) {
+  if (value === null || value === undefined || value === '') return null
+  const number = Number(value)
+  if (!Number.isFinite(number) || number <= 0) return null
+  return Math.floor(number)
 }
 
 function getConversationalDashboardMetrics(
@@ -3399,6 +3407,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const navigate = useNavigate()
   const { agentId: routeAgentIdParam } = useParams<{ agentId?: string }>()
   const routeAgentId = routeAgentIdParam ? decodeURIComponent(routeAgentIdParam) : ''
+  const { user } = useAuth()
   const { showToast, showConfirm } = useNotification()
   const openAIAvailability = useAIAgentAvailability()
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
@@ -3577,6 +3586,29 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const businessPromptStatus = config?.businessPromptStatus || null
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
   const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)
+  const conversationalAgentMaxAgents = normalizePositivePlanLimit(
+    user?.licenseLimits?.conversational_agents?.max_agents ??
+    user?.licenseLimits?.conversational_agents?.maxAgents
+  )
+  const conversationalAgentLimitReached = conversationalAgentMaxAgents !== null && agents.length >= conversationalAgentMaxAgents
+  const conversationalAgentLimitText = conversationalAgentMaxAgents === null
+    ? 'Agentes sin límite del plan'
+    : `${formatMetricInteger(agents.length)}/${formatMetricInteger(conversationalAgentMaxAgents)} agentes del plan`
+  const conversationalAgentLimitMessage = conversationalAgentMaxAgents === null
+    ? ''
+    : `Tu plan actual permite máximo ${conversationalAgentMaxAgents} agente conversacional${conversationalAgentMaxAgents === 1 ? '' : 'es'}. Elimina uno existente o actualiza tu plan para crear otro.`
+
+  const canStartAgentCreation = () => {
+    if (!businessPromptReady) {
+      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
+      return false
+    }
+    if (conversationalAgentLimitReached) {
+      showToast('warning', 'Límite del plan alcanzado', conversationalAgentLimitMessage)
+      return false
+    }
+    return true
+  }
 
   const handleAgentChange = (agentId: string, patch: ConversationalAgentDefInput) => {
     if (patch.enabled === true && !businessPromptReady) {
@@ -3673,6 +3705,10 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
 
   // Núcleo de creación reutilizable: lo usan el wizard guiado y el atajo "a mano".
   const runCreateAgent = async (overrides: ConversationalAgentDefInput = {}) => {
+    if (conversationalAgentLimitReached) {
+      showToast('warning', 'Límite del plan alcanzado', conversationalAgentLimitMessage)
+      return null
+    }
     setCreating(true)
     const defaultProvider = getKnownConversationalAIProvider(config?.aiProvider)
     const draftInput: ConversationalAgentDefInput = {
@@ -3710,19 +3746,13 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   }
 
   const openCreateWizard = () => {
-    if (!businessPromptReady) {
-      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
-      return
-    }
+    if (!canStartAgentCreation()) return
     setWizardOpen(true)
   }
 
   // Atajo: crea un agente (casi en blanco) y salta directo al editor (sin wizard).
   const handleCreateAgent = async (overrides: ConversationalAgentDefInput = {}) => {
-    if (!businessPromptReady) {
-      showToast('warning', 'Prompt interno pendiente', promptBlockerText)
-      return
-    }
+    if (!canStartAgentCreation()) return
     await runCreateAgent(overrides)
   }
 
@@ -3742,6 +3772,10 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const handleCreatePausedConflictDraft = async () => {
     const draftInput = activationConflict?.pausedDraftInput
     if (!draftInput) return
+    if (conversationalAgentLimitReached) {
+      showToast('warning', 'Límite del plan alcanzado', conversationalAgentLimitMessage)
+      return
+    }
     setCreating(true)
     try {
       const agent = await conversationalAgentService.createAgent({ ...draftInput, enabled: false })
@@ -4053,12 +4087,15 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             <Button
               onClick={openCreateWizard}
               loading={creating}
-              disabled={loading || creating || !businessPromptReady}
-              title={!businessPromptReady ? promptBlockerText : undefined}
+              disabled={loading || creating || !businessPromptReady || conversationalAgentLimitReached}
+              title={conversationalAgentLimitReached ? conversationalAgentLimitMessage : (!businessPromptReady ? promptBlockerText : undefined)}
             >
               <Plus size={16} />
               Nuevo agente
             </Button>
+            <Badge variant={conversationalAgentLimitReached ? 'warning' : 'neutral'}>
+              {conversationalAgentLimitText}
+            </Badge>
           </>
         )}
       />
@@ -4129,7 +4166,12 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           </div>
           <h3>Aún no tienes agentes</h3>
           <p>Crea uno y configura qué chats debe tomar, cómo debe responder y cuándo debe pedir ayuda.</p>
-          <Button onClick={openCreateWizard} loading={creating} disabled={creating}>
+          <Button
+            onClick={openCreateWizard}
+            loading={creating}
+            disabled={creating || conversationalAgentLimitReached}
+            title={conversationalAgentLimitReached ? conversationalAgentLimitMessage : undefined}
+          >
             <Plus size={16} />
             Nuevo agente
           </Button>

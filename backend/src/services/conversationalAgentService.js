@@ -13,6 +13,7 @@ import {
   getDefaultConversationalModelForProvider,
   normalizeConversationalAIProvider
 } from './conversationalAIProviderService.js'
+import { getConversationalAgentMaxAgents } from './licenseService.js'
 
 /**
  * Servicio del agente conversacional: configuración global, estado por
@@ -88,6 +89,7 @@ const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const COMPLETION_SUMMARY_MODEL = CHEAPEST_OPENAI_MODEL
 export const CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY = 'conversational_agent_manual_disabled_at'
 export const CONVERSATIONAL_AGENT_ENTRY_CONFLICT_CODE = 'CONVERSATIONAL_AGENT_ENTRY_CONFLICT'
+export const CONVERSATIONAL_AGENT_LIMIT_REACHED_CODE = 'CONVERSATIONAL_AGENT_LIMIT_REACHED'
 const RESPONSE_DELAY_MODES = new Set(['none', 'fixed', 'random'])
 const RESPONSE_DELAY_UNITS = new Set(['seconds', 'minutes'])
 const MAX_RESPONSE_DELAY_SECONDS = 60 * 60
@@ -2779,8 +2781,27 @@ async function assertConversationalAgentEntryDoesNotConflict(candidateAgent, { e
   throw error
 }
 
+async function assertConversationalAgentPlanLimitAllowsCreate() {
+  const maxAgents = await getConversationalAgentMaxAgents()
+  if (maxAgents === null) return
+
+  const existing = await db.get('SELECT COUNT(*) AS total FROM conversational_agents')
+  const currentTotal = Number(existing?.total || 0)
+  if (currentTotal < maxAgents) return
+
+  const error = new Error(`Tu plan actual permite máximo ${maxAgents} agente conversacional${maxAgents === 1 ? '' : 'es'}. Elimina uno existente o actualiza tu plan para crear otro.`)
+  error.statusCode = 403
+  error.code = CONVERSATIONAL_AGENT_LIMIT_REACHED_CODE
+  error.limit = {
+    maxAgents,
+    currentTotal
+  }
+  throw error
+}
+
 export async function createConversationalAgent(input = {}) {
   await ensureAgentsMigration()
+  await assertConversationalAgentPlanLimitAllowsCreate()
   const maxPosition = await db.get('SELECT COALESCE(MAX(position), -1) AS max_pos FROM conversational_agents')
   const next = agentInputToRowValues(input, { ...DEFAULT_AGENT_BASE, position: Number(maxPosition?.max_pos ?? -1) + 1 })
   const id = `cagent_${randomUUID()}`

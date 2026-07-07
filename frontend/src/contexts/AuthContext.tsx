@@ -5,6 +5,13 @@ import { getIntegrationsStatus } from '@/services/integrationsService'
 import type { AccountLocaleDefaults } from '@/utils/accountLocale'
 import type { AccessConfig, LicenseFeatures, UserRole } from '@/utils/accessControl'
 
+export type LicenseLimits = {
+  conversational_agents?: {
+    max_agents?: number | null
+    maxAgents?: number | null
+  }
+}
+
 export interface User {
   id: string
   name: string
@@ -20,6 +27,7 @@ export interface User {
   licenseEnforced?: boolean
   licensePlan?: string | null
   licenseFeatures?: LicenseFeatures
+  licenseLimits?: LicenseLimits
   licenseExternalModules?: Record<string, {
     key?: string
     label?: string
@@ -66,6 +74,9 @@ function mapUserFromApi(apiUser: any): User {
     licensePlan: apiUser.licensePlan || null,
     licenseFeatures: apiUser.licenseFeatures && typeof apiUser.licenseFeatures === 'object'
       ? apiUser.licenseFeatures
+      : {},
+    licenseLimits: apiUser.licenseLimits && typeof apiUser.licenseLimits === 'object'
+      ? apiUser.licenseLimits
       : {},
     licenseExternalModules: apiUser.licenseExternalModules && typeof apiUser.licenseExternalModules === 'object'
       ? apiUser.licenseExternalModules

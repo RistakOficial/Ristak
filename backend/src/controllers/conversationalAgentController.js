@@ -367,7 +367,8 @@ export async function createAgent(req, res) {
       error: error.message || 'Error al crear el agente',
       code: error.code,
       businessPromptStatus: error.businessPromptStatus,
-      conflicts: error.conflicts
+      conflicts: error.conflicts,
+      limit: error.limit
     })
   }
 }

@@ -204,13 +204,13 @@ export const AI_AGENT_NAV_ITEMS = [
     to: '/ai-agent/general',
     label: 'General',
     exact: true,
-    featureKeys: ['ai_agent', 'app_assistant_ai', 'ai']
+    featureKeys: ['app_assistant_ai', 'ai']
   },
   {
     to: '/ai-agent/conversational',
     label: 'Agente conversacional',
     exact: false,
-    featureKeys: ['ai_agent', 'conversational_ai', 'ai']
+    featureKeys: ['conversational_ai', 'ai']
   }
 ] as const
 export type AIAgentNavItem = typeof AI_AGENT_NAV_ITEMS[number]

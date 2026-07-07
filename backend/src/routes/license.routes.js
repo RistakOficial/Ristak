@@ -25,6 +25,7 @@ router.get('/status', requireAuth, async (req, res, next) => {
       allowed: state.allowed,
       plan: state.plan || null,
       features: state.features || {},
+      limits: state.limits || {},
       expires_at: state.expiresAt || null
     })
   } catch (error) {

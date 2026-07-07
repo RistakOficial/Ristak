@@ -10,8 +10,9 @@ en la cuenta de Render de cada cliente desde el portal central
 - **Licencia central = permiso comercial**: tras un login local correcto, la app valida contra el
   servidor central (`POST {LICENSE_SERVER_URL}/api/license/verify`). Sin licencia activa no se entra,
   aunque la contraseña local sea correcta.
-- **Feature flags = funciones disponibles**: el servidor central responde las features del plan;
-  el backend las valida en cada módulo premium (no basta ocultar botones).
+- **Feature flags y límites = funciones disponibles y topes del plan**: el servidor central
+  responde las features y `limits` del plan; el backend las valida en cada módulo premium
+  (no basta ocultar botones).
 
 ## Variables de entorno de una instalación
 
@@ -70,10 +71,16 @@ Implementación: `backend/src/services/licenseService.js`,
 
 ## Feature flags
 
-Features: `whatsapp`, `meta_ads`, `google_calendar`, `ai`, `automations`, `advanced_reports`,
-`premium_modules`. Los mounts premium se protegen en `server.js` con `requireFeature(...)`
-(WhatsApp API, Meta, Calendarios, AI Agent, Reportes). El frontend puede leer
-`GET /api/license/status` para conocer plan y features.
+Features: `whatsapp`, `meta_ads`, `google_calendar`, `app_assistant_ai`,
+`conversational_ai`, `automations`, `advanced_reports`, `premium_modules`. Los mounts
+premium se protegen en `server.js` con `requireFeature(...)` (WhatsApp API, Meta,
+Calendarios, Ristak AI, Agente conversacional, Reportes). El frontend puede leer
+`GET /api/license/status` para conocer plan, features y límites.
+
+El plan `basic` puede tener `conversational_ai=true` y `app_assistant_ai=false`. En ese caso
+la app permite entrar al Agente conversacional, oculta Ristak AI general y aplica
+`limits.conversational_agents.max_agents=1` al crear agentes. El límite se valida en backend
+en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el bloqueo.
 
 ## Setup inicial del dueño (automático, mismas credenciales del portal)
 

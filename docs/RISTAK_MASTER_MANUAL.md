@@ -233,6 +233,11 @@ Hay tres capas distintas:
 3. Permisos de usuario: `requireModuleAccess(moduleKey)` valida lectura/escritura
    por modulo.
 
+El modulo `ai_agent` puede dividirse por feature de licencia: `app_assistant_ai`
+habilita Ristak AI general y `conversational_ai` habilita el Agente conversacional.
+El plan basico puede abrir solo `conversational_ai` y limitar la creacion a
+`limits.conversational_agents.max_agents=1`.
+
 No basta con esconder botones en frontend. Cualquier endpoint que escriba o lea
 datos sensibles debe tener validacion de backend.
 
@@ -1803,9 +1808,10 @@ renderiza una notificacion generica y se pierde el look alineado a iOS.
 
 ## Licenciamiento y distribucion
 
-El licenciamiento central protege instalaciones managed Docker y feature flags.
-El backend local valida licencia y plan con cache. El frontend tambien oculta
-modulos, pero el bloqueo real debe estar en backend.
+El licenciamiento central protege instalaciones managed Docker, feature flags y
+límites de plan. El backend local valida licencia y plan con cache. El frontend
+tambien oculta modulos o anticipa limites, pero el bloqueo real debe estar en
+backend.
 
 Documento: `docs/LICENSING.md`.
 
