@@ -13199,7 +13199,7 @@ function ChatMoreSheet({
   muted: boolean;
   open: boolean;
   unread: number;
-  onAgentAction: (contact: ChatContact, action: AgentAction) => void;
+  onAgentAction: (contact: ChatContact, action: AgentAction, stateHint?: ConversationAgentState | null) => void;
   onAppointment: (contact: ChatContact) => void;
   onArchiveToggle: (contact: ChatContact) => void;
   onClose: () => void;
@@ -13213,6 +13213,7 @@ function ChatMoreSheet({
   const inactiveAgent = isInactiveAgentStatus(agentState?.status);
   const primaryAgentAction: AgentAction = inactiveAgent ? 'activate' : 'pause';
   const agentActionBusy = Boolean(agentBusyAction);
+  const hasAgentControls = Boolean(agentLoading || agentState?.agentId);
   return (
     <BottomActionSheet
       closing={closing}
@@ -13223,6 +13224,50 @@ function ChatMoreSheet({
     >
       {contact ? (
         <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
+          {hasAgentControls ? (
+            <>
+              <View style={styles.sheetSectionDivider}>
+                <Text style={styles.sheetSectionLabel}>Agente conversacional</Text>
+                {agentLoading ? <ActivityIndicator color={COLORS.accent} /> : null}
+              </View>
+              {agentState?.agentId ? (
+                <>
+                  <SheetActionRow
+                    Icon={inactiveAgent ? Play : Pause}
+                    title={inactiveAgent ? 'Continuar agente' : 'Pausar agente'}
+                    subtitle={inactiveAgent ? 'El agente vuelve a atender este chat.' : 'Detiene el agente durante 24 horas.'}
+                    busy={agentBusyAction === primaryAgentAction}
+                    disabled={agentLoading || agentActionBusy}
+                    onPress={() => onAgentAction(contact, primaryAgentAction, agentState)}
+                  />
+                  {!inactiveAgent ? (
+                    <>
+                      <SheetActionRow
+                        Icon={User}
+                        title="Tomar chat"
+                        subtitle="Detiene al agente y deja esta conversación en humano."
+                        busy={agentBusyAction === 'take_over'}
+                        disabled={agentLoading || agentActionBusy}
+                        onPress={() => onAgentAction(contact, 'take_over', agentState)}
+                      />
+                      <SheetActionRow
+                        Icon={X}
+                        title="Omitir agente"
+                        subtitle="El agente no vuelve a tomar este chat hasta reactivarlo."
+                        danger
+                        busy={agentBusyAction === 'skip'}
+                        disabled={agentLoading || agentActionBusy}
+                        onPress={() => onAgentAction(contact, 'skip', agentState)}
+                      />
+                    </>
+                  ) : null}
+                </>
+              ) : null}
+            </>
+          ) : null}
+          <View style={styles.sheetSectionDivider}>
+            <Text style={styles.sheetSectionLabel}>Chat</Text>
+          </View>
           <SheetActionRow
             Icon={ListChecks}
             title="Seleccionar"
@@ -13260,36 +13305,7 @@ function ChatMoreSheet({
             onPress={() => onToggleMute(contact)}
           />
           <View style={styles.sheetSectionDivider}>
-            <Text style={styles.sheetSectionLabel}>Agente conversacional</Text>
-            {agentLoading ? <ActivityIndicator color={COLORS.accent} /> : null}
-          </View>
-          <SheetActionRow
-            Icon={inactiveAgent ? Play : Pause}
-            title={inactiveAgent ? 'Reactivar agente' : 'Pausar agente'}
-            subtitle={inactiveAgent ? 'El agente vuelve a atender este chat.' : 'Detiene el agente durante 24 horas.'}
-            busy={agentBusyAction === primaryAgentAction}
-            disabled={agentLoading || agentActionBusy}
-            onPress={() => onAgentAction(contact, primaryAgentAction)}
-          />
-          <SheetActionRow
-            Icon={User}
-            title="Tomar chat"
-            subtitle="El humano toma esta conversación."
-            busy={agentBusyAction === 'take_over'}
-            disabled={agentLoading || agentActionBusy}
-            onPress={() => onAgentAction(contact, 'take_over')}
-          />
-          <SheetActionRow
-            Icon={X}
-            title="Omitir agente"
-            subtitle="El agente no vuelve a tomar este chat hasta reactivarlo."
-            danger
-            busy={agentBusyAction === 'skip'}
-            disabled={agentLoading || agentActionBusy}
-            onPress={() => onAgentAction(contact, 'skip')}
-          />
-          <View style={styles.sheetSectionDivider}>
-            <Text style={styles.sheetSectionLabel}>Chat</Text>
+            <Text style={styles.sheetSectionLabel}>Bandeja</Text>
           </View>
           {unread > 0 ? (
             <SheetActionRow
@@ -18203,6 +18219,7 @@ function NativeConversationScreen({
   }, [api, contact.id]);
 
   useEffect(() => {
+    agentStatesRef.current = [];
     setAgentStates([]);
     setManualAgentSendPrompt(null);
     void refreshAgentStates({ silent: true });
@@ -18901,12 +18918,13 @@ function NativeConversationScreen({
   };
 
   const openChatMore = () => {
-    setAgentLoading(true);
     openSheet('chatMore');
-    api.getAgentStates(contact.id)
-      .then((states) => setAgentStates(Array.isArray(states) ? states : []))
-      .catch(() => setAgentStates([]))
-      .finally(() => setAgentLoading(false));
+    void refreshAgentStates();
+  };
+
+  const openAttachmentActions = () => {
+    openSheet('attachments');
+    void refreshAgentStates({ silent: true });
   };
 
   const openTagSheet = () => {
@@ -19242,12 +19260,13 @@ function NativeConversationScreen({
     }
   };
 
-  const runAgentAction = async (target: ChatContact, action: AgentAction) => {
+  const runAgentAction = async (target: ChatContact, action: AgentAction, stateHint?: ConversationAgentState | null) => {
     if (agentBusyAction) return;
     setAgentBusyAction(action);
     try {
-      const state = await api.updateAgentState(target.id, action);
-      setAgentStates([state]);
+      const currentPrimaryState = selectPrimaryAgentState(agentStatesRef.current);
+      const state = await api.updateAgentState(target.id, action, { agentId: stateHint?.agentId || currentPrimaryState?.agentId || undefined });
+      setAgentStates((current) => upsertConversationAgentState(current, state));
       closeSheet();
     } catch (err) {
       Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudo actualizar el agente.');
@@ -19596,7 +19615,7 @@ function NativeConversationScreen({
             >
               <ChannelBadgeIcon color={selectedChannelColor} kind={selectedChannelKind} size={22} />
             </Pressable>
-            <Pressable accessibilityRole="button" onPress={() => openSheet('attachments')} style={styles.composerPlus}>
+            <Pressable accessibilityRole="button" onPress={openAttachmentActions} style={styles.composerPlus}>
               <Plus size={28} color={COLORS.text} strokeWidth={1.9} />
             </Pressable>
             <Pressable
@@ -19654,10 +19673,23 @@ function NativeConversationScreen({
         ) : null}
       </KeyboardAvoidingView>
 
+      <NativeManualAgentSendSheet
+        agentLabel={manualAgentSendLabel}
+        busyAction={agentBusyAction}
+        open={Boolean(manualAgentSendPrompt)}
+        onClose={() => setManualAgentSendPrompt(null)}
+        onPauseAndSend={() => void handleManualAgentSendDecision('pause')}
+        onSkipAndSend={() => void handleManualAgentSendDecision('skip')}
+      />
+
       <NativeConversationAttachmentSheet
+        agentBusyAction={agentBusyAction}
+        agentLoading={agentLoading}
+        agentStates={agentStates}
         closing={activeSheet !== 'attachments' && closingSheet === 'attachments'}
         contact={contact}
         open={activeSheet === 'attachments' || closingSheet === 'attachments'}
+        onAgentAction={runAgentAction}
         onAppointment={() => navigateToContactTool(contact, 'calendar')}
         onCamera={() => void pickMedia('camera')}
         onClose={closeSheet}
@@ -19916,9 +19948,13 @@ function NativeComposerChannelSheet({
 }
 
 function NativeConversationAttachmentSheet({
+  agentBusyAction,
+  agentLoading,
+  agentStates = [],
   closing,
   contact,
   open,
+  onAgentAction,
   onAppointment,
   onCamera,
   onClabe,
@@ -19933,9 +19969,13 @@ function NativeConversationAttachmentSheet({
   onTag,
   onTemplates,
 }: {
+  agentBusyAction?: AgentAction | null;
+  agentLoading?: boolean;
+  agentStates?: ConversationAgentState[];
   closing?: boolean;
   contact: ChatContact;
   open: boolean;
+  onAgentAction: (contact: ChatContact, action: AgentAction, stateHint?: ConversationAgentState | null) => void;
   onAppointment: () => void;
   onCamera: () => void;
   onClabe: () => void;
@@ -19950,6 +19990,13 @@ function NativeConversationAttachmentSheet({
   onTag: () => void;
   onTemplates: () => void;
 }) {
+  const contactAgentStates = agentStates.filter((state) => state.agentId);
+  const hasAgentControls = Boolean(agentLoading || contactAgentStates.length);
+  const agentActionBusy = Boolean(agentBusyAction);
+  const getAgentActionTitle = (base: string, state: ConversationAgentState) => (
+    contactAgentStates.length > 1 ? `${base} ${state.agentName || 'agente'}` : `${base} agente`
+  );
+
   return (
     <BottomActionSheet
       closing={closing}
@@ -19959,6 +20006,63 @@ function NativeConversationAttachmentSheet({
       onClose={onClose}
     >
       <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
+        {hasAgentControls ? (
+          <>
+            <View style={styles.sheetSectionDivider}>
+              <Text style={styles.sheetSectionLabel}>Agente conversacional</Text>
+              {agentLoading ? <ActivityIndicator color={COLORS.accent} /> : null}
+            </View>
+            {contactAgentStates.map((state, index) => {
+              const stateKey = state.agentId || state.id || `agent-${index}`;
+              const inactiveAgent = isInactiveAgentStatus(state.status);
+              if (inactiveAgent) {
+                return (
+                  <SheetActionRow
+                    key={`${stateKey}-activate`}
+                    Icon={Play}
+                    title={getAgentActionTitle('Continuar', state)}
+                    subtitle="El agente vuelve a atender este chat."
+                    busy={agentBusyAction === 'activate'}
+                    disabled={agentLoading || agentActionBusy}
+                    onPress={() => onAgentAction(contact, 'activate', state)}
+                  />
+                );
+              }
+              return (
+                <React.Fragment key={stateKey}>
+                  <SheetActionRow
+                    Icon={Pause}
+                    title={getAgentActionTitle('Pausar', state)}
+                    subtitle="Detiene el agente durante 24 horas."
+                    busy={agentBusyAction === 'pause'}
+                    disabled={agentLoading || agentActionBusy}
+                    onPress={() => onAgentAction(contact, 'pause', state)}
+                  />
+                  <SheetActionRow
+                    Icon={User}
+                    title="Tomar chat"
+                    subtitle="Detiene al agente y deja esta conversación en humano."
+                    busy={agentBusyAction === 'take_over'}
+                    disabled={agentLoading || agentActionBusy}
+                    onPress={() => onAgentAction(contact, 'take_over', state)}
+                  />
+                  <SheetActionRow
+                    Icon={X}
+                    title={getAgentActionTitle('Omitir', state)}
+                    subtitle="El agente no vuelve a tomar este chat hasta reactivarlo."
+                    danger
+                    busy={agentBusyAction === 'skip'}
+                    disabled={agentLoading || agentActionBusy}
+                    onPress={() => onAgentAction(contact, 'skip', state)}
+                  />
+                </React.Fragment>
+              );
+            })}
+            <View style={styles.sheetSectionDivider}>
+              <Text style={styles.sheetSectionLabel}>Adjuntos</Text>
+            </View>
+          </>
+        ) : null}
         <SheetActionRow Icon={Camera} title="Cámara" subtitle="Toma foto o graba video para enviarlo por WhatsApp." onPress={onCamera} />
         <SheetActionRow Icon={ImageIcon} title="Fotos y videos" subtitle="Adjunta media desde tu galería." onPress={onLibrary} />
         <SheetActionRow Icon={FilePlus} title="Documento" subtitle="Adjunta PDF, Word, Excel o archivo compatible." onPress={onDocument} />
@@ -19975,6 +20079,64 @@ function NativeConversationAttachmentSheet({
         <SheetActionRow Icon={Tag} title="Agregar etiqueta" subtitle="Clasificar este chat con una etiqueta." onPress={onTag} />
         <SheetActionRow Icon={MoreHorizontal} title="Más acciones" subtitle="Silenciar, archivar o controlar agente." onPress={onMore} />
       </ScrollView>
+    </BottomActionSheet>
+  );
+}
+
+function NativeManualAgentSendSheet({
+  agentLabel,
+  busyAction,
+  open,
+  onClose,
+  onPauseAndSend,
+  onSkipAndSend,
+}: {
+  agentLabel: string;
+  busyAction?: AgentAction | null;
+  open: boolean;
+  onClose: () => void;
+  onPauseAndSend: () => void;
+  onSkipAndSend: () => void;
+}) {
+  const busy = Boolean(busyAction);
+  return (
+    <BottomActionSheet
+      open={open}
+      title="Agente activo en este chat"
+      subtitle="Elige qué hacer antes de enviar"
+      onClose={onClose}
+    >
+      <View style={styles.manualAgentPromptBody}>
+        <Text style={styles.manualAgentPromptText}>
+          {`Si envías este mensaje, ${agentLabel} dejará de responder este chat. Puedes pausarlo 24 horas o quitar este contacto del agente hasta que lo reactives.`}
+        </Text>
+      </View>
+      <View style={styles.sheetActionList}>
+        <SheetActionRow
+          Icon={Pause}
+          title="Pausar 24h y enviar"
+          subtitle="El agente se detiene temporalmente y tu mensaje sale ahora."
+          busy={busyAction === 'pause'}
+          disabled={busy}
+          onPress={onPauseAndSend}
+        />
+        <SheetActionRow
+          Icon={X}
+          title="Quitar del agente y enviar"
+          subtitle="El agente no volverá a tomar este contacto hasta reactivarlo."
+          danger
+          busy={busyAction === 'skip'}
+          disabled={busy}
+          onPress={onSkipAndSend}
+        />
+        <SheetActionRow
+          Icon={ChevronLeft}
+          title="Cancelar"
+          subtitle="No se manda el mensaje ni se cambia el estado del agente."
+          disabled={busy}
+          onPress={onClose}
+        />
+      </View>
     </BottomActionSheet>
   );
 }
@@ -26093,6 +26255,17 @@ function createAppStyles() {
     fontSize: 11,
     fontWeight: '900',
     textTransform: 'uppercase',
+  },
+  manualAgentPromptBody: {
+    paddingHorizontal: 18,
+    paddingTop: 14,
+    paddingBottom: 6,
+  },
+  manualAgentPromptText: {
+    color: COLORS.text,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
   },
   sheetActionRow: {
     minHeight: 64,
