@@ -4,7 +4,7 @@ import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
 import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
-import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
+import { businessTodayDateOnly, DEFAULT_TIMEZONE, getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
 import { coalescedTimestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { getOpenAIApiKey } from './aiAgentService.js'
@@ -73,6 +73,11 @@ export function normalizeConversationalLanguageLevel(value, fallback = DEFAULT_L
 // clientes que ya existían cuando se creó/configuró el agente).
 export function normalizeContactScope(value) {
   return String(value || '').trim().toLowerCase() === 'new_only' ? 'new_only' : 'all'
+}
+
+export function buildNewContactScopeCutoffAt({ timezone = DEFAULT_TIMEZONE, referenceDate = new Date() } = {}) {
+  const today = businessTodayDateOnly(timezone, referenceDate)
+  return normalizeToUtcIso(`${today}T00:00:00`, timezone)
 }
 
 const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
@@ -2387,8 +2392,9 @@ async function refreshAssignedConversationStatesForAgent(agentId, { updatedBy = 
   return Number(result?.changes || result?.rowCount || 0)
 }
 
-function agentInputToRowValues(input, base) {
+async function agentInputToRowValues(input, base) {
   assertAgentTimingInput(input)
+  const accountTimezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const identity = normalizeAgentIdentity(input, base)
   const next = {
     name: input.name === undefined ? base.name : String(input.name || 'Agente').trim().slice(0, 120) || 'Agente',
@@ -2425,8 +2431,9 @@ function agentInputToRowValues(input, base) {
     contactScope: input.contactScope === undefined
       ? normalizeContactScope(base.contactScope)
       : normalizeContactScope(input.contactScope),
-    // El corte se SELLA cuando el scope queda en 'new_only' y aún no lo tenía; al volver
-    // a 'all' se limpia. Así editar/reactivar el agente no mueve el corte sin querer.
+    // El corte se SELLA al inicio del día del negocio cuando el scope queda en 'new_only'
+    // y aún no lo tenía; al volver a 'all' se limpia. Así "desde hoy" no depende de UTC,
+    // de la zona del navegador ni de la hora exacta en que se guardó el agente.
     contactScopeCutoffAt: (() => {
       const nextScope = input.contactScope === undefined
         ? normalizeContactScope(base.contactScope)
@@ -2435,7 +2442,7 @@ function agentInputToRowValues(input, base) {
       if (normalizeContactScope(base.contactScope) === 'new_only' && base.contactScopeCutoffAt) {
         return base.contactScopeCutoffAt
       }
-      return new Date().toISOString()
+      return buildNewContactScopeCutoffAt({ timezone: accountTimezone })
     })(),
     responseDelay: input.responseDelay === undefined
       ? normalizeAgentResponseDelay(base.responseDelay)
@@ -2777,7 +2784,7 @@ async function assertConversationalAgentEntryDoesNotConflict(candidateAgent, { e
 export async function createConversationalAgent(input = {}) {
   await ensureAgentsMigration()
   const maxPosition = await db.get('SELECT COALESCE(MAX(position), -1) AS max_pos FROM conversational_agents')
-  const next = agentInputToRowValues(input, { ...DEFAULT_AGENT_BASE, position: Number(maxPosition?.max_pos ?? -1) + 1 })
+  const next = await agentInputToRowValues(input, { ...DEFAULT_AGENT_BASE, position: Number(maxPosition?.max_pos ?? -1) + 1 })
   const id = `cagent_${randomUUID()}`
   await assertConversationalAgentEntryDoesNotConflict({ ...next, id })
   await db.run(`
@@ -2813,7 +2820,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
   if (!current) {
     throw Object.assign(new Error('Agente conversacional no encontrado'), { statusCode: 404 })
   }
-  const next = agentInputToRowValues(input, current)
+  const next = await agentInputToRowValues(input, current)
   const shouldRefreshAssignedStates = Object.keys(input || {}).some((key) => ACTIVE_AGENT_RUNTIME_CONFIG_KEYS.has(key))
   const shouldValidateEntry = next.enabled && (!current.enabled || input.enabled === true || input.filters !== undefined)
   if (shouldValidateEntry) {

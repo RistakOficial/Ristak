@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  buildNewContactScopeCutoffAt,
+  contactIsOutOfScopeForAgent,
   findConversationalAgentEntryConflicts
 } from '../src/services/conversationalAgentService.js'
 
@@ -66,4 +68,32 @@ test('permite agentes con etiquetas de entrada distintas', () => {
   )
 
   assert.equal(conflicts.length, 0)
+})
+
+test('calcula el corte de contactos nuevos al inicio del dia del negocio', () => {
+  const cutoff = buildNewContactScopeCutoffAt({
+    timezone: 'America/Mexico_City',
+    referenceDate: new Date('2026-07-07T02:00:00.000Z')
+  })
+
+  assert.equal(cutoff, '2026-07-06T06:00:00.000Z')
+})
+
+test('new_only permite contactos creados durante el dia de negocio del corte', () => {
+  const scopedAgent = {
+    contactScope: 'new_only',
+    contactScopeCutoffAt: '2026-07-06T06:00:00.000Z'
+  }
+
+  assert.equal(contactIsOutOfScopeForAgent(scopedAgent, {
+    contactInfo: { createdAt: '2026-07-06 05:59:59' }
+  }), true)
+
+  assert.equal(contactIsOutOfScopeForAgent(scopedAgent, {
+    contactInfo: { createdAt: '2026-07-06 06:00:00' }
+  }), false)
+
+  assert.equal(contactIsOutOfScopeForAgent(scopedAgent, {
+    contactInfo: { createdAt: '2026-07-06 14:00:06.247' }
+  }), false)
 })
