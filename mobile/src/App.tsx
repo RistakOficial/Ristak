@@ -1297,6 +1297,20 @@ function PhoneShell({
   const patchMobileAppConfig = useCallback((patch: Record<string, ConfigValue>) => {
     setMobileAppConfig((current) => ({ ...current, ...patch }));
   }, []);
+  const setMobileChatSelectedWhatsAppPhoneId = useCallback((phoneId: string) => {
+    const nextValue = phoneId.trim() || 'all';
+    const previousValue = mobileAppConfig.mobile_chat_selected_whatsapp_phone_id ?? 'all';
+    setMobileAppConfig((current) => ({ ...current, mobile_chat_selected_whatsapp_phone_id: nextValue }));
+    api.setConfig('mobile_chat_selected_whatsapp_phone_id', nextValue)
+      .catch((err) => {
+        setMobileAppConfig((current) => (
+          current.mobile_chat_selected_whatsapp_phone_id === nextValue
+            ? { ...current, mobile_chat_selected_whatsapp_phone_id: previousValue }
+            : current
+        ));
+        Alert.alert('No se guardó el filtro', err instanceof Error ? err.message : 'Intenta otra vez.');
+      });
+  }, [api, mobileAppConfig.mobile_chat_selected_whatsapp_phone_id]);
 	  const dock = (
 	    <PhoneDock
 	      active={activeSection}
@@ -1395,6 +1409,7 @@ function PhoneShell({
               settings={mobileChatSettings}
               notificationContactId={notificationContactId}
               pendingDraft={pendingChatDraft}
+              onSelectedWhatsAppPhoneIdChange={setMobileChatSelectedWhatsAppPhoneId}
               onDockHiddenChange={handleDockHiddenChange}
               onNotificationHandled={clearNotificationContactId}
               onPendingDraftHandled={(id) => {
@@ -2121,6 +2136,7 @@ function ChatScreen({
   onNotificationHandled,
   onPendingDraftHandled,
   onUnreadTotalChange,
+  onSelectedWhatsAppPhoneIdChange,
   onNavigate,
   onNavigateToContactTool,
 }: {
@@ -2133,6 +2149,7 @@ function ChatScreen({
   onNotificationHandled?: () => void;
   onPendingDraftHandled?: (id: string) => void;
   onUnreadTotalChange?: (count: number) => void;
+  onSelectedWhatsAppPhoneIdChange?: (phoneId: string) => void;
   onNavigate?: (section: PhoneSection) => void;
   onNavigateToContactTool?: (contact: ChatContact, section: PhoneSection) => void;
 }) {
@@ -2198,6 +2215,27 @@ function ChatScreen({
   const chatListLoadedQueryRef = useRef('');
   const chatMountedRef = useRef(true);
   const conversationRouteProgress = useRef(new Animated.Value(0)).current;
+  const businessPhones = useMemo(
+    () => Array.isArray(whatsappStatus?.phoneNumbers) ? whatsappStatus.phoneNumbers : [],
+    [whatsappStatus],
+  );
+  const chatPhoneFilterEnabled = businessPhones.length > 1;
+  const selectedChatPhone = useMemo(() => {
+    if (!settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all') return null;
+    return businessPhones.find((phone) => phone.id === settings.selectedWhatsAppPhoneId) || null;
+  }, [businessPhones, settings.selectedWhatsAppPhoneId]);
+  const selectedChatPhoneFilterActive = Boolean(chatPhoneFilterEnabled && selectedChatPhone);
+  const activePhoneFilterId = selectedChatPhoneFilterActive && selectedChatPhone?.id
+    ? makePhoneChatPhoneFilterId(selectedChatPhone.id)
+    : '';
+  const effectiveActiveFilter = activePhoneFilterId || activeFilter;
+  const chatListPhoneFilterParams = useMemo(() => {
+    if (!selectedChatPhoneFilterActive || !selectedChatPhone) return {};
+    return {
+      businessPhoneNumberId: selectedChatPhone.id.trim() || undefined,
+      businessPhone: getBusinessPhoneValue(selectedChatPhone).trim() || undefined,
+    };
+  }, [selectedChatPhone, selectedChatPhoneFilterActive]);
 
   useEffect(() => () => {
     chatMountedRef.current = false;
@@ -2231,7 +2269,7 @@ function ChatScreen({
     setChatListOffset(0);
     setError('');
     try {
-      const data = await api.getChats(requestQuery, 0, CHAT_LIST_PAGE_SIZE);
+      const data = await api.getChats(requestQuery, 0, CHAT_LIST_PAGE_SIZE, chatListPhoneFilterParams);
       if (!chatMountedRef.current) return;
       if (generation !== chatListGenerationRef.current) return;
       chatListLoadedQueryRef.current = requestQuery;
@@ -2251,7 +2289,7 @@ function ChatScreen({
         setRefreshing(false);
       }
     }
-  }, [api, query]);
+  }, [api, chatListPhoneFilterParams, query]);
 
   const finishCloseChatConversation = useCallback(() => {
     setSelected(null);
@@ -2290,7 +2328,7 @@ function ChatScreen({
     const offset = chatListOffset;
     setChatsLoadingMore(true);
     try {
-      const data = await api.getChats(requestQuery, offset, CHAT_LIST_PAGE_SIZE);
+      const data = await api.getChats(requestQuery, offset, CHAT_LIST_PAGE_SIZE, chatListPhoneFilterParams);
       if (!chatMountedRef.current) return;
       if (generation !== chatListGenerationRef.current) return;
       const nextChats = Array.isArray(data) ? data : [];
@@ -2304,7 +2342,7 @@ function ChatScreen({
     } finally {
       if (chatMountedRef.current && generation === chatListGenerationRef.current) setChatsLoadingMore(false);
     }
-  }, [api, chatListOffset, chatsHasMore, chatsLoadingMore, loading, query, refreshing]);
+  }, [api, chatListOffset, chatListPhoneFilterParams, chatsHasMore, chatsLoadingMore, loading, query, refreshing]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -2462,22 +2500,6 @@ function ChatScreen({
     [archivedChatIds, archivedViewOpen, chats],
   );
 
-  const businessPhones = useMemo(
-    () => Array.isArray(whatsappStatus?.phoneNumbers) ? whatsappStatus.phoneNumbers : [],
-    [whatsappStatus],
-  );
-  const chatPhoneFilterEnabled = businessPhones.length > 1;
-  const selectedChatPhone = useMemo(() => {
-    if (!settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all') return null;
-    return businessPhones.find((phone) => phone.id === settings.selectedWhatsAppPhoneId) || null;
-  }, [businessPhones, settings.selectedWhatsAppPhoneId]);
-  const selectedChatPhoneFilterActive = Boolean(chatPhoneFilterEnabled && selectedChatPhone);
-  const chatPhoneFilteredBase = useMemo(
-    () => selectedChatPhoneFilterActive && selectedChatPhone
-      ? listBaseChats.filter((contact) => contactMatchesBusinessPhoneFilter(contact, selectedChatPhone))
-      : listBaseChats,
-    [listBaseChats, selectedChatPhone, selectedChatPhoneFilterActive],
-  );
   const normalizedCustomChatFilters = useMemo(
     () => normalizePhoneChatCustomFilterPresets(customChatFilters),
     [customChatFilters],
@@ -2528,7 +2550,7 @@ function ChatScreen({
     return next.length ? next : ['all'];
   }, [availableChatFilterPresets, visibleFilterIds]);
   const filteredChats = useMemo(() => {
-    const nextChats = chatPhoneFilteredBase
+    const nextChats = listBaseChats
       .filter((contact) => chatMatchesFilter(contact, archivedViewOpen ? 'all' : activeFilter, phoneChatConditionEvalContext));
     if (settings.sortMode === 'unread') {
       return nextChats.slice().sort((left, right) => {
@@ -2540,7 +2562,7 @@ function ChatScreen({
     return nextChats.slice().sort((left, right) => (
       parseSortableDateValue(right.lastMessageDate) - parseSortableDateValue(left.lastMessageDate)
     ));
-  }, [activeFilter, archivedViewOpen, chatPhoneFilteredBase, phoneChatConditionEvalContext, settings.sortMode]);
+  }, [activeFilter, archivedViewOpen, listBaseChats, phoneChatConditionEvalContext, settings.sortMode]);
   const visibleChatIdSet = useMemo(() => new Set(filteredChats.map((contact) => contact.id)), [filteredChats]);
   const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds]);
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds]);
@@ -2656,12 +2678,13 @@ function ChatScreen({
     openChatConversation(targetContact);
   }, [chats, onPendingDraftHandled, openChatConversation, pendingDraft]);
 
-  const showAssistantRow = settings.aiAgentEnabled && !archivedViewOpen && activeFilter === 'all' && (
+  const showAssistantRow = settings.aiAgentEnabled && !archivedViewOpen && effectiveActiveFilter === 'all' && (
     !query.trim() || AI_AGENT_CHAT_SEARCH_TEXT.includes(query.trim().toLowerCase())
   );
-  const showArchiveRow = settings.showArchived && !selectionActive && !query.trim() && (archivedViewOpen || activeFilter === 'all');
+  const showArchiveRow = settings.showArchived && !selectionActive && !query.trim() && (archivedViewOpen || effectiveActiveFilter === 'all');
   const chatListHasRows = selectionActive || showAssistantRow || showArchiveRow || filteredChats.length > 0;
   const showMainEmptyState = !archivedViewOpen && !selectionActive && filteredChats.length === 0;
+  const hasChatFilterContext = Boolean(query.trim() || effectiveActiveFilter !== 'all');
   const emptyChatsMinHeight = Math.max(
     260,
     Math.round(chatListViewportHeight - chatListHeaderHeight - PHONE_DOCK_RESERVED_SPACE),
@@ -2674,10 +2697,19 @@ function ChatScreen({
       void loadChatFilterCatalogs();
       return;
     }
-    if (!filterPresetMap.has(filterId)) return;
+    const preset = filterPresetMap.get(filterId);
+    if (!preset) return;
     setSelectedChatIds([]);
     setSelectionActionsOpen(false);
     setArchivedViewOpen(false);
+    if (preset.kind === 'phone' && preset.phoneId) {
+      setActiveFilter('all');
+      onSelectedWhatsAppPhoneIdChange?.(preset.phoneId);
+      return;
+    }
+    if (settings.selectedWhatsAppPhoneId !== 'all') {
+      onSelectedWhatsAppPhoneIdChange?.('all');
+    }
     setActiveFilter(filterId);
   };
 
@@ -3316,7 +3348,7 @@ function ChatScreen({
       {!selectionActive ? (
         <View style={styles.chatFilterFloatingBand}>
           <ChatFilterBar
-            active={activeFilter}
+            active={effectiveActiveFilter}
             filters={visibleFilters}
             unreadTotal={visibleUnreadTotal}
             onChange={applyFilter}
@@ -3449,9 +3481,9 @@ function ChatScreen({
               <View style={styles.emptyChatsIcon}>
                 <MessageCircle size={28} color={COLORS.accent} strokeWidth={2.4} />
               </View>
-              <Text style={styles.emptyChatsTitle}>{chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}</Text>
+              <Text style={styles.emptyChatsTitle}>{hasChatFilterContext || chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}</Text>
               <Text style={styles.emptyChatsCopy}>
-                {chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
+                {hasChatFilterContext || chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
               </Text>
             </View>
           </View>
@@ -3498,10 +3530,10 @@ function ChatScreen({
                 <MessageCircle size={28} color={COLORS.accent} strokeWidth={2.4} />
               </View>
               <Text style={styles.emptyChatsTitle}>
-                {archivedViewOpen ? 'No hay nada archivado' : chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}
+                {archivedViewOpen ? 'No hay nada archivado' : hasChatFilterContext || chats.length ? 'No hay chats en este filtro' : 'Aún no hay chats'}
               </Text>
               <Text style={styles.emptyChatsCopy}>
-                {archivedViewOpen ? 'Los chats que archives aparecerán aquí.' : chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
+                {archivedViewOpen ? 'Los chats que archives aparecerán aquí.' : hasChatFilterContext || chats.length ? 'Cambia el filtro o busca otro contacto para encontrar la conversación.' : 'Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí.'}
               </Text>
             </View>
           }
@@ -3548,7 +3580,7 @@ function ChatScreen({
         </ConversationRouteLayer>
       ) : null}
       <FilterManagerSheet
-        activeFilter={activeFilter}
+        activeFilter={effectiveActiveFilter}
         availableFilters={availableChatFilterPresets}
         catalogLoading={filterCatalogLoading}
         customFiltersById={customChatFilterMap}

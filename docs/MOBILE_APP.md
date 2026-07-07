@@ -710,11 +710,14 @@ Esa biblioteca debe incluir los filtros rapidos del chat movil, la entrada de
 `Comentarios`, cada WhatsApp conectado cuando hay mas de un numero y las familias
 avanzadas equivalentes a desktop: canal, origen, red social, etapa y actividad.
 Los filtros por numero simples solo deben activarse cuando hay mas de un
-WhatsApp conectado y el numero guardado existe. Si solo hay un numero, o si
-`mobile_chat_selected_whatsapp_phone_id` apunta a un numero ya inexistente, la
-bandeja debe caer a `Todos` para no vaciar los chats por un filtro invisible.
-Cuando aplica, siguen mandando `businessPhoneNumberId`/`businessPhone` a
-`/contacts/chats`; solo cambia la superficie de control. El chip `Comentarios`
+WhatsApp conectado y el numero guardado existe. En `/movil` y en la app nativa,
+tocar un chip de numero debe actualizar `mobile_chat_selected_whatsapp_phone_id`
+y tocar `Todos` o cualquier filtro no numerico debe regresar ese valor a `all`.
+Si solo hay un numero, o si `mobile_chat_selected_whatsapp_phone_id` apunta a un
+numero ya inexistente, la bandeja debe caer a `Todos` para no vaciar los chats
+por un filtro invisible. Cuando aplica, ambas superficies deben mandar
+`businessPhoneNumberId`/`businessPhone` a `/contacts/chats` antes de paginar; no
+se debe depender de filtrar localmente una pagina global. El chip `Comentarios`
 va separado de `Interesados` con una linea divisoria, igual que la bandeja
 desktop separa comentarios de filtros normales.
 

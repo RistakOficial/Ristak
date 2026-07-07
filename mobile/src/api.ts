@@ -65,6 +65,12 @@ type RequestOptions = RequestInit & {
   params?: Record<string, string | number | boolean | undefined>;
 };
 
+type ChatListQueryOptions = {
+  businessPhoneNumberId?: string;
+  businessPhone?: string;
+  warmProfilePictures?: boolean;
+};
+
 type MessageReplyPayload = {
   replyToMessageId?: string;
   replyToProviderMessageId?: string;
@@ -302,12 +308,15 @@ export class RistakApiClient {
     });
   }
 
-  getChats(query = '', offset = 0, limit = 50) {
+  getChats(query = '', offset = 0, limit = 50, options: ChatListQueryOptions = {}) {
     return this.request<ChatContact[]>('/contacts/chats', {
       params: {
         q: query.trim() || undefined,
         limit,
         offset: offset > 0 ? offset : undefined,
+        businessPhoneNumberId: options.businessPhoneNumberId?.trim() || undefined,
+        businessPhone: options.businessPhone?.trim() || undefined,
+        warmProfilePictures: options.warmProfilePictures || undefined,
       },
     });
   }
