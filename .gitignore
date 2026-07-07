@@ -17,6 +17,7 @@ backend/.env
 # Build outputs
 frontend/dist/
 frontend/build/
+mobile/build/
 
 # Logs
 *.log
