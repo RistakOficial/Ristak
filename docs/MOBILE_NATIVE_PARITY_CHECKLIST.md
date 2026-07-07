@@ -271,9 +271,12 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     reloj para programar cuando hay texto, camara cuando esta vacio, preview de
     respuesta, tira de fotos preparadas y boton enviar/mic visual. El `+` abre
     sheet con tomar foto, elegir foto, cita, pagos, programar, etiqueta y mas
-    acciones. Falta voice note real, ubicacion, sugerencia IA, plantillas,
-    picker avanzado de fecha/hora y soporte de video/audio/documento desde el
-    picker.
+    acciones; cuando el chat tiene agente asignado, los controles del agente
+    aparecen arriba para pausar, tomar, omitir o continuar segun el estado.
+    Enviar manualmente con agente activo abre confirmacion para pausar 24h y
+    enviar, quitar del agente y enviar o cancelar. Falta voice note real,
+    ubicacion, sugerencia IA, plantillas, picker avanzado de fecha/hora y
+    soporte de video/audio/documento desde el picker.
 - [ ] Envio por canal correcto: WhatsApp API, QR, HighLevel, Messenger,
   Instagram, email/SMS cuando aplique.
   - Avance: texto nativo usa `/whatsapp-api/messages/text`; fotos del composer
@@ -312,8 +315,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   - Avance: `mobile/` ya usa bottom sheet desde long press de fila, no
     `Alert.alert`. Incluye seleccionar como primera accion, agendar cita,
     registrar pagos, programar mensaje, agregar etiqueta, silenciar/quitar
-    silencio, controles del agente, marcar leido y archivar/restaurar. `Agregar
-    etiqueta` usa las APIs reales de
+    silencio, controles del agente arriba cuando existen, marcar leido y
+    archivar/restaurar. `Agregar etiqueta` usa las APIs reales de
     `/contact-tags` y `/contacts/bulk/tags`; `Programar mensaje` usa
     `/whatsapp-api/messages/scheduled` con envio en 1 hora; las acciones del
     agente usan `/conversational-agent/states/:contactId`. El sheet conserva el

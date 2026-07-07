@@ -895,7 +895,13 @@ recortado que `/movil` (`/contacts/:id/journey` con `chatMessagesOnly` y
 mostrar avatar/badge de canal en el header y exponer acciones equivalentes por
 bottom sheet: adjuntos/camara, ubicacion, agendar cita, registrar pagos,
 programar mensaje, agregar etiqueta, silenciar, archivar/restaurar y controles
-de agente. El composer nativo manda texto por `/whatsapp-api/messages/text`,
+de agente. Cuando el agente conversacional este activo en el chat, enviar un
+mensaje manual desde `mobile/` debe abrir una confirmacion antes de mandar: el
+usuario elige pausar el agente por 24 horas y enviar, quitar el contacto del
+agente y enviar, o cancelar. El boton `+` de la conversacion debe priorizar los
+controles del agente arriba del sheet cuando haya estado de agente asignado, con
+acciones rapidas para pausar, tomar/continuar u omitir segun el estado. El
+composer nativo manda texto por `/whatsapp-api/messages/text`,
 fotos por `/whatsapp-api/messages/image`, videos por
 `/whatsapp-api/messages/video`, documentos por
 `/whatsapp-api/messages/document`, notas de voz por

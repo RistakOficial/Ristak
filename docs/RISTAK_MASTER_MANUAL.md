@@ -1843,7 +1843,10 @@ destinatarios despues de camara. Cuando cambien filtros, labels, canales,
 unread, archivados, seleccion, swipe, camara, sheets o preview en `/movil`, se
 debe revisar el equivalente en
 `mobile/src/App.tsx` y documentar cualquier brecha temporal en
-`docs/MOBILE_APP.md`.
+`docs/MOBILE_APP.md`. En la conversacion nativa, si un agente conversacional
+esta activo, enviar un mensaje manual debe pedir primero que el usuario pause el
+agente 24 horas, quite el contacto del agente o cancele; el menu `+` debe poner
+los controles del agente al inicio cuando haya estado de agente asignado.
 
 La pantalla de analiticas nativa debe mantenerse alineada con
 `PhoneAnalytics`: periodos `30d`/`60d`/`180d`/`year`/`custom`, 8 KPIs, grafica
