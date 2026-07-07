@@ -537,6 +537,11 @@ como opcion separada cuando la cuenta tiene mas de un remitente. Elegir
 `WhatsApp · <nombre/numero>` cambia el envio puntual del chat abierto y el
 mensaje sale con ese `phoneNumberId`; no debe obligar al usuario a ir al
 desktop para elegir entre WhatsApp 1, WhatsApp 2, etc.
+La conversacion nativa en `mobile/` debe aplicar el mismo contrato: el selector
+del composer solo muestra rutas realmente conectadas para ese chat, lista cada
+numero de WhatsApp disponible por separado y agrega Messenger/Instagram solo si
+la integracion Meta correspondiente esta conectada y el contacto pertenece a
+ese canal.
 
 La info del contacto muestra "Contactando desde". Ese sheet es el control
 persistente del contacto: `Automatico` limpia `preferred_whatsapp_phone_number_id`

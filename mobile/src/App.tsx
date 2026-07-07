@@ -388,11 +388,14 @@ type JourneyEvent = {
 type CalendarViewMode = 'day' | 'week' | 'month' | 'year' | 'years';
 type CalendarSheetMode = 'calendar' | 'contactPicker' | 'event' | 'appointmentForm' | null;
 type AppointmentFormMode = 'create' | 'edit';
+type ComposerChannelRouteValue = NativeMessageChannel | `whatsapp:${string}`;
 type ComposerChannelOption = {
-  value: NativeMessageChannel;
+  value: ComposerChannelRouteValue;
+  channel: NativeMessageChannel;
   label: string;
   description: string;
   kind: ChannelBadgeKind;
+  phoneNumberId?: string;
   disabledReason?: string;
 };
 type AppointmentScheduleMode = 'default' | 'custom';
@@ -2155,6 +2158,7 @@ function ChatScreen({
   const [customChatFilters, setCustomChatFiltersState] = useState<PhoneChatCustomFilterPreset[]>([]);
   const [chatCustomFields, setChatCustomFields] = useState<ContactCustomFieldDefinition[]>([]);
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null);
+  const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(null);
   const [filterCatalogLoading, setFilterCatalogLoading] = useState(false);
   const [filterManagerMode, setFilterManagerMode] = useState<'list' | 'editor'>('list');
   const [editingCustomChatFilterId, setEditingCustomChatFilterId] = useState('');
@@ -2359,11 +2363,12 @@ function ChatScreen({
     setFilterCatalogLoading(true);
     setChatTagsLoading(true);
     try {
-      const [configResponse, tags, fields, status] = await Promise.all([
+      const [configResponse, tags, fields, status, integrations] = await Promise.all([
         api.getConfig([PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY]).catch(() => null),
         api.getContactTags().catch(() => []),
         api.getCustomFieldDefinitions(false).catch(() => []),
         api.getWhatsAppStatus().catch(() => null),
+        api.getIntegrationsStatus().catch(() => null),
       ]);
       const config = unwrapConfigResponse(configResponse);
       if (!chatMountedRef.current) return;
@@ -2371,6 +2376,7 @@ function ChatScreen({
       setChatTags(Array.isArray(tags) ? tags : []);
       setChatCustomFields(Array.isArray(fields) ? fields.filter((field) => !field.archived) : []);
       setWhatsappStatus(status);
+      setIntegrationsStatus(integrations);
     } finally {
       if (chatMountedRef.current) {
         setFilterCatalogLoading(false);
@@ -3480,6 +3486,7 @@ function ChatScreen({
             accountCurrency={accountCurrency}
             archived={archivedChatIds.includes(selected.id)}
             businessPhones={businessPhones}
+            integrationsStatus={integrationsStatus}
             muted={mutedChatIds.includes(selected.id)}
             timezone={businessTimezone}
             onArchiveToggle={(contact) => {
@@ -15109,49 +15116,116 @@ function contactProbeIncludes(contact: ChatContact, value: string) {
   return getChannelProbe(contact).includes(value);
 }
 
-function getComposerChannelOptions(contact: ChatContact): ComposerChannelOption[] {
+function isWhatsAppComposerRoute(value: ComposerChannelRouteValue): value is `whatsapp:${string}` {
+  return String(value).startsWith('whatsapp:');
+}
+
+function getComposerRoutePhoneId(value: ComposerChannelRouteValue) {
+  return isWhatsAppComposerRoute(value) ? String(value).slice('whatsapp:'.length) : '';
+}
+
+function getComposerRouteChannel(value: ComposerChannelRouteValue): NativeMessageChannel {
+  return isWhatsAppComposerRoute(value) ? 'whatsapp' : value;
+}
+
+function getPreferredComposerPhoneId(contact: ChatContact) {
+  return contact.preferredWhatsAppPhoneNumberId
+    || contact.preferred_whatsapp_phone_number_id
+    || contact.lastBusinessPhoneNumberId
+    || '';
+}
+
+function isBusinessPhoneQrReady(phone?: WhatsAppApiPhoneNumber | null) {
+  return Boolean(phone?.qr_send_enabled && String(phone.qr_status || '').toLowerCase() === 'connected');
+}
+
+function isBusinessPhoneSendReady(phone?: WhatsAppApiPhoneNumber | null) {
+  if (!phone?.id) return false;
+  if (phone.availability) return Boolean(phone.availability.available || phone.availability.apiAvailable || phone.availability.qrReady);
+  return phone.api_send_enabled !== false || isBusinessPhoneQrReady(phone);
+}
+
+function isHighLevelConnected(integrations?: IntegrationsStatus | null) {
+  return Boolean(integrations?.highlevel?.connected);
+}
+
+function isNativeMessengerConnected(integrations?: IntegrationsStatus | null) {
+  return Boolean(integrations?.meta?.connected && integrations.meta.pageId);
+}
+
+function isNativeInstagramConnected(integrations?: IntegrationsStatus | null) {
+  return Boolean(integrations?.meta?.connected && integrations.meta.instagramAccountId);
+}
+
+function getDefaultComposerRoute(contact: ChatContact, options: ComposerChannelOption[]): ComposerChannelRouteValue {
+  const preferredChannel = getDefaultComposerChannel(contact);
+  const preferredPhoneId = getPreferredComposerPhoneId(contact);
+  if (preferredChannel === 'whatsapp' && preferredPhoneId) {
+    const preferredPhoneOption = options.find((option) => option.channel === 'whatsapp' && option.phoneNumberId === preferredPhoneId && !option.disabledReason);
+    if (preferredPhoneOption) return preferredPhoneOption.value;
+  }
+  const preferredOption = options.find((option) => option.channel === preferredChannel && !option.disabledReason);
+  if (preferredOption) return preferredOption.value;
+  const firstEnabled = options.find((option) => !option.disabledReason);
+  return firstEnabled?.value || preferredChannel;
+}
+
+function getComposerChannelOptions(
+  contact: ChatContact,
+  businessPhones: WhatsAppApiPhoneNumber[] = [],
+  integrations?: IntegrationsStatus | null,
+): ComposerChannelOption[] {
   const kind = getContactChannelKind(contact);
   const hasPhone = Boolean(String(contact.phone || '').trim());
   const isMessengerContact = kind === 'messenger' || kind === 'facebook_comment' || contactProbeIncludes(contact, 'messenger');
   const isInstagramContact = kind === 'instagram' || kind === 'instagram_comment' || contactProbeIncludes(contact, 'instagram');
+  const highLevelConnected = isHighLevelConnected(integrations);
+  const messengerConnected = isNativeMessengerConnected(integrations);
+  const instagramConnected = isNativeInstagramConnected(integrations);
+  const connectedPhones = businessPhones.filter(isBusinessPhoneSendReady);
+  const whatsappOptions: ComposerChannelOption[] = hasPhone
+    ? connectedPhones.map((phone, index) => ({
+        value: `whatsapp:${phone.id}` as ComposerChannelRouteValue,
+        channel: 'whatsapp',
+        phoneNumberId: phone.id,
+        label: `WhatsApp · ${getBusinessPhoneLabel(phone) || `Número ${index + 1}`}`,
+        description: getBusinessPhoneValue(phone) || phone.verified_name || 'Número conectado',
+        kind: 'whatsapp',
+      }))
+    : [];
+  const options: ComposerChannelOption[] = [...whatsappOptions];
 
-  return [
-    {
-      value: 'whatsapp',
-      label: 'WhatsApp',
-      description: contact.lastBusinessPhone ? `Desde ${contact.lastBusinessPhone}` : 'Mensaje por WhatsApp conectado.',
-      kind: 'whatsapp',
-      disabledReason: hasPhone ? undefined : 'Este contacto no tiene teléfono guardado.',
-    },
-    {
+  if (hasPhone && highLevelConnected) {
+    options.push({
       value: 'sms',
+      channel: 'sms',
       label: 'SMS',
-      description: 'Envía por SMS cuando el contacto tiene teléfono.',
+      description: 'Envía por SMS conectado.',
       kind: 'sms',
-      disabledReason: hasPhone ? undefined : 'Este contacto no tiene teléfono guardado.',
-    },
-    {
+    });
+  }
+
+  if (isMessengerContact && messengerConnected) {
+    options.push({
       value: 'messenger',
+      channel: 'messenger',
       label: 'Messenger',
       description: 'Responde por Facebook Messenger.',
       kind: 'messenger',
-      disabledReason: isMessengerContact ? undefined : 'Disponible cuando este contacto viene de Messenger.',
-    },
-    {
+    });
+  }
+
+  if (isInstagramContact && instagramConnected) {
+    options.push({
       value: 'instagram',
+      channel: 'instagram',
       label: 'Instagram DM',
       description: 'Responde por Instagram Direct.',
       kind: 'instagram',
-      disabledReason: isInstagramContact ? undefined : 'Disponible cuando este contacto viene de Instagram.',
-    },
-    {
-      value: 'email',
-      label: 'Correo',
-      description: 'Disponible desde la vista completa de chats.',
-      kind: 'email',
-      disabledReason: 'El correo todavía se envía desde la vista completa de chats.',
-    },
-  ];
+    });
+  }
+
+  return options;
 }
 
 function getContactCustomFieldRows(contact: ChatContact) {
@@ -17778,6 +17852,7 @@ function NativeConversationScreen({
   archived,
   businessPhones = [],
   contact,
+  integrationsStatus,
   muted,
   timezone,
   onArchiveToggle,
@@ -17795,6 +17870,7 @@ function NativeConversationScreen({
   archived: boolean;
   businessPhones?: WhatsAppApiPhoneNumber[];
   contact: ChatContact;
+  integrationsStatus?: IntegrationsStatus | null;
   muted: boolean;
   timezone: string;
   onArchiveToggle: (contact: ChatContact) => void;
@@ -17818,7 +17894,7 @@ function NativeConversationScreen({
   const [sending, setSending] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedSendChannel, setSelectedSendChannel] = useState<NativeMessageChannel>(() => getDefaultComposerChannel(contact));
+  const [selectedSendChannel, setSelectedSendChannel] = useState<ComposerChannelRouteValue>(() => getDefaultComposerChannel(contact));
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<ConversationDraftAttachment[]>([]);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
@@ -18006,10 +18082,6 @@ function NativeConversationScreen({
     setPaymentLinkDraftPreview(null);
     clearConversationManualScrollReleaseTimer();
   }, [contact.id]);
-
-  useEffect(() => {
-    setSelectedSendChannel(getDefaultComposerChannel(contact));
-  }, [contact.id, contact.lastMessageChannel, contact.lastMessageTransport, contact.source]);
 
   useEffect(() => {
     const handleKeyboardShow = () => {
@@ -18242,11 +18314,19 @@ function NativeConversationScreen({
   }, [conversationHasScheduledMessages]);
 
   const channelKind = getContactChannelKind(contact);
-  const composerChannelOptions = useMemo(() => getComposerChannelOptions(contact), [contact]);
+  const composerChannelOptions = useMemo(
+    () => getComposerChannelOptions(contact, businessPhones, integrationsStatus),
+    [businessPhones, contact, integrationsStatus],
+  );
+  useEffect(() => {
+    setSelectedSendChannel(getDefaultComposerRoute(contact, composerChannelOptions));
+  }, [composerChannelOptions, contact.id, contact.lastMessageChannel, contact.lastMessageTransport, contact.source]);
   const selectedChannelOption = composerChannelOptions.find((option) => option.value === selectedSendChannel) || composerChannelOptions[0];
   const selectedChannelKind = selectedChannelOption?.kind || channelKind;
   const selectedChannelColor = CHANNEL_BADGE_COLORS[selectedChannelKind] || COLORS.accent;
   const selectedChannelCanSend = Boolean(selectedChannelOption && !selectedChannelOption.disabledReason);
+  const selectedRouteChannel = selectedChannelOption?.channel || getComposerRouteChannel(selectedSendChannel);
+  const selectedRoutePhoneNumberId = selectedChannelOption?.phoneNumberId || getComposerRoutePhoneId(selectedSendChannel);
   const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0 || paymentLinkDraftPreview);
   const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
   const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
@@ -18275,7 +18355,7 @@ function NativeConversationScreen({
     setPaymentLinkDraftPreview(pendingDraft.paymentPreview || null);
     setReplyingToMessage(null);
     const requestedChannel = pendingDraft.channel || getDefaultComposerChannel(contact);
-    const enabledRequestedChannel = composerChannelOptions.find((option) => option.value === requestedChannel && !option.disabledReason);
+    const enabledRequestedChannel = composerChannelOptions.find((option) => option.channel === requestedChannel && !option.disabledReason);
     const firstEnabledChannel = composerChannelOptions.find((option) => !option.disabledReason);
     setSelectedSendChannel((enabledRequestedChannel || firstEnabledChannel)?.value || requestedChannel);
     onPendingDraftHandled?.(pendingDraft.id);
@@ -18367,7 +18447,7 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
       return;
     }
-    if (selectedSendChannel !== 'whatsapp') {
+    if (selectedRouteChannel !== 'whatsapp') {
       Alert.alert('Ubicación', 'La ubicación se envía por WhatsApp API/QR. Cambia el canal a WhatsApp para mandarla.');
       return;
     }
@@ -18419,6 +18499,7 @@ function NativeConversationScreen({
         locationPayload.longitude,
         locationPayload.name,
         locationPayload.address,
+        selectedRoutePhoneNumberId,
       );
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
@@ -18528,7 +18609,7 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
       return;
     }
-    if (attachmentsToSend.length > 0 && selectedSendChannel !== 'whatsapp') {
+    if (attachmentsToSend.length > 0 && selectedRouteChannel !== 'whatsapp') {
       Alert.alert('Adjuntos', 'Los adjuntos nativos se envían por WhatsApp API/QR. Cambia el canal a WhatsApp para mandar este archivo.');
       return;
     }
@@ -18536,18 +18617,18 @@ function NativeConversationScreen({
       Alert.alert('Respuesta solo con texto', 'Para contestar un globo específico, manda texto. Para archivos, ubicación o notas de voz, cancela la respuesta primero.');
       return;
     }
-    if (replyingToMessage && selectedSendChannel === 'sms') {
+    if (replyingToMessage && selectedRouteChannel === 'sms') {
       Alert.alert('Respuesta no disponible', 'Las respuestas a un globo específico sólo viajan con WhatsApp, Messenger o Instagram. Cambia el canal o cancela la respuesta.');
       return;
     }
-    if ((selectedSendChannel === 'whatsapp' || selectedSendChannel === 'sms') && !contact.phone) {
+    if ((selectedRouteChannel === 'whatsapp' || selectedRouteChannel === 'sms') && !contact.phone) {
       Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar por este canal.');
       return;
     }
 
     const optimisticId = `local-${Date.now()}`;
     const sentAt = new Date().toISOString();
-    const optimisticChannel = getBackendChannelForComposer(selectedSendChannel);
+    const optimisticChannel = getBackendChannelForComposer(selectedRouteChannel);
     const replyPayload = replyingToMessage ? getNativeMessageReferencePayload(replyingToMessage) : undefined;
     const optimisticMessages: ChatMessage[] = attachmentsToSend.length
       ? attachmentsToSend.map((attachment, index) => ({
@@ -18598,7 +18679,7 @@ function NativeConversationScreen({
     try {
       if (attachmentsToSend.length > 0) {
         const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          sendDraftAttachment(api, contact, attachment, index === 0 ? textToSend : '')
+          sendDraftAttachment(api, contact, attachment, index === 0 ? textToSend : '', selectedRoutePhoneNumberId)
         )));
         setMessages((current) => current.map((message) => {
           if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
@@ -18613,7 +18694,7 @@ function NativeConversationScreen({
           };
         }));
       } else {
-        const response = await api.sendText(contact, textToSend, selectedSendChannel, replyPayload);
+        const response = await api.sendText(contact, textToSend, selectedRouteChannel, replyPayload, selectedRoutePhoneNumberId);
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
             ? {
@@ -18908,7 +18989,7 @@ function NativeConversationScreen({
     setClabeBusyId(account.id);
     try {
       const text = buildClabeMessage(account);
-      await api.sendText(contact, text, selectedSendChannel);
+      await api.sendText(contact, text, selectedRouteChannel, undefined, selectedRoutePhoneNumberId);
       const sentAt = new Date().toISOString();
       setMessages((current) => [...current, {
         id: `clabe-${Date.now()}`,
@@ -18916,11 +18997,11 @@ function NativeConversationScreen({
         date: sentAt,
         direction: 'outbound',
         text,
-        channel: getBackendChannelForComposer(selectedSendChannel),
+        channel: getBackendChannelForComposer(selectedRouteChannel),
         transport: 'native',
         status: 'sent',
       }]);
-      updateContactPreview('CLABE', sentAt, getBackendChannelForComposer(selectedSendChannel));
+      updateContactPreview('CLABE', sentAt, getBackendChannelForComposer(selectedRouteChannel));
       closeSheet();
       void loadConversation(true);
     } catch (err) {
@@ -19090,7 +19171,7 @@ function NativeConversationScreen({
       setScheduleError('Elige una hora futura para programar el mensaje.');
       return;
     }
-    const channelUnavailableReason = getScheduleChannelUnavailableReason(selectedSendChannel, target);
+    const channelUnavailableReason = getScheduleChannelUnavailableReason(selectedRouteChannel, target);
     if (channelUnavailableReason) {
       setScheduleError(channelUnavailableReason);
       Alert.alert('Programar mensaje', channelUnavailableReason);
@@ -19100,7 +19181,7 @@ function NativeConversationScreen({
     setScheduleError('');
     try {
       const editingId = scheduleEditingMessageId;
-      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedSendChannel, editingId || undefined);
+      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedRouteChannel, editingId || undefined, selectedRoutePhoneNumberId);
       closeSheet();
       setScheduleText('');
       setScheduleDraft(createDefaultScheduleDraft(timezone));
@@ -19742,9 +19823,9 @@ function NativeComposerChannelSheet({
   closing?: boolean;
   contact: ChatContact;
   open: boolean;
-  selected: NativeMessageChannel;
+  selected: ComposerChannelRouteValue;
   onClose: () => void;
-  onSelect: (channel: NativeMessageChannel) => void;
+  onSelect: (channel: ComposerChannelRouteValue) => void;
 }) {
   return (
     <BottomActionSheet
@@ -19755,7 +19836,7 @@ function NativeComposerChannelSheet({
       onClose={onClose}
     >
       <View style={styles.channelSheetBody}>
-        {channels.map((channel) => {
+        {channels.length ? channels.map((channel) => {
           const active = selected === channel.value;
           const disabled = Boolean(channel.disabledReason);
           return (
@@ -19781,7 +19862,14 @@ function NativeComposerChannelSheet({
               {active ? <Check size={18} color={COLORS.accent} strokeWidth={2.6} /> : null}
             </Pressable>
           );
-        })}
+        }) : (
+          <View style={styles.channelSheetEmpty}>
+            <Text style={styles.channelSheetEmptyTitle}>Sin canales conectados</Text>
+            <Text style={styles.channelSheetEmptyCopy}>
+              Conecta un número de WhatsApp, Messenger o Instagram para responder desde este chat.
+            </Text>
+          </View>
+        )}
       </View>
     </BottomActionSheet>
   );
@@ -21487,11 +21575,12 @@ function sendDraftAttachment(
   contact: ChatContact,
   attachment: ConversationDraftAttachment,
   caption: string,
+  phoneNumberId?: string,
 ) {
-  if (attachment.kind === 'video') return api.sendVideo(contact, attachment.dataUrl, caption);
-  if (attachment.kind === 'audio') return api.sendAudio(contact, attachment.dataUrl, attachment.durationMs);
-  if (attachment.kind === 'document') return api.sendDocument(contact, attachment.dataUrl, attachment.name, attachment.mimeType, caption);
-  return api.sendImage(contact, attachment.dataUrl, caption);
+  if (attachment.kind === 'video') return api.sendVideo(contact, attachment.dataUrl, caption, phoneNumberId);
+  if (attachment.kind === 'audio') return api.sendAudio(contact, attachment.dataUrl, attachment.durationMs, phoneNumberId);
+  if (attachment.kind === 'document') return api.sendDocument(contact, attachment.dataUrl, attachment.name, attachment.mimeType, caption, phoneNumberId);
+  return api.sendImage(contact, attachment.dataUrl, caption, phoneNumberId);
 }
 
 function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessage[]): ChatMessage[] {
@@ -29410,6 +29499,22 @@ function createAppStyles() {
     paddingHorizontal: 12,
     paddingTop: 8,
     paddingBottom: 18,
+  },
+  channelSheetEmpty: {
+    paddingHorizontal: 12,
+    paddingVertical: 22,
+    gap: 6,
+  },
+  channelSheetEmptyCopy: {
+    color: COLORS.muted,
+    fontSize: 13,
+    fontWeight: '700',
+    lineHeight: 18,
+  },
+  channelSheetEmptyTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    fontWeight: '900',
   },
   clabeSheetBody: {
     padding: 14,

@@ -422,7 +422,7 @@ export class RistakApiClient {
     });
   }
 
-  sendText(contact: ChatContact, text: string, channel: NativeMessageChannel = 'whatsapp', reply?: MessageReplyPayload) {
+  sendText(contact: ChatContact, text: string, channel: NativeMessageChannel = 'whatsapp', reply?: MessageReplyPayload, phoneNumberId?: string) {
     if (channel === 'email') {
       throw new Error('El correo todavía se envía desde la vista completa de chats.');
     }
@@ -462,7 +462,7 @@ export class RistakApiClient {
         contactId: contact.id,
         text,
         externalId: `native-${Date.now()}`,
-        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
         replyToMessageId: reply?.replyToMessageId || undefined,
         replyToProviderMessageId: reply?.replyToProviderMessageId || undefined,
@@ -474,7 +474,7 @@ export class RistakApiClient {
     return this.request<PaymentLinkDeliveryOptions>(`/contacts/${encodeURIComponent(contactId)}/payment-link-delivery-options`);
   }
 
-  sendImage(contact: ChatContact, imageDataUrl: string, caption = '') {
+  sendImage(contact: ChatContact, imageDataUrl: string, caption = '', phoneNumberId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/image', {
       method: 'POST',
       body: JSON.stringify({
@@ -484,13 +484,13 @@ export class RistakApiClient {
         imageDataUrl,
         caption,
         externalId: `native-image-${Date.now()}`,
-        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
       }),
     });
   }
 
-  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '') {
+  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '', phoneNumberId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/document', {
       method: 'POST',
       body: JSON.stringify({
@@ -502,13 +502,13 @@ export class RistakApiClient {
         mimeType: mimeType || undefined,
         caption,
         externalId: `native-document-${Date.now()}`,
-        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
       }),
     });
   }
 
-  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '') {
+  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '', phoneNumberId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/video', {
       method: 'POST',
       body: JSON.stringify({
@@ -518,13 +518,13 @@ export class RistakApiClient {
         videoDataUrl,
         caption,
         externalId: `native-video-${Date.now()}`,
-        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
       }),
     });
   }
 
-  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number) {
+  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number, phoneNumberId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/audio', {
       method: 'POST',
       body: JSON.stringify({
@@ -535,13 +535,13 @@ export class RistakApiClient {
         durationMs,
         voice: true,
         externalId: `native-audio-${Date.now()}`,
-        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
       }),
     });
   }
 
-  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '') {
+  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', phoneNumberId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/location', {
       method: 'POST',
       body: JSON.stringify({
@@ -553,7 +553,7 @@ export class RistakApiClient {
         name,
         address,
         externalId: `native-location-${Date.now()}`,
-        phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
       }),
     });
@@ -599,7 +599,7 @@ export class RistakApiClient {
     });
   }
 
-  scheduleText(contact: ChatContact, text: string, scheduledAt: string, channel?: NativeMessageChannel, scheduledId?: string) {
+  scheduleText(contact: ChatContact, text: string, scheduledAt: string, channel?: NativeMessageChannel, scheduledId?: string, phoneNumberId?: string) {
     const externalId = scheduledId || `native-scheduled-${Date.now()}`;
     const route = getNativeScheduleRoute(contact, channel);
     return this.request('/whatsapp-api/messages/scheduled', {
@@ -614,7 +614,7 @@ export class RistakApiClient {
         text,
         toPhone: contact.phone || undefined,
         fromPhone: contact.lastBusinessPhone || undefined,
-        businessPhoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
+        businessPhoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         scheduledAt,
         externalId,
       }),

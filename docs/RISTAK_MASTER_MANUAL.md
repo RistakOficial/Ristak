@@ -426,6 +426,12 @@ Configuracion > Privacidad guarda
 el marcado local como leido, pero no manda acuses externos de visto a WhatsApp
 API/YCloud, WhatsApp QR/Baileys, Messenger ni Instagram.
 
+En el chat movil, el selector de canal del composer no debe mostrar rutas
+fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia el
+`phoneNumberId` elegido en texto, adjuntos, ubicacion y mensajes programados.
+SMS aparece solo si HighLevel esta conectado, y Messenger/Instagram solo cuando
+Meta esta conectado y el contacto pertenece a ese canal.
+
 ### Correo electronico
 
 Configuracion > Integraciones > Correos conecta envio por SMTP y recepcion por

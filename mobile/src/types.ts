@@ -486,8 +486,19 @@ export type PaymentGatewayStatus = {
   accountLabel?: string | null;
 };
 
+export type MetaIntegrationStatus = {
+  configured?: boolean;
+  connected?: boolean;
+  adAccountId?: string | null;
+  pixelId?: string | null;
+  pageId?: string | null;
+  instagramAccountId?: string | null;
+};
+
 export type IntegrationsStatus = {
   highlevel?: PaymentGatewayStatus;
+  meta?: MetaIntegrationStatus;
+  whatsapp?: PaymentGatewayStatus;
   stripe?: PaymentGatewayStatus;
   conekta?: PaymentGatewayStatus;
   mercadopago?: PaymentGatewayStatus;
