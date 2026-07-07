@@ -1046,8 +1046,8 @@ ultimo inbound pendiente, encola en background el visto real del proveedor:
 YCloud `markAsRead`, QR/Baileys `readMessages` y Meta Messenger/Instagram
 `sender_action='mark_seen'`. Correo queda fuera porque no es chat. Si el
 proveedor se tarda o falla, la UI local no debe esperarlo ni trabarse; el backend
-debe registrar el fallo. El switch Ajustes nativos > Privacidad y Configuracion
-> Privacidad >
+debe registrar el fallo. El switch Ajustes moviles > Privacidad, Ajustes
+nativos > Privacidad y Configuracion > Cuenta > Privacidad >
 `chat_send_read_receipts_enabled` permite apagar solo el acuse externo: el chat
 se limpia como leido dentro de Ristak, pero no se manda visto al proveedor.
 

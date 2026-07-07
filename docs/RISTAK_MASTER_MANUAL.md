@@ -208,7 +208,7 @@ Shell desktop protegido:
 
 Configuracion se organiza en:
 
-- Cuenta: cuenta, usuarios, notificaciones, aplicacion movil.
+- Cuenta: cuenta, usuarios, notificaciones, privacidad, aplicacion movil.
 - Integraciones: HighLevel, Meta, WhatsApp, correos, pagos, calendarios.
 - Datos y rastreo: rastreo web, dominios, costos, media.
 - Personalizacion: campos, variables, trigger links, etiquetas.

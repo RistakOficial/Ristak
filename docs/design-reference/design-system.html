@@ -2704,7 +2704,7 @@ class Component extends DCLogic {
     const tag = String.fromCharCode(60) + 'script src="https://t.ristak.io/r.js" data-id="aurora-8842" async>' + String.fromCharCode(60) + '/script>';
 
     const groups = [
-      { group: 'Cuenta', items: [['account', 'Cuenta'], ['users-access', 'Usuarios y accesos'], ['mobile-app', 'Aplicación móvil']] },
+      { group: 'Cuenta', items: [['account', 'Cuenta'], ['users-access', 'Usuarios y accesos'], ['privacy', 'Privacidad'], ['mobile-app', 'Aplicación móvil']] },
       { group: 'Integraciones', items: [['highlevel', 'HighLevel'], ['meta-ads', 'Meta'], ['whatsapp', 'WhatsApp'], ['email', 'Correos'], ['payments', 'Pagos'], ['calendars', 'Calendarios']] },
       { group: 'Datos y rastreo', items: [['tracking', 'Rastreo Web'], ['domains', 'Dominios'], ['costs', 'Costos'], ['media', 'Media']] },
       { group: 'Personalización', items: [['custom-fields', 'Campos personalizados'], ['variable-fields', 'Campos variables'], ['trigger-links', 'Enlaces de disparo'], ['tags', 'Etiquetas']] },
@@ -2745,6 +2745,12 @@ class Component extends DCLogic {
             { cells: ['Automatizaciones', 'Edición', 'Sin acceso'] },
             { cells: ['Configuración', 'Edición', 'Sin acceso'] }
           ])
+        ])
+      ]},
+      'privacy': { title: 'Privacidad', desc: 'Controla las señales de lectura que manda Ristak en chats.', cards: [
+        card('Vistos de chat', 'Ajustes que afectan lo que tus clientes pueden saber de tu lectura.', [
+          T('Marcar mensajes de chat como leídos o vistos', 'Envía el visto real al abrir o marcar leído un chat.', true),
+          NOTE('Si lo apagas, Ristak limpia los no leídos dentro de la app, pero no manda doble check, mark seen ni acuse externo a WhatsApp, Messenger o Instagram.')
         ])
       ]},
       'mobile-app': { title: 'Aplicación móvil', desc: 'Lleva Ristak Chat en tu teléfono.', cards: [
@@ -3435,7 +3441,7 @@ class Component extends DCLogic {
 
     // ---- Configuración ----
     const settingsSections = [
-      'Cuenta', 'Usuarios y accesos', 'Aplicación móvil', 'Calendarios', 'Pagos', 'HighLevel',
+      'Cuenta', 'Usuarios y accesos', 'Privacidad', 'Aplicación móvil', 'Calendarios', 'Pagos', 'HighLevel',
       'Meta', 'WhatsApp', 'Correos', 'Rastreo Web', 'Dominios', 'Costos', 'Media',
       'Campos personalizados', 'Campos variables', 'Enlaces de disparo', 'Etiquetas', 'Developers'
     ].map((label) => ({ label, active: label === 'Meta' }));
