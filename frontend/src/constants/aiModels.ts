@@ -8,7 +8,7 @@ export const aiModelOptionGroups = [
       { value: 'gpt-5.5-pro', label: 'GPT-5.5 pro', description: 'Más cómputo para respuestas más precisas; puede tardar más.' },
       { value: 'gpt-5.4', label: 'GPT-5.4', description: 'Frontier fuerte con mejor balance de costo.' },
       { value: 'gpt-5.4-pro', label: 'GPT-5.4 pro', description: 'Versión pro de GPT-5.4 para más precisión.' },
-      { value: 'gpt-5.4-mini', label: 'ChatGPT GPT-5.4 Mini', description: 'Default de OpenAI para agentes: rápido, fuerte y eficiente para alto volumen.' },
+      { value: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', description: 'Default de OpenAI para agentes: rápido, fuerte y eficiente para alto volumen.' },
       { value: 'gpt-5.4-nano', label: 'GPT-5.4 nano', description: 'El más económico de la familia GPT-5.4.' }
     ]
   },

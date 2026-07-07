@@ -1678,7 +1678,7 @@ Ristak tiene dos superficies principales:
   atiende, objetivo, quien cumple la meta, cierre posterior cuando lo cumple la
   IA o un enlace, datos requeridos, reglas de pase a equipo y alcance de
   contactos. Cuando el proveedor es OpenAI, el modelo default del sistema es
-  `gpt-5.4-mini` (mostrado en UI como ChatGPT GPT-5.4 Mini); las conexiones
+  `gpt-5.4-mini` (mostrado en UI como GPT-5.4 Mini); las conexiones
   nuevas de OpenAI y los agentes sin modelo explicito deben caer en ese default.
   Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
   el formulario manual avanzado. `extraInstructions` es la superficie editable de
