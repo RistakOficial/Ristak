@@ -222,8 +222,8 @@ function mapConfigRow(row) {
     hideAttended: false,
     hideAttendedNotifications,
     defaultCalendarId: row.default_calendar_id || null,
-    closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
-    closingStrategyCustom: row.closing_strategy_custom || '',
+    closingStrategyMode: 'system',
+    closingStrategyCustom: '',
     persuasionLevel: normalizeConversationalPersuasionLevel(row.persuasion_level),
     languageLevel: normalizeConversationalLanguageLevel(row.language_level),
     updatedAt: row.updated_at || null
@@ -258,12 +258,8 @@ export async function saveConversationalAgentConfig(input = {}) {
       ? (current.hideAttendedNotifications || toBoolean(input.hideAttended))
       : (toBoolean(input.hideAttendedNotifications) || toBoolean(input.hideAttended)),
     defaultCalendarId: input.defaultCalendarId === undefined ? current.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
-    closingStrategyMode: input.closingStrategyMode === undefined
-      ? current.closingStrategyMode
-      : (input.closingStrategyMode === 'custom' ? 'custom' : 'system'),
-    closingStrategyCustom: input.closingStrategyCustom === undefined
-      ? current.closingStrategyCustom
-      : String(input.closingStrategyCustom || '').slice(0, 8000),
+    closingStrategyMode: 'system',
+    closingStrategyCustom: '',
     persuasionLevel: input.persuasionLevel === undefined
       ? current.persuasionLevel
       : normalizeConversationalPersuasionLevel(input.persuasionLevel),
@@ -2064,8 +2060,8 @@ function mapAgentRow(row) {
     hideAttended: false,
     hideAttendedNotifications,
     defaultCalendarId: row.default_calendar_id || null,
-    closingStrategyMode: row.closing_strategy_mode === 'custom' ? 'custom' : 'system',
-    closingStrategyCustom: row.closing_strategy_custom || '',
+    closingStrategyMode: 'system',
+    closingStrategyCustom: '',
     persuasionLevel: normalizeConversationalPersuasionLevel(row.persuasion_level),
     languageLevel: normalizeConversationalLanguageLevel(row.language_level),
     contactScope: normalizeContactScope(row.contact_scope),
@@ -2418,12 +2414,8 @@ function agentInputToRowValues(input, base) {
       ? (base.hideAttendedNotifications || toBoolean(input.hideAttended))
       : (toBoolean(input.hideAttendedNotifications) || toBoolean(input.hideAttended)),
     defaultCalendarId: input.defaultCalendarId === undefined ? base.defaultCalendarId : (String(input.defaultCalendarId || '').trim() || null),
-    closingStrategyMode: input.closingStrategyMode === undefined
-      ? base.closingStrategyMode
-      : (input.closingStrategyMode === 'custom' ? 'custom' : 'system'),
-    closingStrategyCustom: input.closingStrategyCustom === undefined
-      ? base.closingStrategyCustom
-      : String(input.closingStrategyCustom || '').slice(0, 8000),
+    closingStrategyMode: 'system',
+    closingStrategyCustom: '',
     persuasionLevel: input.persuasionLevel === undefined
       ? normalizeConversationalPersuasionLevel(base.persuasionLevel)
       : normalizeConversationalPersuasionLevel(input.persuasionLevel),
@@ -2481,8 +2473,6 @@ const ACTIVE_AGENT_RUNTIME_CONFIG_KEYS = new Set([
   'hideAttended',
   'hideAttendedNotifications',
   'defaultCalendarId',
-  'closingStrategyMode',
-  'closingStrategyCustom',
   'persuasionLevel',
   'languageLevel',
   'contactScope',

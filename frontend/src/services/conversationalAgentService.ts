@@ -182,7 +182,6 @@ export interface ConversationalAgentConfig {
   updatedAt: string | null
   objectives?: Array<{ id: string; label: string }>
   successActions?: Array<{ id: string; label: string }>
-  systemClosingStrategy?: string
   businessPromptStatus?: ConversationalBusinessPromptStatus
   aiProviders?: ConversationalAIProviderStatus[]
 }
@@ -201,8 +200,6 @@ export interface ConversationalAgentConfigInput {
   hideAttended?: boolean
   hideAttendedNotifications?: boolean
   defaultCalendarId?: string | null
-  closingStrategyMode?: ClosingStrategyMode
-  closingStrategyCustom?: string
   persuasionLevel?: ConversationalPersuasionLevel
   languageLevel?: ConversationalLanguageLevel
 }
@@ -310,7 +307,6 @@ export interface ConversationalAgentDef {
   languageLevel: ConversationalLanguageLevel
   contactScope: ConversationalContactScope
   contactScopeCutoffAt?: string | null
-  systemClosingStrategy?: string
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
   followUp: AgentFollowUpConfig
@@ -320,7 +316,7 @@ export interface ConversationalAgentDef {
   updatedAt: string | null
 }
 
-export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'systemClosingStrategy'>>
+export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'closingStrategyMode' | 'closingStrategyCustom'>>
 
 export interface ConversationAgentState {
   id?: string | null

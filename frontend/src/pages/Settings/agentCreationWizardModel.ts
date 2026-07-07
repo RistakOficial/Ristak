@@ -45,7 +45,6 @@ export interface AgentWizardDraft {
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
   hideAttendedNotifications: boolean
-  closingStrategyCustom: string
   completionMode: AgentCompletionMode
   completionUserId: string
   completionUserName: string
@@ -130,7 +129,6 @@ export function buildInitialAgentWizardDraft(
     responseDelay: { ...DEFAULT_AGENT_RESPONSE_DELAY },
     replyDelivery: { ...DEFAULT_AGENT_REPLY_DELIVERY },
     hideAttendedNotifications: false,
-    closingStrategyCustom: '',
     completionMode: 'notify_only',
     completionUserId: '',
     completionUserName: '',
@@ -246,9 +244,6 @@ export function buildOverridesFromDraft(
     },
     hideAttended: false,
     hideAttendedNotifications: draft.hideAttendedNotifications,
-    ...(draft.closingStrategyCustom.trim()
-      ? { closingStrategyMode: 'custom' as const, closingStrategyCustom: draft.closingStrategyCustom.trim() }
-      : { closingStrategyMode: 'system' as const, closingStrategyCustom: '' }),
     goalWorkflow: buildGoalWorkflowFromDraft(draft, accountCurrency),
     defaultCalendarId: isAgentWizardCitasBooking(draft) ? draft.calendarId : null,
     contactScope: draft.contactScope

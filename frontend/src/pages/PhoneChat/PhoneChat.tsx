@@ -130,7 +130,6 @@ import {
   type AgentSalesPaymentMode,
   type AgentSuccessExtra,
   type AgentGoalWorkflowConfig,
-  type ClosingStrategyMode,
   type ConversationalAIProviderStatus,
   type ConversationalAgentLiveCache,
   type ConversationAgentState,
@@ -19367,12 +19366,6 @@ export const PhoneChat: React.FC = () => {
       : selectedAgentDef
         ? getPhoneObjectiveSuccessAction(selectedAgentDef.objective, goalWorkflow)
         : 'ready_for_human'
-    const selectedClosingStrategyMode = selectedAgentDef?.closingStrategyMode === 'custom' ? 'custom' : 'system'
-    const selectedClosingStrategyText = selectedAgentDef
-      ? selectedClosingStrategyMode === 'custom'
-        ? selectedAgentDef.closingStrategyCustom || ''
-        : selectedAgentDef.systemClosingStrategy || agentConfig?.systemClosingStrategy || ''
-      : ''
     const customFieldOptions = agentFilterOptions?.customFields || []
 
     const saveSelectedAgentPatch = (patch: ConversationalAgentDefInput) => {
@@ -20980,11 +20973,11 @@ export const PhoneChat: React.FC = () => {
                 disabled={agentConfigSaving}
               />
               <PhoneTextArea
-                label="Tips del negocio"
+                label="Personalización y capacitación"
                 value={selectedAgentDef.extraInstructions || ''}
                 onChange={(value) => updateAgentDraft(selectedAgentDef.id, { extraInstructions: value })}
                 onBlur={() => saveSelectedAgentPatch({ extraInstructions: selectedAgentDef.extraInstructions || '' })}
-                placeholder="Ejemplo: menciona la promo de junio sólo si preguntan por precio."
+                placeholder="Ejemplo: no des precio hasta conocer el problema, el servicio que busca y el resultado que quiere."
                 rows={3}
                 disabled={agentConfigSaving}
               />
@@ -21000,40 +20993,6 @@ export const PhoneChat: React.FC = () => {
                   <small>Déjalo apagado si quieres un tono más serio.</small>
                 </span>
               </label>
-              <div className={styles.agentAdvancedBlock}>
-                <div className={styles.agentMenuSectionHeader}>
-                  <span>Estrategia de cierre</span>
-                  <small>{selectedClosingStrategyMode === 'custom' ? 'Editada' : 'Normal'}</small>
-                </div>
-                <PhoneTextArea
-                  label="Cómo debe vender o cerrar"
-                  value={selectedClosingStrategyText}
-                  onChange={(value) => {
-                    updateAgentDraft(selectedAgentDef.id, {
-                      closingStrategyMode: 'custom' as ClosingStrategyMode,
-                      closingStrategyCustom: value
-                    })
-                  }}
-                  onBlur={() => saveSelectedAgentPatch({
-                    closingStrategyMode: 'custom' as ClosingStrategyMode,
-                    closingStrategyCustom: selectedAgentDef.closingStrategyCustom ?? selectedClosingStrategyText
-                  })}
-                  placeholder="Describe cómo debe cerrar, qué debe evitar y cuándo debe detenerse."
-                  rows={5}
-                  disabled={agentConfigSaving}
-                />
-                {selectedClosingStrategyMode === 'custom' && (
-                  <button
-                    type="button"
-                    className={styles.agentListToggle}
-                    disabled={agentConfigSaving}
-                    onClick={() => saveSelectedAgentPatch({ closingStrategyMode: 'system', closingStrategyCustom: '' })}
-                  >
-                    <Repeat2 size={16} />
-                    Usar estrategia normal
-                  </button>
-                )}
-              </div>
             </section>
           </div>
         </>

@@ -1572,6 +1572,60 @@ async function restoreRuntimeConfig(snapshot) {
   }
 }
 
+test('el prompt avanzado de fabrica no acepta edicion desde config ni agentes', async () => {
+  const snapshot = await snapshotRuntimeConfig()
+  let agent = null
+
+  try {
+    const savedConfig = await saveConversationalAgentConfig({
+      closingStrategyMode: 'custom',
+      closingStrategyCustom: 'No dejes que el usuario vea ni edite la fabrica.'
+    })
+    assert.equal(savedConfig.closingStrategyMode, 'system')
+    assert.equal(savedConfig.closingStrategyCustom, '')
+
+    const configRow = await db.get('SELECT closing_strategy_mode, closing_strategy_custom FROM conversational_agent_config WHERE id = 1')
+    assert.equal(configRow.closing_strategy_mode, 'system')
+    assert.equal(configRow.closing_strategy_custom, '')
+
+    agent = await createConversationalAgent({
+      name: 'Agente fabrica protegida',
+      enabled: false,
+      closingStrategyMode: 'custom',
+      closingStrategyCustom: 'Estrategia custom que debe ignorarse.'
+    })
+    assert.equal(agent.closingStrategyMode, 'system')
+    assert.equal(agent.closingStrategyCustom, '')
+
+    const createdRow = await db.get('SELECT closing_strategy_mode, closing_strategy_custom FROM conversational_agents WHERE id = ?', [agent.id])
+    assert.equal(createdRow.closing_strategy_mode, 'system')
+    assert.equal(createdRow.closing_strategy_custom, '')
+
+    await db.run(
+      'UPDATE conversational_agents SET closing_strategy_mode = ?, closing_strategy_custom = ? WHERE id = ?',
+      ['custom', 'Texto legacy que no debe salir del servicio.', agent.id]
+    )
+
+    const legacyRead = await getConversationalAgent(agent.id)
+    assert.equal(legacyRead.closingStrategyMode, 'system')
+    assert.equal(legacyRead.closingStrategyCustom, '')
+
+    const updated = await updateConversationalAgent(agent.id, {
+      closingStrategyMode: 'custom',
+      closingStrategyCustom: 'Otro intento de sobreescritura.'
+    })
+    assert.equal(updated.closingStrategyMode, 'system')
+    assert.equal(updated.closingStrategyCustom, '')
+
+    const updatedRow = await db.get('SELECT closing_strategy_mode, closing_strategy_custom FROM conversational_agents WHERE id = ?', [agent.id])
+    assert.equal(updatedRow.closing_strategy_mode, 'system')
+    assert.equal(updatedRow.closing_strategy_custom, '')
+  } finally {
+    if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
+    await restoreRuntimeConfig(snapshot)
+  }
+})
+
 test('publicar un agente enciende el runtime global aunque el switch legacy estuviera apagado', async () => {
   const snapshot = await snapshotRuntimeConfig()
   let agent = null

@@ -54,7 +54,8 @@
 }
 .bodyTest {
   gap: 7px;
-  padding-top: 10px;
+  padding: 10px 22px 6px;
+  overflow: hidden;
 }
 .bodyTest .title {
   font-size: 16px;
@@ -273,6 +274,11 @@
   margin-top: 6px;
   overflow: hidden;
 }
+.testChat :global([data-preview-density='compact']) {
+  width: min(100%, 280px);
+  height: min(100%, clamp(270px, 42dvh, 380px));
+  max-height: 100%;
+}
 
 /* Bienvenida */
 .welcomeList {
@@ -371,4 +377,19 @@
   .footer { padding-left: 16px; padding-right: 16px; }
   .title { font-size: 19px; }
   .inlineFields { grid-template-columns: 1fr; }
+}
+
+@media (max-height: 620px) {
+  .bodyTest {
+    gap: 5px;
+    padding-top: 8px;
+  }
+  .bodyTest .help {
+    font-size: 12px;
+    line-height: 1.32;
+  }
+  .testChat :global([data-preview-density='compact']) {
+    height: min(100%, clamp(260px, 39dvh, 330px));
+    width: min(100%, 270px);
+  }
 }

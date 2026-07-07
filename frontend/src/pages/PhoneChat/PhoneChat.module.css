@@ -11665,7 +11665,6 @@
   color: var(--phone-chat-muted);
 }
 
-.agentAdvancedBlock,
 .agentConditionBuilderShell,
 .agentExtraRow {
   display: grid;

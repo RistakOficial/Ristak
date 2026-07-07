@@ -33,11 +33,7 @@ import {
 import { getAccountLocaleSettings } from '../utils/accountLocale.js'
 import { runConversationalAgentPreview } from '../agents/conversational/runner.js'
 import {
-  buildClosingStrategyTemplateParameters,
-  buildBusinessAdaptiveClosingSection,
-  renderClosingStrategyTemplate,
-  resolveDefaultClosingStrategyBase,
-  usesLightDirectClosingBase
+  buildClosingStrategyTemplateParameters
 } from '../agents/conversational/prompt.js'
 
 function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}, accountLocale = {}) {
@@ -74,19 +70,7 @@ function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}, 
     extractionStatus === 'ready' &&
     visibleParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO
   )
-  // La estrategia visible refleja la MISMA base que usará el agente en runtime:
-  // fábrica pesada o versión ligera y directa, según persuasión x lenguaje.
-  const lightBase = usesLightDirectClosingBase(agentConfig)
-  const renderedStrategy = renderClosingStrategyTemplate(resolveDefaultClosingStrategyBase(agentConfig), visibleParameters, {
-    replaceMissing: true
-  })
-  const adaptedStrategy = [
-    renderedStrategy,
-    ready && !lightBase ? buildBusinessAdaptiveClosingSection({ enabled: true, parameters: visibleParameters }) : ''
-  ].filter(Boolean).join('\n\n')
-
   return {
-    systemClosingStrategy: adaptedStrategy,
     businessPromptStatus: {
       ready,
       status: extractionStatus,
@@ -106,14 +90,6 @@ async function getBusinessPromptState(agentConfig = {}) {
     getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
   ])
   return buildBusinessPromptStateFromProfile(businessProfile, agentConfig, accountLocale)
-}
-
-function withVisibleStrategy(agent, businessProfile, accountLocale = {}) {
-  const promptState = buildBusinessPromptStateFromProfile(businessProfile, agent, accountLocale)
-  return {
-    ...agent,
-    systemClosingStrategy: promptState.systemClosingStrategy
-  }
 }
 
 async function assertBusinessPromptReady() {
@@ -359,12 +335,8 @@ export async function getFilterOptions(req, res) {
 
 export async function listAgents(req, res) {
   try {
-    const [businessProfile, accountLocale] = await Promise.all([
-      getBusinessProfileSnapshot().catch(() => null),
-      getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
-    ])
     const agents = await listConversationalAgents()
-    res.json({ success: true, data: agents.map((agent) => withVisibleStrategy(agent, businessProfile, accountLocale)) })
+    res.json({ success: true, data: agents })
   } catch (error) {
     logger.error('Error listando agentes conversacionales:', error)
     res.status(500).json({ success: false, error: 'Error al listar los agentes conversacionales' })
@@ -386,12 +358,8 @@ export async function createAgent(req, res) {
     if (req.body?.enabled !== false) {
       await assertBusinessPromptReady()
     }
-    const [businessProfile, accountLocale] = await Promise.all([
-      getBusinessProfileSnapshot().catch(() => null),
-      getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
-    ])
     const agent = await createConversationalAgent(req.body || {})
-    res.status(201).json({ success: true, data: withVisibleStrategy(agent, businessProfile, accountLocale) })
+    res.status(201).json({ success: true, data: agent })
   } catch (error) {
     logger.error('Error creando agente conversacional:', error)
     res.status(error.statusCode || 500).json({
@@ -409,12 +377,8 @@ export async function updateAgent(req, res) {
     if (req.body?.enabled === true) {
       await assertBusinessPromptReady()
     }
-    const [businessProfile, accountLocale] = await Promise.all([
-      getBusinessProfileSnapshot().catch(() => null),
-      getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
-    ])
     const agent = await updateConversationalAgent(req.params?.agentId, req.body || {})
-    res.json({ success: true, data: withVisibleStrategy(agent, businessProfile, accountLocale) })
+    res.json({ success: true, data: agent })
   } catch (error) {
     logger.error('Error actualizando agente conversacional:', error)
     res.status(error.statusCode || 500).json({

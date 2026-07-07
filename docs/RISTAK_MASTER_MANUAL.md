@@ -1673,20 +1673,22 @@ Ristak tiene dos superficies principales:
   instrucciones, operacion tecnica del chat, objetivo y cierre, reglas de
   atencion, y entrada/salida. El wizard de nuevo asistente cubre las decisiones
   principales de esos bloques: proveedor/modelo de IA, identidad, persuasion,
-  lenguaje, indicaciones obligatorias (`extraInstructions`), instrucciones
-  avanzadas, tiempos de respuesta, mensajes en partes, notificaciones mientras el
-  agente atiende, objetivo, quien cumple la meta, cierre posterior cuando lo
-  cumple la IA o un enlace, datos requeridos, reglas de pase a equipo y alcance
-  de contactos. Cuando el proveedor es OpenAI, el modelo default del sistema es
+  lenguaje, personalizacion y capacitacion del asistente (`extraInstructions`),
+  tiempos de respuesta, mensajes en partes, notificaciones mientras el agente
+  atiende, objetivo, quien cumple la meta, cierre posterior cuando lo cumple la
+  IA o un enlace, datos requeridos, reglas de pase a equipo y alcance de
+  contactos. Cuando el proveedor es OpenAI, el modelo default del sistema es
   `gpt-5.4-mini` (mostrado en UI como ChatGPT GPT-5.4 Mini); las conexiones
   nuevas de OpenAI y los agentes sin modelo explicito deben caer en ese default.
   Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
-  el formulario manual avanzado. En el wizard, `extraInstructions` son reglas
-  obligatorias del negocio y mandan sobre estilo/venta salvo limites de seguridad
-  e integridad; `closingStrategyCustom` reemplaza la estrategia de cierre, no es
-  el lugar principal para datos obligatorios. Los datos estrictamente necesarios
-  para avanzar deben vivir en `requiredData`. Si `extraInstructions` o
-  `closingStrategyCustom` condicionan precio/valor/costo/cotizacion (por ejemplo,
+  el formulario manual avanzado. `extraInstructions` es la superficie editable de
+  personalizacion del asistente: reglas del negocio, limites, datos que debe
+  pedir, casos especificos y comportamiento que siempre debe respetar, salvo los
+  limites de seguridad e integridad. El prompt avanzado de fabrica vive interno:
+  no se muestra, no se edita desde la UI y las APIs de configuracion ignoran
+  intentos de guardar `closingStrategyCustom`. Los datos estrictamente necesarios
+  para avanzar deben vivir en `requiredData`. Si `extraInstructions` condiciona
+  precio/valor/costo/cotizacion (por ejemplo,
   "no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
   explicito: una pregunta directa por precio no desbloquea montos, rangos,
   descuentos, promociones ni links de pago hasta cumplir esa condicion; el agente

@@ -41,7 +41,6 @@ import {
   type AgentResponseDelayUnit,
   type AgentSalesPaymentMode,
   type AgentSuccessExtra,
-  type ClosingStrategyMode,
   type ConversationalAIProviderStatus,
   type ConversationalBusinessPromptStatus,
   type ConversationalAgentConfig,
@@ -903,7 +902,15 @@ function waitForTestReplyDelay(delayMs: number) {
 }
 
 function agentToInput(agent: ConversationalAgentDef): ConversationalAgentDefInput {
-  const { id: _id, createdAt: _c, updatedAt: _u, systemClosingStrategy: _s, ...rest } = agent
+  const {
+    id: _id,
+    createdAt: _c,
+    updatedAt: _u,
+    systemClosingStrategy: _s,
+    closingStrategyMode: _m,
+    closingStrategyCustom: _custom,
+    ...rest
+  } = agent as ConversationalAgentDef & { systemClosingStrategy?: string }
   return rest
 }
 
@@ -1296,7 +1303,6 @@ interface AgentCardProps {
   triggerLinks: TriggerLink[]
   triggerLinksLoading: boolean
   filterOptions?: AgentFilterOptions
-  systemStrategy: string
   businessPromptStatus?: ConversationalBusinessPromptStatus | null
   onConnectProvider: (providerId: ConversationalAIProviderId) => void
   onBack: () => void
@@ -1308,7 +1314,7 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
   return aiProviders.find((provider) => provider.id === providerId) || null
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, triggerLinks, triggerLinksLoading, filterOptions, systemStrategy, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, triggerLinks, triggerLinksLoading, filterOptions, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
   const { showToast } = useNotification()
   const detectedLocaleDefaults = getDetectedAccountLocaleDefaults()
   const [accountCurrencyConfig] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
@@ -1407,8 +1413,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }))
   const selectedAttendedChatActionValue = getAttendedChatActionValue(agent)
   const selectedAttendedChatAction = attendedChatActionOptions.find((option) => option.value === selectedAttendedChatActionValue) || attendedChatActionOptions[0]
-  const strategyIsCustom = agent.closingStrategyMode === 'custom'
-  const strategyText = strategyIsCustom ? agent.closingStrategyCustom : agent.systemClosingStrategy || systemStrategy
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
   const promptStatusText = getBusinessPromptStatusText(businessPromptStatus)
   const promptBlockerText = getBusinessPromptBlockerText(businessPromptStatus)
@@ -2682,7 +2686,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
               <div className={styles.configQuestion}>
                 <div className={styles.field}>
-                  <label className={styles.label}>Tus indicaciones obligatorias para el asistente</label>
+                  <label className={styles.label}>Personalización y capacitación del asistente</label>
                   <textarea
                     className={styles.textarea}
                     value={agent.extraInstructions}
@@ -2691,9 +2695,9 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                     rows={5}
                   />
                   <p className={styles.helper}>
-                    Reglas del negocio que siempre debe cumplir. Si contradicen cómo viene configurado el asistente, ganan estas indicaciones.
+                    Reglas del negocio que siempre debe cumplir. Esto personaliza conducta, límites, datos que debe pedir y casos especiales; el prompt de fábrica de Ristak se usa por dentro y no se edita desde aquí.
                   </p>
-                  <div className={styles.guidanceExamples} aria-label="Ejemplos de indicaciones obligatorias">
+                  <div className={styles.guidanceExamples} aria-label="Ejemplos de personalización y capacitación">
                     <span>Ejemplos que sí van aquí:</span>
                     <ul>
                       <li>No des precio hasta conocer el problema o reto completo.</li>
@@ -2704,62 +2708,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 </div>
               </div>
             </div>
-
-            <details className={styles.advancedDetails} open={strategyIsCustom || undefined}>
-              <summary>
-                <span>Instrucciones avanzadas</span>
-                <small>{strategyIsCustom ? 'Editada a mano' : promptStatusText}</small>
-              </summary>
-              <div className={styles.advancedContent}>
-                <div className={styles.strategyHeaderRow}>
-                  <label className={styles.label}>Cómo debe vender o cerrar</label>
-                  <span className={`${styles.strategyBadge} ${strategyIsCustom ? styles.strategyBadgeCustom : businessPromptReady ? styles.strategyBadgeReady : styles.strategyBadgeLocked}`}>
-                    {strategyIsCustom ? 'Editada' : businessPromptReady ? 'Adaptada' : 'Pendiente'}
-                  </span>
-                  {strategyIsCustom && (
-                    <button
-                      type="button"
-                      className={styles.resetStrategyButton}
-                      onClick={() => onChange({ closingStrategyMode: 'system', closingStrategyCustom: '' })}
-                    >
-                      <RotateCcw size={13} />
-                      Usar la normal
-                    </button>
-                  )}
-                </div>
-                {!strategyIsCustom && (
-                  <div className={`${styles.strategyPromptState} ${businessPromptReady ? styles.strategyPromptStateReady : styles.strategyPromptStateLocked}`}>
-                    <strong>{promptStatusText}</strong>
-                    <span>
-                      {businessPromptReady
-                        ? 'Ya usa los datos actuales de tu negocio.'
-                        : promptBlockerText}
-                    </span>
-                  </div>
-                )}
-                <textarea
-                  className={`${styles.textarea} ${styles.actionTextarea}`}
-                  value={strategyText}
-                  onChange={(event) => onChange({ closingStrategyMode: 'custom' as ClosingStrategyMode, closingStrategyCustom: event.target.value })}
-                  rows={7}
-                />
-                <p className={styles.helper}>
-                  {strategyIsCustom
-                    ? 'Este agente usa tu texto editado. Sirve para dirigir cómo cierra, negocia y maneja objeciones; las reglas obligatorias viven arriba.'
-                    : businessPromptReady
-                      ? 'Ya usa los datos de tu negocio. Ejemplo: habla según lo que vendes y a quién atiendes. Edita sólo si necesitas una estrategia de cierre distinta.'
-                      : 'Primero describe tu negocio para preparar estas instrucciones.'}
-                </p>
-                <div className={styles.guidanceExamples} aria-label="Ejemplos de instrucciones avanzadas">
-                  <span>Ejemplos que sí van aquí:</span>
-                  <ul>
-                    <li>Si objeta precio, responde con el costo de seguir igual antes de ofrecer alternativa.</li>
-                    <li>Si ya calificó, cierra directo y sin discurso largo.</li>
-                    <li>No uses urgencia salvo que la disponibilidad sea realmente limitada.</li>
-                  </ul>
-                </div>
-              </div>
-            </details>
           </div>
 
           <div className={styles.agentSection}>
@@ -3871,7 +3819,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     )
   }
 
-  const systemStrategy = config?.systemClosingStrategy || ''
   const selectedAgent = selectedAgentId ? agents.find((agent) => agent.id === selectedAgentId) || null : null
   const metricsByAgentId = new Map((metrics?.byAgent || []).map((item) => [item.agentId, item]))
   const dashboardMetrics = getConversationalDashboardMetrics(metrics, agents)
@@ -4033,7 +3980,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           triggerLinks={triggerLinks}
           triggerLinksLoading={triggerLinksLoading}
           filterOptions={filterOptions}
-          systemStrategy={systemStrategy}
           businessPromptStatus={businessPromptStatus}
           onConnectProvider={openProviderModal}
           onBack={() => {
