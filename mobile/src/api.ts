@@ -415,10 +415,17 @@ export class RistakApiClient {
     });
   }
 
-  updateAgentState(contactId: string, action: 'activate' | 'pause' | 'take_over' | 'skip') {
+  updateAgentState(
+    contactId: string,
+    action: 'activate' | 'pause' | 'take_over' | 'skip',
+    options: { agentId?: string } = {},
+  ) {
     return this.request<ConversationAgentState>(`/conversational-agent/states/${encodeURIComponent(contactId)}`, {
       method: 'POST',
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({
+        action,
+        ...(options.agentId ? { agentId: options.agentId } : {}),
+      }),
     });
   }
 

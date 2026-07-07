@@ -432,6 +432,7 @@ type CalendarBootstrapCache = {
   updatedAt?: string;
 };
 type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
+type ManualAgentInterruptionAction = 'pause' | 'skip';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email';
 type AdvancedOriginFilter = 'all' | 'meta' | 'site' | 'organic' | 'trigger' | 'unknown';
@@ -715,8 +716,8 @@ const MESSAGE_ACTION_CLOSE_DURATION_MS = 90;
 const CHAT_SHEET_HIDDEN_TRANSLATE_Y = 860;
 const PAGE_TRANSITION_DURATION_MS = 240;
 const PAGE_TRANSITION_OFFSET_RATIO = 0.18;
-const CONVERSATION_ROUTE_OPEN_DURATION_MS = 260;
-const CONVERSATION_ROUTE_CLOSE_DURATION_MS = 230;
+const CONVERSATION_ROUTE_OPEN_DURATION_MS = 140;
+const CONVERSATION_ROUTE_CLOSE_DURATION_MS = 90;
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏'];
 const CONVERSATION_ATTACHMENT_LIMIT = 4;
 const AI_AGENT_DIRECT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
@@ -2268,7 +2269,7 @@ function ChatScreen({
     const animation = Animated.timing(conversationRouteProgress, {
       toValue: conversationClosing ? 0 : 1,
       duration: conversationClosing ? CONVERSATION_ROUTE_CLOSE_DURATION_MS : CONVERSATION_ROUTE_OPEN_DURATION_MS,
-      easing: conversationClosing ? Easing.in(Easing.cubic) : Easing.out(Easing.cubic),
+      easing: Easing.out(Easing.cubic),
       useNativeDriver: true,
     });
 
@@ -3068,12 +3069,16 @@ function ChatScreen({
     }
   };
 
-  const runAgentAction = async (contact: ChatContact, action: AgentAction) => {
+  const runAgentAction = async (contact: ChatContact, action: AgentAction, stateHint?: ConversationAgentState | null) => {
     if (agentBusyAction) return;
     setAgentBusyAction(action);
     try {
-      const state = await api.updateAgentState(contact.id, action);
-      setAgentStatesByContactId((current) => ({ ...current, [contact.id]: [state] }));
+      const currentPrimaryState = selectPrimaryAgentState(agentStatesByContactId[contact.id]);
+      const state = await api.updateAgentState(contact.id, action, { agentId: stateHint?.agentId || currentPrimaryState?.agentId || undefined });
+      setAgentStatesByContactId((current) => ({
+        ...current,
+        [contact.id]: upsertConversationAgentState(current[contact.id] || [], state),
+      }));
       closeSheet();
     } catch (err) {
       Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudo actualizar el agente.');
@@ -16798,6 +16803,31 @@ function selectPrimaryAgentState(states?: ConversationAgentState[]) {
   return states.find((state) => state.agentId) || states[0] || null;
 }
 
+function getActiveConversationAgentStates(states?: ConversationAgentState[]) {
+  if (!Array.isArray(states)) return [];
+  return states.filter((state) => state.agentId && String(state.status || '').toLowerCase() === 'active');
+}
+
+function getManualAgentSendLabel(states: ConversationAgentState[]) {
+  if (states.length === 0) return 'el agente conversacional';
+  if (states.length === 1) return states[0].agentName || 'el agente conversacional';
+  return `${states.length} agentes conversacionales`;
+}
+
+function upsertConversationAgentState(states: ConversationAgentState[], nextState: ConversationAgentState) {
+  const nextAgentId = nextState.agentId || '';
+  const nextId = nextState.id || '';
+  let replaced = false;
+  const nextStates = states.map((state) => {
+    const sameAgent = nextAgentId && state.agentId === nextAgentId;
+    const sameId = nextId && state.id === nextId;
+    if (!sameAgent && !sameId) return state;
+    replaced = true;
+    return nextState;
+  });
+  return replaced ? nextStates : [nextState, ...nextStates];
+}
+
 function isInactiveAgentStatus(status?: string | null) {
   return ['paused', 'human', 'skipped', 'completed', 'discarded'].includes(String(status || '').toLowerCase());
 }
@@ -17885,7 +17915,7 @@ function NativeConversationScreen({
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [journeyEvents, setJourneyEvents] = useState<JourneyEvent[]>([]);
-  const [localActivityMarkers, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
+  const [, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
   const [completionNotice, setCompletionNotice] = useState<NativeConversationSuccessNotice | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -17919,6 +17949,7 @@ function NativeConversationScreen({
   const [agentStates, setAgentStates] = useState<ConversationAgentState[]>([]);
   const [agentLoading, setAgentLoading] = useState(false);
   const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
+  const [manualAgentSendPrompt, setManualAgentSendPrompt] = useState<ConversationAgentState[] | null>(null);
   const [templates, setTemplates] = useState<WhatsAppTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templateBusyId, setTemplateBusyId] = useState<string | null>(null);
@@ -17942,8 +17973,6 @@ function NativeConversationScreen({
   const listRef = useRef<FlatList<ConversationListItem>>(null);
   const composerInputRef = useRef<TextInput>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dateHeaderHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const dateHeaderOpacity = useRef(new Animated.Value(0)).current;
   const conversationParallaxX = useRef(new Animated.Value(0)).current;
   const conversationParallaxY = useRef(new Animated.Value(0)).current;
   const loadRequestRef = useRef(0);
@@ -17953,6 +17982,7 @@ function NativeConversationScreen({
   const conversationAtLatestRef = useRef(true);
   const pendingConversationInitialScrollRef = useRef(true);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const agentStatesRef = useRef<ConversationAgentState[]>([]);
   const olderMessagesLoadingRef = useRef(false);
   const conversationHasOlderMessagesRef = useRef(false);
   const conversationHistoryExhaustedContactIdRef = useRef<string | null>(null);
@@ -17993,36 +18023,6 @@ function NativeConversationScreen({
     conversationAtLatestRef.current = atLatest;
     if (!atLatest) pendingConversationInitialScrollRef.current = false;
   }, []);
-
-  const clearDateHeaderHideTimer = useCallback(() => {
-    if (dateHeaderHideTimerRef.current) {
-      clearTimeout(dateHeaderHideTimerRef.current);
-      dateHeaderHideTimerRef.current = null;
-    }
-  }, []);
-
-  const showConversationDateHeaders = useCallback(() => {
-    clearDateHeaderHideTimer();
-    Animated.timing(dateHeaderOpacity, {
-      toValue: 1,
-      duration: 90,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  }, [clearDateHeaderHideTimer, dateHeaderOpacity]);
-
-  const hideConversationDateHeaders = useCallback(() => {
-    clearDateHeaderHideTimer();
-    dateHeaderHideTimerRef.current = setTimeout(() => {
-      dateHeaderHideTimerRef.current = null;
-      Animated.timing(dateHeaderOpacity, {
-        toValue: 0,
-        duration: 260,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }).start();
-    }, 380);
-  }, [clearDateHeaderHideTimer, dateHeaderOpacity]);
 
   useEffect(() => {
     let disposed = false;
@@ -18069,6 +18069,10 @@ function NativeConversationScreen({
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    agentStatesRef.current = agentStates;
+  }, [agentStates]);
 
   useEffect(() => {
     activeConversationContactIdRef.current = contact.id;
@@ -18184,9 +18188,28 @@ function NativeConversationScreen({
     void loadConversation();
   }, [loadConversation]);
 
+  const refreshAgentStates = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
+    if (!silent) setAgentLoading(true);
+    try {
+      const states = await api.getAgentStates(contact.id);
+      const nextStates = Array.isArray(states) ? states : [];
+      setAgentStates(nextStates);
+      return nextStates;
+    } catch {
+      return agentStatesRef.current;
+    } finally {
+      if (!silent) setAgentLoading(false);
+    }
+  }, [api, contact.id]);
+
+  useEffect(() => {
+    setAgentStates([]);
+    setManualAgentSendPrompt(null);
+    void refreshAgentStates({ silent: true });
+  }, [contact.id, refreshAgentStates]);
+
   useEffect(() => () => {
     if (sheetCloseTimerRef.current) clearTimeout(sheetCloseTimerRef.current);
-    if (dateHeaderHideTimerRef.current) clearTimeout(dateHeaderHideTimerRef.current);
     if (conversationManualScrollReleaseTimerRef.current) clearTimeout(conversationManualScrollReleaseTimerRef.current);
   }, []);
 
@@ -18229,29 +18252,11 @@ function NativeConversationScreen({
     ].filter(Boolean).join(' ').toLowerCase().includes(needle));
   }, [messages, searchQuery]);
 
-  const activityMarkers = useMemo(() => (
-    mergeConversationActivityMarkers(
-      buildConversationActivityMarkers(contact.id, journeyEvents, timezone, accountCurrency),
-      localActivityMarkers,
-    )
-  ), [accountCurrency, contact.id, journeyEvents, localActivityMarkers, timezone]);
-
-  const filteredActivityMarkers = useMemo(() => {
-    const needle = searchQuery.trim().toLowerCase();
-    if (!needle) return activityMarkers;
-    return activityMarkers.filter((marker) => [
-      marker.title,
-      marker.subtitle,
-      marker.amountLabel,
-    ].join(' ').toLowerCase().includes(needle));
-  }, [activityMarkers, searchQuery]);
-
   const conversationItems = useMemo<ConversationListItem[]>(() => {
     const items: ConversationListItem[] = [];
     let previousDay = '';
     const timelineItems = [
       ...filteredMessages.map((message) => ({ kind: 'message' as const, date: message.date, message })),
-      ...filteredActivityMarkers.map((marker) => ({ kind: 'activity' as const, date: marker.date, marker })),
     ].sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
     timelineItems.forEach((item) => {
       const key = getConversationDayKey(item.date, timezone);
@@ -18263,14 +18268,10 @@ function NativeConversationScreen({
         });
         previousDay = key;
       }
-      if (item.kind === 'message') {
-        items.push({ type: 'message', id: item.message.id, message: item.message });
-      } else {
-        items.push({ type: 'activity', id: item.marker.id, marker: item.marker });
-      }
+      items.push({ type: 'message', id: item.message.id, message: item.message });
     });
     return items;
-  }, [filteredActivityMarkers, filteredMessages, timezone]);
+  }, [filteredMessages, timezone]);
 
   const conversationRenderItems = useMemo<ConversationListItem[]>(
     () => {
@@ -18281,13 +18282,6 @@ function NativeConversationScreen({
     },
     [completionNotice, conversationItems],
   );
-
-  const conversationStickyHeaderIndices = useMemo(() => (
-    conversationRenderItems.reduce<number[]>((indices, item, index) => {
-      if (item.type === 'day') indices.push(index);
-      return indices;
-    }, [])
-  ), [conversationRenderItems]);
 
   const conversationHasItems = conversationRenderItems.length > 0;
   const conversationHasScheduledMessages = useMemo(() => (
@@ -18322,14 +18316,18 @@ function NativeConversationScreen({
     setSelectedSendChannel(getDefaultComposerRoute(contact, composerChannelOptions));
   }, [composerChannelOptions, contact.id, contact.lastMessageChannel, contact.lastMessageTransport, contact.source]);
   const selectedChannelOption = composerChannelOptions.find((option) => option.value === selectedSendChannel) || composerChannelOptions[0];
-  const selectedChannelKind = selectedChannelOption?.kind || channelKind;
+  const selectedChannelKind = selectedChannelOption?.kind || 'unknown';
   const selectedChannelColor = CHANNEL_BADGE_COLORS[selectedChannelKind] || COLORS.accent;
   const selectedChannelCanSend = Boolean(selectedChannelOption && !selectedChannelOption.disabledReason);
+  const selectedChannelLabel = selectedChannelOption?.label || 'Sin canal conectado';
   const selectedRouteChannel = selectedChannelOption?.channel || getComposerRouteChannel(selectedSendChannel);
   const selectedRoutePhoneNumberId = selectedChannelOption?.phoneNumberId || getComposerRoutePhoneId(selectedSendChannel);
   const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0 || paymentLinkDraftPreview);
   const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
   const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
+  const activeManualAgentStates = useMemo(() => getActiveConversationAgentStates(agentStates), [agentStates]);
+  const manualAgentPromptStates = manualAgentSendPrompt || activeManualAgentStates;
+  const manualAgentSendLabel = useMemo(() => getManualAgentSendLabel(manualAgentPromptStates), [manualAgentPromptStates]);
   const voiceRecordingDurationMs = Math.round(audioRecorderState.durationMillis || audioRecorder.currentTime * 1000 || 0);
   const composerPlaceholder = '';
   const conversationFrameBackground = keyboardVisible
@@ -18593,7 +18591,7 @@ function NativeConversationScreen({
     }
   };
 
-  const send = async () => {
+  const send = async (options: { skipAgentInterruptionConfirm?: boolean } = {}) => {
     const text = draft.trim();
     const paymentPreviewToSend = paymentLinkDraftPreview;
     const textToSend = paymentPreviewToSend
@@ -18624,6 +18622,16 @@ function NativeConversationScreen({
     if ((selectedRouteChannel === 'whatsapp' || selectedRouteChannel === 'sms') && !contact.phone) {
       Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar por este canal.');
       return;
+    }
+    if (!options.skipAgentInterruptionConfirm) {
+      const latestAgentStates = await refreshAgentStates({ silent: true });
+      const activeStates = getActiveConversationAgentStates(latestAgentStates);
+      if (activeStates.length > 0) {
+        Keyboard.dismiss();
+        setManualAgentSendPrompt(activeStates);
+        if (activeSheet) closeSheet();
+        return;
+      }
     }
 
     const optimisticId = `local-${Date.now()}`;
@@ -18723,6 +18731,33 @@ function NativeConversationScreen({
       Alert.alert('No se envió', errorMessage);
     } finally {
       setSending(false);
+    }
+  };
+
+  const handleManualAgentSendDecision = async (action: ManualAgentInterruptionAction) => {
+    if (agentBusyAction) return;
+    const targetStates = (manualAgentSendPrompt || activeManualAgentStates).filter((state) => state.agentId);
+    if (!targetStates.length) {
+      setManualAgentSendPrompt(null);
+      await send({ skipAgentInterruptionConfirm: true });
+      return;
+    }
+
+    setAgentBusyAction(action);
+    try {
+      const updatedStates = await Promise.all(targetStates.map((state) => (
+        api.updateAgentState(contact.id, action, { agentId: state.agentId || undefined })
+      )));
+      setAgentStates((current) => (
+        updatedStates.reduce((nextStates, state) => upsertConversationAgentState(nextStates, state), current)
+      ));
+      setManualAgentSendPrompt(null);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+      await send({ skipAgentInterruptionConfirm: true });
+    } catch (err) {
+      Alert.alert('No se pudo pausar el agente', err instanceof Error ? err.message : 'El mensaje no se envió. Intenta otra vez.');
+    } finally {
+      setAgentBusyAction(null);
     }
   };
 
@@ -18986,6 +19021,10 @@ function NativeConversationScreen({
   };
 
   const sendClabe = async (account: BankClabeAccount) => {
+    if (!selectedChannelCanSend) {
+      Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Conecta un canal para enviar esta CLABE.');
+      return;
+    }
     setClabeBusyId(account.id);
     try {
       const text = buildClabeMessage(account);
@@ -19169,6 +19208,12 @@ function NativeConversationScreen({
     }
     if (scheduledDate.getTime() < Date.now() + 10 * 1000) {
       setScheduleError('Elige una hora futura para programar el mensaje.');
+      return;
+    }
+    if (!selectedChannelCanSend) {
+      const reason = selectedChannelOption?.disabledReason || 'Conecta un canal para programar este mensaje.';
+      setScheduleError(reason);
+      Alert.alert('Programar mensaje', reason);
       return;
     }
     const channelUnavailableReason = getScheduleChannelUnavailableReason(selectedRouteChannel, target);
@@ -19410,27 +19455,22 @@ function NativeConversationScreen({
                 <ActivityIndicator color={COLORS.accent} size="small" />
               </View>
             ) : null}
-            stickyHeaderIndices={conversationStickyHeaderIndices}
             scrollEventThrottle={16}
             onScroll={trackConversationScroll}
             onScrollBeginDrag={(event) => {
               markConversationManualScrollActive();
               trackConversationScroll(event);
-              showConversationDateHeaders();
             }}
             onMomentumScrollBegin={() => {
               markConversationManualScrollActive();
-              showConversationDateHeaders();
             }}
             onScrollEndDrag={(event) => {
               trackConversationScroll(event);
               releaseConversationManualScrollSoon();
-              hideConversationDateHeaders();
             }}
             onMomentumScrollEnd={(event) => {
               trackConversationScroll(event);
               releaseConversationManualScrollSoon();
-              hideConversationDateHeaders();
             }}
             ListEmptyComponent={(
               <View style={styles.emptyConversation}>
@@ -19442,9 +19482,9 @@ function NativeConversationScreen({
             renderItem={({ item }) => (
               item.type === 'day'
                 ? (
-                  <Animated.View style={[styles.messageDaySeparator, { opacity: dateHeaderOpacity }]}>
+                  <View style={styles.messageDaySeparator}>
                     <Text style={styles.messageDayLabel}>{item.label}</Text>
-                  </Animated.View>
+                  </View>
                 )
                 : item.type === 'completionNotice'
                   ? <NativeConversationCompletionNotice notice={item.notice} onDone={() => setCompletionNotice(null)} />
@@ -19547,7 +19587,7 @@ function NativeConversationScreen({
           <View style={[styles.composer, hasComposerContent && styles.composerHasContent, styles.aiAssistantComposer, keyboardVisible && styles.composerKeyboardActive]}>
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Canal de envío: ${selectedChannelOption?.label || 'WhatsApp'}`}
+              accessibilityLabel={`Canal de envío: ${selectedChannelLabel}`}
               onPress={() => openSheet('channel')}
               style={({ pressed }) => [
                 styles.composerChannelButton,
@@ -27460,7 +27500,6 @@ function createAppStyles() {
     backgroundColor: conversationWallpaperDotColor,
   },
   messageList: {
-    flexGrow: 1,
     paddingHorizontal: 12,
     paddingTop: 10,
     paddingBottom: 12,
