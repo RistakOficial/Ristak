@@ -222,7 +222,7 @@ function getStandalonePhoneRedirect(pathname: string) {
 const RouteStartupLoader: React.FC<{ pathname: string; message?: string }> = ({ pathname, message }) => (
   isPhoneAppPath(pathname)
     ? <PhoneStartupLoader message={message || 'Abriendo Ristak'} />
-    : <AppStartupLoader message={message || 'Cargando Ristak'} />
+    : <AppStartupLoader message={message || 'Cargando'} />
 )
 
 // Componente para la ruta de setup (primera vez)

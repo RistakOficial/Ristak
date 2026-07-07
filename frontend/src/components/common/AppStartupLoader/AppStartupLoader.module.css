@@ -1,55 +1,50 @@
 .screen {
   position: relative;
   display: grid;
-  grid-template-rows: 1fr auto;
+  place-items: center;
   width: 100%;
   min-height: 100dvh;
-  padding: 1.5rem 1.5rem max(2rem, var(--phone-safe-area-bottom));
-  color: var(--text);
+  padding: 1.5rem;
+  color: var(--text-dim);
   background: var(--bg);
   animation: fadeIn 0.18s ease-out;
 }
 
 .compact {
-  grid-template-rows: auto auto;
-  align-content: center;
-  row-gap: 1.25rem;
   min-height: 60vh;
   padding: 2rem 1rem;
   background: transparent;
 }
 
-.brandStage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.loadingIndicator {
+  display: grid;
+  place-items: center;
   min-width: 0;
+  color: var(--accent);
 }
 
-.brandMark {
-  --ristak-app-mark-size: clamp(108px, 19vw, 148px);
+.spinner {
+  width: 1.75rem;
+  height: 1.75rem;
+  animation: spin 0.9s linear infinite;
 }
 
-.brandName {
-  margin: 0;
-  color: var(--brand-ristak-blue, var(--accent));
-  font-size: 1.08rem;
-  font-weight: 650;
-  letter-spacing: 0;
-  line-height: 1;
-  text-align: center;
+.compact .spinner {
+  width: 1.5rem;
+  height: 1.5rem;
 }
 
-:global(body.dark) .brandName {
-  color: var(--text);
-}
-
-.compact .brandMark {
-  --ristak-app-mark-size: 96px;
-}
-
-.compact .brandName {
-  font-size: 1rem;
+.accessibleMessage {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  white-space: nowrap;
+  border: 0;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
 }
 
 @keyframes fadeIn {
@@ -59,5 +54,18 @@
 
   to {
     opacity: 1;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen,
+  .spinner {
+    animation: none;
   }
 }

@@ -158,9 +158,10 @@ Rutas publicas:
 - `/setup`: configuracion inicial.
 - `/login`, `/sso`, `/reset-password`.
 - `/login` usa el isotipo nuevo de Ristak (`RistakAppMark`) con nombre visible
-  y contexto de inicio de sesion. Los estados de carga inicial del CRM usan
-  `AppStartupLoader`/`PhoneStartupLoader`: fondo limpio claro u oscuro, isotipo
-  centrado y "Ristak" al pie, sin spinner como elemento principal.
+  y contexto de inicio de sesion. En escritorio, los estados de carga inicial del
+  CRM usan `AppStartupLoader` sin logo ni nombre visible: solo un indicador
+  minimo y accesible sobre el fondo del tema. En el shell movil,
+  `PhoneStartupLoader` conserva la carga de marca propia de `/movil`.
 - `/license-blocked`.
 - `/pay/success` y `/pay/:publicPaymentId`.
 - Las superficies publicas de cliente no aplican el selector global de vista
