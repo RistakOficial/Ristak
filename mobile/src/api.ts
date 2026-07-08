@@ -43,6 +43,7 @@ import type {
   RistakUser,
   RuntimeTenant,
   SaveMobilePushDevicePayload,
+  PaymentSettingsResponse,
   SavedCardPaymentPayload,
   SavedCardPaymentResponse,
   SavedPaymentMethodItem,
@@ -152,6 +153,8 @@ type SubscriptionPayload = {
   status?: string;
   amount: number;
   currency: string;
+  applyTax?: boolean;
+  taxCalculationMode?: string;
   intervalType: string;
   intervalCount: number;
   startDate: string;
@@ -238,10 +241,16 @@ function getNativeScheduleRoute(contact: ChatContact, channel?: NativeMessageCha
   throw new Error('La programación por correo todavía no está disponible desde la app móvil.');
 }
 
+export type ApiClientHandlers = {
+  onLicenseBlocked?: () => void;
+  onFeatureBlocked?: (message: string, feature?: unknown) => void;
+};
+
 export class RistakApiClient {
   constructor(
     private readonly baseUrl: string,
     private readonly token = '',
+    private readonly handlers: ApiClientHandlers = {},
   ) {}
 
   private buildUrl(path: string, params?: RequestOptions['params']) {
@@ -269,6 +278,10 @@ export class RistakApiClient {
       headers,
     });
 
+    if (response.status === 204) {
+      return {} as T;
+    }
+
     let payload: unknown = null;
     try {
       payload = await response.json();
@@ -281,17 +294,37 @@ export class RistakApiClient {
       const error = new Error(message || `HTTP ${response.status}`) as ApiError;
       error.status = response.status;
       error.body = payload;
+      let code = '';
       if (payload && typeof payload === 'object') {
-        error.code = String((payload as { code?: unknown }).code || '');
+        code = String((payload as { code?: unknown }).code || '');
+        error.code = code;
+      }
+      // Cross-cutting handling mirroring the web authFetch/apiClient interceptors.
+      if (response.status === 403 && code === 'license_blocked') {
+        this.handlers.onLicenseBlocked?.();
+      } else if (response.status === 403 && code === 'feature_not_available') {
+        const method = String(options.method || 'GET').toUpperCase();
+        // The web only surfaces the plan-gate message on user actions, not on
+        // background screen-load GETs, to avoid nagging on read requests.
+        if (method !== 'GET') {
+          const feature = typeof payload === 'object' && payload
+            ? (payload as { feature?: unknown }).feature
+            : undefined;
+          this.handlers.onFeatureBlocked?.(error.message, feature);
+        }
       }
       throw error;
     }
 
-    if (payload && typeof payload === 'object' && 'success' in payload && 'data' in payload) {
+    if (
+      payload && typeof payload === 'object'
+      && 'success' in payload && 'data' in payload
+      && (payload as { data?: unknown }).data !== undefined
+    ) {
       return (payload as { data: T }).data;
     }
 
-    return payload as T;
+    return (payload ?? {}) as T;
   }
 
   login(email: string, password: string) {
@@ -438,7 +471,25 @@ export class RistakApiClient {
     });
   }
 
-  sendText(contact: ChatContact, text: string, channel: NativeMessageChannel = 'whatsapp', reply?: MessageReplyPayload, phoneNumberId?: string) {
+  sendMetaSocialCommentReply(payload: {
+    contactId: string;
+    platform: 'messenger' | 'instagram';
+    message: string;
+    replyType: 'public' | 'private';
+    commentId?: string;
+    postId?: string;
+    externalId?: string;
+  }) {
+    return this.request<SendTextResponse>('/whatsapp-api/meta/social/comments/reply', {
+      method: 'POST',
+      body: JSON.stringify({
+        ...payload,
+        externalId: payload.externalId || `native-comment-${payload.replyType}-${Date.now()}`,
+      }),
+    });
+  }
+
+  sendText(contact: ChatContact, text: string, channel: NativeMessageChannel = 'whatsapp', reply?: MessageReplyPayload, phoneNumberId?: string, transport?: 'qr' | 'api') {
     if (channel === 'email') {
       throw new Error('El correo todavía se envía desde la vista completa de chats.');
     }
@@ -480,6 +531,7 @@ export class RistakApiClient {
         externalId: `native-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
+        transport: transport || undefined,
         replyToMessageId: reply?.replyToMessageId || undefined,
         replyToProviderMessageId: reply?.replyToProviderMessageId || undefined,
       }),
@@ -490,7 +542,7 @@ export class RistakApiClient {
     return this.request<PaymentLinkDeliveryOptions>(`/contacts/${encodeURIComponent(contactId)}/payment-link-delivery-options`);
   }
 
-  sendImage(contact: ChatContact, imageDataUrl: string, caption = '', phoneNumberId?: string) {
+  sendImage(contact: ChatContact, imageDataUrl: string, caption = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
     return this.request<SendTextResponse>('/whatsapp-api/messages/image', {
       method: 'POST',
       body: JSON.stringify({
@@ -502,11 +554,12 @@ export class RistakApiClient {
         externalId: `native-image-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
+        transport: transport || undefined,
       }),
     });
   }
 
-  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '', phoneNumberId?: string) {
+  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
     return this.request<SendTextResponse>('/whatsapp-api/messages/document', {
       method: 'POST',
       body: JSON.stringify({
@@ -520,11 +573,12 @@ export class RistakApiClient {
         externalId: `native-document-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
+        transport: transport || undefined,
       }),
     });
   }
 
-  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '', phoneNumberId?: string) {
+  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
     return this.request<SendTextResponse>('/whatsapp-api/messages/video', {
       method: 'POST',
       body: JSON.stringify({
@@ -536,11 +590,12 @@ export class RistakApiClient {
         externalId: `native-video-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
+        transport: transport || undefined,
       }),
     });
   }
 
-  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number, phoneNumberId?: string) {
+  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number, phoneNumberId?: string, transport?: 'qr' | 'api') {
     return this.request<SendTextResponse>('/whatsapp-api/messages/audio', {
       method: 'POST',
       body: JSON.stringify({
@@ -553,11 +608,12 @@ export class RistakApiClient {
         externalId: `native-audio-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
+        transport: transport || undefined,
       }),
     });
   }
 
-  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', phoneNumberId?: string) {
+  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
     return this.request<SendTextResponse>('/whatsapp-api/messages/location', {
       method: 'POST',
       body: JSON.stringify({
@@ -571,6 +627,7 @@ export class RistakApiClient {
         externalId: `native-location-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'native_mobile_chat',
+        transport: transport || undefined,
       }),
     });
   }
@@ -615,9 +672,23 @@ export class RistakApiClient {
     });
   }
 
-  scheduleText(contact: ChatContact, text: string, scheduledAt: string, channel?: NativeMessageChannel, scheduledId?: string, phoneNumberId?: string) {
+  scheduleText(
+    contact: ChatContact,
+    text: string,
+    scheduledAt: string,
+    channel?: NativeMessageChannel,
+    scheduledId?: string,
+    phoneNumberId?: string,
+    options: { transport?: 'qr' | 'api'; template?: WhatsAppTemplate } = {},
+  ) {
     const externalId = scheduledId || `native-scheduled-${Date.now()}`;
     const route = getNativeScheduleRoute(contact, channel);
+    // Prefer the caller-computed transport (qr/api resolved from the selected
+    // phone + reply window) over the route default, matching /movil scheduling.
+    const transport = route.provider === 'whatsapp_api'
+      ? (options.transport || route.transport)
+      : undefined;
+    const template = options.template;
     return this.request('/whatsapp-api/messages/scheduled', {
       method: 'POST',
       body: JSON.stringify({
@@ -625,9 +696,12 @@ export class RistakApiClient {
         contactId: contact.id,
         provider: route.provider,
         channel: route.provider === 'highlevel' ? route.channel : undefined,
-        transport: route.provider === 'whatsapp_api' ? route.transport : undefined,
-        messageType: 'text',
+        transport,
+        messageType: template ? 'template' : 'text',
         text,
+        templateId: template?.id || undefined,
+        templateName: template?.name || undefined,
+        templateLanguage: template?.language || undefined,
         toPhone: contact.phone || undefined,
         fromPhone: contact.lastBusinessPhone || undefined,
         businessPhoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
@@ -734,6 +808,10 @@ export class RistakApiClient {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  }
+
+  getPaymentSettings() {
+    return this.request<PaymentSettingsResponse>('/settings/payments');
   }
 
   createInstallmentFlow(payload: InstallmentFlowPayload) {
@@ -919,7 +997,10 @@ export class RistakApiClient {
   }
 
   getBlockedSlots(calendarId: string, startTime: number, endTime: number) {
-    return this.request<CalendarFreeSlot[]>(`/calendars/${encodeURIComponent(calendarId)}/free-slots`, {
+    // Blocked slots come from the dedicated /blocked-slots endpoint (ISO
+    // startTime/endTime/reason). It previously (incorrectly) hit /free-slots,
+    // which returned a different shape, so the conflict check never fired.
+    return this.request<CalendarFreeSlot[]>(`/calendars/${encodeURIComponent(calendarId)}/blocked-slots`, {
       params: {
         startTime,
         endTime,
@@ -942,10 +1023,11 @@ export class RistakApiClient {
   }
 
   getCalendarUsersByIds(userIds: string[]) {
+    // The backend route is POST and reads req.body.userIds (an array); the old
+    // GET with a comma-joined query string 404'd, so team names never loaded.
     return this.request<{ users?: CalendarUser[] }>('/highlevel/users/by-ids', {
-      params: {
-        userIds: userIds.join(','),
-      },
+      method: 'POST',
+      body: JSON.stringify({ userIds }),
     });
   }
 
@@ -1021,6 +1103,13 @@ export class RistakApiClient {
 
   getAIAgentConfig() {
     return this.request<AIAgentConfigStatus>('/ai-agent/config');
+  }
+
+  saveAIAgentConfig(config: { apiKey?: string; model?: string }) {
+    return this.request<AIAgentConfigStatus>('/ai-agent/config', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
   }
 
   saveAIAgentBusinessContext(answer: string) {

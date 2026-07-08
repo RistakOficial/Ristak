@@ -69,16 +69,52 @@ teclado: crea un corte visual entre panel y teclado. No crees formularios con
 `TextInput` fuera de esas primitivas salvo que implementen el mismo contrato de
 keyboard avoidance local y continuidad visual.
 
-En conversaciones nativas, el area de mensajes + composer no debe usar
-`KeyboardAvoidingView` con `padding` en iOS porque crea una franja artificial
-entre composer y teclado y hace que el panel inferior parezca estirarse. La
-conversacion debe reducir su altura disponible (`behavior="height"`) y el
-`AppFrame` de esa pantalla debe usar el mismo fondo que el composer, para que el
-teclado parezca salir integrado desde el panel inferior sin un separador de color.
-Cuando el teclado esta abierto, el composer debe apagar el safe-area inferior
-normal y usar el color de la superficie superior del teclado iOS; si mantiene el
-padding de home indicator o el fondo normal del chat, aparece un margen falso
-entre la barra de escritura y el teclado.
+En conversaciones nativas, el composer vive dentro del `AppFrame` con el
+keyboard avoidance global (`padding` en iOS) y toda la pantalla comparte una
+sola superficie: el `AppFrame` de la conversacion usa siempre el mismo fondo
+que el composer, sin cambiar de color al enfocar. No pintes un "fondo de
+teclado" (emular el color de la superficie del teclado iOS) ni agregues
+rellenos/extensiones extra detras del teclado: como el teclado de iOS es un
+panel translucido que deja ver la app, cualquier franja de color distinta entre
+composer y teclado se percibe como un contenedor separado. Lo que se ve detras
+y alrededor del teclado debe ser el mismo fondo del composer, igual que en las
+demas pantallas con avoidance (buscador de chats, paneles de analiticas).
+Cuando el teclado esta abierto, el composer solo apaga el safe-area inferior
+del home indicator (reduce su padding inferior); mantiene su fondo y su borde
+superior normales, y si el texto crece a varias lineas el dock crece hacia
+arriba con su borde inferior pegado al marco del teclado, que es lo que hace el
+avoidance global.
+
+Arquitectura del hilo de conversacion nativo: el FlatList del hilo es
+INVERTIDO (data[0] = mensaje mas reciente, `inverted` +
+`maintainVisibleContentPosition {minIndexForVisible: 1, autoscrollToTopThreshold}`
++ `onEndReached` para cargar historial, spinner de historial en
+`ListFooterComponent`). El anclaje al ultimo mensaje y la compensacion al
+recibir mensajes lo hace el nativo; NO reintroduzcas coreografia JS de scroll
+(`scrollToEnd` desde `onContentSizeChange`, umbrales "atLatest", guards de
+drag con timers): en Fabric esa combinacion esta rota por bugs abiertos del
+core y produce brincos y regresos de posicion. Ademas: las keys de mensaje
+deben ser estables entre polls y paginas (ids de proveedor o huella de
+contenido, nunca el indice), los merges deben preservar identidad de objetos
+cuando nada cambio (un poll sin novedades debe ser un no-op de React), los
+mensajes optimistas `local-*` se reconcilian con la copia del servidor al
+llegar, y las filas (`NativeMessageBubble`, `ChatRow`) van en `React.memo` con
+callbacks de identidad estable.
+
+Regla de dueño unico del teclado: en cada ruta visible solo puede haber UN
+keyboard avoider habilitado. Dos `KeyboardAvoidingView` apilados (p. ej. el
+`AppFrame` de una pantalla host mas el `AppFrame` de una ruta overlay montada
+dentro, como la conversacion sobre la bandeja de chats) reciben el mismo evento
+de teclado con frames obsoletos, se compensan doble y dejan una franja entre el
+composer y el teclado que ningun padding, color ni safe-area puede corregir.
+`AppFrame` monta siempre su `KeyboardAvoidingView` y lo activa/desactiva con la
+prop `keyboardAvoiding` (via `enabled`, sin desmontar el subarbol): la pantalla
+host debe pasar `keyboardAvoiding={false}` mientras su overlay este abierto
+(ChatScreen lo hace con `keyboardAvoiding={!selected}`), de modo que el frame de
+la ruta overlay — con el fondo del composer — sea el unico dueño del teclado,
+igual que el Asistente Personal AI, que reemplaza el arbol completo. Al abrir
+una conversacion tambien se cierra el teclado pendiente (`Keyboard.dismiss()`)
+antes de traspasar la propiedad.
 
 Regla movil de avisos: las acciones exitosas normales no deben abrir
 `Alert.alert`, `window.alert`, toasts ni popups flotantes en `/movil` ni en

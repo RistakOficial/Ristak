@@ -1,8 +1,24 @@
+export type NativeAccessLevel = 'none' | 'read' | 'write';
+export type NativeAccessConfig = Record<string, NativeAccessLevel>;
+export type NativeLicenseFeatures = Record<string, boolean | undefined>;
+
 export type RistakUser = {
   id: string;
   name?: string;
+  username?: string;
   email?: string;
+  firstName?: string;
+  lastName?: string;
+  fullName?: string;
+  phone?: string;
+  businessName?: string;
   role?: string;
+  accessConfig?: NativeAccessConfig | null;
+  licenseEnforced?: boolean;
+  licensePlan?: string | null;
+  licenseFeatures?: NativeLicenseFeatures | null;
+  licenseLimits?: Record<string, unknown> | null;
+  licenseExternalModules?: Record<string, unknown> | null;
 };
 
 export type LoginResponse = {
@@ -74,6 +90,8 @@ export type ChatContact = {
   lastBusinessPhoneNumberId?: string;
   preferredWhatsAppPhoneNumberId?: string;
   preferred_whatsapp_phone_number_id?: string;
+  routingSource?: string;
+  routingReason?: string;
   unreadCount?: number;
   messageCount?: number;
   tags?: string[];
@@ -555,6 +573,8 @@ export type SavedCardPaymentPayload = {
   phone?: string;
   amount: number;
   currency?: string;
+  applyTax?: boolean;
+  taxCalculationMode?: string;
   title: string;
   description?: string;
   dueDate?: string;
@@ -567,6 +587,17 @@ export type SavedCardPaymentPayload = {
     enabled?: boolean;
     maxInstallments?: number;
   };
+};
+
+export type PaymentTaxSettings = {
+  enabled: boolean;
+  taxName?: string;
+  rateValue?: number;
+  calculationMode?: 'exclusive' | 'inclusive';
+};
+
+export type PaymentSettingsResponse = {
+  taxes?: PaymentTaxSettings;
 };
 
 export type SavedCardPaymentResponse = {
@@ -619,6 +650,8 @@ export type PaymentPlanPayload = {
   };
   totalAmount: number;
   currency?: string;
+  applyTax?: boolean;
+  taxCalculationMode?: string;
   description?: string;
   title?: string;
   invoicePayload?: Record<string, unknown>;
@@ -704,6 +737,8 @@ export type SubscriptionPayload = {
   status?: string;
   amount: number;
   currency?: string;
+  applyTax?: boolean;
+  taxCalculationMode?: string;
   intervalType: string;
   intervalCount: number;
   startDate?: string | null;
