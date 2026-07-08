@@ -22638,21 +22638,64 @@ function renderImportedNativeElementPlaceholder(slot = {}) {
   return `<div class="rstk-imported-native-placeholder">${escapeHtml(label)}</div>`
 }
 
-function renderImportedNativeElementWrapper(attrs = {}, slot = {}, content = '', extraAttrs = {}) {
+// Estilo de bloque para el slot importado (backbone paso 1), en HTML importado.
+// A diferencia del editor normal (que usa wrapRenderedBlock + variables --rstk-block-* +
+// el stylesheet base), aquí NO inyectamos el stylesheet base global porque colisionaría con
+// el CSS del HTML importado. En su lugar emitimos CSS CONCRETO e inline, y SOLO de las
+// propiedades que el usuario configuró de verdad (buildBlockStyleVars devuelve puros deltas):
+// así jamás pisamos estilos que el autor del HTML haya puesto por clase o inline.
+// Paridad por tipo con el editor normal: payment y calendar fuerzan el marco al elemento
+// interno (.rstk-block-style:has(>.rstk-payment-block) / .rstkCalendarBlock => fondo/borde/
+// padding transparentes), así que para esos tipos el wrapper solo aporta margen y alineación.
+function buildImportedNativeSlotStyle(block, slotType = '') {
+  if (!block) return ''
+  const vars = buildBlockStyleVars(block, {})
+  const decls = []
+  if (vars['--rstk-block-margin']) decls.push(`margin:${vars['--rstk-block-margin']}`)
+  if (vars['--rstk-block-align']) decls.push(`text-align:${vars['--rstk-block-align']}`)
+  const framesOwnBox = slotType === 'payment' || slotType === 'calendar'
+  if (!framesOwnBox) {
+    if (vars['--rstk-block-pad']) decls.push(`padding:${vars['--rstk-block-pad']}`)
+    if (vars['--rstk-block-radius']) decls.push(`border-radius:${vars['--rstk-block-radius']}`)
+    const bgColor = vars['--rstk-block-bg-color'] || vars['--rstk-block-bg']
+    if (bgColor) decls.push(`background-color:${bgColor}`)
+    if (vars['--rstk-block-bg-image']) {
+      const layers = [vars['--rstk-block-bg-layer'], vars['--rstk-block-bg-image']].filter(Boolean).join(',')
+      decls.push(`background-image:${layers}`)
+      if (vars['--rstk-block-bg-size']) decls.push(`background-size:${vars['--rstk-block-bg-size']}`)
+      if (vars['--rstk-block-bg-position']) decls.push(`background-position:${vars['--rstk-block-bg-position']}`)
+      decls.push('background-repeat:no-repeat')
+    }
+  }
+  return decls.join(';')
+}
+
+function renderImportedNativeElementWrapper(attrs = {}, slot = {}, content = '', extraAttrs = {}, block = null) {
   const classes = [
     attrs.class,
     'rstk-imported-native-slot',
     slot.type ? `rstk-imported-native-${slot.type}` : '',
     slot.renderMode === 'custom' ? 'rstk-imported-native-custom' : ''
   ].filter(Boolean).join(' ')
-  return `<div${renderHtmlAttributes({
+  const dataAttrs = {
     ...attrs,
     ...extraAttrs,
     class: classes,
     'data-rstk-native-mounted': 'true',
     'data-rstk-native-type': slot.type || '',
     'data-rstk-native-slot-id': slot.id || ''
-  })}>${content}</div>`
+  }
+  // data-rstk-block-id da paridad con el wrapper del editor normal (targeting de acciones de
+  // video por id, base para overrides responsive futuros). Es un atributo inerte y seguro.
+  if (block && block.id) dataAttrs['data-rstk-block-id'] = block.id
+  const blockInlineStyle = buildImportedNativeSlotStyle(block, slot.type)
+  if (blockInlineStyle) {
+    // Fusiona con el style ORIGINAL del elemento importado en un solo atributo: nunca
+    // emitimos dos `style` (HTML inválido) ni descartamos lo que el autor puso inline.
+    const original = cleanString(dataAttrs.style)
+    dataAttrs.style = original ? `${original.replace(/;\s*$/, '')};${blockInlineStyle}` : blockInlineStyle
+  }
+  return `<div${renderHtmlAttributes(dataAttrs)}>${content}</div>`
 }
 
 function buildImportedNativeRenderContext(site, {
@@ -22784,7 +22827,11 @@ function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
 function renderImportedCustomCalendarSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, block = {}, context = {}, runtimeState = {}) {
   const config = getImportedCustomCalendarConfig(slot, block, context)
   if (!config) {
-    return renderImportedNativeElementWrapper(attrs, slot, innerHtml || renderImportedNativeElementPlaceholder(slot))
+    if (innerHtml) return renderImportedNativeElementWrapper(attrs, slot, innerHtml)
+    // Sin frontend propio ni config: placeholder solo en editor, nunca al visitante.
+    return context.preview
+      ? renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot))
+      : ''
   }
   runtimeState.customCalendarConfigs.push(config)
   return `<${tagName}${renderHtmlAttributes({
@@ -22808,7 +22855,15 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
   if (slot.type === 'calendar' && slot.renderMode === 'custom') {
     return renderImportedCustomCalendarSlot(tagName, attrs, innerHtml, slot, block || {}, context, runtimeState)
   }
-  if (!block) return renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot))
+  // Slot sin bloque configurado (o binding no resuelto): el placeholder "Configura…" es
+  // una ayuda de EDITOR, jamás para el visitante real. En publicado devolvemos el markup
+  // original del slot (normalmente vacío) para no gritarle "Configura el pago de Ristak"
+  // a un cliente ni destruir el contenido que el autor haya dejado como fallback.
+  if (!block) {
+    return context.preview
+      ? renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot))
+      : (innerHtml || '')
+  }
   if (slot.type === 'payment' && !context.importedNativePreviewMock) runtimeState.hasPayment = true
   if (slot.type === 'calendar') runtimeState.hasCalendar = true
   if (slot.type === 'video') runtimeState.hasVideo = true
@@ -22816,9 +22871,19 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
   const rendered = slot.type === 'form'
     ? await renderImportedNativeFormSlot(block, context)
     : renderContentBlock(block, context)
+  // Contenido vacío (p. ej. cobro deshabilitado devuelve '') = mismo trato que
+  // wrapRenderedBlock en el editor normal: en publicado no dejamos una caja vacía con
+  // padding; en preview mostramos placeholder para que el editor pueda detectar/seleccionar.
+  if (!rendered) {
+    return context.preview
+      ? renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot), {
+          'data-rstk-native-block-id': block.id || ''
+        }, block)
+      : (innerHtml || '')
+  }
   return renderImportedNativeElementWrapper(attrs, slot, rendered, {
     'data-rstk-native-block-id': block.id || ''
-  })
+  }, block)
 }
 
 async function asyncReplace(value = '', pattern, replacer) {
@@ -22835,7 +22900,47 @@ async function asyncReplace(value = '', pattern, replacer) {
   return parts.join('')
 }
 
+// Binding estable slot<->bloque (backbone paso 4): cuando un elemento nativo NO trae id
+// explícito, el frontend (detectImportedNativeElementSlots) le asigna `${type}-${N}` donde N
+// es su posición en ORDEN DE DOCUMENTO entre TODOS los elementos nativos, y persiste ese id
+// en block.settings.importedHtmlNativeSlotId. El render del backend numeraba distinto (una
+// pasada de tags pareados y luego otra de auto-cerrados con un contador compartido), así que
+// con un nativo auto-cerrado intercalado los ids divergían y el bloque configurado no
+// empataba -> se pintaba el placeholder. Aquí normalizamos: recorremos el HTML UNA vez en
+// orden de documento (misma semántica que querySelectorAll del frontend) e inyectamos
+// data-rstk-native-id en los nativos sin id explícito, de modo que las pasadas posteriores
+// siempre resuelven por id explícito y el binding es determinista en ambos lados.
+function assignImportedNativeFallbackSlotIds(html = '') {
+  let index = 0
+  return String(html || '').replace(
+    /<([a-z][\w:-]*)\b([^>]*?\bdata-(?:rstk|ristak|ristack)-(?:native-element|element|element-type|component|widget)\b[^>]*?)(\/?)>/gi,
+    (full, tagName, attrsText, selfClose) => {
+      const myIndex = index
+      index += 1
+      const attrs = parseHtmlAttributes(attrsText || '')
+      const type = normalizeImportedNativeElementType(firstImportedNativeAttr(attrs, IMPORTED_NATIVE_ELEMENT_ATTR_NAMES))
+      if (!type) return full
+      const explicitId = firstImportedNativeAttr(attrs, [
+        'data-rstk-native-id',
+        'data-ristak-native-id',
+        'data-ristack-native-id',
+        'data-rstk-element-id',
+        'data-ristak-element-id',
+        'data-ristack-element-id',
+        'data-rstk-edit-id',
+        'data-ristak-edit-id',
+        'data-ristack-edit-id',
+        'id'
+      ])
+      if (explicitId) return full
+      const fallbackId = `${type}-${myIndex + 1}`
+      return `<${tagName}${attrsText} data-rstk-native-id="${escapeHtml(fallbackId)}"${selfClose}>`
+    }
+  )
+}
+
 async function replaceImportedNativeElementSlots(html = '', blocks = [], context = {}) {
+  html = assignImportedNativeFallbackSlotIds(html)
   const runtimeState = {
     hasNativeElements: false,
     hasPayment: false,
