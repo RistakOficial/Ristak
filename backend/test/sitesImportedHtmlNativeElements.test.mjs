@@ -163,3 +163,54 @@ test('imported HTML custom calendar slots keep custom markup and expose mapped R
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
 })
+
+test('imported HTML native video slots render the real Ristak player and video actions runtime', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <main>
+            <section data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+          </main>
+        </body>
+      </html>
+    `, `HTML native video ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/video.mp4',
+        videoControlsMode: 'overlay',
+        videoActions: [{
+          id: 'action-1',
+          timeSeconds: 4,
+          action: 'redirect',
+          redirectUrl: 'https://example.test/gracias'
+        }]
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: false })
+
+    assert.match(html, /data-rstk-native-slot-id="video-principal"/)
+    assert.match(html, /class="rstk-video[^"]*rstk-video-player/)
+    assert.match(html, /data-rstk-video-src="https:\/\/cdn\.example\.test\/video\.mp4"/)
+    assert.match(html, /data-rstk-video-actions=/)
+    assert.match(html, /https:\/\/example\.test\/gracias/)
+    assert.match(html, /window\.ristakVideoActionsRuntimeLoaded/)
+    assert.doesNotMatch(html, /Configura el video de Ristak/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})

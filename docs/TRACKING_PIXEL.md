@@ -221,12 +221,14 @@ mismo `event_id`; Meta deduplica ambos. La moneda de `Purchase` sale de
 
 Cuando el HTML externo quiere usar la misma configuracion nativa del editor de
 Sites, debe declarar una zona con `data-rstk-native-element` y
-`data-rstk-native-id`. El editor solo reconoce `form`, `calendar` y `payment`.
+`data-rstk-native-id`. El editor solo reconoce `form`, `calendar`, `payment` y
+`video`.
 
 ```html
 <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot"></div>
 <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>
 <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal"></div>
+<div data-rstk-native-element="video" data-rstk-native-id="video-principal"></div>
 ```
 
 Ristak guarda cada zona como bloque real del sitio importado:
@@ -236,6 +238,9 @@ Ristak guarda cada zona como bloque real del sitio importado:
   configuracion de disponibilidad, campos, pagos, completado y Meta.
 - `payment`: usa el mismo `PaymentGateControls` del editor; el evento `Purchase`
   sale del cobro confirmado, no del click.
+- `video`: usa el mismo bloque de video del editor: subida/URL, controles,
+  diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI
+  configurados.
 
 Si el calendario usa frontend propio, el HTML debe marcar
 `data-rstk-native-render="custom"`. Ristak conserva el markup del sitio externo

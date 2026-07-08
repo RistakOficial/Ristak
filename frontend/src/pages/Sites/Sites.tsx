@@ -1733,7 +1733,7 @@ const normalizeSiteForEditor = (site: PublicSite): PublicSite => ({
 const isImportedHtmlSite = (site?: PublicSite | null) =>
   Boolean(site?.theme?.importedHtml || site?.theme?.template === 'imported_html')
 
-type ImportedNativeElementType = 'form' | 'calendar' | 'payment'
+type ImportedNativeElementType = 'form' | 'calendar' | 'payment' | 'video'
 type ImportedNativeElementRenderMode = 'ristak' | 'custom'
 type ImportedNativeElementSlot = {
   key: string
@@ -1747,13 +1747,15 @@ type ImportedNativeElementSlot = {
 const importedNativeElementBlockTypes: Record<ImportedNativeElementType, SiteBlockType> = {
   form: 'form_embed',
   calendar: 'calendar_embed',
-  payment: 'payment'
+  payment: 'payment',
+  video: 'video'
 }
 
 const importedNativeElementTypeLabels: Record<ImportedNativeElementType, string> = {
   form: 'Formulario',
   calendar: 'Calendario',
-  payment: 'Pago'
+  payment: 'Pago',
+  video: 'Video'
 }
 
 const importedNativeElementSelector = [
@@ -1788,6 +1790,7 @@ const normalizeImportedNativeElementType = (value?: string | null): ImportedNati
   if (['form', 'forms', 'formulario', 'formularios', 'lead-form', 'lead'].includes(token)) return 'form'
   if (['calendar', 'calendars', 'calendario', 'calendarios', 'agenda', 'cita', 'citas', 'booking', 'appointment', 'appointments'].includes(token)) return 'calendar'
   if (['payment', 'payments', 'pago', 'pagos', 'checkout', 'cobro', 'cobros', 'purchase'].includes(token)) return 'payment'
+  if (['video', 'videos', 'video-player', 'player', 'reproductor', 'media'].includes(token)) return 'video'
   return null
 }
 
@@ -1999,11 +2002,12 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
 - Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
 - Formularios: usa <form data-rstk-form-id="lead-form"> y campos con name, id, data-rstk-edit-type="form_field", data-rstk-label y placeholder.
-- Elementos nativos Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario o pago real desde el editor.
-- Solo se aceptan estos elementos nativos: formularios, calendarios y pagos. No uses data-rstk-native-element para otros widgets.
+- Elementos nativos Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment|video" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario, pago o video real desde el editor.
+- Solo se aceptan estos elementos nativos: formularios, calendarios, pagos y videos. No uses data-rstk-native-element para otros widgets.
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
 - Para usar tu propio frontend de calendario pero mapearlo a Ristak: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. Tu JS debe usar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre es ISO UTC del slot confirmado; timezone es la zona del negocio/visitante que eligió la cita.
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
+- Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI configurados.
 - Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
 - Para cita agendada usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC si ya conoces la hora exacta.
@@ -19046,6 +19050,9 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (slot.type === 'payment' && !isPaymentGateConfigEnabled(getPaymentGateFromSettings(settings, accountCurrency))) {
       return 'Activa el pago, elige pasarela y pon un monto mayor a cero.'
     }
+    if (slot.type === 'video' && !getSettingString(settings, 'mediaUrl')) {
+      return 'Sube o pega la URL del video que va en esta zona.'
+    }
     return ''
   }, [accountCurrency])
 
@@ -22065,7 +22072,9 @@ const ImportedHtmlEditorPanel: React.FC<{
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
   const importedNativeElementsPanel = importedNativeElementSlots.length > 0 ? (() => {
     const selectedSlot = selectedImportedNativeElementSlot
-    const selectedBlock = selectedSlot ? findImportedNativeElementBlock((importedNativeElementSiteRef.current || site).blocks || [], selectedSlot) : null
+    const nativeElementSite = importedNativeElementSiteRef.current || site
+    const nativeElementBlocks = nativeElementSite.blocks || []
+    const selectedBlock = selectedSlot ? findImportedNativeElementBlock(nativeElementBlocks, selectedSlot) : null
     const draftBlock = selectedSlot ? makeImportedNativeElementDraftBlock(selectedSlot) : null
     const draftSettings = draftBlock?.settings || {}
     const selectedFormId = getSettingString(draftSettings, 'formSiteId')
@@ -22074,8 +22083,16 @@ const ImportedHtmlEditorPanel: React.FC<{
     const renderSlotIcon = (type: ImportedNativeElementType) => {
       if (type === 'form') return <FormInput size={13} />
       if (type === 'calendar') return <CalendarDays size={13} />
-      return <DollarSign size={13} />
+      if (type === 'payment') return <DollarSign size={13} />
+      return <Video size={13} />
     }
+
+    const patchSelectedVideoSettings = (patch: Record<string, unknown>) => {
+      if (!selectedSlot) return
+      patchImportedNativeElementDraft(selectedSlot, patch)
+    }
+
+    const noopImportedNativeElementSave = () => undefined
 
     return (
       <div className={styles.importedFormFieldsBox}>
@@ -22087,11 +22104,11 @@ const ImportedHtmlEditorPanel: React.FC<{
           </div>
         </div>
         <p className={styles.importedFormFieldsHint}>
-          Estas zonas del HTML se conectan a elementos reales de Ristak para que formularios, citas y cobros usen la misma configuración del editor.
+          Estas zonas del HTML se conectan a elementos reales de Ristak para que formularios, citas, cobros y videos usen la misma configuración del editor.
         </p>
         <div className={styles.importedFormFieldsList}>
           {importedNativeElementSlots.map(slot => {
-            const block = findImportedNativeElementBlock((importedNativeElementSiteRef.current || site).blocks || [], slot)
+            const block = findImportedNativeElementBlock(nativeElementBlocks, slot)
             const isSelected = selectedSlot?.key === slot.key
             return (
               <button
@@ -22190,6 +22207,95 @@ const ImportedHtmlEditorPanel: React.FC<{
                   onSave={() => undefined}
                 />
               </>
+            )}
+
+            {selectedSlot.type === 'video' && (
+              <InspectorTabbedPanel
+                key={`imported-native-video-${selectedSlot.key}`}
+                title="Video"
+                subtitle="Misma configuración del editor de sitios"
+                defaultTab="edit"
+                tabs={[
+                  {
+                    value: 'edit',
+                    label: 'Editar',
+                    icon: <Pencil size={14} />,
+                    content: (
+                      <AccordionGroup>
+                        <AccordionSection id="imported-native-video-source" title="Video" defaultGroupOpen>
+                          <LandingBlockSettings
+                            site={nativeElementSite}
+                            block={draftBlock}
+                            blocks={nativeElementBlocks}
+                            forms={forms}
+                            calendars={calendars}
+                            pages={pages}
+                            activePageId={activeImportedPage?.id || activePageId}
+                            connectedSocialProfiles={[]}
+                            loadingSocialProfiles={false}
+                            onPatchBlock={(patch) => {
+                              if (patch.settings) patchSelectedVideoSettings(patch.settings)
+                            }}
+                            onPatchSettings={patchSelectedVideoSettings}
+                            onSave={noopImportedNativeElementSave}
+                          />
+                        </AccordionSection>
+                      </AccordionGroup>
+                    )
+                  },
+                  {
+                    value: 'design',
+                    label: 'Diseño',
+                    icon: <Sparkles size={14} />,
+                    content: (
+                      <AccordionGroup>
+                        <InlineBlockStyleControls
+                          site={nativeElementSite}
+                          block={draftBlock}
+                          blocks={nativeElementBlocks}
+                          mode="all"
+                          device={device}
+                          onPatchSettings={patchSelectedVideoSettings}
+                          onSave={noopImportedNativeElementSave}
+                        />
+                        <AccordionSection id="imported-native-video-player" title="Reproductor" defaultGroupOpen>
+                          <VideoPlayerSettingsControls
+                            settings={draftSettings}
+                            mediaUrl={getSettingString(draftSettings, 'mediaUrl')}
+                            sections="chrome"
+                            onPatchSettings={patchSelectedVideoSettings}
+                            onSave={noopImportedNativeElementSave}
+                          />
+                        </AccordionSection>
+                      </AccordionGroup>
+                    )
+                  },
+                  {
+                    value: 'videoActions',
+                    label: 'Acciones de video',
+                    icon: <Clock3 size={14} />,
+                    content: (
+                      <VideoActionsPanel
+                        site={nativeElementSite}
+                        block={draftBlock}
+                        blocks={nativeElementBlocks}
+                        popupBlocks={[]}
+                        pages={pages}
+                        activePageId={activeImportedPage?.id || activePageId}
+                        importedPopupDetected={importedHtmlHasPopup(importData || undefined)}
+                        metaPixelConnected={metaPixelConnected}
+                        onPatchSite={onPatchSite}
+                        onSaveSite={onSaveSite}
+                        forms={forms}
+                        customFields={activeImportedCustomFields}
+                        enableVideoFormGateAction
+                        onPatchSettings={patchSelectedVideoSettings}
+                        onSave={noopImportedNativeElementSave}
+                      />
+                    )
+                  }
+                ]}
+              />
             )}
 
             <div className={styles.importedButtonActionFooter}>

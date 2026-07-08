@@ -1590,7 +1590,7 @@ order id y payment id; la moneda enviada a Meta sigue saliendo de
 gracias.
 
 Para HTML importado con elementos nativos de Ristak, el contrato es declarar una
-zona con `data-rstk-native-element="form|calendar|payment"` y
+zona con `data-rstk-native-element="form|calendar|payment|video"` y
 `data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
 a bloques reales del sitio:
 
@@ -1605,6 +1605,9 @@ a bloques reales del sitio:
   horaria usada para la cita; el backend valida disponibilidad antes de crearla.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
   de pagos del editor. El `Purchase` sale solo del pago confirmado.
+- `video`: renderiza el bloque de video real de Ristak con la misma subida/URL,
+  controles, diseno, acciones por tiempo, formularios dentro del video y eventos
+  Meta/CAPI que el editor normal.
 
 Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
 pero las reglas copiables nuevas deben preferir `data-rstk-*`.

@@ -6586,11 +6586,12 @@ Convenciones de formularios para Ristak:
 - Si hay email, usa type="email", name="email", data-rstk-field="email", autocomplete="email".
 
 Conversiones Meta/CAPI para HTML importado:
-- Elementos nativos Ristak en HTML externo: reserva zonas con data-rstk-native-element="form|calendar|payment" y data-rstk-native-id unico. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y el editor permite elegir el formulario, calendario o pago real.
-- Solo uses data-rstk-native-element para formularios, calendarios y pagos. No lo inventes para otros widgets.
+- Elementos nativos Ristak en HTML externo: reserva zonas con data-rstk-native-element="form|calendar|payment|video" y data-rstk-native-id unico. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y el editor permite elegir el formulario, calendario, pago o video real.
+- Solo uses data-rstk-native-element para formularios, calendarios, pagos y videos. No lo inventes para otros widgets.
 - Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
 - Calendario con frontend propio: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. El JS propio debe llamar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre va en ISO UTC del slot confirmado y timezone es la zona horaria usada para la cita.
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
+- Video nativo: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el bloque video real con subida/URL, controles del reproductor, diseno, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI configurados.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
 - Para citas agendadas usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada.
@@ -22137,6 +22138,7 @@ function normalizeImportedNativeElementType(value = '') {
   if (['form', 'forms', 'formulario', 'formularios', 'lead-form', 'lead'].includes(token)) return 'form'
   if (['calendar', 'calendars', 'calendario', 'calendarios', 'agenda', 'cita', 'citas', 'booking', 'appointment', 'appointments'].includes(token)) return 'calendar'
   if (['payment', 'payments', 'pago', 'pagos', 'checkout', 'cobro', 'cobros', 'purchase'].includes(token)) return 'payment'
+  if (['video', 'videos', 'video-player', 'player', 'reproductor', 'media'].includes(token)) return 'video'
   return ''
 }
 
@@ -22169,7 +22171,7 @@ function getImportedNativeElementSlot(attrs = {}, index = 0) {
     'data-ristack-label',
     'aria-label',
     'title'
-  ]) || `${type === 'form' ? 'Formulario' : type === 'calendar' ? 'Calendario' : 'Pago'} ${id}`
+  ]) || `${type === 'form' ? 'Formulario' : type === 'calendar' ? 'Calendario' : type === 'video' ? 'Video' : 'Pago'} ${id}`
   const rawRenderMode = normalizeImportedNativeElementToken(firstImportedNativeAttr(attrs, [
     'data-rstk-native-render',
     'data-ristak-native-render',
@@ -22197,7 +22199,9 @@ function isImportedNativeElementBlock(block = {}, slot = {}) {
       ? 'calendar_embed'
       : slot.type === 'payment'
         ? 'payment'
-        : ''
+        : slot.type === 'video'
+          ? 'video'
+          : ''
   return expectedBlockType &&
     block.blockType === expectedBlockType &&
     normalizeBoolean(settings.importedHtmlNativeElement || settings.imported_html_native_element) &&
@@ -22223,7 +22227,9 @@ function renderImportedNativeElementPlaceholder(slot = {}) {
     ? 'Selecciona un formulario de Ristak'
     : slot.type === 'calendar'
       ? 'Selecciona un calendario de Ristak'
-      : 'Configura el pago de Ristak'
+      : slot.type === 'video'
+        ? 'Configura el video de Ristak'
+        : 'Configura el pago de Ristak'
   return `<div class="rstk-imported-native-placeholder">${escapeHtml(label)}</div>`
 }
 
@@ -22244,14 +22250,29 @@ function renderImportedNativeElementWrapper(attrs = {}, slot = {}, content = '',
   })}>${content}</div>`
 }
 
-function buildImportedNativeRenderContext(site, { pageId = DEFAULT_FUNNEL_PAGE_ID, trackingEnabled = true, preview = false, linkStyle = 'query' } = {}) {
+function buildImportedNativeRenderContext(site, {
+  pageId = DEFAULT_FUNNEL_PAGE_ID,
+  trackingEnabled = true,
+  preview = false,
+  linkStyle = 'query',
+  videoStreamAssetsByStorageUrl = new Map(),
+  videoStorageAssetsByStreamVideoId = new Map()
+} = {}) {
+  const pages = normalizeSitePages(site)
+  const blocks = Array.isArray(site?.blocks) ? site.blocks : []
+  const popupBlocks = getPopupBlocks(site)
+  const videoLookupBlocks = [...blocks, ...popupBlocks]
   return {
     site,
-    pages: normalizeSitePages(site),
+    pages,
     pageId,
     noTrack: !trackingEnabled || preview,
     preview,
-    linkStyle
+    linkStyle,
+    videoStreamAssetsByStorageUrl,
+    videoStorageAssetsByStreamVideoId,
+    videoActionTargetIds: collectVideoActionTargetIds(videoLookupBlocks),
+    videoActionInitialHiddenTargetIds: collectVideoActionInitialHiddenTargetIds(videoLookupBlocks)
   }
 }
 
@@ -22318,6 +22339,7 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
   if (!block) return renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot))
   if (slot.type === 'payment') runtimeState.hasPayment = true
   if (slot.type === 'calendar') runtimeState.hasCalendar = true
+  if (slot.type === 'video') runtimeState.hasVideo = true
 
   const rendered = slot.type === 'form'
     ? await renderImportedNativeFormSlot(block, context)
@@ -22346,6 +22368,7 @@ async function replaceImportedNativeElementSlots(html = '', blocks = [], context
     hasNativeElements: false,
     hasPayment: false,
     hasCalendar: false,
+    hasVideo: false,
     customCalendarConfigs: []
   }
   let index = 0
@@ -22475,6 +22498,7 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}
 .rstk-imported-native-form-frame{display:block;width:100%;min-height:720px;border:0;background:transparent}
 .rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
+.rstk-imported-native-video .rstk-video{width:100%}
 .rstk-payment-block{width:100%;text-align:var(--rstk-checkout-align,left);font-family:inherit;color:inherit}
 .rstk-checkout-card{width:100%;border:1px solid color-mix(in srgb, CanvasText 12%, transparent);border-radius:18px;background:color-mix(in srgb, Canvas 94%, CanvasText 6%);box-shadow:0 12px 30px color-mix(in srgb, CanvasText 10%, transparent);overflow:hidden}
 .rstk-checkout-inner{display:grid;gap:16px;padding:24px}
@@ -22533,21 +22557,29 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
   if (!trackingEnabled || preview) {
     html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
   }
+  const importedNoTrack = !trackingEnabled || preview
+  const importedVideoLookupBlocks = site.blocks || []
+  const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
+    buildVideoStreamAssetsByStorageUrl(importedVideoLookupBlocks, { enabled: !importedNoTrack }),
+    buildVideoStorageAssetsByStreamVideoId(importedVideoLookupBlocks, { enabled: true })
+  ])
   const importedVideoRenderContext = {
     site,
     pages: normalizeSitePages(site),
-    noTrack: !trackingEnabled || preview,
+    noTrack: importedNoTrack,
     preview,
     linkStyle,
-    videoStreamAssetsByStorageUrl: new Map(),
-    videoStorageAssetsByStreamVideoId: new Map()
+    videoStreamAssetsByStorageUrl,
+    videoStorageAssetsByStreamVideoId
   }
   html = rewriteImportedVideosForRender(site, html, importedVideoRenderContext)
   const importedNativeRenderContext = buildImportedNativeRenderContext(site, {
     pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
     trackingEnabled,
     preview,
-    linkStyle
+    linkStyle,
+    videoStreamAssetsByStorageUrl,
+    videoStorageAssetsByStreamVideoId
   })
   const importedNativeRender = await replaceImportedNativeElementSlots(
     html,
@@ -22608,19 +22640,27 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     if (!trackingEnabled) {
       html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
     }
+    const importedNoTrack = !trackingEnabled
+    const importedVideoLookupBlocks = site.blocks || []
+    const [videoStreamAssetsByStorageUrl, videoStorageAssetsByStreamVideoId] = await Promise.all([
+      buildVideoStreamAssetsByStorageUrl(importedVideoLookupBlocks, { enabled: !importedNoTrack }),
+      buildVideoStorageAssetsByStreamVideoId(importedVideoLookupBlocks, { enabled: true })
+    ])
     const importedVideoRenderContext = {
       site,
       pages: normalizeSitePages(site),
-      noTrack: !trackingEnabled,
+      noTrack: importedNoTrack,
       linkStyle: 'query',
-      videoStreamAssetsByStorageUrl: new Map(),
-      videoStorageAssetsByStreamVideoId: new Map()
+      videoStreamAssetsByStorageUrl,
+      videoStorageAssetsByStreamVideoId
     }
     html = rewriteImportedVideosForRender(site, html, importedVideoRenderContext)
     const importedNativeRenderContext = buildImportedNativeRenderContext(site, {
       pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
       trackingEnabled,
-      preview: false
+      preview: false,
+      videoStreamAssetsByStorageUrl,
+      videoStorageAssetsByStreamVideoId
     })
     const importedNativeRender = await replaceImportedNativeElementSlots(
       html,
