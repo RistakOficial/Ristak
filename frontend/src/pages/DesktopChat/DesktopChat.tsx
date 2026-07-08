@@ -154,6 +154,21 @@ type ChatLocation = {
   url?: string
 }
 
+interface MessageAdPreview {
+  platform?: string
+  title: string
+  body?: string
+  sourceUrl?: string
+  previewUrl?: string
+  imageUrl?: string
+  videoUrl?: string
+  campaignName?: string
+  adsetName?: string
+  adName?: string
+  sourceId?: string
+  sourceType?: string
+}
+
 interface ManualAgentSendPrompt {
   contactId: string
   textOverride?: string
@@ -266,6 +281,7 @@ interface DesktopChatMessage {
     isGif?: boolean
   }
   location?: ChatLocation
+  adPreview?: MessageAdPreview
 }
 
 interface ConversationCacheSnapshot {
@@ -1283,6 +1299,18 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
     message.transport,
     message.provider,
     message.routingReason,
+    message.adPreview?.platform,
+    message.adPreview?.title,
+    message.adPreview?.body,
+    message.adPreview?.sourceUrl,
+    message.adPreview?.previewUrl,
+    message.adPreview?.imageUrl,
+    message.adPreview?.videoUrl,
+    message.adPreview?.campaignName,
+    message.adPreview?.adsetName,
+    message.adPreview?.adName,
+    message.adPreview?.sourceId,
+    message.adPreview?.sourceType,
     message.replyToMessageId,
     message.replyToProviderMessageId,
     message.reactionEmoji,
@@ -1476,6 +1504,25 @@ function getJourneyEventSignature(event: JourneyEvent) {
     data.media_mime_type,
     data.media_filename,
     data.media_duration_ms,
+    data.is_ad_attributed,
+    data.ad_platform,
+    data.referral_source_url,
+    data.referral_source_type,
+    data.referral_source_id,
+    data.referral_headline,
+    data.referral_body,
+    data.referral_image_url,
+    data.referral_video_url,
+    data.referral_thumbnail_url,
+    data.referral_ctwa_clid,
+    data.campaign_name,
+    data.adset_name,
+    data.attribution_ad_name,
+    data.attribution_ad_id,
+    data.creative_thumbnail_url,
+    data.creative_image_url,
+    data.creative_video_url,
+    data.creative_preview_url,
     data.comment_id,
     data.post_message,
     data.post_image_url,
@@ -1879,6 +1926,64 @@ function getMessageTypeLabel(type = '', fallback = 'Mensaje') {
   return fallback
 }
 
+function getReadableDataValue(value: unknown) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'object') return ''
+  const text = String(value).trim()
+  if (!text) return ''
+  return ['null', 'undefined', 'nan'].includes(text.toLowerCase()) ? '' : text
+}
+
+function pickReadableDataValue(data: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = getReadableDataValue(data[key])
+    if (value) return value
+  }
+  return ''
+}
+
+function buildMessageAdPreview(data: Record<string, unknown>, direction: DesktopChatMessage['direction']): MessageAdPreview | undefined {
+  if (direction !== 'inbound') return undefined
+
+  const sourceId = pickReadableDataValue(data, ['attribution_ad_id', 'referral_source_id', 'ad_id', 'ad_id_thru_message'])
+  const sourceUrl = pickReadableDataValue(data, ['referral_source_url', 'source_url', 'attribution_url'])
+  const ctwaClid = pickReadableDataValue(data, ['referral_ctwa_clid', 'ctwa_clid', 'attribution_ctwa_clid'])
+  const hasAdSignal = isTruthyDataFlag(data.is_ad_attributed) || Boolean(sourceId || sourceUrl || ctwaClid)
+
+  if (!hasAdSignal) return undefined
+
+  const platform = pickReadableDataValue(data, ['ad_platform', 'source_platform', 'referral_source_app']) || 'Meta Ads'
+  const adName = pickReadableDataValue(data, ['attribution_ad_name', 'ad_name', 'meta_ad_name'])
+  const title = pickReadableDataValue(data, ['referral_headline', 'headline', 'title']) || adName || 'Anuncio de WhatsApp'
+  const body = pickReadableDataValue(data, ['referral_body', 'ad_body', 'description'])
+  const imageUrl = pickReadableDataValue(data, [
+    'referral_image_url',
+    'creative_image_url',
+    'creative_thumbnail_url',
+    'referral_thumbnail_url'
+  ])
+  const videoUrl = pickReadableDataValue(data, ['referral_video_url', 'creative_video_url'])
+  const previewUrl = pickReadableDataValue(data, ['creative_preview_url'])
+  const campaignName = pickReadableDataValue(data, ['campaign_name'])
+  const adsetName = pickReadableDataValue(data, ['adset_name'])
+  const sourceType = pickReadableDataValue(data, ['referral_source_type', 'source_type'])
+
+  return {
+    platform,
+    title,
+    body,
+    sourceUrl,
+    previewUrl,
+    imageUrl,
+    videoUrl,
+    campaignName,
+    adsetName,
+    adName,
+    sourceId,
+    sourceType
+  }
+}
+
 function parseLocationCoordinate(value: unknown) {
   if (value === null || value === undefined || value === '') return null
   const number = typeof value === 'number' ? value : Number(String(value).trim())
@@ -2270,6 +2375,9 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
   const provider = String(data.provider || data.message_provider || data.source_provider || '').trim()
   const transport = String(data.transport || data.channel || '').trim() || provider
+  const adPreview = event.type === 'whatsapp_message'
+    ? buildMessageAdPreview(data, direction)
+    : undefined
   const email = event.type === 'email_message'
     ? buildEmailChatMessageData(data, {
         bodyText: effectiveText,
@@ -2279,7 +2387,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
         transport
       })
     : undefined
-  if (!effectiveText && !attachment && !location && !messageType && !subject && !hasEmailChatMessageContent(email)) return null
+  if (!effectiveText && !attachment && !location && !adPreview && !messageType && !subject && !hasEmailChatMessageContent(email)) return null
   const fallbackText = location
     ? ''
     : attachment
@@ -2334,7 +2442,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
       : undefined,
     email,
     attachment,
-    location
+    location,
+    adPreview
   }
 }
 
@@ -7374,6 +7483,65 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
+  const renderAdPreview = (message: DesktopChatMessage) => {
+    const preview = message.adPreview
+    if (!preview) return null
+
+    const href = preview.previewUrl || preview.sourceUrl || ''
+    const campaignLine = [
+      preview.campaignName ? `Campaña ${formatUrlParameter(preview.campaignName)}` : '',
+      preview.adName ? formatUrlParameter(preview.adName) : '',
+      !preview.adName && preview.sourceId ? `ID ${preview.sourceId}` : ''
+    ].filter(Boolean).join(' · ')
+    const sourceLine = [
+      preview.sourceType ? formatUrlParameter(preview.sourceType) : '',
+      preview.sourceId && preview.adName ? `ID ${preview.sourceId}` : ''
+    ].filter(Boolean).join(' · ')
+    const content = (
+      <>
+        {preview.imageUrl ? (
+          <img
+            className={styles.messageAdPreviewMedia}
+            src={preview.imageUrl}
+            alt=""
+            loading="lazy"
+            decoding="async"
+          />
+        ) : (
+          <span className={styles.messageAdPreviewMediaPlaceholder} aria-hidden="true">
+            {preview.videoUrl ? <Video size={24} /> : <Icon name="meta-ads" size={24} />}
+          </span>
+        )}
+        <span className={styles.messageAdPreviewContent}>
+          <span className={styles.messageAdPreviewLabel}>
+            <Icon name="meta-ads" size={12} />
+            Anuncio {preview.platform || 'Meta Ads'}
+          </span>
+          <strong className={styles.messageAdPreviewTitle}>{formatUrlParameter(preview.title)}</strong>
+          {preview.body ? <span className={styles.messageAdPreviewBody}>{formatUrlParameter(preview.body)}</span> : null}
+          {campaignLine ? <span className={styles.messageAdPreviewMeta}>{campaignLine}</span> : null}
+          {sourceLine ? <span className={styles.messageAdPreviewSource}>{sourceLine}</span> : null}
+          {href ? (
+            <span className={styles.messageAdPreviewAction}>
+              Ver anuncio
+              <ExternalLink size={12} />
+            </span>
+          ) : null}
+        </span>
+      </>
+    )
+
+    if (href) {
+      return (
+        <a className={styles.messageAdPreview} href={href} target="_blank" rel="noreferrer">
+          {content}
+        </a>
+      )
+    }
+
+    return <div className={styles.messageAdPreview}>{content}</div>
+  }
+
   const getMessageBubbleMediaClass = (message: DesktopChatMessage) => {
     if (message.location) return styles.messageLocationBubble
     const attachmentType = message.attachment?.type
@@ -8294,6 +8462,7 @@ export const DesktopChat: React.FC = () => {
                                       ) : (
                                         <>
                                           {message.location ? renderLocationMessage(message) : null}
+                                          {renderAdPreview(message)}
                                           {renderAttachment(message)}
                                           {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
                                           {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}

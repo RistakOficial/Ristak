@@ -408,6 +408,15 @@ abrir Maps sin una franja secundaria de titulo/coordenadas dentro del mensaje.
 Si el texto recibido solo dice `location` o `Ubicacion`, se oculta para no
 duplicar el contenido debajo del mapa.
 
+En `/chat` desktop, los mensajes entrantes de WhatsApp que vienen de un anuncio
+deben mostrar una vista previa compacta del anuncio dentro del globo antes del
+texto del contacto. La tarjeta se arma con `is_ad_attributed`,
+`referral_source_id`, `referral_ctwa_clid`, `referral_source_url`,
+`referral_headline` y `referral_body`; cuando el backend ya enriquecio el evento
+con `meta_ads`, usa `creative_image_url`/`creative_thumbnail_url`,
+`creative_preview_url`, campana, conjunto y nombre del anuncio. Si no hay senal
+real de anuncio, el chat no debe inventar previews ni decorar mensajes directos.
+
 El chat desktop (`/chat`) y el chat movil (`/movil`) permiten responder un
 globo especifico y reaccionar a mensajes recibidos cuando el canal expone
 soporte nativo. En movil la respuesta a un globo normal se activa deslizando la
