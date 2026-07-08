@@ -2069,7 +2069,10 @@ Ristak tiene dos superficies principales:
   agente guardado, antes de probar se guarda el borrador pendiente, se manda el
   `agentId` y el backend resuelve el agente por ese ID aplicando el borrador
   encima. La prueba no debe pasar por un agente distinto ni por un autosave
-  pendiente.
+  pendiente. La prueba del editor ignora la espera inicial de respuesta
+  configurada en "cuanto debe esperar antes de contestar" y devuelve
+  `responseDelayMs: 0` para que el tester responda inmediato; el chat real
+  publicado si conserva esa espera antes de contestar.
   Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
   el formulario manual avanzado. `extraInstructions` es la superficie editable de
   personalizacion del asistente: reglas del negocio, limites, datos que debe

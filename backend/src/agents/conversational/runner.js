@@ -2130,6 +2130,10 @@ export async function resolveConversationalAgentPreviewRuntimeConfig({ configOve
   return { config, globalConfig }
 }
 
+export function getConversationalAgentPreviewResponseDelayMs() {
+  return 0
+}
+
 /**
  * Conversación simulada para probar el agente antes de activarlo.
  * No envía mensajes reales, no toca estados ni crea citas: las acciones internas
@@ -2211,7 +2215,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
       })
   const replyParts = splitResult.messages
   const replyPartDelaysMs = buildReplyPartDelaySchedule(replyParts, { replyDelivery: runtimeConfig.replyDelivery })
-  const responseDelayMs = getAgentResponseDelayMs(runtimeConfig)
+  const responseDelayMs = getConversationalAgentPreviewResponseDelayMs()
 
   return {
     reply: ctx.suppressReply ? '' : reply,
