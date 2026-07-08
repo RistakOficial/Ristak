@@ -1409,6 +1409,15 @@ Ristak usa Meta en varias areas:
   `meta_config.instagram_access_token` y queda encendido si la conexion nueva ya
   trae cuenta de Instagram + token directo. Los comentarios de Instagram se
   controlan aparte desde la columna de Instagram.
+- El bloque **Perfil de red social** del editor de Sites lee los perfiles desde
+  la configuracion Meta guardada (`meta_config.page_id`,
+  `meta_config.instagram_account_id` y `meta_config.access_token`) cuando el
+  usuario ya esta autenticado en Ristak. El endpoint no debe interpretar el JWT
+  de sesion de Ristak como token de Meta; solo usa `X-Meta-Access-Token` durante
+  el wizard cuando se esta probando un token explicito. En sitios publicados, el
+  refresh diario de Meta actualiza avatar, nombre y seguidores de bloques con
+  `socialAutoSync=true`; si un bloque legacy no tiene `socialSourceProfileId`,
+  puede adoptar el perfil configurado que coincida con su plataforma.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con Meta encendido por default: Sites/landings y paginas nuevas usan solo el
   `PageView` base al aterrizar (browser Pixel + CAPI server-side, sin `ViewContent`

@@ -20740,7 +20740,6 @@ function renderAvatar(brand) {
 }
 
 function getSocialPlatformIcon(platform) {
-  if (platform === 'instagram') return RSTK_ICONS.camera
   if (platform === 'tiktok') return RSTK_ICONS.music
   if (platform === 'threads') return '@'
   return ''

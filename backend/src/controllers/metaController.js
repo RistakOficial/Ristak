@@ -3604,6 +3604,15 @@ function extractMetaAccessToken(req) {
   return null;
 }
 
+function extractExplicitMetaAccessToken(req) {
+  const customHeader = req.headers['x-meta-access-token'];
+  if (typeof customHeader === 'string' && customHeader.trim()) {
+    return customHeader.trim();
+  }
+
+  return cleanString(req.query?.accessToken);
+}
+
 /**
  * Obtiene las cuentas de anuncios del usuario de Meta
  * GET /api/meta/ad-accounts (token en header X-Meta-Access-Token / Authorization)
@@ -3843,8 +3852,9 @@ export const getPages = async (req, res) => {
  */
 export const getSocialProfiles = async (req, res) => {
   try {
+    const accessToken = extractExplicitMetaAccessToken(req);
     const result = await getConnectedMetaSocialProfiles({
-      accessToken: extractMetaAccessToken(req) || req.query?.accessToken,
+      ...(accessToken ? { accessToken } : {}),
       pageId: req.query?.pageId,
       instagramAccountId: req.query?.instagramAccountId
     });

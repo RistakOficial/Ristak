@@ -134,7 +134,24 @@ function dedupeProfiles(profiles = []) {
   for (const profile of profiles) {
     if (profile?.id) byId.set(profile.id, profile)
   }
-  return [...byId.values()].sort((a, b) => Number(Boolean(b.isConfiguredPage)) - Number(Boolean(a.isConfiguredPage)))
+  return sortProfilesByPriority([...byId.values()])
+}
+
+function getProfileFollowerCount(profile = {}) {
+  return normalizeCount(profile.followers) || 0
+}
+
+function isConfiguredProfile(profile = {}) {
+  return Boolean(profile.isConfiguredPage || profile.isConfiguredInstagram)
+}
+
+function sortProfilesByPriority(profiles = []) {
+  return [...profiles].sort((a, b) => {
+    const configuredDelta = Number(isConfiguredProfile(b)) - Number(isConfiguredProfile(a))
+    if (configuredDelta !== 0) return configuredDelta
+
+    return getProfileFollowerCount(b) - getProfileFollowerCount(a)
+  })
 }
 
 function extractThreadsFollowers(insights = {}) {
@@ -371,20 +388,22 @@ function applyProfileToTheme(theme = {}, profile) {
 
 function findProfileForSettings(settings = {}, profiles = []) {
   const sourceProfileId = cleanString(settings.socialSourceProfileId)
-  const sourcePlatform = cleanString(settings.socialSourcePlatform || settings.platform)
+  const sourcePlatform = normalizePlatform(settings.socialSourcePlatform || settings.platform)
   const sourceId = cleanString(settings.socialSourceId)
 
   return profiles.find(profile => (
     sourceProfileId && profile.id === sourceProfileId
   )) || profiles.find(profile => (
     sourcePlatform && sourceId && profile.platform === sourcePlatform && profile.sourceId === sourceId
-  )) || null
+  )) || sortProfilesByPriority(profiles.filter(profile => (
+    sourcePlatform && profile.platform === sourcePlatform
+  )))[0] || null
 }
 
 function shouldRefreshSocialSettings(settings = {}, today, force) {
   if (settings.socialAutoSync !== true) return false
   if (!isMetaProfilePlatform(settings.socialSourcePlatform || settings.platform)) return false
-  if (!cleanString(settings.socialSourceProfileId) && !cleanString(settings.socialSourceId)) return false
+  if (!cleanString(settings.socialSourceProfileId) && !cleanString(settings.socialSourceId)) return true
   if (!force && cleanString(settings.socialSyncedAt).slice(0, 10) === today) return false
   return true
 }
