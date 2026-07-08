@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Activity,
   AudioLines,
@@ -73,6 +74,7 @@ const viewModes: ViewMode[] = ['grid', 'list']
 const isMediaFilter = (value?: string | null): value is MediaFilter => mediaFilters.includes(value as MediaFilter)
 const isViewMode = (value?: string | null): value is ViewMode => viewModes.includes(value as ViewMode)
 const isQueryParam = (value?: string | null): value is string => typeof value === 'string'
+const DEFAULT_MEDIA_FILTER: MediaFilter = 'all'
 
 interface ExplorerFile {
   asset: MediaAsset
@@ -488,6 +490,7 @@ function readDraggedMediaIds(dataTransfer: DataTransfer) {
 export const MediaSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const { dateRange, setDateRange } = useDateRange()
+  const [searchParams, setSearchParams] = useSearchParams()
   const uploadQueue = useMediaUploadQueue()
   const uploadInputRef = useRef<HTMLInputElement>(null)
   const filePaneRef = useRef<HTMLElement>(null)
@@ -502,7 +505,7 @@ export const MediaSettings: React.FC = () => {
   const [moving, setMoving] = useState(false)
   const [error, setError] = useState('')
   const [query, setQuery] = useUrlStringState<string>('q', '', isQueryParam)
-  const [activeFilter, setActiveFilter] = useUrlStringState<MediaFilter>('type', 'all', isMediaFilter)
+  const [activeFilter] = useUrlStringState<MediaFilter>('type', DEFAULT_MEDIA_FILTER, isMediaFilter)
   const [storedViewMode, saveStoredViewMode] = useAppConfig<string>(
     MEDIA_VIEW_MODE_CONFIG_KEY,
     MEDIA_DEFAULT_VIEW_MODE
@@ -511,7 +514,7 @@ export const MediaSettings: React.FC = () => {
   const [viewMode, setViewModeState] = useState<ViewMode>(savedViewMode)
   const viewModeRef = useRef(viewMode)
   const viewModeSaveVersionRef = useRef(0)
-  const [currentPath, setCurrentPath] = useUrlStringState<string>('path', '', isQueryParam)
+  const [currentPath] = useUrlStringState<string>('path', '', isQueryParam)
   const [selectedAssetParam, setSelectedAssetParam] = useUrlStringState<string>('asset', '', isQueryParam)
   const selectedAssetId = selectedAssetParam || null
   const setSelectedAssetId = useCallback((value: string | null) => {
@@ -526,6 +529,27 @@ export const MediaSettings: React.FC = () => {
   const [videoAnalytics, setVideoAnalytics] = useState<MediaStreamAnalytics | null>(null)
   const [videoAnalyticsLoading, setVideoAnalyticsLoading] = useState(false)
   const [videoAnalyticsError, setVideoAnalyticsError] = useState('')
+
+  const updateExplorerUrl = useCallback((next: {
+    type?: MediaFilter
+    path?: string
+    asset?: string | null
+  }) => {
+    const nextParams = new URLSearchParams(searchParams)
+    if (next.type !== undefined) {
+      if (next.type === DEFAULT_MEDIA_FILTER) nextParams.delete('type')
+      else nextParams.set('type', next.type)
+    }
+    if (next.path !== undefined) {
+      if (next.path) nextParams.set('path', next.path)
+      else nextParams.delete('path')
+    }
+    if (next.asset !== undefined) {
+      if (next.asset) nextParams.set('asset', next.asset)
+      else nextParams.delete('asset')
+    }
+    setSearchParams(nextParams, { replace: true })
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     setViewModeState(current => current === savedViewMode ? current : savedViewMode)
@@ -734,16 +758,17 @@ export const MediaSettings: React.FC = () => {
   }, [dateRange.end, dateRange.start, selectedVideoFile?.asset, showVideoAnalytics])
 
   const handleFolderOpen = (path: string) => {
-    setCurrentPath(path)
-    setSelectedAssetId(null)
+    updateExplorerUrl({ path, asset: null })
     setSelectedItemKeys(new Set())
   }
 
   const handleMediaFilterChange = (value: string) => {
     const nextFilter = isMediaFilter(value) ? value : 'all'
-    setActiveFilter(nextFilter)
-    if (nextFilter !== 'all' && currentPath) setCurrentPath('')
-    setSelectedAssetId(null)
+    updateExplorerUrl({
+      type: nextFilter,
+      path: '',
+      asset: null
+    })
     setSelectedItemKeys(new Set())
   }
 
@@ -873,8 +898,7 @@ export const MediaSettings: React.FC = () => {
       setSelectedItemKeys(new Set())
       if (movedAssets[0]) {
         const movedFile = toExplorerFile(movedAssets[0])
-        setCurrentPath(movedFile.folderPath)
-        setSelectedAssetId(movedAssets[0].id)
+        updateExplorerUrl({ path: movedFile.folderPath, asset: movedAssets[0].id })
       }
       await loadMedia('refresh')
       showToast('success', 'Archivos movidos', `${movedAssets.length} archivo${movedAssets.length === 1 ? '' : 's'} quedaron en la carpeta elegida.`)
@@ -1081,8 +1105,7 @@ export const MediaSettings: React.FC = () => {
         await loadMedia('refresh')
         if (lastUploaded) {
           const uploadedFile = toExplorerFile(lastUploaded)
-          setCurrentPath(uploadedFile.folderPath)
-          setSelectedAssetId(lastUploaded.id)
+          updateExplorerUrl({ path: uploadedFile.folderPath, asset: lastUploaded.id })
         }
         showToast(
           'success',
