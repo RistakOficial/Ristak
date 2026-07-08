@@ -1542,7 +1542,10 @@ siguiente pagina, redirigir a una URL o ir a una pagina especifica del mismo
 proyecto usando el selector de paginas de esa landing.
 La biblioteca de sitios y formularios permite seleccionar varios elementos con
 checkboxes en vista galeria, lista o tabla y eliminarlos juntos con confirmacion
-destructiva. El selector de paginas del editor tambien permite marcar varias
+destructiva. Los controles masivos de `Todos los visibles` y `Eliminar` aparecen
+solo despues de marcar al menos un elemento; en vista tabla viven dentro de la
+toolbar de seleccion comun de las tablas. El selector de paginas del editor
+tambien permite marcar varias
 paginas borrables y eliminarlas en una sola accion; las paginas fijas de
 resultado de formularios no se pueden seleccionar para borrado masivo.
 
