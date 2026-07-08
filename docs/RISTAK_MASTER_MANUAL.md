@@ -454,6 +454,17 @@ fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia e
 SMS aparece solo si HighLevel esta conectado, y Messenger/Instagram solo cuando
 Meta esta conectado y el contacto pertenece a ese canal.
 
+Los comentarios de Facebook e Instagram son un canal publico distinto de
+Messenger/Instagram DM. Si un contacto nace desde un comentario, el composer debe
+mostrar el canal `Comentario de Facebook` o `Comentario de Instagram` y enviar
+la respuesta como comentario publico en la publicacion. Si el humano cambia el
+canal a Messenger o Instagram DM, el texto se manda como respuesta privada al
+comentario. Si ya existia una conversacion privada y despues llega un comentario,
+la conversacion sigue en Messenger/Instagram DM; el canal publico solo aparece
+cuando ese comentario es el ultimo mensaje entrante del contacto. Si despues del
+comentario el contacto manda un DM, responder en la publicacion exige tocar el
+boton `Responder en la publicacion` del globo de comentario exacto.
+
 ### Correo electronico
 
 Configuracion > Integraciones > Correos conecta envio por SMTP y recepcion por

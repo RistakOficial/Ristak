@@ -1047,6 +1047,8 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
           : normalizedMessageType === 'comment_reply_private'
             ? 'private'
             : undefined,
+        commentId: readString(data, ['comment_id', 'commentId']),
+        commentPlatform: readString(data, ['social_platform', 'platform']).toLowerCase() === 'instagram' ? 'instagram' : 'messenger',
         commentPost: buildCommentPost(data, messageType, postDeleted),
       };
     })

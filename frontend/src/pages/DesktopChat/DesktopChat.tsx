@@ -136,7 +136,9 @@ type BulkAgentSelectionAction = Extract<ConversationStateAction, 'activate' | 'p
 type ContactChannelBadgeKind = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'webchat' | 'meta' | 'facebook_comment' | 'instagram_comment'
 type SchedulePeriod = 'AM' | 'PM'
 type TemplatePanelMode = 'choice' | 'select' | 'create'
-type ComposerChannel = 'whatsapp' | 'messenger' | 'instagram' | 'email'
+type CommentComposerChannel = 'facebook_comment' | 'instagram_comment'
+type ComposerChannel = 'whatsapp' | 'messenger' | 'instagram' | 'email' | CommentComposerChannel
+type CommentReplyTarget = { messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string }
 type ContactIdentityField = 'name' | 'email' | 'phone'
 type ManualAgentInterruptionAction = 'pause' | 'skip'
 type ManualAgentSendOptions = { skipAgentInterruptionConfirm?: boolean }
@@ -915,6 +917,59 @@ function getCommentPlatform(contact?: DesktopChatContact | Contact | null): 'fac
   const record = contact as unknown as Record<string, unknown>
   const channel = String(record?.lastMessageChannel || '').toLowerCase()
   return channel.includes('instagram') ? 'instagram' : 'facebook'
+}
+
+function isCommentComposerChannel(channel: ComposerChannel): channel is CommentComposerChannel {
+  return channel === 'facebook_comment' || channel === 'instagram_comment'
+}
+
+function getCommentComposerPlatform(channel: CommentComposerChannel): 'messenger' | 'instagram' {
+  return channel === 'instagram_comment' ? 'instagram' : 'messenger'
+}
+
+function getCommentComposerChannelForPlatform(platform: 'messenger' | 'instagram'): CommentComposerChannel {
+  return platform === 'instagram' ? 'instagram_comment' : 'facebook_comment'
+}
+
+function getCommentComposerLabel(platform: 'messenger' | 'instagram') {
+  return platform === 'instagram' ? 'Comentario de Instagram' : 'Comentario de Facebook'
+}
+
+function canStartCommentPublicReply(message: DesktopChatMessage) {
+  return Boolean(
+    message.isComment &&
+    message.direction === 'inbound' &&
+    !message.commentReplyMode &&
+    message.commentId
+  )
+}
+
+function buildCommentReplyTarget(message: DesktopChatMessage): CommentReplyTarget | null {
+  if (!canStartCommentPublicReply(message) || !message.commentId) return null
+
+  return {
+    messageId: message.id,
+    commentId: message.commentId,
+    platform: message.commentPlatform || 'messenger',
+    preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+  }
+}
+
+function getLatestEligibleCommentReplyTarget(messages: DesktopChatMessage[]): CommentReplyTarget | null {
+  const latestComment = [...messages]
+    .filter(canStartCommentPublicReply)
+    .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0]
+  if (!latestComment) return null
+
+  const latestCommentTime = getMessageTimeValue(latestComment.date)
+  const hasLaterInboundPrivateMessage = messages.some((message) => (
+    message.direction === 'inbound' &&
+    !message.isComment &&
+    getMessageTimeValue(message.date) > latestCommentTime
+  ))
+  if (hasLaterInboundPrivateMessage) return null
+
+  return buildCommentReplyTarget(latestComment)
 }
 
 function getContactChannelBadge(contact?: DesktopChatContact | Contact | null): ContactChannelBadge | null {
@@ -2483,6 +2538,8 @@ function getTrackingData(contact?: Contact | null, journey: JourneyEvent[] = [])
 
 function normalizeComposerChannel(value?: string | null): ComposerChannel {
   const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (normalized.includes('instagram') && normalized.includes('comment')) return 'instagram_comment'
+  if ((normalized.includes('facebook') || normalized.includes('comment')) && normalized.includes('comment')) return 'facebook_comment'
   if (normalized.includes('instagram')) return 'instagram'
   if (normalized.includes('messenger') || normalized.includes('facebook')) return 'messenger'
   if (normalized.includes('email') || normalized.includes('correo') || normalized.includes('mail') || normalized === 'smtp') return 'email'
@@ -2491,7 +2548,13 @@ function normalizeComposerChannel(value?: string | null): ComposerChannel {
 
 function getDefaultComposerChannel(contact?: DesktopChatContact | null): ComposerChannel {
   if (!contact) return 'whatsapp'
+  if (isCommentContact(contact)) {
+    return getCommentPlatform(contact) === 'instagram' ? 'instagram_comment' : 'facebook_comment'
+  }
   const inferred = normalizeComposerChannel(contact.lastMessageChannel || contact.lastMessageTransport || '')
+  if (isCommentComposerChannel(inferred)) {
+    return inferred === 'instagram_comment' ? 'instagram' : 'messenger'
+  }
   if (inferred === 'email' && contact.email) return 'email'
   if (inferred === 'messenger' || inferred === 'instagram') return inferred
   if (contact.phone) return 'whatsapp'
@@ -2502,6 +2565,8 @@ function getDefaultComposerChannel(contact?: DesktopChatContact | null): Compose
 function getHighLevelChannelForComposer(channel: ComposerChannel): HighLevelChatChannel {
   if (channel === 'email') return 'email'
   if (channel === 'messenger' || channel === 'instagram') return channel
+  if (channel === 'facebook_comment') return 'messenger'
+  if (channel === 'instagram_comment') return 'instagram'
   return 'whatsapp_api'
 }
 
@@ -2551,8 +2616,10 @@ function findBusinessPhoneByRoute(
 
 function renderComposerChannelIcon(channel: ComposerChannel) {
   if (channel === 'whatsapp') return <FaWhatsapp className={styles.composerChannelBrandIcon} aria-hidden="true" />
+  if (channel === 'facebook_comment') return <FaFacebook className={styles.composerChannelBrandIcon} aria-hidden="true" />
   if (channel === 'messenger') return <FaFacebookMessenger className={styles.composerChannelBrandIcon} aria-hidden="true" />
   if (channel === 'instagram') return <FaInstagram className={styles.composerChannelBrandIcon} aria-hidden="true" />
+  if (channel === 'instagram_comment') return <FaInstagram className={styles.composerChannelBrandIcon} aria-hidden="true" />
   return <Mail size={18} aria-hidden="true" />
 }
 
@@ -2824,10 +2891,9 @@ export const DesktopChat: React.FC = () => {
 
   const [composerText, setComposerText] = useState('')
   const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
-  // La barra de abajo SIEMPRE manda privado. Responder PÚBLICO a un comentario es
-  // una acción explícita: el botón de la tarjeta del comentario fija este target
-  // y el composer entra en modo "respuesta pública" (con banner cancelable).
-  const [commentReplyTarget, setCommentReplyTarget] = useState<{ messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string } | null>(null)
+  // Responder PÚBLICO a un comentario puede venir del canal de comentario
+  // seleccionado o del botón de la tarjeta, que fija el target exacto.
+  const [commentReplyTarget, setCommentReplyTarget] = useState<CommentReplyTarget | null>(null)
   const [composerBusinessPhoneId, setComposerBusinessPhoneId] = useState('')
   const [emailSubject, setEmailSubject] = useState('')
   const [emailBodyHtml, setEmailBodyHtml] = useState('')
@@ -3445,6 +3511,11 @@ export const DesktopChat: React.FC = () => {
     })
     return groups
   }, [agentCompletionEvents, messages, timezone, commentsView])
+  const latestEligibleCommentReplyTarget = useMemo(() => getLatestEligibleCommentReplyTarget(messages), [messages])
+  const selectedCommentReplyTarget = commentReplyTarget || (isCommentComposerChannel(composerChannel) ? latestEligibleCommentReplyTarget : null)
+  const selectedCommentComposerPlatform = isCommentComposerChannel(composerChannel)
+    ? getCommentComposerPlatform(composerChannel)
+    : selectedCommentReplyTarget?.platform || null
   const detectedComposerChannel = normalizeComposerChannel(activeContact?.lastMessageChannel || activeContact?.lastMessageTransport || messages[messages.length - 1]?.transport || '')
   const activeConversationChannel = getHighLevelChannelForComposer(composerChannel)
   const hasEmailAccess = hasLicenseFeature(user, ['email'])
@@ -3453,8 +3524,16 @@ export const DesktopChat: React.FC = () => {
     () => isEmailComposer ? emailHtmlToPlainText(emailBodyHtml) : '',
     [emailBodyHtml, isEmailComposer]
   )
-  const hasDetectedMessenger = detectedComposerChannel === 'messenger'
-  const hasDetectedInstagram = detectedComposerChannel === 'instagram'
+  const hasDetectedMessenger = detectedComposerChannel === 'messenger' || (
+    Boolean(activeContact) &&
+    contactHasCommentActivity(activeContact) &&
+    getCommentPlatform(activeContact) === 'facebook'
+  )
+  const hasDetectedInstagram = detectedComposerChannel === 'instagram' || (
+    Boolean(activeContact) &&
+    contactHasCommentActivity(activeContact) &&
+    getCommentPlatform(activeContact) === 'instagram'
+  )
   const whatsappComposerPhones = businessPhones.length
     ? businessPhones
     : selectedBusinessPhone
@@ -3466,8 +3545,32 @@ export const DesktopChat: React.FC = () => {
   ))
   const canSendMessenger = metaMessengerConnected || highLevelConnected
   const canSendInstagram = metaInstagramConnected || highLevelConnected
+  const canSendSelectedCommentPlatform = selectedCommentComposerPlatform === 'instagram'
+    ? Boolean(metaInstagramConnected && instagramCommentsEnabled)
+    : selectedCommentComposerPlatform === 'messenger'
+      ? Boolean(metaMessengerConnected && facebookCommentsEnabled)
+      : false
   const emailChannelConnected = highLevelConnected || emailConnected
-  const composerChannelOptions = COMPOSER_CHANNEL_OPTIONS.flatMap((option) => {
+  const commentChannelOption = latestEligibleCommentReplyTarget
+    ? {
+        value: getCommentComposerChannelForPlatform(latestEligibleCommentReplyTarget.platform),
+        label: getCommentComposerLabel(latestEligibleCommentReplyTarget.platform)
+      }
+    : null
+  const baseComposerChannelOptions = commentChannelOption
+    ? [commentChannelOption, ...COMPOSER_CHANNEL_OPTIONS]
+    : COMPOSER_CHANNEL_OPTIONS
+  const composerChannelOptions = baseComposerChannelOptions.flatMap((option) => {
+    if (isCommentComposerChannel(option.value)) {
+      const platform = getCommentComposerPlatform(option.value)
+      const commentsEnabled = platform === 'instagram' ? instagramCommentsEnabled : facebookCommentsEnabled
+      const metaConnected = platform === 'instagram' ? metaInstagramConnected : metaMessengerConnected
+      return [{
+        ...option,
+        icon: renderComposerChannelIcon(option.value),
+        disabled: !latestEligibleCommentReplyTarget || !commentsEnabled || !metaConnected
+      }]
+    }
     if (option.value === 'whatsapp') {
       const whatsappDisabled = !activeContact?.phone || (!whatsappNativeSourcesAvailable && !highLevelConnected)
       if (whatsappComposerPhones.length === 0) return [{ ...option, icon: renderComposerChannelIcon(option.value), disabled: whatsappDisabled }]
@@ -3499,6 +3602,8 @@ export const DesktopChat: React.FC = () => {
     : composerChannel
   const composerChannelReady = isEmailComposer
     ? Boolean(hasEmailAccess && activeContact?.email && emailChannelConnected)
+    : isCommentComposerChannel(composerChannel)
+    ? Boolean(selectedCommentReplyTarget && canSendSelectedCommentPlatform)
     : composerChannel === 'whatsapp'
     ? Boolean(activeContact?.phone && (whatsappConnected || selectedQrReady || highLevelConnected))
     : composerChannel === 'messenger'
@@ -3518,6 +3623,14 @@ export const DesktopChat: React.FC = () => {
     ? 'Elige una caja de WhatsApp para responder.'
     : composerChannel === 'whatsapp' && !whatsappNativeSourcesAvailable && !highLevelConnected
     ? 'Conecta WhatsApp API o QR para responder desde Ristak.'
+    : isCommentComposerChannel(composerChannel) && !selectedCommentReplyTarget
+    ? 'Para responder en la publicación elige el comentario exacto.'
+    : isCommentComposerChannel(composerChannel) && selectedCommentComposerPlatform === 'messenger' && !facebookCommentsEnabled
+    ? 'Activa comentarios de Facebook en Configuración > Meta Ads > Redes sociales.'
+    : isCommentComposerChannel(composerChannel) && selectedCommentComposerPlatform === 'instagram' && !instagramCommentsEnabled
+    ? 'Activa comentarios de Instagram en Configuración > Meta Ads > Redes sociales.'
+    : isCommentComposerChannel(composerChannel) && !canSendSelectedCommentPlatform
+    ? 'Conecta Meta Ads para responder comentarios desde Ristak.'
     : composerChannel === 'messenger' && !hasDetectedMessenger
     ? 'Este contacto no tiene Messenger detectado.'
     : composerChannel === 'instagram' && !hasDetectedInstagram
@@ -4797,6 +4910,9 @@ export const DesktopChat: React.FC = () => {
 
   const handleComposerChannelChange = useCallback((value: string) => {
     const nextChannel = normalizeComposerChannel(value)
+    if (!isCommentComposerChannel(nextChannel)) {
+      setCommentReplyTarget(null)
+    }
     if (nextChannel === 'email' && composerChannel !== 'email' && !emailBodyHtml.trim() && composerText.trim()) {
       setEmailBodyHtml(plainTextToEmailHtml(composerText))
     }
@@ -5872,19 +5988,24 @@ export const DesktopChat: React.FC = () => {
 		    if (!activeContact) return
 		    if (!isEmailMessage && !text && attachmentsToSend.length === 0 && !voiceToSend) return
 
-		    // Respuesta a un COMENTARIO (FB/IG). Dos caminos:
-		    //  - commentReplyTarget presente (botón "Responder" en la tarjeta) → respuesta
-		    //    PÚBLICA en el post, apuntando a ese comentario exacto (commentId).
-		    //  - contacto que SOLO comentó (aún sin DM) → la barra manda respuesta PRIVADA
-		    //    al comentario (inicia el chat privado).
-		    // Un contacto con DM ya existente NO entra aquí por la barra (cae al DM normal);
-		    // para responderle en público usa el botón de la tarjeta (que fija el target).
-		    if (!isEmailMessage && (commentReplyTarget || isCommentContact(activeContact))) {
+		    // Respuesta a un COMENTARIO (FB/IG).
+		    //  - Canal Facebook/Instagram comentario o botón "Responder" => público.
+		    //  - Contacto nacido de comentario + canal Messenger/Instagram DM => privado.
+		    const privateCommentReply = !selectedCommentReplyTarget &&
+		      isCommentContact(activeContact) &&
+		      (composerChannel === 'messenger' || composerChannel === 'instagram')
+		    if (!isEmailMessage && (selectedCommentReplyTarget || privateCommentReply)) {
 		      if (!text) return
-		      const replyType: 'public' | 'private' = commentReplyTarget ? 'public' : 'private'
-		      const commentPlatform = commentReplyTarget
-		        ? commentReplyTarget.platform
-		        : (getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger')
+		      if (attachmentsToSend.length > 0 || voiceToSend) {
+		        showToast('warning', 'Solo texto', 'Las respuestas a comentarios son solo de texto por ahora.')
+		        return
+		      }
+		      const replyType: 'public' | 'private' = selectedCommentReplyTarget ? 'public' : 'private'
+		      const commentPlatform = selectedCommentReplyTarget
+		        ? selectedCommentReplyTarget.platform
+		        : composerChannel === 'instagram'
+		          ? 'instagram'
+		          : (getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger')
 		      const optimisticId = `desktop-comment-${Date.now()}`
 		      const sentAt = new Date().toISOString()
 		      setComposerStatus('sending')
@@ -5897,7 +6018,9 @@ export const DesktopChat: React.FC = () => {
 		        date: sentAt,
 		        direction: 'outbound',
 		        status: 'enviando',
-		        transport: commentPlatform
+		        transport: commentPlatform,
+		        isComment: true,
+		        commentReplyMode: replyType
 		      } as DesktopChatMessage])
 		      try {
 		        await whatsappApiService.sendMetaSocialCommentReply({
@@ -5905,7 +6028,7 @@ export const DesktopChat: React.FC = () => {
 		          platform: commentPlatform,
 		          message: text,
 		          replyType,
-		          commentId: commentReplyTarget?.commentId
+		          commentId: selectedCommentReplyTarget?.commentId
 		        })
 		        setCommentReplyTarget(null)
 		        setComposerStatus('idle')
@@ -8112,12 +8235,7 @@ export const DesktopChat: React.FC = () => {
                                         <button
                                           type="button"
                                           className={styles.commentReplyButton}
-                                          onClick={() => setCommentReplyTarget({
-                                            messageId: message.id,
-                                            commentId: message.commentId as string,
-                                            platform: message.commentPlatform || 'messenger',
-                                            preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
-                                          })}
+                                          onClick={() => setCommentReplyTarget(buildCommentReplyTarget(message))}
                                         >
                                           <MessageCircle size={13} aria-hidden="true" />
                                           Responder en la publicación
@@ -8223,19 +8341,26 @@ export const DesktopChat: React.FC = () => {
 	                {composerChannelHint ? (
 	                  <span className={styles.composerChannelHint}>{composerChannelHint}</span>
 	                ) : null}
-	                {!isEmailComposer && commentReplyTarget ? (
+	                {!isEmailComposer && selectedCommentReplyTarget ? (
 	                  <div className={styles.commentReplyBanner}>
 	                    <span className={styles.commentReplyBannerLabel}>
 	                      <MessageCircle size={13} aria-hidden="true" />
-	                      <span>Respondiendo <strong>público</strong> al comentario</span>
-	                      {commentReplyTarget.preview ? (
-	                        <span className={styles.commentReplyBannerPreview}>“{commentReplyTarget.preview}”</span>
+	                      <span>
+	                        Respondiendo <strong>público</strong> {commentReplyTarget ? 'al comentario' : 'al último comentario'}
+	                      </span>
+	                      {selectedCommentReplyTarget.preview ? (
+	                        <span className={styles.commentReplyBannerPreview}>“{selectedCommentReplyTarget.preview}”</span>
 	                      ) : null}
 	                    </span>
 	                    <button
 	                      type="button"
 	                      className={styles.commentReplyBannerClose}
-	                      onClick={() => setCommentReplyTarget(null)}
+	                      onClick={() => {
+	                        setCommentReplyTarget(null)
+	                        if (isCommentComposerChannel(composerChannel)) {
+	                          setComposerChannel(selectedCommentReplyTarget.platform === 'instagram' ? 'instagram' : 'messenger')
+	                        }
+	                      }}
 	                      aria-label="Cancelar respuesta pública"
 	                    >
 	                      <X size={14} />
@@ -8243,7 +8368,9 @@ export const DesktopChat: React.FC = () => {
 	                  </div>
 	                ) : (!isEmailComposer && (isCommentContact(activeContact) || messages.some((message) => message.isComment))) ? (
 	                  <span className={styles.composerPrivateHint}>
-	                    Mensaje privado — para responder en la publicación usa “Responder” en el comentario.
+	                    {latestEligibleCommentReplyTarget
+	                      ? `Mensaje privado — para responder en publicación cambia el canal a ${getCommentComposerLabel(latestEligibleCommentReplyTarget.platform)}.`
+	                      : 'Mensaje privado — para responder en la publicación usa “Responder” en el comentario.'}
 	                  </span>
 	                ) : null}
 	                {isEmailComposer ? (

@@ -396,10 +396,13 @@ type JourneyEvent = {
 type CalendarViewMode = 'day' | 'week' | 'month' | 'year' | 'years';
 type CalendarSheetMode = 'calendar' | 'contactPicker' | 'event' | 'appointmentForm' | null;
 type AppointmentFormMode = 'create' | 'edit';
-type ComposerChannelRouteValue = NativeMessageChannel | `whatsapp:${string}`;
+type CommentComposerChannel = 'facebook_comment' | 'instagram_comment';
+type ComposerRouteChannel = NativeMessageChannel | CommentComposerChannel;
+type ComposerChannelRouteValue = ComposerRouteChannel | `whatsapp:${string}`;
+type NativeCommentReplyTarget = { messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string };
 type ComposerChannelOption = {
   value: ComposerChannelRouteValue;
-  channel: NativeMessageChannel;
+  channel: ComposerRouteChannel;
   label: string;
   description: string;
   kind: ChannelBadgeKind;
@@ -16137,7 +16140,7 @@ function contactHasCommentActivity(contact: ChatContact) {
 
 function getContactChannelKind(contact: ChatContact): ChannelBadgeKind {
   const probe = getChannelProbe(contact);
-  if (contactHasCommentActivity(contact)) {
+  if (contactHasCommentActivity(contact) && contact.hasPrivateDm !== true) {
     return probe.includes('instagram') ? 'instagram_comment' : 'facebook_comment';
   }
   if (probe.includes('instagram') || probe.includes('ig_') || probe === 'ig') return 'instagram';
@@ -16157,7 +16160,25 @@ function getDefaultComposerChannel(contact: ChatContact): NativeMessageChannel {
   return 'whatsapp';
 }
 
-function getBackendChannelForComposer(channel: NativeMessageChannel) {
+function isCommentComposerRoute(value?: ComposerChannelRouteValue | ComposerRouteChannel | null): value is CommentComposerChannel {
+  return value === 'facebook_comment' || value === 'instagram_comment';
+}
+
+function getCommentComposerPlatform(value: CommentComposerChannel): 'messenger' | 'instagram' {
+  return value === 'instagram_comment' ? 'instagram' : 'messenger';
+}
+
+function getCommentComposerChannelForPlatform(platform: 'messenger' | 'instagram'): CommentComposerChannel {
+  return platform === 'instagram' ? 'instagram_comment' : 'facebook_comment';
+}
+
+function getCommentComposerLabel(platform: 'messenger' | 'instagram') {
+  return platform === 'instagram' ? 'Comentario de Instagram' : 'Comentario de Facebook';
+}
+
+function getBackendChannelForComposer(channel: ComposerRouteChannel) {
+  if (channel === 'facebook_comment') return 'messenger';
+  if (channel === 'instagram_comment') return 'instagram';
   if (channel === 'sms') return 'sms_qr';
   if (channel === 'email') return 'email';
   if (channel === 'messenger') return 'messenger';
@@ -16190,7 +16211,7 @@ function getComposerRoutePhoneId(value: ComposerChannelRouteValue) {
   return isWhatsAppComposerRoute(value) ? String(value).slice('whatsapp:'.length) : '';
 }
 
-function getComposerRouteChannel(value: ComposerChannelRouteValue): NativeMessageChannel {
+function getComposerRouteChannel(value: ComposerChannelRouteValue): ComposerRouteChannel {
   return isWhatsAppComposerRoute(value) ? 'whatsapp' : value;
 }
 
@@ -16199,6 +16220,42 @@ function getPreferredComposerPhoneId(contact: ChatContact) {
     || contact.preferred_whatsapp_phone_number_id
     || contact.lastBusinessPhoneNumberId
     || '';
+}
+
+function canStartNativeCommentPublicReply(message: ChatMessage) {
+  return Boolean(
+    message.isComment &&
+    message.direction === 'inbound' &&
+    !message.commentReplyMode &&
+    message.commentId
+  );
+}
+
+function buildNativeCommentReplyTarget(message: ChatMessage): NativeCommentReplyTarget | null {
+  if (!canStartNativeCommentPublicReply(message) || !message.commentId) return null;
+  return {
+    messageId: message.id,
+    commentId: message.commentId,
+    platform: message.commentPlatform || 'messenger',
+    preview: getMessagePreviewText(message).replace(/\s+/g, ' ').trim().slice(0, 60),
+  };
+}
+
+function getLatestEligibleNativeCommentReplyTarget(messages: ChatMessage[]): NativeCommentReplyTarget | null {
+  const latestComment = [...messages]
+    .filter(canStartNativeCommentPublicReply)
+    .sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date))[0];
+  if (!latestComment) return null;
+
+  const latestCommentTime = parseSortableDateValue(latestComment.date);
+  const hasLaterInboundPrivateMessage = messages.some((message) => (
+    message.direction === 'inbound' &&
+    !message.isComment &&
+    parseSortableDateValue(message.date) > latestCommentTime
+  ));
+  if (hasLaterInboundPrivateMessage) return null;
+
+  return buildNativeCommentReplyTarget(latestComment);
 }
 
 function isBusinessPhoneQrReady(phone?: WhatsAppApiPhoneNumber | null) {
@@ -16224,6 +16281,10 @@ function isNativeInstagramConnected(integrations?: IntegrationsStatus | null) {
 }
 
 function getDefaultComposerRoute(contact: ChatContact, options: ComposerChannelOption[]): ComposerChannelRouteValue {
+  if (contactHasCommentActivity(contact) && contact.hasPrivateDm !== true) {
+    const commentOption = options.find((option) => isCommentComposerRoute(option.channel) && !option.disabledReason);
+    if (commentOption) return commentOption.value;
+  }
   const preferredChannel = getDefaultComposerChannel(contact);
   const preferredPhoneId = getPreferredComposerPhoneId(contact);
   if (preferredChannel === 'whatsapp' && preferredPhoneId) {
@@ -16240,6 +16301,7 @@ function getComposerChannelOptions(
   contact: ChatContact,
   businessPhones: WhatsAppApiPhoneNumber[] = [],
   integrations?: IntegrationsStatus | null,
+  latestCommentReplyTarget?: NativeCommentReplyTarget | null,
 ): ComposerChannelOption[] {
   const kind = getContactChannelKind(contact);
   const hasPhone = Boolean(String(contact.phone || '').trim());
@@ -16260,6 +16322,19 @@ function getComposerChannelOptions(
       }))
     : [];
   const options: ComposerChannelOption[] = [...whatsappOptions];
+
+  if (latestCommentReplyTarget) {
+    const commentChannel = getCommentComposerChannelForPlatform(latestCommentReplyTarget.platform);
+    const commentConnected = latestCommentReplyTarget.platform === 'instagram' ? instagramConnected : messengerConnected;
+    options.unshift({
+      value: commentChannel,
+      channel: commentChannel,
+      label: getCommentComposerLabel(latestCommentReplyTarget.platform),
+      description: 'Responde público en la publicación.',
+      kind: commentChannel,
+      disabledReason: commentConnected ? undefined : 'Conecta Meta Ads para responder comentarios.',
+    });
+  }
 
   if (hasPhone && highLevelConnected) {
     options.push({
@@ -19023,9 +19098,12 @@ function NativeConversationScreen({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSendChannel, setSelectedSendChannel] = useState<ComposerChannelRouteValue>(() => getDefaultComposerChannel(contact));
+  const selectedSendContactIdRef = useRef(contact.id);
+  const selectedSendManuallyRef = useRef(false);
   const [composerFocused, setComposerFocused] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<ConversationDraftAttachment[]>([]);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
+  const [commentReplyTarget, setCommentReplyTarget] = useState<NativeCommentReplyTarget | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
   const [activeSheet, setActiveSheet] = useState<ConversationSheetMode>(null);
   const [closingSheet, setClosingSheet] = useState<ConversationSheetMode>(null);
@@ -19434,19 +19512,44 @@ function NativeConversationScreen({
   }, [conversationHasScheduledMessages]);
 
   const channelKind = getContactChannelKind(contact);
+  const latestEligibleCommentReplyTarget = useMemo(() => getLatestEligibleNativeCommentReplyTarget(messages), [messages]);
   const composerChannelOptions = useMemo(
-    () => getComposerChannelOptions(contact, businessPhones, integrationsStatus),
-    [businessPhones, contact, integrationsStatus],
+    () => getComposerChannelOptions(contact, businessPhones, integrationsStatus, latestEligibleCommentReplyTarget),
+    [businessPhones, contact, integrationsStatus, latestEligibleCommentReplyTarget],
   );
   useEffect(() => {
-    setSelectedSendChannel(getDefaultComposerRoute(contact, composerChannelOptions));
+    const contactChanged = selectedSendContactIdRef.current !== contact.id;
+    selectedSendContactIdRef.current = contact.id;
+    if (contactChanged) {
+      selectedSendManuallyRef.current = false;
+      setCommentReplyTarget(null);
+    }
+    setSelectedSendChannel((current) => {
+      const currentOption = composerChannelOptions.find((option) => option.value === current && !option.disabledReason);
+      const defaultRoute = getDefaultComposerRoute(contact, composerChannelOptions);
+      if (!contactChanged && selectedSendManuallyRef.current && currentOption) return current;
+      if (!contactChanged && currentOption && !(isCommentComposerRoute(defaultRoute) && !isCommentComposerRoute(current))) return current;
+      return defaultRoute;
+    });
   }, [composerChannelOptions, contact.id, contact.lastMessageChannel, contact.lastMessageTransport, contact.source]);
   const selectedChannelOption = composerChannelOptions.find((option) => option.value === selectedSendChannel) || composerChannelOptions[0];
-  const selectedChannelKind = selectedChannelOption?.kind || 'unknown';
+  const optionRouteChannel = selectedChannelOption?.channel || getComposerRouteChannel(selectedSendChannel);
+  const selectedCommentReplyTarget = commentReplyTarget || (isCommentComposerRoute(optionRouteChannel) ? latestEligibleCommentReplyTarget : null);
+  const selectedCommentRouteChannel = selectedCommentReplyTarget ? getCommentComposerChannelForPlatform(selectedCommentReplyTarget.platform) : null;
+  const selectedRouteChannel = selectedCommentRouteChannel || optionRouteChannel;
+  const selectedCommentPlatformConnected = selectedCommentReplyTarget?.platform === 'instagram'
+    ? isNativeInstagramConnected(integrationsStatus)
+    : selectedCommentReplyTarget?.platform === 'messenger'
+      ? isNativeMessengerConnected(integrationsStatus)
+      : false;
+  const selectedChannelKind = selectedCommentRouteChannel || selectedChannelOption?.kind || 'unknown';
   const selectedChannelColor = CHANNEL_BADGE_COLORS[selectedChannelKind] || COLORS.accent;
-  const selectedChannelCanSend = Boolean(selectedChannelOption && !selectedChannelOption.disabledReason);
-  const selectedChannelLabel = selectedChannelOption?.label || 'Sin canal conectado';
-  const selectedRouteChannel = selectedChannelOption?.channel || getComposerRouteChannel(selectedSendChannel);
+  const selectedChannelCanSend = selectedCommentReplyTarget
+    ? selectedCommentPlatformConnected
+    : Boolean(selectedChannelOption && !selectedChannelOption.disabledReason);
+  const selectedChannelLabel = selectedCommentReplyTarget
+    ? getCommentComposerLabel(selectedCommentReplyTarget.platform)
+    : selectedChannelOption?.label || 'Sin canal conectado';
   const selectedRoutePhoneNumberId = selectedChannelOption?.phoneNumberId || getComposerRoutePhoneId(selectedSendChannel);
   // Resolve the qr/api transport + reply-window state for the currently selected
   // WhatsApp sender, mirroring /movil's resolvedTransport. Shared by every
@@ -19775,6 +19878,14 @@ function NativeConversationScreen({
     // chats route correctly instead of failing at the backend.
     const contactChannelKind = getContactChannelKind(contact);
     const isCommentContact = contactChannelKind === 'facebook_comment' || contactChannelKind === 'instagram_comment';
+    const privateCommentReply = !selectedCommentReplyTarget &&
+      isCommentContact &&
+      (selectedRouteChannel === 'messenger' || selectedRouteChannel === 'instagram');
+    const commentReplyMode: 'public' | 'private' | undefined = selectedCommentReplyTarget
+      ? 'public'
+      : privateCommentReply
+        ? 'private'
+        : undefined;
     const sendingWhatsApp = selectedRouteChannel === 'whatsapp';
     const whatsAppSend = sendingWhatsApp ? resolveWhatsAppSendTransport() : null;
     if (whatsAppSend && !whatsAppSend.replyWindowOpen && !whatsAppSend.qrReady) {
@@ -19841,6 +19952,8 @@ function NativeConversationScreen({
         paymentPreview: paymentPreviewToSend || undefined,
         replyToMessageId: replyPayload?.replyToMessageId,
         replyToProviderMessageId: replyPayload?.replyToProviderMessageId,
+        isComment: Boolean(commentReplyMode),
+        commentReplyMode,
       }];
 
     setDraft('');
@@ -19873,16 +19986,21 @@ function NativeConversationScreen({
           };
         }));
       } else {
-        const response = isCommentContact
+        const response = commentReplyMode
           ? await api.sendMetaSocialCommentReply({
             contactId: contact.id,
-            platform: contactChannelKind === 'instagram_comment' ? 'instagram' : 'messenger',
+            platform: selectedCommentReplyTarget
+              ? selectedCommentReplyTarget.platform
+              : selectedRouteChannel === 'instagram'
+                ? 'instagram'
+                : contactChannelKind === 'instagram_comment'
+                  ? 'instagram'
+                  : 'messenger',
             message: textToSend,
-            // No public comment target is selectable natively yet, so start the
-            // conversation as a private reply (DM the commenter), like /movil.
-            replyType: 'private',
+            replyType: commentReplyMode,
+            commentId: selectedCommentReplyTarget?.commentId,
           })
-          : await api.sendText(contact, textToSend, selectedRouteChannel, replyPayload, selectedRoutePhoneNumberId, resolvedWhatsAppTransport);
+          : await api.sendText(contact, textToSend, selectedRouteChannel as NativeMessageChannel, replyPayload, selectedRoutePhoneNumberId, resolvedWhatsAppTransport);
         const localMessageId = getSendResponseLocalMessageId(response);
         const providerMessageId = getSendResponseProviderMessageId(response);
         setMessages((current) => current.map((message) => (
@@ -19899,6 +20017,7 @@ function NativeConversationScreen({
             }
             : message
         )));
+        if (commentReplyMode) setCommentReplyTarget(null);
       }
       onRefreshChats();
       void loadConversation(true, true);
@@ -19963,6 +20082,15 @@ function NativeConversationScreen({
   }, []);
   const handleMessageReplySwipe = useCallback((message: ChatMessage) => {
     setReplyingToMessage(message);
+    setCommentReplyTarget(null);
+  }, []);
+  const startCommentPublicReply = useCallback((message: ChatMessage) => {
+    const target = buildNativeCommentReplyTarget(message);
+    if (!target) return;
+    setCommentReplyTarget(target);
+    setReplyingToMessage(null);
+    selectedSendManuallyRef.current = true;
+    setSelectedSendChannel(getCommentComposerChannelForPlatform(target.platform));
   }, []);
 
   const reactToMessage = async (message: ChatMessage, emoji: string) => {
@@ -20234,10 +20362,14 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Conecta un canal para enviar esta CLABE.');
       return;
     }
+    if (isCommentComposerRoute(selectedRouteChannel)) {
+      Alert.alert('Canal no disponible', 'Envía la CLABE por Messenger o WhatsApp; el canal de comentario público es solo para responder publicaciones.');
+      return;
+    }
     setClabeBusyId(account.id);
     try {
       const text = buildClabeMessage(account);
-      await api.sendText(contact, text, selectedRouteChannel, undefined, selectedRoutePhoneNumberId);
+      await api.sendText(contact, text, selectedRouteChannel as NativeMessageChannel, undefined, selectedRoutePhoneNumberId);
       const sentAt = new Date().toISOString();
       setMessages((current) => [...current, {
         id: `clabe-${Date.now()}`,
@@ -20425,6 +20557,12 @@ function NativeConversationScreen({
       Alert.alert('Programar mensaje', reason);
       return;
     }
+    if (isCommentComposerRoute(selectedRouteChannel)) {
+      const reason = 'Las respuestas públicas a comentarios se envían al momento; no se pueden programar desde la app móvil.';
+      setScheduleError(reason);
+      Alert.alert('Programar mensaje', reason);
+      return;
+    }
     const channelUnavailableReason = getScheduleChannelUnavailableReason(selectedRouteChannel, target);
     if (channelUnavailableReason) {
       setScheduleError(channelUnavailableReason);
@@ -20452,7 +20590,7 @@ function NativeConversationScreen({
     setScheduleError('');
     try {
       const editingId = scheduleEditingMessageId;
-      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedRouteChannel, editingId || undefined, selectedRoutePhoneNumberId, { transport: scheduledTransport });
+      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedRouteChannel as NativeMessageChannel, editingId || undefined, selectedRoutePhoneNumberId, { transport: scheduledTransport });
       closeSheet();
       setScheduleText('');
       setScheduleDraft(createDefaultScheduleDraft(timezone));
@@ -20710,9 +20848,10 @@ function NativeConversationScreen({
 	                    searchActive={Boolean(searchQuery)}
 	                    scheduledCountdownNow={isScheduledMessage(item.message) ? scheduledCountdownNow : 0}
 	                    starred={starredMessageIds.includes(item.message.id)}
-	                    themeTone={activeNativeThemeTone}
-	                    timezone={timezone}
+                    themeTone={activeNativeThemeTone}
+                    timezone={timezone}
                     onLongPress={handleMessageLongPress}
+                    onCommentReply={startCommentPublicReply}
                     onReplySwipe={handleMessageReplySwipe}
                   />
                 )
@@ -20725,6 +20864,33 @@ function NativeConversationScreen({
             styles.conversationComposerDock,
           ]}
         >
+          {selectedCommentReplyTarget ? (
+            <View style={styles.commentReplyPreviewBar}>
+              <View style={styles.commentReplyPreviewMarker} />
+              <View style={styles.commentReplyPreviewCopy}>
+                <Text numberOfLines={1} style={styles.commentReplyPreviewTitle}>
+                  Respondiendo público {commentReplyTarget ? 'al comentario' : 'al último comentario'}
+                </Text>
+                <Text numberOfLines={1} style={styles.commentReplyPreviewText}>
+                  {selectedCommentReplyTarget.preview || getCommentComposerLabel(selectedCommentReplyTarget.platform)}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setCommentReplyTarget(null);
+                  if (isCommentComposerRoute(selectedSendChannel)) {
+                    selectedSendManuallyRef.current = true;
+                    setSelectedSendChannel(selectedCommentReplyTarget.platform === 'instagram' ? 'instagram' : 'messenger');
+                  }
+                }}
+                style={styles.replyPreviewClose}
+              >
+                <LiquidControlBackground />
+                <X size={16} color={COLORS.muted} strokeWidth={2.45} />
+              </Pressable>
+            </View>
+          ) : null}
           {replyingToMessage ? (
             <View style={styles.replyPreviewBar}>
               <View style={styles.replyPreviewMarker} />
@@ -20929,6 +21095,17 @@ function NativeConversationScreen({
             Alert.alert('Canal no disponible', option.disabledReason);
             return;
           }
+          if (isCommentComposerRoute(channel)) {
+            if (!latestEligibleCommentReplyTarget || latestEligibleCommentReplyTarget.platform !== getCommentComposerPlatform(channel)) {
+              Alert.alert('Canal no disponible', 'Para responder en la publicación toca el comentario exacto.');
+              return;
+            }
+            setCommentReplyTarget(latestEligibleCommentReplyTarget);
+            setReplyingToMessage(null);
+          } else {
+            setCommentReplyTarget(null);
+          }
+          selectedSendManuallyRef.current = true;
           setSelectedSendChannel(channel);
           closeSheet();
         }}
@@ -21541,6 +21718,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   // recibir el tono como prop hace que React.memo re-renderice al cambiarlo.
   themeTone: _themeTone,
   timezone,
+  onCommentReply,
   onLongPress,
   onReplySwipe,
 }: {
@@ -21552,6 +21730,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   starred?: boolean;
   themeTone?: string;
   timezone: string;
+  onCommentReply?: (message: ChatMessage) => void;
   onLongPress?: (message: ChatMessage) => void;
   onReplySwipe?: (message: ChatMessage) => void;
 }) {
@@ -21695,6 +21874,16 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
               </Text>
             </View>
             {message.commentPost ? <NativeCommentPostCard post={message.commentPost} /> : null}
+            {canStartNativeCommentPublicReply(message) ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onCommentReply?.(message)}
+                style={({ pressed }) => [styles.commentReplyButton, pressed && styles.pressed]}
+              >
+                <MessageCircle size={12} color={COLORS.accent} strokeWidth={2.5} />
+                <Text style={styles.commentReplyButtonText}>Responder en la publicación</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
         {message.emailDetails ? (
@@ -30013,6 +30202,25 @@ function createAppStyles() {
     lineHeight: 16,
     fontWeight: '800',
   },
+  commentReplyButton: {
+    minHeight: 34,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: isLight ? 'rgba(0,122,255,0.10)' : 'rgba(10,132,255,0.14)',
+    borderWidth: 1,
+    borderColor: isLight ? 'rgba(0,122,255,0.22)' : 'rgba(10,132,255,0.26)',
+  },
+  commentReplyButtonText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    lineHeight: 15,
+    fontWeight: '900',
+  },
   messageRoutingNote: {
     color: COLORS.meta,
     fontSize: 11,
@@ -30093,6 +30301,38 @@ function createAppStyles() {
     ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  commentReplyPreviewBar: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+  },
+  commentReplyPreviewMarker: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderRadius: 999,
+    backgroundColor: COLORS.accent,
+  },
+  commentReplyPreviewCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  commentReplyPreviewTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  commentReplyPreviewText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 1,
+    fontWeight: '700',
   },
   draftAttachmentStrip: {
     alignItems: 'center',

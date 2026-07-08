@@ -65,6 +65,7 @@ export type ChatContact = {
   hasAppointments?: boolean;
   nextAppointmentDate?: string | null;
   hasCommentMessage?: boolean;
+  hasPrivateDm?: boolean;
   name?: string;
   contactName?: string;
   displayName?: string;
@@ -187,6 +188,8 @@ export type ChatMessage = {
   location?: ChatLocation;
   isComment?: boolean;
   commentReplyMode?: 'public' | 'private';
+  commentId?: string;
+  commentPlatform?: 'instagram' | 'messenger';
   commentPost?: {
     message?: string;
     imageUrl?: string;

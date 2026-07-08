@@ -213,6 +213,17 @@ mismo globo. Si hay link, la ficha abre la publicacion; si Meta marca el post
 como eliminado, debe mostrarse como `Publicacion eliminada` sin perder el
 comentario conservado en Ristak.
 
+El canal de respuesta de comentarios tambien debe mantenerse en paridad. Un
+contacto creado desde comentario debe abrir el composer en `Comentario de
+Facebook` o `Comentario de Instagram` y publicar la respuesta en la publicacion.
+Si el usuario cambia el canal a Messenger/Instagram DM, la respuesta se manda por
+privado usando el comentario como origen. Si el contacto ya tenia una conversacion
+privada y luego comenta una publicacion, el chat sigue en el canal privado; el
+canal publico solo puede usarse automaticamente mientras ese comentario siga
+siendo el ultimo mensaje entrante del contacto. Si despues llega un DM, responder
+en la publicacion requiere tocar `Responder en la publicacion` dentro del globo
+del comentario exacto.
+
 El fondo de la conversacion nativa usa una textura sutil detras de los globos y
 un parallax real con `expo-sensors`/`DeviceMotion`: la inclinacion del iPhone
 desplaza solo la textura unos pixeles; los mensajes, header y composer no deben
