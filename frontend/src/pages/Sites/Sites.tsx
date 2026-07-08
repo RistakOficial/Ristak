@@ -23078,10 +23078,24 @@ const ImportedHtmlEditorPanel: React.FC<{
                   onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
                   onSave={autosaveSelectedNativeElement}
                 />
-                {selectedSlot.renderMode === 'custom' && (
+                {selectedSlot.renderMode === 'custom' ? (
                   <p className={styles.importedFormFieldsHint}>
                     Este slot conserva tu frontend. Ristak solo le entrega horarios disponibles y recibe la cita confirmada con fecha, hora y zona horaria.
                   </p>
+                ) : (
+                  // Diseño del calendario: mismo componente que el editor normal. Tema, colores,
+                  // días y alineación fluyen por la URL del embed, así que aplican igual en el
+                  // sitio importado. La altura la auto-ajusta el bridge del calendario.
+                  <AccordionGroup>
+                    <CalendarBlockDesignControls
+                      site={nativeElementSite}
+                      block={draftBlock}
+                      blocks={nativeElementBlocks}
+                      calendar={calendars.find(calendar => calendar.id === getSettingString(draftSettings, 'calendarId'))}
+                      onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
+                      onSave={autosaveSelectedNativeElement}
+                    />
+                  </AccordionGroup>
                 )}
               </>
             )}
@@ -23104,6 +23118,16 @@ const ImportedHtmlEditorPanel: React.FC<{
                   onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
                   onSave={autosaveSelectedNativeElement}
                 />
+                {/* Diseño del checkout: alineación, color de texto de campos y toggles de
+                    datos/nota se emiten y consumen igual en el sitio importado (renderPaymentBlock),
+                    así que son efectivos aquí tal como en el editor normal. */}
+                <AccordionGroup>
+                  <PaymentBlockDesignControls
+                    settings={draftSettings}
+                    onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
+                    onSave={autosaveSelectedNativeElement}
+                  />
+                </AccordionGroup>
               </>
             )}
 
@@ -33225,6 +33249,126 @@ const InlineBlockStyleControls: React.FC<{
   )
 }
 
+// Controles de diseño del bloque de pago (estilo pasarela, alineación, color de campos,
+// toggles de datos/nota). Extraído del inspector nativo para reusarse TAL CUAL en el editor
+// de HTML importado: mismas settings, mismo render. paymentTextAlign/paymentFieldTextColor y
+// los toggles se emiten/consumen igual en el sitio importado (renderPaymentBlock).
+const PaymentBlockDesignControls: React.FC<{
+  settings: Record<string, unknown>
+  onPatchSettings: (patch: Record<string, unknown>) => void
+  onSave: () => void
+}> = ({ settings, onPatchSettings, onSave }) => (
+  <AccordionSection id="design-payment-layout" title="Diseño del bloque">
+    <label className={styles.field}>
+      <span>Estilo de pasarela</span>
+      <CustomSelect
+        value={normalizePaymentBlockLayout(settings.paymentLayout)}
+        onValueChange={(value) => {
+          onPatchSettings({ paymentLayout: normalizePaymentBlockLayout(value) })
+          window.setTimeout(onSave, 0)
+        }}
+        options={paymentBlockLayoutOptions}
+      />
+    </label>
+
+    <AlignmentControl
+      label="Alineación del texto"
+      value={getHorizontalAlign(settings, 'paymentTextAlign', 'left')}
+      options={horizontalAlignOptions}
+      onChange={(value) => onPatchSettings({ paymentTextAlign: value })}
+      onCommit={onSave}
+    />
+
+    <ColorField
+      label="Color de texto de los campos"
+      value={getSettingPaint(settings, 'paymentFieldTextColor', '')}
+      allowGradient={false}
+      onChange={(value) => onPatchSettings({ paymentFieldTextColor: value })}
+      onCommit={onSave}
+    />
+
+    <div className={styles.videoFormGateSwitchRow}>
+      <div>
+        <strong>Mostrar nombre de la pasarela</strong>
+        <span>El rótulo de la pasarela (p. ej. “Stripe”) arriba del checkout.</span>
+      </div>
+      <Switch
+        checked={getSettingBoolean(settings, 'paymentShowGatewayName', true)}
+        onChange={(checked) => { onPatchSettings({ paymentShowGatewayName: checked }); window.setTimeout(() => { onSave() }, 0) }}
+        aria-label="Mostrar nombre de la pasarela"
+      />
+    </div>
+
+    <div className={styles.videoFormGateSwitchRow}>
+      <div>
+        <strong>Mostrar campo País</strong>
+        <span>Pide el país en el formulario de tarjeta (Stripe).</span>
+      </div>
+      <Switch
+        checked={getSettingBoolean(settings, 'paymentShowCountry', true)}
+        onChange={(checked) => { onPatchSettings({ paymentShowCountry: checked }); window.setTimeout(() => { onSave() }, 0) }}
+        aria-label="Mostrar campo País"
+      />
+    </div>
+
+    <div className={styles.videoFormGateSwitchRow}>
+      <div>
+        <strong>Pedir correo</strong>
+        <span>Campo de correo en el checkout (Stripe/Conekta).</span>
+      </div>
+      <Switch
+        checked={getSettingBoolean(settings, 'paymentCollectEmail', true)}
+        onChange={(checked) => {
+          const phoneOn = getSettingBoolean(settings, 'paymentCollectPhone', true)
+          onPatchSettings({ paymentCollectEmail: checked, paymentCollectPhone: checked ? phoneOn : true })
+          window.setTimeout(() => { onSave() }, 0)
+        }}
+        aria-label="Pedir correo"
+      />
+    </div>
+
+    <div className={styles.videoFormGateSwitchRow}>
+      <div>
+        <strong>Pedir teléfono</strong>
+        <span>Campo de teléfono en el checkout (Stripe/Conekta).</span>
+      </div>
+      <Switch
+        checked={getSettingBoolean(settings, 'paymentCollectPhone', true)}
+        onChange={(checked) => {
+          const emailOn = getSettingBoolean(settings, 'paymentCollectEmail', true)
+          onPatchSettings({ paymentCollectPhone: checked, paymentCollectEmail: checked ? emailOn : true })
+          window.setTimeout(() => { onSave() }, 0)
+        }}
+        aria-label="Pedir teléfono"
+      />
+    </div>
+
+    <div className={styles.videoFormGateSwitchRow}>
+      <div>
+        <strong>Mostrar nota de seguridad</strong>
+        <span>El texto pequeño debajo del botón de pago.</span>
+      </div>
+      <Switch
+        checked={getSettingBoolean(settings, 'paymentShowSecureNote', true)}
+        onChange={(checked) => { onPatchSettings({ paymentShowSecureNote: checked }); window.setTimeout(() => { onSave() }, 0) }}
+        aria-label="Mostrar nota de seguridad"
+      />
+    </div>
+
+    {getSettingBoolean(settings, 'paymentShowSecureNote', true) && (
+      <label className={styles.field}>
+        <span>Texto de la nota de seguridad</span>
+        <input
+          value={getSettingString(settings, 'paymentSecureNote')}
+          placeholder="Pago seguro. La tarjeta se captura en campos cifrados del proveedor."
+          onChange={(event) => onPatchSettings({ paymentSecureNote: event.target.value })}
+          onBlur={onSave}
+        />
+      </label>
+    )}
+  </AccordionSection>
+)
+
 const CalendarBlockDesignControls: React.FC<{
   site: PublicSite
   block: SiteBlock
@@ -39688,123 +39832,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
       />
 
       {block.blockType === 'payment' && (
-        <AccordionSection id="design-payment-layout" title="Diseño del bloque">
-          <label className={styles.field}>
-            <span>Estilo de pasarela</span>
-            <CustomSelect
-              value={normalizePaymentBlockLayout(settings.paymentLayout)}
-              onValueChange={(value) => {
-                onPatchSettings({ paymentLayout: normalizePaymentBlockLayout(value) })
-                window.setTimeout(onSave, 0)
-              }}
-              options={paymentBlockLayoutOptions}
-            />
-          </label>
-
-          <AlignmentControl
-            label="Alineación del texto"
-            value={getHorizontalAlign(settings, 'paymentTextAlign', 'left')}
-            options={horizontalAlignOptions}
-            onChange={(value) => onPatchSettings({ paymentTextAlign: value })}
-            onCommit={onSave}
-          />
-
-          <ColorField
-            label="Color de texto de los campos"
-            value={getSettingPaint(settings, 'paymentFieldTextColor', '')}
-            allowGradient={false}
-            onChange={(value) => onPatchSettings({ paymentFieldTextColor: value })}
-            onCommit={onSave}
-          />
-
-          <div className={styles.videoFormGateSwitchRow}>
-            <div>
-              <strong>Mostrar nombre de la pasarela</strong>
-              <span>El rótulo de la pasarela (p. ej. “Stripe”) arriba del checkout.</span>
-            </div>
-            <Switch
-              checked={getSettingBoolean(settings, 'paymentShowGatewayName', true)}
-              onChange={(checked) => { onPatchSettings({ paymentShowGatewayName: checked }); window.setTimeout(() => { onSave() }, 0) }}
-              aria-label="Mostrar nombre de la pasarela"
-            />
-          </div>
-
-          <div className={styles.videoFormGateSwitchRow}>
-            <div>
-              <strong>Mostrar campo País</strong>
-              <span>Pide el país en el formulario de tarjeta (Stripe).</span>
-            </div>
-            <Switch
-              checked={getSettingBoolean(settings, 'paymentShowCountry', true)}
-              onChange={(checked) => { onPatchSettings({ paymentShowCountry: checked }); window.setTimeout(() => { onSave() }, 0) }}
-              aria-label="Mostrar campo País"
-            />
-          </div>
-
-          {/* Datos de contacto del comprador: correo/teléfono para ligar el pago a un
-              contacto (y disparar el Purchase de Meta). Al menos uno debe quedar activo.
-              CLIP y Mercado Pago ya los piden en su propio formulario. */}
-          <div className={styles.videoFormGateSwitchRow}>
-            <div>
-              <strong>Pedir correo</strong>
-              <span>Campo de correo en el checkout (Stripe/Conekta).</span>
-            </div>
-            <Switch
-              checked={getSettingBoolean(settings, 'paymentCollectEmail', true)}
-              onChange={(checked) => {
-                const phoneOn = getSettingBoolean(settings, 'paymentCollectPhone', true)
-                onPatchSettings({ paymentCollectEmail: checked, paymentCollectPhone: checked ? phoneOn : true })
-                window.setTimeout(() => { onSave() }, 0)
-              }}
-              aria-label="Pedir correo"
-            />
-          </div>
-
-          <div className={styles.videoFormGateSwitchRow}>
-            <div>
-              <strong>Pedir teléfono</strong>
-              <span>Campo de teléfono en el checkout (Stripe/Conekta).</span>
-            </div>
-            <Switch
-              checked={getSettingBoolean(settings, 'paymentCollectPhone', true)}
-              onChange={(checked) => {
-                const emailOn = getSettingBoolean(settings, 'paymentCollectEmail', true)
-                onPatchSettings({ paymentCollectPhone: checked, paymentCollectEmail: checked ? emailOn : true })
-                window.setTimeout(() => { onSave() }, 0)
-              }}
-              aria-label="Pedir teléfono"
-            />
-          </div>
-
-          {/* Paridad payment #3: se retiró el toggle "Guardar mi información". Stripe
-              Link/guardar tarjeta NO es ocultable por código, así que prometía algo que
-              el checkout en vivo no puede cumplir. El valor guardado se ignora sin
-              migración de datos. */}
-
-          <div className={styles.videoFormGateSwitchRow}>
-            <div>
-              <strong>Mostrar nota de seguridad</strong>
-              <span>El texto pequeño debajo del botón de pago.</span>
-            </div>
-            <Switch
-              checked={getSettingBoolean(settings, 'paymentShowSecureNote', true)}
-              onChange={(checked) => { onPatchSettings({ paymentShowSecureNote: checked }); window.setTimeout(() => { onSave() }, 0) }}
-              aria-label="Mostrar nota de seguridad"
-            />
-          </div>
-
-          {getSettingBoolean(settings, 'paymentShowSecureNote', true) && (
-            <label className={styles.field}>
-              <span>Texto de la nota de seguridad</span>
-              <input
-                value={getSettingString(settings, 'paymentSecureNote')}
-                placeholder="Pago seguro. La tarjeta se captura en campos cifrados del proveedor."
-                onChange={(event) => onPatchSettings({ paymentSecureNote: event.target.value })}
-                onBlur={onSave}
-              />
-            </label>
-          )}
-        </AccordionSection>
+        <PaymentBlockDesignControls settings={settings} onPatchSettings={onPatchSettings} onSave={onSave} />
       )}
 
       {isField && (
