@@ -1166,20 +1166,22 @@ async function getSourceBreakdownByMetric(metric, range) {
  */
 export const getOriginDistribution = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query
+    const { startDate, endDate, includeWeb = '1', includeWhatsapp = '1' } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
     }
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
+    const shouldIncludeWeb = String(includeWeb) !== '0'
+    const shouldIncludeWhatsapp = String(includeWhatsapp) !== '0'
 
     const [traffic, leadIds, appointments, conversions, whatsappNumbers] = await Promise.all([
-      getTrafficDistributions(range),
+      getTrafficDistributions(range, { includeWeb: shouldIncludeWeb, includeWhatsapp: shouldIncludeWhatsapp }),
       getLeadsContactIds(range),
       getSourceBreakdownByMetric('appointments', range),
       getSourceBreakdownByMetric('conversions', range),
-      getWhatsAppApiNumberBreakdown(range)
+      shouldIncludeWhatsapp ? getWhatsAppApiNumberBreakdown(range) : []
     ])
 
     const leads = await getContactSourceBreakdown(leadIds, { limit: 10 })
@@ -1360,7 +1362,7 @@ export const getFinancialOverview = async (req, res) => {
  */
 export const getFunnelData = async (req, res) => {
   try {
-    const { startDate, endDate, scope = 'all' } = req.query
+    const { startDate, endDate, scope = 'all', includeWeb = '1' } = req.query
 
     if (!startDate || !endDate) {
       return res.status(400).json({ success: false, error: 'Se requieren startDate y endDate' })
@@ -1370,6 +1372,7 @@ export const getFunnelData = async (req, res) => {
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const isAttributed = scope === 'campaigns' || scope === 'attributed'
     const useContactAttribution = scope === 'campaigns' || scope === 'attributed' || scope === 'attribution'
+    const shouldIncludeWeb = String(includeWeb) !== '0'
 
     // Obtener labels personalizados del usuario
     const hlConfig = await db.get('SELECT custom_labels, location_id, api_token FROM highlevel_config LIMIT 1')
@@ -1401,7 +1404,9 @@ export const getFunnelData = async (req, res) => {
     // ========================================
     let visitorsCount = 0
 
-    if (!useContactAttribution) {
+    if (!shouldIncludeWeb) {
+      visitorsCount = 0
+    } else if (!useContactAttribution) {
       // Vista "Todos": Todos los visitantes en el rango de fechas
       const visitorsQuery = `
         SELECT COUNT(DISTINCT ${getVisitorIdentityExpression()}) as count
@@ -1610,7 +1615,7 @@ export const getFunnelData = async (req, res) => {
     // 6. RESPUESTA
     // ========================================
     const data = [
-      { stage: 'Visitantes', value: visitorsCount },
+      ...(shouldIncludeWeb ? [{ stage: 'Visitantes', value: visitorsCount }] : []),
       { stage: labels.leads, value: parseInt(leadsData?.count || 0) },
       { stage: 'Citas', value: appointmentsCount },
       { stage: 'Asistencias', value: attendancesCount },

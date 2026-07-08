@@ -20,10 +20,12 @@ import {
 } from 'lucide-react'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useLabels } from '@/contexts/LabelsContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { formatCurrency, formatRoas, formatDateToISO, formatEndDateToISO, normalizeDateInputToLocalDate, parseLocalDateString, formatChartCurrency, formatChartNumber } from '@/utils/format'
 import { campaignsService, type CampaignContact } from '@/services/campaignsService'
 import { reportsService, type CampaignsReport } from '@/services/reportsService'
 import { useAppConfig, useMetaTimezone, useUrlDateRangeSync } from '@/hooks'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import styles from './Campaigns.module.css'
 
 interface AdData {
@@ -258,11 +260,12 @@ export const Campaigns: React.FC = () => {
   const routeChartView = getCampaignChartView(routeChart)
 
   // Sistema híbrido de configuración
+  const { user } = useAuth()
   const [visitorSourceConfig] = useAppConfig<'platform' | 'tracking'>('visitor_source', 'platform')
   const [showAnalyticsConfig] = useAppConfig<string | number | boolean>('show_analytics', '1')
 
   const visitorSource = visitorSourceConfig
-  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
+  const analyticsEnabled = hasLicenseFeature(user, ['web_analytics']) && parseAnalyticsFlag(showAnalyticsConfig)
 
   // Detectar discrepancia de timezone
   const timezoneInfo = useMetaTimezone()

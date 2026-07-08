@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { useDateRange } from '../../contexts/DateRangeContext'
 import { useTimezone } from '../../contexts/TimezoneContext'
 import { useLabels } from '../../contexts/LabelsContext'
+import { useAuth } from '../../contexts/AuthContext'
 import { useUrlDateRangeSync, useUrlFilterState } from '../../hooks'
 import {
   PageContainer,
@@ -41,6 +42,7 @@ import { formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString, f
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '../../utils/timezone'
 import { normalizeTrafficSource } from '../../utils/trafficSourceNormalizer'
 import { readNumberParam, setSearchParam } from '../../utils/urlState'
+import { hasLicenseFeature } from '../../utils/accessControl'
 
 type ViewType = 'day' | 'month' | 'year'
 type MonthPreset = 'last12' | 'thisYear' | 'all' | 'custom'
@@ -1173,6 +1175,8 @@ const Analytics: React.FC = () => {
     return nextRange.start <= nextRange.end ? nextRange : defaultYearRange
   }, [defaultYearRange, searchParams])
   const { labels: appLabels } = useLabels()
+  const { user } = useAuth()
+  const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
   const [loading, setLoading] = useState(false)
   const [hasLoadedAnalytics, setHasLoadedAnalytics] = useState(false)
   const [webTrackingConfigured, setWebTrackingConfigured] = useState(false)
@@ -1340,16 +1344,18 @@ const Analytics: React.FC = () => {
           trackingConfig,
           messageSummary
         ] = await Promise.all([
-          getSessionsByDateRange(startDate, endDate, { payload: 'analytics' }),
-          getSessionMetricsByDateRange(prevStartDate, prevEndDate),
-          getContactsByDate(startDate, endDate),
-          getContactsByDate(prevStartDate, prevEndDate),
+          hasWebAnalyticsAccess ? getSessionsByDateRange(startDate, endDate, { payload: 'analytics' }) : Promise.resolve([] as Session[]),
+          hasWebAnalyticsAccess
+            ? getSessionMetricsByDateRange(prevStartDate, prevEndDate)
+            : Promise.resolve({ pageViews: 0, uniqueVisitors: 0, uniqueSessions: 0, returningUsers: 0 }),
+          hasWebAnalyticsAccess ? getContactsByDate(startDate, endDate) : Promise.resolve([] as ContactsByDate[]),
+          hasWebAnalyticsAccess ? getContactsByDate(prevStartDate, prevEndDate) : Promise.resolve([] as ContactsByDate[]),
           getContactConversionsByDate(startDate, endDate),
-          trackingService.getTrackingConfig().catch(() => null),
+          hasWebAnalyticsAccess ? trackingService.getTrackingConfig().catch(() => null) : Promise.resolve(null),
           getMessageAnalyticsSummary(startDate, endDate, viewType, messageSummaryFilters).catch(() => null)
         ])
 
-        setWebTrackingConfigured(Boolean(
+        setWebTrackingConfigured(hasWebAnalyticsAccess && Boolean(
           trackingConfig?.isConfigured ||
           trackingConfig?.hasPublicSites ||
           currentSessions.length > 0
@@ -1939,7 +1945,7 @@ const Analytics: React.FC = () => {
     }
 
     fetchAnalytics()
-  }, [apiRange.from, apiRange.to, viewType, convertToLocalTime, conversionFilters, messageSummaryFilterKey, messageSummaryFilters])
+  }, [apiRange.from, apiRange.to, viewType, convertToLocalTime, conversionFilters, hasWebAnalyticsAccess, messageSummaryFilterKey, messageSummaryFilters])
 
   // Efecto para filtrar sesiones cuando cambian los filtros seleccionados
   useEffect(() => {
@@ -2357,7 +2363,7 @@ const Analytics: React.FC = () => {
     (messageMetrics?.contacts || 0) > 0 ||
     (messageAnalytics?.trend || []).some(item => (item.messages || 0) > 0)
   )
-  const showWebAnalyticsBlocks = Boolean(webTrackingConfigured || hasWebAnalyticsData)
+  const showWebAnalyticsBlocks = hasWebAnalyticsAccess && Boolean(webTrackingConfigured || hasWebAnalyticsData)
   const showMessageAnalyticsBlocks = Boolean(
     messageAnalytics?.status?.connected ||
     hasMessageAnalyticsData
@@ -3000,7 +3006,7 @@ const Analytics: React.FC = () => {
         )}
 
         {/* Grid de Gráficas: Conversión y Distribución */}
-        <div className="grid gap-4 lg:grid-cols-2">
+        <div className={showWebAnalyticsBlocks ? 'grid gap-4 lg:grid-cols-2' : 'grid gap-4'}>
           <Card
             variant="glass"
             className="p-6 h-full [&>[data-ristak-card-content]]:flex [&>[data-ristak-card-content]]:h-full [&>[data-ristak-card-content]]:flex-col"
@@ -3068,7 +3074,7 @@ const Analytics: React.FC = () => {
             </div>
           </Card>
 
-          <OriginDistributionCard />
+          {showWebAnalyticsBlocks && <OriginDistributionCard />}
         </div>
 
         {/* Grid de stats cards */}

@@ -34,6 +34,7 @@ import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { getTransactionStatusBadge, getAppointmentStatusBadge } from '@/utils/statusBadges'
 import { Badge } from '@/components/common/Badge'
+import { hasLicenseFeature } from '@/utils/accessControl'
 
 const parseAnalyticsFlag = (value: unknown) => {
   if (value === null || value === undefined) return false
@@ -468,6 +469,7 @@ export const Dashboard: React.FC = () => {
   const { user, locationId, accessToken } = useAuth()
   const { labels } = useLabels()
   const { formatLocalDateTime, timezone } = useTimezone()
+  const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
   const businessToday = React.useMemo(
     () => dateOnlyToLocalDate(todayDateOnlyInTimezone(timezone)) || new Date(),
     [timezone]
@@ -483,7 +485,7 @@ export const Dashboard: React.FC = () => {
 
   const analyticsPreferenceEnabled = parseAnalyticsFlag(showAnalyticsConfig)
   const [webTrackingConfigured, setWebTrackingConfigured] = useState(false)
-  const analyticsEnabled = analyticsPreferenceEnabled && webTrackingConfigured
+  const analyticsEnabled = hasWebAnalyticsAccess && analyticsPreferenceEnabled && webTrackingConfigured
   const showFunnelVisitors = analyticsEnabled && parseAnalyticsFlag(showFunnelVisitorsConfig)
 
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
@@ -528,11 +530,10 @@ export const Dashboard: React.FC = () => {
     return funnelData.filter((stage) => stage.stage?.trim().toLowerCase() !== 'visitantes')
   }, [analyticsEnabled, funnelData])
 
-  // La dona de origen unificada (Tráfico / Leads / Citas / Clientes) se muestra siempre.
-  const showTrafficSourcesChart = true
+  const showTrafficSourcesChart = analyticsEnabled
 
   useEffect(() => {
-    if (!analyticsPreferenceEnabled) {
+    if (!hasWebAnalyticsAccess || !analyticsPreferenceEnabled) {
       setWebTrackingConfigured(false)
       return
     }
@@ -550,7 +551,7 @@ export const Dashboard: React.FC = () => {
     return () => {
       mounted = false
     }
-  }, [analyticsPreferenceEnabled])
+  }, [hasWebAnalyticsAccess, analyticsPreferenceEnabled])
 
   const handleFunnelVisitorsVisibilityChange = React.useCallback((nextShowVisitors: boolean) => {
     setShowFunnelVisitorsConfig(nextShowVisitors ? '1' : '0').catch((error) => {
@@ -1015,7 +1016,8 @@ export const Dashboard: React.FC = () => {
           dashboardService.getFunnelData({
             start: dateRange.start,
             end: dateRange.end,
-            scope: 'all'
+            scope: 'all',
+            includeWeb: hasWebAnalyticsAccess
           })
         ])
 
@@ -1037,7 +1039,7 @@ export const Dashboard: React.FC = () => {
     return () => {
       mounted = false
     }
-  }, [analyticsEnabled, dateRange.end, dateRange.start, user])
+  }, [analyticsEnabled, dateRange.end, dateRange.start, hasWebAnalyticsAccess, user])
 
   useEffect(() => {
     if (!user) return
@@ -1161,7 +1163,8 @@ export const Dashboard: React.FC = () => {
         const funnelDataResponse = await dashboardService.getFunnelData({
           start: dateRange.start,
           end: dateRange.end,
-          scope: funnelScope
+          scope: funnelScope,
+          includeWeb: hasWebAnalyticsAccess
         })
         setFunnelData(funnelDataResponse)
       } catch (error) {
@@ -1170,7 +1173,7 @@ export const Dashboard: React.FC = () => {
     }
 
     loadFunnelData()
-  }, [funnelScope, dateRange])
+  }, [funnelScope, dateRange, hasWebAnalyticsAccess])
 
   const renderOperationsLoadingRows = (count = 4) => (
     Array.from({ length: count }).map((_, index) => (

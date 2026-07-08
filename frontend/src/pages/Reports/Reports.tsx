@@ -17,6 +17,7 @@ import {
   Modal
 } from '@/components/common'
 import type { Column } from '@/components/common'
+import { useAuth } from '@/contexts/AuthContext'
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useLabels } from '@/contexts/LabelsContext'
@@ -33,6 +34,7 @@ import { costsService, type Cost } from '@/services/costsService'
 import { formatCurrency, formatNumber, formatDate, formatDateToISO, normalizeDateInputToLocalDate, parseLocalDateString } from '@/utils/format'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDateRangeSync } from '@/hooks'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import { readNumberParam, setSearchParam } from '@/utils/urlState'
 import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
@@ -1791,6 +1793,7 @@ export const Reports: React.FC = () => {
   const location = useLocation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
+  const { user } = useAuth()
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
@@ -1826,7 +1829,7 @@ export const Reports: React.FC = () => {
   )
 
   const visitorSource = visitorSourceConfig
-  const analyticsEnabled = parseAnalyticsFlag(showAnalyticsConfig)
+  const analyticsEnabled = hasLicenseFeature(user, ['web_analytics']) && parseAnalyticsFlag(showAnalyticsConfig)
 
   const [reportType, setReportType] = useState<ReportType>(routeState.reportType)
   const reportTypeRef = React.useRef<ReportType>(reportType)
@@ -2006,7 +2009,7 @@ export const Reports: React.FC = () => {
         if (!isCurrentRequest()) return
 
         // Si estamos en modo tracking, obtener visitantes del tracking
-        if (visitorSource === 'tracking') {
+        if (analyticsEnabled && visitorSource === 'tracking') {
           try {
             const trackingResponse = await fetch(
               `/api/tracking/visitors-by-period?` + new URLSearchParams({
@@ -2060,7 +2063,7 @@ export const Reports: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [apiRange.from, apiRange.to, scopeParam, viewType, showToast, dateRange, visitorSource])
+  }, [analyticsEnabled, apiRange.from, apiRange.to, scopeParam, viewType, showToast, dateRange, visitorSource])
 
   useEffect(() => {
     const fetchSummary = async () => {

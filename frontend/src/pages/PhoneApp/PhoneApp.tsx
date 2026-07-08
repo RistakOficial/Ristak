@@ -34,6 +34,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import { reportsService, type ContactListItem, type ReportMetricRow, type ReportsSummary } from '@/services/reportsService'
 import { transactionsService, type Transaction, type TransactionSummary } from '@/services/transactionsService'
 import { formatCurrency, formatDate, formatDateTime as formatBusinessDateTime, formatDateToISO, formatNumber, formatRoas, getBusinessDateRangeTimestamps, normalizeDateInputToLocalDate } from '@/utils/format'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { PHONE_APP_PREFIX, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import styles from './PhoneApp.module.css'
@@ -366,7 +367,8 @@ function toTrendFromReports(data: ReportMetricRow[], key: keyof ReportMetricRow,
 
 export const PhoneApp: React.FC = () => {
   const params = useParams<{ section?: string }>()
-  const { locationId, accessToken } = useAuth()
+  const { user, locationId, accessToken } = useAuth()
+  const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
   const { dateRange, setPreset } = useDateRange()
   const { timezone } = useTimezone() // (MOB-007) zona del negocio
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
@@ -577,9 +579,11 @@ export const PhoneApp: React.FC = () => {
         ] = await Promise.all([
           safe(dashboardService.getDashboardMetrics({ start: startDate, end: endDate }), createEmptyDashboardMetrics()),
           safe(dashboardService.getFinancialChart({ start: startDate, end: endDate, scope: 'all' }), [] as ChartData[]),
-          safe(dashboardService.getFunnelData({ start: startDate, end: endDate, scope: 'all' }), [] as Array<{ stage: string; value: number }>),
-          safe(dashboardService.getTrafficSources({ start: startDate, end: endDate }), [] as Array<{ name: string; value: number; color?: string }>),
-          safe(dashboardService.getVisitorsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>),
+          safe(dashboardService.getFunnelData({ start: startDate, end: endDate, scope: 'all', includeWeb: hasWebAnalyticsAccess }), [] as Array<{ stage: string; value: number }>),
+          safe(dashboardService.getTrafficSources({ start: startDate, end: endDate, includeWeb: hasWebAnalyticsAccess }), [] as Array<{ name: string; value: number; color?: string }>),
+          hasWebAnalyticsAccess
+            ? safe(dashboardService.getVisitorsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
+            : Promise.resolve([] as Array<{ label: string; value: number }>),
           safe(dashboardService.getLeadsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>),
           safe(dashboardService.getAppointmentsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>),
           safe(dashboardService.getSalesData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>),
@@ -653,7 +657,7 @@ export const PhoneApp: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [accessState, accessToken, activeSectionId, endDate, endIso, locationId, rangeEndTime, rangeStartTime, refreshKey, startDate, startIso, timezone]) // (MOB-007) recarga si cambia la zona del negocio
+  }, [accessState, accessToken, activeSectionId, endDate, endIso, hasWebAnalyticsAccess, locationId, rangeEndTime, rangeStartTime, refreshKey, startDate, startIso, timezone]) // (MOB-007) recarga si cambia la zona del negocio
 
   const dashboardTiles = useMemo(() => {
     const metrics = phoneData.dashboardMetrics
@@ -756,12 +760,12 @@ export const PhoneApp: React.FC = () => {
     const sales = salesTrend.reduce((total, item) => total + item.value, 0)
 
     return [
-      { label: 'Visitors', value: visitors, percent: 100 },
-      { label: 'Leads', value: leads, percent: visitors ? (leads / visitors) * 100 : 0 },
+      ...(hasWebAnalyticsAccess ? [{ label: 'Visitors', value: visitors, percent: 100 }] : []),
+      { label: 'Leads', value: leads, percent: hasWebAnalyticsAccess && visitors ? (leads / visitors) * 100 : 100 },
       { label: 'Appointments', value: appointments, percent: leads ? (appointments / leads) * 100 : 0 },
       { label: 'Sales', value: sales, percent: leads ? (sales / leads) * 100 : 0 }
     ]
-  }, [appointmentsTrend, leadsTrend, salesTrend, visitorsTrend])
+  }, [appointmentsTrend, hasWebAnalyticsAccess, leadsTrend, salesTrend, visitorsTrend])
 
   if (!activeSectionId) {
     return <Navigate to={`${PHONE_APP_PREFIX}/dashboard`} replace />
@@ -882,6 +886,7 @@ export const PhoneApp: React.FC = () => {
                   financeTrend={financeTrend}
                   funnelData={phoneData.funnelData}
                   trafficSources={phoneData.trafficSources}
+                  showWebAnalytics={hasWebAnalyticsAccess}
                 />
               )}
 
@@ -924,6 +929,7 @@ export const PhoneApp: React.FC = () => {
                   reportsSummary={phoneData.reportsSummary}
                   profitTrend={profitTrend}
                   rows={phoneData.reportMetrics.slice(-6).reverse()}
+                  showWebAnalytics={hasWebAnalyticsAccess}
                 />
               )}
 
@@ -933,6 +939,7 @@ export const PhoneApp: React.FC = () => {
                   leadsTrend={leadsTrend}
                   salesTrend={salesTrend}
                   conversion={analyticsConversion}
+                  showWebAnalytics={hasWebAnalyticsAccess}
                 />
               )}
 
@@ -958,9 +965,10 @@ interface DashboardSectionProps {
   financeTrend: TrendPoint[]
   funnelData: Array<{ stage: string; value: number }>
   trafficSources: Array<{ name: string; value: number; color?: string }>
+  showWebAnalytics: boolean
 }
 
-function DashboardSection({ tiles, financeTrend, funnelData, trafficSources }: DashboardSectionProps) {
+function DashboardSection({ tiles, financeTrend, funnelData, trafficSources, showWebAnalytics }: DashboardSectionProps) {
   return (
     <div className={styles.sectionStack}>
       <div className={styles.metricGrid}>
@@ -980,7 +988,7 @@ function DashboardSection({ tiles, financeTrend, funnelData, trafficSources }: D
         />
       </Panel>
 
-      <Panel title="Traffic sources" actionLabel="Channels">
+      <Panel title={showWebAnalytics ? 'Traffic sources' : 'Contact sources'} actionLabel="Channels">
         <ProgressList
           items={trafficSources.map((source) => ({ label: source.name, value: source.value, color: source.color }))}
           formatValue={formatNumber}
@@ -1186,9 +1194,10 @@ interface ReportsSectionProps {
   reportsSummary: ReportsSummary | null
   profitTrend: TrendPoint[]
   rows: ReportMetricRow[]
+  showWebAnalytics: boolean
 }
 
-function ReportsSection({ totals, reportsSummary, profitTrend, rows }: ReportsSectionProps) {
+function ReportsSection({ totals, reportsSummary, profitTrend, rows, showWebAnalytics }: ReportsSectionProps) {
   const summaryRoas = reportsSummary?.campaigns?.roas || (totals.spend > 0 ? totals.revenue / totals.spend : 0)
 
   return (
@@ -1210,7 +1219,11 @@ function ReportsSection({ totals, reportsSummary, profitTrend, rows }: ReportsSe
             <ListItem
               key={row.date}
               title={formatDate(row.date, { includeYear: true })}
-              meta={`${formatNumber(row.visitors)} visits · ${formatNumber(row.leads)} leads · ${formatNumber(row.customers)} customers`}
+              meta={[
+                ...(showWebAnalytics ? [`${formatNumber(row.visitors)} visits`] : []),
+                `${formatNumber(row.leads)} leads`,
+                `${formatNumber(row.customers)} customers`
+              ].join(' · ')}
               value={formatCompactCurrency(row.profit)}
             />
           ))}
@@ -1225,27 +1238,30 @@ interface AnalyticsSectionProps {
   leadsTrend: TrendPoint[]
   salesTrend: TrendPoint[]
   conversion: Array<{ label: string; value: number; percent: number }>
+  showWebAnalytics: boolean
 }
 
-function AnalyticsSection({ visitorsTrend, leadsTrend, salesTrend, conversion }: AnalyticsSectionProps) {
+function AnalyticsSection({ visitorsTrend, leadsTrend, salesTrend, conversion, showWebAnalytics }: AnalyticsSectionProps) {
   return (
     <div className={styles.sectionStack}>
       <div className={styles.metricGrid}>
-        {conversion.map((item) => (
+        {conversion.map((item, index) => (
           <MetricTile
             key={item.label}
             label={item.label}
             value={formatCompactNumber(item.value)}
-            detail={item.label === 'Visitantes' ? 'Base del embudo' : `${formatPercent(item.percent)} conversión`}
-            tone={item.label === 'Ventas' ? 'green' : item.label === 'Citas' ? 'purple' : item.label === 'Leads' ? 'blue' : 'orange'}
+            detail={index === 0 ? 'Base del embudo' : `${formatPercent(item.percent)} conversión`}
+            tone={item.label === 'Sales' || item.label === 'Ventas' ? 'green' : item.label === 'Appointments' || item.label === 'Citas' ? 'purple' : item.label === 'Leads' ? 'blue' : 'orange'}
             icon={getAnalyticsMetricIcon(item.label)}
           />
         ))}
       </div>
 
-      <Panel title="Visitors" actionLabel="Traffic">
-        <MiniBars data={visitorsTrend} formatValue={formatNumber} />
-      </Panel>
+      {showWebAnalytics && (
+        <Panel title="Visitors" actionLabel="Traffic">
+          <MiniBars data={visitorsTrend} formatValue={formatNumber} />
+        </Panel>
+      )}
 
       <Panel title="Leads vs sales" actionLabel="Conversion">
         <DualTrend data={mergeTrendSeries(leadsTrend, salesTrend)} labelA="Leads" labelB="Sales" formatValue={formatCompactNumber} />
@@ -1309,9 +1325,9 @@ function mergeTrendSeries(primary: TrendPoint[], secondary: TrendPoint[]): Trend
 }
 
 function getAnalyticsMetricIcon(label: string): LucideIcon {
-  if (label === 'Visitantes') return Eye
+  if (label === 'Visitors' || label === 'Visitantes') return Eye
   if (label === 'Leads') return Users
-  if (label === 'Citas') return CalendarDays
+  if (label === 'Appointments' || label === 'Citas') return CalendarDays
   return TrendingUp
 }
 

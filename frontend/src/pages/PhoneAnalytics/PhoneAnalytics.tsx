@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
+import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { usePhoneElasticScroll } from '@/hooks'
@@ -30,6 +31,7 @@ import {
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { formatDate } from '@/utils/format'
 import { formatCurrency, formatNumber, formatRoas } from '@/utils/format'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneAnalytics.module.css'
 
@@ -293,8 +295,10 @@ function MobileDualLineChart({
 }
 
 export const PhoneAnalytics: React.FC = () => {
+  const { user } = useAuth()
   const { labels } = useLabels()
   const { timezone } = useTimezone()
+  const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
   usePhoneElasticScroll()
 
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d')
@@ -302,7 +306,7 @@ export const PhoneAnalytics: React.FC = () => {
   const [chartView, setChartView] = useState<ChartView>('revenue-spend')
   const [financialScope, setFinancialScope] = useState<ScopeType>('all')
   const [funnelScope, setFunnelScope] = useState<ScopeType>('all')
-  const [originTab, setOriginTab] = useState<OriginTab>('traffic')
+  const [originTab, setOriginTab] = useState<OriginTab>(hasWebAnalyticsAccess ? 'traffic' : 'leads')
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [chartData, setChartData] = useState<ChartPoint[]>([])
   const [funnelData, setFunnelData] = useState<Array<{ stage: string; value: number }>>([])
@@ -322,6 +326,18 @@ export const PhoneAnalytics: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    if (!hasWebAnalyticsAccess && chartView === 'visitors-leads') {
+      setChartView('leads-appointments')
+    }
+  }, [chartView, hasWebAnalyticsAccess])
+
+  useEffect(() => {
+    if (!hasWebAnalyticsAccess && originTab === 'traffic') {
+      setOriginTab('leads')
+    }
+  }, [hasWebAnalyticsAccess, originTab])
+
+  useEffect(() => {
     let active = true
 
     setLoading(true)
@@ -329,7 +345,7 @@ export const PhoneAnalytics: React.FC = () => {
 
     Promise.all([
       dashboardService.getDashboardMetrics({ start: range.start, end: range.end }),
-      dashboardService.getOriginDistribution({ start: range.start, end: range.end }),
+      dashboardService.getOriginDistribution({ start: range.start, end: range.end, includeWeb: hasWebAnalyticsAccess }),
       whatsappApiService.getStatus().catch(() => null)
     ])
       .then(([metricsResponse, originResponse, whatsappStatus]) => {
@@ -364,13 +380,13 @@ export const PhoneAnalytics: React.FC = () => {
     return () => {
       active = false
     }
-  }, [range.end, range.start])
+  }, [hasWebAnalyticsAccess, range.end, range.start])
 
   useEffect(() => {
     let active = true
 
     setFunnelLoading(true)
-    dashboardService.getFunnelData({ start: range.start, end: range.end, scope: funnelScope })
+    dashboardService.getFunnelData({ start: range.start, end: range.end, scope: funnelScope, includeWeb: hasWebAnalyticsAccess })
       .then((response) => {
         if (active) setFunnelData(response)
       })
@@ -384,7 +400,7 @@ export const PhoneAnalytics: React.FC = () => {
     return () => {
       active = false
     }
-  }, [funnelScope, range.end, range.start])
+  }, [funnelScope, hasWebAnalyticsAccess, range.end, range.start])
 
   useEffect(() => {
     let active = true
@@ -413,11 +429,15 @@ export const PhoneAnalytics: React.FC = () => {
         let response: ChartPoint[] = []
 
         if (chartView === 'visitors-leads') {
-          const [visitors, leads] = await Promise.all([
-            dashboardService.getVisitorsData(commonParams),
-            dashboardService.getLeadsData(commonParams)
-          ])
-          response = combineSeries(visitors, leads)
+          if (!hasWebAnalyticsAccess) {
+            response = []
+          } else {
+            const [visitors, leads] = await Promise.all([
+              dashboardService.getVisitorsData(commonParams),
+              dashboardService.getLeadsData(commonParams)
+            ])
+            response = combineSeries(visitors, leads)
+          }
         } else if (chartView === 'leads-appointments') {
           const [leads, appointments] = await Promise.all([
             dashboardService.getLeadsData(commonParams),
@@ -451,15 +471,25 @@ export const PhoneAnalytics: React.FC = () => {
     return () => {
       active = false
     }
-  }, [chartView, financialScope, groupBy, range.end, range.start])
+  }, [chartView, financialScope, groupBy, hasWebAnalyticsAccess, range.end, range.start])
 
-  const chartOptions = useMemo<Array<{ id: ChartView; label: string }>>(() => ([
-    { id: 'revenue-spend', label: 'Ingresos vs gastos' },
-    { id: 'visitors-leads', label: `Visitantes vs ${labels.leads}` },
-    { id: 'leads-appointments', label: `${labels.leads} vs citas` },
-    { id: 'appointments-attendances', label: 'Citas vs asistencias' },
-    { id: 'attendances-sales', label: 'Asistencias vs ventas' }
-  ]), [labels.leads])
+  const chartOptions = useMemo<Array<{ id: ChartView; label: string }>>(() => {
+    const options: Array<{ id: ChartView; label: string }> = [
+      { id: 'revenue-spend', label: 'Ingresos vs gastos' }
+    ]
+
+    if (hasWebAnalyticsAccess) {
+      options.push({ id: 'visitors-leads', label: `Visitantes vs ${labels.leads}` })
+    }
+
+    options.push(
+      { id: 'leads-appointments', label: `${labels.leads} vs citas` },
+      { id: 'appointments-attendances', label: 'Citas vs asistencias' },
+      { id: 'attendances-sales', label: 'Asistencias vs ventas' }
+    )
+
+    return options
+  }, [hasWebAnalyticsAccess, labels.leads])
 
   const chartMeta = useMemo<ChartMeta>(() => {
     if (chartView === 'visitors-leads') {
@@ -493,31 +523,41 @@ export const PhoneAnalytics: React.FC = () => {
   ]), [])
 
   const hasChartData = chartData.some((point) => point.value > 0 || point.value2 > 0)
-  const funnelRows = funnelData.length > 0
+  const funnelRows = (funnelData.length > 0
     ? funnelData
     : [
-      { stage: 'Visitantes', value: 0 },
+      ...(hasWebAnalyticsAccess ? [{ stage: 'Visitantes', value: 0 }] : []),
       { stage: labels.leads, value: 0 },
       { stage: 'Citas', value: 0 },
       { stage: 'Asistencias', value: 0 },
       { stage: labels.customers, value: 0 }
-    ]
+    ]).filter((item) => hasWebAnalyticsAccess || item.stage?.trim().toLowerCase() !== 'visitantes')
   const funnelMax = Math.max(1, ...funnelRows.map((item) => item.value || 0))
   const totalConversion = funnelRows[0]?.value > 0
     ? ((funnelRows[funnelRows.length - 1].value / funnelRows[0].value) * 100).toFixed(1)
     : '0.0'
 
-  const originOptions = useMemo<Array<{ id: OriginTab; label: string }>>(() => ([
-    { id: 'traffic', label: 'Tráfico' },
-    { id: 'leads', label: labels.leads },
-    { id: 'appointments', label: 'Citas' },
-    { id: 'conversions', label: labels.customers }
-  ]), [labels.customers, labels.leads])
+  const originOptions = useMemo<Array<{ id: OriginTab; label: string }>>(() => {
+    const options: Array<{ id: OriginTab; label: string }> = []
+
+    if (hasWebAnalyticsAccess) {
+      options.push({ id: 'traffic', label: 'Tráfico' })
+    }
+
+    options.push(
+      { id: 'leads', label: labels.leads },
+      { id: 'appointments', label: 'Citas' },
+      { id: 'conversions', label: labels.customers }
+    )
+
+    return options
+  }, [hasWebAnalyticsAccess, labels.customers, labels.leads])
 
   const originRows = useMemo<SourceDatum[]>(() => {
+    if (originTab === 'traffic' && !hasWebAnalyticsAccess) return []
     if (originTab === 'traffic') return originData.traffic.sources || []
     return originData[originTab] || []
-  }, [originData, originTab])
+  }, [hasWebAnalyticsAccess, originData, originTab])
   const originMax = Math.max(1, ...originRows.map((item) => item.value || 0))
   const originTotal = originRows.reduce((sum, item) => sum + (item.value || 0), 0)
   const phoneNumberRows = useMemo(

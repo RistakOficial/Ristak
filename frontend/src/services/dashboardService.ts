@@ -388,11 +388,15 @@ class DashboardService {
   async getOriginDistribution(params: {
     start: Date;
     end: Date;
+    includeWeb?: boolean;
+    includeWhatsapp?: boolean;
   }): Promise<OriginDistributionData> {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
-        endDate: formatEndDateToISO(params.end)
+        endDate: formatEndDateToISO(params.end),
+        includeWeb: params.includeWeb === false ? '0' : '1',
+        includeWhatsapp: params.includeWhatsapp === false ? '0' : '1'
       });
 
       const response = await fetch(apiUrl(`/api/dashboard/origin-distribution?${queryParams}`));
@@ -413,12 +417,14 @@ class DashboardService {
     start: Date;
     end: Date;
     scope?: 'all' | 'attribution' | 'campaigns';
+    includeWeb?: boolean;
   }): Promise<{ stage: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
         startDate: formatDateToISO(params.start),
         endDate: formatEndDateToISO(params.end),
-        scope: params.scope || 'all'
+        scope: params.scope || 'all',
+        includeWeb: params.includeWeb === false ? '0' : '1'
       });
 
       const response = await fetch(apiUrl(`/api/dashboard/funnel?${queryParams}`));
