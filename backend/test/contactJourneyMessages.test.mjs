@@ -367,6 +367,54 @@ test('meta comment messages keep readable deleted text when the source post is g
   }
 })
 
+test('contact journey exposes provider for HighLevel mirrored meta messages', async () => {
+  const id = randomUUID().replace(/-/g, '')
+  const contactId = `journey_hl_meta_${id}`
+  const phone = `+52997${Date.now().toString().slice(-7)}`
+  const metaMessageId = `hl_meta_message_${id}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente HighLevel Meta',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2099-07-03T12:00:00.000Z',
+      updated_at: '2099-07-03T12:00:00.000Z'
+    })
+
+    await insertRow('meta_social_messages', {
+      id: `meta_highlevel_${id}`,
+      platform: 'messenger',
+      meta_message_id: metaMessageId,
+      contact_id: contactId,
+      sender_id: 'fb_customer',
+      recipient_id: 'fb_page',
+      page_id: 'fb_page',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'DM sincronizado desde HighLevel',
+      message_timestamp: '2099-07-03T12:06:00.000Z',
+      created_at: '2099-07-03T12:06:00.000Z',
+      raw_payload_json: '{"provider":"highlevel","source":"conversations_sync"}'
+    })
+
+    const journey = await readJourney(contactId)
+    const message = journey.find(event => event.type === 'meta_message')
+
+    assert.ok(message)
+    assert.equal(message.data.provider, 'highlevel')
+    assert.equal(message.data.provider_message_id, metaMessageId)
+    assert.equal(message.data.transport, 'messenger')
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('contact journey defaults to contact-authored messages only', async () => {
   const id = randomUUID()
   const contactId = `journey_msg_${id}`

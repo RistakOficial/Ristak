@@ -414,16 +414,20 @@ soporte nativo. En movil la respuesta a un globo normal se activa deslizando la
 burbuja hacia la derecha, igual que el flujo de comentarios: en mensajes
 normales abre la cajita/preview de respuesta del composer; en comentarios de
 publicaciones mantiene la respuesta publica al comentario. En desktop, las
-reacciones se ofrecen desde el propio globo recibido y deben enviarse como
-reaccion nativa apuntando al `provider_message_id` de ese mensaje, no como un
-mensaje normal con emoji. WhatsApp API/YCloud envia respuestas con
+reacciones se ofrecen desde el propio globo recibido al pasar el cursor o hacer
+click derecho, y deben enviarse como reaccion nativa apuntando al
+`provider_message_id` de ese mensaje, no como un mensaje normal con emoji. La UI
+desktop solo debe mostrar esos iconos si el mensaje pertenece a una ruta nativa
+conectada y compatible; mensajes sincronizados desde HighLevel, email, SMS,
+webchat y comentarios no deben abrir el picker de reaccion. WhatsApp API/YCloud
+envia respuestas con
 `context.message_id` y reacciones con `type='reaction'`; WhatsApp QR/Baileys usa
 el mensaje citado (`quoted`) y `react.key`. Messenger e Instagram nativos usan
 `reply_to.mid` para respuestas y `sender_action='react'` para reacciones; en
 Meta la reaccion soportada por contrato es corazon (`love`). HighLevel, email y
 comentarios no deben simular quote/reaccion si la API del canal no lo soporta:
 la UI debe avisar al usuario y mandar un mensaje normal solo cuando cancele la
-respuesta seleccionada. El journey debe exponer `provider_message_id`,
+respuesta seleccionada. El journey debe exponer `provider`, `provider_message_id`,
 `reply_to_provider_message_id`, `reaction_emoji` y
 `reaction_target_provider_message_id` para que las burbujas de `/chat` y
 `/movil` pinten el quote y peguen el emoji al globo correcto.

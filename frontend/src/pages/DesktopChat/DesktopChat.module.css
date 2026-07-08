@@ -1259,6 +1259,21 @@
   transform: none;
 }
 
+.messageReactionContextMenu {
+  position: fixed;
+  top: var(--message-reaction-menu-y);
+  left: var(--message-reaction-menu-x);
+  z-index: 80;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+}
+
 .messageReactions {
   display: inline-flex;
   align-items: center;

@@ -140,6 +140,7 @@ type ComposerChannel = 'whatsapp' | 'messenger' | 'instagram' | 'email'
 type ContactIdentityField = 'name' | 'email' | 'phone'
 type ManualAgentInterruptionAction = 'pause' | 'skip'
 type ManualAgentSendOptions = { skipAgentInterruptionConfirm?: boolean }
+type DesktopMessageReactionChannel = 'whatsapp_api' | 'whatsapp_qr' | 'messenger' | 'instagram'
 
 type ChatLocation = {
   latitude: number
@@ -152,6 +153,12 @@ type ChatLocation = {
 interface ManualAgentSendPrompt {
   contactId: string
   textOverride?: string
+}
+
+interface MessageReactionMenuState {
+  messageId: string
+  x: number
+  y: number
 }
 
 interface ContactChannelBadge {
@@ -220,6 +227,7 @@ interface DesktopChatMessage {
   businessPhone?: string
   businessPhoneNumberId?: string
   transport?: string
+  provider?: string
   routingReason?: string
   replyToMessageId?: string
   replyToProviderMessageId?: string
@@ -371,6 +379,7 @@ const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
 const CHAT_REFRESH_INTERVAL_MS = 20000
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
+const META_MESSAGE_REACTION_EMOJIS = ['❤️']
 // Lotes moderados: la bandeja calcula stats de mensajes y debe pintar rápido sin ahogar Postgres.
 const CHAT_LIST_PAGE_SIZE = 50
 // Distancia mínima al fondo para empezar a prefetch del siguiente lote. El disparo real
@@ -1207,6 +1216,7 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
     message.businessPhone,
     message.businessPhoneNumberId,
     message.transport,
+    message.provider,
     message.routingReason,
     message.replyToMessageId,
     message.replyToProviderMessageId,
@@ -1380,6 +1390,9 @@ function getJourneyEventSignature(event: JourneyEvent) {
     data.meta_social_message_id,
     data.meta_message_id,
     data.provider_message_id,
+    data.provider,
+    data.message_provider,
+    data.source_provider,
     data.email_message_id,
     data.smtp_message_id,
     data.appointment_id,
@@ -2190,7 +2203,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     : ''
   const effectiveText = text || emailBodyText || getCommentFallbackText(messageType, status, postDeleted)
   const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
-  const transport = String(data.transport || data.channel || data.provider || '').trim()
+  const provider = String(data.provider || data.message_provider || data.source_provider || '').trim()
+  const transport = String(data.transport || data.channel || '').trim() || provider
   const email = event.type === 'email_message'
     ? buildEmailChatMessageData(data, {
         bodyText: effectiveText,
@@ -2234,6 +2248,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     businessPhone: String(data.business_phone || data.businessPhone || data.from || '').trim(),
     businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || '').trim(),
     transport,
+    provider,
     routingReason: String(data.routing_reason || data.routingReason || data.fallbackReason || '').trim(),
     replyToMessageId: String(data.reply_to_message_id || data.replyToMessageId || '').trim() || undefined,
     replyToProviderMessageId: replyToProviderMessageId || undefined,
@@ -2597,7 +2612,10 @@ function desktopMessageCanOpenWhatsAppReplyWindow(message: DesktopChatMessage) {
 }
 
 function getMetaPlatformForDesktopMessage(message: DesktopChatMessage, contact?: DesktopChatContact | Contact | null): 'messenger' | 'instagram' | null {
+  if (isHighLevelMessageTransport(message)) return null
+
   const messageProbe = normalizeFilterProbe([
+    message.provider,
     message.transport,
     message.commentPlatform
   ])
@@ -2618,8 +2636,34 @@ function getMetaPlatformForDesktopMessage(message: DesktopChatMessage, contact?:
 }
 
 function isHighLevelMessageTransport(message: DesktopChatMessage) {
-  const transport = String(message.transport || '').trim().toLowerCase()
-  return transport.startsWith('ghl_') || transport === 'sms_qr'
+  const probe = normalizeFilterProbe([message.provider, message.transport])
+  const transport = String(message.transport || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  return probe.includes('highlevel') || transport.startsWith('ghl_') || transport === 'sms_qr'
+}
+
+function getNativeWhatsAppReactionChannel(message: DesktopChatMessage): Extract<DesktopMessageReactionChannel, 'whatsapp_api' | 'whatsapp_qr'> | null {
+  if (isHighLevelMessageTransport(message)) return null
+
+  const probe = normalizeFilterProbe([message.provider, message.transport])
+  const transport = String(message.transport || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (
+    probe.includes('messenger') ||
+    probe.includes('instagram') ||
+    probe.includes('facebook') ||
+    probe.includes('email') ||
+    probe.includes('webchat') ||
+    probe.includes('sms')
+  ) return null
+
+  if (transport === 'qr' || transport === 'whatsapp_qr' || transport === 'baileys' || transport === 'bailey') return 'whatsapp_qr'
+  if (!transport || ['api', 'ycloud', 'meta_direct', 'whatsapp', 'whatsapp_api'].includes(transport)) return 'whatsapp_api'
+  return null
+}
+
+function getMessageReactionEmojis(channel: DesktopMessageReactionChannel) {
+  return channel === 'messenger' || channel === 'instagram'
+    ? META_MESSAGE_REACTION_EMOJIS
+    : MESSAGE_REACTION_EMOJIS
 }
 
 function getMessageBusinessPhone(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
@@ -2805,6 +2849,7 @@ export const DesktopChat: React.FC = () => {
   const [playingAudioId, setPlayingAudioId] = useState('')
   const [messageAudioProgress, setMessageAudioProgress] = useState<Record<string, { currentTime: number; duration: number }>>({})
   const [reactingMessageId, setReactingMessageId] = useState<string | null>(null)
+  const [messageReactionMenu, setMessageReactionMenu] = useState<MessageReactionMenuState | null>(null)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
   const [metaMessengerConnected, setMetaMessengerConnected] = useState(false)
@@ -2917,6 +2962,57 @@ export const DesktopChat: React.FC = () => {
   const nativeWhatsAppTransport: 'api' | 'qr' = selectedQrReady && (!apiReplyWindowOpen || !whatsappConnected || selectedApiUnavailable)
     ? 'qr'
     : 'api'
+
+  const getMessageReactionChannel = useCallback((message: DesktopChatMessage): DesktopMessageReactionChannel | null => {
+    if (!activeContact) return null
+    if (message.direction !== 'inbound') return null
+    if (message.isComment || message.email || isHighLevelMessageTransport(message)) return null
+    if (!getMessageProviderMessageId(message)) return null
+
+    const metaPlatform = getMetaPlatformForDesktopMessage(message, activeContact)
+    if (metaPlatform === 'messenger') return metaMessengerConnected ? 'messenger' : null
+    if (metaPlatform === 'instagram') return metaInstagramConnected ? 'instagram' : null
+
+    const whatsappReactionChannel = getNativeWhatsAppReactionChannel(message)
+    if (!whatsappReactionChannel || !activeContact.phone) return null
+
+    const messagePhone = getMessageBusinessPhone(message, whatsappStatus)
+    const routePhone = messagePhone || selectedBusinessPhone
+    if (whatsappReactionChannel === 'whatsapp_qr') {
+      return isPhoneQrReadyForSend(routePhone) ? 'whatsapp_qr' : null
+    }
+
+    const fromPhone = message.businessPhone || getBusinessPhoneValue(routePhone)
+    return whatsappStatus?.connected && fromPhone ? 'whatsapp_api' : null
+  }, [activeContact, metaInstagramConnected, metaMessengerConnected, selectedBusinessPhone, whatsappStatus])
+
+  useEffect(() => {
+    setMessageReactionMenu(null)
+  }, [activeContact?.id])
+
+  useEffect(() => {
+    if (!messageReactionMenu) return
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target instanceof Element ? event.target : null
+      if (target?.closest('[data-message-reaction-context-menu="true"]')) return
+      setMessageReactionMenu(null)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMessageReactionMenu(null)
+    }
+    const handleScroll = () => setMessageReactionMenu(null)
+
+    window.addEventListener('pointerdown', handlePointerDown)
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('scroll', handleScroll, true)
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown)
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [messageReactionMenu])
+
   useEffect(() => {
     setCommentReplyTarget(null)
     if (!activeContact) {
@@ -6296,23 +6392,19 @@ export const DesktopChat: React.FC = () => {
 
   const handleReactToMessage = async (message: DesktopChatMessage, emoji: string) => {
     if (!activeContact || reactingMessageId === message.id) return
-    if (message.direction !== 'inbound') {
-      showToast('info', 'Solo mensajes recibidos', 'Las APIs oficiales reaccionan a mensajes que te mandó el contacto.')
-      return
-    }
-    if (message.isComment || message.email || isHighLevelMessageTransport(message)) {
-      showToast('warning', 'Canal sin reacción nativa', 'Ese canal no expone una reacción real al globo desde su API.')
-      return
-    }
-
+    const reactionChannel = getMessageReactionChannel(message)
     const providerMessageId = getMessageProviderMessageId(message)
+    if (!reactionChannel) {
+      showToast('warning', 'Canal sin reacción nativa', 'Ese mensaje no tiene una ruta nativa conectada para reaccionar al globo.')
+      return
+    }
     if (!providerMessageId) {
       showToast('warning', 'Falta ID del mensaje', 'Este mensaje no tiene el ID remoto necesario para reaccionar.')
       return
     }
 
-    const metaPlatform = getMetaPlatformForDesktopMessage(message, activeContact)
-    if (metaPlatform && emoji !== '❤️') {
+    const metaPlatform = reactionChannel === 'messenger' || reactionChannel === 'instagram' ? reactionChannel : null
+    if (metaPlatform && !META_MESSAGE_REACTION_EMOJIS.includes(emoji)) {
       showToast('warning', 'Meta solo permite corazón', 'Messenger e Instagram solo aceptan corazón como reacción desde la API.')
       return
     }
@@ -6343,7 +6435,8 @@ export const DesktopChat: React.FC = () => {
         })
       } else {
         if (!activeContact.phone) throw new Error('Guarda el teléfono del contacto antes de reaccionar.')
-        const fromPhone = message.businessPhone || selectedBusinessPhoneValue
+        const reactionBusinessPhone = getMessageBusinessPhone(message, whatsappStatus) || selectedBusinessPhone
+        const fromPhone = message.businessPhone || getBusinessPhoneValue(reactionBusinessPhone) || selectedBusinessPhoneValue
         if (!fromPhone) throw new Error('Selecciona el número de WhatsApp del negocio.')
         await whatsappApiService.sendReaction({
           to: activeContact.phone,
@@ -6353,8 +6446,8 @@ export const DesktopChat: React.FC = () => {
           targetMessageId: message.id,
           targetProviderMessageId: providerMessageId,
           externalId: optimisticReactionId,
-          transport: isQrTransport(message.transport) ? 'qr' : 'api',
-          phoneNumberId: message.businessPhoneNumberId || selectedBusinessPhone?.id || undefined,
+          transport: reactionChannel === 'whatsapp_qr' ? 'qr' : 'api',
+          phoneNumberId: message.businessPhoneNumberId || reactionBusinessPhone?.id || selectedBusinessPhone?.id || undefined,
           messageOrigin: 'manual_chat'
         })
       }
@@ -6947,13 +7040,7 @@ export const DesktopChat: React.FC = () => {
     }
   }, [showToast])
 
-  const canReactToMessage = (message: DesktopChatMessage) => (
-    message.direction === 'inbound' &&
-    !message.isComment &&
-    !message.email &&
-    !isHighLevelMessageTransport(message) &&
-    Boolean(getMessageProviderMessageId(message))
-  )
+  const canReactToMessage = (message: DesktopChatMessage) => Boolean(getMessageReactionChannel(message))
 
   const renderMessageReactions = (message: DesktopChatMessage) => {
     if (!message.reactions?.length) return null
@@ -6970,10 +7057,10 @@ export const DesktopChat: React.FC = () => {
   }
 
   const renderMessageReactionPicker = (message: DesktopChatMessage) => {
-    if (!canReactToMessage(message)) return null
+    const reactionChannel = getMessageReactionChannel(message)
+    if (!reactionChannel) return null
 
-    const metaPlatform = getMetaPlatformForDesktopMessage(message, activeContact)
-    const emojis = metaPlatform ? ['❤️'] : MESSAGE_REACTION_EMOJIS
+    const emojis = getMessageReactionEmojis(reactionChannel)
     const reacting = reactingMessageId === message.id
 
     return (
@@ -6991,6 +7078,65 @@ export const DesktopChat: React.FC = () => {
           </button>
         ))}
       </span>
+    )
+  }
+
+  const handleMessageReactionContextMenu = (message: DesktopChatMessage, event: React.MouseEvent<HTMLElement>) => {
+    if (!canReactToMessage(message) || typeof window === 'undefined') return
+    event.preventDefault()
+    event.stopPropagation()
+
+    const margin = 8
+    const menuWidth = 190
+    const menuHeight = 42
+    const maxX = Math.max(margin, window.innerWidth - menuWidth - margin)
+    const maxY = Math.max(margin, window.innerHeight - menuHeight - margin)
+    setMessageReactionMenu({
+      messageId: message.id,
+      x: Math.min(Math.max(event.clientX, margin), maxX),
+      y: Math.min(Math.max(event.clientY, margin), maxY)
+    })
+  }
+
+  const renderMessageReactionContextMenu = () => {
+    if (!messageReactionMenu) return null
+
+    const message = messages.find((item) => item.id === messageReactionMenu.messageId)
+    const reactionChannel = message ? getMessageReactionChannel(message) : null
+    if (!message || !reactionChannel) return null
+
+    const emojis = getMessageReactionEmojis(reactionChannel)
+    const reacting = reactingMessageId === message.id
+
+    return (
+      <div
+        data-message-reaction-context-menu="true"
+        className={styles.messageReactionContextMenu}
+        style={{
+          '--message-reaction-menu-x': `${messageReactionMenu.x}px`,
+          '--message-reaction-menu-y': `${messageReactionMenu.y}px`
+        } as React.CSSProperties}
+        role="menu"
+        aria-label="Reaccionar al mensaje"
+        aria-busy={reacting}
+      >
+        {emojis.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            className={styles.messageReactionButton}
+            onClick={() => {
+              setMessageReactionMenu(null)
+              void handleReactToMessage(message, emoji)
+            }}
+            disabled={reacting}
+            role="menuitem"
+            aria-label={`Reaccionar con ${emoji}`}
+          >
+            {emoji}
+          </button>
+        ))}
+      </div>
     )
   }
 
@@ -7871,6 +8017,7 @@ export const DesktopChat: React.FC = () => {
                               <div className={styles.messageBubbleWrap}>
                                 <article
                                   className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
+                                  onContextMenu={(event) => handleMessageReactionContextMenu(message, event)}
                                 >
                                   {message.isComment ? (
                                     <div className={styles.commentCard}>
@@ -7965,6 +8112,7 @@ export const DesktopChat: React.FC = () => {
                     </div>
                   ))}
                 </ChatMessageSurface>
+                {renderMessageReactionContextMenu()}
                 {draggingFilesOverChat ? (
                   <div className={styles.chatDropOverlay} aria-live="polite">
                     <div className={styles.chatDropOverlayCard}>
