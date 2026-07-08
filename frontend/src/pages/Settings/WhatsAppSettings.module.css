@@ -364,6 +364,16 @@
   color: var(--color-text-primary);
 }
 
+.rowActions button.dangerRowAction {
+  color: var(--neg);
+}
+
+.rowActions button.dangerRowAction:hover:not(:disabled) {
+  border-color: var(--neg);
+  background: var(--neg-soft);
+  color: var(--neg);
+}
+
 .rowActions button:disabled {
   cursor: wait;
   opacity: 0.55;

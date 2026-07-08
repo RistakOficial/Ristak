@@ -754,6 +754,12 @@ coincide con un numero oficial existente, el usuario debe conectarlo desde la
 fila de ese numero para conservar la validacion estricta. En numeros de
 WhatsApp API ligados con QR, el QR escaneado debe coincidir con el numero
 oficial esperado; si no coincide, se rechaza como `number_mismatch`.
+Los numeros standalone de WhatsApp QR/Baileys pueden eliminarse directamente en
+la tabla de Configuracion > WhatsApp: Ristak cierra la sesion QR, borra el auth
+state local, limpia preferencias de contactos y quita el numero de
+`whatsapp_api_phone_numbers`. Los numeros oficiales de YCloud/Meta no se borran
+desde Ristak; deben eliminarse en el proveedor y Ristak los retira de la lista al
+sincronizar o recibir el evento externo de eliminacion.
 
 En la ficha de contacto, la pagina de Chat desktop y el chat movil bajo
 `/movil`, la informacion del contacto permite elegir el WhatsApp de respuesta

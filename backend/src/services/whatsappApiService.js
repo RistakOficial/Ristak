@@ -3438,6 +3438,70 @@ export async function createWhatsAppQrPhoneNumber({ phoneNumberId, phoneNumber, 
   return db.get('SELECT * FROM whatsapp_api_phone_numbers WHERE id = ?', [id])
 }
 
+export async function deleteWhatsAppQrPhoneNumber({ phoneNumberId } = {}) {
+  const cleanPhoneNumberId = cleanString(phoneNumberId)
+  if (!cleanPhoneNumberId) {
+    throw new Error('Elige el número QR que quieres eliminar')
+  }
+
+  const phone = await db.get(`
+    SELECT id, provider, status, phone_number, display_phone_number, verified_name, is_default_sender
+    FROM whatsapp_api_phone_numbers
+    WHERE id = ?
+  `, [cleanPhoneNumberId])
+
+  if (!phone) {
+    throw new Error('Ese número de WhatsApp no está en la lista')
+  }
+
+  if (cleanString(phone.provider).toLowerCase() !== 'qr') {
+    throw new Error('Solo puedes eliminar números conectados por QR. Los números oficiales se eliminan desde YCloud/Meta y Ristak los limpia al sincronizar.')
+  }
+
+  await disconnectWhatsAppQrConnection({ phoneNumberId: cleanPhoneNumberId })
+
+  const configuredPhoneNumberId = cleanString(await getAppConfig(CONFIG_KEYS.phoneNumberId))
+  const shouldResetDefault = configuredPhoneNumberId === cleanPhoneNumberId || Number(phone.is_default_sender || 0) === 1
+
+  await db.run('UPDATE contacts SET preferred_whatsapp_phone_number_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE preferred_whatsapp_phone_number_id = ?', [cleanPhoneNumberId])
+  await db.run('UPDATE scheduled_chat_messages SET business_phone_number_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE business_phone_number_id = ?', [cleanPhoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [cleanPhoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [cleanPhoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_labels WHERE phone_number_id = ?', [cleanPhoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${cleanPhoneNumberId}`]).catch(() => undefined)
+  const result = await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [cleanPhoneNumberId])
+
+  if (shouldResetDefault) {
+    const nextDefault = await db.get(`
+      SELECT id, waba_id, phone_number, display_phone_number
+      FROM whatsapp_api_phone_numbers
+      ORDER BY is_default_sender DESC, updated_at DESC, phone_number ASC
+      LIMIT 1
+    `)
+
+    if (nextDefault?.id) {
+      await setDefaultSenderPhoneNumber(nextDefault.id)
+      await setAppConfig(CONFIG_KEYS.senderPhone, nextDefault.phone_number || nextDefault.display_phone_number || '')
+      await setAppConfig(CONFIG_KEYS.phoneNumberId, nextDefault.id || '')
+      await setAppConfig(CONFIG_KEYS.wabaId, nextDefault.waba_id || '')
+    } else {
+      await setAppConfig(CONFIG_KEYS.senderPhone, '')
+      await setAppConfig(CONFIG_KEYS.phoneNumberId, '')
+      await setAppConfig(CONFIG_KEYS.wabaId, '')
+    }
+  }
+
+  await setAppConfig(CONFIG_KEYS.lastSyncedAt, nowIso())
+  await setAppConfig(CONFIG_KEYS.lastError, '')
+
+  logger.info(`WhatsApp QR: número eliminado localmente: ${phone.phone_number || phone.display_phone_number || phone.id} (${phone.verified_name || 'sin nombre'})`)
+
+  return {
+    deleted: Number(result?.changes || 0),
+    phoneNumberId: cleanPhoneNumberId
+  }
+}
+
 async function getBalanceFromDb() {
   const row = await db.get(`
     SELECT amount, currency, updated_at

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
-import { db } from '../src/config/database.js'
+import { db, setAppConfig } from '../src/config/database.js'
 import {
   QR_CONSENT_TEXT,
   resetWhatsAppQrServiceForTest,
@@ -11,7 +11,7 @@ import {
   setWhatsAppQrReconnectDelayForTest,
   shutdownWhatsAppQrService
 } from '../src/services/whatsappQrService.js'
-import { createWhatsAppQrPhoneNumber } from '../src/services/whatsappApiService.js'
+import { createWhatsAppQrPhoneNumber, deleteWhatsAppQrPhoneNumber } from '../src/services/whatsappApiService.js'
 
 const BUSINESS_PHONE = '+526561234567'
 const CONNECTED_JID = '526561234567@s.whatsapp.net'
@@ -329,6 +329,74 @@ test('WhatsApp QR standalone detecta y guarda el número al escanear', async () 
     assert.equal(savedSession.last_error, null)
   } finally {
     await cleanupQrFixture(phone.id)
+  }
+})
+
+test('elimina un número WhatsApp QR standalone y limpia referencias locales', async () => {
+  const phone = await createWhatsAppQrPhoneNumber({ phoneNumber: '+526568617073', label: 'QR borrar' })
+  const contactId = `contact_qr_delete_${randomUUID()}`
+  const scheduledMessageId = `scheduled_qr_delete_${randomUUID()}`
+
+  try {
+    await db.run(
+      'INSERT INTO contacts (id, phone, full_name, source, preferred_whatsapp_phone_number_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)',
+      [contactId, '6568617073', 'Contacto QR delete', 'test', phone.id]
+    )
+    await db.run(`
+      INSERT INTO scheduled_chat_messages (
+        id, contact_id, provider, channel, transport, message_text, to_phone, business_phone_number_id, scheduled_at, status
+      ) VALUES (?, ?, 'whatsapp_api', 'whatsapp', 'qr', 'Mensaje programado', '+526561110000', ?, ?, 'scheduled')
+    `, [scheduledMessageId, contactId, phone.id, sqlFuture()])
+    await db.run(
+      'INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+      [phone.id, 'creds', '{"registered":true}']
+    )
+    await setAppConfig('whatsapp_api_phone_number_id', phone.id)
+    await setAppConfig('whatsapp_api_sender_phone', '+526568617073')
+
+    const result = await deleteWhatsAppQrPhoneNumber({ phoneNumberId: phone.id })
+
+    const deletedPhone = await db.get('SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?', [phone.id])
+    const authState = await db.get('SELECT 1 as present FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phone.id])
+    const session = await db.get('SELECT 1 as present FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phone.id])
+    const contact = await db.get('SELECT preferred_whatsapp_phone_number_id FROM contacts WHERE id = ?', [contactId])
+    const scheduled = await db.get('SELECT business_phone_number_id FROM scheduled_chat_messages WHERE id = ?', [scheduledMessageId])
+
+    assert.equal(result.deleted, 1)
+    assert.equal(deletedPhone, null)
+    assert.equal(authState, null)
+    assert.equal(session, null)
+    assert.equal(contact.preferred_whatsapp_phone_number_id, null)
+    assert.equal(scheduled.business_phone_number_id, null)
+  } finally {
+    await db.run('DELETE FROM scheduled_chat_messages WHERE id = ?', [scheduledMessageId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+    await cleanupQrFixture(phone.id)
+    await setAppConfig('whatsapp_api_phone_number_id', '')
+    await setAppConfig('whatsapp_api_sender_phone', '')
+  }
+})
+
+test('no elimina números oficiales de YCloud desde el endpoint local de QR', async () => {
+  const phoneNumberId = `phone_ycloud_delete_guard_${randomUUID()}`
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        api_send_enabled, qr_send_enabled, qr_status, status
+      ) VALUES (?, 'ycloud', 'waba_guard', '+526568617074', '+52 656 861 7074', 'YCloud guard', 1, 0, 'disconnected', 'CONNECTED')
+    `, [phoneNumberId])
+
+    await assert.rejects(
+      () => deleteWhatsAppQrPhoneNumber({ phoneNumberId }),
+      /Solo puedes eliminar números conectados por QR/
+    )
+
+    const row = await db.get('SELECT id FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    assert.equal(row.id, phoneNumberId)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
   }
 })
 

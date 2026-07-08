@@ -8,6 +8,7 @@ import {
   disconnectWhatsAppApiView,
   disconnectMetaDirectConnectionView,
   disconnectWhatsAppQrView,
+  deleteWhatsAppQrPhoneNumberView,
   getWhatsAppApiConnectionStatus,
   getMetaDirectConnectUrlView,
   getMetaDirectSetupPrefillView,
@@ -80,6 +81,7 @@ router.get('/qr/drip-settings', getWhatsAppQrDripSettingsView)
 router.put('/qr/drip-settings', updateWhatsAppQrDripSettingsView)
 router.get('/qr', getWhatsAppQrView)
 router.post('/qr/phone-numbers', createWhatsAppQrPhoneNumberView)
+router.delete('/qr/phone-numbers/:id', deleteWhatsAppQrPhoneNumberView)
 router.post('/qr/connect', connectWhatsAppQrView)
 router.post('/qr/disconnect', disconnectWhatsAppQrView)
 router.get('/messages/scheduled', listScheduledChatMessagesView)

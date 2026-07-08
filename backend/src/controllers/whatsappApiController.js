@@ -2,6 +2,7 @@ import {
   connectWhatsAppQrForPhone,
   connectWhatsAppApi,
   createWhatsAppQrPhoneNumber,
+  deleteWhatsAppQrPhoneNumber,
   completeMetaDirectConnection,
   createMetaDirectConnectUrl,
   disconnectMetaDirectConnection,
@@ -571,6 +572,21 @@ export async function createWhatsAppQrPhoneNumberView(req, res) {
     res.status(400).json({
       success: false,
       error: error.message || 'No se pudo crear el número QR de WhatsApp'
+    })
+  }
+}
+
+export async function deleteWhatsAppQrPhoneNumberView(req, res) {
+  try {
+    await deleteWhatsAppQrPhoneNumber({
+      phoneNumberId: req.params?.id
+    })
+    res.json({ success: true, data: await getWhatsAppApiStatus() })
+  } catch (error) {
+    logger.error(`Error eliminando número WhatsApp QR: ${error.message}`)
+    res.status(400).json({
+      success: false,
+      error: error.message || 'No se pudo eliminar el número QR de WhatsApp'
     })
   }
 }

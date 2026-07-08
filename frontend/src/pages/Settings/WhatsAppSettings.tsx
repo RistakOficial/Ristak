@@ -17,6 +17,7 @@ import {
   Send,
   ShieldCheck,
   Star,
+  Trash2,
   Unplug,
   Wallet
 } from 'lucide-react'
@@ -269,6 +270,7 @@ export const WhatsAppSettings: React.FC = () => {
   const [metaBusinessAccountId, setMetaBusinessAccountId] = useState('')
   const [qrConnectingPhoneId, setQrConnectingPhoneId] = useState('')
   const [qrDisconnectingPhoneId, setQrDisconnectingPhoneId] = useState('')
+  const [qrDeletingPhoneId, setQrDeletingPhoneId] = useState('')
   const [qrConsentPhone, setQrConsentPhone] = useState<WhatsAppApiPhoneNumber | null>(null)
   const [connectionChoice, setConnectionChoice] = useState<ConnectionChoice | null>(null)
   const [addNumberModalOpen, setAddNumberModalOpen] = useState(false)
@@ -691,6 +693,36 @@ export const WhatsAppSettings: React.FC = () => {
       },
       'Desconectar',
       'Cancelar'
+    )
+  }
+
+  const deleteQrPhone = (phone: WhatsAppApiPhoneNumber) => {
+    showConfirm(
+      'Eliminar WhatsApp QR',
+      `Vas a eliminar ${getPhoneLabel(phone)} de la lista y borrar su sesión local de WhatsApp Web. Los mensajes y contactos guardados se quedan en Ristak. Esta acción no se puede deshacer.`,
+      async () => {
+        setQrDeletingPhoneId(phone.id)
+        try {
+          const nextStatus = await whatsappApiService.deleteQrPhoneNumber(phone.id)
+          setApiStatus(nextStatus)
+          if (selectedPhoneId === phone.id) {
+            const nextSelectedPhoneId = nextStatus.sender.phoneNumberId ||
+              nextStatus.phoneNumbers.find(item => item.is_default_sender)?.id ||
+              nextStatus.phoneNumbers[0]?.id ||
+              ''
+            setSelectedPhoneId(nextSelectedPhoneId)
+          }
+          showToast('success', 'WhatsApp QR eliminado', 'Ese número ya no aparecerá en la lista de WhatsApp.')
+        } catch (error) {
+          showToast('error', 'No se pudo eliminar', error instanceof Error ? error.message : 'Intenta nuevamente')
+        } finally {
+          setQrDeletingPhoneId('')
+        }
+      },
+      'Eliminar',
+      'Cancelar',
+      undefined,
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
@@ -1149,6 +1181,7 @@ export const WhatsAppSettings: React.FC = () => {
                 <tbody>
                   {filteredPhones.map((row) => {
                     const { phone, qrPending, qrConnected, qrError, qrStatus, displayName, isSender, apiEnabled } = row
+                    const canDeleteQrPhone = isStandaloneQrPhone(phone)
 
                     return (
                       <React.Fragment key={phone.id}>
@@ -1201,6 +1234,18 @@ export const WhatsAppSettings: React.FC = () => {
                               {!isSender && (
                                 <button type="button" onClick={() => makePhoneDefault(phone)} disabled={defaultingPhoneId === phone.id} title="Hacer principal" aria-label={`Hacer principal ${getPhoneLabel(phone)}`}>
                                   <Star size={15} />
+                                </button>
+                              )}
+                              {canDeleteQrPhone && (
+                                <button
+                                  type="button"
+                                  className={styles.dangerRowAction}
+                                  onClick={() => deleteQrPhone(phone)}
+                                  disabled={qrDeletingPhoneId === phone.id}
+                                  title="Eliminar WhatsApp QR"
+                                  aria-label={`Eliminar WhatsApp QR ${getPhoneLabel(phone)}`}
+                                >
+                                  <Trash2 size={15} />
                                 </button>
                               )}
                             </div>

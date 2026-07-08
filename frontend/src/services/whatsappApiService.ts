@@ -642,6 +642,7 @@ export const whatsappApiService = {
   getQrDripSettings: () => apiClient.get<WhatsAppQrDripSettings>('/whatsapp-api/qr/drip-settings'),
   updateQrDripSettings: (payload: WhatsAppQrDripSettingsPayload) => apiClient.put<WhatsAppQrDripSettings>('/whatsapp-api/qr/drip-settings', payload),
   createQrPhoneNumber: (payload: WhatsAppQrPhoneNumberPayload) => apiClient.post<WhatsAppApiPhoneNumber>('/whatsapp-api/qr/phone-numbers', payload),
+  deleteQrPhoneNumber: (phoneNumberId: string) => apiClient.delete<WhatsAppApiStatus>(`/whatsapp-api/qr/phone-numbers/${encodeURIComponent(phoneNumberId)}`),
   connectQr: (payload: WhatsAppQrConnectPayload) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/connect', payload),
   disconnectQr: (phoneNumberId: string) => apiClient.post<WhatsAppQrSession>('/whatsapp-api/qr/disconnect', { phoneNumberId }),
   getTemplates: (status: string | null = WHATSAPP_API_APPROVED_TEMPLATE_STATUS) => apiClient.get<WhatsAppApiTemplatesResponse>('/whatsapp-api/templates', {
