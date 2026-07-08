@@ -1,0 +1,413 @@
+import SwiftUI
+
+/// Pantalla de la bandeja de chats (lista + chips + estados, doc research/03).
+/// Se usa igual como raíz del stack (iPhone) y como sidebar del split (iPad).
+struct InboxScreen: View {
+    @Bindable var viewModel: InboxViewModel
+    /// Conversación abierta en el detalle (iPad) para resaltar la fila.
+    var selectedContactID: String?
+    let onOpenChat: (ChatContact) -> Void
+    let onOpenAssistant: () -> Void
+
+    @Environment(ShellState.self) private var shell
+
+    @State private var activeSheet: InboxSheet?
+
+    enum InboxSheet: Identifiable {
+        case more(ChatContact)
+        case tag(ChatContact)
+        case schedule(ChatContact)
+        case filters
+        case newChat
+
+        var id: String {
+            switch self {
+            case .more(let contact): return "more-\(contact.id)"
+            case .tag(let contact): return "tag-\(contact.id)"
+            case .schedule(let contact): return "schedule-\(contact.id)"
+            case .filters: return "filters"
+            case .newChat: return "new-chat"
+            }
+        }
+    }
+
+    var body: some View {
+        content
+            .navigationTitle("Chats")
+            .navigationSubtitle(viewModel.unreadTotal > 0 ? "\(viewModel.unreadTotal) sin leer" : "")
+            .searchable(text: $viewModel.searchText, prompt: "Buscar chats")
+            .onChange(of: viewModel.searchText) {
+                viewModel.searchTextDidChange()
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        activeSheet = .newChat
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("Nuevo chat")
+                }
+            }
+            .sheet(item: $activeSheet) { sheet in
+                sheetContent(sheet)
+                    .presentationDetents([.medium, .large])
+            }
+            .sensoryFeedback(.selection, trigger: viewModel.selectionHapticTick)
+            .sensoryFeedback(.impact(weight: .medium), trigger: viewModel.impactHapticTick)
+            .sensoryFeedback(.success, trigger: viewModel.successHapticTick)
+            .alert("Aviso", isPresented: transientAlertBinding) {
+                Button("Entendido", role: .cancel) {}
+            } message: {
+                Text(viewModel.transientAlertMessage ?? "")
+            }
+    }
+
+    // MARK: - Estados raíz
+
+    @ViewBuilder
+    private var content: some View {
+        if viewModel.isAccessDenied, viewModel.displayRows.isEmpty {
+            RistakEmptyState(
+                icon: "lock",
+                title: "Sin acceso",
+                message: "No tienes acceso a esta sección."
+            )
+        } else if viewModel.isInitialLoading, viewModel.displayRows.isEmpty {
+            RistakLoadingView(message: "Cargando chats…")
+        } else if let error = viewModel.loadErrorMessage, viewModel.displayRows.isEmpty, !viewModel.isSearchActive {
+            RistakErrorState(message: error) {
+                Task { await viewModel.refreshNow() }
+            }
+        } else {
+            inboxList
+        }
+    }
+
+    // MARK: - Lista
+
+    private var inboxList: some View {
+        List {
+            if viewModel.isShowingCachedData {
+                CacheRefreshPillRow()
+                    .listRowSeparator(.hidden)
+            }
+
+            if viewModel.isSelecting {
+                ChatSelectionPanel(
+                    selectedCount: viewModel.selectedIDs.count,
+                    allVisibleSelected: viewModel.allVisibleSelected,
+                    isArchivedView: viewModel.archivedViewActive,
+                    onMarkRead: { viewModel.markSelectedRead() },
+                    onArchiveOrRestore: {
+                        viewModel.archivedViewActive ? viewModel.restoreSelected() : viewModel.archiveSelected()
+                    },
+                    onToggleSelectVisible: {
+                        viewModel.allVisibleSelected ? viewModel.deselectVisible() : viewModel.selectVisible()
+                    },
+                    onCancel: { viewModel.cancelSelection() }
+                )
+                .listRowSeparator(.hidden)
+            } else if !viewModel.isSearchActive {
+                chipsRow
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+            }
+
+            if viewModel.showsAssistantRow {
+                AssistantChatRow()
+                    .onTapGesture { onOpenAssistant() }
+            }
+
+            if viewModel.archivedViewActive {
+                ArchivedAccessRow(count: viewModel.archivedCount, isBackRow: true)
+                    .onTapGesture { viewModel.closeArchivedView() }
+            } else if viewModel.showsArchivedRow {
+                ArchivedAccessRow(count: viewModel.archivedCount, isBackRow: false)
+                    .onTapGesture { viewModel.openArchivedView() }
+            }
+
+            ForEach(viewModel.displayRows) { contact in
+                ChatRowView(
+                    contact: contact,
+                    formatters: viewModel.formatters,
+                    showPreview: viewModel.showLastPreview,
+                    showUnreadIndicators: viewModel.showUnreadIndicators,
+                    isMuted: viewModel.localState.isMuted(contact.id),
+                    isSelecting: viewModel.isSelecting,
+                    isSelected: viewModel.selectedIDs.contains(contact.id),
+                    isActive: selectedContactID == contact.id,
+                    tagNames: viewModel.tagNames(for: contact)
+                )
+                .onTapGesture { handleTap(contact) }
+                .onLongPressGesture(minimumDuration: 0.35) { handleLongPress(contact) }
+                .onAppear { viewModel.loadMoreIfNeeded(currentRow: contact) }
+            }
+
+            if viewModel.isLoadingMore {
+                HStack(spacing: RistakTheme.Spacing.xs) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Cargando más chats…")
+                        .font(.footnote)
+                        .foregroundStyle(RistakTheme.textDim)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .listRowSeparator(.hidden)
+            }
+
+            if viewModel.displayRows.isEmpty, !viewModel.isInitialLoading {
+                emptyContent
+                    .listRowSeparator(.hidden)
+            }
+        }
+        .listStyle(.plain)
+        .refreshable {
+            await viewModel.refreshNow()
+        }
+    }
+
+    private func handleTap(_ contact: ChatContact) {
+        if viewModel.isSelecting {
+            viewModel.toggleSelected(contactID: contact.id)
+        } else {
+            onOpenChat(contact)
+        }
+    }
+
+    private func handleLongPress(_ contact: ChatContact) {
+        guard !viewModel.isSelecting else { return }
+        viewModel.triggerImpactHaptic()
+        activeSheet = .more(contact)
+    }
+
+    // MARK: - Chips de filtros (doc 03 §4.1)
+
+    private var chipsRow: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: RistakTheme.Spacing.xs) {
+                if viewModel.activeFilter.isCommentsLens {
+                    commentsLensChips
+                } else {
+                    standardChips
+                }
+
+                Button {
+                    activeSheet = .filters
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(RistakTheme.textPrimary)
+                        .frame(width: 34, height: 34)
+                        .background(Circle().fill(RistakTheme.controlRest))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Más filtros")
+            }
+            .padding(.horizontal, RistakTheme.Spacing.md)
+        }
+    }
+
+    @ViewBuilder
+    private var standardChips: some View {
+        ForEach(viewModel.chipModels) { chip in
+            if chip.leadingDivider {
+                Rectangle()
+                    .fill(RistakTheme.border)
+                    .frame(width: 1, height: 22)
+                    .accessibilityHidden(true)
+            }
+            RistakFilterChip(
+                title: chip.title,
+                count: chip.count,
+                isSelected: chip.isSelected
+            ) {
+                viewModel.select(filter: chip.filter)
+            }
+        }
+    }
+
+    /// Modo lente de comentarios: `Comentarios (tap = salir) · Todas ·
+    /// Facebook · Instagram · +` (doc 03 §4.1).
+    @ViewBuilder
+    private var commentsLensChips: some View {
+        RistakFilterChip(
+            title: "Comentarios",
+            systemImage: "xmark",
+            isSelected: true
+        ) {
+            viewModel.exitCommentsLens()
+        }
+
+        ForEach(ChatCommentsPlatform.allCases, id: \.rawValue) { platform in
+            RistakFilterChip(
+                title: platform.title,
+                isSelected: viewModel.commentsPlatform == platform
+            ) {
+                viewModel.selectCommentsPlatform(platform)
+            }
+        }
+    }
+
+    // MARK: - Vacíos y sugerencias (doc 03 §4.9)
+
+    @ViewBuilder
+    private var emptyContent: some View {
+        if viewModel.isSearchActive {
+            if viewModel.isSearchingContacts {
+                HStack(spacing: RistakTheme.Spacing.xs) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Buscando contactos...")
+                        .font(.subheadline)
+                        .foregroundStyle(RistakTheme.textDim)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, RistakTheme.Spacing.xl)
+            } else if !viewModel.contactSuggestions.isEmpty {
+                Section {
+                    ForEach(viewModel.contactSuggestions) { contact in
+                        suggestionRow(contact)
+                    }
+                } header: {
+                    Text("Contactos encontrados")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(RistakTheme.textDim)
+                }
+            } else {
+                RistakEmptyState(
+                    icon: "magnifyingglass",
+                    title: "Sin resultados",
+                    message: "No encontramos chats ni contactos con esa búsqueda."
+                )
+                .frame(minHeight: 280)
+            }
+        } else if viewModel.archivedViewActive {
+            RistakEmptyState(
+                icon: "archivebox",
+                title: "No hay nada archivado",
+                message: "Los chats que archives aparecerán aquí."
+            )
+            .frame(minHeight: 280)
+        } else if viewModel.activeFilter != .quick(.all) {
+            RistakEmptyState(
+                icon: "bubble.left.and.bubble.right",
+                title: "No hay chats en este filtro",
+                message: "Cambia el filtro o busca un contacto para iniciar una conversación."
+            )
+            .frame(minHeight: 280)
+        } else {
+            VStack(spacing: RistakTheme.Spacing.md) {
+                RistakEmptyState(
+                    icon: "bubble.left.and.bubble.right",
+                    title: "Aún no hay chats",
+                    message: "Cuando llegue un mensaje de WhatsApp, Messenger o Instagram aparecerá aquí."
+                )
+                .frame(minHeight: 240)
+
+                Button {
+                    activeSheet = .newChat
+                } label: {
+                    Label("Nuevo chat", systemImage: "plus")
+                        .fontWeight(.semibold)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.bottom, RistakTheme.Spacing.xl)
+        }
+    }
+
+    private func suggestionRow(_ contact: ChatContact) -> some View {
+        HStack(spacing: RistakTheme.Spacing.sm) {
+            ContactAvatarView(
+                name: ChatRowSignals.displayName(contact),
+                photoURL: contact.profilePhotoUrl.flatMap(URL.init(string:)),
+                size: 40,
+                channel: ChatRowSignals.badgeChannel(contact)
+            )
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ChatRowSignals.displayName(contact))
+                    .font(.body)
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .lineLimit(1)
+
+                Text(ChatRowSignals.contactDetailSubtitle(contact))
+                    .font(.caption)
+                    .foregroundStyle(RistakTheme.textDim)
+                    .lineLimit(1)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onOpenChat(contact) }
+    }
+
+    // MARK: - Sheets
+
+    @ViewBuilder
+    private func sheetContent(_ sheet: InboxSheet) -> some View {
+        switch sheet {
+        case .more(let contact):
+            ChatMoreActionsSheet(contact: contact, viewModel: viewModel) { action in
+                handleMoreAction(action, contact: contact)
+            }
+        case .tag(let contact):
+            ContactTagSheet(contact: contact, viewModel: viewModel)
+        case .schedule(let contact):
+            InboxScheduleMessageSheet(
+                contact: contact,
+                viewModel: viewModel,
+                businessTimeZone: viewModel.formatters.timeZone
+            )
+        case .filters:
+            FilterManagerSheet(viewModel: viewModel)
+        case .newChat:
+            NewChatSheet(viewModel: viewModel) { contact in
+                onOpenChat(contact)
+            }
+        }
+    }
+
+    private func handleMoreAction(_ action: ChatMoreAction, contact: ChatContact) {
+        switch action {
+        case .select:
+            viewModel.enterSelection(with: contact.id)
+        case .scheduleAppointment:
+            // TODO(chats-inbox): cambiar al sheet nativo de cita cuando el
+            // módulo Calendarios exponga su formulario embebible; por ahora
+            // salta a la sección con el contacto precargado (patrón RN
+            // `navigateToContactTool`).
+            shell.openCalendars(contactID: contact.id)
+        case .registerPayment:
+            // TODO(chats-inbox): ídem con el sheet de cobro del módulo Pagos.
+            shell.openPayments(contactID: contact.id)
+        case .scheduleMessage:
+            presentAfterDismiss(.schedule(contact))
+        case .addTag:
+            presentAfterDismiss(.tag(contact))
+        case .toggleMute:
+            viewModel.toggleMuted(contactID: contact.id)
+        case .markRead:
+            viewModel.markRead(contactID: contact.id)
+        case .toggleArchive:
+            viewModel.setArchived(!viewModel.localState.isArchived(contact.id), contactID: contact.id)
+        }
+    }
+
+    /// Espera la animación de cierre del sheet anterior antes de abrir otro
+    /// (iOS bloquea modal sobre modal).
+    private func presentAfterDismiss(_ sheet: InboxSheet) {
+        Task {
+            try? await Task.sleep(nanoseconds: 420_000_000)
+            activeSheet = sheet
+        }
+    }
+
+    private var transientAlertBinding: Binding<Bool> {
+        Binding(
+            get: { viewModel.transientAlertMessage != nil },
+            set: { if !$0 { viewModel.transientAlertMessage = nil } }
+        )
+    }
+}

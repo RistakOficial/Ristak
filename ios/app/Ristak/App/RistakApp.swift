@@ -1,0 +1,36 @@
+import SwiftUI
+
+/// Punto de entrada. Crea los stores raíz una sola vez y los inyecta por
+/// Environment (Observation): sesión, config de cuenta/usuario, permisos y
+/// estado del shell.
+@main
+struct RistakApp: App {
+    @UIApplicationDelegateAdaptor(RistakAppDelegate.self) private var appDelegate
+
+    @State private var session: SessionStore
+    @State private var appConfig: AppConfigStore
+    @State private var access: AccessStore
+    @State private var shellState: ShellState
+
+    init() {
+        let session = SessionStore()
+        session.pushUnregisterHandler = {
+            await PushRegistrar.shared.unregisterForLogout()
+        }
+        _session = State(initialValue: session)
+        _appConfig = State(initialValue: AppConfigStore())
+        _access = State(initialValue: AccessStore(session: session))
+        _shellState = State(initialValue: ShellState())
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            RootView()
+                .environment(session)
+                .environment(appConfig)
+                .environment(access)
+                .environment(shellState)
+                .environment(NotificationRouter.shared)
+        }
+    }
+}
