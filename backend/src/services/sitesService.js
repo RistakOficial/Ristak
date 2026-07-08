@@ -19207,15 +19207,27 @@ function buildCalendarEmbedMetaParams(calendarMetaOverride) {
   }
 }
 
-// Acción "Al agendar" configurada en el bloque de calendario. 'next_page' y
-// 'redirect' navegan la página completa (vía el puente postMessage del iframe);
-// cualquier otra cosa deja que el calendario use sus propias reglas.
+// Acción "Al agendar" configurada en el bloque de calendario. Las acciones de
+// navegación usan el puente postMessage del iframe; cualquier otra cosa deja que
+// el calendario use sus propias reglas.
 function getCalendarEmbedCompletionRedirect(block = {}, context = {}) {
   const settings = block?.settings || {}
   const action = cleanString(settings.calendarCompletionAction || settings.calendar_completion_action)
   if (action === 'next_page') {
     const next = getNextPage(context.site, context.pageId)
     return next ? buildPageHref(next.id, { site: context.site, linkStyle: context.linkStyle }) : ''
+  }
+  if (action === 'specific_page') {
+    const pages = normalizeSitePages(context.site)
+    const targetPageId = cleanString(
+      settings.calendarCompletionPageId ||
+      settings.calendar_completion_page_id ||
+      settings.completionPageId ||
+      settings.completion_page_id
+    )
+    return targetPageId && pages.some(page => page.id === targetPageId)
+      ? buildPageHref(targetPageId, { site: context.site, linkStyle: context.linkStyle })
+      : ''
   }
   if (action === 'redirect') {
     return safeHref(settings.calendarCompletionRedirectUrl || settings.calendar_completion_redirect_url || '', '')

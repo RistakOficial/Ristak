@@ -688,6 +688,28 @@ test('calendar embed bridges to the next funnel page on booking', async () => {
   assert.equal(url.searchParams.get('bookingBridge'), '1')
 })
 
+test('calendar embed bridges to a specific site page on booking', async () => {
+  const site = calendarSite({
+    calendarCompletionAction: 'specific_page',
+    calendarCompletionPageId: 'page-3'
+  })
+  site.theme.pages = [
+    { id: 'page-1', title: 'Pagina 1', sortOrder: 0 },
+    { id: 'page-2', title: 'Pagina 2', sortOrder: 1 },
+    { id: 'page-3', title: 'Gracias', sortOrder: 2 }
+  ]
+  const html = await renderPublicSiteHtml(site, {
+    pageId: 'page-1',
+    trackingEnabled: false,
+    preview: true
+  })
+
+  assert.match(html, /data-rstk-calendar-redirect="[^"]*page-3[^"]*"/)
+  assert.doesNotMatch(html, /data-rstk-calendar-redirect="[^"]*page-2[^"]*"/)
+  const url = getCalendarFrameUrl(html)
+  assert.equal(url.searchParams.get('bookingBridge'), '1')
+})
+
 test('calendar embeds created on funnel landings default to next page on booking', async () => {
   const site = await createSite({
     siteType: 'landing_page',

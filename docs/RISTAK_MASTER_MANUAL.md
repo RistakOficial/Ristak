@@ -1525,6 +1525,9 @@ En el editor visual, los bloques de calendario embebido eligen el calendario y
 la accion posterior a la cita desde la barra superior del editor. El inspector
 derecho solo muestra el estado del calendario seleccionado y los controles de
 diseno/estilo, para no duplicar la misma decision en dos superficies.
+Las acciones de formularios, calendarios, pagos y botones pueden avanzar a la
+siguiente pagina, redirigir a una URL o ir a una pagina especifica del mismo
+proyecto usando el selector de paginas de esa landing.
 
 La ruta publica puede depender de dominio, slug, host o rutas internas. Cualquier
 cambio a Sites debe revisar editor, renderer publico, submissions y tracking.

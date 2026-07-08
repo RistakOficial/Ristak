@@ -5899,10 +5899,10 @@ const getFormCompletionAction = (settings: Record<string, unknown>): FormComplet
   return isFormCompletionAction(action) ? action : 'form_default'
 }
 
-type CalendarCompletionAction = 'calendar_default' | 'next_page' | 'redirect'
+type CalendarCompletionAction = 'calendar_default' | 'next_page' | 'specific_page' | 'redirect'
 const getCalendarCompletionAction = (settings: Record<string, unknown>): CalendarCompletionAction => {
   const action = getSettingString(settings, 'calendarCompletionAction')
-  return action === 'next_page' || action === 'redirect' ? action : 'calendar_default'
+  return action === 'next_page' || action === 'specific_page' || action === 'redirect' ? action : 'calendar_default'
 }
 
 const getForwardFunnelPage = (site?: PublicSite | null, activePageId = ''): SitePage | null => {
@@ -35030,6 +35030,16 @@ const getCompletionTargetPageId = (
   return getDefaultCompletionPageId(pages, activePageId)
 }
 
+const getCalendarCompletionTargetPageId = (
+  settings: Record<string, unknown> = {},
+  pages: SitePage[] = [],
+  activePageId = ''
+) => {
+  const configured = getSettingString(settings, 'calendarCompletionPageId') || getSettingString(settings, 'calendar_completion_page_id')
+  if (configured && pages.some(page => page.id === configured)) return configured
+  return getDefaultCompletionPageId(pages, activePageId)
+}
+
 const FormCompletionSettingsControls: React.FC<{
   settings?: Record<string, unknown>
   pages?: SitePage[]
@@ -35210,6 +35220,7 @@ const CalendarEmbedToolbarControls: React.FC<{
   const completionAction = !hasForwardPage && storedCompletionAction === 'next_page'
     ? 'calendar_default'
     : storedCompletionAction
+  const completionTargetPageId = getCalendarCompletionTargetPageId(settings, pages, activePageId)
 
   const commitSoon = () => {
     window.setTimeout(onSave, 0)
@@ -35248,18 +35259,42 @@ const CalendarEmbedToolbarControls: React.FC<{
           <span>Al agendar</span>
           <CustomSelect
             value={completionAction}
-            dropdownMinWidth={280}
+            dropdownMinWidth={320}
             onChange={(event) => {
-              onPatchSettings({ calendarCompletionAction: event.target.value })
+              const action = event.target.value as CalendarCompletionAction
+              const patch: Record<string, unknown> = { calendarCompletionAction: action }
+              if (action === 'specific_page' && !getSettingString(settings, 'calendarCompletionPageId')) {
+                patch.calendarCompletionPageId = completionTargetPageId
+              }
+              onPatchSettings(patch)
               commitSoon()
             }}
             onBlur={onSave}
           >
             <option value="calendar_default">Usar reglas del calendario</option>
             {hasForwardPage && <option value="next_page">Ir a la siguiente página</option>}
+            <option value="specific_page">Ir a una página específica</option>
             <option value="redirect">Redirigir a URL</option>
           </CustomSelect>
         </label>
+        {completionAction === 'specific_page' && pages.length > 0 && (
+          <label className={`${styles.field} ${styles.formToolbarField}`}>
+            <span>Página destino</span>
+            <CustomSelect
+              value={completionTargetPageId}
+              dropdownMinWidth={240}
+              onChange={(event) => {
+                onPatchSettings({ calendarCompletionPageId: event.target.value })
+                commitSoon()
+              }}
+              onBlur={onSave}
+            >
+              {pages.map(page => (
+                <option key={page.id} value={page.id}>{page.title || 'Página'}</option>
+              ))}
+            </CustomSelect>
+          </label>
+        )}
         {completionAction === 'redirect' && (
           <label className={`${styles.field} ${styles.formToolbarField}`}>
             <span>URL destino</span>
