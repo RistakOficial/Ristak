@@ -873,6 +873,22 @@ function getCommentFallbackText(messageType = '', status: string | undefined = '
   return 'Comentario sin texto';
 }
 
+function buildCommentPost(data: Record<string, unknown>, messageType = '', postDeleted = false): ChatMessage['commentPost'] | undefined {
+  if (!isCommentMessageType(messageType)) return undefined;
+
+  const message = readString(data, ['post_message', 'postMessage']);
+  const imageUrl = readString(data, ['post_image_url', 'postImageUrl']);
+  const permalink = readString(data, ['post_permalink', 'postPermalink', 'permalink']);
+  if (!message && !imageUrl && !permalink && !postDeleted) return undefined;
+
+  return {
+    message: message || (postDeleted ? 'Publicación eliminada' : ''),
+    imageUrl,
+    permalink,
+    deleted: postDeleted,
+  };
+}
+
 function getMessageProviderId(message: ChatMessage) {
   return message.providerMessageId || message.id;
 }
@@ -1001,6 +1017,7 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
           : normalizedMessageType === 'comment_reply_private'
             ? 'private'
             : undefined,
+        commentPost: buildCommentPost(data, messageType, postDeleted),
       };
     })
     .filter((message): message is ChatMessage => Boolean(message));

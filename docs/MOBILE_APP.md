@@ -157,6 +157,15 @@ header fusionadas dentro de una sola capsula compacta. El boton de canal puede
 colorear el glifo segun el canal, pero no debe volver a meterlo en un circulo
 solido.
 
+Los comentarios de Facebook e Instagram en la conversacion nativa deben mantener
+la misma paridad que escritorio y `/movil`: el globo muestra si fue comentario,
+respuesta publica o respuesta privada, y cuando el backend entrega contexto de
+la publicacion comentada (`post_message`, `post_image_url`, `post_permalink` o
+`post_deleted`) se renderiza una ficha compacta de esa publicacion dentro del
+mismo globo. Si hay link, la ficha abre la publicacion; si Meta marca el post
+como eliminado, debe mostrarse como `Publicacion eliminada` sin perder el
+comentario conservado en Ristak.
+
 El fondo de la conversacion nativa usa una textura sutil detras de los globos y
 un parallax real con `expo-sensors`/`DeviceMotion`: la inclinacion del iPhone
 desplaza solo la textura unos pixeles; los mensajes, header y composer no deben

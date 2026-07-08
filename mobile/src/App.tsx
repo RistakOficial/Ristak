@@ -72,6 +72,7 @@ import {
   CreditCard,
   DollarSign,
   Edit3,
+  ExternalLink,
   FileText,
   FilePlus,
   Forward,
@@ -20533,10 +20534,17 @@ function NativeMessageBubble({
         {message.location ? <NativeMessageLocation location={message.location} /> : null}
         {message.isComment ? (
           <View style={styles.commentContext}>
-            <MessageCircle size={12} color={COLORS.accent} strokeWidth={2.5} />
-            <Text style={styles.commentContextText}>
-              {message.commentReplyMode === 'public' ? 'Respuesta pública al comentario' : message.commentReplyMode === 'private' ? 'Respuesta por privado' : 'Comentario'}
-            </Text>
+            <View style={styles.commentContextLabel}>
+              <MessageCircle size={12} color={COLORS.accent} strokeWidth={2.5} />
+              <Text style={styles.commentContextText}>
+                {message.commentReplyMode === 'public'
+                  ? 'Respuesta pública al comentario'
+                  : message.commentReplyMode === 'private'
+                    ? 'Respuesta por privado'
+                    : 'Comentó en tu publicación'}
+              </Text>
+            </View>
+            {message.commentPost ? <NativeCommentPostCard post={message.commentPost} /> : null}
           </View>
         ) : null}
         {message.emailDetails ? (
@@ -20600,6 +20608,46 @@ function NativeFormattedMessageText({ failed, outbound, text }: { failed?: boole
         </Text>
       ))}
     </Text>
+  );
+}
+
+function NativeCommentPostCard({ post }: { post: NonNullable<ChatMessage['commentPost']> }) {
+  const visibleMessage = post.message && !(post.deleted && post.message === 'Publicación eliminada') ? post.message : '';
+  const mutedText = post.deleted ? 'Comentario conservado en Ristak' : 'Ver publicación';
+  const content = (
+    <>
+      {post.imageUrl ? (
+        <Image source={{ uri: post.imageUrl }} resizeMode="cover" style={styles.commentPostThumb as ImageStyle} />
+      ) : (
+        <View style={styles.commentPostThumbPlaceholder}>
+          <ImageIcon size={18} color={COLORS.meta} strokeWidth={2.35} />
+        </View>
+      )}
+      <View style={styles.commentPostMeta}>
+        <Text numberOfLines={1} style={styles.commentPostKind}>{post.deleted ? 'Publicación eliminada' : 'Publicación'}</Text>
+        {visibleMessage ? (
+          <Text numberOfLines={2} style={styles.commentPostText}>{visibleMessage}</Text>
+        ) : (
+          <Text numberOfLines={1} style={styles.commentPostTextMuted}>{mutedText}</Text>
+        )}
+      </View>
+      {post.permalink ? <ExternalLink size={13} color={COLORS.meta} strokeWidth={2.35} /> : null}
+    </>
+  );
+
+  if (!post.permalink) {
+    return <View style={[styles.commentPostChip, styles.commentPostChipStatic]}>{content}</View>;
+  }
+
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel="Abrir publicación"
+      onPress={() => void Linking.openURL(post.permalink || '').catch(() => undefined)}
+      style={({ pressed }) => [styles.commentPostChip, pressed && styles.pressed]}
+    >
+      {content}
+    </Pressable>
   );
 }
 
@@ -28514,6 +28562,12 @@ function createAppStyles() {
   },
   commentContext: {
     alignSelf: 'flex-start',
+    width: '100%',
+    maxWidth: 286,
+    gap: 7,
+  },
+  commentContextLabel: {
+    alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -28526,6 +28580,59 @@ function createAppStyles() {
     color: COLORS.meta,
     fontSize: 11,
     fontWeight: '900',
+  },
+  commentPostChip: {
+    width: '100%',
+    minHeight: 58,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    padding: 6,
+    backgroundColor: isLight ? 'rgba(255,255,255,0.78)' : 'rgba(58,58,60,0.48)',
+    borderWidth: 1,
+    borderColor: isLight ? 'rgba(60,60,67,0.12)' : 'rgba(235,235,245,0.12)',
+  },
+  commentPostChipStatic: {
+    opacity: 0.94,
+  },
+  commentPostThumb: {
+    width: 46,
+    height: 46,
+    borderRadius: 9,
+    backgroundColor: COLORS.panelSoft,
+  },
+  commentPostThumbPlaceholder: {
+    width: 46,
+    height: 46,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: isLight ? 'rgba(60,60,67,0.10)' : 'rgba(255,255,255,0.08)',
+  },
+  commentPostMeta: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  commentPostKind: {
+    color: messageBubbleMetaColor,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  commentPostText: {
+    color: messageBubbleTextColor,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  commentPostTextMuted: {
+    color: messageBubbleMetaColor,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
   },
   messageRoutingNote: {
     color: COLORS.meta,

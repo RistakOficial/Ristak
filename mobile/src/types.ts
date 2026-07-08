@@ -169,6 +169,12 @@ export type ChatMessage = {
   location?: ChatLocation;
   isComment?: boolean;
   commentReplyMode?: 'public' | 'private';
+  commentPost?: {
+    message?: string;
+    imageUrl?: string;
+    permalink?: string;
+    deleted?: boolean;
+  };
   linkPreview?: {
     kind?: string;
     title?: string;
