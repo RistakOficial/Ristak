@@ -717,7 +717,6 @@ const RSTK_BASE_CSS = `
   }
   .rstkCalendarBlock.rstk-block-style{background:transparent;border:0;padding:0}
   .rstkSocialProfileBlock.rstk-block-style{width:fit-content;min-width:0;max-width:100%}
-  .rstk-kind-form:not(.rstk-embedded-form-source-frame) .rstkSocialProfileBlock.rstk-block-style{justify-self:start}
   .rstkHasBgVideo{isolation:isolate;overflow:hidden}
   .rstk-block-bg-video{position:absolute;inset:0;z-index:0;width:100%;height:100%;object-fit:var(--rstk-block-bg-size,cover);pointer-events:none}
   .rstkHasBgVideo > :not(.rstk-block-bg-video){position:relative;z-index:1}
@@ -1029,7 +1028,7 @@ const RSTK_BASE_CSS = `
   .rstk-site-panel-footer .rstk-site-panel-links{justify-content:center}
 
   .rstk-field{display:grid;gap:8px;text-align:left}
-  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-kind-form .rstk-payment-block,.rstk-embedded-form .rstk-field,.rstk-embedded-form .rstk-options,.rstk-embedded-form .rstk-actions,.rstk-embedded-form .rstk-payment-block{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);text-align:var(--rstk-block-align,left)}
+  .rstk-kind-form .rstk-field,.rstk-kind-form .rstk-options,.rstk-kind-form .rstk-actions,.rstk-kind-form .rstk-payment-block,.rstk-kind-form .rstkSocialProfileBlock.rstk-block-style,.rstk-embedded-form .rstk-field,.rstk-embedded-form .rstk-options,.rstk-embedded-form .rstk-actions,.rstk-embedded-form .rstk-payment-block,.rstk-embedded-form .rstkSocialProfileBlock.rstk-block-style{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);text-align:var(--rstk-block-align,left)}
   .rstk-embedded-form > .rstk-help{width:min(100%,620px);justify-self:center}
   .rstk-embedded-pages,.rstk-embedded-pages [data-embedded-page-content]{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);display:grid;gap:14px}
   /* Contrato form-fields #5: el override de ancho por campo cuelga de
@@ -1302,7 +1301,7 @@ const RSTK_BASE_CSS = `
   .rstk-kind-landing .rstk-embedded-form-source-frame .rstk-embedded-form,.rstk-embedded-form-source-frame .rstk-embedded-form{width:100%;max-width:100%;min-width:0;justify-self:stretch;margin:0;padding:0;border:0;border-radius:0;background:transparent}
   .rstk-embedded-form-source-frame .rstk-embedded-pages,.rstk-embedded-form-source-frame .rstk-embedded-pages [data-embedded-page-content]{width:100%;max-width:100%;min-width:0;justify-self:stretch}
   .rstk-embedded-form-source-frame .rstk-block-style{max-width:100%;min-width:0}
-  .rstk-embedded-form-source-frame .rstkSocialProfileBlock.rstk-block-style{justify-self:start;transform:none}
+  .rstk-embedded-form-source-frame .rstkSocialProfileBlock.rstk-block-style{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);transform:none}
   .rstk-embedded-form-source-frame .rstk-social-profile-block{padding:0}
   .rstk-embedded-form-source-frame .rstk-headline{margin:0;color:var(--rstk-ink);font-family:var(--rstk-font);font-size:clamp(1.7rem,4.6vw,3rem);font-weight:var(--rstk-heading-weight);line-height:1.05;letter-spacing:0;background-image:none;-webkit-text-fill-color:currentColor;max-width:100%;min-width:0;overflow-wrap:break-word}
   .rstk-embedded-form-source-frame .rstk-subheading{margin:0;color:var(--rstk-muted);font-size:clamp(1rem,2vw,1.18rem);line-height:1.5;max-width:min(100%,var(--rstk-content-max,60ch));min-width:0;background-image:none;-webkit-text-fill-color:currentColor;overflow-wrap:break-word}

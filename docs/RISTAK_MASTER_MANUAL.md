@@ -1417,7 +1417,10 @@ Ristak usa Meta en varias areas:
   el wizard cuando se esta probando un token explicito. En sitios publicados, el
   refresh diario de Meta actualiza avatar, nombre y seguidores de bloques con
   `socialAutoSync=true`; si un bloque legacy no tiene `socialSourceProfileId`,
-  puede adoptar el perfil configurado que coincida con su plataforma.
+  puede adoptar el perfil configurado que coincida con su plataforma. Cuando el
+  bloque vive dentro de un formulario nativo o un formulario embebido en Sites,
+  se alinea con el mismo carril de ancho y justificacion que los campos, opciones,
+  acciones y pagos del formulario.
 - Cuando Meta ya tiene dataset/pixel y token guardado, las nuevas superficies nacen
   con Meta encendido por default: Sites/landings y paginas nuevas usan solo el
   `PageView` base al aterrizar (browser Pixel + CAPI server-side, sin `ViewContent`

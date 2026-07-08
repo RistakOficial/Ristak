@@ -606,6 +606,19 @@ test('RSTK_BASE_CSS: el override de ancho por campo cuelga de .rstk-field-width-
   assert.ok(!/\.rstk-block-style\s*>\s*\.rstk-field\{width/.test(RSTK_BASE_CSS))
 })
 
+test('RSTK_BASE_CSS: el perfil social en formularios comparte carril con los campos', () => {
+  const formLaneRule = RSTK_BASE_CSS.match(/\.rstk-kind-form \.rstk-field,[^{}]+\.rstk-embedded-form \.rstkSocialProfileBlock\.rstk-block-style\{[^}]+\}/)?.[0] || ''
+
+  assert.match(formLaneRule, /\.rstk-kind-form \.rstkSocialProfileBlock\.rstk-block-style/)
+  assert.match(formLaneRule, /\.rstk-embedded-form \.rstkSocialProfileBlock\.rstk-block-style/)
+  assert.match(formLaneRule, /width:min\(100%,var\(--rstk-form-field-width,560px\)\)/)
+  assert.match(formLaneRule, /justify-self:var\(--rstk-form-field-justify,center\)/)
+
+  assert.ok(RSTK_BASE_CSS.includes('.rstk-embedded-form-source-frame .rstkSocialProfileBlock.rstk-block-style{width:min(100%,var(--rstk-form-field-width,560px));justify-self:var(--rstk-form-field-justify,center);transform:none}'))
+  assert.ok(!RSTK_BASE_CSS.includes('.rstk-kind-form:not(.rstk-embedded-form-source-frame) .rstkSocialProfileBlock.rstk-block-style{justify-self:start}'))
+  assert.ok(!RSTK_BASE_CSS.includes('.rstk-embedded-form-source-frame .rstkSocialProfileBlock.rstk-block-style{justify-self:start'))
+})
+
 test('blockHasStyleWrapper espeja las condiciones del wrapper publicado (content #3)', () => {
   assert.equal(blockHasStyleWrapper({ blockType: 'title', settings: {} }), false)
   assert.equal(blockHasStyleWrapper({ blockType: 'title', settings: { blockText: '#111111' } }), true)
