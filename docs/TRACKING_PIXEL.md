@@ -217,6 +217,50 @@ esta confirmado. Ristak manda CAPI server-side y el Pixel del navegador con el
 mismo `event_id`; Meta deduplica ambos. La moneda de `Purchase` sale de
 `account_currency`, no del HTML externo.
 
+### Elementos Nativos Ristak En HTML Importado
+
+Cuando el HTML externo quiere usar la misma configuracion nativa del editor de
+Sites, debe declarar una zona con `data-rstk-native-element` y
+`data-rstk-native-id`. El editor solo reconoce `form`, `calendar` y `payment`.
+
+```html
+<div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot"></div>
+<div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>
+<div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal"></div>
+```
+
+Ristak guarda cada zona como bloque real del sitio importado:
+
+- `form`: se conecta a un formulario existente de Ristak.
+- `calendar`: se conecta a cualquier calendario disponible y respeta su
+  configuracion de disponibilidad, campos, pagos, completado y Meta.
+- `payment`: usa el mismo `PaymentGateControls` del editor; el evento `Purchase`
+  sale del cobro confirmado, no del click.
+
+Si el calendario usa frontend propio, el HTML debe marcar
+`data-rstk-native-render="custom"`. Ristak conserva el markup del sitio externo
+e inyecta helpers publicos:
+
+```javascript
+await window.ristakCalendarGetSlots('agenda-custom', {
+  startDate: '2026-08-15',
+  endDate: '2026-08-22',
+  timezone: 'America/Mexico_City'
+})
+
+await window.ristakCalendarBook('agenda-custom', {
+  startTime: '2026-08-15T17:00:00Z',
+  timezone: 'America/Mexico_City',
+  name: 'Ana Cliente',
+  email: 'ana@example.com',
+  phone: '+525512345678'
+})
+```
+
+`startTime` debe ser el ISO UTC del slot confirmado y `timezone` la zona usada
+para mostrar/agendar la cita. El backend vuelve a validar disponibilidad antes
+de crear la cita y manda el evento Meta de calendario cuando corresponde.
+
 ## Tabla `sessions`
 
 Schema creado por `backend/src/config/database.js`:

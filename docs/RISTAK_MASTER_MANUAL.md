@@ -1585,6 +1585,36 @@ order id y payment id; la moneda enviada a Meta sigue saliendo de
 `Purchase` en clicks o intentos de pago: solo en confirmacion real/pagina de
 gracias.
 
+Para HTML importado con elementos nativos de Ristak, el contrato es declarar una
+zona con `data-rstk-native-element="form|calendar|payment"` y
+`data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
+a bloques reales del sitio:
+
+- `form`: selecciona un formulario existente de Ristak.
+- `calendar` con `data-rstk-native-render="ristak"`: renderiza el calendario
+  embebido normal y respeta disponibilidad, campos, pagos, reglas de completado
+  y evento Meta "al agendar".
+- `calendar` con `data-rstk-native-render="custom"`: conserva el frontend del
+  HTML importado, pero expone `window.ristakCalendarGetSlots(slotId, params)` y
+  `window.ristakCalendarBook(slotId, payload)` para mapearlo a un calendario de
+  Ristak. `payload.startTime` debe ser ISO UTC y `payload.timezone` la zona
+  horaria usada para la cita; el backend valida disponibilidad antes de crearla.
+- `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
+  de pagos del editor. El `Purchase` sale solo del pago confirmado.
+
+Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
+pero las reglas copiables nuevas deben preferir `data-rstk-*`.
+
+La revision de "Ruta de datos" de HTML importado debe permitir dos salidas para
+campos personalizados: mapear a un campo guardado del catalogo o declarar un
+campo nuevo con clave interna (`destinationType/saveMode = new_custom`) cuando
+no existe todavia. El usuario no debe quedar bloqueado por no tener campos
+personalizados creados antes de importar. Los titulos visibles de formularios
+detectados tambien deben ignorar snippets tecnicos de Ristak (`data-rstk-*`,
+acciones `open_popup/close_popup`, JSON de acciones de boton) y caer al titulo
+humano cercano o a `Formulario N`, para no mostrar atributos internos en el
+modal ni en formularios fuente.
+
 En landings en modo embudo, los bloques nuevos que ejecutan una accion posterior
 al evento (`calendario embebido`, `formulario embebido` y `pago`) nacen apuntando
 a `Ir a la siguiente pagina` solo si la pagina actual tiene otra pagina por

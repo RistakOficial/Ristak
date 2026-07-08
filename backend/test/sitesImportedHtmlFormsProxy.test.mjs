@@ -158,3 +158,48 @@ test('imported HTML forms materialize Forms-page source forms and route submissi
     await setAppConfig(DOMAIN_KEYS.error, previousConfig.error || '')
   }
 })
+
+test('imported HTML form titles ignore nearby Ristak technical snippets', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  let siteId = ''
+  let sourceFormId = ''
+
+  try {
+    const html = `
+      <!doctype html>
+      <html>
+        <head><title>Embudo marketing</title></head>
+        <body>
+          <main>
+            <h1>Agenda de clientes</h1>
+            <p>lify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.</p>
+            <form id="agenda">
+              <label for="appointment_start_time">Fecha y hora</label>
+              <input id="appointment_start_time" name="appointment_start_time">
+              <label for="goal">Objetivo</label>
+              <textarea id="goal" name="goal"></textarea>
+              <button type="submit">Agendar</button>
+            </form>
+          </main>
+        </body>
+      </html>
+    `
+
+    const created = await createImportedSiteFromHtml({
+      filename: 'agenda-tecnica.html',
+      fileBase64: Buffer.from(html, 'utf8').toString('base64'),
+      siteType: 'landing_page',
+      name: `Agenda tecnica ${suffix}`
+    })
+    siteId = created.site.id
+
+    const mapping = created.import.formMappings[0]
+    sourceFormId = mapping.formSiteId || ''
+
+    assert.equal(mapping.formTitle, 'Agenda de clientes')
+    assert.doesNotMatch(mapping.formTitle, /data-rstk-button-actions|open_popup|close_popup/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    if (sourceFormId) await deleteSite(sourceFormId).catch(() => undefined)
+  }
+})

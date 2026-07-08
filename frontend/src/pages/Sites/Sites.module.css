@@ -1966,6 +1966,12 @@
   color: var(--color-text-primary);
 }
 
+.importedNativeElementRowActive {
+  border-color: var(--color-primary);
+  background: var(--color-background-secondary);
+  color: var(--color-text-primary);
+}
+
 .importedFormFieldRow:disabled {
   opacity: 0.55;
   cursor: default;
@@ -1990,6 +1996,36 @@
 .importedFormFieldRowMain small {
   color: var(--color-text-tertiary);
   font-size: 0.72rem;
+}
+
+.importedNativeElementControls {
+  display: grid;
+  gap: 12px;
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 12px;
+}
+
+.importedNativeElementControls .formEmbedToolbarControls,
+.importedNativeElementControls .formCompletionToolbarControls {
+  min-width: 0;
+  display: grid;
+  align-items: stretch;
+  gap: 10px;
+}
+
+.importedNativeElementControls .formToolbarField,
+.importedNativeElementControls .formCompletionToolbarControls .formToolbarField {
+  min-width: 0;
+  display: grid;
+  align-items: stretch;
+  gap: 7px;
+}
+
+.importedNativeElementControls .formToolbarField > span {
+  color: var(--color-text-secondary);
+  font-size: 0.78rem;
+  font-weight: 850;
+  line-height: 1.2;
 }
 
 .importedFormFieldBadge {
@@ -3856,7 +3892,7 @@
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-card);
   background: var(--modal-surface-bg);
   color: var(--text);
   box-shadow: var(--modal-shadow);
@@ -3879,28 +3915,29 @@
   justify-content: space-between;
   gap: 18px;
   padding: 24px 26px 18px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--border);
 }
 
 .importReviewHeader span {
   display: block;
   margin-bottom: 6px;
-  color: #64748b;
+  color: var(--text-mute);
   font-size: 0.82rem;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .importReviewHeader h2 {
   margin: 0;
+  color: var(--text);
   font-size: clamp(1.35rem, 2vw, 1.9rem);
   letter-spacing: 0;
 }
 
 .importReviewHeader p {
   margin: 8px 0 0;
-  color: #64748b;
+  color: var(--text-dim);
 }
 
 .importReviewClose {
@@ -3908,11 +3945,17 @@
   height: 36px;
   display: grid;
   place-items: center;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #334155;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text-dim);
   cursor: pointer;
+}
+
+.importReviewClose:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+  color: var(--text);
 }
 
 .importSecurityNote {
@@ -3921,10 +3964,10 @@
   gap: 10px;
   margin: 16px 26px 0;
   padding: 10px 12px;
-  border: 1px solid #fde68a;
-  border-radius: 8px;
-  background: #fffbeb;
-  color: #92400e;
+  border: 1px solid var(--warn);
+  border-radius: var(--radius-ctl);
+  background: var(--warn-soft);
+  color: var(--warn);
   font-size: 0.9rem;
 }
 
@@ -3939,13 +3982,13 @@
   align-items: center;
   gap: 10px;
   padding: 20px 0;
-  color: #475569;
+  color: var(--text-dim);
 }
 
 .importFormSection + .importFormSection {
   margin-top: 22px;
   padding-top: 22px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
 }
 
 .importFormHeader {
@@ -3961,7 +4004,7 @@
 }
 
 .importFormHeader span {
-  color: #64748b;
+  color: var(--text-mute);
   font-size: 0.88rem;
 }
 
@@ -3976,7 +4019,7 @@
   gap: 12px;
   align-items: end;
   padding: 12px 0;
-  border-bottom: 1px solid #eef2f7;
+  border-bottom: 1px solid var(--border);
 }
 
 .importFieldSource {
@@ -3986,7 +4029,7 @@
 .importFieldSource strong {
   display: block;
   overflow: hidden;
-  color: #0f172a;
+  color: var(--text);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -3995,7 +4038,7 @@
   display: block;
   margin-top: 4px;
   overflow: hidden;
-  color: #64748b;
+  color: var(--text-mute);
   font-size: 0.82rem;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4008,19 +4051,19 @@
 }
 
 .importFieldRow label > span {
-  color: #64748b;
+  color: var(--text-mute);
   font-size: 0.78rem;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .importFieldRow select,
 .importFieldRow input {
   width: 100%;
   min-height: 38px;
-  border: 1px solid #cbd5e1;
-  border-radius: 8px;
-  background: #ffffff;
-  color: #0f172a;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
   font: inherit;
 }
 
@@ -4033,8 +4076,8 @@
 }
 
 .importFieldRow input:disabled {
-  background: #f8fafc;
-  color: #94a3b8;
+  background: var(--surface-2);
+  color: var(--text-mute);
 }
 
 .importReviewFooter {
@@ -4042,102 +4085,20 @@
   justify-content: flex-end;
   gap: 10px;
   padding: 18px 26px 24px;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--border);
 }
 
-:global(body.dark) .importReviewOverlay,
-:global([data-theme="dark"]) .importReviewOverlay {
-  background: rgba(3, 7, 18, 0.78);
-  backdrop-filter: blur(4px);
+.importFieldCustomRoute {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
 }
 
-:global(body.dark) .importReviewDialog,
-:global([data-theme="dark"]) .importReviewDialog {
-  color-scheme: dark;
-  border: 1px solid rgba(148, 163, 184, 0.18);
-  background: #141518;
-  color: #f8fafc;
-  box-shadow: 0 34px 100px -44px rgba(0, 0, 0, 0.94);
-}
-
-:global(body.dark) .importReviewHeader,
-:global([data-theme="dark"]) .importReviewHeader,
-:global(body.dark) .importReviewFooter,
-:global([data-theme="dark"]) .importReviewFooter,
-:global(body.dark) .importFormSection + .importFormSection,
-:global([data-theme="dark"]) .importFormSection + .importFormSection,
-:global(body.dark) .importFieldRow,
-:global([data-theme="dark"]) .importFieldRow {
-  border-color: rgba(148, 163, 184, 0.16);
-}
-
-:global(body.dark) .importReviewHeader h2,
-:global([data-theme="dark"]) .importReviewHeader h2,
-:global(body.dark) .importFormHeader strong,
-:global([data-theme="dark"]) .importFormHeader strong,
-:global(body.dark) .importFieldSource strong,
-:global([data-theme="dark"]) .importFieldSource strong {
-  color: #f8fafc;
-}
-
-:global(body.dark) .importReviewHeader span,
-:global([data-theme="dark"]) .importReviewHeader span,
-:global(body.dark) .importReviewHeader p,
-:global([data-theme="dark"]) .importReviewHeader p,
-:global(body.dark) .importFormHeader span,
-:global([data-theme="dark"]) .importFormHeader span,
-:global(body.dark) .importFieldSource span,
-:global([data-theme="dark"]) .importFieldSource span,
-:global(body.dark) .importFieldRow label > span,
-:global([data-theme="dark"]) .importFieldRow label > span,
-:global(body.dark) .importEmptyFields,
-:global([data-theme="dark"]) .importEmptyFields {
-  color: #94a3b8;
-}
-
-:global(body.dark) .importReviewClose,
-:global([data-theme="dark"]) .importReviewClose {
-  border-color: rgba(148, 163, 184, 0.2);
-  background: #1a1b1f;
-  color: #e5e7eb;
-}
-
-:global(body.dark) .importReviewClose:hover,
-:global([data-theme="dark"]) .importReviewClose:hover {
-  border-color: rgba(248, 250, 252, 0.22);
-  background: #22242a;
-  color: #ffffff;
-}
-
-:global(body.dark) .importSecurityNote,
-:global([data-theme="dark"]) .importSecurityNote {
-  border-color: rgba(251, 191, 36, 0.3);
-  background: rgba(251, 191, 36, 0.1);
-  color: #fcd34d;
-}
-
-:global(body.dark) .importFieldRow select,
-:global([data-theme="dark"]) .importFieldRow select,
-:global(body.dark) .importFieldRow input,
-:global([data-theme="dark"]) .importFieldRow input {
-  border-color: rgba(148, 163, 184, 0.24);
-  background: #0f1117;
-  color: #f8fafc;
-}
-
-:global(body.dark) .importFieldRow select:focus,
-:global([data-theme="dark"]) .importFieldRow select:focus,
-:global(body.dark) .importFieldRow input:focus,
-:global([data-theme="dark"]) .importFieldRow input:focus {
-  border-color: rgba(34, 197, 94, 0.55);
+.importFieldRow select:focus,
+.importFieldRow input:focus {
+  border-color: var(--accent);
   outline: none;
   box-shadow: var(--ristak-focus-ring);
-}
-
-:global(body.dark) .importFieldRow input:disabled,
-:global([data-theme="dark"]) .importFieldRow input:disabled {
-  background: #17191f;
-  color: #64748b;
 }
 
 @media (max-width: 1120px) {

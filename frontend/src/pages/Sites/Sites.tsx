@@ -133,7 +133,7 @@ import {
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
-import { useAIAgentAvailability, useAppConfig, useUrlDateRangeSync } from '@/hooks'
+import { useAIAgentAvailability, useAccountCurrency, useAppConfig, useUrlDateRangeSync } from '@/hooks'
 import { useMediaUploadQueue } from '@/hooks/useMediaUploadQueue'
 import { setSearchParam } from '@/utils/urlState'
 import { hasLicenseFeature } from '@/utils/accessControl'
@@ -1732,6 +1732,187 @@ const normalizeSiteForEditor = (site: PublicSite): PublicSite => ({
 })
 const isImportedHtmlSite = (site?: PublicSite | null) =>
   Boolean(site?.theme?.importedHtml || site?.theme?.template === 'imported_html')
+
+type ImportedNativeElementType = 'form' | 'calendar' | 'payment'
+type ImportedNativeElementRenderMode = 'ristak' | 'custom'
+type ImportedNativeElementSlot = {
+  key: string
+  id: string
+  type: ImportedNativeElementType
+  renderMode: ImportedNativeElementRenderMode
+  label: string
+  tagName: string
+}
+
+const importedNativeElementBlockTypes: Record<ImportedNativeElementType, SiteBlockType> = {
+  form: 'form_embed',
+  calendar: 'calendar_embed',
+  payment: 'payment'
+}
+
+const importedNativeElementTypeLabels: Record<ImportedNativeElementType, string> = {
+  form: 'Formulario',
+  calendar: 'Calendario',
+  payment: 'Pago'
+}
+
+const importedNativeElementSelector = [
+  '[data-rstk-native-element]',
+  '[data-ristak-native-element]',
+  '[data-ristack-native-element]',
+  '[data-rstk-element]',
+  '[data-ristak-element]',
+  '[data-ristack-element]',
+  '[data-rstk-element-type]',
+  '[data-ristak-element-type]',
+  '[data-ristack-element-type]',
+  '[data-rstk-component]',
+  '[data-ristak-component]',
+  '[data-ristack-component]',
+  '[data-rstk-widget]',
+  '[data-ristak-widget]',
+  '[data-ristack-widget]'
+].join(',')
+
+const normalizeImportedNativeToken = (value?: string | null) => (
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_\s]+/g, '-')
+)
+
+const normalizeImportedNativeElementType = (value?: string | null): ImportedNativeElementType | null => {
+  const token = normalizeImportedNativeToken(value)
+  if (['form', 'forms', 'formulario', 'formularios', 'lead-form', 'lead'].includes(token)) return 'form'
+  if (['calendar', 'calendars', 'calendario', 'calendarios', 'agenda', 'cita', 'citas', 'booking', 'appointment', 'appointments'].includes(token)) return 'calendar'
+  if (['payment', 'payments', 'pago', 'pagos', 'checkout', 'cobro', 'cobros', 'purchase'].includes(token)) return 'payment'
+  return null
+}
+
+const getImportedNativeElementAttr = (element: Element, names: string[]) => {
+  for (const name of names) {
+    const value = element.getAttribute(name)
+    if (value !== null && String(value).trim()) return String(value).trim()
+  }
+  return ''
+}
+
+const getImportedNativeElementTypeFromElement = (element: Element): ImportedNativeElementType | null => (
+  normalizeImportedNativeElementType(getImportedNativeElementAttr(element, [
+    'data-rstk-native-element',
+    'data-ristak-native-element',
+    'data-ristack-native-element',
+    'data-rstk-element',
+    'data-ristak-element',
+    'data-ristack-element',
+    'data-rstk-element-type',
+    'data-ristak-element-type',
+    'data-ristack-element-type',
+    'data-rstk-component',
+    'data-ristak-component',
+    'data-ristack-component',
+    'data-rstk-widget',
+    'data-ristak-widget',
+    'data-ristack-widget'
+  ]))
+)
+
+const getImportedNativeElementRenderMode = (element: Element, type: ImportedNativeElementType): ImportedNativeElementRenderMode => {
+  if (type !== 'calendar') return 'ristak'
+  const token = normalizeImportedNativeToken(getImportedNativeElementAttr(element, [
+    'data-rstk-native-render',
+    'data-ristak-native-render',
+    'data-ristack-native-render',
+    'data-rstk-render',
+    'data-ristak-render',
+    'data-ristack-render',
+    'data-rstk-calendar-render',
+    'data-ristak-calendar-render',
+    'data-ristack-calendar-render'
+  ]))
+  return ['custom', 'propio', 'own', 'external', 'externo', 'html', 'mapped', 'mapeado'].includes(token) ? 'custom' : 'ristak'
+}
+
+const getImportedNativeElementSlotId = (element: Element, type: ImportedNativeElementType, index: number) => {
+  const explicitId = getImportedNativeElementAttr(element, [
+    'data-rstk-native-id',
+    'data-ristak-native-id',
+    'data-ristack-native-id',
+    'data-rstk-element-id',
+    'data-ristak-element-id',
+    'data-ristack-element-id',
+    'data-rstk-edit-id',
+    'data-ristak-edit-id',
+    'data-ristack-edit-id',
+    'id'
+  ])
+  return explicitId || `${type}-${index + 1}`
+}
+
+const getImportedNativeElementLabel = (element: Element, type: ImportedNativeElementType, id: string) => {
+  const explicitLabel = getImportedNativeElementAttr(element, [
+    'data-rstk-label',
+    'data-ristak-label',
+    'data-ristack-label',
+    'aria-label',
+    'title'
+  ])
+  if (explicitLabel) return explicitLabel
+  const text = String(element.textContent || '').replace(/\s+/g, ' ').trim()
+  if (text) return text.slice(0, 80)
+  return `${importedNativeElementTypeLabels[type]} ${id}`
+}
+
+const detectImportedNativeElementSlots = (html = ''): ImportedNativeElementSlot[] => {
+  if (!html || typeof DOMParser === 'undefined') return []
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const seen = new Set<string>()
+    return Array.from(doc.querySelectorAll(importedNativeElementSelector))
+      .map((element, index): ImportedNativeElementSlot | null => {
+        const type = getImportedNativeElementTypeFromElement(element)
+        if (!type) return null
+        const id = getImportedNativeElementSlotId(element, type, index)
+        const key = `${type}:${id}`
+        if (seen.has(key)) return null
+        seen.add(key)
+        return {
+          key,
+          id,
+          type,
+          renderMode: getImportedNativeElementRenderMode(element, type),
+          label: getImportedNativeElementLabel(element, type, id),
+          tagName: element.tagName.toLowerCase()
+        }
+      })
+      .filter(Boolean) as ImportedNativeElementSlot[]
+  } catch {
+    return []
+  }
+}
+
+const getImportedNativeElementBlockSettings = (slot: ImportedNativeElementSlot, pageId = '') => ({
+  importedHtmlNativeElement: true,
+  importedHtmlNativeSlotId: slot.id,
+  importedHtmlNativeType: slot.type,
+  importedHtmlNativeRenderMode: slot.renderMode,
+  importedHtmlNativeLabel: slot.label,
+  ...(pageId ? { pageId } : {})
+})
+
+const isImportedNativeElementBlock = (block: SiteBlock, slot: ImportedNativeElementSlot) => {
+  const settings = block.settings || {}
+  return Boolean(settings.importedHtmlNativeElement) &&
+    getSettingString(settings, 'importedHtmlNativeSlotId') === slot.id &&
+    getSettingString(settings, 'importedHtmlNativeType') === slot.type &&
+    block.blockType === importedNativeElementBlockTypes[slot.type]
+}
+
+const findImportedNativeElementBlock = (blocks: SiteBlock[] = [], slot: ImportedNativeElementSlot) =>
+  blocks.find(block => isImportedNativeElementBlock(block, slot)) || null
+
 const IMPORTED_POPUP_PATTERN = /(<dialog\b|role=["']dialog["']|aria-modal=["']true["']|(?:id|class|data-[\w-]+)=["'][^"']*(?:popup|pop-up|modal|dialog|lightbox|overlay|exit-intent|newsletter)[^"']*["'])/i
 const importedHtmlHasPopup = (importData?: ImportedSiteImport | null) => {
   const html = `${importData?.htmlSanitized || ''}\n${importData?.htmlOriginal || ''}`
@@ -1818,6 +1999,11 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
 - Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
 - Formularios: usa <form data-rstk-form-id="lead-form"> y campos con name, id, data-rstk-edit-type="form_field", data-rstk-label y placeholder.
+- Elementos nativos Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario o pago real desde el editor.
+- Solo se aceptan estos elementos nativos: formularios, calendarios y pagos. No uses data-rstk-native-element para otros widgets.
+- Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
+- Para usar tu propio frontend de calendario pero mapearlo a Ristak: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. Tu JS debe usar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre es ISO UTC del slot confirmado; timezone es la zona del negocio/visitante que eligió la cita.
+- Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
 - Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
 - Para cita agendada usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC si ya conoces la hora exacta.
@@ -13527,6 +13713,7 @@ export const Sites: React.FC = () => {
                 <ImportedHtmlEditorPanel
                   site={editorSite}
                   forms={forms}
+                  calendars={calendars}
                   pages={pages}
                   activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                   domainConfig={domainConfig}
@@ -18595,6 +18782,7 @@ function getImportedCodeDiagnostics(value: string, language = 'html') {
 const ImportedHtmlEditorPanel: React.FC<{
   site: PublicSite
   forms: PublicSite[]
+  calendars: CalendarType[]
   pages: SitePage[]
   activePageId: string
   domainConfig: SitesDomainConfig
@@ -18623,6 +18811,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 }> = ({
   site,
   forms,
+  calendars,
   pages,
   activePageId,
   device,
@@ -18644,6 +18833,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   onSaveSite,
 }) => {
   const { showToast } = useNotification()
+  const [accountCurrency] = useAccountCurrency()
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const codePreviewIframeRef = useRef<HTMLIFrameElement | null>(null)
   const codeSplitRef = useRef<HTMLDivElement | null>(null)
@@ -18690,6 +18880,10 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [codeAssistantWorkSteps, setCodeAssistantWorkSteps] = useState<ImportedCodeAssistantWorkStep[]>([])
   const [codeAssistantAttachments, setCodeAssistantAttachments] = useState<SitesAICreationAttachment[]>([])
   const [codeAssistantAttachmentError, setCodeAssistantAttachmentError] = useState('')
+  const [selectedImportedNativeElementKey, setSelectedImportedNativeElementKey] = useState('')
+  const [importedNativeElementDrafts, setImportedNativeElementDrafts] = useState<Record<string, Record<string, unknown>>>({})
+  const [importedNativeElementSavingKey, setImportedNativeElementSavingKey] = useState('')
+  const importedNativeElementSiteRef = useRef(site)
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
   const popupCodeFile = useMemo<ImportedSiteCodeFile>(() => ({
@@ -18731,6 +18925,14 @@ const ImportedHtmlEditorPanel: React.FC<{
   const activeCodeDirty = Boolean(activeCodeKey && Object.prototype.hasOwnProperty.call(codeDrafts, activeCodeKey))
   const activePageDraftPreviewHtml = !popupCodeActive && activeCodeFile?.language === 'html' && activeCodeDirty ? activeCodeValue : ''
   const editorPreviewHtml = activePageDraftPreviewHtml || previewHtml
+  const importedNativeElementDetectionHtml = activeCodeFile?.language === 'html'
+    ? activeCodeValue
+    : editorPreviewHtml
+  const importedNativeElementSlots = useMemo(
+    () => detectImportedNativeElementSlots(importedNativeElementDetectionHtml),
+    [importedNativeElementDetectionHtml]
+  )
+  const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || importedNativeElementSlots[0] || null
   const guardedEditorPreviewHtml = useMemo(
     () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
     [editorPreviewHtml]
@@ -18746,6 +18948,144 @@ const ImportedHtmlEditorPanel: React.FC<{
   useEffect(() => {
     setImportedEditorCustomFields(customFields)
   }, [customFields])
+
+  useEffect(() => {
+    importedNativeElementSiteRef.current = site
+  }, [site])
+
+  useEffect(() => {
+    if (!importedNativeElementSlots.length) {
+      if (selectedImportedNativeElementKey) setSelectedImportedNativeElementKey('')
+      return
+    }
+    if (selectedImportedNativeElementKey && importedNativeElementSlots.some(slot => slot.key === selectedImportedNativeElementKey)) return
+    setSelectedImportedNativeElementKey(importedNativeElementSlots[0].key)
+  }, [importedNativeElementSlots, selectedImportedNativeElementKey])
+
+  const getImportedNativeElementDefaultSettingsForSlot = useCallback((slot: ImportedNativeElementSlot) => {
+    const blockType = importedNativeElementBlockTypes[slot.type]
+    const pageId = activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
+    const payload = defaultBlockPayload(blockType, site, undefined, pageId)
+    const nativeSettings = getImportedNativeElementBlockSettings(slot, pageId)
+    const baseSettings = {
+      ...(payload.settings || {}),
+      ...nativeSettings
+    }
+    if (slot.type === 'payment') {
+      return {
+        ...baseSettings,
+        paymentGate: defaultPaymentGateConfig(accountCurrency || getDetectedAccountLocaleDefaults().currency || 'MXN')
+      }
+    }
+    if (slot.type === 'calendar') {
+      return {
+        ...baseSettings,
+        calendarDesignMode: slot.renderMode === 'custom' ? 'original' : getSettingString(baseSettings, 'calendarDesignMode') || 'original'
+      }
+    }
+    return baseSettings
+  }, [accountCurrency, activeImportedPage?.id, activePageId, site])
+
+  const getImportedNativeElementDraftSettings = useCallback((slot: ImportedNativeElementSlot) => {
+    const currentSite = importedNativeElementSiteRef.current || site
+    const block = findImportedNativeElementBlock(currentSite.blocks || [], slot)
+    const defaults = getImportedNativeElementDefaultSettingsForSlot(slot)
+    return {
+      ...defaults,
+      ...(block?.settings || {}),
+      ...(importedNativeElementDrafts[slot.key] || {}),
+      ...getImportedNativeElementBlockSettings(slot, activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID)
+    }
+  }, [activeImportedPage?.id, activePageId, getImportedNativeElementDefaultSettingsForSlot, importedNativeElementDrafts, site])
+
+  const makeImportedNativeElementDraftBlock = useCallback((slot: ImportedNativeElementSlot): SiteBlock => {
+    const currentSite = importedNativeElementSiteRef.current || site
+    const existing = findImportedNativeElementBlock(currentSite.blocks || [], slot)
+    const settings = getImportedNativeElementDraftSettings(slot)
+    if (existing) {
+      return { ...existing, label: existing.label || slot.label, settings }
+    }
+    const blockType = importedNativeElementBlockTypes[slot.type]
+    const payload = defaultBlockPayload(blockType, currentSite, undefined, activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID)
+    return {
+      id: `imported-native-draft-${slot.key}`,
+      siteId: currentSite.id,
+      blockType,
+      label: slot.label || importedNativeElementTypeLabels[slot.type],
+      content: payload.content || (slot.type === 'payment' ? 'Pago requerido' : ''),
+      placeholder: payload.placeholder || '',
+      required: Boolean(payload.required),
+      options: Array.isArray(payload.options) ? payload.options : [],
+      settings,
+      sortOrder: (currentSite.blocks || []).length,
+      createdAt: '',
+      updatedAt: ''
+    }
+  }, [activeImportedPage?.id, activePageId, getImportedNativeElementDraftSettings, site])
+
+  const patchImportedNativeElementDraft = useCallback((slot: ImportedNativeElementSlot, patch: Record<string, unknown>) => {
+    setImportedNativeElementDrafts(current => ({
+      ...current,
+      [slot.key]: {
+        ...(current[slot.key] || {}),
+        ...patch
+      }
+    }))
+  }, [])
+
+  const validateImportedNativeElementSlotSettings = useCallback((slot: ImportedNativeElementSlot, settings: Record<string, unknown>) => {
+    if (slot.type === 'form' && !getSettingString(settings, 'formSiteId')) {
+      return 'Elige qué formulario de Ristak va en esta zona.'
+    }
+    if (slot.type === 'calendar' && !getSettingString(settings, 'calendarSlug') && !getSettingString(settings, 'calendarId')) {
+      return 'Elige qué calendario de Ristak va en esta zona.'
+    }
+    if (slot.type === 'payment' && !isPaymentGateConfigEnabled(getPaymentGateFromSettings(settings, accountCurrency))) {
+      return 'Activa el pago, elige pasarela y pon un monto mayor a cero.'
+    }
+    return ''
+  }, [accountCurrency])
+
+  const saveImportedNativeElementSlot = useCallback(async (slot: ImportedNativeElementSlot) => {
+    const currentSite = importedNativeElementSiteRef.current || site
+    const existing = findImportedNativeElementBlock(currentSite.blocks || [], slot)
+    const blockType = importedNativeElementBlockTypes[slot.type]
+    const settings = getImportedNativeElementDraftSettings(slot)
+    const validationError = validateImportedNativeElementSlotSettings(slot, settings)
+    if (validationError) {
+      showToast('warning', 'Falta configuración', validationError)
+      return
+    }
+
+    setImportedNativeElementSavingKey(slot.key)
+    try {
+      const saved = existing
+        ? await sitesService.updateBlock(currentSite.id, existing.id, {
+          label: existing.label || slot.label || importedNativeElementTypeLabels[slot.type],
+          content: existing.content || (slot.type === 'payment' ? 'Pago requerido' : ''),
+          settings
+        })
+        : await sitesService.createBlock(currentSite.id, {
+          ...defaultBlockPayload(blockType, currentSite, undefined, activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID),
+          label: slot.label || importedNativeElementTypeLabels[slot.type],
+          content: slot.type === 'payment' ? 'Pago requerido' : '',
+          settings
+        })
+      const normalized = normalizeSiteForEditor(saved)
+      importedNativeElementSiteRef.current = normalized
+      onPatchSite(normalized)
+      setImportedNativeElementDrafts(current => {
+        const next = { ...current }
+        delete next[slot.key]
+        return next
+      })
+      showToast('success', 'Elemento Ristak guardado', `${importedNativeElementTypeLabels[slot.type]} conectado con el HTML importado.`)
+    } catch (error) {
+      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Revisa la configuración e intenta otra vez.')
+    } finally {
+      setImportedNativeElementSavingKey('')
+    }
+  }, [activeImportedPage?.id, activePageId, getImportedNativeElementDraftSettings, onPatchSite, showToast, site, validateImportedNativeElementSlotSettings])
 
   useEffect(() => {
     if (customFields.length) return
@@ -21720,6 +22060,152 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeCodePreviewHtml, codeEditorOpen, guardedCodePreviewHtml, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement])
 
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
+  const importedNativeElementsPanel = importedNativeElementSlots.length > 0 ? (() => {
+    const selectedSlot = selectedImportedNativeElementSlot
+    const selectedBlock = selectedSlot ? findImportedNativeElementBlock((importedNativeElementSiteRef.current || site).blocks || [], selectedSlot) : null
+    const draftBlock = selectedSlot ? makeImportedNativeElementDraftBlock(selectedSlot) : null
+    const draftSettings = draftBlock?.settings || {}
+    const selectedFormId = getSettingString(draftSettings, 'formSiteId')
+    const selectedSlotSaving = Boolean(selectedSlot && importedNativeElementSavingKey === selectedSlot.key)
+
+    const renderSlotIcon = (type: ImportedNativeElementType) => {
+      if (type === 'form') return <FormInput size={13} />
+      if (type === 'calendar') return <CalendarDays size={13} />
+      return <DollarSign size={13} />
+    }
+
+    return (
+      <div className={styles.importedFormFieldsBox}>
+        <div className={styles.importedButtonActionHeader}>
+          <SlidersHorizontal size={17} />
+          <div>
+            <span>Elementos Ristak</span>
+            <strong>{importedNativeElementSlots.length} {importedNativeElementSlots.length === 1 ? 'zona detectada' : 'zonas detectadas'}</strong>
+          </div>
+        </div>
+        <p className={styles.importedFormFieldsHint}>
+          Estas zonas del HTML se conectan a elementos reales de Ristak para que formularios, citas y cobros usen la misma configuración del editor.
+        </p>
+        <div className={styles.importedFormFieldsList}>
+          {importedNativeElementSlots.map(slot => {
+            const block = findImportedNativeElementBlock((importedNativeElementSiteRef.current || site).blocks || [], slot)
+            const isSelected = selectedSlot?.key === slot.key
+            return (
+              <button
+                key={slot.key}
+                type="button"
+                className={`${styles.importedFormFieldRow} ${isSelected ? styles.importedNativeElementRowActive : ''}`}
+                onClick={() => setSelectedImportedNativeElementKey(slot.key)}
+                disabled={Boolean(importedNativeElementSavingKey)}
+                aria-pressed={isSelected}
+              >
+                {renderSlotIcon(slot.type)}
+                <span className={styles.importedFormFieldRowMain}>
+                  <strong>{slot.label}</strong>
+                  <small>{importedNativeElementTypeLabels[slot.type]} · {slot.id}{slot.type === 'calendar' && slot.renderMode === 'custom' ? ' · frontend propio' : ''}</small>
+                </span>
+                <span className={styles.importedFormFieldBadge}>{block ? 'Configurado' : 'Pendiente'}</span>
+              </button>
+            )
+          })}
+        </div>
+
+        {selectedSlot && draftBlock && (
+          <div className={styles.importedNativeElementControls}>
+            <div className={styles.importedButtonActionHeader}>
+              {renderSlotIcon(selectedSlot.type)}
+              <div>
+                <span>{importedNativeElementTypeLabels[selectedSlot.type]}</span>
+                <strong>{selectedSlot.label}</strong>
+              </div>
+            </div>
+
+            {selectedSlot.type === 'form' && (
+              <label className={styles.importedActionField}>
+                <span>Formulario de Ristak</span>
+                <CustomSelect
+                  value={selectedFormId}
+                  portal
+                  onChange={(event) => {
+                    const nextFormId = event.target.value
+                    patchImportedNativeElementDraft(selectedSlot, {
+                      formSiteId: nextFormId,
+                      embeddedSiteId: undefined,
+                      embeddedSiteName: undefined,
+                      embeddedBlocks: undefined,
+                      embeddedPages: undefined,
+                      embeddedTheme: undefined,
+                      embeddedSiteType: undefined
+                    })
+                  }}
+                >
+                  <option value="">Selecciona un formulario</option>
+                  {selectedFormId && !forms.some(form => form.id === selectedFormId) && (
+                    <option value={selectedFormId}>Formulario seleccionado</option>
+                  )}
+                  {forms.filter(form => form.id !== site.id).map(form => (
+                    <option key={form.id} value={form.id}>{form.name || 'Formulario'}</option>
+                  ))}
+                </CustomSelect>
+              </label>
+            )}
+
+            {selectedSlot.type === 'calendar' && (
+              <>
+                <CalendarEmbedToolbarControls
+                  block={draftBlock}
+                  calendars={calendars}
+                  pages={pages}
+                  activePageId={activeImportedPage?.id || activePageId}
+                  onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
+                  onSave={() => undefined}
+                />
+                {selectedSlot.renderMode === 'custom' && (
+                  <p className={styles.importedFormFieldsHint}>
+                    Este slot conserva tu frontend. Ristak solo le entrega horarios disponibles y recibe la cita confirmada con fecha, hora y zona horaria.
+                  </p>
+                )}
+              </>
+            )}
+
+            {selectedSlot.type === 'payment' && (
+              <>
+                <PaymentGateControls
+                  value={getPaymentGateFromSettings(draftSettings, accountCurrency)}
+                  onChange={(paymentGate) => patchImportedNativeElementDraft(selectedSlot, { paymentGate })}
+                  onCommit={() => undefined}
+                  title="Cobro de esta zona"
+                  description="El checkout publicado usa la pasarela y reglas configuradas aquí."
+                  currencyFallback={accountCurrency}
+                />
+                <PaymentCompletionSettingsControls
+                  compact
+                  settings={draftSettings}
+                  pages={pages}
+                  activePageId={activeImportedPage?.id || activePageId}
+                  onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
+                  onSave={() => undefined}
+                />
+              </>
+            )}
+
+            <div className={styles.importedButtonActionFooter}>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => void saveImportedNativeElementSlot(selectedSlot)}
+                loading={selectedSlotSaving}
+                disabled={selectedSlotSaving}
+              >
+                <Save size={14} />
+                {selectedBlock ? 'Guardar configuración' : 'Conectar zona'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  })() : null
 
   if (codeEditorOpen) {
     return (
@@ -21775,6 +22261,7 @@ const ImportedHtmlEditorPanel: React.FC<{
             </summary>
             <pre>{IMPORTED_HTML_AI_GUIDE}</pre>
           </details>
+          {importedNativeElementsPanel}
           {activeCodeFile ? (
             <div className={styles.importedCodeEditorShell}>
               <pre
@@ -22040,6 +22527,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       </section>
 
       <aside className={styles.importedSidePanel}>
+        {importedNativeElementsPanel}
+
         {panelFormFields.length > 0 && (
           <div className={styles.importedFormFieldsBox}>
             <div className={styles.importedButtonActionHeader}>
@@ -22490,6 +22979,80 @@ const normalizeImportedDestinationKey = (value: string, fallback: string) =>
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '') || 'campo_personalizado'
 
+const IMPORTED_CREATE_CUSTOM_FIELD_VALUE = '__rstk_new_custom_field__'
+
+const importedCustomFieldDataTypes = new Set<CustomFieldDataType>([
+  'text',
+  'textarea',
+  'radio',
+  'dropdown',
+  'checkboxes',
+  'number',
+  'currency',
+  'date',
+  'email',
+  'phone',
+  'select',
+  'multiselect'
+])
+
+const normalizeImportedCustomFieldDataType = (field: ImportedSiteFieldMapping): CustomFieldDataType => {
+  const rawType = normalizeImportedDestinationKey(
+    field.customFieldDataType || field.type || '',
+    'text'
+  )
+  if (importedCustomFieldDataTypes.has(rawType as CustomFieldDataType)) return rawType as CustomFieldDataType
+  if (rawType === 'tel') return 'phone'
+  if (rawType === 'checkbox') return 'checkboxes'
+  if (rawType === 'radio') return 'radio'
+  return 'text'
+}
+
+const getImportedNewCustomFieldKey = (field: ImportedSiteFieldMapping) => (
+  normalizeImportedDestinationKey(
+    field.customFieldKey || field.destinationKey || field.sourceName || field.label || field.fieldId,
+    'campo_personalizado'
+  )
+)
+
+const buildNewImportedCustomFieldPatch = (
+  field: ImportedSiteFieldMapping,
+  key = getImportedNewCustomFieldKey(field)
+): Partial<ImportedSiteFieldMapping> => {
+  const destinationKey = normalizeImportedDestinationKey(key, getImportedNewCustomFieldKey(field))
+  return {
+    ...clearImportedCustomFieldPatch,
+    destinationType: 'new_custom',
+    ignored: false,
+    saveMode: 'new_custom',
+    destinationKey,
+    customFieldKey: destinationKey,
+    customFieldLabel: field.customFieldLabel || field.label || field.sourceName || destinationKey,
+    customFieldDataType: normalizeImportedCustomFieldDataType(field),
+    customFieldSyncTarget: field.customFieldSyncTarget || 'local'
+  }
+}
+
+const isImportedTechnicalReviewTitle = (value = '') => {
+  const text = String(value || '').trim()
+  if (!text) return false
+  if (/\bdata-(?:rstk|ristak|ristack)-/i.test(text)) return true
+  if (/\b(?:open_popup|close_popup|buttonUrl|appointment_start_time|dataLayer)\b/i.test(text)) return true
+  return /[{[\]"'=]/.test(text) && /\b(?:action|button|popup|rstk|ristak)\b/i.test(text)
+}
+
+const getImportedReviewTitleSuffix = (title = '') => {
+  const match = String(title || '').match(/\s-\s([^<>]*\.(?:html?|xhtml))$/i)
+  return match?.[1]?.trim() || ''
+}
+
+const getImportedReviewFormTitle = (form: ImportedSiteFormMapping, index: number) => {
+  const title = String(form.formTitle || '').trim()
+  if (title && !isImportedTechnicalReviewTitle(title)) return title
+  const suffix = getImportedReviewTitleSuffix(title)
+  return suffix ? `Formulario ${index + 1} - ${suffix}` : `Formulario ${index + 1}`
+}
+
 const importedStandardFieldAliases: Record<string, string[]> = {
   email: [
     'email',
@@ -22855,24 +23418,20 @@ const ImportedHtmlReviewModal: React.FC<{
 
   const customRouteNeedsSelection = (field: ImportedSiteFieldMapping) => (
     getImportedFieldRouteType(field) === 'custom' &&
-    !findImportedCustomFieldDefinition(activeCustomFields, field)
+    !findImportedCustomFieldDefinition(activeCustomFields, field) &&
+    !String(field.customFieldKey || field.destinationKey || '').trim()
   )
 
   const hasUnresolvedCustomRoutes = draft.some(form => form.fields.some(customRouteNeedsSelection))
 
-  const normalizeDraftForConfirm = () => draft.map(form => ({
+  const normalizeDraftForConfirm = () => draft.map((form, formIndex) => ({
     ...form,
+    formTitle: getImportedReviewFormTitle(form, formIndex),
     fields: form.fields.map(field => {
       if (getImportedFieldRouteType(field) !== 'custom') return field
       const selectedField = findImportedCustomFieldDefinition(activeCustomFields, field)
       if (selectedField) return { ...field, ...buildExistingImportedCustomFieldPatch(selectedField) }
-      return {
-        ...field,
-        ...clearImportedCustomFieldPatch,
-        destinationType: 'ignored' as const,
-        ignored: true,
-        saveMode: 'ignored'
-      }
+      return { ...field, ...buildNewImportedCustomFieldPatch(field) }
     })
   }))
 
@@ -22894,13 +23453,7 @@ const ImportedHtmlReviewModal: React.FC<{
         patchField(formIndex, fieldIndex, buildExistingImportedCustomFieldPatch(selectedField))
         return
       }
-      patchField(formIndex, fieldIndex, {
-        ...clearImportedCustomFieldPatch,
-        destinationType: 'custom',
-        ignored: false,
-        saveMode: 'custom',
-        destinationKey: ''
-      })
+      patchField(formIndex, fieldIndex, buildNewImportedCustomFieldPatch(field))
       return
     }
 
@@ -22914,8 +23467,8 @@ const ImportedHtmlReviewModal: React.FC<{
   }
 
   return (
-    <div className={styles.importReviewOverlay} role="dialog" aria-modal="true" aria-labelledby="import-review-title">
-      <div className={styles.importReviewDialog}>
+    <div className={styles.importReviewOverlay} role="dialog" aria-modal="true" aria-labelledby="import-review-title" data-overlay>
+      <div className={styles.importReviewDialog} data-modal>
         <header className={styles.importReviewHeader}>
           <div>
             <span>Ruta de datos</span>
@@ -22943,7 +23496,7 @@ const ImportedHtmlReviewModal: React.FC<{
           ) : draft.map((form, formIndex) => (
             <section key={form.formId || formIndex} className={styles.importFormSection}>
               <div className={styles.importFormHeader}>
-                <strong>{form.formTitle || `Formulario ${formIndex + 1}`}</strong>
+                <strong>{getImportedReviewFormTitle(form, formIndex)}</strong>
                 <span>{form.fields.length} campos detectados</span>
               </div>
               <div className={styles.importFieldList}>
@@ -22953,6 +23506,8 @@ const ImportedHtmlReviewModal: React.FC<{
                     ? findImportedCustomFieldDefinition(activeCustomFields, field)
                     : null
                   const selectedCustomFieldId = field.customFieldDefinitionId || selectedCustomField?.definitionId || ''
+                  const customFieldSelectValue = selectedCustomField ? selectedCustomFieldId : IMPORTED_CREATE_CUSTOM_FIELD_VALUE
+                  const showNewCustomFieldInput = destinationType === 'custom' && !selectedCustomField
                   return (
                     <div key={`${field.fieldId}-${fieldIndex}`} className={styles.importFieldRow}>
                       <div className={styles.importFieldSource}>
@@ -22991,39 +23546,43 @@ const ImportedHtmlReviewModal: React.FC<{
                           </CustomSelect>
                         </label>
                       ) : destinationType === 'custom' ? (
-                        <label>
-                          <span>Campo personalizado</span>
-                          <CustomSelect
-                            value={selectedCustomFieldId}
-                            onChange={(event) => {
-                              if (!event.target.value) {
-                                patchField(formIndex, fieldIndex, {
-                                  ...clearImportedCustomFieldPatch,
-                                  destinationType: 'custom',
-                                  ignored: false,
-                                  saveMode: 'custom',
-                                  destinationKey: ''
-                                })
-                                return
-                              }
-                              const customField = activeCustomFields.find(item => item.definitionId === event.target.value)
-                              if (!customField) return
-                              patchField(formIndex, fieldIndex, buildExistingImportedCustomFieldPatch(customField))
-                            }}
-                          >
-                            <option value="" disabled>
-                              {activeCustomFields.length ? 'Elige un campo guardado' : 'No hay campos disponibles'}
-                            </option>
-                            {selectedCustomFieldId && !selectedCustomField && (
-                              <option value={selectedCustomFieldId}>{field.customFieldLabel || field.destinationKey || 'Campo guardado'}</option>
-                            )}
-                            {activeCustomFields.map(customField => (
-                              <option key={customField.definitionId} value={customField.definitionId}>
-                                {customField.label || customField.name || customField.fieldKey}
-                              </option>
-                            ))}
-                          </CustomSelect>
-                        </label>
+                        <div className={styles.importFieldCustomRoute}>
+                          <label>
+                            <span>Campo personalizado</span>
+                            <CustomSelect
+                              value={customFieldSelectValue}
+                              portal
+                              onChange={(event) => {
+                                if (event.target.value === IMPORTED_CREATE_CUSTOM_FIELD_VALUE) {
+                                  patchField(formIndex, fieldIndex, buildNewImportedCustomFieldPatch(field))
+                                  return
+                                }
+                                const customField = activeCustomFields.find(item => item.definitionId === event.target.value)
+                                if (!customField) return
+                                patchField(formIndex, fieldIndex, buildExistingImportedCustomFieldPatch(customField))
+                              }}
+                            >
+                              <option value={IMPORTED_CREATE_CUSTOM_FIELD_VALUE}>Crear campo nuevo</option>
+                              {activeCustomFields.map(customField => (
+                                <option key={customField.definitionId} value={customField.definitionId}>
+                                  {customField.label || customField.name || customField.fieldKey}
+                                </option>
+                              ))}
+                            </CustomSelect>
+                          </label>
+                          {showNewCustomFieldInput && (
+                            <label>
+                              <span>Nombre interno</span>
+                              <input
+                                value={getImportedNewCustomFieldKey(field)}
+                                placeholder="ej. presupuesto_estimado"
+                                name={`rstk-imported-new-custom-field-${formIndex}-${fieldIndex}`}
+                                {...importedEditorNoAutocompleteAttrs}
+                                onChange={(event) => patchField(formIndex, fieldIndex, buildNewImportedCustomFieldPatch(field, event.target.value))}
+                              />
+                            </label>
+                          )}
+                        </div>
                       ) : (
                         <label>
                           <span>Dato</span>
@@ -23044,7 +23603,7 @@ const ImportedHtmlReviewModal: React.FC<{
           </Button>
           <Button onClick={() => onConfirm(normalizeDraftForConfirm())} loading={saving} disabled={hasUnresolvedCustomRoutes}>
             <Check size={15} />
-            {hasUnresolvedCustomRoutes ? 'Elige campos guardados' : 'Guardar ruta de datos'}
+            {hasUnresolvedCustomRoutes ? 'Completa campos nuevos' : 'Guardar ruta de datos'}
           </Button>
         </footer>
       </div>

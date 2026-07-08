@@ -2025,14 +2025,26 @@ function getLabelForField(html = '', attrs = {}) {
   return ''
 }
 
+function isImportedTechnicalText(value = '') {
+  const text = cleanString(value)
+  if (!text) return false
+  if (/\bdata-(?:rstk|ristak|ristack)-/i.test(text)) return true
+  if (/\b(?:open_popup|close_popup|buttonUrl|appointment_start_time|dataLayer)\b/i.test(text)) return true
+  if (/[{[\]"'=]/.test(text) && /\b(?:action|button|popup|rstk|ristak)\b/i.test(text)) return true
+  return false
+}
+
 function getNearbyText(html = '', startIndex = 0) {
   const before = html.slice(Math.max(0, startIndex - 360), startIndex)
   const headingMatch = before.match(/<(h1|h2|h3|legend|strong|b|p)\b[^>]*>([\s\S]*?)<\/\1>/gi)
-  const lastHeading = headingMatch?.[headingMatch.length - 1] || ''
+  const headings = headingMatch ? [...headingMatch].reverse() : []
   // The raw slice can start mid-tag; drop the leading tag fragment (attribute
   // soup ending in ">") so it does not leak into the visible title.
   const fallback = before.slice(-180).replace(/^[^<>]*>/, '')
-  return limitString(stripHtmlTags(lastHeading || fallback), 120)
+  const candidates = [...headings, fallback]
+    .map(candidate => limitString(stripHtmlTags(candidate), 120))
+    .filter(Boolean)
+  return candidates.find(candidate => !isImportedTechnicalText(candidate)) || ''
 }
 
 function getImportedFieldRequiredFromAttrs(attrs = {}) {
@@ -6553,6 +6565,11 @@ Convenciones de formularios para Ristak:
 - Si hay email, usa type="email", name="email", data-rstk-field="email", autocomplete="email".
 
 Conversiones Meta/CAPI para HTML importado:
+- Elementos nativos Ristak en HTML externo: reserva zonas con data-rstk-native-element="form|calendar|payment" y data-rstk-native-id unico. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y el editor permite elegir el formulario, calendario o pago real.
+- Solo uses data-rstk-native-element para formularios, calendarios y pagos. No lo inventes para otros widgets.
+- Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
+- Calendario con frontend propio: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. El JS propio debe llamar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre va en ISO UTC del slot confirmado y timezone es la zona horaria usada para la cita.
+- Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.
 - Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
 - Para citas agendadas usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada.
@@ -6618,7 +6635,7 @@ Modo edición:
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
 - Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-native-*, data-rstk-element-*, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 - En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
@@ -22052,6 +22069,406 @@ function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true }
   ].filter(Boolean).join('')
 }
 
+const IMPORTED_NATIVE_ELEMENT_ATTR_NAMES = [
+  'data-rstk-native-element',
+  'data-ristak-native-element',
+  'data-ristack-native-element',
+  'data-rstk-element',
+  'data-ristak-element',
+  'data-ristack-element',
+  'data-rstk-element-type',
+  'data-ristak-element-type',
+  'data-ristack-element-type',
+  'data-rstk-component',
+  'data-ristak-component',
+  'data-ristack-component',
+  'data-rstk-widget',
+  'data-ristak-widget',
+  'data-ristack-widget'
+]
+
+const IMPORTED_NATIVE_ELEMENT_ATTR_PATTERN = /\bdata-(?:rstk|ristak|ristack)-(?:native-element|element|element-type|component|widget)\b/i
+
+function normalizeImportedNativeElementToken(value = '') {
+  return cleanString(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_\s]+/g, '-')
+}
+
+function normalizeImportedNativeElementType(value = '') {
+  const token = normalizeImportedNativeElementToken(value)
+  if (['form', 'forms', 'formulario', 'formularios', 'lead-form', 'lead'].includes(token)) return 'form'
+  if (['calendar', 'calendars', 'calendario', 'calendarios', 'agenda', 'cita', 'citas', 'booking', 'appointment', 'appointments'].includes(token)) return 'calendar'
+  if (['payment', 'payments', 'pago', 'pagos', 'checkout', 'cobro', 'cobros', 'purchase'].includes(token)) return 'payment'
+  return ''
+}
+
+function firstImportedNativeAttr(attrs = {}, names = []) {
+  for (const name of names) {
+    const value = cleanString(attrs[name])
+    if (value) return value
+  }
+  return ''
+}
+
+function getImportedNativeElementSlot(attrs = {}, index = 0) {
+  const type = normalizeImportedNativeElementType(firstImportedNativeAttr(attrs, IMPORTED_NATIVE_ELEMENT_ATTR_NAMES))
+  if (!type) return null
+  const id = firstImportedNativeAttr(attrs, [
+    'data-rstk-native-id',
+    'data-ristak-native-id',
+    'data-ristack-native-id',
+    'data-rstk-element-id',
+    'data-ristak-element-id',
+    'data-ristack-element-id',
+    'data-rstk-edit-id',
+    'data-ristak-edit-id',
+    'data-ristack-edit-id',
+    'id'
+  ]) || `${type}-${index + 1}`
+  const label = firstImportedNativeAttr(attrs, [
+    'data-rstk-label',
+    'data-ristak-label',
+    'data-ristack-label',
+    'aria-label',
+    'title'
+  ]) || `${type === 'form' ? 'Formulario' : type === 'calendar' ? 'Calendario' : 'Pago'} ${id}`
+  const rawRenderMode = normalizeImportedNativeElementToken(firstImportedNativeAttr(attrs, [
+    'data-rstk-native-render',
+    'data-ristak-native-render',
+    'data-ristack-native-render',
+    'data-rstk-render',
+    'data-ristak-render',
+    'data-ristack-render',
+    'data-rstk-calendar-render',
+    'data-ristak-calendar-render',
+    'data-ristack-calendar-render'
+  ]))
+  return {
+    id,
+    type,
+    label,
+    renderMode: type === 'calendar' && ['custom', 'propio', 'own', 'external', 'externo', 'html', 'mapped', 'mapeado'].includes(rawRenderMode) ? 'custom' : 'ristak'
+  }
+}
+
+function isImportedNativeElementBlock(block = {}, slot = {}) {
+  const settings = block.settings || {}
+  const expectedBlockType = slot.type === 'form'
+    ? 'form_embed'
+    : slot.type === 'calendar'
+      ? 'calendar_embed'
+      : slot.type === 'payment'
+        ? 'payment'
+        : ''
+  return expectedBlockType &&
+    block.blockType === expectedBlockType &&
+    normalizeBoolean(settings.importedHtmlNativeElement || settings.imported_html_native_element) &&
+    cleanString(settings.importedHtmlNativeSlotId || settings.imported_html_native_slot_id) === cleanString(slot.id) &&
+    cleanString(settings.importedHtmlNativeType || settings.imported_html_native_type) === cleanString(slot.type)
+}
+
+function findImportedNativeElementBlock(blocks = [], slot = {}) {
+  return blocks.find(block => isImportedNativeElementBlock(block, slot)) || null
+}
+
+function renderHtmlAttributes(attrs = {}) {
+  return Object.entries(attrs)
+    .filter(([key, value]) => /^[a-zA-Z_:][\w:.-]*$/.test(key) && value !== undefined && value !== null && value !== false)
+    .map(([key, value]) => value === true || value === ''
+      ? ` ${key}`
+      : ` ${key}="${escapeHtml(String(value))}"`)
+    .join('')
+}
+
+function renderImportedNativeElementPlaceholder(slot = {}) {
+  const label = slot.type === 'form'
+    ? 'Selecciona un formulario de Ristak'
+    : slot.type === 'calendar'
+      ? 'Selecciona un calendario de Ristak'
+      : 'Configura el pago de Ristak'
+  return `<div class="rstk-imported-native-placeholder">${escapeHtml(label)}</div>`
+}
+
+function renderImportedNativeElementWrapper(attrs = {}, slot = {}, content = '', extraAttrs = {}) {
+  const classes = [
+    attrs.class,
+    'rstk-imported-native-slot',
+    slot.type ? `rstk-imported-native-${slot.type}` : '',
+    slot.renderMode === 'custom' ? 'rstk-imported-native-custom' : ''
+  ].filter(Boolean).join(' ')
+  return `<div${renderHtmlAttributes({
+    ...attrs,
+    ...extraAttrs,
+    class: classes,
+    'data-rstk-native-mounted': 'true',
+    'data-rstk-native-type': slot.type || '',
+    'data-rstk-native-slot-id': slot.id || ''
+  })}>${content}</div>`
+}
+
+function buildImportedNativeRenderContext(site, { pageId = DEFAULT_FUNNEL_PAGE_ID, trackingEnabled = true, preview = false } = {}) {
+  return {
+    site,
+    pages: normalizeSitePages(site),
+    pageId,
+    noTrack: !trackingEnabled || preview,
+    preview,
+    linkStyle: 'query'
+  }
+}
+
+async function renderImportedNativeFormSlot(block = {}, context = {}) {
+  const settings = block.settings || {}
+  const sourceFormId = cleanString(settings.formSiteId || settings.form_site_id || settings.embeddedSiteId || settings.embedded_site_id)
+  if (!sourceFormId || sourceFormId === cleanString(context.site?.id)) return renderImportedNativeElementPlaceholder({ type: 'form' })
+  const sourceForm = await getSite(sourceFormId, { includeBlocks: true, includeSubmissions: false }).catch(() => null)
+  if (!sourceForm) return renderImportedNativeElementPlaceholder({ type: 'form' })
+  const formHtml = await renderPublicSiteHtml(sourceForm, {
+    trackingEnabled: !context.noTrack,
+    preview: context.preview
+  })
+  return `<iframe class="rstk-imported-native-form-frame" title="${escapeHtml(sourceForm.title || sourceForm.name || 'Formulario')}" srcdoc="${escapeHtml(formHtml)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
+}
+
+function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
+  const settings = block.settings || {}
+  const calendarSlug = cleanString(settings.calendarSlug || settings.calendar_slug || block.content)
+  if (!calendarSlug) return null
+  const calendarMetaOverride = resolveCalendarMetaOverride(context, block)
+  const calendarCompletionRedirect = getCalendarEmbedCompletionRedirect(block, context)
+  const metaParams = buildCalendarEmbedMetaParams(calendarMetaOverride)
+  return {
+    slotId: cleanString(slot.id),
+    calendarId: cleanString(settings.calendarId || settings.calendar_id),
+    calendarSlug,
+    calendarName: cleanString(settings.calendarName || settings.calendar_name || block.label || 'Calendario'),
+    slotsUrl: `/api/calendars/public/${encodeURIComponent(calendarSlug)}/free-slots`,
+    bookUrl: `/api/calendars/public/${encodeURIComponent(calendarSlug)}/appointments`,
+    redirectUrl: calendarCompletionRedirect,
+    metaEventName: cleanString(metaParams.metaCalEvent),
+    metaEventParameters: metaParams.metaCalData ? parseJson(metaParams.metaCalData, {}) : {}
+  }
+}
+
+function renderImportedCustomCalendarSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, block = {}, context = {}, runtimeState = {}) {
+  const config = getImportedCustomCalendarConfig(slot, block, context)
+  if (!config) {
+    return renderImportedNativeElementWrapper(attrs, slot, innerHtml || renderImportedNativeElementPlaceholder(slot))
+  }
+  runtimeState.customCalendarConfigs.push(config)
+  return `<${tagName}${renderHtmlAttributes({
+    ...attrs,
+    class: [attrs.class, 'rstk-imported-native-slot', 'rstk-imported-native-calendar', 'rstk-imported-native-custom'].filter(Boolean).join(' '),
+    'data-rstk-native-mounted': 'true',
+    'data-rstk-native-type': 'calendar',
+    'data-rstk-native-slot-id': slot.id,
+    'data-rstk-native-block-id': block.id || '',
+    'data-rstk-calendar-id': config.calendarId,
+    'data-rstk-calendar-slug': config.calendarSlug,
+    'data-rstk-calendar-name': config.calendarName,
+    'data-rstk-calendar-slots-url': config.slotsUrl,
+    'data-rstk-calendar-book-url': config.bookUrl
+  })}>${innerHtml}</${tagName}>`
+}
+
+async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, innerHtml = '', slot = {}, blocks = [], context = {}, runtimeState = {}) {
+  runtimeState.hasNativeElements = true
+  const block = findImportedNativeElementBlock(blocks, slot)
+  if (slot.type === 'calendar' && slot.renderMode === 'custom') {
+    return renderImportedCustomCalendarSlot(tagName, attrs, innerHtml, slot, block || {}, context, runtimeState)
+  }
+  if (!block) return renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot))
+  if (slot.type === 'payment') runtimeState.hasPayment = true
+  if (slot.type === 'calendar') runtimeState.hasCalendar = true
+
+  const rendered = slot.type === 'form'
+    ? await renderImportedNativeFormSlot(block, context)
+    : renderContentBlock(block, context)
+  return renderImportedNativeElementWrapper(attrs, slot, rendered, {
+    'data-rstk-native-block-id': block.id || ''
+  })
+}
+
+async function asyncReplace(value = '', pattern, replacer) {
+  const parts = []
+  let lastIndex = 0
+  let match
+  pattern.lastIndex = 0
+  while ((match = pattern.exec(value))) {
+    parts.push(value.slice(lastIndex, match.index))
+    parts.push(await replacer(...match))
+    lastIndex = pattern.lastIndex
+  }
+  parts.push(value.slice(lastIndex))
+  return parts.join('')
+}
+
+async function replaceImportedNativeElementSlots(html = '', blocks = [], context = {}) {
+  const runtimeState = {
+    hasNativeElements: false,
+    hasPayment: false,
+    hasCalendar: false,
+    customCalendarConfigs: []
+  }
+  let index = 0
+  const pairedPattern = /<([a-z][\w:-]*)\b([^>]*?\bdata-(?:rstk|ristak|ristack)-(?:native-element|element|element-type|component|widget)\b[^>]*)>([\s\S]*?)<\/\1>/gi
+  let output = ''
+  let lastIndex = 0
+  let match
+  while ((match = pairedPattern.exec(html))) {
+    const attrsText = match[2] || ''
+    if (!IMPORTED_NATIVE_ELEMENT_ATTR_PATTERN.test(attrsText)) continue
+    const attrs = parseHtmlAttributes(attrsText)
+    const slot = getImportedNativeElementSlot(attrs, index)
+    if (!slot) continue
+    index += 1
+    output += html.slice(lastIndex, match.index)
+    output += await renderImportedNativeElementSlot(match[1].toLowerCase(), attrs, match[3] || '', slot, blocks, context, runtimeState)
+    lastIndex = pairedPattern.lastIndex
+  }
+  output += html.slice(lastIndex)
+
+  const singleTagPattern = /<([a-z][\w:-]*)\b([^>]*?\bdata-(?:rstk|ristak|ristack)-(?:native-element|element|element-type|component|widget)\b[^>]*?)\/?>/gi
+  output = await asyncReplace(output, singleTagPattern, async (full, tagName, attrsText) => {
+    if (/<\/[a-z][\w:-]*>$/i.test(full)) return full
+    const attrs = parseHtmlAttributes(attrsText || '')
+    if (cleanString(attrs['data-rstk-native-mounted']) || cleanString(attrs['data-ristak-native-mounted'])) return full
+    const slot = getImportedNativeElementSlot(attrs, index)
+    if (!slot) return full
+    index += 1
+    return renderImportedNativeElementSlot(tagName.toLowerCase(), attrs, '', slot, blocks, context, runtimeState)
+  })
+
+  return { html: output, runtimeState }
+}
+
+function buildImportedCalendarBridgeScript() {
+  return `<script>
+  (() => {
+    window.addEventListener('message', event => {
+      const data = event.data || {};
+      if (data.type === 'ristak:calendar-booked') {
+        const calendarFrame = Array.from(document.querySelectorAll('iframe.rstk-calendar-embed')).find(item => item.contentWindow === event.source);
+        const target = calendarFrame ? calendarFrame.getAttribute('data-rstk-calendar-redirect') : '';
+        if (target) window.location.assign(window.ristakPreserveParams ? window.ristakPreserveParams(target) : target);
+        return;
+      }
+      if (data.type !== 'ristak:calendar-embed-height') return;
+      const calendarFrame = Array.from(document.querySelectorAll('iframe.rstk-calendar-embed')).find(item => item.contentWindow === event.source);
+      if (!calendarFrame) return;
+      const height = Math.max(${EMBED_MIN_HEIGHT}, Math.min(${EMBED_MAX_HEIGHT}, Number(data.height || 0)));
+      if (!Number.isFinite(height)) return;
+      calendarFrame.style.minHeight = Math.round(height) + 'px';
+      calendarFrame.style.height = Math.round(height) + 'px';
+    });
+  })();
+  </script>`
+}
+
+function buildImportedCustomCalendarRuntimeScript(configs = []) {
+  if (!configs.length) return ''
+  return `<script>
+  (() => {
+    const configs = ${scriptJson(Object.fromEntries(configs.map(config => [config.slotId, config])))};
+    window.ristakCalendarElements = Object.assign({}, window.ristakCalendarElements || {}, configs);
+    const getConfig = (slotId) => {
+      const config = window.ristakCalendarElements && window.ristakCalendarElements[String(slotId || '')];
+      if (!config) throw new Error('Calendario Ristak no configurado para este slot.');
+      return config;
+    };
+    const withParams = (url, params = {}) => {
+      const target = new URL(url, window.location.origin);
+      ['startDate', 'endDate', 'timezone'].forEach(key => {
+        if (params[key]) target.searchParams.set(key, params[key]);
+      });
+      return target.toString();
+    };
+    const parseJson = async (response) => {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || payload.success === false) {
+        throw new Error(payload.error || payload.message || 'No se pudo completar la solicitud.');
+      }
+      return payload.data || payload;
+    };
+    window.ristakCalendarGetSlots = async (slotId, params = {}) => {
+      const config = getConfig(slotId);
+      const data = await fetch(withParams(config.slotsUrl, params), { credentials: 'same-origin' }).then(parseJson);
+      return data.slots || data;
+    };
+    window.ristakCalendarBook = async (slotId, payload = {}) => {
+      const config = getConfig(slotId);
+      const body = Object.assign({}, payload);
+      if (config.metaEventName) {
+        body.meta = Object.assign({}, body.meta || {}, {
+          siteEventName: config.metaEventName,
+          siteEventParameters: config.metaEventParameters || {}
+        });
+      }
+      const data = await fetch(config.bookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      }).then(parseJson);
+      const metaEvent = data && data.metaEvent ? data.metaEvent : null;
+      if (metaEvent && window.ristakMetaTrackSiteEvent) {
+        window.ristakMetaTrackSiteEvent(metaEvent.eventName || config.metaEventName || 'Schedule', metaEvent.eventId, {
+          calendar_id: config.calendarId || '',
+          calendar_name: config.calendarName || '',
+          appointment_id: metaEvent.appointmentId || '',
+          status: metaEvent.status || 'booked',
+          conversion_type: 'appointment_scheduled',
+          imported_html: true
+        });
+      }
+      window.dispatchEvent(new CustomEvent('ristak:calendar-booked', { detail: { slotId, response: data } }));
+      if (config.redirectUrl) {
+        window.location.assign(window.ristakPreserveParams ? window.ristakPreserveParams(config.redirectUrl) : config.redirectUrl);
+      }
+      return data;
+    };
+  })();
+  </script>`
+}
+
+const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
+.rstk-imported-native-slot{box-sizing:border-box;width:100%}
+.rstk-imported-native-slot *{box-sizing:border-box}
+.rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}
+.rstk-imported-native-form-frame{display:block;width:100%;min-height:720px;border:0;background:transparent}
+.rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
+.rstk-payment-block{width:100%;text-align:var(--rstk-checkout-align,left);font-family:inherit;color:inherit}
+.rstk-checkout-card{width:100%;border:1px solid color-mix(in srgb, CanvasText 12%, transparent);border-radius:18px;background:color-mix(in srgb, Canvas 94%, CanvasText 6%);box-shadow:0 12px 30px color-mix(in srgb, CanvasText 10%, transparent);overflow:hidden}
+.rstk-checkout-inner{display:grid;gap:16px;padding:24px}
+.rstk-checkout-head{display:grid;gap:6px}
+.rstk-payment-kicker{color:color-mix(in srgb, CanvasText 62%, transparent);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0}
+.rstk-checkout-title{font-size:clamp(20px,2vw,28px);line-height:1.1}
+.rstk-checkout-desc,.rstk-checkout-secure,.rstk-checkout-message{margin:0;color:color-mix(in srgb, CanvasText 68%, transparent);font-size:14px;line-height:1.4}
+.rstk-checkout-amount{font-size:18px;font-weight:800}
+.rstk-checkout-body{display:grid;gap:12px}
+.rstk-checkout-loading{display:flex;align-items:center;gap:8px;color:color-mix(in srgb, CanvasText 68%, transparent);font-size:14px}
+.rstk-checkout-spinner{width:16px;height:16px;border:2px solid color-mix(in srgb, CanvasText 18%, transparent);border-top-color:CanvasText;border-radius:50%;animation:rstkCheckoutSpin .8s linear infinite}
+.rstk-checkout-fields,.rstk-checkout-installments{display:grid;gap:10px}
+.rstk-imported-native-payment .rstk-button-link,.rstk-imported-native-payment .rstk-checkout-pay{display:inline-flex;align-items:center;justify-content:center;justify-self:var(--rstk-checkout-pay-justify,stretch);width:var(--rstk-checkout-pay-width,100%);min-height:48px;border:0;border-radius:12px;background:CanvasText;color:Canvas;font:800 15px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-decoration:none;cursor:pointer;padding:0 18px}
+.rstk-checkout-pay:disabled{opacity:.62;cursor:not-allowed}
+.rstk-checkout-success{border-radius:12px;background:color-mix(in srgb, CanvasText 8%, transparent);padding:14px}
+.rstk-checkout-testbadge{margin:0;border-radius:999px;background:color-mix(in srgb, CanvasText 9%, transparent);color:CanvasText;font-size:12px;font-weight:800;padding:7px 10px;width:max-content}
+@keyframes rstkCheckoutSpin{to{transform:rotate(360deg)}}
+</style>`
+
+function buildImportedNativeElementRuntimeInjection(runtimeState = {}) {
+  if (!runtimeState.hasNativeElements && !(runtimeState.customCalendarConfigs || []).length) return ''
+  return [
+    IMPORTED_NATIVE_ELEMENT_CSS,
+    runtimeState.hasPayment ? buildPaymentCheckoutRuntimeScript() : '',
+    runtimeState.hasCalendar ? buildImportedCalendarBridgeScript() : '',
+    buildImportedCustomCalendarRuntimeScript(runtimeState.customCalendarConfigs || [])
+  ].filter(Boolean).join('')
+}
+
 async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled = true, preview = false } = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
@@ -22073,6 +22490,10 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     }
   }
   html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths)
+  site = {
+    ...site,
+    blocks: await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+  }
   if (!trackingEnabled || preview) {
     html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
   }
@@ -22086,6 +22507,18 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     videoStorageAssetsByStreamVideoId: new Map()
   }
   html = rewriteImportedVideosForRender(site, html, importedVideoRenderContext)
+  const importedNativeRenderContext = buildImportedNativeRenderContext(site, {
+    pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
+    trackingEnabled,
+    preview
+  })
+  const importedNativeRender = await replaceImportedNativeElementSlots(
+    html,
+    site.blocks || [],
+    importedNativeRenderContext
+  )
+  html = importedNativeRender.html
+  const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState)
   const importedVideoRuntime = buildImportedVideoRuntimeInjection(html, { actionsEnabled: !preview })
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
@@ -22098,7 +22531,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     annotateImportedEditableHtml(html),
     `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${injection.head}`
   )
-  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedVideoRuntime}`)
+  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}`)
 }
 
 export async function getImportedSiteAssetResponse(siteId, assetPath, { trackingEnabled = true } = {}) {
@@ -22130,6 +22563,10 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       asset.assetPath,
       availablePaths
     )
+    site = {
+      ...site,
+      blocks: await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+    }
     if (!trackingEnabled) {
       html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
     }
@@ -22142,6 +22579,18 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       videoStorageAssetsByStreamVideoId: new Map()
     }
     html = rewriteImportedVideosForRender(site, html, importedVideoRenderContext)
+    const importedNativeRenderContext = buildImportedNativeRenderContext(site, {
+      pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
+      trackingEnabled,
+      preview: false
+    })
+    const importedNativeRender = await replaceImportedNativeElementSlots(
+      html,
+      site.blocks || [],
+      importedNativeRenderContext
+    )
+    html = importedNativeRender.html
+    const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState)
     const importedVideoRuntime = buildImportedVideoRuntimeInjection(html)
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
@@ -22158,7 +22607,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       site,
       assetPath: asset.assetPath,
       contentType: 'text/html; charset=utf-8',
-      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedVideoRuntime}`), 'utf8'),
+      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}`), 'utf8'),
       cacheControl: trackingEnabled ? 'public, max-age=300' : 'no-store'
     }
   }
