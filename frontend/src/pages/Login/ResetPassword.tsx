@@ -1,6 +1,7 @@
 import React, { useState, FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Button } from '@/components/common'
+import { Lock } from 'lucide-react'
+import { Button, Logo } from '@/components/common'
 import { apiUrl } from '@/services/apiBaseUrl'
 import styles from './Login.module.css'
 
@@ -44,6 +45,9 @@ export default function ResetPassword() {
 
   return (
     <div className={styles.container}>
+      <div className={styles.authBrand}>
+        <Logo size="md" className={styles.authLogo} />
+      </div>
       <div className={styles.loginBox}>
         <div className={styles.header}>
           <p className={styles.subtitle}>Restablece tu contraseña</p>
@@ -61,28 +65,34 @@ export default function ResetPassword() {
           <form onSubmit={handleSubmit} className={styles.form}>
             <div className={styles.inputGroup}>
               <label htmlFor="newPassword" className={styles.label}>Nueva contraseña</label>
-              <input
-                id="newPassword"
-                type="password"
-                className={styles.input}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Mínimo 10 caracteres"
-                autoComplete="new-password"
-                disabled={loading}
-              />
+              <div className={styles.inputWrapper}>
+                <Lock size={18} className={styles.inputIcon} />
+                <input
+                  id="newPassword"
+                  type="password"
+                  className={styles.input}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Mínimo 10 caracteres"
+                  autoComplete="new-password"
+                  disabled={loading}
+                />
+              </div>
             </div>
             <div className={styles.inputGroup}>
               <label htmlFor="confirmPassword" className={styles.label}>Confirma la contraseña</label>
-              <input
-                id="confirmPassword"
-                type="password"
-                className={styles.input}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-                autoComplete="new-password"
-                disabled={loading}
-              />
+              <div className={styles.inputWrapper}>
+                <Lock size={18} className={styles.inputIcon} />
+                <input
+                  id="confirmPassword"
+                  type="password"
+                  className={styles.input}
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  autoComplete="new-password"
+                  disabled={loading}
+                />
+              </div>
             </div>
             {error && <div className={styles.error}>{error}</div>}
             <Button type="submit" loading={loading} disabled={!password || !confirm} className={styles.submitButton}>

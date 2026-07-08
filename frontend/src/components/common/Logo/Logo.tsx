@@ -18,12 +18,10 @@ const sizeClasses: Record<NonNullable<LogoProps['size']>, string | undefined> = 
 
 const logoSources = {
   black: {
-    src: '/logo-web-black-640.webp',
-    srcSet: '/logo-web-black-320.webp 320w, /logo-web-black-640.webp 640w'
+    src: '/logo-web-black.webp'
   },
   white: {
-    src: '/logo-web-white-640.webp',
-    srcSet: '/logo-web-white-320.webp 320w, /logo-web-white-640.webp 640w'
+    src: '/logo-web-white.webp'
   }
 }
 
@@ -36,8 +34,6 @@ export const Logo: React.FC<LogoProps> = ({ className = '', size = 'md', variant
     <span className={`${styles.logo} ${sizeClasses[size] || ''} ${className}`} aria-label="ristak">
       <img
         src={source.src}
-        srcSet={source.srcSet}
-        sizes="(max-width: 480px) 280px, 240px"
         alt="ristak"
         className={styles.image}
         decoding="async"

@@ -1,7 +1,7 @@
-import React, { useMemo, useState, useEffect, FormEvent } from 'react'
+import React, { useMemo, useState, useEffect, FormEvent, useRef } from 'react'
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom'
-import { Lock, Mail, UserPlus } from 'lucide-react'
-import { Button } from '@/components/common'
+import { Lock, Mail } from 'lucide-react'
+import { Button, Logo } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
 import { apiUrl } from '@/services/apiBaseUrl'
 import { getDetectedAccountLocaleDefaults } from '@/utils/accountLocale'
@@ -54,6 +54,13 @@ export const Setup: React.FC = () => {
   // En instalaciones gestionadas, primero se intenta el setup automático:
   // el portal central comparte las credenciales y el dueño entra directo.
   const [autoSetup, setAutoSetup] = useState<'pending' | 'running' | 'manual'>('pending')
+  const autoSetupAttemptedRef = useRef(false)
+
+  useEffect(() => {
+    autoSetupAttemptedRef.current = false
+    setAutoSetup('pending')
+    setError('')
+  }, [setupToken])
 
   // Si la app fue instalada por el portal central, el setup requiere el enlace
   // con token de un solo uso y el email del dueño viene precargado.
@@ -111,17 +118,16 @@ export const Setup: React.FC = () => {
   const tokenModeReady = !tokenState.loading && tokenState.requiresToken && tokenState.valid
 
   useEffect(() => {
-    if (!tokenModeReady || autoSetup !== 'pending' || !needsSetup) return
+    if (!tokenModeReady || autoSetup !== 'pending' || !needsSetup || autoSetupAttemptedRef.current) return
 
-    let cancelled = false
+    autoSetupAttemptedRef.current = true
     setAutoSetup('running')
 
     const runAutoSetup = async () => {
       try {
         await setupAccount(tokenState.email, '', setupToken, detectedAccountLocale)
-        if (!cancelled) navigate(redirectPath, { replace: true })
+        window.location.replace(redirectPath)
       } catch (err: any) {
-        if (cancelled) return
         if (err.code === 'license_blocked') {
           navigate('/license-blocked', { replace: true, state: { message: err.message } })
           return
@@ -135,7 +141,6 @@ export const Setup: React.FC = () => {
     }
 
     runAutoSetup()
-    return () => { cancelled = true }
   }, [tokenModeReady, autoSetup, needsSetup, setupAccount, tokenState.email, setupToken, detectedAccountLocale, navigate, redirectPath])
 
   // Si el setup ya terminó, mandar a la pantalla correcta sin pedir los datos otra vez.
@@ -178,7 +183,7 @@ export const Setup: React.FC = () => {
 
     try {
       await setupAccount(effectiveEmail, password, tokenMode ? setupToken : undefined, detectedAccountLocale)
-      navigate(redirectPath, { replace: true })
+      window.location.replace(redirectPath)
     } catch (err: any) {
       if (err.code === 'license_blocked') {
         navigate('/license-blocked', { replace: true, state: { message: err.message } })
@@ -193,9 +198,11 @@ export const Setup: React.FC = () => {
   if (tokenState.loading || (tokenModeReady && autoSetup !== 'manual')) {
     return (
       <div className={styles.container}>
+        <div className={styles.authBrand}>
+          <Logo size="md" className={styles.authLogo} />
+        </div>
         <div className={styles.loginBox}>
           <div className={styles.header}>
-            <h1 className={styles.title}>Ristak</h1>
             <p className={styles.subtitle}>Preparando tu cuenta... Esto toma unos segundos.</p>
           </div>
         </div>
@@ -207,14 +214,11 @@ export const Setup: React.FC = () => {
   if (tokenState.requiresToken && !tokenState.valid) {
     return (
       <div className={styles.container}>
+        <div className={styles.authBrand}>
+          <Logo size="md" className={styles.authLogo} />
+        </div>
         <div className={styles.loginBox}>
           <div className={styles.header}>
-            <div className={styles.logoContainer}>
-              <div className={styles.logo}>
-                <UserPlus size={32} strokeWidth={1.5} />
-              </div>
-            </div>
-            <h1 className={styles.title}>Ristak</h1>
             <p className={styles.subtitle}>{tokenState.message}</p>
           </div>
         </div>
@@ -224,14 +228,11 @@ export const Setup: React.FC = () => {
 
   return (
     <div className={styles.container}>
+      <div className={styles.authBrand}>
+        <Logo size="md" className={styles.authLogo} />
+      </div>
       <div className={styles.loginBox}>
         <div className={styles.header}>
-          <div className={styles.logoContainer}>
-            <div className={styles.logo}>
-              <UserPlus size={32} strokeWidth={1.5} />
-            </div>
-          </div>
-          <h1 className={styles.title}>Ristak</h1>
           <p className={styles.subtitle}>
             {tokenMode ? 'Crea tu contraseña para empezar' : 'Configura tu acceso'}
           </p>

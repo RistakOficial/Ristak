@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Logo } from '@/components/common'
 import { apiUrl } from '@/services/apiBaseUrl'
 import { getLoginPathForRoute, isPhoneAppPath, sanitizeAuthRedirectPath } from '@/utils/phoneAccess'
 import styles from './Login.module.css'
@@ -72,9 +73,22 @@ export const Sso: React.FC = () => {
 
   return (
     <div className={`${styles.container} ${isPhoneReturn ? styles.phoneContainer : ''}`}>
+      {!isPhoneReturn && (
+        <div className={styles.authBrand}>
+          <Logo size="md" className={styles.authLogo} />
+        </div>
+      )}
       <div className={`${styles.loginBox} ${isPhoneReturn ? styles.phoneLoginBox : ''}`}>
         <div className={styles.header}>
-          <h1 className={styles.title}>Ristak</h1>
+          {isPhoneReturn && (
+            <div className={styles.logoContainer}>
+              <Logo
+                size="xl"
+                variant="black"
+                className={styles.authLogo}
+              />
+            </div>
+          )}
           <p className={styles.subtitle}>
             {error || 'Entrando a tu cuenta...'}
           </p>

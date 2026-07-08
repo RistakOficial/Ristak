@@ -245,6 +245,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw error
       }
 
+      if (!data.token || !data.user) {
+        throw new Error('Tu acceso se creó, pero la app no devolvió una sesión válida. Intenta iniciar sesión con la contraseña que acabas de crear.')
+      }
+
       // Guardar token en localStorage
       localStorage.setItem('auth_token', data.token)
       if (data.apiToken) {

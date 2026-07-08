@@ -1,6 +1,7 @@
 .container {
   min-height: 100vh;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   background: var(--color-background-primary);
@@ -70,29 +71,20 @@ body.light .phoneLoginBox {
   margin-bottom: 1.75rem;
 }
 
+.authBrand {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 1rem;
+}
+
 .logoContainer {
   display: flex;
   justify-content: center;
-  margin-bottom: 0.85rem;
+  margin-bottom: 1rem;
 }
 
-.brandMark {
-  --ristak-app-mark-size: 96px;
-}
-
-.phoneBrandMark {
-  --ristak-app-mark-size: 118px;
-}
-
-.logo {
-  width: 4rem;
-  height: 4rem;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 1rem;
-  background: rgba(148, 163, 184, 0.08);
-  color: var(--color-text-secondary);
+.authLogo {
+  flex: 0 0 auto;
 }
 
 .title {
@@ -212,6 +204,21 @@ body.light .divider span {
   margin: 0;
 }
 
+.inputWrapper {
+  position: relative;
+  width: 100%;
+}
+
+.inputIcon {
+  position: absolute;
+  left: 0.875rem;
+  top: 50%;
+  z-index: 1;
+  transform: translateY(-50%);
+  color: var(--color-text-tertiary);
+  pointer-events: none;
+}
+
 .input {
   width: 100%;
   height: 2.5rem;
@@ -222,6 +229,10 @@ body.light .divider span {
   color: var(--color-text-primary);
   font-size: 0.875rem;
   transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.inputWrapper .input {
+  padding-left: 2.625rem;
 }
 
 .input::placeholder {
@@ -242,6 +253,10 @@ body.light .divider span {
 .input:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.inputWrapper:has(.input:disabled) .inputIcon {
+  opacity: 0.6;
 }
 
 body.light .input {
@@ -332,6 +347,15 @@ body.light .error {
   background: #f0f0f0;
   font-size: 1.05rem;
   padding-inline: 1.25rem;
+}
+
+.phoneLoginBox .inputWrapper .input {
+  padding-inline: 3.25rem 1.25rem;
+}
+
+.phoneLoginBox .inputIcon {
+  left: 1.25rem;
+  color: #6b7280;
 }
 
 .phoneLoginBox .input:focus {

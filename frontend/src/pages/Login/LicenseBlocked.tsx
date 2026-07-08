@@ -1,7 +1,6 @@
 import React from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { ShieldAlert } from 'lucide-react'
-import { Button } from '@/components/common'
+import { Button, Logo } from '@/components/common'
 import styles from './Login.module.css'
 
 type LicenseBlockedState = {
@@ -28,13 +27,11 @@ export const LicenseBlocked: React.FC = () => {
 
   return (
     <div className={styles.container}>
+      <div className={styles.authBrand}>
+        <Logo size="md" className={styles.authLogo} />
+      </div>
       <div className={styles.loginBox}>
         <div className={styles.header}>
-          <div className={styles.logoContainer}>
-            <div className={styles.logo}>
-              <ShieldAlert size={32} strokeWidth={1.5} />
-            </div>
-          </div>
           <h1 className={styles.title}>Licencia no activa</h1>
           <p className={styles.subtitle}>{message}</p>
         </div>

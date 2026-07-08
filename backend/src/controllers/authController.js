@@ -1207,14 +1207,30 @@ export async function setup(req, res) {
       })
     }
 
+    let createdUser = null
     let userId = result.lastID
-    if (!userId) {
-      const createdUser = await db.get('SELECT id FROM users WHERE username = ?', [username])
+    if (userId) {
+      createdUser = await db.get('SELECT * FROM users WHERE id = ?', [userId])
+    }
+    if (!createdUser) {
+      createdUser = await db.get('SELECT * FROM users WHERE username = ?', [username])
       userId = createdUser?.id
     }
 
-    if (!userId) {
-      throw new Error('No se pudo resolver el ID del usuario creado')
+    if (!createdUser?.id) {
+      throw new Error('No se pudo resolver el usuario creado')
+    }
+
+    if (!createdUser.password_hash) {
+      throw new Error('La contraseña no quedó guardada en la base de datos')
+    }
+
+    if (ownerPasswordHash) {
+      if (createdUser.password_hash !== ownerPasswordHash) {
+        throw new Error('La contraseña compartida por el portal no quedó guardada correctamente')
+      }
+    } else if (!verifyPassword(password, createdUser.password_hash)) {
+      throw new Error('La contraseña creada no coincide con el hash guardado')
     }
 
     try {
@@ -1239,16 +1255,21 @@ export async function setup(req, res) {
       }
     }
 
+    await db.run(
+      'UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE id = ?',
+      [userId]
+    )
+
     // Generar token JWT
     const sessionToken = generateToken({
       userId,
-      username,
+      username: createdUser.username,
       email: ownerEmail,
-      role: 'admin',
-      tokenVersion: 0 // (AUTH-003) usuario recién creado
+      role: createdUser.role || 'admin',
+      tokenVersion: createdUser.token_version ?? 0 // (AUTH-003)
     })
 
-    logger.success(`✅ Primer usuario creado: ${username}`)
+    logger.success(`✅ Primer usuario creado: ${createdUser.username}`)
 
     res.json({
       success: true,
@@ -1257,13 +1278,7 @@ export async function setup(req, res) {
       appId,
       apiToken,
       apiTokenMetadata,
-      user: serializeAuthUser({
-        id: userId,
-        username,
-        email: ownerEmail,
-        full_name: username,
-        role: 'admin'
-      }, licenseState)
+      user: serializeAuthUser(createdUser, licenseState)
     })
   } catch (error) {
     logger.error('❌ Error en setup:', error)
