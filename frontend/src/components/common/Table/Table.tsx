@@ -195,6 +195,15 @@ interface TableProps<T> {
   serverSideSearch?: boolean
   searchTerm?: string
   onSearchTermChange?: (nextSearchTerm: string) => void
+  serverSidePagination?: boolean
+  currentPage?: number
+  totalItems?: number
+  totalPages?: number
+  onPageChange?: (nextPage: number) => void
+  serverSideSort?: boolean
+  sortBy?: string | null
+  sortOrder?: 'asc' | 'desc'
+  onSortChange?: (sortBy: string, sortOrder: 'asc' | 'desc') => void
   showColumnEditor?: boolean
 }
 
@@ -227,15 +236,24 @@ export function Table<T extends Record<string, any>>({
   serverSideSearch = false,
   searchTerm,
   onSearchTermChange,
+  serverSidePagination = false,
+  currentPage: controlledCurrentPage,
+  totalItems: controlledTotalItems,
+  totalPages: controlledTotalPages,
+  onPageChange,
+  serverSideSort = false,
+  sortBy: controlledSortBy,
+  sortOrder: controlledSortOrder,
+  onSortChange,
   showColumnEditor = true
 }: TableProps<T>) {
   // Sistema híbrido de configuración de tablas
   const [savedTableConfig, updateTableConfig] = useTableConfig(tableId || 'default')
 
   const [localSearchTerm, setLocalSearchTerm] = useState('')
-  const [sortBy, setSortBy] = useState<string | null>(initialSortBy || null)
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(initialSortOrder)
-  const [currentPage, setCurrentPage] = useState(1)
+  const [localSortBy, setLocalSortBy] = useState<string | null>(initialSortBy || null)
+  const [localSortOrder, setLocalSortOrder] = useState<'asc' | 'desc'>(initialSortOrder)
+  const [localCurrentPage, setLocalCurrentPage] = useState(1)
   const [editMode, setEditMode] = useState(false)
   const [draggedColumn, setDraggedColumn] = useState<string | null>(null)
   const [dragOverColumn, setDragOverColumn] = useState<string | null>(null)
@@ -397,6 +415,11 @@ export function Table<T extends Record<string, any>>({
   const hiddenColumns = columns.filter(col => !col.fixed && col.visible === false)
   const hasControlledSearchTerm = typeof searchTerm === 'string'
   const resolvedSearchTerm = hasControlledSearchTerm ? searchTerm : localSearchTerm
+  const resolvedSortBy = serverSideSort ? controlledSortBy ?? null : localSortBy
+  const resolvedSortOrder = serverSideSort ? controlledSortOrder ?? initialSortOrder : localSortOrder
+  const resolvedCurrentPage = serverSidePagination
+    ? Math.max(Number(controlledCurrentPage) || 1, 1)
+    : localCurrentPage
   const rawData = Array.isArray(data) ? data : []
   const hasCompletedInitialLoadRef = useRef(false)
   const lastSettledDataRef = useRef<T[]>([])
@@ -438,18 +461,18 @@ export function Table<T extends Record<string, any>>({
       )
     }
 
-    if (sortBy) {
-      const sortColumn = columns.find(column => column.key === sortBy)
+    if (!serverSideSort && resolvedSortBy) {
+      const sortColumn = columns.find(column => column.key === resolvedSortBy)
       const compare = (a: T, b: T) => {
         const aValue = sortColumn?.sortValue
-          ? sortColumn.sortValue(a[sortBy], a)
-          : getDateSortValueForKey(sortBy, a[sortBy])
+          ? sortColumn.sortValue(a[resolvedSortBy], a)
+          : getDateSortValueForKey(resolvedSortBy, a[resolvedSortBy])
         const bValue = sortColumn?.sortValue
-          ? sortColumn.sortValue(b[sortBy], b)
-          : getDateSortValueForKey(sortBy, b[sortBy])
+          ? sortColumn.sortValue(b[resolvedSortBy], b)
+          : getDateSortValueForKey(resolvedSortBy, b[resolvedSortBy])
 
         const result = compareSortableValues(aValue, bValue)
-        return sortOrder === 'asc' ? result : -result
+        return resolvedSortOrder === 'asc' ? result : -result
       }
 
       const hasHierarchy = filtered.some(item => item && (item as any).level)
@@ -457,7 +480,7 @@ export function Table<T extends Record<string, any>>({
     }
 
     return filtered
-  }, [columns, tableData, resolvedSearchTermPrepared, rowSearchIndexes, resolvedSearchTerm, serverSideSearch, sortBy, sortOrder])
+  }, [columns, tableData, resolvedSearchTermPrepared, rowSearchIndexes, resolvedSearchTerm, serverSideSearch, serverSideSort, resolvedSortBy, resolvedSortOrder])
 
   const handleSearchTermChange = (nextSearchTerm: string) => {
     if (!hasControlledSearchTerm) {
@@ -470,14 +493,20 @@ export function Table<T extends Record<string, any>>({
   }
 
   const paginatedData = useMemo(() => {
+    if (serverSidePagination) return filteredData
     if (!paginated) return filteredData
 
-    const start = (currentPage - 1) * pageSize
+    const start = (resolvedCurrentPage - 1) * pageSize
     const end = start + pageSize
     return filteredData.slice(start, end)
-  }, [filteredData, currentPage, pageSize, paginated])
+  }, [filteredData, resolvedCurrentPage, pageSize, paginated, serverSidePagination])
 
-  const totalPages = Math.ceil(filteredData.length / pageSize)
+  const totalItemCount = serverSidePagination
+    ? Math.max(Number(controlledTotalItems) || 0, 0)
+    : filteredData.length
+  const totalPages = serverSidePagination
+    ? Math.max(Number(controlledTotalPages) || Math.ceil(totalItemCount / pageSize), 1)
+    : Math.ceil(filteredData.length / pageSize)
   const totalVisibleColumns = visibleColumns.length + (rowSelection ? 1 : 0)
   const selectedKeySet = useMemo(() => new Set(rowSelection?.selectedKeys ?? []), [rowSelection?.selectedKeys])
   const selectableRows = useMemo(() => {
@@ -524,27 +553,43 @@ export function Table<T extends Record<string, any>>({
   }
 
   useEffect(() => {
+    if (serverSidePagination) return
     const safeTotalPages = Math.max(totalPages, 1)
-    if (currentPage > safeTotalPages) {
-      setCurrentPage(safeTotalPages)
+    if (localCurrentPage > safeTotalPages) {
+      setLocalCurrentPage(safeTotalPages)
     }
-  }, [currentPage, totalPages])
+  }, [localCurrentPage, serverSidePagination, totalPages])
 
   useEffect(() => {
-    if (!focusedRowKey || !paginated) return
+    if (!focusedRowKey || !paginated || serverSidePagination) return
 
     const focusedIndex = filteredData.findIndex((item) => keyExtractor(item) === focusedRowKey)
     if (focusedIndex < 0) return
 
-    setCurrentPage(Math.floor(focusedIndex / pageSize) + 1)
-  }, [filteredData, focusedRowKey, keyExtractor, pageSize, paginated])
+    setLocalCurrentPage(Math.floor(focusedIndex / pageSize) + 1)
+  }, [filteredData, focusedRowKey, keyExtractor, pageSize, paginated, serverSidePagination])
 
   const handleSort = (key: string) => {
-    if (sortBy === key) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+    const nextOrder = resolvedSortBy === key && resolvedSortOrder === 'asc' ? 'desc' : 'asc'
+    if (serverSideSort) {
+      onSortChange?.(key, nextOrder)
+      return
+    }
+
+    if (localSortBy === key) {
+      setLocalSortOrder(localSortOrder === 'asc' ? 'desc' : 'asc')
     } else {
-      setSortBy(key)
-      setSortOrder('asc')
+      setLocalSortBy(key)
+      setLocalSortOrder('asc')
+    }
+  }
+
+  const handlePageChange = (nextPage: number) => {
+    const safeNextPage = Math.min(Math.max(nextPage, 1), Math.max(totalPages, 1))
+    if (serverSidePagination) {
+      onPageChange?.(safeNextPage)
+    } else {
+      setLocalCurrentPage(safeNextPage)
     }
   }
 
@@ -778,9 +823,9 @@ export function Table<T extends Record<string, any>>({
                           <XIcon size={14} />
                         </button>
                       )}
-                      {!columnEditMode && column.sortable && sortBy === column.key && (
+                      {!columnEditMode && column.sortable && resolvedSortBy === column.key && (
                         <span className={styles.sortIcon}>
-                          {sortOrder === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                          {resolvedSortOrder === 'asc' ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </span>
                       )}
                     </div>
@@ -893,8 +938,8 @@ export function Table<T extends Record<string, any>>({
         <div className={styles.pagination}>
           <button
             className={styles.pageButton}
-            disabled={currentPage === 1}
-            onClick={() => setCurrentPage(currentPage - 1)}
+            disabled={resolvedCurrentPage === 1}
+            onClick={() => handlePageChange(resolvedCurrentPage - 1)}
           >
             <ChevronLeft size={16} />
           </button>
@@ -905,22 +950,22 @@ export function Table<T extends Record<string, any>>({
               if (totalPages <= 9) {
                 // Mostrar todas las páginas si hay 9 o menos
                 pageNum = i + 1
-              } else if (currentPage <= 5) {
+              } else if (resolvedCurrentPage <= 5) {
                 // Mostrar las primeras 9 páginas
                 pageNum = i + 1
-              } else if (currentPage >= totalPages - 4) {
+              } else if (resolvedCurrentPage >= totalPages - 4) {
                 // Mostrar las últimas 9 páginas
                 pageNum = totalPages - 8 + i
               } else {
                 // Centrar la página actual (4 antes, 4 después)
-                pageNum = currentPage - 4 + i
+                pageNum = resolvedCurrentPage - 4 + i
               }
 
               return (
                 <button
                   key={pageNum}
-                  className={`${styles.pageNumber} ${currentPage === pageNum ? styles.active : ''}`}
-                  onClick={() => setCurrentPage(pageNum)}
+                  className={`${styles.pageNumber} ${resolvedCurrentPage === pageNum ? styles.active : ''}`}
+                  onClick={() => handlePageChange(pageNum)}
                 >
                   {pageNum}
                 </button>
@@ -930,14 +975,16 @@ export function Table<T extends Record<string, any>>({
 
           <button
             className={styles.pageButton}
-            disabled={currentPage === totalPages}
-            onClick={() => setCurrentPage(currentPage + 1)}
+            disabled={resolvedCurrentPage === totalPages}
+            onClick={() => handlePageChange(resolvedCurrentPage + 1)}
           >
             <ChevronRight size={16} />
           </button>
 
           <span className={styles.pageInfo}>
-            {((currentPage - 1) * pageSize) + 1} - {Math.min(currentPage * pageSize, filteredData.length)} de {filteredData.length}
+            {totalItemCount === 0
+              ? '0 de 0'
+              : `${((resolvedCurrentPage - 1) * pageSize) + 1} - ${Math.min(resolvedCurrentPage * pageSize, totalItemCount)} de ${totalItemCount}`}
           </span>
         </div>
       )}

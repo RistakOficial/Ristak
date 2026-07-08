@@ -331,6 +331,19 @@ Capacidades:
   `payment_mode = test`, para poder probar checkouts sandbox de punta a punta.
   Las metricas financieras de la lista (`total_paid`, LTV, conteos live y
   reportes de ingresos) siguen excluyendo pagos test.
+- La pantalla `/contacts` usa paginacion real del lado servidor. La tabla pide
+  solamente la pagina visible (20 contactos) con el rango, busqueda, filtro
+  rapido, condiciones avanzadas y orden activo; no debe cargar el CRM completo en
+  segundo plano para simular paginacion local. Al cambiar de fecha, filtro,
+  busqueda u orden vuelve a la pagina 1; al avanzar de pagina se consulta solo
+  ese batch.
+- Las tarjetas KPI de Contactos no son metricas de la pagina visible: resumen el
+  conjunto completo que coincide con el rango y filtros activos. `/api/contacts/stats`
+  debe reutilizar los mismos filtros de `/api/contacts` sin `limit/offset`, para
+  que totales, clientes, LTV y promedio sigan siendo correctos aunque la tabla
+  muestre solo un batch. La ficha/modal del contacto hidrata el detalle completo
+  al abrirse; la lista debe usar datos suficientes para la tabla y no bloquearse
+  por datos pesados de contactos que no estan visibles.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta

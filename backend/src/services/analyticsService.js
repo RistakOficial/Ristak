@@ -13,6 +13,12 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { nonTestPaymentCondition, SUCCESS_PAYMENT_STATUSES } from '../utils/paymentMode.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { getVisitorIdentityExpression } from './trackingService.js'
+import {
+  buildContactListWhere,
+  normalizeContactAdvancedFilters,
+  normalizeContactListQuickFilter,
+  normalizeContactListTrackingFilters
+} from './contactListFilterService.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 const ACTIVE_PAYMENT_STATUSES = new Set(SUCCESS_PAYMENT_STATUSES)
@@ -198,11 +204,19 @@ async function fetchPreviousRange(range, fallbackStrategy) {
   return null
 }
 
-export async function buildContactStats ({ startDate, endDate, scope = 'all' } = {}) {
+export async function buildContactStats ({
+  startDate,
+  endDate,
+  scope = 'all',
+  search = '',
+  filter = 'all',
+  trackingFilters = {},
+  advancedFilters = {}
+} = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns'
 
-  const dedupExpr = buildDedupExpression('')
+  const dedupExpr = buildDedupExpression('contacts')
 
   // Derivar estado del contacto desde datos vivos, no desde columnas denormalizadas
   // que pueden quedar obsoletas. Un contacto es "cliente" si tiene al menos un pago
@@ -242,50 +256,51 @@ export async function buildContactStats ({ startDate, endDate, scope = 'all' } =
     FROM contacts
   `
 
-  const filters = []
-  const params = []
-
-  if (range.startUtc) {
-    filters.push('created_at >= ?')
-    params.push(range.startUtc)
-  }
-
-  if (range.endUtc) {
-    filters.push('created_at <= ?')
-    params.push(range.endUtc)
-  }
-
-  if (scopeAttributed) {
-    filters.push(attributionMatchCondition('contacts', 'created_at', range.appliedTimezone))
-  }
-
   // Aplicar filtro de contactos ocultos
   const hiddenFilters = await getHiddenContactFilters()
   const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'contacts', false)
-  if (hiddenCondition) {
-    filters.push(hiddenCondition)
+
+  const buildStatsWhere = (statsRange) => {
+    const builtWhere = buildContactListWhere({
+      alias: 'contacts',
+      search,
+      range: statsRange,
+      hiddenCondition,
+      quickFilter: normalizeContactListQuickFilter(filter),
+      trackingFilters: normalizeContactListTrackingFilters(trackingFilters),
+      advancedFilters: normalizeContactAdvancedFilters(advancedFilters)
+    })
+    const conditions = [...builtWhere.conditions]
+    const params = [...builtWhere.params]
+
+    if (scopeAttributed) {
+      conditions.push(attributionMatchCondition('contacts', 'created_at', statsRange.appliedTimezone))
+    }
+
+    return {
+      whereClause: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '',
+      params
+    }
   }
 
-  const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
+  const currentWhere = buildStatsWhere(range)
 
-  const currentResult = await db.get(`${selectClause} ${whereClause}`, params)
+  const currentResult = await db.get(`${selectClause} ${currentWhere.whereClause}`, currentWhere.params)
 
   let previousResult = { ...DEFAULT_NUMBER }
 
   const previousRange = await fetchPreviousRange(range, range.isFiltered ? null : 'month')
 
   if (previousRange) {
-    const previousFilters = ['created_at BETWEEN ? AND ?']
-    const previousParams = [previousRange.startUtc, previousRange.endUtc]
-    if (scopeAttributed) {
-      previousFilters.push(attributionMatchCondition('contacts', 'created_at', range.appliedTimezone))
-    }
-    if (hiddenCondition) {
-      previousFilters.push(hiddenCondition)
-    }
+    const previousWhere = buildStatsWhere({
+      ...range,
+      startUtc: previousRange.startUtc,
+      endUtc: previousRange.endUtc,
+      isFiltered: true
+    })
     previousResult = await db.get(
-      `${selectClause} WHERE ${previousFilters.join(' AND ')}`,
-      previousParams
+      `${selectClause} ${previousWhere.whereClause}`,
+      previousWhere.params
     ) || { ...DEFAULT_NUMBER }
   }
 
