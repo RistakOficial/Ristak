@@ -3591,12 +3591,24 @@ function getContactInfoArchiveItems(journey: JourneyEvent[] = []): ContactInfoAr
   return items.sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date))
 }
 
+// Huella estable del contenido de un evento para derivar un id cuando el backend
+// no manda uno de proveedor. Antes se usaba el índice del journey, que se recorre
+// al paginar/insertar → cambiaba el id → cambiaba la `key` → remount de la fila →
+// salto de scroll. El hash del contenido es estable entre polls y páginas.
+function hashConversationContent(value: string): string {
+  let hash = 5381
+  for (let cursor = 0; cursor < value.length; cursor += 1) {
+    hash = ((hash << 5) + hash + value.charCodeAt(cursor)) | 0
+  }
+  return (hash >>> 0).toString(36)
+}
+
 function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | null {
   if (event.type === 'appointment_confirmation') {
     const title = String(event.data?.title || '').trim() || 'la cita'
     const when = formatMessageDate(String(event.data?.start_time || ''))
     return {
-      id: String(event.data?.id || event.data?.appointment_id || `appointment-confirmation-${index}`),
+      id: String(event.data?.id || event.data?.appointment_id || `appointment-confirmation-${event.date}-${hashConversationContent(title)}`),
       text: `Cita confirmada por IA: ${title}${when ? ` · ${when}` : ''}.`,
       date: event.date,
       direction: 'system',
@@ -3613,7 +3625,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     const transport = String(eventData.transport || '').trim()
 
     return {
-      id: String(eventData.email_message_id || eventData.smtp_message_id || `email-message-${index}`),
+      id: String(eventData.email_message_id || eventData.smtp_message_id || `email-message-${event.date}-${hashConversationContent(`${subject}|${body}`)}`),
       text: buildEmailMessageText(subject, body),
       date: event.date,
       direction,
@@ -3660,8 +3672,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
   return {
     id: String(
       isMetaMessage
-        ? event.data?.meta_social_message_id || event.data?.meta_message_id || `meta-message-${index}`
-        : event.data?.whatsapp_api_message_id || event.data?.whatsapp_message_id || event.data?.attribution_record_id || `message-${index}`
+        ? event.data?.meta_social_message_id || event.data?.meta_message_id || `meta-message-${event.date}-${hashConversationContent(`${text}|${attachment?.url || attachment?.name || ''}|${normalizedMessageType}|${direction}`)}`
+        : event.data?.whatsapp_api_message_id || event.data?.whatsapp_message_id || event.data?.attribution_record_id || `message-${event.date}-${hashConversationContent(`${text}|${attachment?.url || attachment?.name || ''}|${normalizedMessageType}|${direction}`)}`
     ),
     providerMessageId: String(event.data?.provider_message_id || event.data?.whatsapp_message_id || event.data?.meta_message_id || '').trim() || undefined,
     text: text || (attachment || location ? '' : getMessageTypeLabel(messageType, isMetaMessage ? 'Mensaje de Meta' : 'Mensaje de WhatsApp')),
@@ -3734,7 +3746,7 @@ function getScheduledChatMessageBubble(message: ScheduledChatMessage): ChatMessa
     id: `scheduled-${message.id}`,
     scheduledMessageId: message.id,
     text,
-    date: message.createdAt || message.updatedAt || new Date().toISOString(),
+    date: message.createdAt || message.updatedAt || message.scheduledAt || '',
     direction: 'outbound',
     status: message.status || 'scheduled',
     errorReason: message.errorMessage || '',
@@ -5145,6 +5157,75 @@ function buildClabeMessage(account: BankClabeAccount) {
   ].filter(Boolean).join('\n')
 }
 
+type MessageImageSize = { width: number; height: number }
+
+// Cache de dimensiones medidas por URL: sin él cada montaje de burbuja re-mide la
+// imagen, el alto del item cambia DESPUÉS de pintar y el hilo "brinca" al cargar
+// (mismo patrón que la app nativa con nativeImageSizeCache). Con el espacio ya
+// reservado vía aspect-ratio, ni la carga inicial ni el prepend de historial
+// mueven el scroll.
+const messageImageSizeCache = new Map<string, MessageImageSize>()
+const MESSAGE_IMAGE_PLACEHOLDER_SIZE: MessageImageSize = { width: 200, height: 150 }
+
+function boundMessageImageSize(naturalWidth: number, naturalHeight: number): MessageImageSize {
+  if (!(naturalWidth > 0) || !(naturalHeight > 0)) return MESSAGE_IMAGE_PLACEHOLDER_SIZE
+  const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 400
+  const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 720
+  const maxWidth = Math.min(252, Math.round(viewportWidth * 0.62))
+  const maxHeight = Math.min(318, Math.round(viewportHeight * 0.58))
+  let width = Math.min(naturalWidth, maxWidth)
+  let height = Math.round((width / naturalWidth) * naturalHeight)
+  if (height > maxHeight) {
+    height = maxHeight
+    width = Math.round((height / naturalHeight) * naturalWidth)
+  }
+  return { width: Math.max(1, Math.round(width)), height: Math.max(1, Math.round(height)) }
+}
+
+// Imagen de mensaje que reserva su espacio ANTES de cargar. El `<img>` desnudo
+// medía 0px hasta que la foto bajaba y luego saltaba a su alto real, rompiendo
+// todas las compensaciones de scroll. Aquí arrancamos con el tamaño cacheado (o
+// un placeholder) y ajustamos al medir en onLoad; el aspect-ratio mantiene el
+// hueco estable y responsive.
+const MessageImage = React.memo(function MessageImage({
+  src,
+  alt,
+  className
+}: {
+  src?: string
+  alt?: string
+  className?: string
+}) {
+  const [size, setSize] = useState<MessageImageSize>(
+    () => (src && messageImageSizeCache.get(src)) || MESSAGE_IMAGE_PLACEHOLDER_SIZE
+  )
+
+  useEffect(() => {
+    const cached = src ? messageImageSizeCache.get(src) : undefined
+    if (cached) setSize(cached)
+  }, [src])
+
+  const handleLoad = useCallback((event: React.SyntheticEvent<HTMLImageElement>) => {
+    const image = event.currentTarget
+    const next = boundMessageImageSize(image.naturalWidth, image.naturalHeight)
+    if (src && !src.startsWith('data:')) messageImageSizeCache.set(src, next)
+    setSize((previous) => (previous.width === next.width && previous.height === next.height ? previous : next))
+  }, [src])
+
+  return (
+    <img
+      className={className}
+      src={src}
+      alt={alt}
+      decoding="async"
+      width={size.width}
+      height={size.height}
+      style={{ width: `${size.width}px`, aspectRatio: `${size.width} / ${size.height}` }}
+      onLoad={handleLoad}
+    />
+  )
+})
+
 export const PhoneChat: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -5827,12 +5908,20 @@ export const PhoneChat: React.FC = () => {
   }, [])
 
   const handleMessagesPaneScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
-    const bottomGap = event.currentTarget.scrollHeight - event.currentTarget.scrollTop - event.currentTarget.clientHeight
-    messagesPaneNearBottomRef.current = isConversationBottomLockActive(activeContactIdRef.current) || bottomGap < 96
-    if (event.currentTarget.scrollLeft !== 0) {
-      event.currentTarget.scrollLeft = 0
+    const target = event.currentTarget
+    const bottomGap = target.scrollHeight - target.scrollTop - target.clientHeight
+    const atBottom = bottomGap < 96
+    // El lock inicial pega el hilo abajo al abrir, pero si el usuario sube
+    // deliberadamente lo soltamos: su gesto manda sobre el anclaje automático,
+    // así deja de "rebotar" al fondo mientras intenta leer historial.
+    if (!atBottom && !conversationHistoryPrependRef.current) {
+      conversationInitialBottomLockRef.current = { contactId: null, expiresAt: 0 }
     }
-    if (event.currentTarget.scrollTop <= CHAT_CONVERSATION_TOP_LOAD_GAP_PX) {
+    messagesPaneNearBottomRef.current = atBottom || isConversationBottomLockActive(activeContactIdRef.current)
+    if (target.scrollLeft !== 0) {
+      target.scrollLeft = 0
+    }
+    if (target.scrollTop <= CHAT_CONVERSATION_TOP_LOAD_GAP_PX) {
       const contactId = activeContactIdRef.current
       if (conversationOpenRef.current && contactId) {
         void loadOlderConversationMessages(contactId)
@@ -15466,7 +15555,7 @@ export const PhoneChat: React.FC = () => {
       <>
         {renderQuotedMessagePreview(message)}
         {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
-          <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
+          <MessageImage className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || 'Foto enviada'} />
         )}
         {isVideoMessage && (
           <span className={styles.messageActionAttachmentPreview}>
@@ -15729,7 +15818,7 @@ export const PhoneChat: React.FC = () => {
           onClick={() => openAIAgentAttachmentFocus(attachment)}
           aria-label={`Abrir ${attachment.name || 'imagen enviada al agente'}`}
         >
-          <img
+          <MessageImage
             className={styles.messageImage}
             src={attachmentUrl}
             alt={attachment.name || 'Imagen enviada al agente'}
@@ -15975,7 +16064,7 @@ export const PhoneChat: React.FC = () => {
                         onClick={() => openMessageAttachmentFocus(message)}
                         aria-label={message.attachment.name || (message.attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}
                       >
-                        <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || (message.attachment.isGif ? 'GIF enviado' : 'Foto enviada')} />
+                        <MessageImage className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || (message.attachment.isGif ? 'GIF enviado' : 'Foto enviada')} />
                       </button>
                     )}
                     {isVideoMessage && (
