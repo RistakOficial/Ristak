@@ -901,6 +901,7 @@ export interface ImportedEditableContentUpdate {
   fieldHtmlId?: string
   fieldTag?: string
   fieldInputType?: string
+  fontSizePx?: number
   videoSettings?: Record<string, unknown>
 }
 

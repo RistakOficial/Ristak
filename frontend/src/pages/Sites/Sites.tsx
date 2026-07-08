@@ -73,6 +73,7 @@ import {
   MousePointerClick,
   PanelBottom,
   PanelTop,
+  PanelLeftOpen,
   Paperclip,
   Pause,
   Pencil,
@@ -1776,6 +1777,35 @@ const importedNativeElementSelector = [
   '[data-ristack-widget]'
 ].join(',')
 
+const IMPORTED_TEXT_FONT_SIZE_MIN = 10
+const IMPORTED_TEXT_FONT_SIZE_MAX = 96
+const IMPORTED_CODE_PANEL_COLLAPSE_THRESHOLD = 6
+const IMPORTED_CODE_PANEL_MIN_WIDTH = 24
+const IMPORTED_CODE_PANEL_MAX_WIDTH = 88
+const IMPORTED_CODE_PANEL_DEFAULT_WIDTH = 50
+const IMPORTED_CODE_PANEL_INSPECTOR_MAX_WIDTH = 38
+
+const clampImportedTextFontSize = (value: number, fallback = 16) => {
+  const numericValue = Number.isFinite(value) ? value : fallback
+  return Math.min(IMPORTED_TEXT_FONT_SIZE_MAX, Math.max(IMPORTED_TEXT_FONT_SIZE_MIN, Math.round(numericValue)))
+}
+
+const normalizeImportedCodePanelWidth = (value: number) => {
+  if (!Number.isFinite(value) || value <= IMPORTED_CODE_PANEL_COLLAPSE_THRESHOLD) return 0
+  return Math.min(IMPORTED_CODE_PANEL_MAX_WIDTH, Math.max(IMPORTED_CODE_PANEL_MIN_WIDTH, value))
+}
+
+const getImportedCodePanelSourceWidth = (value: number, hasInspector: boolean) => {
+  if (value <= 0) return 0
+  return hasInspector ? Math.min(value, IMPORTED_CODE_PANEL_INSPECTOR_MAX_WIDTH) : value
+}
+
+const getImportedCodePanelSourceTrack = (value: number, hasInspector: boolean) => {
+  const width = getImportedCodePanelSourceWidth(value, hasInspector)
+  if (width <= 0) return '0px'
+  return `minmax(${hasInspector ? '300px' : '340px'}, ${width}%)`
+}
+
 const normalizeImportedNativeToken = (value?: string | null) => (
   String(value || '')
     .trim()
@@ -1852,6 +1882,41 @@ const getImportedNativeElementSlotId = (element: Element, type: ImportedNativeEl
     'id'
   ])
   return explicitId || `${type}-${index + 1}`
+}
+
+const getImportedNativeElementExplicitSlotId = (element: Element) => getImportedNativeElementAttr(element, [
+  'data-rstk-native-id',
+  'data-ristak-native-id',
+  'data-ristack-native-id',
+  'data-rstk-element-id',
+  'data-ristak-element-id',
+  'data-ristack-element-id',
+  'data-rstk-edit-id',
+  'data-ristak-edit-id',
+  'data-ristack-edit-id',
+  'id'
+])
+
+const findImportedNativeElementFromTarget = (
+  target: Element | null,
+  slots: ImportedNativeElementSlot[]
+): { slot: ImportedNativeElementSlot; element: HTMLElement } | null => {
+  if (!target || typeof target.closest !== 'function' || !slots.length) return null
+  const element = target.closest(importedNativeElementSelector) as HTMLElement | null
+  if (!element) return null
+  const type = getImportedNativeElementTypeFromElement(element)
+  if (!type) return null
+
+  const explicitId = getImportedNativeElementExplicitSlotId(element)
+  const exactSlot = explicitId ? slots.find(slot => slot.type === type && slot.id === explicitId) : null
+  if (exactSlot) return { slot: exactSlot, element }
+
+  const typeSlots = slots.filter(slot => slot.type === type)
+  if (typeSlots.length === 1) return { slot: typeSlots[0], element }
+
+  const fallbackId = getImportedNativeElementSlotId(element, type, 0)
+  const fallbackSlot = slots.find(slot => slot.type === type && slot.id === fallbackId)
+  return fallbackSlot ? { slot: fallbackSlot, element } : null
 }
 
 const getImportedNativeElementLabel = (element: Element, type: ImportedNativeElementType, id: string) => {
@@ -15656,6 +15721,7 @@ type ImportedEditableSelection = {
   label: string
   value: string
   tagName: string
+  fontSizePx?: number
   buttonActions?: ImportedButtonActionStep[]
   buttonAction?: ImportedButtonAction
   buttonUrl?: string
@@ -15808,6 +15874,7 @@ type ImportedCodeElementEditorState = {
   required?: boolean
   options?: ImportedFormFieldOption[]
   mediaUrl?: string
+  fontSizePx?: number
   videoSettings?: Record<string, unknown>
   videoTargetBlocks?: SiteBlock[]
 }
@@ -16889,6 +16956,14 @@ const getEditableElementValue = (element: HTMLElement, editType: ImportedEditabl
   return (element.textContent || '').replace(/\s+/g, ' ').trim()
 }
 
+const getImportedElementFontSizePx = (element: HTMLElement) => {
+  const fontSize = element.ownerDocument.defaultView?.getComputedStyle(element).fontSize ||
+    element.style.fontSize ||
+    ''
+  const parsed = Number.parseFloat(fontSize)
+  return clampImportedTextFontSize(parsed || 16)
+}
+
 const importedChoiceSelector = 'input[type="radio"], input[type="checkbox"]'
 const importedFormFieldSelector = [
   '[data-rstk-edit-type="form_field"]',
@@ -17531,6 +17606,7 @@ const readImportedEditableSelection = (element: HTMLElement): ImportedEditableSe
     label,
     value: getEditableElementValue(element, editType),
     tagName: element.tagName.toLowerCase(),
+    fontSizePx: getImportedElementFontSizePx(element),
     ...(editType === 'video' ? { videoSettings: readImportedVideoSettings(element, getEditableElementValue(element, editType)) } : {}),
     ...readImportedButtonSettings(element, editType)
   }
@@ -17818,7 +17894,8 @@ const readImportedCodeElementEditor = (
     editType: inferredType,
     tagName,
     label: getImportedCodeElementLabel(element, descriptor, canEditText ? editableTypeLabels[inferredType] || 'Texto' : 'Contenedor'),
-    value: canEditText ? textValue : ''
+    value: canEditText ? textValue : '',
+    fontSizePx: getImportedElementFontSizePx(element)
   }
 }
 
@@ -17837,6 +17914,31 @@ const getImportedHtmlAttributeValue = (openingTag = '', attrName = '') => {
   const match = openingTag.match(attrPattern)
   if (!match?.[1]) return ''
   return match[1].replace(/^["']|["']$/g, '')
+}
+
+const setImportedInlineStyleDeclaration = (styleValue = '', property = '', value = '') => {
+  if (!property) return styleValue
+  const cleanProperty = escapeImportedRegex(property)
+  const declarationPattern = new RegExp(`\\s*${cleanProperty}\\s*:\\s*[^;]+;?`, 'ig')
+  const withoutDeclaration = String(styleValue || '')
+    .replace(declarationPattern, '')
+    .replace(/;+\s*$/g, '')
+    .trim()
+  const cleanValue = value.trim()
+  return [withoutDeclaration, cleanValue ? `${property}: ${cleanValue}` : '']
+    .filter(Boolean)
+    .join('; ')
+}
+
+const setImportedHtmlOpeningTagFontSize = (openingTag = '', fontSizePx?: number) => {
+  if (!fontSizePx) return openingTag
+  const currentStyle = getImportedHtmlAttributeValue(openingTag, 'style')
+  const nextStyle = setImportedInlineStyleDeclaration(
+    currentStyle,
+    'font-size',
+    `${clampImportedTextFontSize(fontSizePx)}px`
+  )
+  return setImportedHtmlAttribute(openingTag, 'style', nextStyle)
 }
 
 const setImportedOptionActionAttributes = (openingTag: string, actions: ImportedButtonActionStep[] = []) => {
@@ -18089,6 +18191,7 @@ const applyImportedCodeElementPatch = (
   }
 
   openingTag = setImportedHtmlAttribute(openingTag, 'data-rstk-edit-type', editor.editType === 'section' ? 'text' : editor.editType)
+  openingTag = setImportedHtmlOpeningTagFontSize(openingTag, editor.fontSizePx)
   if (tagName === 'input') {
     openingTag = setImportedHtmlAttribute(openingTag, 'value', editor.value.trim())
     return `${source.slice(0, start)}${openingTag}${source.slice(start + startTagMatch[0].length)}`
@@ -19259,8 +19362,9 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [selectedFieldRouteDraft, setSelectedFieldRouteDraft] = useState<ImportedSelectedFieldRouteDraft | null>(null)
   const [selectedFieldRouteSaving, setSelectedFieldRouteSaving] = useState(false)
   const [importedEditorCustomFields, setImportedEditorCustomFields] = useState<CustomFieldDefinition[]>(customFields)
-  const [codeEditorWidth, setCodeEditorWidth] = useState(50)
-  const codeEditorWidthRef = useRef(50)
+  const [codeEditorWidth, setCodeEditorWidth] = useState(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+  const codeEditorWidthRef = useRef(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+  const lastCodeEditorExpandedWidthRef = useRef(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
   const [codeEditorTheme, setCodeEditorTheme] = useState<ImportedCodeTheme>('dark')
   const [codeSelectionNotice, setCodeSelectionNotice] = useState('')
   const [codeAssistantPrompt, setCodeAssistantPrompt] = useState('')
@@ -19604,6 +19708,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!container) return
     event.preventDefault()
 
+    const hasInspector = importedNativeElementSlots.length > 0
     let frame = 0
     let latestWidth = codeEditorWidthRef.current
     const rect = container.getBoundingClientRect()
@@ -19611,11 +19716,12 @@ const ImportedHtmlEditorPanel: React.FC<{
     const updateWidth = (clientX: number) => {
       if (!rect.width) return
       const next = ((clientX - rect.left) / rect.width) * 100
-      latestWidth = Math.min(88, Math.max(28, next))
+      latestWidth = normalizeImportedCodePanelWidth(next)
       if (frame) return
       frame = window.requestAnimationFrame(() => {
         frame = 0
-        container.style.setProperty('--imported-code-source-width', `${latestWidth}%`)
+        container.style.setProperty('--imported-code-source-track', getImportedCodePanelSourceTrack(latestWidth, hasInspector))
+        container.style.setProperty('--imported-code-source-width', `${getImportedCodePanelSourceWidth(latestWidth, hasInspector)}%`)
       })
     }
 
@@ -19633,7 +19739,9 @@ const ImportedHtmlEditorPanel: React.FC<{
         frame = 0
       }
       codeEditorWidthRef.current = latestWidth
-      container.style.setProperty('--imported-code-source-width', `${latestWidth}%`)
+      if (latestWidth > 0) lastCodeEditorExpandedWidthRef.current = latestWidth
+      container.style.setProperty('--imported-code-source-track', getImportedCodePanelSourceTrack(latestWidth, hasInspector))
+      container.style.setProperty('--imported-code-source-width', `${getImportedCodePanelSourceWidth(latestWidth, hasInspector)}%`)
       setCodeEditorWidth(latestWidth)
       document.body.classList.remove('rstk-code-resizing')
     }
@@ -19641,10 +19749,11 @@ const ImportedHtmlEditorPanel: React.FC<{
     document.body.classList.add('rstk-code-resizing')
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp, { once: true })
-  }, [])
+  }, [importedNativeElementSlots.length])
 
   useEffect(() => {
     codeEditorWidthRef.current = codeEditorWidth
+    if (codeEditorWidth > 0) lastCodeEditorExpandedWidthRef.current = codeEditorWidth
   }, [codeEditorWidth])
 
   const stopCodeAssistantProgress = useCallback(() => {
@@ -20018,6 +20127,40 @@ const ImportedHtmlEditorPanel: React.FC<{
     setFieldEditor(null)
   }, [clearImportedVideoActionHover])
 
+  const selectImportedNativeElementFromPreviewTarget = useCallback((
+    target: Element | null,
+    mode: 'visual' | 'code'
+  ) => {
+    const match = findImportedNativeElementFromTarget(target, importedNativeElementSlots)
+    if (!match) return false
+
+    setSelectedImportedNativeElementKey(match.slot.key)
+    setInlineEditor(null)
+    setButtonEditor(null)
+    setVideoEditor(null)
+    videoEditorRef.current = null
+    setCodeElementEditor(null)
+    setElementPopoverPosition(null)
+    setChoiceEditor(null)
+    setFieldEditor(null)
+    setContentError('')
+    clearImportedVideoActionHover()
+
+    if (mode === 'code') {
+      selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
+      selectedCodePreviewElementRef.current = match.element
+      match.element.classList.add('rstk-imported-code-selected')
+      setCodeSelectionNotice(`${match.slot.label} · configuración en panel derecho`)
+    } else {
+      selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
+      selectedIframeElementRef.current = match.element
+      match.element.classList.add('rstk-imported-selected')
+    }
+
+    match.element.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    return true
+  }, [clearImportedVideoActionHover, importedNativeElementSlots])
+
   const hasElementPopoverEditor = Boolean(buttonEditor || videoEditor || choiceEditor || fieldEditor || codeElementEditor)
   const elementPopoverStyle = elementPopoverPosition
     ? ({
@@ -20094,6 +20237,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       fieldHtmlId?: string
       fieldTag?: string
       fieldInputType?: string
+      fontSizePx?: number
       videoSettings?: Record<string, unknown>
     }
   ) => {
@@ -20679,6 +20823,10 @@ const ImportedHtmlEditorPanel: React.FC<{
           box-shadow: none !important;
           transition: outline-color 140ms ease, outline-width 140ms ease, box-shadow 140ms ease, background-color 140ms ease !important;
         }
+        ${importedNativeElementSelector} {
+          cursor: pointer !important;
+          scroll-margin: 42px !important;
+        }
         ${importedEditableSelector}:hover {
           outline-color: rgba(100, 116, 139, 0.44) !important;
           outline-style: dashed !important;
@@ -20736,6 +20884,46 @@ const ImportedHtmlEditorPanel: React.FC<{
             0 0 0 1px rgba(15, 23, 42, 0.18),
             0 0 0 4px rgba(37, 99, 235, 0.14) !important;
         }
+        .rstk-imported-text-toolbar {
+          position: fixed !important;
+          z-index: 2147483647 !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          gap: 6px !important;
+          min-height: 34px !important;
+          border: 1px solid rgba(148, 163, 184, 0.24) !important;
+          border-radius: 8px !important;
+          background: rgba(15, 17, 23, 0.96) !important;
+          color: #f8fafc !important;
+          padding: 5px !important;
+          font: 800 12px/1 "Inter", Arial, sans-serif !important;
+          box-shadow: 0 18px 46px rgba(0, 0, 0, 0.44) !important;
+          color-scheme: dark !important;
+        }
+        .rstk-imported-text-toolbar button {
+          width: 28px !important;
+          height: 28px !important;
+          border: 0 !important;
+          border-radius: 6px !important;
+          background: rgba(255, 255, 255, 0.1) !important;
+          color: #f8fafc !important;
+          font: inherit !important;
+          cursor: pointer !important;
+        }
+        .rstk-imported-text-toolbar button:hover {
+          background: rgba(255, 255, 255, 0.18) !important;
+        }
+        .rstk-imported-text-toolbar input {
+          width: 44px !important;
+          height: 28px !important;
+          border: 1px solid rgba(148, 163, 184, 0.26) !important;
+          border-radius: 6px !important;
+          background: rgba(15, 23, 42, 0.72) !important;
+          color: #f8fafc !important;
+          text-align: center !important;
+          font: inherit !important;
+          outline: 0 !important;
+        }
         .rstk-imported-image-action {
           position: fixed !important;
           z-index: 2147483647 !important;
@@ -20785,6 +20973,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       doc.head?.appendChild(style)
 
       let mediaActionButton: HTMLButtonElement | null = null
+      let textToolbar: HTMLDivElement | null = null
       let regionBox: HTMLDivElement | null = null
       let removeRegionDragHandlers = () => {}
 
@@ -20803,6 +20992,11 @@ const ImportedHtmlEditorPanel: React.FC<{
         mediaActionButton = null
       }
 
+      const removeTextToolbar = () => {
+        textToolbar?.remove()
+        textToolbar = null
+      }
+
       const removeRegionBox = () => {
         regionBox?.remove()
         regionBox = null
@@ -20814,14 +21008,78 @@ const ImportedHtmlEditorPanel: React.FC<{
         element.classList.add('rstk-imported-selected')
       }
 
+      const positionTextToolbar = (element: HTMLElement, toolbar: HTMLDivElement) => {
+        const rect = element.getBoundingClientRect()
+        const toolbarWidth = toolbar.offsetWidth || 150
+        const maxLeft = Math.max(8, (doc.defaultView?.innerWidth || doc.documentElement.clientWidth || 0) - toolbarWidth - 8)
+        toolbar.style.left = `${Math.min(Math.max(8, rect.left), maxLeft)}px`
+        toolbar.style.top = `${Math.max(8, rect.top - 44)}px`
+      }
+
+      const showTextToolbar = (
+        element: HTMLElement,
+        initialFontSizePx: number,
+        onFontSizeChange: (fontSizePx: number) => void
+      ) => {
+        removeTextToolbar()
+        const toolbar = doc.createElement('div')
+        toolbar.className = 'rstk-imported-text-toolbar'
+        toolbar.setAttribute('role', 'toolbar')
+        toolbar.setAttribute('aria-label', 'Tamaño de texto')
+
+        const decrease = doc.createElement('button')
+        decrease.type = 'button'
+        decrease.textContent = 'A-'
+        decrease.setAttribute('aria-label', 'Reducir tamaño de letra')
+
+        const input = doc.createElement('input')
+        input.type = 'text'
+        input.inputMode = 'numeric'
+        input.readOnly = true
+        input.value = String(initialFontSizePx)
+        input.setAttribute('aria-label', 'Tamaño de letra en pixeles')
+
+        const increase = doc.createElement('button')
+        increase.type = 'button'
+        increase.textContent = 'A+'
+        increase.setAttribute('aria-label', 'Aumentar tamaño de letra')
+
+        const applyFontSize = (rawValue: number) => {
+          const nextFontSize = clampImportedTextFontSize(rawValue, initialFontSizePx)
+          input.value = String(nextFontSize)
+          element.style.fontSize = `${nextFontSize}px`
+          onFontSizeChange(nextFontSize)
+          positionTextToolbar(element, toolbar)
+        }
+
+        decrease.addEventListener('click', () => applyFontSize((Number.parseFloat(input.value) || initialFontSizePx) - 2))
+        increase.addEventListener('click', () => applyFontSize((Number.parseFloat(input.value) || initialFontSizePx) + 2))
+        input.addEventListener('input', () => {
+          const parsed = Number.parseFloat(input.value)
+          if (Number.isFinite(parsed)) applyFontSize(parsed)
+        })
+        toolbar.addEventListener('mousedown', (toolbarEvent) => toolbarEvent.preventDefault())
+        toolbar.append(decrease, input, increase)
+        doc.body.appendChild(toolbar)
+        textToolbar = toolbar
+        positionTextToolbar(element, toolbar)
+      }
+
       const beginTextEdit = (element: HTMLElement, selection: ImportedEditableSelection) => {
         const originalValue = selection.value
+        const originalFontSizePx = selection.fontSizePx || getImportedElementFontSizePx(element)
+        const originalInlineFontSize = element.style.fontSize
+        let pendingFontSizePx = originalFontSizePx
         setInlineEditor(null)
         setContentError('')
+        removeTextToolbar()
         element.classList.add('rstk-imported-editing')
         element.setAttribute('contenteditable', 'plaintext-only')
         element.setAttribute('spellcheck', 'true')
         element.focus({ preventScroll: true })
+        showTextToolbar(element, originalFontSizePx, (fontSizePx) => {
+          pendingFontSizePx = fontSizePx
+        })
 
         const frameSelection = doc.defaultView?.getSelection()
         if (frameSelection) {
@@ -20840,13 +21098,16 @@ const ImportedHtmlEditorPanel: React.FC<{
           element.removeAttribute('contenteditable')
           element.removeAttribute('spellcheck')
           element.classList.remove('rstk-imported-editing')
+          removeTextToolbar()
           const nextValue = (element.textContent || '').replace(/\s+/g, ' ').trim()
+          const fontSizeChanged = pendingFontSizePx !== originalFontSizePx
           if (!save) {
             element.textContent = originalValue
+            element.style.fontSize = originalInlineFontSize
             return
           }
-          if (nextValue !== originalValue.trim()) {
-            void saveEditableContent(selection, nextValue)
+          if (nextValue !== originalValue.trim() || fontSizeChanged) {
+            void saveEditableContent(selection, nextValue || originalValue, undefined, fontSizeChanged ? { fontSizePx: pendingFontSizePx } : undefined)
           }
         }
 
@@ -20914,6 +21175,11 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
 
       const selectImportedFrameTarget = (target: Element) => {
+        if (selectImportedNativeElementFromPreviewTarget(target, 'visual')) {
+          removeMediaActionButton()
+          return true
+        }
+
         const formFieldElement = getFormFieldFromFrameTarget(target)
         if (formFieldElement) {
           formFieldElement.blur()
@@ -21015,6 +21281,10 @@ const ImportedHtmlEditorPanel: React.FC<{
         }
         const target = event.target as Element | null
         if (!target || typeof target.closest !== 'function') return
+        if (target.closest('.rstk-imported-text-toolbar')) {
+          blockImportedPreviewActivation(event)
+          return
+        }
         const actionTarget = getImportedPreviewActionTarget(target)
         if (actionTarget) {
           blockImportedPreviewActivation(event)
@@ -21031,6 +21301,10 @@ const ImportedHtmlEditorPanel: React.FC<{
 
       const handleRegionMouseDown = (event: MouseEvent) => {
         const target = event.target as Element | null
+        if (target && typeof target.closest === 'function' && target.closest('.rstk-imported-text-toolbar')) {
+          blockImportedPreviewActivation(event)
+          return
+        }
         if (!aiRegionMode) {
           if (target && typeof target.closest === 'function') {
             if (getImportedPreviewActionTarget(target)) {
@@ -21174,6 +21448,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         window.removeEventListener('message', handleFrameGuardMessage)
         removeRegionDragHandlers()
         removeMediaActionButton()
+        removeTextToolbar()
         removeRegionBox()
         doc.body?.classList.remove('rstk-imported-region-selecting')
         style.remove()
@@ -21189,7 +21464,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       iframe.removeEventListener('load', installEditorHooks)
       cleanupDocument()
     }
-  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, openVideoEditorForElement, previewLoading, previewVersion, saveEditableContent, site.id, site.name, site.title])
+  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, openVideoEditorForElement, previewLoading, previewVersion, saveEditableContent, selectImportedNativeElementFromPreviewTarget, site.id, site.name, site.title])
 
   const saveInlineEditor = async () => {
     if (!inlineEditor || inlineEditor.selection.editType === 'section') return
@@ -22353,6 +22628,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
     let cleanupDocument = () => {}
     let cancelled = false
+    let beginCodePreviewTextEditForMessage: ((element: HTMLElement, editor: ImportedCodeElementEditorState) => void) | null = null
 
     const installCodePreviewHooks = () => {
       if (cancelled) return
@@ -22378,6 +22654,10 @@ const ImportedHtmlEditorPanel: React.FC<{
         ${importedCodeSelectableSelector} {
           cursor: pointer !important;
         }
+        ${importedNativeElementSelector} {
+          cursor: pointer !important;
+          scroll-margin: 42px !important;
+        }
         ${importedCodeSelectableSelector}:hover {
           outline: 1px dashed rgba(100, 116, 139, 0.5) !important;
           outline-offset: 4px !important;
@@ -22399,8 +22679,122 @@ const ImportedHtmlEditorPanel: React.FC<{
             0 0 0 1px rgba(15, 23, 42, 0.18),
             0 0 0 5px rgba(245, 158, 11, 0.18) !important;
         }
+        .rstk-imported-code-editing {
+          cursor: text !important;
+          outline: 2px dashed #2563eb !important;
+          outline-offset: 5px !important;
+          border-radius: 6px !important;
+          background: rgba(37, 99, 235, 0.06) !important;
+          box-shadow:
+            0 0 0 1px rgba(15, 23, 42, 0.18),
+            0 0 0 4px rgba(37, 99, 235, 0.14) !important;
+        }
+        .rstk-imported-text-toolbar {
+          position: fixed !important;
+          z-index: 2147483647 !important;
+          display: inline-flex !important;
+          align-items: center !important;
+          gap: 6px !important;
+          min-height: 34px !important;
+          border: 1px solid rgba(148, 163, 184, 0.24) !important;
+          border-radius: 8px !important;
+          background: rgba(15, 17, 23, 0.96) !important;
+          color: #f8fafc !important;
+          padding: 5px !important;
+          font: 800 12px/1 "Inter", Arial, sans-serif !important;
+          box-shadow: 0 18px 46px rgba(0, 0, 0, 0.44) !important;
+          color-scheme: dark !important;
+        }
+        .rstk-imported-text-toolbar button {
+          width: 28px !important;
+          height: 28px !important;
+          border: 0 !important;
+          border-radius: 6px !important;
+          background: rgba(255, 255, 255, 0.1) !important;
+          color: #f8fafc !important;
+          font: inherit !important;
+          cursor: pointer !important;
+        }
+        .rstk-imported-text-toolbar button:hover {
+          background: rgba(255, 255, 255, 0.18) !important;
+        }
+        .rstk-imported-text-toolbar input {
+          width: 44px !important;
+          height: 28px !important;
+          border: 1px solid rgba(148, 163, 184, 0.26) !important;
+          border-radius: 6px !important;
+          background: rgba(15, 23, 42, 0.72) !important;
+          color: #f8fafc !important;
+          text-align: center !important;
+          font: inherit !important;
+          outline: 0 !important;
+        }
       `
       doc.head?.appendChild(style)
+
+      let textToolbar: HTMLDivElement | null = null
+
+      const removeTextToolbar = () => {
+        textToolbar?.remove()
+        textToolbar = null
+      }
+
+      const positionTextToolbar = (element: HTMLElement, toolbar: HTMLDivElement) => {
+        const rect = element.getBoundingClientRect()
+        const toolbarWidth = toolbar.offsetWidth || 150
+        const maxLeft = Math.max(8, (doc.defaultView?.innerWidth || doc.documentElement.clientWidth || 0) - toolbarWidth - 8)
+        toolbar.style.left = `${Math.min(Math.max(8, rect.left), maxLeft)}px`
+        toolbar.style.top = `${Math.max(8, rect.top - 44)}px`
+      }
+
+      const showTextToolbar = (
+        element: HTMLElement,
+        initialFontSizePx: number,
+        onFontSizeChange: (fontSizePx: number) => void
+      ) => {
+        removeTextToolbar()
+        const toolbar = doc.createElement('div')
+        toolbar.className = 'rstk-imported-text-toolbar'
+        toolbar.setAttribute('role', 'toolbar')
+        toolbar.setAttribute('aria-label', 'Tamaño de texto')
+
+        const decrease = doc.createElement('button')
+        decrease.type = 'button'
+        decrease.textContent = 'A-'
+        decrease.setAttribute('aria-label', 'Reducir tamaño de letra')
+
+        const input = doc.createElement('input')
+        input.type = 'text'
+        input.inputMode = 'numeric'
+        input.readOnly = true
+        input.value = String(initialFontSizePx)
+        input.setAttribute('aria-label', 'Tamaño de letra en pixeles')
+
+        const increase = doc.createElement('button')
+        increase.type = 'button'
+        increase.textContent = 'A+'
+        increase.setAttribute('aria-label', 'Aumentar tamaño de letra')
+
+        const applyFontSize = (rawValue: number) => {
+          const nextFontSize = clampImportedTextFontSize(rawValue, initialFontSizePx)
+          input.value = String(nextFontSize)
+          element.style.fontSize = `${nextFontSize}px`
+          onFontSizeChange(nextFontSize)
+          positionTextToolbar(element, toolbar)
+        }
+
+        decrease.addEventListener('click', () => applyFontSize((Number.parseFloat(input.value) || initialFontSizePx) - 2))
+        increase.addEventListener('click', () => applyFontSize((Number.parseFloat(input.value) || initialFontSizePx) + 2))
+        input.addEventListener('input', () => {
+          const parsed = Number.parseFloat(input.value)
+          if (Number.isFinite(parsed)) applyFontSize(parsed)
+        })
+        toolbar.addEventListener('mousedown', (toolbarEvent) => toolbarEvent.preventDefault())
+        toolbar.append(decrease, input, increase)
+        doc.body.appendChild(toolbar)
+        textToolbar = toolbar
+        positionTextToolbar(element, toolbar)
+      }
 
       const getSelectableTarget = (target: Element | null) => {
         if (!target || typeof target.closest !== 'function') return null
@@ -22412,6 +22806,94 @@ const ImportedHtmlEditorPanel: React.FC<{
         return target.closest(importedEditorActionSelector) as HTMLElement | null
       }
 
+      const beginCodePreviewTextEdit = (element: HTMLElement, editor: ImportedCodeElementEditorState) => {
+        if (!activeCodeFile || activeCodeFile.language !== 'html') return
+        const originalValue = editor.value
+        const originalFontSizePx = editor.fontSizePx || getImportedElementFontSizePx(element)
+        const originalInlineFontSize = element.style.fontSize
+        let pendingFontSizePx = originalFontSizePx
+
+        removeTextToolbar()
+        setButtonEditor(null)
+        setCodeElementEditor(null)
+        setElementPopoverPosition(null)
+        setContentError('')
+
+        element.classList.add('rstk-imported-code-editing')
+        element.setAttribute('contenteditable', 'plaintext-only')
+        element.setAttribute('spellcheck', 'true')
+        element.focus({ preventScroll: true })
+        showTextToolbar(element, originalFontSizePx, (fontSizePx) => {
+          pendingFontSizePx = fontSizePx
+        })
+
+        const frameSelection = doc.defaultView?.getSelection()
+        if (frameSelection) {
+          const range = doc.createRange()
+          range.selectNodeContents(element)
+          frameSelection.removeAllRanges()
+          frameSelection.addRange(range)
+        }
+
+        let done = false
+        const cleanupTextEdit = (save: boolean) => {
+          if (done) return
+          done = true
+          element.removeEventListener('blur', handleBlur)
+          element.removeEventListener('keydown', handleKeydown)
+          element.removeAttribute('contenteditable')
+          element.removeAttribute('spellcheck')
+          element.classList.remove('rstk-imported-code-editing')
+          removeTextToolbar()
+
+          const nextValue = (element.textContent || '').replace(/\s+/g, ' ').trim()
+          const fontSizeChanged = pendingFontSizePx !== originalFontSizePx
+          if (!save) {
+            element.textContent = originalValue
+            element.style.fontSize = originalInlineFontSize
+            return
+          }
+          if (nextValue === originalValue.trim() && !fontSizeChanged) return
+
+          const sourceRange = findImportedSourceRangeForDescriptor(activeCodeValue, editor.descriptor) || editor.range
+          const nextHtml = applyImportedCodeElementPatch(
+            activeCodeValue,
+            {
+              ...editor,
+              value: nextValue || originalValue,
+              fontSizePx: fontSizeChanged ? pendingFontSizePx : editor.fontSizePx
+            },
+            sourceRange
+          )
+          if (!nextHtml) {
+            setContentError('No pude actualizar ese texto en el código. Selecciónalo otra vez desde la vista.')
+            element.textContent = originalValue
+            element.style.fontSize = originalInlineFontSize
+            return
+          }
+          onCodeDraftChange(activeCodeFile.path, nextHtml, activeCodeFile.content)
+          setCodeSelectionNotice('Texto actualizado en el código · cambios sin guardar')
+          showToast('success', 'Texto actualizado', 'Revisa el código y guarda el sitio cuando termines.')
+        }
+
+        const handleBlur = () => cleanupTextEdit(true)
+        const handleKeydown = (keyboardEvent: KeyboardEvent) => {
+          if (keyboardEvent.key === 'Escape') {
+            keyboardEvent.preventDefault()
+            cleanupTextEdit(false)
+            return
+          }
+          if (keyboardEvent.key === 'Enter' && !keyboardEvent.shiftKey) {
+            keyboardEvent.preventDefault()
+            element.blur()
+          }
+        }
+
+        element.addEventListener('blur', handleBlur)
+        element.addEventListener('keydown', handleKeydown)
+      }
+      beginCodePreviewTextEditForMessage = beginCodePreviewTextEdit
+
       const handleCodePreviewClick = (event: MouseEvent) => {
         event.preventDefault()
         event.stopPropagation()
@@ -22419,6 +22901,9 @@ const ImportedHtmlEditorPanel: React.FC<{
           event.stopImmediatePropagation()
         }
         const rawTarget = event.target as Element | null
+        if (rawTarget && typeof rawTarget.closest === 'function' && rawTarget.closest('.rstk-imported-text-toolbar')) return
+        if (selectImportedNativeElementFromPreviewTarget(rawTarget, 'code')) return
+
         const actionTarget = getActionTarget(rawTarget)
         const choiceInput = rawTarget ? getImportedChoiceInputFromTarget(rawTarget, doc) : null
         const formFieldTarget = choiceInput || getImportedCodeFormFieldElementFromTarget(rawTarget, doc)
@@ -22429,7 +22914,12 @@ const ImportedHtmlEditorPanel: React.FC<{
         if (actionTarget && range) {
           openCodeButtonEditorForElement(actionTarget, descriptor, range)
         } else if (range) {
-          openCodeElementEditorForElement(target, descriptor, range)
+          const editor = readImportedCodeElementEditor(target, descriptor, range, doc)
+          if (editor?.mode === 'text') {
+            beginCodePreviewTextEdit(target, editor)
+          } else {
+            openCodeElementEditorForElement(target, descriptor, range)
+          }
         } else {
           setButtonEditor(null)
           setCodeElementEditor(null)
@@ -22444,6 +22934,8 @@ const ImportedHtmlEditorPanel: React.FC<{
         doc?.removeEventListener('auxclick', handleCodePreviewClick, true)
         selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
         selectedCodePreviewElementRef.current = null
+        removeTextToolbar()
+        beginCodePreviewTextEditForMessage = null
         style.remove()
       }
     }
@@ -22455,6 +22947,8 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (!doc) return
       const element = findImportedFrameElementByDescriptor(doc, event.data)
       if (!element) return
+      if (selectImportedNativeElementFromPreviewTarget(element, 'code')) return
+
       const actionElement = element.matches(importedEditorActionSelector) ? element : null
       const choiceInput = getImportedChoiceInputFromTarget(element, doc)
       const formFieldElement = choiceInput || getImportedCodeFormFieldElementFromTarget(element, doc)
@@ -22466,7 +22960,12 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (actionElement) {
         if (range) openCodeButtonEditorForElement(actionElement, descriptor, range)
       } else if (range) {
-        openCodeElementEditorForElement(targetElement, descriptor, range)
+        const editor = readImportedCodeElementEditor(targetElement, descriptor, range, doc)
+        if (editor?.mode === 'text' && beginCodePreviewTextEditForMessage) {
+          beginCodePreviewTextEditForMessage(targetElement, editor)
+        } else {
+          openCodeElementEditorForElement(targetElement, descriptor, range)
+        }
       } else {
         setButtonEditor(null)
         setCodeElementEditor(null)
@@ -22485,7 +22984,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       window.removeEventListener('message', handleCodePreviewMessage)
       cleanupDocument()
     }
-  }, [activeCodePreviewHtml, codeEditorOpen, guardedCodePreviewHtml, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement])
+  }, [activeCodeFile, activeCodePreviewHtml, activeCodeValue, codeEditorOpen, guardedCodePreviewHtml, onCodeDraftChange, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement, selectImportedNativeElementFromPreviewTarget, showToast])
 
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
   const importedNativeElementsPanel = importedNativeElementSlots.length > 0 ? (() => {
@@ -22752,17 +23251,33 @@ const ImportedHtmlEditorPanel: React.FC<{
     )
   })() : null
 
-  const codeEditorSourceWidth = importedNativeElementsPanel ? Math.min(codeEditorWidth, 38) : codeEditorWidth
+  const codeEditorHasNativeInspector = Boolean(importedNativeElementsPanel)
+  const codeEditorCollapsed = codeEditorWidth <= 0
+  const codeEditorSourceWidth = getImportedCodePanelSourceWidth(codeEditorWidth, codeEditorHasNativeInspector)
+  const codeEditorSourceTrack = getImportedCodePanelSourceTrack(codeEditorWidth, codeEditorHasNativeInspector)
+  const expandCodeEditorPanel = () => {
+    const nextWidth = normalizeImportedCodePanelWidth(lastCodeEditorExpandedWidthRef.current || IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+    setCodeEditorWidth(nextWidth || IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+  }
+  const collapseCodeEditorPanel = () => setCodeEditorWidth(0)
 
   if (codeEditorOpen) {
     return (
       <div
         ref={codeSplitRef}
-        className={`${styles.importedCodeEditorPanel} ${importedNativeElementsPanel ? styles.importedCodeEditorPanelWithInspector : ''}`}
-        style={{ '--imported-code-source-width': `${codeEditorSourceWidth}%` } as React.CSSProperties}
+        className={[
+          styles.importedCodeEditorPanel,
+          codeEditorHasNativeInspector ? styles.importedCodeEditorPanelWithInspector : '',
+          codeEditorCollapsed ? styles.importedCodeEditorPanelCodeCollapsed : ''
+        ].filter(Boolean).join(' ')}
+        style={{
+          '--imported-code-source-width': `${codeEditorSourceWidth}%`,
+          '--imported-code-source-track': codeEditorSourceTrack
+        } as React.CSSProperties}
       >
         <section
-          className={`${styles.importedCodeSourcePane} ${codeEditorTheme === 'dark' ? styles.importedCodeSourcePaneDark : styles.importedCodeSourcePaneLight} ${activeCodeDiagnostics.length ? styles.importedCodeSourcePaneInvalid : ''}`}
+          className={`${styles.importedCodeSourcePane} ${codeEditorCollapsed ? styles.importedCodeSourcePaneCollapsed : ''} ${codeEditorTheme === 'dark' ? styles.importedCodeSourcePaneDark : styles.importedCodeSourcePaneLight} ${activeCodeDiagnostics.length ? styles.importedCodeSourcePaneInvalid : ''}`}
+          aria-hidden={codeEditorCollapsed}
         >
           <div className={styles.importedCodePaneHeader}>
             <div className={styles.importedCodeTitleBlock}>
@@ -22962,26 +23477,42 @@ const ImportedHtmlEditorPanel: React.FC<{
         </section>
 
         <div
-          className={styles.importedCodeResizeHandle}
+          className={`${styles.importedCodeResizeHandle} ${codeEditorCollapsed ? styles.importedCodeResizeHandleCollapsed : ''}`}
           role="separator"
           aria-orientation="vertical"
-          aria-label="Cambiar tamaño entre código y vista"
-          aria-valuemin={28}
-          aria-valuemax={88}
+          aria-label={codeEditorCollapsed ? 'Mostrar código HTML' : 'Cambiar tamaño entre código y vista'}
+          aria-valuemin={0}
+          aria-valuemax={IMPORTED_CODE_PANEL_MAX_WIDTH}
           aria-valuenow={Math.round(codeEditorWidth)}
           tabIndex={0}
           onPointerDown={handleCodeSplitPointerDown}
-          onDoubleClick={() => setCodeEditorWidth(50)}
+          onDoubleClick={() => {
+            if (codeEditorCollapsed) expandCodeEditorPanel()
+            else setCodeEditorWidth(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
+          }}
           onKeyDown={(event) => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
             event.preventDefault()
-            if (event.key === 'ArrowLeft') setCodeEditorWidth(current => Math.max(28, current - 4))
-            if (event.key === 'ArrowRight') setCodeEditorWidth(current => Math.min(88, current + 4))
-            if (event.key === 'Home') setCodeEditorWidth(28)
-            if (event.key === 'End') setCodeEditorWidth(88)
+            if (event.key === 'ArrowLeft') setCodeEditorWidth(current => normalizeImportedCodePanelWidth(current - 4))
+            if (event.key === 'ArrowRight') setCodeEditorWidth(current => normalizeImportedCodePanelWidth((current || lastCodeEditorExpandedWidthRef.current || IMPORTED_CODE_PANEL_DEFAULT_WIDTH) + 4))
+            if (event.key === 'Home') collapseCodeEditorPanel()
+            if (event.key === 'End') setCodeEditorWidth(IMPORTED_CODE_PANEL_MAX_WIDTH)
           }}
         >
-          <span />
+          {codeEditorCollapsed ? (
+            <button
+              type="button"
+              className={styles.importedCodeResizeExpandButton}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={expandCodeEditorPanel}
+              aria-label="Mostrar código HTML"
+              title="Mostrar código HTML"
+            >
+              <PanelLeftOpen size={16} />
+            </button>
+          ) : (
+            <span />
+          )}
         </div>
 
         <section className={[

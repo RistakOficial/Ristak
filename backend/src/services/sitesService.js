@@ -2780,6 +2780,39 @@ function setStyleBackgroundUrl(style = '', url = '') {
   return `${prefix}${prefix ? '; ' : ''}background-image: ${safeBackground}`
 }
 
+function normalizeImportedTextFontSizePx(input = {}) {
+  const raw = input.fontSizePx ?? input.font_size_px ?? input.fontSize ?? input.font_size
+  if (raw === undefined || raw === null || raw === '') return null
+  const parsed = Number.parseFloat(String(raw).replace(/px$/i, ''))
+  if (!Number.isFinite(parsed)) return null
+  return Math.min(96, Math.max(10, Math.round(parsed)))
+}
+
+function setInlineStyleDeclaration(styleValue = '', property = '', value = '') {
+  if (!property) return styleValue
+  const declarationPattern = new RegExp(`\\s*${escapeRegExp(property)}\\s*:\\s*[^;]+;?`, 'ig')
+  const withoutDeclaration = String(styleValue || '')
+    .replace(declarationPattern, '')
+    .replace(/;+\s*$/g, '')
+    .trim()
+  const cleanValue = cleanString(value)
+  return [withoutDeclaration, cleanValue ? `${property}: ${cleanValue}` : '']
+    .filter(Boolean)
+    .join('; ')
+}
+
+function setImportedTextFontSizeAttribute(openingTag = '', attrsText = '', input = {}) {
+  const fontSizePx = normalizeImportedTextFontSizePx(input)
+  if (!fontSizePx) return openingTag
+  const attrs = parseHtmlAttributes(attrsText)
+  return setHtmlAttribute(
+    openingTag,
+    attrsText,
+    'style',
+    setInlineStyleDeclaration(attrs.style || '', 'font-size', `${fontSizePx}px`)
+  )
+}
+
 function getWistiaMediaIdFromValue(value = '') {
   const raw = decodeHtmlAttribute(cleanString(value))
   if (!raw) return ''
@@ -3502,7 +3535,8 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
       const currentType = getImportedEditTypeFromAttrs(attrsText)
       if (currentType && currentType !== editType) return match
       updated = true
-      return `<${tagName}${attrsText}>${escapeHtml(value)}</${tagName}>`
+      const openingTag = setImportedTextFontSizeAttribute(`<${tagName}${attrsText}>`, attrsText, input)
+      return `${openingTag}${escapeHtml(value)}</${tagName}>`
     })
     // Generic containers annotated as editable text (innermost match, see
     // annotateImportedSimpleTextContainers).
@@ -3515,7 +3549,8 @@ function applyImportedEditableContentUpdate(html = '', input = {}) {
           const currentType = getImportedEditTypeFromAttrs(attrsText)
           if (currentType && currentType !== editType) return match
           updated = true
-          return `<${tag}${attrsText}>${escapeHtml(value)}</${tag}>`
+          const openingTag = setImportedTextFontSizeAttribute(`<${tag}${attrsText}>`, attrsText, input)
+          return `${openingTag}${escapeHtml(value)}</${tag}>`
         })
       }
     }

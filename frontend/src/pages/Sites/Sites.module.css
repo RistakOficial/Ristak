@@ -467,7 +467,7 @@
   height: 100%;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(340px, var(--imported-code-source-width, 50%)) 12px minmax(96px, 1fr);
+  grid-template-columns: var(--imported-code-source-track, minmax(340px, 50%)) 12px minmax(96px, 1fr);
   gap: 0;
   align-items: stretch;
   overflow: hidden;
@@ -475,11 +475,19 @@
 
 .importedCodeEditorPanelWithInspector {
   grid-template-columns:
-    minmax(300px, var(--imported-code-source-width, 38%))
+    var(--imported-code-source-track, minmax(300px, 38%))
     12px
     minmax(280px, 1fr)
     minmax(340px, 410px);
   column-gap: 10px;
+}
+
+.importedCodeEditorPanelCodeCollapsed {
+  grid-template-columns: 0 40px minmax(0, 1fr);
+}
+
+.importedCodeEditorPanelCodeCollapsed.importedCodeEditorPanelWithInspector {
+  grid-template-columns: 0 40px minmax(0, 1fr) minmax(340px, 410px);
 }
 
 .importedCodeNativeInspectorPane {
@@ -516,6 +524,12 @@
   border-radius: 8px;
   background: var(--color-background-primary);
   overflow: hidden;
+}
+
+.importedCodeSourcePaneCollapsed {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .importedCodeSourcePane {
@@ -833,6 +847,34 @@
   place-items: center;
   cursor: col-resize;
   color: var(--color-text-tertiary);
+}
+
+.importedCodeResizeHandleCollapsed {
+  min-width: 40px;
+  cursor: default;
+  border-inline: 1px solid var(--color-border-subtle);
+  background: var(--color-background-primary);
+}
+
+.importedCodeResizeExpandButton {
+  width: 30px;
+  height: 30px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-background-secondary);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.importedCodeResizeExpandButton:hover,
+.importedCodeResizeExpandButton:focus-visible {
+  border-color: rgba(var(--color-primary-rgb), 0.42);
+  background: var(--color-background-tertiary);
+  color: var(--color-primary);
+  outline: none;
 }
 
 .importedCodeResizeHandle span {
@@ -4153,12 +4195,30 @@
     grid-template-rows: minmax(420px, 1fr) 14px minmax(520px, 1fr) minmax(360px, auto);
   }
 
+  .importedCodeEditorPanelCodeCollapsed {
+    grid-template-columns: 1fr;
+    grid-template-rows: 0 40px minmax(520px, 1fr);
+  }
+
+  .importedCodeEditorPanelCodeCollapsed.importedCodeEditorPanelWithInspector {
+    grid-template-columns: 1fr;
+    grid-template-rows: 0 40px minmax(520px, 1fr) minmax(360px, auto);
+  }
+
   .importedCodeResizeHandle {
     min-width: 0;
     min-height: 14px;
     width: 100%;
     height: 14px;
     cursor: row-resize;
+  }
+
+  .importedCodeResizeHandleCollapsed {
+    min-height: 40px;
+    width: 100%;
+    height: 40px;
+    border-inline: 0;
+    border-block: 1px solid var(--color-border-subtle);
   }
 
   .importedCodeResizeHandle span {
@@ -20810,7 +20870,7 @@
   }
 
   .importedCodeEditorPanel {
-    grid-template-columns: minmax(304px, var(--imported-code-source-width, 48%)) 10px minmax(180px, 1fr);
+    grid-template-columns: var(--imported-code-source-track, minmax(304px, 48%)) 10px minmax(180px, 1fr);
   }
 
   .importedCodePaneHeader {
@@ -20896,12 +20956,12 @@
   }
 
   .importedCodeEditorPanel {
-    grid-template-columns: minmax(280px, var(--imported-code-source-width, 46%)) 8px minmax(160px, 1fr);
+    grid-template-columns: var(--imported-code-source-track, minmax(280px, 46%)) 8px minmax(160px, 1fr);
   }
 
   .importedCodeEditorPanelWithInspector {
     grid-template-columns:
-      minmax(280px, var(--imported-code-source-width, 38%))
+      var(--imported-code-source-track, minmax(280px, 38%))
       8px
       minmax(180px, 1fr)
       minmax(320px, 360px);
@@ -21599,5 +21659,15 @@
   .importedCodeEditorPanel.importedCodeEditorPanelWithInspector {
     grid-template-columns: 1fr;
     grid-template-rows: minmax(420px, 1fr) 14px minmax(520px, 1fr) minmax(360px, auto);
+  }
+
+  .importedCodeEditorPanel.importedCodeEditorPanelCodeCollapsed {
+    grid-template-columns: 1fr;
+    grid-template-rows: 0 40px minmax(520px, 1fr);
+  }
+
+  .importedCodeEditorPanel.importedCodeEditorPanelCodeCollapsed.importedCodeEditorPanelWithInspector {
+    grid-template-columns: 1fr;
+    grid-template-rows: 0 40px minmax(520px, 1fr) minmax(360px, auto);
   }
 }
