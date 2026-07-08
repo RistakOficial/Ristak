@@ -8400,6 +8400,136 @@ function siteTrackingStatsFromRows(trackingRow = {}, submissionsRow = {}, extra 
   }
 }
 
+function hasSiteAnalyticsResponseValue(value) {
+  if (Array.isArray(value)) return value.map(cleanString).filter(Boolean).length > 0
+  if (value && typeof value === 'object') return Object.keys(value).length > 0
+  return cleanString(value) !== ''
+}
+
+function formatSiteAnalyticsRate(numerator, denominator) {
+  const parsedNumerator = Number(numerator || 0)
+  const parsedDenominator = Number(denominator || 0)
+  if (!Number.isFinite(parsedNumerator) || !Number.isFinite(parsedDenominator) || parsedDenominator <= 0) return 0
+  return Number(((parsedNumerator / parsedDenominator) * 100).toFixed(1))
+}
+
+function getSiteAnalyticsFieldLabel(block = {}, index = 0) {
+  return cleanString(block.label || block.placeholder || block.content || block.settings?.label) ||
+    `Pregunta ${index + 1}`
+}
+
+async function getSitesFormFunnelSummary(siteIds = [], dateFilters = {}, statsBySite = {}) {
+  if (!siteIds.length) return {}
+
+  const placeholders = siteIds.map(() => '?').join(',')
+  const blockRows = await db.all(`
+    SELECT *
+    FROM public_site_blocks
+    WHERE site_id IN (${placeholders})
+    ORDER BY site_id ASC, sort_order ASC, created_at ASC
+  `, siteIds)
+  const blocksBySite = new Map()
+  for (const row of blockRows) {
+    const block = mapBlock(row)
+    if (!block) continue
+    const list = blocksBySite.get(block.siteId) || []
+    list.push(block)
+    blocksBySite.set(block.siteId, list)
+  }
+
+  const submissionDateClause = dateFilters.dateFrom && dateFilters.dateTo
+    ? 'AND created_at >= ? AND created_at <= ?'
+    : ''
+  const submissionRows = await db.all(`
+    WITH scoped_submissions AS (
+      SELECT
+        site_id as resolved_site_id,
+        id,
+        response_json,
+        status,
+        created_at
+      FROM public_site_submissions
+      WHERE site_id IN (${placeholders})
+        ${submissionDateClause}
+      UNION ALL
+      SELECT
+        form_site_id as resolved_site_id,
+        id,
+        response_json,
+        status,
+        created_at
+      FROM public_site_submissions
+      WHERE form_site_id IN (${placeholders})
+        AND (site_id IS NULL OR site_id != form_site_id)
+        ${submissionDateClause}
+    )
+    SELECT *
+    FROM scoped_submissions
+    WHERE resolved_site_id IS NOT NULL AND resolved_site_id != ''
+  `, [
+    ...siteIds,
+    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : []),
+    ...siteIds,
+    ...(dateFilters.dateFrom && dateFilters.dateTo ? [dateFilters.dateFrom, dateFilters.dateTo] : [])
+  ])
+  const submissionsBySite = new Map()
+  for (const row of submissionRows) {
+    const siteId = cleanString(row.resolved_site_id)
+    if (!siteId) continue
+    const list = submissionsBySite.get(siteId) || []
+    list.push({
+      id: cleanString(row.id),
+      responses: parseJson(row.response_json, {}),
+      status: cleanString(row.status || 'received'),
+      createdAt: row.created_at || ''
+    })
+    submissionsBySite.set(siteId, list)
+  }
+
+  const result = {}
+  for (const siteId of siteIds) {
+    const fields = collectFieldBlocks(blocksBySite.get(siteId) || [])
+    const submissions = submissionsBySite.get(siteId) || []
+    const stats = statsBySite[siteId] || emptySiteTrackingStats({ siteId })
+    const starts = Math.max(Number(stats.visitors || 0), submissions.length)
+    const submissionsCount = submissions.length
+    let previousAnsweredCount = starts
+
+    result[siteId] = {
+      siteId,
+      starts,
+      views: Number(stats.views || 0),
+      visitors: Number(stats.visitors || 0),
+      submissions: submissionsCount,
+      conversionRate: formatSiteAnalyticsRate(submissionsCount, starts),
+      fields: fields.map((field, index) => {
+        const answeredCount = submissions.reduce((total, submission) => (
+          hasSiteAnalyticsResponseValue(submission.responses?.[field.id]) ? total + 1 : total
+        ), 0)
+        const reachedCount = index === 0 ? starts : previousAnsweredCount
+        const missedCount = Math.max(0, reachedCount - answeredCount)
+        const row = {
+          blockId: field.id,
+          label: getSiteAnalyticsFieldLabel(field, index),
+          blockType: field.blockType,
+          required: Boolean(field.required),
+          stepIndex: index + 1,
+          reachedCount,
+          answeredCount,
+          missedCount,
+          answerRate: formatSiteAnalyticsRate(answeredCount, starts),
+          stepCompletionRate: formatSiteAnalyticsRate(answeredCount, reachedCount),
+          missedRate: formatSiteAnalyticsRate(missedCount, reachedCount)
+        }
+        previousAnsweredCount = answeredCount
+        return row
+      })
+    }
+  }
+
+  return result
+}
+
 export async function getSitesTrackingSummary(input = {}) {
   const siteIds = normalizeSitesAnalyticsIds(input.siteIds)
   const dateFilters = await resolveSitesAnalyticsDateFilters(input)
@@ -8412,7 +8542,8 @@ export async function getSitesTrackingSummary(input = {}) {
     return {
       dateFrom: dateFilters.dateFrom || '',
       dateTo: dateFilters.dateTo || '',
-      bySiteId
+      bySiteId,
+      formFunnels: {}
     }
   }
 
@@ -8504,11 +8635,13 @@ export async function getSitesTrackingSummary(input = {}) {
       { siteId }
     )
   }
+  const formFunnels = await getSitesFormFunnelSummary(siteIds, dateFilters, bySiteId)
 
   return {
     dateFrom: dateFilters.dateFrom || '',
     dateTo: dateFilters.dateTo || '',
-    bySiteId
+    bySiteId,
+    formFunnels
   }
 }
 

@@ -168,3 +168,73 @@ test('sites analytics summary deduplicates visitors by contact identity', async 
     await db.run('DELETE FROM public_sites WHERE id = ?', [siteId]).catch(() => undefined)
   }
 })
+
+test('sites analytics summary includes form completion by question', async () => {
+  const suffix = `${Date.now()}_${Math.random().toString(16).slice(2)}`
+  const formId = `form_funnel_${suffix}`
+  const q1 = `question_one_${suffix}`
+  const q2 = `question_two_${suffix}`
+  const q3 = `question_three_${suffix}`
+  const inRange = '2026-03-20T18:00:00.000Z'
+  const outOfRange = '2026-03-10T18:00:00.000Z'
+
+  try {
+    await db.run(
+      'INSERT INTO public_sites (id, name, slug, site_type, status) VALUES (?, ?, ?, ?, ?)',
+      [formId, 'Formulario embudo', `form-funnel-${suffix}`, 'standard_form', 'published']
+    )
+
+    await db.run(
+      'INSERT INTO public_site_blocks (id, site_id, block_type, label, required, sort_order, options_json, settings_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [q1, formId, 'short_text', 'Nombre', 1, 1, '[]', '{}']
+    )
+    await db.run(
+      'INSERT INTO public_site_blocks (id, site_id, block_type, label, required, sort_order, options_json, settings_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [q2, formId, 'email', 'Correo', 1, 2, '[]', '{}']
+    )
+    await db.run(
+      'INSERT INTO public_site_blocks (id, site_id, block_type, label, required, sort_order, options_json, settings_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [q3, formId, 'phone', 'WhatsApp', 0, 3, '[]', '{}']
+    )
+
+    await db.run(
+      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
+      [`submission_${suffix}_complete`, formId, JSON.stringify({ [q1]: 'Raul', [q2]: 'raul@example.com', [q3]: '+5216560000000' }), inRange]
+    )
+    await db.run(
+      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
+      [`submission_${suffix}_partial`, formId, JSON.stringify({ [q1]: 'Ana', [q2]: 'ana@example.com' }), inRange]
+    )
+    await db.run(
+      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
+      [`submission_${suffix}_first`, formId, JSON.stringify({ [q1]: 'Luis' }), inRange]
+    )
+    await db.run(
+      'INSERT INTO public_site_submissions (id, site_id, response_json, created_at) VALUES (?, ?, ?, ?)',
+      [`submission_${suffix}_old`, formId, JSON.stringify({ [q1]: 'Viejo', [q2]: 'old@example.com', [q3]: '1234567890' }), outOfRange]
+    )
+
+    const summary = await getSitesTrackingSummary({
+      siteIds: [formId],
+      dateFrom: '2026-03-20',
+      dateTo: '2026-03-20'
+    })
+
+    const funnel = summary.formFunnels[formId]
+    assert.equal(funnel.submissions, 3)
+    assert.equal(funnel.starts, 3)
+    assert.equal(funnel.fields.length, 3)
+    assert.deepEqual(
+      funnel.fields.map(field => [field.label, field.answeredCount, field.answerRate, field.stepCompletionRate]),
+      [
+        ['Nombre', 3, 100, 100],
+        ['Correo', 2, 66.7, 66.7],
+        ['WhatsApp', 1, 33.3, 50]
+      ]
+    )
+  } finally {
+    await db.run('DELETE FROM public_site_submissions WHERE site_id = ?', [formId]).catch(() => undefined)
+    await db.run('DELETE FROM public_site_blocks WHERE site_id = ?', [formId]).catch(() => undefined)
+    await db.run('DELETE FROM public_sites WHERE id = ?', [formId]).catch(() => undefined)
+  }
+})

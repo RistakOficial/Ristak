@@ -298,6 +298,7 @@ export async function getSitesAnalyticsSummaryHandler(req, res) {
         dateFrom: siteTracking.dateFrom || videoTracking.dateFrom || '',
         dateTo: siteTracking.dateTo || videoTracking.dateTo || '',
         sites: siteTracking.bySiteId,
+        formFunnels: siteTracking.formFunnels || {},
         videos: videoTracking
       }
     })

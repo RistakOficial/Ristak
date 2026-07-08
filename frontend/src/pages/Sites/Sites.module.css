@@ -7887,6 +7887,164 @@
   text-align: center;
 }
 
+.sitesAnalyticsSelectedPanel {
+  min-height: 0;
+}
+
+.sitesAnalyticsConversionPath,
+.formFunnelSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.sitesAnalyticsConversionPath div,
+.formFunnelSummary div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--design-panel-border);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+}
+
+.sitesAnalyticsConversionPath svg,
+.formFunnelSummary svg {
+  color: var(--accent);
+}
+
+.sitesAnalyticsConversionPath span,
+.formFunnelSummary span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-mute);
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sitesAnalyticsConversionPath strong,
+.formFunnelSummary strong {
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.98rem;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formFunnelSteps {
+  display: grid;
+  gap: 10px;
+}
+
+.formFunnelStep {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px 16px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--design-panel-border);
+}
+
+.formFunnelStepMain {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+}
+
+.formFunnelStepNumber {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-dim);
+  font-family: var(--num-font);
+  font-size: 0.82rem;
+  font-weight: 500;
+}
+
+.formFunnelStepMain strong {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formFunnelStepMain span:not(.formFunnelStepNumber) {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-mute);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 400;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formFunnelStepStats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--text-mute);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+
+.formFunnelStatus {
+  font-family: var(--num-font);
+}
+
+.formFunnelTrack {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+}
+
+.formFunnelTrack span {
+  display: block;
+  width: var(--form-funnel-progress, 0%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.formFunnelTrack[data-tone="success"] span {
+  background: var(--pos);
+}
+
+.formFunnelTrack[data-tone="warning"] span {
+  background: var(--warn);
+}
+
+.formFunnelTrack[data-tone="error"] span {
+  background: var(--neg);
+}
+
 .videoEngagementDashboard {
   display: grid;
   gap: 12px;
@@ -21102,7 +21260,9 @@
   .sitesAnalyticsHeader,
   .sitesAnalyticsFilters,
   .sitesAnalyticsFilterControls,
+  .sitesAnalyticsConversionPath,
   .sitesAnalyticsGrid,
+  .formFunnelSummary,
   .videoAggregateDashboard,
   .videoEngagementHero,
   .videoEngagementGrid,
@@ -21131,6 +21291,14 @@
 @media (max-width: 720px) {
   .sitesAnalyticsKpis {
     grid-template-columns: 1fr;
+  }
+
+  .formFunnelStep {
+    grid-template-columns: 1fr;
+  }
+
+  .formFunnelStepStats {
+    justify-content: flex-start;
   }
 
   .videoDetailMetricGrid {

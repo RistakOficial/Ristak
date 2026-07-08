@@ -2460,6 +2460,14 @@ const formatSitesPercent = (value?: number | null) => {
   return `${new Intl.NumberFormat('es-MX', { maximumFractionDigits: parsed >= 10 ? 0 : 1 }).format(parsed)}%`
 }
 
+const getSitesCompletionTone = (value?: number | null): BadgeVariant => {
+  const rate = Number(value || 0)
+  if (!Number.isFinite(rate)) return 'neutral'
+  if (rate >= 80) return 'success'
+  if (rate >= 50) return 'warning'
+  return 'error'
+}
+
 const formatSitesSeconds = (value?: number | null) => {
   const total = Math.max(0, Math.round(Number(value || 0)))
   if (!Number.isFinite(total) || total <= 0) return '0s'
@@ -42291,6 +42299,12 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     stats: analyticsSummary?.sites?.[site.id] || getSiteAnalyticsStats(site),
     videoCount: videos.filter(asset => getMediaSourceSiteId(asset) === site.id).length
   }))
+  const selectedSiteRow = selectedSiteId
+    ? siteRows.find(row => row.site.id === selectedSiteId) || null
+    : null
+  const selectedFormFunnel = selectedSiteId
+    ? analyticsSummary?.formFunnels?.[selectedSiteId] || null
+    : null
   const totalSiteViews = siteRows.reduce((total, row) => total + row.stats.views, 0)
   const totalVisitors = siteRows.reduce((total, row) => total + row.stats.visitors, 0)
   const totalSessions = siteRows.reduce((total, row) => total + row.stats.sessions, 0)
@@ -42438,6 +42452,112 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     </div>
   )
 
+  const renderSelectedConversionPanel = () => {
+    if (!selectedSiteRow || isFormsView || isVideosView) return null
+
+    const stats = selectedSiteRow.stats
+    const selectedRate = stats.visitors > 0
+      ? stats.conversionRate
+      : stats.views > 0 ? (stats.conversions / stats.views) * 100 : 0
+
+    return (
+      <div className={`${styles.sitesAnalyticsChartBlock} ${styles.sitesAnalyticsSelectedPanel}`}>
+        <div className={styles.sitesAnalyticsChartTitle}>
+          <span>Conversión del sitio seleccionado</span>
+          <strong>{formatSitesPercent(selectedRate)}</strong>
+        </div>
+        <div className={styles.sitesAnalyticsConversionPath}>
+          {[
+            { key: 'views', icon: <Eye size={15} />, label: 'Vistas', value: formatSitesCompactNumber(stats.views) },
+            { key: 'visitors', icon: <Globe2 size={15} />, label: 'Visitantes', value: formatSitesCompactNumber(stats.visitors) },
+            { key: 'sessions', icon: <MousePointerClick size={15} />, label: 'Sesiones', value: formatSitesCompactNumber(stats.sessions) },
+            { key: 'conversions', icon: <ListChecks size={15} />, label: 'Convirtieron', value: formatSitesCompactNumber(stats.conversions) }
+          ].map(metric => (
+            <div key={metric.key}>
+              {metric.icon}
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  const renderSelectedFormFunnelPanel = () => {
+    if (!selectedSiteRow || !isFormsView || !selectedSiteId) return null
+
+    const stats = selectedSiteRow.stats
+    const funnel = selectedFormFunnel
+    const fields = funnel?.fields || []
+    const starts = funnel?.starts ?? Math.max(stats.visitors, stats.conversions)
+    const submissions = funnel?.submissions ?? stats.conversions
+    const conversionRate = funnel?.conversionRate ?? (starts > 0 ? (submissions / starts) * 100 : stats.conversionRate)
+    const weakestField = fields.reduce<typeof fields[number] | null>((current, field) => (
+      !current || field.missedCount > current.missedCount ? field : current
+    ), null)
+
+    return (
+      <div className={`${styles.sitesAnalyticsChartBlock} ${styles.sitesAnalyticsSelectedPanel}`}>
+        <div className={styles.sitesAnalyticsChartTitle}>
+          <span>Completición por pregunta</span>
+          <strong>{formatSitesPercent(conversionRate)} finaliza</strong>
+        </div>
+
+        <div className={styles.formFunnelSummary}>
+          {[
+            { key: 'views', icon: <Eye size={15} />, label: 'Vistas', value: formatSitesCompactNumber(funnel?.views ?? stats.views) },
+            { key: 'starts', icon: <Globe2 size={15} />, label: 'Visitantes', value: formatSitesCompactNumber(starts) },
+            { key: 'submissions', icon: <ListChecks size={15} />, label: 'Envíos', value: formatSitesCompactNumber(submissions) },
+            { key: 'weakest', icon: <ArrowDown size={15} />, label: 'Más fricción', value: weakestField ? weakestField.label : 'Sin dato' }
+          ].map(metric => (
+            <div key={metric.key}>
+              {metric.icon}
+              <span>{metric.label}</span>
+              <strong>{metric.value}</strong>
+            </div>
+          ))}
+        </div>
+
+        {loadingAnalytics && !funnel ? (
+          <div className={styles.sitesAnalyticsChartEmpty}>Calculando completición del formulario...</div>
+        ) : fields.length ? (
+          <div className={styles.formFunnelSteps}>
+            {fields.map(field => {
+              const tone = getSitesCompletionTone(field.stepCompletionRate)
+              const progressStyle = {
+                '--form-funnel-progress': `${clampSitesPercent(field.stepCompletionRate)}%`
+              } as React.CSSProperties
+              return (
+                <div key={field.blockId} className={styles.formFunnelStep}>
+                  <div className={styles.formFunnelStepMain}>
+                    <span className={styles.formFunnelStepNumber}>{field.stepIndex}</span>
+                    <div>
+                      <strong>{field.label}</strong>
+                      <span>{field.required ? 'Obligatoria' : 'Opcional'} · {formatSitesCompactNumber(field.reachedCount)} llegaron</span>
+                    </div>
+                  </div>
+                  <div className={styles.formFunnelStepStats}>
+                    <Badge variant={tone} className={styles.formFunnelStatus}>
+                      {formatSitesPercent(field.stepCompletionRate)}
+                    </Badge>
+                    <span>{formatSitesCompactNumber(field.answeredCount)} respondieron</span>
+                    <span>{formatSitesCompactNumber(field.missedCount)} sin respuesta</span>
+                  </div>
+                  <div className={styles.formFunnelTrack} data-tone={tone} style={progressStyle}>
+                    <span />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div className={styles.sitesAnalyticsChartEmpty}>Este formulario todavía no tiene preguntas registrables.</div>
+        )}
+      </div>
+    )
+  }
+
   const renderEntityAnalytics = () => {
     if (analyticsSummaryError) {
       return (
@@ -42460,73 +42580,77 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     }
 
     return (
-      <div className={styles.sitesAnalyticsGrid}>
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>{isFormsView ? 'Formularios con más envíos' : 'Sitios con más vistas'}</span>
-            <strong>{formatSitesCompactNumber(isFormsView ? totalConversions : totalSiteViews)}</strong>
+      <>
+        {renderSelectedFormFunnelPanel()}
+        {renderSelectedConversionPanel()}
+        <div className={styles.sitesAnalyticsGrid}>
+          <div className={styles.sitesAnalyticsChartBlock}>
+            <div className={styles.sitesAnalyticsChartTitle}>
+              <span>{isFormsView ? 'Formularios con más envíos' : 'Sitios con más vistas'}</span>
+              <strong>{formatSitesCompactNumber(isFormsView ? totalConversions : totalSiteViews)}</strong>
+            </div>
+            {renderDetailRows(
+              (isFormsView ? rowsByConversions : rowsByViews).slice(0, 5).map(row => ({
+                key: row.site.id,
+                icon: isFormsView ? <ListChecks size={15} /> : <Eye size={15} />,
+                label: row.site.name,
+                value: isFormsView
+                  ? `${formatSitesCompactNumber(row.stats.conversions)} envíos`
+                  : `${formatSitesCompactNumber(row.stats.views)} vistas`
+              })),
+              `Sin actividad registrada en estos ${entityPluralLabel}.`
+            )}
           </div>
-          {renderDetailRows(
-            (isFormsView ? rowsByConversions : rowsByViews).slice(0, 5).map(row => ({
-              key: row.site.id,
-              icon: isFormsView ? <ListChecks size={15} /> : <Eye size={15} />,
-              label: row.site.name,
-              value: isFormsView
-                ? `${formatSitesCompactNumber(row.stats.conversions)} envíos`
-                : `${formatSitesCompactNumber(row.stats.views)} vistas`
-            })),
-            `Sin actividad registrada en estos ${entityPluralLabel}.`
-          )}
-        </div>
 
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Conversión por {entityLabel}</span>
-            <strong>{formatSitesPercent(conversionRate)}</strong>
+          <div className={styles.sitesAnalyticsChartBlock}>
+            <div className={styles.sitesAnalyticsChartTitle}>
+              <span>Conversión por {entityLabel}</span>
+              <strong>{formatSitesPercent(conversionRate)}</strong>
+            </div>
+            {renderDetailRows(
+              rowsByConversionRate.slice(0, 5).map(row => ({
+                key: row.site.id,
+                icon: <BarChart3 size={15} />,
+                label: row.site.name,
+                value: `${formatSitesPercent(row.stats.conversionRate)} · ${formatSitesCompactNumber(row.stats.conversions)}`
+              })),
+              `Sin conversiones registradas en estos ${entityPluralLabel}.`
+            )}
           </div>
-          {renderDetailRows(
-            rowsByConversionRate.slice(0, 5).map(row => ({
-              key: row.site.id,
-              icon: <BarChart3 size={15} />,
-              label: row.site.name,
-              value: `${formatSitesPercent(row.stats.conversionRate)} · ${formatSitesCompactNumber(row.stats.conversions)}`
-            })),
-            `Sin conversiones registradas en estos ${entityPluralLabel}.`
-          )}
-        </div>
 
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Videos dentro de {entityPluralLabel}</span>
-            <strong>{formatSitesCompactNumber(videos.length)}</strong>
+          <div className={styles.sitesAnalyticsChartBlock}>
+            <div className={styles.sitesAnalyticsChartTitle}>
+              <span>Videos dentro de {entityPluralLabel}</span>
+              <strong>{formatSitesCompactNumber(videos.length)}</strong>
+            </div>
+            {renderDetailRows(
+              rowsByVideoCount.slice(0, 5).map(row => ({
+                key: row.site.id,
+                icon: <Video size={15} />,
+                label: row.site.name,
+                value: `${formatSitesCompactNumber(row.videoCount)} video${row.videoCount === 1 ? '' : 's'}`
+              })),
+              `No hay videos asociados a estos ${entityPluralLabel}.`
+            )}
           </div>
-          {renderDetailRows(
-            rowsByVideoCount.slice(0, 5).map(row => ({
-              key: row.site.id,
-              icon: <Video size={15} />,
-              label: row.site.name,
-              value: `${formatSitesCompactNumber(row.videoCount)} video${row.videoCount === 1 ? '' : 's'}`
-            })),
-            `No hay videos asociados a estos ${entityPluralLabel}.`
-          )}
-        </div>
 
-        <div className={styles.sitesAnalyticsChartBlock}>
-          <div className={styles.sitesAnalyticsChartTitle}>
-            <span>Elementos en vivo</span>
-            <strong>{formatSitesCompactNumber(sites.length)} {entityPluralLabel}</strong>
+          <div className={styles.sitesAnalyticsChartBlock}>
+            <div className={styles.sitesAnalyticsChartTitle}>
+              <span>Elementos en vivo</span>
+              <strong>{formatSitesCompactNumber(sites.length)} {entityPluralLabel}</strong>
+            </div>
+            {renderDetailRows([
+              { key: 'published', icon: <CheckCircle2 size={15} />, label: 'En vivo', value: formatSitesCompactNumber(publishedCount) },
+              ...(latestUpdatedSite ? [{
+                key: 'latest',
+                icon: <CalendarDays size={15} />,
+                label: `Último cambio: ${latestUpdatedSite.name}`,
+                value: 'En vivo'
+              }] : [])
+            ], `Sin elementos en vivo para estos ${entityPluralLabel}.`)}
           </div>
-          {renderDetailRows([
-            { key: 'published', icon: <CheckCircle2 size={15} />, label: 'En vivo', value: formatSitesCompactNumber(publishedCount) },
-            ...(latestUpdatedSite ? [{
-              key: 'latest',
-              icon: <CalendarDays size={15} />,
-              label: `Último cambio: ${latestUpdatedSite.name}`,
-              value: 'En vivo'
-            }] : [])
-          ], `Sin elementos en vivo para estos ${entityPluralLabel}.`)}
         </div>
-      </div>
+      </>
     )
   }
 

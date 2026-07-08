@@ -1533,6 +1533,13 @@ Sites es el constructor/publicador de paginas. Incluye:
 - Eventos Meta y tracking.
 - AI create/edit para contenido.
 
+En Sitios > Analíticas, al elegir un formulario específico, Ristak muestra un
+embudo de completición por pregunta calculado desde las respuestas guardadas del
+rango seleccionado: vistas, visitantes, envíos, porcentaje de finalización y
+cuántas personas respondieron o dejaron sin respuesta cada campo. Al elegir un
+sitio/landing específico, la misma vista muestra el resumen de conversión del
+sitio con vistas, visitantes, sesiones y conversiones.
+
 En el editor visual, los bloques de calendario embebido eligen el calendario y
 la accion posterior a la cita desde la barra superior del editor. El inspector
 derecho solo muestra el estado del calendario seleccionado y los controles de

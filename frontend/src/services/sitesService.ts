@@ -296,6 +296,30 @@ export interface SitesTrackingStats {
   conversionRate: number
 }
 
+export interface SitesFormFunnelField {
+  blockId: string
+  label: string
+  blockType: SiteBlockType
+  required: boolean
+  stepIndex: number
+  reachedCount: number
+  answeredCount: number
+  missedCount: number
+  answerRate: number
+  stepCompletionRate: number
+  missedRate: number
+}
+
+export interface SitesFormFunnelAnalytics {
+  siteId: string
+  starts: number
+  views: number
+  visitors: number
+  submissions: number
+  conversionRate: number
+  fields: SitesFormFunnelField[]
+}
+
 export type SitesVideoAnalyticsSummary = FirstPartyVideoTracking['summary']
 
 export interface SitesVideoAnalyticsAggregateItem extends SitesVideoAnalyticsSummary {
@@ -317,6 +341,7 @@ export interface SitesAnalyticsSummary {
   dateFrom?: string
   dateTo?: string
   sites: Record<string, SitesTrackingStats>
+  formFunnels?: Record<string, SitesFormFunnelAnalytics>
   videos: SitesVideoAnalyticsAggregate
 }
 
