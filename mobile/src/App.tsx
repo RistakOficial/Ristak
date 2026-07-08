@@ -19703,8 +19703,7 @@ function NativeConversationScreen({
                   setScheduleDraft(createDefaultScheduleDraft(timezone));
                   setScheduleError('');
                   openSheet('schedule');
-                }} style={styles.composerScheduleButton}>
-                  <LiquidControlBackground />
+                }} hitSlop={8} style={({ pressed }) => [styles.composerScheduleButton, pressed && styles.composerScheduleButtonPressed]}>
                   <Clock size={17} color={COLORS.accent} strokeWidth={2.45} />
                 </Pressable>
               ) : null}
@@ -29033,11 +29032,16 @@ function createAppStyles() {
   composerScheduleButton: {
     width: 34,
     height: 34,
-    borderRadius: 17,
-    ...liquidControlBase,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 1,
+  },
+  composerScheduleButtonPressed: {
+    opacity: 0.58,
+    transform: [{ scale: 0.94 }],
   },
   composerTrailingActions: {
     minWidth: 72,
