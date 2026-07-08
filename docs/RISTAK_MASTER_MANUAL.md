@@ -1617,6 +1617,18 @@ zona con `data-rstk-native-element="form|calendar|payment|video"` y
 `data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
 a bloques reales del sitio:
 
+Los slots nativos que Ristak renderiza (`form`, `calendar` con
+`data-rstk-native-render="ristak"`, `payment` y `video`) deben ser huecos
+limpios: contenedores vacios, sin texto placeholder, mocks, tarjetas, bordes
+punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni
+wrappers decorativos dentro, detras o encima. El HTML externo solo decide la
+ubicacion del bloque; Ristak pinta el formulario, calendario, checkout o video
+completo con su propio diseno y configuracion. Si hace falta reservar espacio en
+el layout, debe hacerse con estructura neutra sin borde/fondo visible para que
+no quede UI falsa atras o encima del embed. La excepcion es `calendar` con
+`data-rstk-native-render="custom"`, porque ahi el frontend importado si es el
+calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
+
 - `form`: selecciona un formulario existente de Ristak. La zona debe ser un
   contenedor vacio; no debe incluir `<form>`, campos ni botones de envio dentro
   o pegados a esa zona, porque Ristak renderiza el formulario completo con su

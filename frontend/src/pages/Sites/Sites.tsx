@@ -2077,9 +2077,10 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Orden de páginas: si entregas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.
 - Elementos nativos Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment|video" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario, pago o video real desde el editor.
 - Solo se aceptan estos elementos nativos: formularios, calendarios, pagos y videos. No uses data-rstk-native-element para otros widgets.
+- Slots nativos renderizados por Ristak (form, calendar con data-rstk-native-render="ristak", payment y video): deja el contenedor limpio y vacío. No agregues texto tipo "aquí va...", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima. El HTML solo define la ubicación; Ristak insertará el diseño completo del elemento real. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.
 - Formularios nativos Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacío; no pongas <form>, campos ni botones de envío dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio botón y sus acciones "Al enviar"; si necesitas ir a otra página, configúralo en el editor.
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
-- Para usar tu propio frontend de calendario pero mapearlo a Ristak: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. Tu JS debe usar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre es ISO UTC del slot confirmado; timezone es la zona del negocio/visitante que eligió la cita.
+- Para usar tu propio frontend de calendario pero mapearlo a Ristak: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. Esta excepción sí puede tener UI propia porque no usa el calendario visual de Ristak. Tu JS debe usar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre es ISO UTC del slot confirmado; timezone es la zona del negocio/visitante que eligió la cita.
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
 - Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, acciones por tiempo y eventos Meta/CAPI configurados. En HTML importado no uses la acción "Abrir formulario de video"; usa mostrar/ocultar/ir a página/popup/Meta según aplique.
 - Targets para acciones de video: todo botón, contenedor, imagen, sección o formulario que quieras mostrar/ocultar desde un video debe tener id único o data-rstk-edit-id único. Ejemplo: <button id="cta-final" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-final">Continuar</button>. Los fondos/decoración deben marcarse como data-rstk-edit-type="background_image" o aria-hidden="true" para que no salgan como targets.
@@ -25976,6 +25977,12 @@ const EXTERNAL_AI_COMPATIBILITY_DEFAULTS: ExternalAICompatibilityAnswers = {
 }
 
 const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswers) => {
+  const usesRistakNativeSlots =
+    answers.forms === 'native' ||
+    answers.calendar === 'native' ||
+    answers.video === 'native' ||
+    answers.payment === 'native'
+
   const sections = [
     'Bloque de compatibilidad para crear HTML importable en Ristak',
     '',
@@ -25993,11 +26000,22 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     ''
   ]
 
+  if (usesRistakNativeSlots) {
+    sections.push(
+      'Slots nativos de Ristak:',
+      '- Los slots nativos que Ristak renderiza deben ser huecos limpios, vacíos y sin diseño propio.',
+      '- No pongas texto placeholder tipo "aquí va el calendario", mocks, tarjetas, bordes punteados/dashed, outlines, fondos, sombras, iconos, labels, pseudo-elementos ni wrappers decorativos dentro, detrás o encima del slot.',
+      '- El HTML solo decide la ubicación del elemento; Ristak insertará el diseño completo del formulario, calendario, pago o video real. Si necesitas reservar espacio, usa layout neutro sin borde/fondo visible.',
+      '- Esta regla aplica a form, calendar nativo, payment y video. No aplica al calendario custom con data-rstk-native-render="custom", porque ese sí usa tu frontend propio conectado a Ristak.',
+      ''
+    )
+  }
+
   if (answers.forms === 'native') {
     sections.push(
       'Formularios:',
       '- La página usará formularios nativos de Ristak.',
-      '- Reserva una zona vacía así: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>.',
+      '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>.',
       '- No pongas <form>, campos ni botones de envío dentro o pegados a esa zona; Ristak renderiza el formulario completo y sus acciones al enviar.',
       ''
     )
@@ -26022,7 +26040,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     sections.push(
       'Calendario:',
       '- La página usará calendario nativo de Ristak.',
-      '- Reserva una zona así: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak" data-rstk-label="Agenda principal"></div>.',
+      '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak" data-rstk-label="Agenda principal"></div>.',
       '- Ristak elegirá el calendario real, disponibilidad, campos, pagos y acción posterior desde el editor.',
       ''
     )
@@ -26047,7 +26065,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     sections.push(
       'Video:',
       '- La página usará video nativo de Ristak.',
-      '- Reserva una zona así: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>.',
+      '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>.',
       '- Ristak configurará el video real, controles, diseño, acciones por tiempo y eventos desde el editor.',
       ''
     )
@@ -26071,7 +26089,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     sections.push(
       'Pago:',
       '- La página usará pago nativo de Ristak.',
-      '- Reserva una zona así: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>.',
+      '- Reserva una zona limpia y vacía así: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>.',
       '- No marques Purchase por click ni por precio mostrado. Ristak dispara la compra solo cuando el pago real se confirma.',
       ''
     )
