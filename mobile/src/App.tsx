@@ -549,6 +549,20 @@ type AssistantAttachmentDraft = AIAgentAttachment & {
   uri: string;
 };
 type AssistantVoiceState = 'idle' | 'recording' | 'paused' | 'processing';
+type AssistantMessageInlineSegment = {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  strike?: boolean;
+  mono?: boolean;
+  url?: string;
+};
+type AssistantMessageBlock =
+  | { type: 'paragraph'; text: string }
+  | { type: 'heading'; text: string }
+  | { type: 'bulletList'; items: string[] }
+  | { type: 'orderedList'; items: string[] }
+  | { type: 'code'; text: string };
 type WhatsAppTextSegment = {
   text: string;
   bold?: boolean;
@@ -14445,6 +14459,210 @@ function getAssistantAttachmentPromptText(attachments: AIAgentAttachment[]) {
   return `Analiza estos ${attachments.length} archivos adjuntos y dime qué encuentras.`;
 }
 
+function normalizeAssistantLinkUrl(value: string) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function splitAssistantUrlPunctuation(value: string) {
+  const match = String(value || '').match(/^(.+?)([),.;:!?]+)?$/);
+  return {
+    urlText: match?.[1] || value,
+    trailing: match?.[2] || '',
+  };
+}
+
+function pushAssistantInlineSegment(segments: AssistantMessageInlineSegment[], segment: AssistantMessageInlineSegment) {
+  if (!segment.text) return;
+  const previous = segments[segments.length - 1];
+  if (
+    previous
+    && previous.bold === segment.bold
+    && previous.italic === segment.italic
+    && previous.strike === segment.strike
+    && previous.mono === segment.mono
+    && previous.url === segment.url
+  ) {
+    previous.text += segment.text;
+    return;
+  }
+  segments.push(segment);
+}
+
+function parseAssistantInlineMarkdown(text: string, active: Omit<AssistantMessageInlineSegment, 'text' | 'url'> = {}): AssistantMessageInlineSegment[] {
+  const pattern = /(!?\[[^\]]+]\([^)]+\)|https?:\/\/[^\s<>()]+|www\.[^\s<>()]+|```[\s\S]+?```|`[^`]+`|\*\*[\s\S]+?\*\*|\*[^\s*][\s\S]*?[^\s*]\*|_[^_\s][\s\S]*?[^_\s]_|~[^~\s][\s\S]*?[^~\s]~)/g;
+  const segments: AssistantMessageInlineSegment[] = [];
+  let index = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > index) {
+      pushAssistantInlineSegment(segments, { text: text.slice(index, match.index), ...active });
+    }
+
+    const token = match[0];
+    const markdownLink = token.match(/^!?\[([^\]]+)]\(([^)]+)\)$/);
+    if (markdownLink) {
+      const url = normalizeAssistantLinkUrl(markdownLink[2]);
+      pushAssistantInlineSegment(segments, { text: markdownLink[1], url, ...active });
+      index = pattern.lastIndex;
+      continue;
+    }
+
+    if (/^(https?:\/\/|www\.)/i.test(token)) {
+      const { urlText, trailing } = splitAssistantUrlPunctuation(token);
+      pushAssistantInlineSegment(segments, {
+        text: urlText,
+        url: normalizeAssistantLinkUrl(urlText),
+        ...active,
+      });
+      if (trailing) pushAssistantInlineSegment(segments, { text: trailing, ...active });
+      index = pattern.lastIndex;
+      continue;
+    }
+
+    if (token.startsWith('```') && token.endsWith('```')) {
+      pushAssistantInlineSegment(segments, { text: token.slice(3, -3).trim(), mono: true, ...active });
+      index = pattern.lastIndex;
+      continue;
+    }
+
+    if (token.startsWith('`') && token.endsWith('`')) {
+      pushAssistantInlineSegment(segments, { text: token.slice(1, -1), mono: true, ...active });
+      index = pattern.lastIndex;
+      continue;
+    }
+
+    const marker = token.startsWith('**') ? '**' : token[0];
+    const inner = token.slice(marker.length, -marker.length).trim();
+    const nextActive = {
+      ...active,
+      ...(marker === '**' || marker === '*' ? { bold: true } : {}),
+      ...(marker === '_' ? { italic: true } : {}),
+      ...(marker === '~' ? { strike: true } : {}),
+    };
+    parseAssistantInlineMarkdown(inner, nextActive).forEach((segment) => pushAssistantInlineSegment(segments, segment));
+    index = pattern.lastIndex;
+  }
+
+  if (index < text.length) {
+    pushAssistantInlineSegment(segments, { text: text.slice(index), ...active });
+  }
+
+  return segments.length ? segments : [{ text, ...active }];
+}
+
+function countAssistantMarker(value: string, marker: string) {
+  return (value.match(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+}
+
+function hasUnclosedAssistantMarkdown(value: string) {
+  return countAssistantMarker(value, '**') % 2 === 1
+    || countAssistantMarker(value, '`') % 2 === 1
+    || countAssistantMarker(value, '~') % 2 === 1;
+}
+
+function shouldContinueAssistantListItem(item: string, nextLine: string) {
+  const trimmed = nextLine.trim();
+  if (!trimmed) return false;
+  if (/^\s+/.test(nextLine)) return true;
+  if (hasUnclosedAssistantMarkdown(item)) return true;
+  if (/^([*_~`]{1,3})/.test(trimmed)) return true;
+  return !/[.!?。)]["')\]]?$/.test(item.trim());
+}
+
+function parseAssistantMessageBlocks(content: string): AssistantMessageBlock[] {
+  const lines = String(content || '').replace(/\r\n/g, '\n').split('\n');
+  const blocks: AssistantMessageBlock[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    if (/^```/.test(trimmed)) {
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^```/.test(lines[index].trim())) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push({ type: 'code', text: codeLines.join('\n').trim() });
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^#{1,6}\s+(.+)$/);
+    if (headingMatch) {
+      blocks.push({ type: 'heading', text: headingMatch[1].replace(/^\*\*/, '').replace(/\*\*$/, '').trim() });
+      index += 1;
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.+)$/);
+    const orderedMatch = trimmed.match(/^\d+[\.)]\s+(.+)$/);
+    if (bulletMatch || orderedMatch) {
+      const ordered = Boolean(orderedMatch);
+      const items: string[] = [];
+
+      while (index < lines.length) {
+        const current = lines[index];
+        const currentTrimmed = current.trim();
+        const currentMatch = ordered
+          ? currentTrimmed.match(/^\d+[\.)]\s+(.+)$/)
+          : currentTrimmed.match(/^[-*•]\s+(.+)$/);
+
+        if (!currentTrimmed) {
+          index += 1;
+          break;
+        }
+
+        if (!currentMatch) break;
+
+        let item = currentMatch[1].trim();
+        index += 1;
+        while (
+          index < lines.length
+          && lines[index].trim()
+          && !/^[-*•]\s+/.test(lines[index].trim())
+          && !/^\d+[\.)]\s+/.test(lines[index].trim())
+          && shouldContinueAssistantListItem(item, lines[index])
+        ) {
+          item = `${item}\n${lines[index].trim()}`;
+          index += 1;
+        }
+        items.push(item);
+      }
+
+      blocks.push({ type: ordered ? 'orderedList' : 'bulletList', items });
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (
+      index < lines.length
+      && lines[index].trim()
+      && !/^```/.test(lines[index].trim())
+      && !/^#{1,6}\s+/.test(lines[index].trim())
+      && !/^[-*•]\s+/.test(lines[index].trim())
+      && !/^\d+[\.)]\s+/.test(lines[index].trim())
+    ) {
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+
+    blocks.push({ type: 'paragraph', text: paragraphLines.join('\n') });
+  }
+
+  return blocks;
+}
+
 function formatMegabytes(bytes: number) {
   const value = bytes / 1024 / 1024;
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -15015,7 +15233,7 @@ function AssistantMessageBubble({
             ))}
           </View>
         ) : null}
-        <Text style={[styles.aiMessageText, message.failed && styles.failedMessageText]}>{message.content}</Text>
+        <AssistantFormattedMessageContent failed={Boolean(message.failed)} text={message.content} />
         {message.sources?.length ? (
           <View style={styles.aiMessageSources}>
             <Link2 size={12} color={COLORS.meta} strokeWidth={2.4} />
@@ -15038,6 +15256,85 @@ function AssistantMessageBubble({
         ) : null}
       </View>
     </View>
+  );
+}
+
+function AssistantFormattedMessageContent({ failed, text }: { failed?: boolean; text: string }) {
+  const blocks = useMemo(() => parseAssistantMessageBlocks(text), [text]);
+  if (!blocks.length) return null;
+
+  return (
+    <View style={styles.aiRichMessage}>
+      {blocks.map((block, index) => {
+        if (block.type === 'heading') {
+          return <AssistantFormattedInlineText key={`heading-${index}`} failed={failed} text={block.text} variant="heading" />;
+        }
+
+        if (block.type === 'code') {
+          return (
+            <Text key={`code-${index}`} style={[styles.aiMessageText, styles.aiMessageCodeBlock, failed && styles.failedMessageText]}>
+              {block.text}
+            </Text>
+          );
+        }
+
+        if (block.type === 'bulletList' || block.type === 'orderedList') {
+          return (
+            <View key={`${block.type}-${index}`} style={styles.aiMessageList}>
+              {block.items.map((item, itemIndex) => (
+                <View key={`${block.type}-${index}-${itemIndex}`} style={styles.aiMessageListItem}>
+                  <Text style={[styles.aiMessageListMarker, failed && styles.failedMessageText]}>
+                    {block.type === 'orderedList' ? `${itemIndex + 1}.` : '•'}
+                  </Text>
+                  <AssistantFormattedInlineText failed={failed} text={item} variant="list" />
+                </View>
+              ))}
+            </View>
+          );
+        }
+
+        return <AssistantFormattedInlineText key={`paragraph-${index}`} failed={failed} text={block.text} />;
+      })}
+    </View>
+  );
+}
+
+function AssistantFormattedInlineText({
+  failed,
+  text,
+  variant = 'paragraph',
+}: {
+  failed?: boolean;
+  text: string;
+  variant?: 'paragraph' | 'heading' | 'list';
+}) {
+  const segments = useMemo(() => parseAssistantInlineMarkdown(text), [text]);
+  return (
+    <Text
+      style={[
+        styles.aiMessageText,
+        variant === 'heading' && styles.aiMessageHeadingText,
+        variant === 'list' && styles.aiMessageListText,
+        failed && styles.failedMessageText,
+      ]}
+    >
+      {segments.map((segment, index) => (
+        <Text
+          key={`${segment.text}-${index}`}
+          onPress={segment.url ? () => void Linking.openURL(segment.url || '').catch(() => undefined) : undefined}
+          style={[
+            segment.bold && styles.aiMessageTextBold,
+            segment.italic && styles.aiMessageTextItalic,
+            segment.strike && styles.aiMessageTextStrike,
+            segment.mono && styles.aiMessageTextMono,
+            segment.url && styles.aiMessageTextLink,
+            failed && styles.failedMessageText,
+          ]}
+        >
+          {segment.text}
+        </Text>
+      ))}
+    </Text>
   );
 }
 
@@ -27324,6 +27621,63 @@ function createAppStyles() {
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '500',
+  },
+  aiRichMessage: {
+    gap: 7,
+    minWidth: 0,
+  },
+  aiMessageHeadingText: {
+    color: COLORS.text,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '900',
+  },
+  aiMessageTextBold: {
+    fontWeight: '900',
+  },
+  aiMessageTextItalic: {
+    fontStyle: 'italic',
+  },
+  aiMessageTextStrike: {
+    textDecorationLine: 'line-through',
+  },
+  aiMessageTextMono: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontWeight: '700',
+  },
+  aiMessageTextLink: {
+    color: COLORS.accent,
+    textDecorationLine: 'underline',
+    fontWeight: '700',
+  },
+  aiMessageList: {
+    gap: 5,
+  },
+  aiMessageListItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    minWidth: 0,
+  },
+  aiMessageListMarker: {
+    minWidth: 16,
+    color: COLORS.meta,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  aiMessageListText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  aiMessageCodeBlock: {
+    borderRadius: 10,
+    backgroundColor: COLORS.panelSoft,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontWeight: '700',
   },
   aiMessageAttachmentGrid: {
     gap: 6,

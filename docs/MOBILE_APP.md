@@ -147,7 +147,11 @@ asistente personal. El composer del asistente mantiene `+` para enviar fotos y
 documentos como attachments al agente; los videos se bloquean en movil hasta que
 la app genere miniatura/contenido visual legible para el backend. El microfono
 graba nota de voz, la transcribe con `/api/ai-agent/transcribe` y manda el texto
-resultante al mismo chat.
+resultante al mismo chat. Las burbujas del asistente nativo deben renderizar el
+formato basico que ya usa el asistente de escritorio: negritas, italicas,
+tachado, codigo inline, links y listas no deben mostrar delimitadores crudos como
+`**`, `_`, `~` o marcadores Markdown; la UI interpreta el formato y conserva una
+burbuja legible.
 
 En la conversacion nativa, el composer inferior debe replicar la referencia
 visual de la app original: panel azul muy claro, campo de texto blanco,
