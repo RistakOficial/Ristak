@@ -6574,6 +6574,7 @@ Marcado para edición rapida:
 - No envuelvas textos editables en demasiadas etiquetas. Deja un elemento claro para cada texto importante.
 
 Convenciones de formularios para Ristak:
+- Estas convenciones aplican a formularios HTML propios; si usas data-rstk-native-element="form", no crees un <form> propio para esa zona.
 - Cada formulario debe tener data-rstk-form="lead_capture" y method="post".
 - Cada campo debe tener id, name, label visible y autocomplete cuando aplique.
 - Agrega data-rstk-field y data-ristak-field en campos estandar para que Ristak los entienda.
@@ -6588,6 +6589,7 @@ Convenciones de formularios para Ristak:
 Conversiones Meta/CAPI para HTML importado:
 - Elementos nativos Ristak en HTML externo: reserva zonas con data-rstk-native-element="form|calendar|payment|video" y data-rstk-native-id unico. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y el editor permite elegir el formulario, calendario, pago o video real.
 - Solo uses data-rstk-native-element para formularios, calendarios, pagos y videos. No lo inventes para otros widgets.
+- Formulario nativo Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacio; no metas <form>, campos ni botones de envio dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio boton y sus acciones "Al enviar"; si necesitas navegar despues del submit, configuralo en el editor.
 - Calendario nativo: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. Ristak renderiza el calendario elegido con su configuracion completa.
 - Calendario con frontend propio: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. El JS propio debe llamar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre va en ISO UTC del slot confirmado y timezone es la zona horaria usada para la cita.
 - Pago nativo: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El evento Purchase lo dispara el cobro real de Ristak, no un click ni un precio mostrado.

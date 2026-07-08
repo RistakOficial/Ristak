@@ -233,7 +233,9 @@ Sites, debe declarar una zona con `data-rstk-native-element` y
 
 Ristak guarda cada zona como bloque real del sitio importado:
 
-- `form`: se conecta a un formulario existente de Ristak.
+- `form`: se conecta a un formulario existente de Ristak. La zona debe ser un
+  contenedor vacio; no debe traer `<form>`, campos ni botones de envio propios,
+  porque el formulario embebido ya renderiza su boton y acciones desde Ristak.
 - `calendar`: se conecta a cualquier calendario disponible y respeta su
   configuracion de disponibilidad, campos, pagos, completado y Meta.
 - `payment`: usa el mismo `PaymentGateControls` del editor; el evento `Purchase`

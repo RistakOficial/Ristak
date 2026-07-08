@@ -1594,7 +1594,10 @@ zona con `data-rstk-native-element="form|calendar|payment|video"` y
 `data-rstk-native-id` unico. El editor detecta esas zonas y permite conectarlas
 a bloques reales del sitio:
 
-- `form`: selecciona un formulario existente de Ristak.
+- `form`: selecciona un formulario existente de Ristak. La zona debe ser un
+  contenedor vacio; no debe incluir `<form>`, campos ni botones de envio dentro
+  o pegados a esa zona, porque Ristak renderiza el formulario completo con su
+  propio boton y sus acciones "Al enviar".
 - `calendar` con `data-rstk-native-render="ristak"`: renderiza el calendario
   embebido normal y respeta disponibilidad, campos, pagos, reglas de completado
   y evento Meta "al agendar".
