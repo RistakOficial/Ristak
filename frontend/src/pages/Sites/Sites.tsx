@@ -2008,7 +2008,8 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
 - Para usar tu propio frontend de calendario pero mapearlo a Ristak: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. Tu JS debe usar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre es ISO UTC del slot confirmado; timezone es la zona del negocio/visitante que eligió la cita.
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
-- Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, acciones por tiempo, formularios dentro del video y eventos Meta/CAPI configurados.
+- Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, acciones por tiempo y eventos Meta/CAPI configurados. En HTML importado no uses la acción "Abrir formulario de video"; usa mostrar/ocultar/ir a página/popup/Meta según aplique.
+- Targets para acciones de video: todo botón, contenedor, imagen, sección o formulario que quieras mostrar/ocultar desde un video debe tener id único o data-rstk-edit-id único. Ejemplo: <button id="cta-final" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-final">Continuar</button>. Los fondos/decoración deben marcarse como data-rstk-edit-type="background_image" o aria-hidden="true" para que no salgan como targets.
 - Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
 - Para cita agendada usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC si ya conoces la hora exacta.
@@ -16922,9 +16923,20 @@ const cleanImportedVideoSettings = (settings: Record<string, unknown> = {}, medi
 )
 
 const getImportedVideoActionTargetId = (element: HTMLElement) => String(
+  element.getAttribute('data-rstk-video-action-target') ||
+  element.getAttribute('data-ristak-video-action-target') ||
+  element.getAttribute('data-ristack-video-action-target') ||
+  element.getAttribute('data-rstk-block-id') ||
   getImportedEditableAttribute(element, 'id') ||
   element.getAttribute('data-rstk-form-id') ||
   element.getAttribute('data-ristak-form-id') ||
+  element.getAttribute('data-ristack-form-id') ||
+  element.getAttribute('data-rstk-native-id') ||
+  element.getAttribute('data-ristak-native-id') ||
+  element.getAttribute('data-ristack-native-id') ||
+  element.getAttribute('data-rstk-element-id') ||
+  element.getAttribute('data-ristak-element-id') ||
+  element.getAttribute('data-ristack-element-id') ||
   element.getAttribute('id') ||
   getImportedEditableAttribute(element, 'section') ||
   ''
@@ -16944,6 +16956,8 @@ const getImportedVideoActionTargetBlockType = (
   editType: ImportedEditableSelection['editType'] | ''
 ): SiteBlockType => {
   const tagName = element.tagName.toLowerCase()
+  const nativeType = getImportedNativeElementTypeFromElement(element)
+  if (nativeType) return importedNativeElementBlockTypes[nativeType]
   if (tagName === 'form' || element.hasAttribute('data-rstk-form-id') || element.hasAttribute('data-ristak-form-id')) return 'form_embed'
   if (editType === 'form_field' || tagName === 'input' || tagName === 'textarea' || tagName === 'select') return 'form_embed'
   if (getImportedEditableAttribute(element, 'section')) return SECTION_BLOCK_TYPE
@@ -16954,25 +16968,63 @@ const getImportedVideoActionTargetBlockType = (
   return 'text'
 }
 
+const importedVideoActionTargetSelector = [
+  importedEditableSelector,
+  importedSectionSelector,
+  importedNativeElementSelector,
+  '[data-rstk-video-action-target]',
+  '[data-ristak-video-action-target]',
+  '[data-ristack-video-action-target]',
+  '[data-rstk-block-id]',
+  'form[data-rstk-form-id]',
+  'form[data-ristak-form-id]',
+  'form[data-ristack-form-id]',
+  'button[id]',
+  'a[id]',
+  'img[id]',
+  'picture[id]',
+  'figure[id]',
+  'form[id]',
+  'section[id]',
+  'article[id]',
+  'aside[id]',
+  'header[id]',
+  'footer[id]',
+  'main[id]',
+  'div[id]'
+].join(', ')
+
+const isImportedVideoActionTargetBackgroundOnly = (
+  element: HTMLElement,
+  editType: ImportedEditableSelection['editType'] | ''
+) => {
+  if (editType === 'background_image') return true
+  const explicitRole = String(
+    element.getAttribute('data-rstk-role') ||
+    element.getAttribute('data-ristak-role') ||
+    element.getAttribute('data-ristack-role') ||
+    element.getAttribute('role') ||
+    ''
+  ).trim().toLowerCase()
+  if (['background', 'wallpaper', 'decorative'].includes(explicitRole)) return true
+  const ariaHidden = String(element.getAttribute('aria-hidden') || '').trim().toLowerCase()
+  return ariaHidden === 'true' && !element.matches('button,a,input,textarea,select,img,form')
+}
+
 const buildImportedVideoActionTargetBlocks = (
   doc: Document,
   sourceEditId: string,
   siteId: string
 ): SiteBlock[] => {
-  const selector = [
-    importedEditableSelector,
-    importedSectionSelector,
-    'form[data-rstk-form-id]',
-    'form[data-ristak-form-id]'
-  ].join(', ')
   const seen = new Set<string>()
   const now = new Date().toISOString()
 
-  return Array.from(doc.querySelectorAll<HTMLElement>(selector))
+  return Array.from(doc.querySelectorAll<HTMLElement>(importedVideoActionTargetSelector))
     .map((element, index): SiteBlock | null => {
       const id = getImportedVideoActionTargetId(element)
       if (!id || id === sourceEditId || seen.has(id)) return null
       const editType = normalizeImportedEditableType(getImportedEditableAttribute(element, 'type'), element)
+      if (isImportedVideoActionTargetBackgroundOnly(element, editType)) return null
       const blockType = getImportedVideoActionTargetBlockType(element, editType)
       const label = getImportedVideoActionTargetLabel(element, blockLabels[blockType] || 'Elemento')
       seen.add(id)
@@ -16994,18 +17046,45 @@ const buildImportedVideoActionTargetBlocks = (
     .filter((block): block is SiteBlock => Boolean(block))
 }
 
+const buildImportedVideoActionTargetBlocksFromHtml = (
+  html: string,
+  sourceEditId: string,
+  siteId: string
+): SiteBlock[] => {
+  if (!html || typeof DOMParser === 'undefined') return []
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    return buildImportedVideoActionTargetBlocks(doc, sourceEditId, siteId)
+  } catch {
+    return []
+  }
+}
+
 const findImportedVideoActionTargetElement = (doc: Document, targetId: string): HTMLElement | null => {
   const id = String(targetId || '').trim()
   if (!id) return null
   const escaped = escapeImportedCssValue(id)
   const selectors = [
+    `[data-rstk-video-action-target="${escaped}"]`,
+    `[data-ristak-video-action-target="${escaped}"]`,
+    `[data-ristack-video-action-target="${escaped}"]`,
+    `[data-rstk-block-id="${escaped}"]`,
     `[data-rstk-edit-id="${escaped}"]`,
     `[data-ristak-edit-id="${escaped}"]`,
     `[data-ristack-edit-id="${escaped}"]`,
     `[data-rstk-form-id="${escaped}"]`,
     `[data-ristak-form-id="${escaped}"]`,
+    `[data-ristack-form-id="${escaped}"]`,
     `[data-rstk-section="${escaped}"]`,
     `[data-ristak-section="${escaped}"]`,
+    `[data-ristack-section="${escaped}"]`,
+    `[data-rstk-native-slot-id="${escaped}"]`,
+    `[data-rstk-native-id="${escaped}"]`,
+    `[data-ristak-native-id="${escaped}"]`,
+    `[data-ristack-native-id="${escaped}"]`,
+    `[data-rstk-element-id="${escaped}"]`,
+    `[data-ristak-element-id="${escaped}"]`,
+    `[data-ristack-element-id="${escaped}"]`,
     `#${escaped}`
   ]
   try {
@@ -19065,8 +19144,14 @@ const ImportedHtmlEditorPanel: React.FC<{
     const currentSite = importedNativeElementSiteRef.current || site
     const existing = findImportedNativeElementBlock(currentSite.blocks || [], slot)
     const settings = getImportedNativeElementDraftSettings(slot)
+    const mediaContent = slot.type === 'video' ? getSettingString(settings, 'mediaUrl') : ''
     if (existing) {
-      return { ...existing, label: existing.label || slot.label, settings }
+      return {
+        ...existing,
+        label: existing.label || slot.label,
+        content: mediaContent || existing.content || '',
+        settings
+      }
     }
     const blockType = importedNativeElementBlockTypes[slot.type]
     const payload = defaultBlockPayload(blockType, currentSite, undefined, activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID)
@@ -19075,7 +19160,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       siteId: currentSite.id,
       blockType,
       label: slot.label || importedNativeElementTypeLabels[slot.type],
-      content: payload.content || (slot.type === 'payment' ? 'Pago requerido' : ''),
+      content: mediaContent || payload.content || (slot.type === 'payment' ? 'Pago requerido' : ''),
       placeholder: payload.placeholder || '',
       required: Boolean(payload.required),
       options: Array.isArray(payload.options) ? payload.options : [],
@@ -19117,6 +19202,11 @@ const ImportedHtmlEditorPanel: React.FC<{
     const existing = findImportedNativeElementBlock(currentSite.blocks || [], slot)
     const blockType = importedNativeElementBlockTypes[slot.type]
     const settings = getImportedNativeElementDraftSettings(slot)
+    const content = slot.type === 'payment'
+      ? 'Pago requerido'
+      : slot.type === 'video'
+        ? getSettingString(settings, 'mediaUrl')
+        : ''
     const validationError = validateImportedNativeElementSlotSettings(slot, settings)
     if (validationError) {
       showToast('warning', 'Falta configuración', validationError)
@@ -19128,13 +19218,13 @@ const ImportedHtmlEditorPanel: React.FC<{
       const saved = existing
         ? await sitesService.updateBlock(currentSite.id, existing.id, {
           label: existing.label || slot.label || importedNativeElementTypeLabels[slot.type],
-          content: existing.content || (slot.type === 'payment' ? 'Pago requerido' : ''),
+          content: content || existing.content || '',
           settings
         })
         : await sitesService.createBlock(currentSite.id, {
           ...defaultBlockPayload(blockType, currentSite, undefined, activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID),
           label: slot.label || importedNativeElementTypeLabels[slot.type],
-          content: slot.type === 'payment' ? 'Pago requerido' : '',
+          content,
           settings
         })
       const normalized = normalizeSiteForEditor(saved)
@@ -22159,6 +22249,13 @@ const ImportedHtmlEditorPanel: React.FC<{
     const draftSettings = draftBlock?.settings || {}
     const selectedFormId = getSettingString(draftSettings, 'formSiteId')
     const selectedSlotSaving = Boolean(selectedSlot && importedNativeElementSavingKey === selectedSlot.key)
+    const importedNativeVideoTargetBlocks = selectedSlot?.type === 'video'
+      ? buildImportedVideoActionTargetBlocksFromHtml(
+        importedNativeElementDetectionHtml,
+        selectedSlot.id,
+        nativeElementSite.id
+      )
+      : []
 
     const renderSlotIcon = (type: ImportedNativeElementType) => {
       if (type === 'form') return <FormInput size={13} />
@@ -22170,6 +22267,19 @@ const ImportedHtmlEditorPanel: React.FC<{
     const patchSelectedVideoSettings = (patch: Record<string, unknown>) => {
       if (!selectedSlot) return
       patchImportedNativeElementDraft(selectedSlot, patch)
+    }
+
+    const patchSelectedVideoBlock = (patch: Partial<SiteBlock>) => {
+      if (!selectedSlot) return
+      const nextSettings = {
+        ...(patch.settings || {})
+      }
+      if (typeof patch.content === 'string') {
+        nextSettings.mediaUrl = patch.content
+      }
+      if (Object.keys(nextSettings).length) {
+        patchImportedNativeElementDraft(selectedSlot, nextSettings)
+      }
     }
 
     const noopImportedNativeElementSave = () => undefined
@@ -22313,9 +22423,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                             activePageId={activeImportedPage?.id || activePageId}
                             connectedSocialProfiles={[]}
                             loadingSocialProfiles={false}
-                            onPatchBlock={(patch) => {
-                              if (patch.settings) patchSelectedVideoSettings(patch.settings)
-                            }}
+                            onPatchBlock={patchSelectedVideoBlock}
                             onPatchSettings={patchSelectedVideoSettings}
                             onSave={noopImportedNativeElementSave}
                           />
@@ -22358,7 +22466,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                       <VideoActionsPanel
                         site={nativeElementSite}
                         block={draftBlock}
-                        blocks={nativeElementBlocks}
+                        blocks={importedNativeVideoTargetBlocks}
                         popupBlocks={[]}
                         pages={pages}
                         activePageId={activeImportedPage?.id || activePageId}
@@ -22368,9 +22476,9 @@ const ImportedHtmlEditorPanel: React.FC<{
                         onSaveSite={onSaveSite}
                         forms={forms}
                         customFields={activeImportedCustomFields}
-                        enableVideoFormGateAction
                         onPatchSettings={patchSelectedVideoSettings}
                         onSave={noopImportedNativeElementSave}
+                        onTargetHover={(targetId) => hoverImportedVideoActionTarget(targetId, codePreviewIframeRef.current || iframeRef.current)}
                       />
                     )
                   }

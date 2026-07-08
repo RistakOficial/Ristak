@@ -244,6 +244,7 @@ test('imported HTML native video slots render the real Ristak player and video a
         <body>
           <main>
             <section data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+            <button id="cta-final" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-final">Continuar</button>
           </main>
         </body>
       </html>
@@ -263,6 +264,13 @@ test('imported HTML native video slots render the real Ristak player and video a
         videoControlsMode: 'overlay',
         videoActions: [{
           id: 'action-1',
+          timeSeconds: 2,
+          action: 'show',
+          targetBlockId: 'cta-final',
+          targetBlockIds: ['cta-final'],
+          before: 'hidden'
+        }, {
+          id: 'action-2',
           timeSeconds: 4,
           action: 'redirect',
           redirectUrl: 'https://example.test/gracias'
@@ -279,7 +287,13 @@ test('imported HTML native video slots render the real Ristak player and video a
     assert.match(html, /data-rstk-video-actions=/)
     assert.match(html, /https:\/\/example\.test\/gracias/)
     assert.match(html, /window\.ristakVideoActionsRuntimeLoaded/)
+    assert.match(html, /id="cta-final"[^>]*data-rstk-video-action-target="cta-final"/)
+    assert.match(html, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
     assert.doesNotMatch(html, /Configura el video de Ristak/)
+
+    const previewHtml = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: false, preview: true })
+    assert.match(previewHtml, /const PREVIEW_SAFE = true;/)
+    assert.match(previewHtml, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }

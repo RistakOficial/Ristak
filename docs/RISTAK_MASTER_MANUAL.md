@@ -1612,8 +1612,20 @@ a bloques reales del sitio:
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
   de pagos del editor. El `Purchase` sale solo del pago confirmado.
 - `video`: renderiza el bloque de video real de Ristak con la misma subida/URL,
-  controles, diseno, acciones por tiempo, formularios dentro del video y eventos
-  Meta/CAPI que el editor normal.
+  controles, diseno, acciones por tiempo y eventos Meta/CAPI que el editor
+  normal. En HTML importado no se ofrece la accion "Abrir formulario de video";
+  las acciones esperadas son mostrar/ocultar elementos, ir a paginas del proyecto,
+  popup, redireccion y eventos Meta cuando correspondan.
+
+Las acciones de video en HTML importado solo deben apuntar a elementos
+identificables y publicables: botones, links, formularios, secciones, imagenes o
+contenedores con `id`, `data-rstk-edit-id`, `data-rstk-form-id`,
+`data-rstk-section` o `data-rstk-native-id`. El editor filtra elementos
+decorativos marcados como `data-rstk-edit-type="background_image"` o
+`aria-hidden="true"` para no ofrecer fondos como targets. Cuando una accion
+arranca con estado "Mantener oculto", el render importado marca el target con
+`data-rstk-video-action-hidden="true"` desde el HTML inicial para evitar
+parpadeos entre preview y sitio publicado.
 
 En el editor HTML importado, estos elementos se configuran desde un inspector
 derecho independiente del panel de codigo. El panel de codigo se conserva para

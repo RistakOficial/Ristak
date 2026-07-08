@@ -13362,13 +13362,15 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
       window.ristakVideoActionsRuntimeLoaded = true;
       const SOURCE_SELECTOR = 'video[data-rstk-video-actions]';
       const POPUP_ID = ${JSON.stringify(POPUP_SURFACE_ID)};
+      const PREVIEW_SAFE = ${options.previewSafe ? 'true' : 'false'};
+      const PREVIEW_SAFE_ACTIONS = new Set(['show', 'hide', 'scroll_to']);
       const attached = new WeakSet();
       const parseActions = video => {
         try {
           const parsed = JSON.parse(video.getAttribute('data-rstk-video-actions') || '[]');
           return Array.isArray(parsed)
             ? parsed
-              .filter(action => action && action.id && action.action && Number.isFinite(Number(action.timeSeconds)))
+              .filter(action => action && action.id && action.action && Number.isFinite(Number(action.timeSeconds)) && (!PREVIEW_SAFE || PREVIEW_SAFE_ACTIONS.has(String(action.action || ''))))
               .map(action => ({ ...action, timeSeconds: Math.max(0, Number(action.timeSeconds) || 0) }))
               .sort((a, b) => a.timeSeconds - b.timeSeconds)
             : [];
@@ -13393,8 +13395,17 @@ function buildVideoActionsRuntimeScript(blocks = [], options = {}) {
           document.querySelector('[data-ristack-edit-id="' + escaped + '"]') ||
           document.querySelector('[data-rstk-form-id="' + escaped + '"]') ||
           document.querySelector('[data-ristak-form-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristack-form-id="' + escaped + '"]') ||
           document.querySelector('[data-rstk-section="' + escaped + '"]') ||
           document.querySelector('[data-ristak-section="' + escaped + '"]') ||
+          document.querySelector('[data-ristack-section="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-native-slot-id="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-native-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristak-native-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristack-native-id="' + escaped + '"]') ||
+          document.querySelector('[data-rstk-element-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristak-element-id="' + escaped + '"]') ||
+          document.querySelector('[data-ristack-element-id="' + escaped + '"]') ||
           document.getElementById(targetId);
       };
       const getTargetIds = action => {
@@ -22259,14 +22270,14 @@ function buildImportedVideoPlayerRuntimeScript() {
   </script>`
 }
 
-function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true } = {}) {
+function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true, actionsPreviewSafe = false } = {}) {
   const source = String(html || '')
   const hasRistakVideo = /\brstk-video\b/.test(source)
   if (!hasRistakVideo) return ''
   return [
     IMPORTED_VIDEO_PLAYER_CSS,
     /\brstk-video-player\b/.test(source) ? buildImportedVideoPlayerRuntimeScript() : '',
-    actionsEnabled && /data-rstk-video-actions=/.test(source) ? buildVideoActionsRuntimeScript([], { force: true }) : ''
+    actionsEnabled && /data-rstk-video-actions=/.test(source) ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
   ].filter(Boolean).join('')
 }
 
@@ -22441,6 +22452,65 @@ function buildImportedNativeRenderContext(site, {
     videoActionTargetIds: collectVideoActionTargetIds(videoLookupBlocks),
     videoActionInitialHiddenTargetIds: collectVideoActionInitialHiddenTargetIds(videoLookupBlocks)
   }
+}
+
+function getImportedVideoActionTargetCandidateIdsFromAttrs(attrs = {}) {
+  return [
+    attrs['data-rstk-video-action-target'],
+    attrs['data-ristak-video-action-target'],
+    attrs['data-ristack-video-action-target'],
+    attrs['data-rstk-block-id'],
+    attrs['data-rstk-edit-id'],
+    attrs['data-ristak-edit-id'],
+    attrs['data-ristack-edit-id'],
+    attrs['data-rstk-form-id'],
+    attrs['data-ristak-form-id'],
+    attrs['data-ristack-form-id'],
+    attrs['data-rstk-section'],
+    attrs['data-ristak-section'],
+    attrs['data-ristack-section'],
+    attrs['data-rstk-native-slot-id'],
+    attrs['data-rstk-native-id'],
+    attrs['data-ristak-native-id'],
+    attrs['data-ristack-native-id'],
+    attrs['data-rstk-element-id'],
+    attrs['data-ristak-element-id'],
+    attrs['data-ristack-element-id'],
+    attrs.id
+  ].map(cleanString).filter(Boolean)
+}
+
+function openingTagHasAttribute(attrsText = '', attrName = '') {
+  return new RegExp(`(?:^|\\s)${escapeRegExp(attrName)}(?:\\s*=|\\s|$)`, 'i').test(attrsText)
+}
+
+function annotateImportedVideoActionTargets(html = '', context = {}) {
+  const targetIds = context.videoActionTargetIds
+  const hiddenIds = context.videoActionInitialHiddenTargetIds
+  if ((!targetIds || !targetIds.size) && (!hiddenIds || !hiddenIds.size)) return html
+
+  return String(html || '').replace(/<([a-z][\w:-]*)\b([^>]*)>/gi, (full, tagName, attrsText = '') => {
+    const tag = cleanString(tagName).toLowerCase()
+    if (!tag || tag === 'script' || tag === 'style') return full
+    const attrs = parseHtmlAttributes(attrsText)
+    const targetId = getImportedVideoActionTargetCandidateIdsFromAttrs(attrs)
+      .find(id => targetIds?.has?.(id) || hiddenIds?.has?.(id))
+    if (!targetId) return full
+
+    const startsHidden = Boolean(hiddenIds?.has?.(targetId))
+    const extras = []
+    if (!openingTagHasAttribute(attrsText, 'data-rstk-video-action-target')) {
+      extras.push(` data-rstk-video-action-target="${escapeHtml(targetId)}"`)
+    }
+    if (startsHidden && !openingTagHasAttribute(attrsText, 'data-rstk-video-action-hidden')) {
+      extras.push(' data-rstk-video-action-hidden="true"')
+    }
+    if (startsHidden && !openingTagHasAttribute(attrsText, 'aria-hidden')) {
+      extras.push(' aria-hidden="true"')
+    }
+    if (!extras.length) return full
+    return full.replace(/(\s*\/?>)$/i, `${extras.join('')}$1`)
+  })
 }
 
 async function renderImportedNativeFormSlot(block = {}, context = {}) {
@@ -22773,6 +22843,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
     videoStreamAssetsByStorageUrl,
     videoStorageAssetsByStreamVideoId
   })
+  html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
   const importedNativeRender = await replaceImportedNativeElementSlots(
     html,
     site.blocks || [],
@@ -22780,7 +22851,10 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
   )
   html = importedNativeRender.html
   const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState)
-  const importedVideoRuntime = buildImportedVideoRuntimeInjection(html, { actionsEnabled: !preview })
+  const importedVideoRuntime = buildImportedVideoRuntimeInjection(html, {
+    actionsEnabled: true,
+    actionsPreviewSafe: preview
+  })
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled: trackingEnabled && !preview,
@@ -22854,6 +22928,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       videoStreamAssetsByStorageUrl,
       videoStorageAssetsByStreamVideoId
     })
+    html = annotateImportedVideoActionTargets(html, importedNativeRenderContext)
     const importedNativeRender = await replaceImportedNativeElementSlots(
       html,
       site.blocks || [],
