@@ -209,7 +209,9 @@ final class SubscriptionsModel {
                     url: link,
                     gatewayName: gateway.displayName,
                     contactName: contact?.displayName,
-                    amountLabel: appConfig.formatters.currency(amount)
+                    amountLabel: appConfig.formatters.currency(amount),
+                    contactID: (contact?.id.isEmpty == false) ? contact?.id : nil,
+                    contactPhone: (contact?.phone.isEmpty == false) ? contact?.phone : nil
                 )
             } else {
                 successMessage = "\(created.name.isEmpty ? "La suscripción" : created.name) quedó guardada."
@@ -600,6 +602,7 @@ struct SubscriptionFormView: View {
             gatewaySection
             confirmSection
         }
+        .paymentsKeyboardDismissable()
     }
 
     private var gatewaySection: some View {
@@ -611,16 +614,18 @@ struct SubscriptionFormView: View {
                     .font(.caption)
                     .foregroundStyle(RistakTheme.warn)
             } else {
-                ForEach(gateways, id: \.rawValue) { gateway in
-                    PaymentOptionRow(
-                        title: gateway.displayName,
-                        subtitle: gatewayCopy(gateway),
-                        isSelected: model.selectedGateway == gateway
-                    ) {
-                        model.selectedGateway = gateway
+                VStack(spacing: RistakTheme.Spacing.xs) {
+                    ForEach(gateways, id: \.rawValue) { gateway in
+                        PaymentOptionRow(
+                            title: gateway.displayName,
+                            subtitle: gatewayCopy(gateway),
+                            isSelected: model.selectedGateway == gateway
+                        ) {
+                            model.selectedGateway = gateway
+                        }
                     }
-                    .listRowSeparator(.hidden)
                 }
+                .listRowSeparator(.hidden)
             }
         } header: {
             Text("Elige pasarela")

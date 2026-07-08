@@ -3,25 +3,31 @@ import SwiftUI
 /// Panel de timeline Día/Semana:
 /// - Tira de semana (dom–sáb) para elegir día; swipe horizontal cambia de
 ///   día/semana (paridad RN, ≥56 pt).
-/// - Rejilla de 24 h (54 pt/h) con etiquetas `12 a.m. … 11 p.m.`.
+/// - Rejilla de 24 h (54 pt/h) con etiquetas `12 a.m. … 11 p.m.`, scrolleable
+///   por todo el día.
+/// - Día = una sola columna; Semana = 7 columnas reales (paridad RN).
 /// - Tap en un hueco → Nueva cita en ese minuto snapeado al `slotInterval`.
-/// - Long-press (0.38 s) → haptic + arrastrar estira el rango → Nueva cita.
-/// - En ancho regular (iPad) el modo Semana muestra 7 columnas reales.
+/// - Long-press → haptic + arrastrar estira el rango → Nueva cita (el scroll se
+///   deshabilita mientras hay selección viva, como en RN).
 struct CalendarTimelinePane: View {
     let model: CalendarsViewModel
-    /// Semana con columnas reales (iPad regular).
-    let showsWeekColumns: Bool
+    /// Día ancla de esta página (el pager pasa el día ±1 / semana ±1). Por
+    /// defecto el día seleccionado del modelo.
+    var anchorDay: CalendarBusinessDay
+    /// `false` en las páginas contiguas del pager: solo lectura para el
+    /// descubrimiento durante el arrastre (User #8).
+    var interactive: Bool = true
     let canCreate: Bool
     let onCreate: (AppointmentPrefill) -> Void
     let onEventTap: (CalendarAppointment) -> Void
 
     private var isWeekMode: Bool { model.viewMode == .week }
 
+    /// Día = una columna; Semana = 7 columnas (dom–sáb) — distingue las vistas.
     private var timelineDays: [CalendarBusinessDay] {
-        if isWeekMode && showsWeekColumns {
-            return CalendarDateMath.weekDays(containing: model.selectedDay, timeZone: model.timeZone)
-        }
-        return [model.selectedDay]
+        isWeekMode
+            ? CalendarDateMath.weekDays(containing: anchorDay, timeZone: model.timeZone)
+            : [anchorDay]
     }
 
     var body: some View {
@@ -31,18 +37,20 @@ struct CalendarTimelinePane: View {
             CalendarTimelineGridView(
                 days: timelineDays,
                 model: model,
-                canCreate: canCreate,
+                canCreate: interactive && canCreate,
                 onCreate: onCreate,
-                onEventTap: onEventTap
+                onEventTap: interactive ? onEventTap : { _ in }
             )
         }
     }
 
     // MARK: - Tira de semana
 
+    /// El swipe entre día/semana lo maneja `CalendarPeriodPager` (User #8): la
+    /// tira ya no lleva gesto propio.
     private var weekStrip: some View {
         HStack(spacing: 4) {
-            ForEach(Array(CalendarDateMath.weekDays(containing: model.selectedDay, timeZone: model.timeZone).enumerated()), id: \.element) { index, day in
+            ForEach(Array(CalendarDateMath.weekDays(containing: anchorDay, timeZone: model.timeZone).enumerated()), id: \.element) { index, day in
                 let isSelected = day == model.selectedDay
                 Button {
                     withAnimation(.snappy(duration: 0.18)) { model.select(day: day) }
@@ -70,26 +78,12 @@ struct CalendarTimelinePane: View {
                     .contentShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .disabled(!interactive)
                 .accessibilityLabel(CalendarDateMath.dayHeader(day, timeZone: model.timeZone))
                 .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
         .padding(.horizontal, RistakTheme.Spacing.md)
-        .contentShape(Rectangle())
-        .gesture(stripSwipeGesture)
-    }
-
-    private var stripSwipeGesture: some Gesture {
-        DragGesture(minimumDistance: 24)
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                let step = isWeekMode ? 7 : 1
-                if value.translation.width <= -56 {
-                    withAnimation(.snappy) { model.shiftSelectedDay(by: step) }
-                } else if value.translation.width >= 56 {
-                    withAnimation(.snappy) { model.shiftSelectedDay(by: -step) }
-                }
-            }
     }
 }
 
@@ -110,6 +104,12 @@ private struct CalendarTimelineGridView: View {
 
     /// Selección en vivo del long-press + arrastre.
     @State private var selection: TimelineDragSelection?
+    /// Toque en curso sobre una columna (día, punto de inicio, hora de inicio).
+    /// Alimenta al long-press (ancla) y a la detección de tap sin bloquear el
+    /// scroll: sólo el long-press arma la `selection` (que congela el scroll).
+    @State private var touchDay: CalendarBusinessDay?
+    @State private var touchStart: CGPoint = .zero
+    @State private var touchStartTime: Date = .distantPast
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -128,6 +128,10 @@ private struct CalendarTimelineGridView: View {
                 .padding(.vertical, RistakTheme.Spacing.sm)
                 .padding(.trailing, RistakTheme.Spacing.md)
             }
+            // Mientras hay una selección viva (long-press + arrastre) el scroll
+            // se congela para que el arrastre estire el rango, no desplace la
+            // vista (paridad RN: `scrollEnabled={!timelineSelection}`).
+            .scrollDisabled(selection != nil)
             .onAppear {
                 // Arranca cerca de las 8 a.m. para no abrir en medianoche.
                 proxy.scrollTo("timeline-hour-8", anchor: .top)
@@ -168,20 +172,22 @@ private struct CalendarTimelineGridView: View {
                         .offset(y: CGFloat(hour) * hourHeight)
                 }
 
-                // Capa interactiva de huecos.
+                // Capa interactiva de huecos (User #9). DOS gestos planos y
+                // SIMULTÁNEOS al scroll, en vez de un `sequenced` que capturaba
+                // el pan vertical:
+                //   • `trackGesture` (DragGesture minDistance 0) sólo registra
+                //     el toque y estira el rango cuando ya hay selección; nunca
+                //     congela el scroll por sí mismo.
+                //   • `armGesture` (LongPressGesture) arma la selección tras
+                //     mantener el dedo quieto; un pan vertical mueve el dedo y
+                //     cancela el long-press, así que el ScrollView desplaza toda
+                //     la timeline desde CUALQUIER punto (incluidos los huecos).
+                // El tap limpio se detecta al soltar dentro de `trackGesture`.
                 Color.clear
                     .frame(height: totalHeight)
                     .contentShape(Rectangle())
-                    .onTapGesture { location in
-                        guard canCreate else { return }
-                        let minute = snappedMinute(fromY: location.y)
-                        onCreate(AppointmentPrefill(
-                            day: day,
-                            startMinutes: minute,
-                            durationMinutes: model.defaultDurationMinutes
-                        ))
-                    }
-                    .gesture(rangeGesture(for: day))
+                    .simultaneousGesture(trackGesture(for: day))
+                    .simultaneousGesture(armGesture(for: day))
 
                 // Indicador de hora actual (solo el día de hoy).
                 if day == model.today {
@@ -241,33 +247,73 @@ private struct CalendarTimelineGridView: View {
             .allowsHitTesting(false)
     }
 
-    // MARK: Gesto long-press + arrastre
+    // MARK: Gestos de creación (tap + long-press-arrastre) que ceden el scroll
 
-    private func rangeGesture(for day: CalendarBusinessDay) -> some Gesture {
-        LongPressGesture(minimumDuration: 0.38)
-            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+    /// Registra el toque y, cuando `selection` está armada, estira el rango. Al
+    /// soltar decide: rango armado → crear con esa duración; toque limpio (poco
+    /// movimiento, breve) → crear al instante en el minuto snapeado. Nunca
+    /// congela el scroll por sí mismo — es simultáneo al pan del ScrollView.
+    private func trackGesture(for day: CalendarBusinessDay) -> some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
-                guard canCreate, case .second(true, let drag?) = value else { return }
-                let anchor = snappedMinute(fromY: drag.startLocation.y)
-                let current = rawMinute(fromY: drag.location.y)
+                guard canCreate else { return }
+                if selection == nil, touchDay != day {
+                    touchDay = day
+                    touchStart = value.startLocation
+                    touchStartTime = Date()
+                }
                 if var live = selection, live.day == day {
-                    live.currentMinute = current
+                    live.currentMinute = rawMinute(fromY: value.location.y)
                     selection = live
-                } else {
-                    selection = TimelineDragSelection(day: day, anchorMinute: anchor, currentMinute: current)
                 }
             }
             .onEnded { value in
-                defer { selection = nil }
-                guard canCreate, case .second(true, _) = value, let live = selection, live.day == day else { return }
-                let range = live.normalizedRange(minimumMinutes: model.slotStepMinutes)
-                // +gracia: la duración nunca queda menor a la del calendario.
-                let duration = max(range.upperBound - range.lowerBound, model.defaultDurationMinutes)
-                onCreate(AppointmentPrefill(
+                let startTime = touchStartTime
+                defer { touchDay = nil }
+                guard canCreate else { selection = nil; return }
+                if let live = selection, live.day == day {
+                    selection = nil
+                    // Arrastre horizontal-dominante = paginado (User #8): no crear.
+                    if abs(value.translation.width) > abs(value.translation.height),
+                       abs(value.translation.width) > 24 {
+                        return
+                    }
+                    let range = live.normalizedRange(minimumMinutes: model.slotStepMinutes)
+                    // +gracia: la duración nunca queda menor a la del calendario.
+                    let duration = max(range.upperBound - range.lowerBound, model.defaultDurationMinutes)
+                    onCreate(AppointmentPrefill(
+                        day: day,
+                        startMinutes: range.lowerBound,
+                        durationMinutes: duration
+                    ))
+                } else {
+                    // Sin long-press: distinguimos un toque limpio de un scroll.
+                    let moved = hypot(value.translation.width, value.translation.height)
+                    let elapsed = Date().timeIntervalSince(startTime)
+                    guard moved <= 10, elapsed <= 0.4 else { return }
+                    let minute = snappedMinute(fromY: value.startLocation.y)
+                    onCreate(AppointmentPrefill(
+                        day: day,
+                        startMinutes: minute,
+                        durationMinutes: model.defaultDurationMinutes
+                    ))
+                }
+            }
+    }
+
+    /// Arma la selección tras mantener el dedo quieto. `maximumDistance` pequeño
+    /// hace que cualquier pan (scroll vertical o swipe de paginado) lo cancele,
+    /// de modo que el long-press NUNCA roba el desplazamiento.
+    private func armGesture(for day: CalendarBusinessDay) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.32, maximumDistance: 12)
+            .onEnded { _ in
+                guard canCreate, selection == nil, touchDay == day else { return }
+                let anchor = snappedMinute(fromY: touchStart.y)
+                selection = TimelineDragSelection(
                     day: day,
-                    startMinutes: range.lowerBound,
-                    durationMinutes: duration
-                ))
+                    anchorMinute: anchor,
+                    currentMinute: min(anchor + model.slotStepMinutes, 24 * 60)
+                )
             }
     }
 
@@ -372,35 +418,28 @@ private struct CalendarTimelineGridView: View {
         return Button {
             onEventTap(positioned.event)
         } label: {
-            HStack(alignment: .top, spacing: 6) {
-                Capsule()
-                    .fill(statusColor)
-                    .frame(width: 3)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(positioned.event.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .lineLimit(1)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(positioned.event.title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(RistakTheme.textPrimary)
+                if let start = positioned.event.startDate {
+                    Text(formatters.messageTime(start))
+                        .font(.caption2)
+                        .foregroundStyle(RistakTheme.textDim)
                         .lineLimit(1)
-
-                    if let start = positioned.event.startDate {
-                        Text(formatters.messageTime(start))
-                            .font(.caption2)
-                            .foregroundStyle(RistakTheme.textDim)
-                            .lineLimit(1)
-                    }
                 }
                 Spacer(minLength: 0)
             }
-            .padding(4)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
             .frame(width: max(width - 2, 20), height: height, alignment: .topLeading)
+            // Sin borde ni contorno (User #10): SÓLO un relleno suave teñido con
+            // el color del estado/evento — look más limpio y moderno.
             .background(
                 RoundedRectangle(cornerRadius: RistakTheme.Radius.small, style: .continuous)
-                    .fill(RistakTheme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: RistakTheme.Radius.small, style: .continuous)
-                    .strokeBorder(statusColor.opacity(0.45), lineWidth: 0.8)
+                    .fill(statusColor.opacity(0.16))
             )
             .clipped()
         }

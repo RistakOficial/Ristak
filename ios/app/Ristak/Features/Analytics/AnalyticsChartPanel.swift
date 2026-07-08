@@ -74,6 +74,8 @@ struct AnalyticsChartPanel: View {
                 }
             }
         }
+        .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+        .padding(.horizontal, -RistakTheme.Spacing.md)
     }
 
     private var scopeChips: some View {
@@ -89,6 +91,8 @@ struct AnalyticsChartPanel: View {
                 }
             }
         }
+        .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+        .padding(.horizontal, -RistakTheme.Spacing.md)
     }
 
     // MARK: Leyenda + escala superior
@@ -152,21 +156,35 @@ struct AnalyticsChartPanel: View {
             AnalyticsDualLineChart(
                 points: model.chartPoints,
                 color1: model.chartKind.color1,
-                color2: model.chartKind.color2
+                color2: model.chartKind.color2,
+                legendLabels: model.chartKind.legendLabels(labels: model.labels),
+                isCurrency: model.chartKind.isCurrency,
+                formatters: formatters
             )
         }
     }
 }
 
-// MARK: - Gráfica de doble línea (Swift Charts)
+// MARK: - Gráfica de doble línea (Swift Charts, estilo Stocks)
 
-/// Dos polylines con punto en cada muestra, 3 gridlines horizontales
+/// Dos polylines limpias (sin puntos visibles), 3 gridlines horizontales
 /// (25/50/75 %), eje X con 3 etiquetas (primera, central, última) y escala Y
 /// desde 0 hasta el máximo de ambas series (paridad del SVG de /movil).
+///
+/// Interacción tipo app Stocks de Apple: al mantener presionado y arrastrar
+/// sobre la gráfica aparece una regla vertical + un punto circular sobre cada
+/// línea que SIGUEN al dedo, y un callout flotante con la fecha y los valores
+/// del punto más cercano. Al soltar, el indicador desaparece.
 struct AnalyticsDualLineChart: View {
     let points: [AnalyticsChartPoint]
     let color1: Color
     let color2: Color
+    let legendLabels: (String, String)
+    let isCurrency: Bool
+    let formatters: BusinessFormatters
+
+    /// Índice del punto que el dedo está tocando (nil = sin scrubbing).
+    @State private var scrubIndex: Int?
 
     private var maxY: Double {
         max(1, points.flatMap { [$0.value1, $0.value2] }.max() ?? 1)
@@ -191,13 +209,6 @@ struct AnalyticsDualLineChart: View {
                 .lineStyle(StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
                 .interpolationMethod(.linear)
 
-                PointMark(
-                    x: .value("Fecha", Double(index)),
-                    y: .value("Valor", point.value1)
-                )
-                .foregroundStyle(color1)
-                .symbolSize(24)
-
                 LineMark(
                     x: .value("Fecha", Double(index)),
                     y: .value("Valor", point.value2),
@@ -206,13 +217,6 @@ struct AnalyticsDualLineChart: View {
                 .foregroundStyle(color2)
                 .lineStyle(StrokeStyle(lineWidth: 2.6, lineCap: .round, lineJoin: .round))
                 .interpolationMethod(.linear)
-
-                PointMark(
-                    x: .value("Fecha", Double(index)),
-                    y: .value("Valor", point.value2)
-                )
-                .foregroundStyle(color2)
-                .symbolSize(24)
             }
         }
         .chartLegend(.hidden)
@@ -236,12 +240,167 @@ struct AnalyticsDualLineChart: View {
                 }
             }
         }
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                if let plotAnchor = proxy.plotFrame {
+                    let plotRect = geo[plotAnchor]
+                    ZStack(alignment: .topLeading) {
+                        // Capa transparente que captura el gesto de scrubbing.
+                        Rectangle()
+                            .fill(Color.clear)
+                            .contentShape(Rectangle())
+                            .gesture(scrubGesture(proxy: proxy, plotRect: plotRect))
+
+                        if let index = scrubIndex, points.indices.contains(index) {
+                            scrubIndicator(index: index, proxy: proxy, plotRect: plotRect)
+                        }
+                    }
+                }
+            }
+        }
+        // Tick háptico al cruzar a un nuevo punto (y al agarrar/soltar), como Stocks.
+        .sensoryFeedback(.selection, trigger: scrubIndex)
         .frame(height: 190)
         .accessibilityLabel("Gráfica de doble línea")
+        .accessibilityHint("Mantén presionado y arrastra para ver los valores por fecha.")
+    }
+
+    // MARK: Gesto de scrubbing (long-press + arrastre)
+
+    /// Long-press corto encadenado a un arrastre horizontal: no secuestra el
+    /// scroll vertical del contenedor; una vez fijado, sigue al dedo en X.
+    private func scrubGesture(proxy: ChartProxy, plotRect: CGRect) -> some Gesture {
+        LongPressGesture(minimumDuration: 0.18)
+            .sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .local))
+            .onChanged { value in
+                guard case .second(true, let drag?) = value else { return }
+                if let index = index(forX: drag.location.x, proxy: proxy, plotRect: plotRect) {
+                    if index != scrubIndex { scrubIndex = index }
+                }
+            }
+            .onEnded { _ in
+                scrubIndex = nil
+            }
+    }
+
+    /// Convierte la X del dedo (espacio del overlay) al índice del punto más
+    /// cercano, acotado a `0...count-1`.
+    private func index(forX x: CGFloat, proxy: ChartProxy, plotRect: CGRect) -> Int? {
+        guard !points.isEmpty else { return nil }
+        let relativeX = x - plotRect.minX
+        guard let raw: Double = proxy.value(atX: relativeX) else { return nil }
+        let rounded = Int(raw.rounded())
+        return min(max(rounded, 0), points.count - 1)
+    }
+
+    // MARK: Indicador de scrubbing (regla + puntos + callout)
+
+    @ViewBuilder
+    private func scrubIndicator(index: Int, proxy: ChartProxy, plotRect: CGRect) -> some View {
+        let point = points[index]
+        let pointX = plotRect.minX + (proxy.position(forX: Double(index)) ?? 0)
+        let y1 = plotRect.minY + (proxy.position(forY: point.value1) ?? 0)
+        let y2 = plotRect.minY + (proxy.position(forY: point.value2) ?? 0)
+
+        // Regla vertical a lo alto del área de la gráfica.
+        Rectangle()
+            .fill(RistakTheme.textMute)
+            .frame(width: 1, height: plotRect.height)
+            .position(x: pointX, y: plotRect.midY)
+
+        // Punto circular sobre cada línea (relleno de la serie + anillo de superficie).
+        indicatorDot(color: color2, x: pointX, y: y2)
+        indicatorDot(color: color1, x: pointX, y: y1)
+
+        // Callout flotante con fecha + valores; sigue al dedo, acotado al área.
+        callout(point: point)
+            .fixedSize()
+            .modifier(CalloutPositioner(pointX: pointX, plotRect: plotRect))
+    }
+
+    private func indicatorDot(color: Color, x: CGFloat, y: CGFloat) -> some View {
+        Circle()
+            .fill(color)
+            .frame(width: 10, height: 10)
+            .overlay(
+                Circle().stroke(RistakTheme.surface, lineWidth: 2)
+            )
+            .position(x: x, y: y)
+    }
+
+    private func callout(point: AnalyticsChartPoint) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(AnalyticsViewModel.chartAxisLabel(point.label))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(RistakTheme.textDim)
+
+            calloutRow(color: color1, label: legendLabels.0, value: point.value1)
+            calloutRow(color: color2, label: legendLabels.1, value: point.value2)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: RistakTheme.Radius.small, style: .continuous)
+                .fill(RistakTheme.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: RistakTheme.Radius.small, style: .continuous)
+                        .stroke(RistakTheme.border, lineWidth: 1)
+                )
+        )
+        .shadow(color: .black.opacity(0.14), radius: 8, x: 0, y: 3)
+    }
+
+    private func calloutRow(color: Color, label: String, value: Double) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(RistakTheme.textDim)
+                .lineLimit(1)
+            Spacer(minLength: RistakTheme.Spacing.xs)
+            Text(valueLabel(value))
+                .font(.caption.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(RistakTheme.textPrimary)
+        }
+    }
+
+    /// Valor preciso del callout: moneda de la cuenta o entero con separadores.
+    private func valueLabel(_ value: Double) -> String {
+        isCurrency ? formatters.currency(value) : formatters.wholeNumber(value)
     }
 
     private func axisLabel(at index: Int) -> String {
         guard points.indices.contains(index) else { return "" }
         return AnalyticsViewModel.chartAxisLabel(points[index].label)
+    }
+}
+
+// MARK: - Posicionador del callout
+
+/// Centra el callout en X sobre el dedo, acotándolo dentro del área de la
+/// gráfica (midiendo su tamaño real para que nunca se salga por los lados),
+/// y lo fija cerca del borde superior del plot.
+private struct CalloutPositioner: ViewModifier {
+    let pointX: CGFloat
+    let plotRect: CGRect
+
+    @State private var size: CGSize = .zero
+
+    func body(content: Content) -> some View {
+        let halfWidth = size.width / 2
+        let minX = plotRect.minX + halfWidth
+        let maxX = plotRect.maxX - halfWidth
+        // Si el callout es más ancho que el plot, se centra sin más.
+        let clampedX = minX <= maxX ? min(max(pointX, minX), maxX) : plotRect.midX
+        let y = plotRect.minY + size.height / 2 + 2
+
+        content
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            .position(x: clampedX, y: y)
+            // Oculto hasta medir para evitar un salto en el primer frame.
+            .opacity(size == .zero ? 0 : 1)
     }
 }

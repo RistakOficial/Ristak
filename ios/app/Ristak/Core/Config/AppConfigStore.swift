@@ -218,9 +218,43 @@ final class AppConfigStore {
         boolValue(appConfig[RistakAppConfigKey.showUnreadIndicators], default: true)
     }
 
-    /// Panel Apariencia.
+    /// Panel Apariencia: preferencia CRUDA guardada por el móvil
+    /// (`mobile_chat_theme_preference`). Un valor ausente o inválido → `.system`
+    /// (no distingue "ausente" de "system"; para eso está `effectiveThemePreference`).
     var themePreference: RistakThemePreference {
         RistakThemePreference.parse(appConfig[RistakAppConfigKey.themePreference])
+    }
+
+    /// Tono claro/oscuro elegido en el CRM de ESCRITORIO (`theme_color`).
+    /// `nil` si el escritorio no fijó un tono (usa su propio horario). (#6.)
+    var desktopThemeColor: ColorScheme? {
+        let raw = appConfig[RistakAppConfigKey.desktopThemeColor]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch raw {
+        case "light": return .light
+        case "dark": return .dark
+        default: return nil
+        }
+    }
+
+    /// Preferencia de tema EFECTIVA (#6 THEME SYNC): si el usuario ya eligió una
+    /// preferencia EN EL MÓVIL (`mobile_chat_theme_preference` presente y no
+    /// vacío) manda esa; si no, HEREDA el tono claro/oscuro fijado en el
+    /// ESCRITORIO (`theme_color`); en última instancia, `.system`. Así el móvil
+    /// "usa automáticamente el tema elegido en escritorio" cuando aún no se ha
+    /// tocado Apariencia en el celular.
+    var effectiveThemePreference: RistakThemePreference {
+        if let raw = appConfig[RistakAppConfigKey.themePreference]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !raw.isEmpty {
+            return RistakThemePreference.parse(raw)
+        }
+        switch desktopThemeColor {
+        case .light: return .light
+        case .dark: return .dark
+        case .none: return .system
+        }
     }
 
     /// Bandeja "Juntos"/"Separado": `'all'` o un phoneNumberId.
@@ -314,11 +348,12 @@ final class AppConfigStore {
 
     // MARK: - Tema
 
-    /// Resolución del tema para `preferredColorScheme`:
+    /// Resolución del tema para `preferredColorScheme`, usando la preferencia
+    /// EFECTIVA (móvil > escritorio > sistema, ver `effectiveThemePreference`):
     /// `system` → nil (sigue al SO); `light`/`dark` literales;
     /// `auto` → oscuro de 19:00 a 05:59 en la zona horaria del negocio.
     var preferredColorScheme: ColorScheme? {
-        switch themePreference {
+        switch effectiveThemePreference {
         case .system:
             return nil
         case .light:

@@ -30,8 +30,11 @@ struct DaySeparatorView: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(RistakTheme.textDim)
             .padding(.horizontal, RistakTheme.Spacing.sm)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(RistakTheme.daySeparator))
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(RistakTheme.daySeparator)
+            )
             .frame(maxWidth: .infinity)
             .padding(.vertical, RistakTheme.Spacing.xxs)
             .accessibilityAddTraits(.isHeader)
@@ -45,37 +48,59 @@ struct ActivityMarkerView: View {
     let formatters: BusinessFormatters
 
     var body: some View {
-        HStack(spacing: RistakTheme.Spacing.xs) {
+        HStack(spacing: RistakTheme.Spacing.sm) {
             line
-            HStack(spacing: RistakTheme.Spacing.xxs) {
-                Image(systemName: marker.systemImage)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(marker.kind == .payment ? RistakTheme.pos : RistakTheme.accent)
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 4) {
-                        Text(marker.title)
+            markerCard
+            line
+        }
+        .padding(.vertical, RistakTheme.Spacing.xxs)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Tarjeta cómoda del hito: ícono + título + monto + fecha en una línea
+    /// legible y centrada. La tarjeta ABRAZA su contenido y NO se deja aplastar:
+    /// los divisores flexibles de los lados rellenan el espacio sobrante.
+    private var markerCard: some View {
+        HStack(alignment: .center, spacing: RistakTheme.Spacing.xs) {
+            Image(systemName: marker.systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(marker.kind == .payment ? RistakTheme.pos : RistakTheme.accent)
+                // Marco fijo → el símbolo circular ($ / calendario) mantiene su
+                // proporción y nunca se aplasta a óvalo aunque el HStack apriete.
+                .frame(width: 20, height: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(alignment: .firstTextBaseline, spacing: RistakTheme.Spacing.xs) {
+                    Text(marker.title)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(RistakTheme.textPrimary)
+                        .lineLimit(1)
+                    if let amount = marker.amountLabel {
+                        Text(amount)
                             .font(.caption.weight(.bold))
-                            .foregroundStyle(RistakTheme.textPrimary)
-                        if let amount = marker.amountLabel {
-                            Text(amount)
-                                .font(.caption.weight(.bold))
-                                .monospacedDigit()
-                                .foregroundStyle(RistakTheme.pos)
-                        }
+                            .monospacedDigit()
+                            .foregroundStyle(RistakTheme.pos)
+                            .lineLimit(1)
                     }
+                }
+                if !subtitleLine.isEmpty {
                     Text(subtitleLine)
                         .font(.caption2)
                         .foregroundStyle(RistakTheme.textDim)
                         .lineLimit(1)
                 }
             }
-            .padding(.horizontal, RistakTheme.Spacing.sm)
-            .padding(.vertical, 6)
-            .background(Capsule().fill(RistakTheme.daySeparator))
-            line
         }
-        .padding(.vertical, RistakTheme.Spacing.xxs)
-        .accessibilityElement(children: .combine)
+        .padding(.horizontal, RistakTheme.Spacing.md)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(RistakTheme.daySeparator)
+        )
+        // Abraza el contenido (no se estira ni se comprime): tamaño dictado por el
+        // texto, con prioridad de layout para ganar el ancho frente a los
+        // divisores `.frame(maxWidth: .infinity)` que lo flanquean.
+        .fixedSize(horizontal: true, vertical: false)
+        .layoutPriority(1)
     }
 
     private var subtitleLine: String {
@@ -122,12 +147,28 @@ struct MessageRowView: View {
     let message: ChatMessage
     let formatters: BusinessFormatters
     let contactName: String
+    /// Foto del contacto para el avatar de la nota de voz (paridad /movil).
+    var contactPhotoURL: URL? = nil
     /// Countdown en vivo para programados ("5m", "3h", "2d").
     let scheduledCountdown: String?
     let actions: MessageRowActions
 
     @State private var dragOffset: CGFloat = 0
+    /// True mientras el usuario arrastra la ruedita del scrubber de audio: bloquea
+    /// el swipe-para-responder para que no compitan ambos gestos horizontales.
+    @State private var isScrubbingAudio = false
     @State private var replyTriggered = false
+    /// True mientras el arrastre supera el umbral (para disparar el háptico una
+    /// sola vez por gesto, justo al cruzarlo).
+    @State private var reachedReplyThreshold = false
+    /// Trigger del háptico sutil al cruzar el umbral durante el swipe.
+    @State private var replyThresholdHaptic = false
+    /// Presenta el selector ampliado de emojis (botón «+» del picker rápido).
+    @State private var showsEmojiPicker = false
+
+    /// Distancia de arrastre a la que se dispara la respuesta (paridad /movil
+    /// `Math.abs(gesture.dx) > 38`). La flecha llega a plena visibilidad aquí.
+    private let replyThreshold: CGFloat = 38
 
     private var isOutbound: Bool { message.direction == .outbound }
 
@@ -148,32 +189,60 @@ struct MessageRowView: View {
                 }
             }
 
-            bubbleContent
-                .offset(x: dragOffset)
-                .overlay(alignment: isOutbound ? .trailing : .leading) {
-                    if abs(dragOffset) > 6 {
-                        Image(systemName: "arrowshape.turn.up.left.fill")
-                            .font(.footnote.weight(.semibold))
-                            .foregroundStyle(RistakTheme.textDim)
-                            .padding(6)
-                            .background(Circle().fill(RistakTheme.daySeparator))
-                            .offset(x: isOutbound ? 40 : -40)
-                    }
-                }
-                .simultaneousGesture(swipeToReplyGesture)
-                .sensoryFeedback(.impact(weight: .light), trigger: replyTriggered)
+            // La flecha vive FIJA en el hueco que revela el arrastre (entrante
+            // pegada a .leading, saliente a .trailing) y la burbuja se desliza
+            // POR ENCIMA con `.offset(x:)`, dejándola a la vista. Antes la flecha
+            // era un overlay del propio contenido desplazado, así que viajaba con
+            // la burbuja y nunca se veía (bug #5).
+            ZStack(alignment: isOutbound ? .trailing : .leading) {
+                replyArrowCue
+                bubbleContent
+                    .offset(x: dragOffset)
+            }
+            .simultaneousGesture(swipeToReplyGesture)
+            .sensoryFeedback(.impact(weight: .light), trigger: replyTriggered)
+            .sensoryFeedback(.impact(weight: .light, intensity: 0.5), trigger: replyThresholdHaptic)
 
             if !isOutbound {
                 Spacer(minLength: 44)
             }
         }
-        .padding(.vertical, 1.5)
+        // Separación entre burbujas consecutivas (paridad /movil
+        // `.messageRow { margin: 3px 0 }` → 6 pt de aire entre mensajes).
+        .padding(.vertical, 3)
     }
 
     // MARK: Globo
 
     private var bubbleContent: some View {
-        VStack(alignment: .leading, spacing: RistakTheme.Spacing.xxs) {
+        bubbleInner
+            // Vestido de globo con la geometría exacta de mobile/ (radio 11,
+            // colita a 4, padding 7/9/5, sombra sutil). ABRAZA el texto.
+            .modifier(RistakChatBubbleStyle(
+                side: isOutbound ? .outbound : .inbound,
+                fill: bubbleFillOverride,
+                dashed: message.isScheduled
+            ))
+            .overlay(alignment: .bottom) {
+                reactionChips
+                    .offset(y: 12)
+            }
+            .padding(.bottom, message.visibleReactions.isEmpty ? 0 : 12)
+            .contextMenu { contextMenuItems }
+            .sheet(isPresented: $showsEmojiPicker) {
+                ReactionEmojiPickerSheet { emoji in
+                    actions.react(message, emoji)
+                }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+            }
+    }
+
+    /// Columna de contenido del globo. La meta (hora + acuse) se reserva como
+    /// última "línea" invisible y se dibuja encima abajo-derecha, para que el
+    /// globo abrace su contenido en vez de estirarse a lo ancho (WhatsApp).
+    private var bubbleInner: some View {
+        VStack(alignment: .leading, spacing: RistakTheme.Spacing.xxs + 2) {
             quoteBlock
             attachmentBlock
             locationBlock
@@ -181,38 +250,17 @@ struct MessageRowView: View {
             emailBlock
             textBlock
             routingReasonBlock
+            metaRow.hidden()
+        }
+        .overlay(alignment: .bottomTrailing) {
             metaRow
         }
-        .padding(.horizontal, RistakTheme.Spacing.sm)
-        .padding(.vertical, RistakTheme.Spacing.xs)
-        .background(bubbleBackground)
-        .overlay(alignment: .bottom) {
-            reactionChips
-                .offset(y: 12)
-        }
-        .padding(.bottom, message.visibleReactions.isEmpty ? 0 : 12)
-        .contextMenu { contextMenuItems }
     }
 
-    private var bubbleBackground: some View {
-        let shape = RoundedRectangle(cornerRadius: 16)
-        return ZStack {
-            shape.fill(bubbleFill)
-            if message.isScheduled {
-                shape.strokeBorder(
-                    RistakTheme.textMute,
-                    style: StrokeStyle(lineWidth: 1, dash: [5, 4])
-                )
-            }
-        }
-    }
-
-    private var bubbleFill: Color {
-        if message.failed {
-            return RistakTheme.bubbleFailed
-        }
-        if message.isScheduled { return RistakTheme.bubbleScheduled }
-        return isOutbound ? RistakTheme.bubbleOutgoing : RistakTheme.bubbleIncoming
+    /// Relleno explícito solo cuando falló (rojo). Programado y lados normales
+    /// los resuelve `RistakChatBubbleStyle` (dashed / inbound / outbound).
+    private var bubbleFillOverride: Color? {
+        message.failed ? RistakTheme.bubbleFailed : nil
     }
 
     // MARK: Piezas
@@ -265,7 +313,14 @@ struct MessageRowView: View {
             case .video:
                 VideoAttachmentView(attachment: attachment, isOutbound: isOutbound)
             case .audio:
-                AudioMessageView(attachment: attachment, isOutbound: isOutbound)
+                AudioMessageView(
+                    attachment: attachment,
+                    isOutbound: isOutbound,
+                    messageID: message.id,
+                    contactName: contactName,
+                    contactPhotoURL: contactPhotoURL,
+                    isScrubbing: $isScrubbingAudio
+                )
             case .document, .file:
                 DocumentAttachmentView(attachment: attachment)
             }
@@ -341,7 +396,7 @@ struct MessageRowView: View {
     @ViewBuilder
     private var emailBlock: some View {
         if let details = message.emailDetails {
-            EmailMessageCard(message: message, details: details)
+            EmailMessageCard(message: message, details: details, formatters: formatters)
         }
     }
 
@@ -350,7 +405,7 @@ struct MessageRowView: View {
         // El globo NO repite el texto plano cuando hay emailDetails (doc 04 §7.6).
         if message.emailDetails == nil, !message.text.isEmpty {
             Text(WhatsAppTextFormatter.attributed(message.text, baseFont: .body))
-                .foregroundStyle(message.failed ? RistakTheme.neg : RistakTheme.textPrimary)
+                .foregroundStyle(message.failed ? RistakTheme.neg : RistakTheme.bubbleTextInbound)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -372,27 +427,26 @@ struct MessageRowView: View {
             if let badge = MessageTransportBadge.label(for: message) {
                 Text(badge)
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(RistakTheme.textMute)
+                    .foregroundStyle(RistakTheme.bubbleMeta)
             }
 
             if message.isScheduled {
                 Image(systemName: "clock")
                     .font(.system(size: 10))
-                    .foregroundStyle(RistakTheme.textMute)
+                    .foregroundStyle(RistakTheme.bubbleMeta)
                 Text("Programado para \(formatters.messageTime(fromISO: message.scheduledAt ?? message.date))")
                     .font(.caption2)
-                    .foregroundStyle(RistakTheme.textMute)
+                    .foregroundStyle(RistakTheme.bubbleMeta)
             } else {
                 Text(metaLabel)
                     .font(.caption2)
                     .monospacedDigit()
-                    .foregroundStyle(RistakTheme.textMute)
+                    .foregroundStyle(RistakTheme.bubbleMeta)
                 if isOutbound {
                     MessageReceiptView(status: message.receiptStatus)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private var metaLabel: String {
@@ -450,6 +504,15 @@ struct MessageRowView: View {
                             actions.react(message, emoji)
                         }
                     }
+                    // «+» para reaccionar con CUALQUIER emoji. Solo cuando el canal
+                    // acepta más de un emoji (WhatsApp); en Meta (solo ❤️) se oculta.
+                    if capability.emojis.count > 1 {
+                        Button {
+                            showsEmojiPicker = true
+                        } label: {
+                            Label("Más", systemImage: "plus")
+                        }
+                    }
                 }
                 .controlGroupStyle(.compactMenu)
             }
@@ -488,22 +551,64 @@ struct MessageRowView: View {
 
     // MARK: Swipe para responder (doc 04 §8.1)
 
+    /// Progreso del swipe hacia el umbral de respuesta (0…1). Alcanza 1 justo en
+    /// el umbral; a partir de ahí se mantiene lleno.
+    private var replySwipeProgress: Double {
+        Double(min(1, abs(dragOffset) / replyThreshold))
+    }
+
+    /// Flecha curva de respuesta que aparece PROGRESIVAMENTE con el arrastre
+    /// (opacidad + escala), a plena visibilidad justo al llegar al umbral —
+    /// paridad con el gesto de respuesta de /movil (`Forward` en color acento).
+    @ViewBuilder
+    private var replyArrowCue: some View {
+        if abs(dragOffset) > 1 {
+            let progress = replySwipeProgress
+            Image(systemName: "arrowshape.turn.up.left.fill")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(RistakTheme.accent)
+                .padding(6)
+                .background(
+                    Circle()
+                        .fill(RistakTheme.surface)
+                        .overlay(Circle().strokeBorder(RistakTheme.border, lineWidth: 0.5))
+                )
+                // Escala sutil 0.5→1 y opacidad 0.2→1 con el progreso del swipe;
+                // llega a plena visibilidad justo en el umbral (38 pt). Sin
+                // `.offset` propio: se queda quieta en el hueco y la burbuja la
+                // descubre al deslizarse.
+                .scaleEffect(0.5 + 0.5 * progress)
+                .opacity(0.2 + 0.8 * progress)
+                .padding(.horizontal, 4)
+                .allowsHitTesting(false)
+        }
+    }
+
     private var swipeToReplyGesture: some Gesture {
         DragGesture(minimumDistance: 24)
             .onChanged { value in
-                guard !message.isScheduled else { return }
+                // Si el dedo está arrastrando la ruedita del audio, este gesto no
+                // debe mover la burbuja ni armar la respuesta.
+                guard !message.isScheduled, !isScrubbingAudio else { return }
                 let dx = value.translation.width
                 let dy = value.translation.height
                 guard abs(dx) > abs(dy) * 1.4 else { return }
                 // Entrantes arrastran a la derecha; salientes a la izquierda.
                 let directional = isOutbound ? min(0, dx) : max(0, dx)
                 dragOffset = max(-72, min(72, directional))
+                // Háptico sutil justo al cruzar el umbral (una sola vez por gesto).
+                let crossed = abs(dragOffset) >= replyThreshold
+                if crossed != reachedReplyThreshold {
+                    reachedReplyThreshold = crossed
+                    if crossed { replyThresholdHaptic.toggle() }
+                }
             }
             .onEnded { _ in
-                if abs(dragOffset) > 38 {
+                if !isScrubbingAudio, abs(dragOffset) >= replyThreshold {
                     replyTriggered.toggle()
                     actions.reply(message)
                 }
+                reachedReplyThreshold = false
                 withAnimation(.spring(duration: 0.28)) {
                     dragOffset = 0
                 }
@@ -565,5 +670,56 @@ struct MessageReceiptView: View {
         }
         .font(.system(size: 10, weight: .semibold))
         .foregroundStyle(color)
+    }
+}
+
+// MARK: - Selector ampliado de emoji para reacción (botón «+»)
+
+/// Grilla simple de emojis comunes para reaccionar con CUALQUIER emoji
+/// (WhatsApp). Se abre desde el botón «+» del picker rápido del menú contextual;
+/// aplica el emoji elegido por la misma ruta de reacción existente.
+struct ReactionEmojiPickerSheet: View {
+    let onSelect: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private static let emojis: [String] = [
+        "❤️", "👍", "👎", "😂", "🤣", "😮",
+        "😯", "😢", "😭", "🙏", "🔥", "🎉",
+        "👏", "💯", "😍", "🥰", "😅", "🤔",
+        "😎", "😊", "👌", "🙌", "💪", "✨",
+        "⭐️", "💖", "😴", "🤯", "🥳", "😱",
+        "🤩", "😤", "🫶", "🤝", "🙈", "😇",
+        "🥲", "😜", "🤗", "😬", "😉", "🤞",
+    ]
+
+    private let columns = Array(
+        repeating: GridItem(.flexible(), spacing: RistakTheme.Spacing.sm),
+        count: 6
+    )
+
+    var body: some View {
+        SheetScaffold(title: "Elegir reacción", subtitle: "Toca un emoji para reaccionar") {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: RistakTheme.Spacing.md) {
+                    ForEach(Self.emojis, id: \.self) { emoji in
+                        Button {
+                            onSelect(emoji)
+                            dismiss()
+                        } label: {
+                            Text(emoji)
+                                .font(.system(size: 30))
+                                .frame(maxWidth: .infinity, minHeight: 46)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Reaccionar con \(emoji)")
+                    }
+                }
+                .padding(.horizontal, RistakTheme.Spacing.lg)
+                .padding(.top, RistakTheme.Spacing.sm)
+                .padding(.bottom, RistakTheme.Spacing.xl)
+            }
+        }
     }
 }

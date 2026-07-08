@@ -250,6 +250,11 @@ actor APIClient {
         }
         if !items.isEmpty {
             components.queryItems = items.sorted { $0.name < $1.name }
+            // Express decodifica '+' del query string como espacio (convención
+            // x-www-form-urlencoded); URLComponents lo deja literal. Sin esto,
+            // buscar teléfonos "+52..." llega al backend como " 52...".
+            components.percentEncodedQuery = components.percentEncodedQuery?
+                .replacingOccurrences(of: "+", with: "%2B")
         }
         guard let url = components.url else { throw RistakAPIError.invalidResponse }
 

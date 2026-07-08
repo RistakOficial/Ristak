@@ -87,11 +87,21 @@ final class ContactInfoViewModel {
     /// Trigger de háptico de éxito (`.sensoryFeedback`).
     private(set) var successFeedbackCount = 0
 
+    // MARK: Viaje de cliente (journey COMPLETO, doc 04 §10 + doc 06 §4.1.7)
+
+    private(set) var journeyEvents: [JourneyEvent] = []
+    private(set) var journeyItems: [ContactJourneyItem] = []
+    /// Multimedia/archivos compartidos derivados del journey completo
+    /// (paridad `getContactArchiveItems`). Se construyen una sola vez al cargar.
+    private(set) var archiveItems: [ContactArchiveItem] = []
+    private(set) var journeyPhase: JourneyLoadPhase = .idle
+
     // MARK: Dependencias (Core)
 
     private let contacts = ContactsService()
     private let tags = TagsService()
     private let agent = AgentStateService()
+    private let journey = JourneyService()
 
     init(contactID: String) {
         self.contactID = contactID
@@ -198,6 +208,66 @@ final class ContactInfoViewModel {
     private func loadAgentState() async {
         // 403 de feature/módulo es silencioso en cargas: sin agente no hay panel.
         agentState = try? await agent.fetchPrimaryState(contactId: contactID)
+    }
+
+    // MARK: - Viaje de cliente (journey completo)
+
+    /// Carga el journey COMPLETO (sin filtrar) una sola vez y construye los
+    /// hitos con la zona/moneda del negocio. Si el task se cancela (cambio de
+    /// tab/pantalla) queda en `.idle` para reintentar al reaparecer, nunca en
+    /// un estado "vacío falso".
+    func loadJourneyIfNeeded(formatters: BusinessFormatters) async {
+        guard journeyPhase == .idle || journeyPhase == .failed else {
+            // Ya cargado: solo re-formatea por si cambió la zona horaria.
+            if journeyPhase == .loaded { rebuildJourney(formatters: formatters) }
+            return
+        }
+        journeyPhase = .loading
+        do {
+            let events = try await journey.fetchFullJourney(contactId: contactID)
+            // La construcción de los hitos (merge por día/canal) y del archivo
+            // (reconstruir mensajes + parsear adjuntos/enlaces) es CPU-intensiva
+            // y corría en el main actor: eso bloqueaba el primer render de la
+            // ficha y causaba el "tirón" al abrir. La movemos a una tarea
+            // detached; solo el assign de resultados vuelve al main. (doc 06 §6.10)
+            let contactID = self.contactID
+            let built = await Task.detached(priority: .userInitiated) {
+                () -> (items: [ContactJourneyItem], archive: [ContactArchiveItem]) in
+                let items = ContactJourneyBuilder(formatters: formatters).items(from: events)
+                let archive = ContactArchiveBuilder.items(contactID: contactID, events: events)
+                return (items, archive)
+            }.value
+            journeyEvents = events
+            journeyItems = built.items
+            archiveItems = built.archive
+            journeyPhase = .loaded
+        } catch {
+            journeyPhase = Self.isCancellation(error) ? .idle : .failed
+        }
+    }
+
+    /// Reintento manual del journey (botón del panel).
+    func retryJourney(formatters: BusinessFormatters) async {
+        journeyPhase = .idle
+        await loadJourneyIfNeeded(formatters: formatters)
+    }
+
+    /// Reconstruye los hitos ya cargados con nuevos formateadores (cambio de
+    /// zona horaria del negocio) sin volver a pegarle al backend.
+    func rebuildJourney(formatters: BusinessFormatters) {
+        guard !journeyEvents.isEmpty else { return }
+        journeyItems = ContactJourneyBuilder(formatters: formatters).items(from: journeyEvents)
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        if error is CancellationError { return true }
+        if let api = error as? RistakAPIError,
+           api.kind == .network,
+           let urlError = api.underlying as? URLError,
+           urlError.code == .cancelled {
+            return true
+        }
+        return false
     }
 
     // MARK: - Nombre (PUT {full_name}, doc 06 §4.1.2)
@@ -390,7 +460,48 @@ final class ContactInfoViewModel {
             )
         }
 
-        return rows
+        // El "Nombre del negocio" (business_name) es un dato del sistema; nunca
+        // se muestra como campo personalizado del contacto.
+        return rows.filter { !Self.isHiddenSystemField($0) }
+    }
+
+    /// Oculta el campo `business_name` / "Nombre del negocio" de la lista de
+    /// campos personalizados (dato del negocio, no del contacto).
+    ///
+    /// El campo puede llegar de formas distintas según su origen: con clave
+    /// `business_name`/`business.name`, con label "Nombre del negocio", o como
+    /// valor huérfano cuya única señal es el `name`/`label` crudo (`business_name`
+    /// sin clave). Por eso normalizamos TODAS las señales (clave, fieldKey, label
+    /// y name — tanto de la definición como del valor) quitando mayúsculas,
+    /// espacios, guiones bajos y cualquier símbolo, y las comparamos contra las
+    /// variantes conocidas. Así se cubre cualquier combinación sin depender de
+    /// una coincidencia exacta con espacios.
+    private static func isHiddenSystemField(_ row: CustomFieldRow) -> Bool {
+        // Variantes normalizadas que identifican al "Nombre del negocio".
+        let hiddenTokens: Set<String> = ["businessname", "nombredelnegocio", "nombredenegocio"]
+        let tokens = [
+            row.definition?.key,
+            row.definition?.fieldKey,
+            row.definition?.label,
+            row.definition?.name,
+            row.value?.key,
+            row.value?.fieldKey,
+            row.value?.label,
+            row.value?.name,
+            row.label,
+        ]
+        .compactMap { normalizedFieldToken($0) }
+        return tokens.contains { hiddenTokens.contains($0) }
+    }
+
+    /// Normaliza una señal de campo (clave/label/name) a minúsculas sin espacios,
+    /// guiones bajos ni ningún carácter no alfanumérico. `nil` si queda vacío.
+    private static func normalizedFieldToken(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let token = value
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]", with: "", options: .regularExpression)
+        return token.isEmpty ? nil : token
     }
 
     private static func matches(definition: ContactCustomFieldDefinition, value: ContactCustomFieldValue) -> Bool {

@@ -27,8 +27,14 @@ struct ContactInfoScreen: View {
     @State private var showTagsSheet = false
     @State private var showPaymentsPanel = false
     @State private var showAppointmentsPanel = false
+    @State private var showJourneyPanel = false
+    @State private var showArchivePanel = false
+    @State private var showAutomationsSheet = false
     @State private var editingCustomField: ContactInfoViewModel.CustomFieldRow?
     @State private var tagPendingRemoval: ContactTag?
+
+    /// Aviso sutil tras inscribir en una automatización (auto-oculta).
+    @State private var automationNotice: String?
 
     private let localFlags = ContactLocalFlagsStore.shared
 
@@ -71,6 +77,11 @@ struct ContactInfoScreen: View {
         .task {
             localFlags.configure(accountKey: session.baseURL?.host())
             await viewModel.loadIfNeeded()
+        }
+        // Journey completo en paralelo (paridad /movil: la ficha carga su
+        // recorrido de forma silenciosa). Se recarga si vuelve a aparecer.
+        .task(id: appConfig.businessTimeZone) {
+            await viewModel.loadJourneyIfNeeded(formatters: appConfig.formatters)
         }
         .sensoryFeedback(.success, trigger: viewModel.successFeedbackCount)
         // Alert genérico de errores de guardado (nombre/teléfono/correo/quitar etiqueta).
@@ -158,6 +169,31 @@ struct ContactInfoScreen: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        .sheet(isPresented: $showJourneyPanel) {
+            ContactJourneyPanel(
+                phase: viewModel.journeyPhase,
+                items: viewModel.journeyItems,
+                timeZone: appConfig.businessTimeZone,
+                onRetry: {
+                    Task { await viewModel.retryJourney(formatters: appConfig.formatters) }
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showArchivePanel) {
+            ContactArchivePanel(
+                contactName: viewModel.contact?.name ?? "",
+                phase: viewModel.journeyPhase,
+                items: viewModel.archiveItems,
+                timeZone: appConfig.businessTimeZone,
+                onRetry: {
+                    Task { await viewModel.retryJourney(formatters: appConfig.formatters) }
+                }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
         .sheet(item: $editingCustomField) { row in
             ContactCustomFieldEditorSheet(
                 row: row,
@@ -167,6 +203,25 @@ struct ContactInfoScreen: View {
             }
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showAutomationsSheet) {
+            ContactAutomationEnrollSheet(
+                contactID: viewModel.contactID,
+                contactName: viewModel.contact?.name ?? ""
+            ) { automationName in
+                showAutomationNotice("Contacto agregado a «\(automationName)»")
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+    }
+
+    /// Muestra un aviso sutil de éxito y lo oculta a los pocos segundos.
+    private func showAutomationNotice(_ text: String) {
+        withAnimation(.easeInOut(duration: 0.2)) { automationNotice = text }
+        Task {
+            try? await Task.sleep(for: .seconds(3))
+            withAnimation(.easeInOut(duration: 0.2)) { automationNotice = nil }
         }
     }
 
@@ -186,6 +241,10 @@ struct ContactInfoScreen: View {
         if let contact = viewModel.contact {
             ScrollView {
                 VStack(spacing: RistakTheme.Spacing.md) {
+                    if let automationNotice {
+                        automationNoticePill(automationNotice)
+                    }
+
                     if viewModel.isRefreshing {
                         refreshingPill
                     }
@@ -193,11 +252,13 @@ struct ContactInfoScreen: View {
                     heroSection(contact)
                     metricsSection(contact)
                     mainDataSection(contact)
+                    archiveSection(contact)
                     tagsSection(contact)
                     customFieldsSection
                     originSection(contact)
                     followUpSection(contact)
                     agentSection
+                    automationsSection
                     localChatSection(contact)
                 }
                 .frame(maxWidth: horizontalSizeClass == .regular ? 640 : .infinity)
@@ -518,6 +579,25 @@ struct ContactInfoScreen: View {
         access.canWrite(module: .contacts)
     }
 
+    // MARK: Multimedia / archivos compartidos (doc 06 §4.1 + mobile/ archivos)
+
+    /// Fila resumen "Archivos compartidos" que abre el panel de multimedia
+    /// (fotos/videos/documentos/enlaces del chat). Los items se derivan del
+    /// journey completo (mismo origen que el "Viaje de cliente").
+    private func archiveSection(_ contact: ContactDetail) -> some View {
+        SectionCard {
+            ContactArchiveSummaryRow(
+                phase: viewModel.journeyPhase,
+                items: viewModel.archiveItems
+            ) {
+                if viewModel.journeyPhase == .failed {
+                    Task { await viewModel.retryJourney(formatters: appConfig.formatters) }
+                }
+                showArchivePanel = true
+            }
+        }
+    }
+
     // MARK: Etiquetas
 
     private func tagsSection(_ contact: ContactDetail) -> some View {
@@ -651,39 +731,77 @@ struct ContactInfoScreen: View {
                 ForEach(rows, id: \.0) { label, value in
                     ContactInfoRow(label: label, value: value)
                 }
+
+                if !rows.isEmpty {
+                    divider
+                }
+
+                // Viaje de cliente: abre el recorrido completo (nuevo → viejo).
+                ContactJourneySummaryRow(
+                    phase: viewModel.journeyPhase,
+                    count: viewModel.journeyItems.count
+                ) {
+                    if viewModel.journeyPhase == .failed {
+                        Task { await viewModel.retryJourney(formatters: appConfig.formatters) }
+                    }
+                    showJourneyPanel = true
+                }
             }
         }
     }
 
+    /// Sólo lo esencial de la conversión: canal, fecha de conversión, fecha de
+    /// primer pago y fecha de primera cita. Cada fila aparece SÓLO si tiene
+    /// valor (sin filas vacías, sin el resto de la atribución).
     private func originRows(_ contact: ContactDetail) -> [(String, String)] {
         var rows: [(String, String)] = []
 
-        let arrival = contact.source ?? contact.attributionSessionSource ?? ""
-        rows.append(("Llegó desde", arrival))
-
-        if let started = contact.firstSession?.startedAt {
-            rows.append(("Primera visita", ContactInfoDates.dateTime(fromISO: started, timeZone: appConfig.businessTimeZone)))
+        // Canal donde convirtió (etiqueta legible del origen; se oculta si es
+        // genérico/desconocido).
+        if let channel = conversionChannelLabel(contact) {
+            rows.append(("Canal donde convirtió", channel))
         }
-        if let page = firstNonEmpty(contact.firstSession?.landingPage, contact.firstSession?.pageUrl) {
-            rows.append(("Página", page))
+        // Fecha de conversión: cuando el visitante se convirtió en contacto.
+        let conversion = ContactInfoDates.dateTime(fromISO: contact.createdAt, timeZone: appConfig.businessTimeZone)
+        if !conversion.isEmpty {
+            rows.append(("Fecha de conversión", conversion))
         }
-        if let campaign = firstNonEmpty(contact.metaAttribution?.campaignName, contact.campaignName, contact.firstSession?.campaignName) {
-            rows.append(("Campaña", campaign))
+        // Fecha de primer pago (primer pago recibido).
+        if let firstPayment = firstPaymentDateLabel() {
+            rows.append(("Fecha de primer pago", firstPayment))
         }
-        if let adset = firstNonEmpty(contact.metaAttribution?.adsetName, contact.adsetName, contact.firstSession?.adsetName) {
-            rows.append(("Conjunto", adset))
+        // Fecha de primera cita.
+        if let firstAppointment = firstAppointmentDateLabel(contact) {
+            rows.append(("Fecha de primera cita", firstAppointment))
         }
-        if let ad = firstNonEmpty(contact.metaAttribution?.adName, contact.adName, contact.firstSession?.adName) {
-            rows.append(("Anuncio", ad))
-        }
-        if let device = deviceLine(contact) {
-            rows.append(("Dispositivo", device))
-        }
-        if let location = locationLine(contact) {
-            rows.append(("Ubicación", location))
-        }
-        rows.append(("Convirtió", conversionLine(contact)))
         return rows
+    }
+
+    private func conversionChannelLabel(_ contact: ContactDetail) -> String? {
+        guard let raw = firstNonEmpty(
+            contact.source,
+            contact.attributionSessionSource,
+            contact.whatsappAttributionPlatform
+        ) else { return nil }
+        let label = ContactInfoChannelLabel.friendly(raw)
+        return label.isEmpty ? nil : label
+    }
+
+    private func firstPaymentDateLabel() -> String? {
+        let dates = viewModel.receivedPayments
+            .compactMap { RistakDateParsing.date(fromISO: $0.paymentDate ?? $0.createdAt) }
+        guard let first = dates.min() else { return nil }
+        var style = Date.FormatStyle(date: .abbreviated, time: .shortened)
+        style.locale = BusinessFormatters.locale
+        style.timeZone = appConfig.businessTimeZone
+        return first.formatted(style)
+    }
+
+    private func firstAppointmentDateLabel(_ contact: ContactDetail) -> String? {
+        guard let first = contact.firstAppointmentDate,
+              RistakDateParsing.date(fromISO: first) != nil else { return nil }
+        let formatted = ContactInfoDates.dateTime(fromISO: first, timeZone: appConfig.businessTimeZone)
+        return formatted.isEmpty ? nil : formatted
     }
 
     private func firstNonEmpty(_ values: String?...) -> String? {
@@ -693,37 +811,6 @@ struct ContactInfoScreen: View {
             }
         }
         return nil
-    }
-
-    private func deviceLine(_ contact: ContactDetail) -> String? {
-        let parts = [contact.firstSession?.deviceType, contact.firstSession?.os, contact.firstSession?.browser]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    private func locationLine(_ contact: ContactDetail) -> String? {
-        let parts = [contact.firstSession?.geoCity, contact.firstSession?.geoRegion, contact.firstSession?.geoCountry]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        return parts.isEmpty ? nil : parts.joined(separator: ", ")
-    }
-
-    private func conversionLine(_ contact: ContactDetail) -> String {
-        // Primer pago exitoso o primera cita; si no, sin conversión (doc 06 §4.1.7).
-        let successfulDates = viewModel.receivedPayments
-            .compactMap { RistakDateParsing.date(fromISO: $0.paymentDate ?? $0.createdAt) }
-        if let firstPayment = successfulDates.min() {
-            var style = Date.FormatStyle(date: .abbreviated, time: .omitted)
-            style.locale = BusinessFormatters.locale
-            style.timeZone = appConfig.businessTimeZone
-            return "Primer pago · \(firstPayment.formatted(style))"
-        }
-        if let firstAppointment = contact.firstAppointmentDate,
-           RistakDateParsing.date(fromISO: firstAppointment) != nil {
-            return "Primera cita · \(ContactInfoDates.dateTime(fromISO: firstAppointment, timeZone: appConfig.businessTimeZone))"
-        }
-        return "Aún sin conversión registrada"
     }
 
     // MARK: Seguimiento (doc 06 §4.1.8)
@@ -910,6 +997,74 @@ struct ContactInfoScreen: View {
         case "skipped", "discarded": return RistakTheme.neg
         default: return RistakTheme.textDim
         }
+    }
+
+    // MARK: Automatizaciones ("Meter a automatización", #7)
+
+    /// Acceso a inscribir el contacto en una automatización publicada. Solo se
+    /// muestra con permiso de escritura en Contactos (acción mutante); el backend
+    /// re-valida el módulo de automatizaciones por request.
+    @ViewBuilder
+    private var automationsSection: some View {
+        if canEditContact {
+            SectionCard {
+                Button {
+                    showAutomationsSheet = true
+                } label: {
+                    HStack(spacing: RistakTheme.Spacing.sm) {
+                        RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                            .fill(RistakTheme.accentSoft)
+                            .frame(width: 44, height: 44)
+                            .overlay(
+                                Image(systemName: "arrow.triangle.branch")
+                                    .font(.system(size: 19, weight: .semibold))
+                                    .foregroundStyle(RistakTheme.accent)
+                            )
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Meter a una automatización")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(RistakTheme.textPrimary)
+                                .lineLimit(1)
+
+                            Text("Inscribe al contacto en una secuencia publicada.")
+                                .font(.footnote)
+                                .foregroundStyle(RistakTheme.textDim)
+                                .lineLimit(2)
+                        }
+
+                        Spacer(minLength: 0)
+
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(RistakTheme.textMute)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Meter a una automatización")
+            }
+        }
+    }
+
+    /// Aviso sutil de éxito tras inscribir en una automatización.
+    private func automationNoticePill(_ text: String) -> some View {
+        HStack(spacing: RistakTheme.Spacing.xs) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.subheadline)
+                .foregroundStyle(RistakTheme.pos)
+            Text(text)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(RistakTheme.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, RistakTheme.Spacing.sm)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                .fill(RistakTheme.posSoft)
+        )
+        .transition(.opacity.combined(with: .move(edge: .top)))
     }
 
     // MARK: Chat en este dispositivo (estado local, doc 03 §4.8)

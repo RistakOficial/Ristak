@@ -90,6 +90,9 @@ struct AnalyticsRootView: View {
             // Refresca TODOS los paneles en paralelo (async let en el VM).
             await model.reloadAll()
         }
+        // Dock por dirección de scroll (#11). Solo compacto; en iPad el modifier
+        // no oculta nada. Ver `ShellScrollTracking.swift`.
+        .reportsShellScroll()
     }
 
     // MARK: - Selector de periodo

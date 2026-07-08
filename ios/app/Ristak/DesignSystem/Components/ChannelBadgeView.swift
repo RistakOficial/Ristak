@@ -37,8 +37,14 @@ enum RistakChatChannel: String, CaseIterable, Sendable {
     var assetFileName: String { rawValue }
 }
 
-/// Badge circular del canal (WhatsApp/Facebook/Messenger/Instagram/Gmail).
+/// Badge del canal (WhatsApp/Facebook/Messenger/Instagram/Gmail) como ícono
+/// libre: se pinta el WebP crudo tal cual, SIN contenedor circular, aro, borde,
+/// fondo ni recorte. Los assets ya traen su forma propia (p. ej. la colita del
+/// globo de WhatsApp) — cualquier `clipShape` la mutilaría. Paridad con mobile/
+/// (`ChannelAvatarBadgeIcon`, `resizeMode="contain"`).
+///
 /// Carga los WebP del bundle vía `UIImage(contentsOfFile:)` con caché estática.
+/// Se usa igual en filas de bandeja, header de conversación e info de contacto.
 struct ChannelBadgeView: View {
     let channel: RistakChatChannel
     var size: CGFloat = 22
@@ -47,9 +53,8 @@ struct ChannelBadgeView: View {
         if let image = Self.badgeImage(for: channel) {
             Image(uiImage: image)
                 .resizable()
-                .scaledToFill()
+                .scaledToFit()
                 .frame(width: size, height: size)
-                .clipShape(Circle())
                 .accessibilityHidden(true)
         }
     }

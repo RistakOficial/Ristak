@@ -1,9 +1,27 @@
 import Foundation
 import SwiftUI
+import UIKit
 
 // Soporte del hilo de conversación (docs research/04 §6-§7):
 // items del timeline, markers de actividad, contexto de comentarios FB/IG,
 // chip de transporte y texto con formato WhatsApp.
+
+// MARK: - Cierre del teclado (paridad mobile/ `Keyboard.dismiss`)
+
+/// Cierra el teclado renunciando al primer respondedor activo. Se usa al tocar
+/// fuera del composer para que el teclado no quede atrapado (regresión
+/// reportada: "el teclado no se puede cerrar si tocamos fuera de él").
+enum KeyboardDismisser {
+    @MainActor
+    static func dismiss() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+    }
+}
 
 // MARK: - Marker de actividad (pagos/citas del journey completo)
 
@@ -61,10 +79,43 @@ enum ConversationTimelineItem: Identifiable, Equatable {
     }
 }
 
+/// Grupo de un día del hilo: el separador (etiqueta) como cabecera y sus filas
+/// (mensajes + markers, sin el item `.day`). Alimenta las `Section` del
+/// `LazyVStack(pinnedViews: [.sectionHeaders])` para lograr la fecha flotante
+/// pegajosa de /movil (`.messageDaySeparator { position: sticky; top: 8px }`).
+struct ConversationDayGroup: Identifiable, Equatable {
+    /// Estable: `day-<clave>` (o `day-none` para el grupo sin fecha).
+    let id: String
+    /// Etiqueta del separador ("Hoy", "Ayer", "10 jul"); vacía = sin cabecera.
+    let label: String
+    /// Filas del día en orden ascendente (nunca contiene `.day`).
+    var items: [ConversationTimelineItem]
+}
+
 /// Construcción del timeline (doc 04 §6): mensajes + markers ordenados asc,
 /// con separadores de día en la zona horaria del NEGOCIO. Con búsqueda activa
 /// los markers se ocultan y los separadores se recalculan sobre lo filtrado.
 enum ConversationTimelineBuilder {
+    /// Reagrupa el timeline plano en días para la lista con cabeceras pegajosas.
+    /// Conserva ids e items estables (memoria del proyecto: merges
+    /// identity-preserving, sin scroll-jumps). Las filas previas al primer
+    /// separador (fechas inválidas) caen en un grupo sin etiqueta.
+    static func groupByDay(_ timeline: [ConversationTimelineItem]) -> [ConversationDayGroup] {
+        var groups: [ConversationDayGroup] = []
+        for item in timeline {
+            switch item {
+            case .day(let id, let label):
+                groups.append(ConversationDayGroup(id: id, label: label, items: []))
+            case .activity, .message:
+                if groups.isEmpty {
+                    groups.append(ConversationDayGroup(id: "day-none", label: "", items: []))
+                }
+                groups[groups.count - 1].items.append(item)
+            }
+        }
+        return groups
+    }
+
     static func build(
         messages: [ChatMessage],
         markers: [ConversationActivityMarker],
@@ -221,6 +272,41 @@ enum ConversationTimelineBuilder {
             )
         }
         return contexts
+    }
+}
+
+// MARK: - Separador de día flotante (cabecera pegajosa)
+
+/// Píldora de fecha que se queda pegada arriba del hilo mientras te desplazas
+/// dentro de ese día y la empuja la del día siguiente (paridad /movil
+/// `.messageDaySeparator { position: sticky; top: 8px }` con `backdrop-filter`).
+///
+/// Se usa como `header` de cada `Section` en un
+/// `LazyVStack(pinnedViews: [.sectionHeaders])`. Flota centrada sobre el
+/// wallpaper, translúcida y sutil.
+struct StickyDaySeparator: View {
+    let label: String
+
+    var body: some View {
+        Text(label)
+            .font(.caption.weight(.bold))
+            .foregroundStyle(RistakTheme.textPrimary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background {
+                Capsule(style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        Capsule(style: .continuous)
+                            .strokeBorder(RistakTheme.border.opacity(0.5), lineWidth: 0.5)
+                    )
+            }
+            .frame(maxWidth: .infinity)
+            // 8 pt de aire arriba = inset de la píldora cuando queda pegada
+            // (paridad `top: 8px`); 12 pt abajo la separan del primer mensaje.
+            .padding(.top, 8)
+            .padding(.bottom, 12)
+            .accessibilityAddTraits(.isHeader)
     }
 }
 

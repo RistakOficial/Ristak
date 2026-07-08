@@ -22,7 +22,6 @@ struct AppointmentFlowSheet: View {
                 } else if case .create(let prefill, _) = context.kind {
                     AppointmentContactPickerView(
                         title: "Nueva cita",
-                        subtitle: CalendarDateMath.dayHeader(prefill.day, timeZone: timeZone),
                         emptyHint: "Busca un contacto para agendar.",
                         onSelect: { selection in
                             withAnimation(.snappy) {
@@ -80,8 +79,9 @@ struct AppointmentFlowSheet: View {
 /// Filas SIN icono de enviar mensaje — la acción es agendar.
 struct AppointmentContactPickerView: View {
     let title: String
-    let subtitle: String
     var emptyHint: String = "Busca un contacto para agendar."
+    /// Texto del CTA de alta rápida (User #5: «Nuevo contacto», a ancho total).
+    var newContactTitle: String = "Nuevo contacto"
     let onSelect: (AppointmentContactSelection) -> Void
 
     @State private var query = ""
@@ -90,6 +90,11 @@ struct AppointmentContactPickerView: View {
     @State private var searching = false
     @State private var loadingRecents = true
     @State private var showNewContact = false
+
+    /// Avatar de fila (40pt). El separador arranca alineado al texto: avatar +
+    /// gap `Spacing.sm` (12) = 52pt, idéntico en todas las filas del listado.
+    private static let avatarSize: CGFloat = 40
+    private var rowSeparatorInset: CGFloat { Self.avatarSize + RistakTheme.Spacing.sm }
 
     private var trimmedQuery: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -100,52 +105,72 @@ struct AppointmentContactPickerView: View {
     }
 
     var body: some View {
+        // Todo en UN solo `List`: la alta rápida «Nuevo contacto» es la PRIMERA
+        // fila del listado y se desplaza con el contenido (ya no queda fija
+        // arriba). Sigue a ancho completo (User #5). Separadores unificados con
+        // `.ristakRowSeparator()` (mismo inset/tinte) y sin las líneas nativas
+        // en filas de estado/CTA (#1.1).
         List {
-            Section {
-                if !subtitle.isEmpty {
-                    Text(subtitle)
+            Button {
+                showNewContact = true
+            } label: {
+                Label(newContactTitle, systemImage: "person.badge.plus")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(RistakTheme.accent)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+                    // Fondo transparente (User #3): solo texto de acento + borde
+                    // fino de acento, sin relleno de superficie.
+                    .background(
+                        RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                            .fill(Color.clear)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                            .strokeBorder(RistakTheme.accent, lineWidth: 1.5)
+                    )
+            }
+            .buttonStyle(.plain)
+            .listRowInsets(EdgeInsets(
+                top: RistakTheme.Spacing.xs,
+                leading: RistakTheme.Spacing.lg,
+                bottom: RistakTheme.Spacing.sm,
+                trailing: RistakTheme.Spacing.lg
+            ))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+
+            if searching {
+                HStack(spacing: RistakTheme.Spacing.xs) {
+                    ProgressView()
+                    Text("Buscando contactos...")
                         .font(.subheadline)
                         .foregroundStyle(RistakTheme.textDim)
-                        .listRowBackground(Color.clear)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
                 }
-
-                Button {
-                    showNewContact = true
-                } label: {
-                    Label("Crear contacto nuevo", systemImage: "person.badge.plus")
-                        .foregroundStyle(RistakTheme.accent)
-                }
-            }
-
-            Section {
-                if searching {
+                .listRowSeparator(.hidden)
+            } else if visibleContacts.isEmpty {
+                if loadingRecents && trimmedQuery.count < 2 {
                     HStack(spacing: RistakTheme.Spacing.xs) {
                         ProgressView()
-                        Text("Buscando contactos...")
+                        Text("Cargando contactos...")
                             .font(.subheadline)
                             .foregroundStyle(RistakTheme.textDim)
                     }
-                } else if visibleContacts.isEmpty {
-                    if loadingRecents && trimmedQuery.count < 2 {
-                        HStack(spacing: RistakTheme.Spacing.xs) {
-                            ProgressView()
-                            Text("Cargando contactos...")
-                                .font(.subheadline)
-                                .foregroundStyle(RistakTheme.textDim)
-                        }
-                    } else {
-                        Text(emptyHint)
-                            .font(.subheadline)
-                            .foregroundStyle(RistakTheme.textDim)
-                    }
+                    .listRowSeparator(.hidden)
                 } else {
-                    ForEach(visibleContacts) { contact in
-                        contactRow(contact)
-                    }
+                    Text(emptyHint)
+                        .font(.subheadline)
+                        .foregroundStyle(RistakTheme.textDim)
+                        .listRowSeparator(.hidden)
+                }
+            } else {
+                ForEach(visibleContacts) { contact in
+                    contactRow(contact)
+                        .ristakRowSeparator(leadingInset: rowSeparatorInset)
                 }
             }
         }
+        .listStyle(.plain)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Buscar contacto")
         .task {
             recentChats = (try? await ChatsService().fetchChats(limit: 25)) ?? []
@@ -182,7 +207,7 @@ struct AppointmentContactPickerView: View {
                 ContactAvatarView(
                     name: contact.name.isEmpty ? contact.phone : contact.name,
                     photoURL: contact.profilePhotoUrl.flatMap(URL.init(string:)),
-                    size: 40
+                    size: Self.avatarSize
                 )
                 VStack(alignment: .leading, spacing: 1) {
                     Text(contact.name.isEmpty ? (contact.phone.isEmpty ? contact.email : contact.phone) : contact.name)
@@ -201,6 +226,45 @@ struct AppointmentContactPickerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Contact picker como sheet modal reutilizable
+
+/// Envuelve `AppointmentContactPickerView` en su propio `NavigationStack` con
+/// título y botón de cierre. Es el MISMO buscador del alta de cita, reutilizado
+/// como modal para invitados (User #4): buscar contactos existentes + botón
+/// «Nuevo contacto». Devuelve la selección y se cierra.
+struct AppointmentContactPickerSheet: View {
+    var title: String = "Agregar invitados"
+    var emptyHint: String = "Busca un contacto para invitar."
+    let onSelect: (AppointmentContactSelection) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            AppointmentContactPickerView(
+                title: title,
+                emptyHint: emptyHint,
+                onSelect: { selection in
+                    onSelect(selection)
+                    dismiss()
+                }
+            )
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                    }
+                    .accessibilityLabel("Cerrar")
+                }
+            }
+        }
     }
 }
 
@@ -245,13 +309,21 @@ struct AppointmentNewContactSheet: View {
                         Task { await save() }
                     } label: {
                         HStack(spacing: RistakTheme.Spacing.xs) {
-                            if saving { ProgressView() }
+                            if saving {
+                                ProgressView()
+                                    .tint(RistakTheme.onAccent)
+                            }
                             Text("Crear contacto")
                                 .font(.body.weight(.semibold))
                         }
                         .frame(maxWidth: .infinity)
+                        .padding(.vertical, 4)
                     }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .disabled(saving)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                    .listRowBackground(Color.clear)
                 }
             }
             .scrollDismissesKeyboard(.interactively)

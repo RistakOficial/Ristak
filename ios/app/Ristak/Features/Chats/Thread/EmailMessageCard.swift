@@ -1,12 +1,16 @@
 import SwiftUI
 import UIKit
 
-/// Tarjeta de correo colapsable (doc 04 §7.6): cabecera siempre visible
-/// (kicker + asunto + ruta + chevron); expandida muestra filas etiqueta:valor
-/// y el cuerpo (HTML → texto atribuido; fallback al cuerpo plano).
+/// Tarjeta de correo dentro del hilo (User #5): se ve como un preview de mail
+/// nativo. Cabecera siempre visible (icono tonal + tipo + fecha en zona del
+/// negocio, asunto y contacto principal); colapsada muestra un adelanto de 2
+/// líneas del cuerpo con afordancia para expandir; expandida muestra chips de
+/// remitente/destinatarios y el cuerpo (HTML → texto atribuido legible en
+/// claro/oscuro, ancho acotado).
 struct EmailMessageCard: View {
     let message: ChatMessage
     let details: ChatEmailDetails
+    let formatters: BusinessFormatters
 
     @State private var isExpanded = false
     @State private var htmlBody: AttributedString?
@@ -19,7 +23,14 @@ struct EmailMessageCard: View {
         }
     }
 
-    private var routeLine: String {
+    private var subject: String {
+        let trimmed = details.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Sin asunto" : trimmed
+    }
+
+    /// Contacto principal de la ruta: para salientes el destinatario, para
+    /// entrantes el remitente (con respaldo al otro extremo).
+    private var primaryContact: String {
         switch message.direction {
         case .outbound:
             return details.toEmail.isEmpty ? details.fromEmail : details.toEmail
@@ -28,98 +39,199 @@ struct EmailMessageCard: View {
         }
     }
 
+    private var primaryContactLabel: String {
+        message.direction == .outbound ? "Para" : "De"
+    }
+
+    /// Fecha del correo en la zona horaria del negocio ("Hoy · 3:40 p.m.").
+    private var dateLabel: String {
+        let day = formatters.daySeparatorLabel(fromISO: message.date)
+        let time = formatters.messageTime(fromISO: message.date)
+        return [day, time].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private var previewBody: String {
+        details.body
+            .replacingOccurrences(of: "\r", with: " ")
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var bodyText: String {
+        let trimmed = details.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Sin cuerpo" : trimmed
+    }
+
+    /// Chips de la ruta completa (solo los que traen valor).
+    private var recipientChips: [(label: String, value: String)] {
+        var chips: [(String, String)] = []
+        func add(_ label: String, _ value: String?) {
+            let clean = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !clean.isEmpty { chips.append((label, clean)) }
+        }
+        add("De", details.fromEmail)
+        add("Para", details.toEmail)
+        add("CC", details.ccEmail)
+        add("BCC", details.bccEmail)
+        add("Responder a", details.replyTo)
+        return chips
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.snappy(duration: 0.22)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(alignment: .top, spacing: RistakTheme.Spacing.sm) {
+            header
+
+            if isExpanded {
+                expandedContent
+            } else if !previewBody.isEmpty {
+                collapsedPreview
+            }
+        }
+        .frame(maxWidth: 300, alignment: .leading)
+    }
+
+    // MARK: - Cabecera
+
+    private var header: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.22)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: RistakTheme.Spacing.xs) {
                     Image(systemName: "envelope.fill")
-                        .font(.subheadline)
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(RistakTheme.info)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 30, height: 30)
                         .background(Circle().fill(RistakTheme.infoSoft))
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text(kicker.uppercased())
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(RistakTheme.textDim)
-                        Text(details.subject.isEmpty ? "Sin asunto" : details.subject)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(RistakTheme.textPrimary)
-                            .lineLimit(isExpanded ? nil : 2)
-                        if !routeLine.isEmpty {
-                            Text(routeLine)
-                                .font(.caption)
-                                .foregroundStyle(RistakTheme.textDim)
+                            .font(.system(size: 10, weight: .bold))
+                            .tracking(0.4)
+                            .foregroundStyle(RistakTheme.info)
+                            .lineLimit(1)
+                        if !dateLabel.isEmpty {
+                            Text(dateLabel)
+                                .font(.caption2)
+                                .foregroundStyle(RistakTheme.textMute)
                                 .lineLimit(1)
                         }
                     }
+
                     Spacer(minLength: 0)
+
                     Image(systemName: "chevron.down")
-                        .font(.caption.weight(.semibold))
+                        .font(.caption2.weight(.bold))
                         .foregroundStyle(RistakTheme.textMute)
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                 }
-            }
-            .buttonStyle(.plain)
 
-            if isExpanded {
-                VStack(alignment: .leading, spacing: RistakTheme.Spacing.xs) {
-                    Divider()
-                        .padding(.vertical, RistakTheme.Spacing.xxs)
+                Text(subject)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .lineLimit(isExpanded ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    detailRow("Asunto", details.subject)
-                    detailRow("Remitente", details.fromEmail)
-                    detailRow("Destinatarios", details.toEmail)
-                    detailRow("CC", details.ccEmail ?? "")
-                    detailRow("BCC", details.bccEmail ?? "")
-                    detailRow("Responder a", details.replyTo)
-                    detailRow("Estado", details.status)
-                    detailRow("Transporte", details.transport)
-
-                    Text("Cuerpo:")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(RistakTheme.textDim)
-
-                    if let htmlBody {
-                        Text(htmlBody)
-                            .font(.subheadline)
-                            .foregroundStyle(RistakTheme.textPrimary)
-                            .textSelection(.enabled)
-                    } else {
-                        Text(details.body.isEmpty ? "Sin cuerpo" : details.body)
-                            .font(.subheadline)
-                            .foregroundStyle(details.body.isEmpty ? RistakTheme.textDim : RistakTheme.textPrimary)
-                            .textSelection(.enabled)
+                if !primaryContact.isEmpty {
+                    HStack(spacing: 4) {
+                        Text(primaryContactLabel)
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(RistakTheme.textMute)
+                        Text(primaryContact)
+                            .font(.caption)
+                            .foregroundStyle(RistakTheme.textDim)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                }
-                .task {
-                    await renderHTMLIfNeeded()
                 }
             }
         }
-        .frame(maxWidth: 320, alignment: .leading)
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Colapsado
+
+    private var collapsedPreview: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(previewBody)
+                .font(.caption)
+                .foregroundStyle(RistakTheme.textDim)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Ver correo completo")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(RistakTheme.accent)
+        }
+        .padding(.top, RistakTheme.Spacing.xs)
+    }
+
+    // MARK: - Expandido
+
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
+            Rectangle()
+                .fill(RistakTheme.border.opacity(0.6))
+                .frame(height: 0.5)
+                .padding(.top, RistakTheme.Spacing.xs)
+
+            if !recipientChips.isEmpty {
+                VStack(alignment: .leading, spacing: 5) {
+                    ForEach(recipientChips, id: \.label) { chip in
+                        recipientChip(chip.label, chip.value)
+                    }
+                }
+            }
+
+            bodyView
+        }
+        .padding(.top, 2)
+        .task {
+            await renderHTMLIfNeeded()
+        }
+    }
+
+    private func recipientChip(_ label: String, _ value: String) -> some View {
+        HStack(spacing: 6) {
+            Text(label.uppercased())
+                .font(.system(size: 9, weight: .bold))
+                .tracking(0.3)
+                .foregroundStyle(RistakTheme.textMute)
+            Text(value)
+                .font(.caption)
+                .foregroundStyle(RistakTheme.textPrimary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(RistakTheme.controlRest))
     }
 
     @ViewBuilder
-    private func detailRow(_ label: String, _ value: String) -> some View {
-        if !value.isEmpty {
-            HStack(alignment: .top, spacing: RistakTheme.Spacing.xxs) {
-                Text("\(label):")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(RistakTheme.textDim)
-                Text(value)
-                    .font(.caption)
-                    .foregroundStyle(RistakTheme.textPrimary)
-                    .textSelection(.enabled)
-            }
+    private var bodyView: some View {
+        if let htmlBody {
+            Text(htmlBody)
+                .font(.callout)
+                .foregroundStyle(RistakTheme.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(bodyText)
+                .font(.callout)
+                .foregroundStyle(details.body.isEmpty ? RistakTheme.textMute : RistakTheme.textPrimary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     /// Render del cuerpo HTML como texto atribuido (main thread; una sola vez).
+    /// Se normaliza tipografía y color para que la Vista imponga la fuente y el
+    /// color del tema (legible en claro/oscuro).
     @MainActor
     private func renderHTMLIfNeeded() async {
         guard htmlBody == nil,
@@ -134,9 +246,9 @@ struct EmailMessageCard: View {
             return
         }
         var attributed = AttributedString(rendered)
-        // Normalizar tipografía/color para ambos modos (el HTML trae estilos propios).
         attributed.font = nil
         attributed.foregroundColor = nil
+        attributed.backgroundColor = nil
         htmlBody = attributed
     }
 }

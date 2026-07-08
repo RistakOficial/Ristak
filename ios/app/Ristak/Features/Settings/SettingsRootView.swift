@@ -104,38 +104,59 @@ struct SettingsRootView: View {
     // MARK: - Lista principal
 
     private func settingsList(selection: Binding<SettingsPanel?>?) -> some View {
-        List(selection: selection ?? .constant(nil)) {
-            Section {
-                ForEach(SettingsPanel.allCases) { panel in
-                    row(for: panel)
-                        .tag(panel)
-                }
+        listContainer(selection: selection)
+            .refreshable {
+                async let sections: Void = model.reloadAll()
+                async let config: Void = appConfig.refresh()
+                _ = await (sections, config)
             }
+            // Dock por dirección de scroll (#11). Solo compacto; en iPad (split)
+            // el modifier no oculta nada. Ver `ShellScrollTracking.swift`.
+            .reportsShellScroll()
+    }
 
-            Section {
-                Button(role: .destructive) {
-                    showLogoutDialog = true
-                } label: {
-                    SettingsMainRow(
-                        systemImage: "rectangle.portrait.and.arrow.right",
-                        tint: RistakTheme.neg,
-                        title: "Cerrar sesión",
-                        subtitle: "Salir de este dispositivo.",
-                        meta: nil
-                    )
-                }
-            } footer: {
-                Text(versionFooter)
-                    .font(.footnote)
-                    .foregroundStyle(RistakTheme.textMute)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, RistakTheme.Spacing.xs)
+    /// En COMPACTO (iPhone) la lista NO recibe binding de `selection`: cada fila
+    /// es un `NavigationLink(value:)` que empuja su panel en el `NavigationStack`
+    /// del `compactLayout`. Un `selection:` constante hacía que iOS tratara las
+    /// filas como seleccionables y, en algunos casos, se «comiera» el tap sin
+    /// empujar el panel. En REGULAR (iPad) sí usa `selection` para pilotar el
+    /// detalle del `NavigationSplitView`.
+    @ViewBuilder
+    private func listContainer(selection: Binding<SettingsPanel?>?) -> some View {
+        if let selection {
+            List(selection: selection) { listSections }
+        } else {
+            List { listSections }
+        }
+    }
+
+    @ViewBuilder
+    private var listSections: some View {
+        Section {
+            ForEach(SettingsPanel.allCases) { panel in
+                row(for: panel)
+                    .tag(panel)
             }
         }
-        .refreshable {
-            async let sections: Void = model.reloadAll()
-            async let config: Void = appConfig.refresh()
-            _ = await (sections, config)
+
+        Section {
+            Button(role: .destructive) {
+                showLogoutDialog = true
+            } label: {
+                SettingsMainRow(
+                    systemImage: "rectangle.portrait.and.arrow.right",
+                    tint: RistakTheme.neg,
+                    title: "Cerrar sesión",
+                    subtitle: "Salir de este dispositivo.",
+                    meta: nil
+                )
+            }
+        } footer: {
+            Text(versionFooter)
+                .font(.footnote)
+                .foregroundStyle(RistakTheme.textMute)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.top, RistakTheme.Spacing.xs)
         }
     }
 

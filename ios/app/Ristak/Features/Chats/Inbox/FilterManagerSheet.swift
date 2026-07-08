@@ -4,17 +4,33 @@ import SwiftUI
 /// (Rápidos, Números, Canal, Origen, Red social, Etapa, Actividad,
 /// Condicionales) con Agregar/Quitar inmediato sobre
 /// `mobile_chat_filter_chip_ids` y «Restaurar filtros base».
-/// Los presets condicionales se crean/editan desde /movil o escritorio y
-/// sincronizan solos por `app_config`; aquí se pueden mostrar/ocultar y borrar.
+///
+/// Los presets condicionales se crean/editan aquí mismo (paridad /movil): el
+/// botón «Crear filtro condicional» abre el editor de campo+operador+valor y
+/// guarda en `mobile_chat_custom_filter_presets`; también se pueden editar y
+/// borrar los existentes.
 struct FilterManagerSheet: View {
     let viewModel: InboxViewModel
 
     @Environment(\.dismiss) private var dismiss
     @State private var presetPendingDelete: ChatFilterPreset?
+    @State private var editorDraft: ChatCustomFilterDraft?
 
     var body: some View {
         SheetScaffold(title: "Filtros", subtitle: "Elige los chips visibles de la bandeja") {
             List {
+                Section {
+                    Button {
+                        editorDraft = viewModel.makeNewFilterDraft()
+                    } label: {
+                        Label("Crear filtro condicional", systemImage: "plus.circle.fill")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(RistakTheme.accent)
+                    }
+                } footer: {
+                    Text("Arma tus propias combinaciones (segmento, etiquetas, canal, campos…) y guárdalas como un chip.")
+                }
+
                 ForEach(viewModel.managerSections) { section in
                     Section(section.title) {
                         ForEach(section.entries) { entry in
@@ -34,6 +50,10 @@ struct FilterManagerSheet: View {
             }
             .listStyle(.insetGrouped)
             .scrollContentBackground(.hidden)
+        }
+        .sheet(item: $editorDraft) { draft in
+            CustomFilterEditorView(viewModel: viewModel, draft: draft)
+                .presentationDetents([.large])
         }
         .confirmationDialog(
             "¿Borrar este filtro condicional?",
@@ -85,8 +105,21 @@ struct FilterManagerSheet: View {
             }
 
             if entry.isDeletablePreset {
+                let presetID = String(entry.chipID.dropFirst("custom:".count))
+
                 Button {
-                    let presetID = String(entry.chipID.dropFirst("custom:".count))
+                    if let preset = viewModel.customPresets.first(where: { $0.id == presetID }) {
+                        editorDraft = viewModel.makeEditDraft(for: preset)
+                    }
+                } label: {
+                    Image(systemName: "pencil")
+                        .font(.subheadline)
+                        .foregroundStyle(RistakTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Editar filtro \(entry.title)")
+
+                Button {
                     presetPendingDelete = viewModel.customPresets.first { $0.id == presetID }
                 } label: {
                     Image(systemName: "trash")

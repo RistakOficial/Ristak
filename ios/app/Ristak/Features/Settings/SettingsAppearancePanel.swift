@@ -11,6 +11,7 @@ struct SettingsAppearancePanel: View {
 
     private var isSaving: Bool {
         appConfig.savingKeys.contains(RistakAppConfigKey.themePreference)
+            || appConfig.savingKeys.contains(RistakAppConfigKey.desktopThemeColor)
     }
 
     var body: some View {
@@ -27,7 +28,7 @@ struct SettingsAppearancePanel: View {
                                 systemImage: option.systemImage,
                                 title: option.title,
                                 subtitle: option.subtitle,
-                                isSelected: appConfig.themePreference == option.preference,
+                                isSelected: appConfig.effectiveThemePreference == option.preference,
                                 isDisabled: isSaving
                             ) {
                                 select(option.preference)
@@ -49,9 +50,22 @@ struct SettingsAppearancePanel: View {
     }
 
     private func select(_ preference: RistakThemePreference) {
-        guard preference != appConfig.themePreference else { return }
+        guard preference != appConfig.effectiveThemePreference else { return }
         saveError.run {
+            // 1) Preferencia del móvil (paridad RN, aplica en vivo el
+            //    claro/oscuro vía `preferredColorScheme`).
             try await appConfig.setAppConfigValue(preference.rawValue, forKey: RistakAppConfigKey.themePreference)
+            // 2) Sincroniza el tono con el CRM de ESCRITORIO (#6 THEME SYNC):
+            //    Claro/Noche fijan un tono compartido (`theme_color`); Sistema y
+            //    Horario liberan el override (cadena vacía → el escritorio vuelve
+            //    a su horario propio) porque el escritorio no tiene esos modos.
+            let desktopThemeColor: String
+            switch preference {
+            case .light: desktopThemeColor = "light"
+            case .dark: desktopThemeColor = "dark"
+            case .system, .auto: desktopThemeColor = ""
+            }
+            try await appConfig.setAppConfigValue(desktopThemeColor, forKey: RistakAppConfigKey.desktopThemeColor)
         }
     }
 
@@ -98,7 +112,7 @@ struct SettingsAppearancePanel: View {
 enum SettingsThemeMeta {
     @MainActor
     static func label(for appConfig: AppConfigStore, systemScheme: ColorScheme) -> String {
-        switch appConfig.themePreference {
+        switch appConfig.effectiveThemePreference {
         case .light:
             return "Claro"
         case .dark:

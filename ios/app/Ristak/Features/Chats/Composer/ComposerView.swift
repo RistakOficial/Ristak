@@ -12,6 +12,7 @@ import UniformTypeIdentifiers
 struct ComposerView: View {
     @Bindable var viewModel: ConversationViewModel
     @Environment(ShellState.self) private var shell
+    @Environment(\.displayScale) private var displayScale
 
     @FocusState private var isTextFieldFocused: Bool
     @State private var photoPickerItems: [PhotosPickerItem] = []
@@ -45,10 +46,35 @@ struct ComposerView: View {
             aiSuggestBar
             replyBar
             attachmentsTray
-            voicePanel
-            composerRow
+            // Grabando o con nota lista, la barra deja de ser el composer normal
+            // y se convierte en UI de audio dedicada (paridad /movil): se ocultan
+            // canal, "+" y campo de texto; solo se ve la grabación / el preview.
+            switch viewModel.voiceRecorder.phase {
+            case .idle:
+                composerRow
+            case .recording:
+                RecordingComposerBar(
+                    recorder: viewModel.voiceRecorder,
+                    onStop: { viewModel.toggleVoiceRecording() }
+                )
+            case .preview:
+                voicePreviewBar
+            }
         }
-        .background(RistakTheme.composerBackground)
+        // El fondo del composer se derrama hacia el borde inferior seguro: así
+        // NO queda una franja entre el panel y el teclado; se ven como uno solo
+        // (paridad mobile/: composer + teclado comparten fondo). Un hairline
+        // arriba separa el hilo del composer, como en mobile/.
+        .background(alignment: .top) {
+            RistakTheme.composerBackground
+                .ignoresSafeArea(edges: .bottom)
+        }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(RistakTheme.border)
+                .frame(height: 1 / max(displayScale, 1))
+                .accessibilityHidden(true)
+        }
         .photosPicker(
             isPresented: $isPhotoPickerPresented,
             selection: $photoPickerItems,
@@ -229,8 +255,8 @@ struct ComposerView: View {
                             attachmentChip(draft)
                         }
                     }
-                    .padding(.horizontal, RistakTheme.Spacing.md)
                 }
+                .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
                 Text("\(viewModel.attachments.count) archivo\(viewModel.attachments.count == 1 ? "" : "s") listo\(viewModel.attachments.count == 1 ? "" : "s") · Agrega texto o envía directo.")
                     .font(.caption2)
                     .foregroundStyle(RistakTheme.textMute)
@@ -286,48 +312,21 @@ struct ComposerView: View {
         }
     }
 
-    // MARK: - Panel de nota de voz (doc 05 §7.3)
+    // MARK: - Preview de nota de voz (doc 05 §7.3)
 
+    /// Reproductor de la nota grabada: onda con progreso + duración, y las tres
+    /// acciones (eliminar, reproducir, enviar). Se arma con los datos ya fijos
+    /// del recorder en `.preview`, así que solo cambia al detener/descartar.
     @ViewBuilder
-    private var voicePanel: some View {
-        let recorder = viewModel.voiceRecorder
-        if recorder.phase != .idle {
-            HStack(spacing: RistakTheme.Spacing.sm) {
-                Button {
-                    recorder.discard()
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.body)
-                        .foregroundStyle(RistakTheme.neg)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Descartar nota de voz")
-
-                if recorder.isRecording {
-                    Circle()
-                        .fill(RistakTheme.neg)
-                        .frame(width: 8, height: 8)
-                        .opacity(0.4 + recorder.meterLevel * 0.6)
-                    Text("Grabando…")
-                        .font(.caption)
-                        .foregroundStyle(RistakTheme.textDim)
-                } else {
-                    Image(systemName: "waveform")
-                        .foregroundStyle(RistakTheme.accent)
-                    Text("Nota de voz lista")
-                        .font(.caption)
-                        .foregroundStyle(RistakTheme.textDim)
-                }
-
-                Spacer(minLength: 0)
-
-                Text(BusinessFormatters.audioDuration(seconds: recorder.elapsedSeconds))
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(RistakTheme.textPrimary)
-            }
-            .padding(.horizontal, RistakTheme.Spacing.md)
-            .padding(.vertical, RistakTheme.Spacing.xs)
+    private var voicePreviewBar: some View {
+        if let url = viewModel.voiceRecorder.recordedFileURL {
+            VoicePreviewBar(
+                url: url,
+                durationMs: viewModel.voiceRecorder.recordedDurationMs,
+                sending: viewModel.isSending,
+                onSend: { viewModel.sendCurrentDraft() },
+                onDelete: { viewModel.voiceRecorder.discard() }
+            )
         }
     }
 
@@ -335,18 +334,8 @@ struct ComposerView: View {
 
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: RistakTheme.Spacing.xs) {
-            Button {
-                viewModel.isAttachmentSheetPresented = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(RistakTheme.textPrimary)
-                    .frame(width: 34, height: 34)
-                    .background(Circle().fill(RistakTheme.controlRest))
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Adjuntar")
-
+            // El canal va primero, antes del "+" (User #3): primero eliges por
+            // dónde envías, luego adjuntas.
             Button {
                 viewModel.isChannelSheetPresented = true
             } label: {
@@ -355,6 +344,19 @@ struct ComposerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Canal de envío")
+
+            Button {
+                viewModel.isAttachmentSheetPresented = true
+            } label: {
+                // Glifo "+" libre, sin círculo de fondo (User #6).
+                Image(systemName: "plus")
+                    .font(.title3)
+                    .foregroundStyle(RistakTheme.textDim)
+                    .frame(width: 34, height: 34)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Adjuntar")
 
             HStack(alignment: .bottom, spacing: RistakTheme.Spacing.xxs) {
                 TextField("Mensaje", text: $viewModel.draftText, axis: .vertical)
@@ -409,9 +411,21 @@ struct ComposerView: View {
         } label: {
             Image(systemName: buttonIcon)
                 .font(.body.weight(.semibold))
-                .foregroundStyle(RistakTheme.onAccent)
+                // Mic vacío = glifo libre como el "+" (textDim); enviar/grabar =
+                // glifo blanco sobre el círculo de acento (User #5).
+                .foregroundStyle(isEmptyMic ? RistakTheme.textDim : RistakTheme.onAccent)
+                // El avión apunta a la derecha (User #6). La rotación solo aplica
+                // al glifo de enviar; el mic/stop quedan sin rotar.
+                .rotationEffect(.degrees(isSendGlyph ? 45 : 0))
                 .frame(width: 36, height: 36)
-                .background(Circle().fill(buttonColor))
+                .background {
+                    // Sin círculo en el mic vacío: queda suelto como el "+"
+                    // (User #5). El acento solo aparece al enviar o grabar.
+                    if !isEmptyMic {
+                        Circle().fill(buttonColor)
+                    }
+                }
+                .contentShape(Rectangle())
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
@@ -422,7 +436,18 @@ struct ComposerView: View {
 
     private var buttonIcon: String {
         if viewModel.voiceRecorder.isRecording { return "stop.fill" }
-        return viewModel.canSendDraft ? "arrow.up" : "mic.fill"
+        // Mic de contorno (sin `.fill`) para el estado vacío (User #5).
+        return viewModel.canSendDraft ? "paperplane.fill" : "mic"
+    }
+
+    /// Verdadero cuando se muestra el avión de enviar (para rotarlo a horizontal).
+    private var isSendGlyph: Bool {
+        !viewModel.voiceRecorder.isRecording && viewModel.canSendDraft
+    }
+
+    /// Estado vacío del morph: mic de contorno, libre y sin círculo (User #5).
+    private var isEmptyMic: Bool {
+        !viewModel.voiceRecorder.isRecording && !viewModel.canSendDraft
     }
 
     private var buttonColor: Color {
@@ -540,5 +565,208 @@ struct CameraCaptureView: UIViewControllerRepresentable {
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
         }
+    }
+}
+
+// MARK: - Barra de grabación en vivo (doc 05 §7.3)
+
+/// Reemplaza al composer mientras se graba (paridad /movil): PAUSA al extremo
+/// izquierdo, onda en vivo con nivel REAL del micrófono + reloj en la pista, y
+/// STOP al extremo derecho. Aislada como vista propia para que el refresco a
+/// ~20 fps de la onda no repinte el resto del composer.
+private struct RecordingComposerBar: View {
+    let recorder: VoiceRecorderController
+    let onStop: () -> Void
+
+    @State private var stopPulse = false
+
+    var body: some View {
+        HStack(spacing: RistakTheme.Spacing.sm) {
+            // PAUSA — extremo izquierdo.
+            Button {
+                recorder.togglePause()
+            } label: {
+                Image(systemName: recorder.isPaused ? "play.fill" : "pause.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(recorder.isPaused ? "Continuar grabación" : "Pausar grabación")
+
+            // Pista: punto rojo vivo + onda real + reloj.
+            HStack(spacing: RistakTheme.Spacing.xs) {
+                Circle()
+                    .fill(RistakTheme.neg)
+                    .frame(width: 7, height: 7)
+                    .opacity(recorder.isPaused ? 0.3 : 0.5 + recorder.meterLevel * 0.5)
+                LiveWaveformView(samples: recorder.meterSamples, paused: recorder.isPaused)
+                    .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22)
+                Text(BusinessFormatters.audioDuration(seconds: recorder.elapsedSeconds))
+                    .font(.caption.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .frame(minWidth: 42, alignment: .trailing)
+            }
+            .padding(.horizontal, RistakTheme.Spacing.sm)
+            .frame(minHeight: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 19)
+                    .fill(RistakTheme.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 19)
+                            .strokeBorder(RistakTheme.border, lineWidth: 0.5)
+                    )
+            )
+
+            // STOP — extremo derecho: termina y pasa al preview.
+            Button {
+                stopPulse.toggle()
+                onStop()
+            } label: {
+                Image(systemName: "stop.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(RistakTheme.onAccent)
+                    .frame(width: 40, height: 40)
+                    .background(Circle().fill(RistakTheme.accent))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .sensoryFeedback(.impact(weight: .medium), trigger: stopPulse)
+            .accessibilityLabel("Detener grabación")
+        }
+        .padding(.horizontal, RistakTheme.Spacing.md)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+    }
+}
+
+/// Onda en vivo dibujada con `Canvas`: cada muestra es una barra fina; la más
+/// nueva queda a la derecha y el conjunto se desplaza hacia la izquierda. La
+/// altura sale del nivel REAL del micrófono (no de una animación). En pausa se
+/// tiñe con el color apagado.
+private struct LiveWaveformView: View {
+    let samples: [Double]
+    let paused: Bool
+
+    var body: some View {
+        Canvas { context, size in
+            guard size.width > 0, size.height > 0 else { return }
+            let barWidth: CGFloat = 2
+            let gap: CGFloat = 2
+            let step = barWidth + gap
+            let maxBars = max(1, Int((size.width + gap) / step))
+            let visible = Array(samples.suffix(maxBars))
+            guard !visible.isEmpty else { return }
+            let color = paused ? RistakTheme.textMute : RistakTheme.accent
+            let count = visible.count
+            for (offset, sample) in visible.enumerated() {
+                let fromRight = count - 1 - offset
+                let x = size.width - CGFloat(fromRight) * step - barWidth
+                let level = max(0, min(1, CGFloat(sample)))
+                let barHeight = max(3, level * size.height)
+                let y = (size.height - barHeight) / 2
+                let rect = CGRect(x: x, y: y, width: barWidth, height: barHeight)
+                context.fill(Path(roundedRect: rect, cornerRadius: barWidth / 2), with: .color(color))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Barra de preview de nota de voz (doc 05 §7.3)
+
+/// Reemplaza al composer cuando hay una nota lista para enviar (paridad /movil):
+/// solo se ve la nota (onda con progreso + duración) con tres acciones —
+/// ELIMINAR (descarta), REPRODUCIR (preview) y ENVIAR. Reutiliza los
+/// componentes de audio del hilo (`AudioWaveformView` / `AudioPlaybackController`).
+private struct VoicePreviewBar: View {
+    let url: URL
+    let durationMs: Double
+    let sending: Bool
+    let onSend: () -> Void
+    let onDelete: () -> Void
+
+    @State private var player = AudioPlaybackController()
+
+    var body: some View {
+        HStack(spacing: RistakTheme.Spacing.sm) {
+            // ELIMINAR — descarta la nota y vuelve al composer normal.
+            Button {
+                player.stop()
+                onDelete()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .frame(width: 36, height: 38)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Eliminar nota de voz")
+
+            // Pista: onda con progreso de reproducción + duración.
+            HStack(spacing: RistakTheme.Spacing.xs) {
+                AudioWaveformView(progress: player.progress)
+                    .frame(maxWidth: .infinity, minHeight: 22, maxHeight: 22)
+                Text(BusinessFormatters.audioDuration(milliseconds: durationMs))
+                    .font(.caption.weight(.bold))
+                    .monospacedDigit()
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .frame(minWidth: 42, alignment: .trailing)
+            }
+            .padding(.horizontal, RistakTheme.Spacing.sm)
+            .frame(minHeight: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 19)
+                    .fill(RistakTheme.surface)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 19)
+                            .strokeBorder(RistakTheme.border, lineWidth: 0.5)
+                    )
+            )
+
+            // REPRODUCIR — escucha la nota antes de enviarla.
+            Button {
+                player.togglePlayback(url: url)
+            } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(player.isPlaying ? "Pausar nota de voz" : "Reproducir nota de voz")
+
+            // ENVIAR — usa la ruta de nota de voz existente.
+            Button {
+                player.stop()
+                onSend()
+            } label: {
+                Group {
+                    if sending {
+                        ProgressView()
+                            .tint(RistakTheme.onAccent)
+                    } else {
+                        Image(systemName: "paperplane.fill")
+                            .font(.body.weight(.semibold))
+                            .foregroundStyle(RistakTheme.onAccent)
+                            .rotationEffect(.degrees(45))
+                    }
+                }
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(RistakTheme.accent))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(sending)
+            .accessibilityLabel("Enviar nota de voz")
+        }
+        .padding(.horizontal, RistakTheme.Spacing.md)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
+        .onDisappear { player.stop() }
     }
 }
