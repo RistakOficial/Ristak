@@ -16684,6 +16684,16 @@ const importedChoiceQuickActions: Array<{ value: '' | ImportedButtonAction; labe
   { value: 'specific_page', label: 'Enviar a página específica' },
   { value: 'url', label: 'Redirigir a URL' }
 ]
+const importedChoiceQuickActionValues = new Set<ImportedButtonAction>(
+  importedChoiceQuickActions
+    .map(option => option.value)
+    .filter((value): value is ImportedButtonAction => Boolean(value))
+)
+
+const getSanitizedImportedChoiceActions = (actions?: ImportedButtonActionStep[]) => {
+  const firstAction = (actions || []).find(step => step && importedChoiceQuickActionValues.has(step.action))
+  return firstAction ? [firstAction] : []
+}
 
 const getImportedOptionQuickAction = (option: ImportedFormFieldOption): '' | ImportedButtonAction => (
   option.actions?.find(step => importedChoiceQuickActions.some(item => item.value && item.value === step.action))?.action || ''
@@ -16693,17 +16703,29 @@ const getImportedOptionQuickAction = (option: ImportedFormFieldOption): '' | Imp
 const patchImportedOptionActionStep = (
   option: ImportedFormFieldOption,
   patch: Partial<ImportedButtonActionStep>
-): Partial<ImportedFormFieldOption> => ({
-  actions: patch.action
-    ? [{ ...makeImportedActionStep(patch.action), ...option.actions?.[0], ...patch }]
-    : option.actions?.length
-      ? [{ ...option.actions[0], ...patch }]
-      : []
-})
+): Partial<ImportedFormFieldOption> => {
+  const sanitizedActions = getSanitizedImportedChoiceActions(option.actions)
+  return {
+    actions: patch.action
+      ? [{ ...makeImportedActionStep(patch.action), ...option.actions?.[0], ...patch }]
+      : sanitizedActions.length
+        ? [{ ...sanitizedActions[0], ...patch }]
+        : []
+  }
+}
+
+const cleanImportedFieldOption = (option: ImportedFormFieldOption): ImportedFormFieldOption => {
+  const sanitizedActions = getSanitizedImportedChoiceActions(option.actions)
+  return {
+    label: option.label.trim(),
+    value: (option.value || option.label).trim(),
+    ...(sanitizedActions.length ? { actions: sanitizedActions } : {})
+  }
+}
 
 // specific_page needs a destination and url needs a link before saving.
 const areImportedOptionQuickActionsValid = (options: ImportedFormFieldOption[]) => options.every(option => {
-  const step = option.actions?.[0]
+  const step = getSanitizedImportedChoiceActions(option.actions)[0]
   if (!step) return true
   if (step.action === 'specific_page') return Boolean(step.buttonPageId)
   if (step.action === 'url') return Boolean(step.buttonUrl?.trim())
@@ -20888,11 +20910,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     areImportedOptionQuickActionsValid(choiceEditor.options)
   )
   const cleanChoiceOptions = (choiceEditor?.options || [])
-    .map((option): ImportedFormFieldOption => ({
-      label: option.label.trim(),
-      value: (option.value || option.label).trim(),
-      ...(option.actions?.length ? { actions: option.actions } : {})
-    }))
+    .map(cleanImportedFieldOption)
     .filter(option => option.label || option.value)
   const patchChoiceOption = (index: number, patch: Partial<ImportedFormFieldOption>) => {
     setChoiceEditor(current => {
@@ -20942,11 +20960,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     (fieldEditor.selection.tagName === 'select' || ['radio', 'checkbox'].includes(fieldEditor.selection.inputType))
   )
   const cleanFieldOptions = (fieldEditor?.options || [])
-    .map((option): ImportedFormFieldOption => ({
-      label: option.label.trim(),
-      value: (option.value || option.label).trim(),
-      ...(option.actions?.length ? { actions: option.actions } : {})
-    }))
+    .map(cleanImportedFieldOption)
     .filter(option => option.label || option.value)
   const canSaveFieldEditor = Boolean(
     fieldEditor &&
@@ -21008,11 +21022,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     (codeElementEditor.tagName === 'select' || ['radio', 'checkbox'].includes(codeElementEditor.fieldInputType || ''))
   )
   const cleanCodeElementOptions = (codeElementEditor?.options || [])
-    .map((option): ImportedFormFieldOption => ({
-      label: option.label.trim(),
-      value: (option.value || option.label).trim(),
-      ...(option.actions?.length ? { actions: option.actions } : {})
-    }))
+    .map(cleanImportedFieldOption)
     .filter(option => option.label || option.value)
 
   const patchCodeElementOption = (index: number, patch: Partial<ImportedFormFieldOption>) => {
@@ -24740,7 +24750,274 @@ const TemplateCategoryGallery: React.FC<{
   </div>
 )
 
+type ExternalAIFormMode = 'native' | 'custom' | 'none'
+type ExternalAICalendarMode = 'native' | 'custom' | 'none'
+type ExternalAIVideoMode = 'native' | 'html' | 'none'
+type ExternalAIPaymentMode = 'native' | 'none'
+
+type ExternalAICompatibilityAnswers = {
+  forms: ExternalAIFormMode
+  calendar: ExternalAICalendarMode
+  video: ExternalAIVideoMode
+  payment: ExternalAIPaymentMode
+}
+
+const EXTERNAL_AI_COMPATIBILITY_DEFAULTS: ExternalAICompatibilityAnswers = {
+  forms: 'none',
+  calendar: 'none',
+  video: 'none',
+  payment: 'none'
+}
+
+const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswers) => {
+  const sections = [
+    'Bloque de compatibilidad para crear HTML importable en Ristak',
+    '',
+    'Usa estas reglas junto con mi petición real. Este bloque no define el negocio, el diseño, las conversiones ni cuántas páginas debe tener el sitio; solo define cómo debe quedar el HTML para que Ristak lo pueda importar y editar bien.',
+    '',
+    'Reglas generales:',
+    '- Entrega HTML, CSS y JavaScript estático. Si hay varios archivos, organízalos para que se puedan comprimir en un ZIP e importar en Ristak.',
+    '- No dependas de un build step, servidor propio, framework que requiera compilación ni rutas privadas.',
+    '- Marca textos, imágenes, botones, campos y videos editables con data-rstk-editable="true", data-rstk-edit-type y data-rstk-edit-id único.',
+    '- Para botones usa data-rstk-button-actions como JSON cuando conozcas la acción. Acciones válidas: url, next_page, specific_page, submit, disqualify, open_popup y close_popup.',
+    '- Solo uses next_page cuando la página tenga claramente otra página después en el orden del embudo. En la última página no pongas next_page; usa specific_page, url o deja la acción configurable.',
+    '- Usa data-rstk-section="Hero|Formulario|Agenda|Pago|Gracias" para que el editor ubique rápido cada zona.',
+    '- Evita navegación automática, window.open, submits automáticos o scripts que intenten saltarse el editor de Ristak.',
+    ''
+  ]
+
+  if (answers.forms === 'native') {
+    sections.push(
+      'Formularios:',
+      '- La página usará formularios nativos de Ristak.',
+      '- Reserva una zona vacía así: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>.',
+      '- No pongas <form>, campos ni botones de envío dentro o pegados a esa zona; Ristak renderiza el formulario completo y sus acciones al enviar.',
+      ''
+    )
+  } else if (answers.forms === 'custom') {
+    sections.push(
+      'Formularios:',
+      '- La página usará campos HTML personalizados compatibles.',
+      '- Usa <form data-rstk-form-id="lead-form"> y campos con name, id, placeholder, data-rstk-editable="true", data-rstk-edit-type="form_field", data-rstk-edit-id y data-rstk-label.',
+      '- Marca email y teléfono con data-rstk-field="email" o data-rstk-field="phone" cuando existan.',
+      '- Si un botón envía el formulario, debe estar dentro del mismo <form> y usar una acción submit compatible.',
+      ''
+    )
+  } else {
+    sections.push(
+      'Formularios:',
+      '- Esta página no usará formularios. No agregues data-rstk-native-element="form" ni formularios HTML de captura.',
+      ''
+    )
+  }
+
+  if (answers.calendar === 'native') {
+    sections.push(
+      'Calendario:',
+      '- La página usará calendario nativo de Ristak.',
+      '- Reserva una zona así: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak" data-rstk-label="Agenda principal"></div>.',
+      '- Ristak elegirá el calendario real, disponibilidad, campos, pagos y acción posterior desde el editor.',
+      ''
+    )
+  } else if (answers.calendar === 'custom') {
+    sections.push(
+      'Calendario:',
+      '- La página usará un calendario diseñado por la IA pero conectado a Ristak.',
+      '- Envuelve el calendario custom con: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>.',
+      '- El JavaScript debe pedir horarios con window.ristakCalendarGetSlots("agenda-custom", { startDate:"YYYY-MM-DD", endDate:"YYYY-MM-DD", timezone:"Zona/Del_Negocio" }).',
+      '- Para agendar debe llamar window.ristakCalendarBook("agenda-custom", { startTime:"YYYY-MM-DDTHH:mm:ssZ", timezone:"Zona/Del_Negocio", name, email, phone }). startTime debe ser ISO UTC.',
+      ''
+    )
+  } else {
+    sections.push(
+      'Calendario:',
+      '- Esta página no usará calendario. No agregues data-rstk-native-element="calendar" ni llamadas window.ristakCalendarGetSlots/window.ristakCalendarBook.',
+      ''
+    )
+  }
+
+  if (answers.video === 'native') {
+    sections.push(
+      'Video:',
+      '- La página usará video nativo de Ristak.',
+      '- Reserva una zona así: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>.',
+      '- Ristak configurará el video real, controles, diseño, acciones por tiempo y eventos desde el editor.',
+      ''
+    )
+  } else if (answers.video === 'html') {
+    sections.push(
+      'Video:',
+      '- La página usará video HTML compatible.',
+      '- No dejes <video>, <iframe>, <embed> u <object> sueltos. Envuélvelos en un contenedor editable con data-rstk-editable="true", data-rstk-edit-type="video", data-rstk-edit-id, data-rstk-label y data-rstk-video-url.',
+      '- Mantén el mismo URL en data-rstk-video-url y en src para que Ristak pueda reemplazarlo desde el editor.',
+      ''
+    )
+  } else {
+    sections.push(
+      'Video:',
+      '- Esta página no usará video. No agregues data-rstk-native-element="video" ni contenedores de video editables.',
+      ''
+    )
+  }
+
+  if (answers.payment === 'native') {
+    sections.push(
+      'Pago:',
+      '- La página usará pago nativo de Ristak.',
+      '- Reserva una zona así: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>.',
+      '- No marques Purchase por click ni por precio mostrado. Ristak dispara la compra solo cuando el pago real se confirma.',
+      ''
+    )
+  } else {
+    sections.push(
+      'Pago:',
+      '- Esta página no usará pago. No agregues data-rstk-native-element="payment" ni eventos Purchase.',
+      ''
+    )
+  }
+
+  sections.push(
+    'Salida esperada:',
+    '- Genera el HTML que te pida en mi solicitud real respetando estas reglas.',
+    '- No expliques estas reglas de nuevo salvo que algo sea imposible; entrega el código listo para copiar o para ZIP.'
+  )
+
+  return sections.join('\n')
+}
+
+const copyTextToClipboard = async (text: string) => {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text)
+    return
+  }
+
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  textarea.setAttribute('readonly', 'true')
+  textarea.style.position = 'fixed'
+  textarea.style.opacity = '0'
+  document.body.appendChild(textarea)
+  textarea.select()
+  const copied = document.execCommand('copy')
+  document.body.removeChild(textarea)
+  if (!copied) throw new Error('No se pudo copiar')
+}
+
+const ExternalAICompatibilityModal: React.FC<{
+  isOpen: boolean
+  creating: boolean
+  onClose: () => void
+  onImportHtml: () => void
+  onOpenEditor: () => void
+}> = ({ isOpen, creating, onClose, onImportHtml, onOpenEditor }) => {
+  const { showToast } = useNotification()
+  const [answers, setAnswers] = useState<ExternalAICompatibilityAnswers>(EXTERNAL_AI_COMPATIBILITY_DEFAULTS)
+  const compatibilityText = useMemo(() => buildExternalAICompatibilityText(answers), [answers])
+
+  const updateAnswer = <Key extends keyof ExternalAICompatibilityAnswers>(
+    key: Key,
+    value: ExternalAICompatibilityAnswers[Key]
+  ) => {
+    setAnswers(current => ({ ...current, [key]: value }))
+  }
+
+  const handleCopy = async () => {
+    try {
+      await copyTextToClipboard(compatibilityText)
+      showToast('success', 'Código copiado', 'Pégalo en ChatGPT, Claude o Codex junto con tu petición real.')
+    } catch (error) {
+      showToast('error', 'No se pudo copiar', error instanceof Error ? error.message : 'Copia el texto manualmente.')
+    }
+  }
+
+  const handleImportHtml = () => {
+    onClose()
+    onImportHtml()
+  }
+
+  const handleOpenEditor = () => {
+    onClose()
+    onOpenEditor()
+  }
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Asistente de compatibilidad"
+      subtitle="Elige qué elementos especiales de Ristak quieres permitir dentro del HTML que te genere una IA externa."
+      size="lg"
+      closeOnBackdropClick={!creating}
+      closeOnEscape={!creating}
+    >
+      <div className={styles.aiCreationFunnelPicker}>
+        <label className={styles.importedActionField}>
+          <span>¿Tu página usará formularios?</span>
+          <CustomSelect value={answers.forms} onChange={(event) => updateAnswer('forms', event.target.value as ExternalAIFormMode)}>
+            <option value="native">Sí, usando formularios nativos de Ristak</option>
+            <option value="custom">Sí, usando campos HTML personalizados compatibles</option>
+            <option value="none">No usará formularios</option>
+          </CustomSelect>
+        </label>
+
+        <label className={styles.importedActionField}>
+          <span>¿Tu página usará calendario?</span>
+          <CustomSelect value={answers.calendar} onChange={(event) => updateAnswer('calendar', event.target.value as ExternalAICalendarMode)}>
+            <option value="native">Sí, usando el calendario nativo de Ristak</option>
+            <option value="custom">Sí, usando un calendario diseñado por la IA pero conectado a Ristak</option>
+            <option value="none">No usará calendario</option>
+          </CustomSelect>
+        </label>
+
+        <label className={styles.importedActionField}>
+          <span>¿Tu página usará video?</span>
+          <CustomSelect value={answers.video} onChange={(event) => updateAnswer('video', event.target.value as ExternalAIVideoMode)}>
+            <option value="native">Sí, usando video nativo de Ristak</option>
+            <option value="html">Sí, usando video HTML compatible</option>
+            <option value="none">No usará video</option>
+          </CustomSelect>
+        </label>
+
+        <label className={styles.importedActionField}>
+          <span>¿Tu página usará pago?</span>
+          <CustomSelect value={answers.payment} onChange={(event) => updateAnswer('payment', event.target.value as ExternalAIPaymentMode)}>
+            <option value="native">Sí, usando pago nativo de Ristak</option>
+            <option value="none">No usará pago</option>
+          </CustomSelect>
+        </label>
+
+        <label className={styles.aiCreationPrompt}>
+          <span>Código de compatibilidad</span>
+          <textarea
+            readOnly
+            rows={14}
+            value={compatibilityText}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </label>
+
+        <div className={styles.aiCreationActions}>
+          <Button type="button" variant="secondary" onClick={() => void handleCopy()}>
+            <Copy size={15} />
+            Copiar
+          </Button>
+          <Button type="button" variant="secondary" onClick={handleImportHtml} disabled={creating}>
+            <Upload size={15} />
+            Subir mi HTML
+          </Button>
+          <Button type="button" onClick={handleOpenEditor} disabled={creating} loading={creating}>
+            <Code2 size={15} />
+            Ir al editor
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAgentAvailable, onCreate, onCreateWithAI, onCreateBlankHtml, onImportHtml, onAdvance }) => {
+  const [externalAICompatibilityOpen, setExternalAICompatibilityOpen] = useState(false)
+
   return (
     <section className={styles.createPanel}>
       {step === 'landing-start' && (
@@ -24784,6 +25061,12 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
                 <Upload size={22} />
                 <strong>Subir HTML o ZIP</strong>
                 <p>Usa tu página actual o un sitio comprimido; Ristak detecta sus formularios.</p>
+                <ChevronRight size={18} />
+              </button>
+              <button type="button" disabled={creating} onClick={() => setExternalAICompatibilityOpen(true)}>
+                <Sparkles size={22} />
+                <strong>Hacer la mía con ChatGPT/Claude</strong>
+                <p>Completarás un formulario y te daremos un código de compatibilidad para pegar en ChatGPT o Claude.</p>
                 <ChevronRight size={18} />
               </button>
               {aiAgentAvailable && (
@@ -24911,6 +25194,15 @@ const CreateFlowPanel: React.FC<CreateFlowPanelProps> = ({ step, creating, aiAge
         </>
       )}
 
+      <ExternalAICompatibilityModal
+        isOpen={externalAICompatibilityOpen}
+        creating={creating}
+        onClose={() => {
+          if (!creating) setExternalAICompatibilityOpen(false)
+        }}
+        onImportHtml={() => onImportHtml('landing_page')}
+        onOpenEditor={() => onCreateBlankHtml('landing_page')}
+      />
     </section>
   )
 }

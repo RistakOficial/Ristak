@@ -1629,6 +1629,16 @@ configurado; el sitio publicado conserva la ruta publica normal.
 Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
 pero las reglas copiables nuevas deben preferir `data-rstk-*`.
 
+En el flujo de crear un sitio, la opcion `Hacer la mia con ChatGPT/Claude`
+vive dentro del grupo de Editor HTML, despues de `Subir HTML o ZIP`. Esta opcion
+no llama a ninguna API de IA ni crea paginas por el usuario: solo abre un
+asistente de compatibilidad que pregunta si el HTML generado externamente usara
+formularios, calendario, video o pago de Ristak. Al terminar muestra un bloque de
+texto listo para copiar y pegar en ChatGPT, Claude o Codex junto con la peticion
+real del usuario. Desde ese modal, `Subir mi HTML` abre el flujo de importacion
+ZIP/HTML y `Ir al editor` crea una hoja HTML en blanco para pegar codigo pagina
+por pagina.
+
 La revision de "Ruta de datos" de HTML importado debe permitir dos salidas para
 campos personalizados: mapear a un campo guardado del catalogo o declarar un
 campo nuevo con clave interna (`destinationType/saveMode = new_custom`) cuando
@@ -1663,10 +1673,11 @@ guardada mientras sea valida.
 El editor tambien debe ocultar cualquier opcion literal de `Ir a la siguiente
 pagina` cuando la pagina activa ya es la ultima del orden del sitio. Esta regla
 aplica a formularios embebidos, calendarios embebidos, pagos, botones de bloques
-y botones editables de sitios/HTML importados. Si una configuracion vieja llega
-a la ultima pagina con `next_page` guardado, el editor debe bajarla a un fallback
-seguro: reglas del formulario/calendario, mensaje de exito del pago o URL vacia
-en botones, segun la superficie.
+y botones/opciones editables de sitios/HTML importados. Si una configuracion
+vieja llega a la ultima pagina con `next_page` guardado, el editor debe bajarla
+a un fallback seguro: reglas del formulario/calendario, mensaje de exito del
+pago, URL vacia o accion omitida en botones/campos importados, segun la
+superficie.
 
 En embudos multipagina, los bloques de pago top-level solo bloquean el submit de
 la pagina donde viven. Un formulario en una pagina anterior debe crear contacto y
