@@ -473,6 +473,33 @@
   overflow: hidden;
 }
 
+.importedCodeEditorPanelWithInspector {
+  grid-template-columns:
+    minmax(300px, var(--imported-code-source-width, 38%))
+    12px
+    minmax(280px, 1fr)
+    minmax(340px, 410px);
+  column-gap: 10px;
+}
+
+.importedCodeNativeInspectorPane {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 8px;
+  background: var(--color-background-primary);
+  overflow: hidden;
+}
+
+.importedCodeNativeInspectorPane .importedFormFieldsBox {
+  min-height: 0;
+  align-content: start;
+  padding: 12px;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+
 .importedCodeSourcePane,
 .importedCodePreviewPane {
   min-width: 0;
@@ -4112,6 +4139,11 @@
     grid-template-columns: 1fr;
     grid-template-rows: minmax(420px, 1fr) 14px minmax(520px, 1fr);
     overflow: visible;
+  }
+
+  .importedCodeEditorPanelWithInspector {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(420px, 1fr) 14px minmax(520px, 1fr) minmax(360px, auto);
   }
 
   .importedCodeResizeHandle {
@@ -20579,6 +20611,14 @@
     grid-template-columns: minmax(280px, var(--imported-code-source-width, 46%)) 8px minmax(160px, 1fr);
   }
 
+  .importedCodeEditorPanelWithInspector {
+    grid-template-columns:
+      minmax(280px, var(--imported-code-source-width, 38%))
+      8px
+      minmax(180px, 1fr)
+      minmax(320px, 360px);
+  }
+
   .importedCodePaneHeader {
     min-height: 42px;
     gap: 8px;
@@ -21266,3 +21306,10 @@
 }
 .responsiveEditHint strong { color: var(--text); font-weight: 600; }
 .responsiveEditHint svg { flex: 0 0 auto; color: var(--accent); }
+
+@media (max-width: 1120px) {
+  .importedCodeEditorPanel.importedCodeEditorPanelWithInspector {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(420px, 1fr) 14px minmax(520px, 1fr) minmax(360px, auto);
+  }
+}

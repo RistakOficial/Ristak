@@ -1609,6 +1609,14 @@ a bloques reales del sitio:
   controles, diseno, acciones por tiempo, formularios dentro del video y eventos
   Meta/CAPI que el editor normal.
 
+En el editor HTML importado, estos elementos se configuran desde un inspector
+derecho independiente del panel de codigo. El panel de codigo se conserva para
+editar HTML/IA externa, mientras el inspector de elementos Ristak administra
+formularios, calendarios, pagos y videos con la misma configuracion del editor
+visual. Cuando no hay borradores de HTML sin guardar, la previsualizacion usa el
+render del backend para mostrar los elementos nativos ya montados tal como se
+veran en vivo.
+
 Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
 pero las reglas copiables nuevas deben preferir `data-rstk-*`.
 

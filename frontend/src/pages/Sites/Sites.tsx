@@ -19089,6 +19089,15 @@ const ImportedHtmlEditorPanel: React.FC<{
         delete next[slot.key]
         return next
       })
+      try {
+        const html = await sitesService.getPreviewHtml(normalized.id, activeImportedPage?.id, { test: true })
+        setPreviewHtml(html)
+        setPreviewError('')
+        setPreviewVersion(current => current + 1)
+      } catch {
+        // La configuración ya quedó guardada; si el preview falla, el próximo refresh
+        // o cambio de página lo vuelve a pedir al backend.
+      }
       showToast('success', 'Elemento Ristak guardado', `${importedNativeElementTypeLabels[slot.type]} conectado con el HTML importado.`)
     } catch (error) {
       showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Revisa la configuración e intenta otra vez.')
@@ -21843,8 +21852,12 @@ const ImportedHtmlEditorPanel: React.FC<{
     </div>
   ) : null
 
-  const activeCodePreviewHtml = activeCodeFile?.language === 'html'
+  const activeCodeSourceHtml = activeCodeFile?.language === 'html'
     ? activeCodeValue
+    : previewHtml
+  const shouldUseRenderedCodePreview = Boolean(!popupCodeActive && !activeCodeDirty && previewHtml)
+  const activeCodePreviewHtml = activeCodeFile?.language === 'html'
+    ? shouldUseRenderedCodePreview ? previewHtml : activeCodeValue
     : previewHtml
   const codePreviewSourceHtml = useMemo(
     () => buildImportedCodeRangePreviewHtml(activeCodePreviewHtml),
@@ -21898,7 +21911,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeCodeValue.length])
   const selectImportedCodePreviewElement = useCallback((element: HTMLElement, descriptor?: ImportedFrameElementDescriptor) => {
     const selectionDescriptor = descriptor || getImportedFrameElementDescriptor(element, 'code')
-    const range = findImportedSourceRangeForDescriptor(activeCodePreviewHtml, selectionDescriptor)
+    const range = findImportedSourceRangeForDescriptor(activeCodeSourceHtml, selectionDescriptor)
     selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
     selectedCodePreviewElementRef.current = element
     element.classList.add('rstk-imported-code-selected')
@@ -21911,7 +21924,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
     focusImportedCodeRange(range)
     return range
-  }, [activeCodePreviewHtml, focusImportedCodeRange])
+  }, [activeCodeSourceHtml, focusImportedCodeRange])
 
   useEffect(() => {
     if (!codeEditorOpen) {
@@ -22316,12 +22329,14 @@ const ImportedHtmlEditorPanel: React.FC<{
     )
   })() : null
 
+  const codeEditorSourceWidth = importedNativeElementsPanel ? Math.min(codeEditorWidth, 38) : codeEditorWidth
+
   if (codeEditorOpen) {
     return (
       <div
         ref={codeSplitRef}
-        className={styles.importedCodeEditorPanel}
-        style={{ '--imported-code-source-width': `${codeEditorWidth}%` } as React.CSSProperties}
+        className={`${styles.importedCodeEditorPanel} ${importedNativeElementsPanel ? styles.importedCodeEditorPanelWithInspector : ''}`}
+        style={{ '--imported-code-source-width': `${codeEditorSourceWidth}%` } as React.CSSProperties}
       >
         <section
           className={`${styles.importedCodeSourcePane} ${codeEditorTheme === 'dark' ? styles.importedCodeSourcePaneDark : styles.importedCodeSourcePaneLight} ${activeCodeDiagnostics.length ? styles.importedCodeSourcePaneInvalid : ''}`}
@@ -22370,7 +22385,6 @@ const ImportedHtmlEditorPanel: React.FC<{
             </summary>
             <pre>{IMPORTED_HTML_AI_GUIDE}</pre>
           </details>
-          {importedNativeElementsPanel}
           {activeCodeFile ? (
             <div className={styles.importedCodeEditorShell}>
               <pre
@@ -22578,7 +22592,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 className={styles.importedCodePreviewFrame}
                 title={`Vista previa de ${popupCodeActive ? 'Pop up' : activeImportedPage?.title || site.name}`}
                 srcDoc={guardedCodePreviewHtml}
-                sandbox="allow-same-origin allow-scripts"
+                sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
                 referrerPolicy="no-referrer-when-downgrade"
               />
             ) : (
@@ -22589,6 +22603,11 @@ const ImportedHtmlEditorPanel: React.FC<{
             )}
           </div>
         </section>
+        {importedNativeElementsPanel && (
+          <aside className={styles.importedCodeNativeInspectorPane} aria-label="Configurar elementos Ristak detectados">
+            {importedNativeElementsPanel}
+          </aside>
+        )}
         {codeElementFloatingPanel}
       </div>
     )
@@ -22616,7 +22635,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               className={styles.importedPreviewFrame}
               title={`Vista previa de ${activeImportedPage?.title || site.name}`}
               srcDoc={guardedEditorPreviewHtml}
-              sandbox="allow-same-origin allow-scripts"
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
               referrerPolicy="no-referrer-when-downgrade"
             />
           )}
