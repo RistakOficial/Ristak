@@ -769,6 +769,57 @@ const NATIVE_INBOX_CACHE_LIMIT = 200;
 const CONVERSATION_MESSAGE_CACHE_LIMIT = 150;
 const conversationMessageMemCache = new Map<string, ChatMessage[]>();
 const conversationCacheKey = (contactId: string) => `conv:${contactId}`;
+
+// useState con espejo en disco (offline-first): al montar pinta el último valor
+// guardado (memoria o disco) y persiste cada cambio, para que cualquier pantalla
+// se vea al instante en frío y se refresque por detrás. La clave puede incluir
+// parámetros (periodo, filtro) para cachear cada combinación por separado; pasa
+// null para desactivar el caché temporalmente (se comporta como useState normal).
+const cachedStateMemRegistry = new Map<string, unknown>();
+const CACHE_STATE_MISS = Symbol('cache-miss');
+
+function useCachedState<T>(cacheKey: string | null, initialValue: T): [T, (value: T | ((prev: T) => T)) => void] {
+  const initialRef = useRef(initialValue);
+  const keyRef = useRef(cacheKey);
+  const [value, setValue] = useState<T>(() =>
+    cacheKey && cachedStateMemRegistry.has(cacheKey)
+      ? (cachedStateMemRegistry.get(cacheKey) as T)
+      : initialValue,
+  );
+  useEffect(() => {
+    keyRef.current = cacheKey;
+    if (!cacheKey) return;
+    if (cachedStateMemRegistry.has(cacheKey)) {
+      setValue(cachedStateMemRegistry.get(cacheKey) as T);
+      return;
+    }
+    // Clave nueva sin copia previa: vuelve al inicial mientras hidrata desde
+    // disco, para no mostrar los datos de otra clave (p. ej. otro periodo).
+    setValue(initialRef.current);
+    let alive = true;
+    void readCache<unknown>(cacheKey, CACHE_STATE_MISS).then((cached) => {
+      if (!alive || cached === CACHE_STATE_MISS) return;
+      cachedStateMemRegistry.set(cacheKey, cached);
+      if (keyRef.current === cacheKey) setValue(cached as T);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cacheKey]);
+  const setCachedValue = useCallback((update: T | ((prev: T) => T)) => {
+    setValue((prev) => {
+      const next = typeof update === 'function' ? (update as (prev: T) => T)(prev) : update;
+      const key = keyRef.current;
+      if (key) {
+        cachedStateMemRegistry.set(key, next);
+        const empty = next == null || (Array.isArray(next) && next.length === 0);
+        if (!empty) writeCache(key, next);
+      }
+      return next;
+    });
+  }, []);
+  return [value, setCachedValue];
+}
 const CONVERSATION_REFRESH_INTERVAL_MS = 7000;
 // Emitted when a push notification is received while the app is in the
 // foreground, so the inbox and open conversation can refresh instantly.
@@ -3983,7 +4034,7 @@ function PaymentsSection({
   const [paymentContactsLoading, setPaymentContactsLoading] = useState(false);
   const [paymentContact, setPaymentContact] = useState<ChatContact | null>(null);
   const [paymentContactLocked, setPaymentContactLocked] = useState(false);
-  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [products, setProducts] = useCachedState<ProductItem[]>('payments:products', []);
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsRefreshing, setProductsRefreshing] = useState(false);
   const [productsError, setProductsError] = useState('');
@@ -3999,12 +4050,13 @@ function PaymentsSection({
   const [customRecentDraftEndDate, setCustomRecentDraftEndDate] = useState('');
   const [customRecentRangeOpen, setCustomRecentRangeOpen] = useState(false);
   const [customRecentRangeError, setCustomRecentRangeError] = useState('');
-  const [recentPayments, setRecentPayments] = useState<TransactionItem[]>([]);
+  const paymentsRecentCacheScope = recentPaymentsPeriod === 'custom' ? `c:${customRecentStartDate}:${customRecentEndDate}` : recentPaymentsPeriod;
+  const [recentPayments, setRecentPayments] = useCachedState<TransactionItem[]>(`payments:recent:${paymentsRecentCacheScope}`, []);
   const [recentPaymentsLoading, setRecentPaymentsLoading] = useState(false);
   const [recentPaymentsRefreshing, setRecentPaymentsRefreshing] = useState(false);
   const [recentPaymentsError, setRecentPaymentsError] = useState('');
   const [selectedRecentPaymentId, setSelectedRecentPaymentId] = useState<string | null>(null);
-  const [paymentAccess, setPaymentAccess] = useState<MobilePaymentAccess>(DEFAULT_MOBILE_PAYMENT_ACCESS);
+  const [paymentAccess, setPaymentAccess] = useCachedState<MobilePaymentAccess>('payments:access', DEFAULT_MOBILE_PAYMENT_ACCESS);
   const [paymentAccessLoading, setPaymentAccessLoading] = useState(true);
   const handledInitialPaymentContactKeyRef = useRef('');
 
@@ -6172,7 +6224,7 @@ function PaymentFormView({
           />
           {chargeType === 'product' ? (
             <>
-              {productsLoading ? (
+              {productsLoading && products.length === 0 ? (
                 <View style={styles.paymentInlineLoading}>
                   <ActivityIndicator color={COLORS.accent} size="small" />
                   <Text style={styles.caption}>Cargando productos...</Text>
@@ -10673,10 +10725,11 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
   const [financialScope, setFinancialScope] = useState<DashboardFunnelScope>('all');
   const [funnelScope, setFunnelScope] = useState<DashboardFunnelScope>('all');
   const [originTab, setOriginTab] = useState<AnalyticsOriginTab>('traffic');
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
-  const [chartData, setChartData] = useState<AnalyticsChartPoint[]>([]);
-  const [funnelData, setFunnelData] = useState<DashboardFunnelRow[]>([]);
-  const [originData, setOriginData] = useState<OriginDistributionData>(EMPTY_ORIGIN_DATA);
+  const analyticsCacheScope = period === 'custom' ? `c:${customStartDate}:${customEndDate}` : period;
+  const [metrics, setMetrics] = useCachedState<DashboardMetrics | null>(`analytics:metrics:${analyticsCacheScope}`, null);
+  const [chartData, setChartData] = useCachedState<AnalyticsChartPoint[]>(`analytics:chart:${analyticsCacheScope}:${chartView}:${financialScope}`, []);
+  const [funnelData, setFunnelData] = useCachedState<DashboardFunnelRow[]>(`analytics:funnel:${analyticsCacheScope}:${funnelScope}`, []);
+  const [originData, setOriginData] = useCachedState<OriginDistributionData>(`analytics:origin:${analyticsCacheScope}`, EMPTY_ORIGIN_DATA);
   const [detectedPhones, setDetectedPhones] = useState<WhatsAppApiPhoneNumber[]>([]);
   const [labels, setLabels] = useState<CustomLabels>(DEFAULT_CUSTOM_LABELS);
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
@@ -11126,7 +11179,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
           </View>
         </View>
 
-        {chartLoading ? (
+        {chartLoading && !hasChartData ? (
           <View style={styles.analyticsLoadingState}>
             <ActivityIndicator color={COLORS.accent} />
           </View>
@@ -11167,7 +11220,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
           ))}
         </View>
 
-        {funnelLoading ? (
+        {funnelLoading && !funnelRows.length ? (
           <View style={styles.analyticsLoadingState}>
             <ActivityIndicator color={COLORS.accent} />
           </View>
@@ -11235,7 +11288,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
           })}
         </ScrollView>
 
-        {originLoading ? (
+        {originLoading && !originRows.length ? (
           <View style={styles.analyticsLoadingState}>
             <ActivityIndicator color={COLORS.accent} />
           </View>
@@ -11536,8 +11589,8 @@ function SettingsScreen({
   const [activePanel, setActivePanel] = useState<SettingsPanel>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [appConfig, setAppConfig] = useState<Record<string, ConfigValue>>({});
-  const [userConfig, setUserConfigState] = useState<Record<string, ConfigValue>>({});
+  const [appConfig, setAppConfig] = useCachedState<Record<string, ConfigValue>>('settings:appConfig', {});
+  const [userConfig, setUserConfigState] = useCachedState<Record<string, ConfigValue>>('settings:userConfig', {});
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
@@ -12343,8 +12396,8 @@ function SettingsScreen({
           {activePanel === 'custom-fields' ? <Text style={styles.settingsHeaderSubtitle}>Elige qué datos quieres ver en la info de cada contacto.</Text> : null}
           {activePanel === 'privacy' ? <Text style={styles.settingsHeaderSubtitle}>Ajustes que afectan lo que tus clientes pueden saber de tu lectura.</Text> : null}
         </View>
-        <SectionState loading={loading} error={error} onRetry={load} />
-        {!loading && !error ? <View style={styles.settingsContent}>{renderPanel()}</View> : null}
+        <SectionState loading={loading && Object.keys(appConfig).length === 0} error={error} onRetry={load} />
+        {(!loading || Object.keys(appConfig).length > 0) && !error ? <View style={styles.settingsContent}>{renderPanel()}</View> : null}
       </ScrollView>
       {footer}
     </AppFrame>
