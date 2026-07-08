@@ -163,11 +163,14 @@ export async function getNativePushPermissionStatus(): Promise<NativePushPermiss
   }
 }
 
-export function configureNativeNotificationListeners(onAction: (intent: NativeNotificationIntent) => void) {
+export function configureNativeNotificationListeners(
+  onAction: (intent: NativeNotificationIntent) => void,
+  onReceived?: (intent: NativeNotificationIntent) => void,
+) {
   if (!isNativeMobilePlatform()) return () => undefined;
 
   const received = Notifications.addNotificationReceivedListener((notification) => {
-    buildNotificationIntent(notification, 'received');
+    onReceived?.(buildNotificationIntent(notification, 'received'));
   });
   const response = Notifications.addNotificationResponseReceivedListener((event: NotificationResponse) => {
     onAction(buildNotificationIntent(event.notification, 'action'));

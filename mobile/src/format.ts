@@ -590,6 +590,28 @@ function readString(data: Record<string, unknown>, keys: string[]) {
   return '';
 }
 
+// Los ids del backend pueden llegar como INTEGER (p. ej. attribution_record_id);
+// readString los descartaría y el mensaje caería al id sintético.
+function readIdString(data: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = data[key];
+    if (typeof value === 'string' && value.trim()) return value.trim();
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  }
+  return '';
+}
+
+// Huella corta y determinista para ids sintéticos: debe depender solo del
+// contenido del evento, nunca de su posición en la página (los índices cambian
+// con cada poll y rompen las keys del FlatList).
+function hashConversationEventContent(value: string) {
+  let hash = 5381;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = ((hash << 5) + hash + value.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 function readNumber(data: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = data[key];
@@ -924,7 +946,8 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
       const data = event.data && typeof event.data === 'object' ? event.data : {};
       if (event.type === 'appointment_confirmation') {
         return {
-          id: readString(data, ['id', 'appointment_id']) || `appointment-confirmation-${index}`,
+          id: readIdString(data, ['id', 'appointment_id'])
+            || `appointment-confirmation-${event.date}-${hashConversationEventContent(readString(data, ['title']))}`,
           contactId,
           date: event.date,
           direction: 'system',
@@ -961,21 +984,28 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
       ) || getCommentFallbackText(messageType, status, postDeleted) || (attachment || location ? '' : getMediaFallback(data));
       if (!text && !messageType && !attachment && !location && !emailDetails) return null;
 
-      const id = readString(data, [
+      const direction = normalizeDirection(readString(data, ['direction']));
+      const attributionRecordId = readIdString(data, ['attribution_record_id']);
+      // El id debe ser estable entre polls y páginas: primero ids de proveedor,
+      // luego el id de atribución (INTEGER en el backend, con prefijo para no
+      // chocar con ids numéricos de Meta) y como último recurso una huella del
+      // contenido — jamás el índice, que cambia con la ventana de 100 mensajes.
+      const id = readIdString(data, [
         'whatsapp_api_message_id',
         'whatsapp_message_id',
         'meta_social_message_id',
         'meta_message_id',
         'email_message_id',
-        'attribution_record_id',
-      ]) || `${event.type}-${event.date}-${index}`;
+      ])
+        || (attributionRecordId ? `attr-${attributionRecordId}` : '')
+        || `${event.type}-${event.date}-${direction}-${hashConversationEventContent(`${text}|${attachment?.url || attachment?.name || ''}|${messageType}`)}`;
       const normalizedMessageType = messageType.trim().toLowerCase();
 
       return {
         id,
         contactId,
         date: event.date,
-        direction: normalizeDirection(readString(data, ['direction'])),
+        direction,
         text,
         channel: readString(data, ['transport', 'social_platform', 'source']) || event.type,
         transport: readString(data, ['transport', 'social_platform', 'source']) || event.type,

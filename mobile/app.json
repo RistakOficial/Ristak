@@ -68,7 +68,9 @@
         }
       ],
       "expo-location",
-      "expo-video"
+      "expo-video",
+      "expo-background-task",
+      "expo-web-browser"
     ]
   }
 }

@@ -4,6 +4,8 @@ import {
   Alert,
   Animated,
   Appearance,
+  AppState,
+  DeviceEventEmitter,
   Easing,
   FlatList,
   Image,
@@ -131,12 +133,17 @@ import {
   writeAuthToken,
   writeJsonValue,
 } from './storage';
+import { readCache, writeCache, clearAllCache, setCacheNamespace } from './cache';
+import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
+import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant } from './api';
+import { hasPhoneSectionAccess } from './access';
 import {
   configureNativeNotificationListeners,
   getNativePushPermissionStatus,
   subscribeToNativePushNotifications,
   type NativePushPermissionStatus,
+  type NativeNotificationIntent,
 } from './notifications';
 import {
   buildMessagesFromJourney,
@@ -202,6 +209,7 @@ import type {
   LicenseStatusResponse,
   OriginDistributionData,
   PaymentGatewayProvider,
+  PaymentTaxSettings,
   PaymentLinkResponse,
   PaymentSubscription,
   PhoneSection,
@@ -635,7 +643,23 @@ type ScheduleDraft = {
   period: SchedulePeriod;
 };
 
-const PHONE_NAV_ITEMS: Array<{ key: PhoneSection; label: string; Icon: LucideIcon }> = [
+// Map a push notification (its internal url / category) to the phone section it
+// targets, mirroring /movil's openInternalPath deep-link routing. Falls back to
+// the chat section for message notifications that only carry a contactId.
+function getPhoneSectionFromNotification(intent: NativeNotificationIntent): PhoneSection | null {
+  const url = String(intent.url || '').toLowerCase();
+  const category = String(intent.category || '').toLowerCase();
+  const matches = (needles: string[]) => needles.some((needle) => url.includes(needle) || category.includes(needle));
+  if (matches(['/calendar', '/appointments', 'appointment', 'calendar', 'cita'])) return 'calendar';
+  if (matches(['/transactions', '/payments', 'payment', 'transaction', 'pago'])) return 'payments';
+  if (matches(['/analytics', 'analytic'])) return 'analytics';
+  if (matches(['/settings', 'setting', 'ajuste'])) return 'settings';
+  if (intent.contactId || matches(['/chat', 'chat', 'message', 'mensaje'])) return 'chat';
+  return null;
+}
+
+type PhoneNavItem = { key: PhoneSection; label: string; Icon: LucideIcon };
+const PHONE_NAV_ITEMS: PhoneNavItem[] = [
   { key: 'settings', label: 'Ajustes', Icon: Settings },
   { key: 'chat', label: 'Chats', Icon: MessageCircle },
   { key: 'calendar', label: 'Citas', Icon: CalendarDays },
@@ -705,8 +729,23 @@ const PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD = 'chat_segment';
 const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
 const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
 const CHAT_LIST_PAGE_SIZE = 50;
+const CHAT_INBOX_REFRESH_INTERVAL_MS = 20000;
+// Última bandeja cargada por cliente API (WeakMap: una sesión nueva crea otro
+// cliente y no hereda la bandeja de la cuenta anterior). Permite pintar la
+// lista al instante cuando ChatScreen se remonta al cambiar de sección.
+const nativeInboxCache = new WeakMap<RistakApiClient, ChatContact[]>();
+// Copia en disco de la bandeja + conversaciones (offline-first tipo WhatsApp):
+// sobrevive al cierre de la app y se pinta al instante en el arranque en frío.
+const NATIVE_INBOX_CACHE_KEY = 'chats';
+const NATIVE_INBOX_CACHE_LIMIT = 200;
+const CONVERSATION_MESSAGE_CACHE_LIMIT = 150;
+const conversationMessageMemCache = new Map<string, ChatMessage[]>();
+const conversationCacheKey = (contactId: string) => `conv:${contactId}`;
+const CONVERSATION_REFRESH_INTERVAL_MS = 7000;
+// Emitted when a push notification is received while the app is in the
+// foreground, so the inbox and open conversation can refresh instantly.
+const CHAT_REFRESH_EVENT = 'ristak:chat-refresh';
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 100;
-const CHAT_CONVERSATION_OLDER_THRESHOLD = 0.22;
 const CHAT_ROW_MIN_HEIGHT = 86;
 const CHAT_AVATAR_SIZE = 58;
 const CHAT_CHANNEL_ICON_BOX_SIZE = 22;
@@ -728,9 +767,6 @@ const AI_AGENT_PICKER_PRESENTATION_DELAY_MS = 280;
 const CONVERSATION_COMPOSER_LIGHT_BACKGROUND = '#f5f5f7';
 const CONVERSATION_COMPOSER_SAFE_BOTTOM = 22;
 const CONVERSATION_COMPOSER_KEYBOARD_BOTTOM = 3;
-const CONVERSATION_KEYBOARD_LIGHT_BACKGROUND = '#e3e4e7';
-const CONVERSATION_KEYBOARD_DARK_BACKGROUND = '#171718';
-const CONVERSATION_LATEST_SCROLL_THRESHOLD = 64;
 const CONVERSATION_AUDIO_WAVE_BAR_HEIGHTS = [7, 13, 9, 17, 11, 6, 15, 10, 18, 8, 14, 6, 16, 11, 7, 13, 9, 18, 10, 15, 6, 12];
 const CONVERSATION_AUDIO_PLAYBACK_SPEEDS = [1, 2, 4] as const;
 const CONVERSATION_AUDIO_MAX_MOBILE_RATE = 2;
@@ -1122,7 +1158,48 @@ const PHONE_DOCK_RESERVED_SPACE = 118;
 export default function RistakNativeApp() {
   const [screen, setScreen] = useState<Screen>('boot');
   const [session, setSession] = useState<SessionState>({ baseUrl: '', token: '', user: null });
-  const api = useMemo(() => new RistakApiClient(session.baseUrl, session.token), [session.baseUrl, session.token]);
+  const licenseAlertShownRef = useRef(false);
+  const handleLicenseBlocked = useCallback(() => {
+    void clearAuthToken();
+    setSession((current) => ({ ...current, token: '', user: null }));
+    setScreen('login');
+    if (!licenseAlertShownRef.current) {
+      licenseAlertShownRef.current = true;
+      Alert.alert(
+        'Licencia suspendida',
+        'Tu licencia de Ristak ya no está activa. Inicia sesión de nuevo cuando se reactive.',
+      );
+    }
+  }, []);
+  const handleFeatureBlocked = useCallback((message: string) => {
+    Alert.alert(
+      'Función no disponible',
+      message || 'Esta función no está incluida en tu plan. Pídele al administrador que la active.',
+    );
+  }, []);
+  const api = useMemo(
+    () => {
+      // Aísla la caché local por servidor/cuenta conectada, antes de que las
+      // pantallas lean o escriban su copia offline.
+      setCacheNamespace(session.baseUrl || 'default');
+      return new RistakApiClient(session.baseUrl, session.token, {
+        onLicenseBlocked: handleLicenseBlocked,
+        onFeatureBlocked: handleFeatureBlocked,
+      });
+    },
+    [session.baseUrl, session.token, handleLicenseBlocked, handleFeatureBlocked],
+  );
+
+  // Programa el refresco en segundo plano cuando hay sesión: iOS despierta la app
+  // de vez en cuando para actualizar la bandeja en la caché local, así al abrir
+  // ya está más fresca. Se cancela al cerrar sesión.
+  useEffect(() => {
+    if (session.token) {
+      void registerInboxBackgroundTask();
+    } else {
+      void unregisterInboxBackgroundTask();
+    }
+  }, [session.token]);
 
   const bootstrap = useCallback(async () => {
     const [storedBaseUrl, storedToken] = await Promise.all([
@@ -1183,18 +1260,22 @@ export default function RistakNativeApp() {
     const response = await loginWithResolvedTenant(email, password);
     await writeApiBaseUrl(response.baseUrl);
     await writeAuthToken(response.token);
+    licenseAlertShownRef.current = false;
     setSession({ baseUrl: response.baseUrl, token: response.token, user: response.user });
     setScreen('shell');
   };
 
   const logout = async () => {
     await clearAuthToken();
+    // Limpiar la copia local: evita que la siguiente sesión vea datos ajenos.
+    void clearAllCache();
     setSession((current) => ({ ...current, token: '', user: null }));
     setScreen('login');
   };
 
   const resetServer = async () => {
     await clearRuntimeState();
+    void clearAllCache();
     setSession({ baseUrl: '', token: '', user: null });
     setScreen('login');
   };
@@ -1212,13 +1293,17 @@ export default function RistakNativeApp() {
   }
 
   return (
-    <PhoneShell
-      api={api}
-      user={session.user}
-      baseUrl={session.baseUrl}
-      onLogout={logout}
-      onChangeServer={resetServer}
-    />
+    <>
+      <PhoneShell
+        api={api}
+        user={session.user}
+        baseUrl={session.baseUrl}
+        onLogout={logout}
+        onChangeServer={resetServer}
+      />
+      {/* Visor de imágenes a pantalla completa dentro de la app (no navegador externo). */}
+      <GlobalImageViewer />
+    </>
   );
 }
 
@@ -1236,6 +1321,15 @@ function PhoneShell({
   onChangeServer: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
+  const allowedNavItems = useMemo(() => {
+    const filtered = PHONE_NAV_ITEMS.filter((item) => hasPhoneSectionAccess(user, item.key));
+    return filtered.length ? filtered : PHONE_NAV_ITEMS;
+  }, [user]);
+  useEffect(() => {
+    setActiveSection((current) => (
+      allowedNavItems.some((item) => item.key === current) ? current : allowedNavItems[0].key
+    ));
+  }, [allowedNavItems]);
   const [pageDirection, setPageDirection] = useState(1);
   const [dockHidden, setDockHidden] = useState(false);
   const [dockCompact, setDockCompact] = useState(false);
@@ -1255,14 +1349,15 @@ function PhoneShell({
   const clearNotificationContactId = useCallback(() => setNotificationContactId(''), []);
   const handleDockHiddenChange = useCallback((hidden: boolean) => setDockHidden(hidden), []);
   const navigateSection = useCallback((section: PhoneSection) => {
+    if (!allowedNavItems.some((item) => item.key === section)) return;
     setActiveSection((current) => {
       if (current === section) return current;
-      const currentIndex = Math.max(0, PHONE_NAV_ITEMS.findIndex((item) => item.key === current));
-      const nextIndex = Math.max(0, PHONE_NAV_ITEMS.findIndex((item) => item.key === section));
+      const currentIndex = Math.max(0, allowedNavItems.findIndex((item) => item.key === current));
+      const nextIndex = Math.max(0, allowedNavItems.findIndex((item) => item.key === section));
       setPageDirection(nextIndex >= currentIndex ? 1 : -1);
       return section;
     });
-  }, []);
+  }, [allowedNavItems]);
   const navigateToContactTool = useCallback((contact: ChatContact, section: PhoneSection) => {
     setContactToolContext({
       section,
@@ -1316,6 +1411,7 @@ function PhoneShell({
 	      active={activeSection}
 	      badges={{ chat: chatUnreadTotal }}
 	      compact={dockCompact}
+	      navItems={allowedNavItems}
 	      onSelect={navigateSection}
 	    />
 	  );
@@ -1366,9 +1462,18 @@ function PhoneShell({
   }, [activeSection]);
 
 	  useEffect(() => configureNativeNotificationListeners((intent) => {
-	    if (!intent.contactId) return;
-	    setNotificationContactId(intent.contactId);
-	    navigateSection('chat');
+	    const section = getPhoneSectionFromNotification(intent);
+	    if (intent.contactId) setNotificationContactId(intent.contactId);
+	    if (section && section !== 'chat') {
+	      navigateSection(section);
+	      return;
+	    }
+	    if (intent.contactId || section === 'chat') {
+	      navigateSection('chat');
+	    }
+	  }, (intent) => {
+	    // Foreground push received: nudge the inbox / open thread to refresh now.
+	    DeviceEventEmitter.emit(CHAT_REFRESH_EVENT, intent);
 	  }), [navigateSection]);
 
   useEffect(() => {
@@ -1469,7 +1574,7 @@ function PhoneShell({
       onTouchStart={handleShellTouchStart}
       style={styles.phoneShellRoot}
     >
-      {PHONE_NAV_ITEMS.map((item) => renderSection(item.key))}
+      {allowedNavItems.map((item) => renderSection(item.key))}
       {!dockHidden ? dock : null}
     </View>
 	  );
@@ -1567,14 +1672,16 @@ function PhoneDock({
   active,
   badges = {},
   compact,
+  navItems = PHONE_NAV_ITEMS,
   onSelect,
 }: {
   active: PhoneSection;
   badges?: Partial<Record<PhoneSection, number>>;
   compact: boolean;
+  navItems?: PhoneNavItem[];
   onSelect: (section: PhoneSection) => void;
 }) {
-  const activeIndex = Math.max(0, PHONE_NAV_ITEMS.findIndex((item) => item.key === active));
+  const activeIndex = Math.max(0, navItems.findIndex((item) => item.key === active));
   const [dockWidth, setDockWidth] = useState(0);
   const [visualIndex, setVisualIndex] = useState(activeIndex);
   const [swiping, setSwiping] = useState(false);
@@ -1588,7 +1695,7 @@ function PhoneDock({
   const suppressPressRef = useRef(false);
   const suppressPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const tabWidth = dockWidth > 0
-    ? (dockWidth - (PHONE_DOCK_HORIZONTAL_PADDING * 2)) / PHONE_NAV_ITEMS.length
+    ? (dockWidth - (PHONE_DOCK_HORIZONTAL_PADDING * 2)) / navItems.length
     : 0;
   const dockGlassEffectStyle = useMemo(() => ({
     style: 'clear',
@@ -1624,17 +1731,17 @@ function PhoneDock({
     const maxCenter = dockWidth - PHONE_DOCK_HORIZONTAL_PADDING - (tabWidth / 2);
     const clampedCenter = Math.max(minCenter, Math.min(locationX, maxCenter));
     return Math.max(0, Math.min(
-      PHONE_NAV_ITEMS.length - 1,
+      navItems.length - 1,
       Math.round((clampedCenter - minCenter) / tabWidth),
     ));
   }, [activeIndex, dockWidth, tabWidth]);
 
   const getIndicatorXForIndex = useCallback((index: number, width = dockWidth) => {
     const computedTabWidth = width > 0
-      ? (width - (PHONE_DOCK_HORIZONTAL_PADDING * 2)) / PHONE_NAV_ITEMS.length
+      ? (width - (PHONE_DOCK_HORIZONTAL_PADDING * 2)) / navItems.length
       : 0;
     if (!computedTabWidth) return 0;
-    const safeIndex = Math.max(0, Math.min(PHONE_NAV_ITEMS.length - 1, index));
+    const safeIndex = Math.max(0, Math.min(navItems.length - 1, index));
     const centerX = PHONE_DOCK_HORIZONTAL_PADDING + (computedTabWidth * safeIndex) + (computedTabWidth / 2);
     return centerX - (PHONE_DOCK_INDICATOR_WIDTH / 2);
   }, [dockWidth]);
@@ -1642,7 +1749,7 @@ function PhoneDock({
   const getIndicatorXForLocation = useCallback((locationX: number) => {
     if (!tabWidth || !dockWidth) return getIndicatorXForIndex(activeIndex);
     const minX = getIndicatorXForIndex(0);
-    const maxX = getIndicatorXForIndex(PHONE_NAV_ITEMS.length - 1);
+    const maxX = getIndicatorXForIndex(navItems.length - 1);
     const nextX = locationX - (PHONE_DOCK_INDICATOR_WIDTH / 2);
     return Math.max(minX, Math.min(nextX, maxX));
   }, [activeIndex, dockWidth, getIndicatorXForIndex, tabWidth]);
@@ -1691,7 +1798,7 @@ function PhoneDock({
     setSwiping(false);
     suppressNextPress();
     animateIndicatorToIndex(nextIndex, 130);
-    const nextItem = PHONE_NAV_ITEMS[nextIndex];
+    const nextItem = navItems[nextIndex];
     if (nextItem && nextItem.key !== active) {
       onSelect(nextItem.key);
       return;
@@ -1790,7 +1897,7 @@ function PhoneDock({
           />
           <View pointerEvents="none" style={styles.phoneDockIndicatorSurfaceStroke} />
         </Animated.View>
-        {PHONE_NAV_ITEMS.map((item, index) => {
+        {navItems.map((item, index) => {
           const selected = index === visualIndex;
           const badgeCount = Math.max(0, Number(badges[item.key] || 0));
           const DockIcon = item.Icon;
@@ -1914,17 +2021,16 @@ function AppFrame({
     </>
   );
 
-  if (!keyboardAvoiding) {
-    return (
-      <View style={[styles.appFrame, { backgroundColor }]}>
-        {content}
-      </View>
-    );
-  }
-
+  // Siempre monta el mismo KeyboardAvoidingView y apaga/enciende con
+  // `enabled` para poder ceder la propiedad del teclado a una ruta overlay
+  // (p. ej. ChatScreen -> conversación) sin desmontar el subárbol. Solo puede
+  // haber UN avoider habilitado por ruta visible: dos apilados reaccionan al
+  // mismo evento de teclado con frames obsoletos, se compensan doble y dejan
+  // una franja entre el composer y el teclado.
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      enabled={keyboardAvoiding}
       keyboardVerticalOffset={0}
       style={[styles.appFrame, { backgroundColor }]}
     >
@@ -2067,15 +2173,21 @@ function LoginScreen({
   const [error, setError] = useState('');
 
   const submit = async () => {
-    if (!email.trim() || !password) {
+    const cleanEmail = email.trim();
+    if (!cleanEmail || !password) {
       setError('Escribe tu correo y contrasena.');
+      return;
+    }
+    // Validate the email format before hitting the backend, like /movil.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setError('Escribe un correo válido.');
       return;
     }
 
     setBusy(true);
     setError('');
     try {
-      await onLogin(email.trim(), password);
+      await onLogin(cleanEmail, password);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'No se pudo iniciar sesion.');
     } finally {
@@ -2194,11 +2306,13 @@ function ChatScreen({
   const [cameraRecipients, setCameraRecipients] = useState<ChatContact[]>([]);
   const [cameraCaption, setCameraCaption] = useState('');
   const [cameraSending, setCameraSending] = useState(false);
-  const [chats, setChats] = useState<ChatContact[]>([]);
+  // Hidratar desde la caché en memoria: ChatScreen se desmonta al cambiar de
+  // sección y sin esto cada regreso pinta vacío -> spinner -> lista (flash).
+  const [chats, setChats] = useState<ChatContact[]>(() => nativeInboxCache.get(api) || []);
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
   const [accountCurrency, setAccountCurrency] = useState(DEFAULT_ACCOUNT_CURRENCY);
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !(nativeInboxCache.get(api)?.length));
   const [chatsLoadingMore, setChatsLoadingMore] = useState(false);
   const [chatsHasMore, setChatsHasMore] = useState(true);
   const [chatListOffset, setChatListOffset] = useState(0);
@@ -2214,6 +2328,33 @@ function ChatScreen({
   const chatListGenerationRef = useRef(0);
   const chatListLoadedQueryRef = useRef('');
   const chatMountedRef = useRef(true);
+  const chatsRef = useRef(chats);
+  useEffect(() => {
+    chatsRef.current = chats;
+    // Solo la bandeja sin búsqueda alimenta la caché de remontaje.
+    if (!query.trim()) {
+      nativeInboxCache.set(api, chats);
+      // Espejo en disco para el arranque en frío: la próxima vez que abras la
+      // app, la última bandeja aparece de inmediato mientras llega la fresca.
+      if (chats.length) writeCache(NATIVE_INBOX_CACHE_KEY, chats.slice(0, NATIVE_INBOX_CACHE_LIMIT));
+    }
+  }, [api, chats, query]);
+  // Hidratar la bandeja desde disco en frío: la caché en memoria se pierde al
+  // cerrar la app, así que si arrancamos vacíos leemos la copia local guardada.
+  useEffect(() => {
+    if (nativeInboxCache.get(api)?.length) return;
+    let alive = true;
+    void readCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, []).then((cached) => {
+      if (!alive || !cached.length) return;
+      nativeInboxCache.set(api, cached);
+      setChats((current) => (current.length ? current : cached));
+      setLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
+    // Solo al montar/ cambiar de cuenta; no re-hidratar tras cargas frescas.
+  }, [api]);
   const conversationRouteProgress = useRef(new Animated.Value(0)).current;
   const businessPhones = useMemo(
     () => Array.isArray(whatsappStatus?.phoneNumbers) ? whatsappStatus.phoneNumbers : [],
@@ -2230,8 +2371,10 @@ function ChatScreen({
     : '';
   const effectiveActiveFilter = activePhoneFilterId || activeFilter;
   const chatListPhoneFilterParams = useMemo(() => {
-    if (!selectedChatPhoneFilterActive || !selectedChatPhone) return {};
+    // Always warm avatars like /movil so contact pictures paint on first load.
+    if (!selectedChatPhoneFilterActive || !selectedChatPhone) return { warmProfilePictures: true };
     return {
+      warmProfilePictures: true,
       businessPhoneNumberId: selectedChatPhone.id.trim() || undefined,
       businessPhone: getBusinessPhoneValue(selectedChatPhone).trim() || undefined,
     };
@@ -2248,6 +2391,9 @@ function ChatScreen({
   }, [assistantOpen, onDockHiddenChange, selected]);
 
   const openChatConversation = useCallback((contact: ChatContact) => {
+    // Cierra el teclado del buscador antes de traspasar la propiedad del
+    // teclado del frame de la lista al frame de la conversación.
+    Keyboard.dismiss();
     conversationRouteProgress.stopAnimation();
     conversationRouteProgress.setValue(0);
     setConversationClosing(false);
@@ -2256,6 +2402,7 @@ function ChatScreen({
 
   const closeChatConversation = useCallback(() => {
     if (!selected || conversationClosing) return;
+    Keyboard.dismiss();
     setConversationClosing(true);
   }, [conversationClosing, selected]);
 
@@ -2263,10 +2410,19 @@ function ChatScreen({
     const requestQuery = query.trim();
     const generation = chatListGenerationRef.current + 1;
     chatListGenerationRef.current = generation;
-    if (!silent) setLoading(true);
+    // On a silent refresh with the same query, merge the fresh first page over
+    // the already-loaded tail instead of collapsing the list back to page 0,
+    // so scrolled depth and position survive.
+    const shouldMerge = silent && requestQuery === chatListLoadedQueryRef.current;
+    // El spinner de pantalla completa solo cuando no hay nada que mostrar:
+    // reemplazar la lista visible por un spinner en cada búsqueda o cambio de
+    // filtro es uno de los parpadeos reportados.
+    if (!silent && !chatsRef.current.length) setLoading(true);
     setChatsLoadingMore(false);
-    setChatsHasMore(true);
-    setChatListOffset(0);
+    if (!shouldMerge) {
+      setChatsHasMore(true);
+      setChatListOffset(0);
+    }
     setError('');
     try {
       const data = await api.getChats(requestQuery, 0, CHAT_LIST_PAGE_SIZE, chatListPhoneFilterParams);
@@ -2274,9 +2430,23 @@ function ChatScreen({
       if (generation !== chatListGenerationRef.current) return;
       chatListLoadedQueryRef.current = requestQuery;
       const nextChats = Array.isArray(data) ? data : [];
-      setChats(nextChats);
-      setChatListOffset(nextChats.length);
-      setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
+      if (shouldMerge) {
+        setChats((current) => mergeFreshChatPage(nextChats, current));
+        setChatListOffset((current) => Math.max(current, nextChats.length));
+        setChatsHasMore((current) => current || nextChats.length >= CHAT_LIST_PAGE_SIZE);
+      } else {
+        // Reemplazo (query/filtro nuevos) pero conservando avatares e
+        // identidad de los contactos que no cambiaron.
+        setChats((current) => {
+          const currentById = new Map(current.map((contact) => [contact.id, contact]));
+          return nextChats.map((contact) => {
+            const prior = contact?.id ? currentById.get(contact.id) : undefined;
+            return prior ? mergeContactWithoutLosingAvatar(prior, contact) : contact;
+          });
+        });
+        setChatListOffset(nextChats.length);
+        setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
+      }
     } catch (err) {
       console.warn('[RistakNative][chat] loadChats failed', err);
       if (!chatMountedRef.current) return;
@@ -2295,6 +2465,26 @@ function ChatScreen({
     setSelected(null);
     setConversationClosing(false);
     void loadChats(true);
+  }, [loadChats]);
+
+  // Keep the inbox live like /movil: a silent periodic refresh plus a refresh
+  // whenever the app returns to the foreground. Both merge (see loadChats) so
+  // new inbound messages and unread badges appear without a manual pull.
+  useEffect(() => {
+    const refreshInboxSilently = () => {
+      if (!chatMountedRef.current) return;
+      void loadChats(true);
+    };
+    const interval = setInterval(refreshInboxSilently, CHAT_INBOX_REFRESH_INTERVAL_MS);
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshInboxSilently();
+    });
+    const pushSub = DeviceEventEmitter.addListener(CHAT_REFRESH_EVENT, refreshInboxSilently);
+    return () => {
+      clearInterval(interval);
+      appStateSub.remove();
+      pushSub.remove();
+    };
   }, [loadChats]);
 
   useEffect(() => {
@@ -3267,6 +3457,18 @@ function ChatScreen({
     openChatConversation(contact);
   };
 
+  // Trampolines estables para las filas memoizadas del inbox.
+  const handleChatPressRef = useRef(handleChatPress);
+  handleChatPressRef.current = handleChatPress;
+  const handleChatRowPress = useCallback((contact: ChatContact) => {
+    handleChatPressRef.current(contact);
+  }, []);
+  const openChatMoreActionsRef = useRef(openChatMoreActions);
+  openChatMoreActionsRef.current = openChatMoreActions;
+  const handleChatRowLongPress = useCallback((contact: ChatContact) => {
+    openChatMoreActionsRef.current(contact);
+  }, []);
+
   const markSelectedChatsAsRead = async () => {
     const contactIds = selectedChatContacts.map((contact) => contact.id);
     if (!contactIds.length || bulkActionBusy) return;
@@ -3282,6 +3484,22 @@ function ChatScreen({
     } finally {
       setBulkActionBusy(false);
     }
+  };
+
+  const muteSelectedChats = () => {
+    const contactIds = selectedChatContacts.map((contact) => contact.id);
+    if (!contactIds.length) return;
+    // If every selected chat is already muted, unmute them; otherwise mute all.
+    const allMuted = contactIds.every((id) => mutedChatIdSet.has(id));
+    setMutedChatIds((current) => {
+      const next = new Set(current);
+      contactIds.forEach((id) => {
+        if (allMuted) next.delete(id);
+        else next.add(id);
+      });
+      return Array.from(next);
+    });
+    clearChatSelection();
   };
 
   const archiveSelectedChats = () => {
@@ -3364,12 +3582,14 @@ function ChatScreen({
         <ChatSelectionPanel
           allVisibleSelected={allVisibleChatsSelected}
           archiveLabel={archivedViewOpen ? 'Restaurar seleccionados' : 'Archivar seleccionados'}
+          muteLabel={selectedChatContacts.length > 0 && selectedChatContacts.every((contact) => mutedChatIdSet.has(contact.id)) ? 'Reactivar seleccionados' : 'Silenciar seleccionados'}
           busy={bulkActionBusy}
           count={selectedVisibleChatCount}
           menuOpen={selectionActionsOpen}
           onArchiveSelected={archiveSelectedChats}
           onClear={clearChatSelection}
           onMarkRead={() => void markSelectedChatsAsRead()}
+          onMuteSelected={muteSelectedChats}
           onToggleMenu={() => setSelectionActionsOpen((current) => !current)}
           onToggleVisible={toggleVisibleChatSelection}
         />
@@ -3384,7 +3604,10 @@ function ChatScreen({
   );
 
   return (
-    <AppFrame>
+    // Con la conversación abierta, su propio AppFrame (fondo del composer) es
+    // el único dueño del teclado; este frame externo queda inerte para no
+    // apilar dos KeyboardAvoidingView sobre la misma ruta.
+    <AppFrame keyboardAvoiding={!selected}>
       <Animated.View
         pointerEvents={selected ? 'none' : 'auto'}
         style={[styles.chatRouteListPage, chatListPageStyle]}
@@ -3519,9 +3742,10 @@ function ChatScreen({
               showLastPreview={settings.showLastPreview}
               showUnreadIndicators={settings.showUnreadIndicators}
               selected={selectedChatIdSet.has(item.id)}
+              themeTone={activeNativeThemeTone}
               timezone={businessTimezone}
-              onLongPress={() => openChatMoreActions(item)}
-              onPress={() => handleChatPress(item)}
+              onLongPress={handleChatRowLongPress}
+              onPress={handleChatRowPress}
             />
           )}
           ListEmptyComponent={
@@ -3744,6 +3968,7 @@ function PaymentsSection({
   const [recentPayments, setRecentPayments] = useState<TransactionItem[]>([]);
   const [recentPaymentsLoading, setRecentPaymentsLoading] = useState(false);
   const [recentPaymentsRefreshing, setRecentPaymentsRefreshing] = useState(false);
+  const [recentPaymentsError, setRecentPaymentsError] = useState('');
   const [selectedRecentPaymentId, setSelectedRecentPaymentId] = useState<string | null>(null);
   const [paymentAccess, setPaymentAccess] = useState<MobilePaymentAccess>(DEFAULT_MOBILE_PAYMENT_ACCESS);
   const [paymentAccessLoading, setPaymentAccessLoading] = useState(true);
@@ -3799,6 +4024,7 @@ function PaymentsSection({
     const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod, businessTimezone, customRecentStartDate, customRecentEndDate);
     if (recentPayments.length) setRecentPaymentsRefreshing(true);
     else setRecentPaymentsLoading(true);
+    setRecentPaymentsError('');
     try {
       const transactionsResponse = await api.getTransactions({ startDate, endDate, sync: false });
       const receivedPayments = normalizeTransactionsResponse(transactionsResponse)
@@ -3808,9 +4034,12 @@ function PaymentsSection({
       setSelectedRecentPaymentId((current) => (
         current && receivedPayments.some((payment) => getTransactionId(payment) === current) ? current : null
       ));
-    } catch {
+    } catch (err) {
+      // Surface the failure instead of showing an empty list that looks like
+      // "no payments", so the user knows to retry.
       setRecentPayments([]);
       setSelectedRecentPaymentId(null);
+      setRecentPaymentsError(err instanceof Error ? err.message : 'No se pudieron cargar los pagos recientes.');
     } finally {
       setRecentPaymentsLoading(false);
       setRecentPaymentsRefreshing(false);
@@ -4088,6 +4317,7 @@ function PaymentsSection({
         initialContact={paymentContact}
         mode={view}
         offlineOnly={paymentAccess.offlineOnly}
+        connectedGateways={paymentAccess.connectedGateways}
         timezone={businessTimezone}
         onBack={() => {
           setView('select');
@@ -4218,6 +4448,11 @@ function PaymentsSection({
               <View style={styles.recentPaymentsState}>
                 <ActivityIndicator color={COLORS.accent} />
                 <Text style={styles.caption}>Cargando...</Text>
+              </View>
+            ) : recentPaymentsError && recentPayments.length === 0 ? (
+              <View style={styles.recentPaymentsState}>
+                <Text style={styles.caption}>{recentPaymentsError}</Text>
+                <SecondaryButton label="Reintentar" onPress={() => void loadRecentPayments()} />
               </View>
             ) : recentPayments.length === 0 ? (
               <View style={styles.recentPaymentsState}>
@@ -4686,6 +4921,13 @@ function mergeContactWithoutLosingAvatar(base: ChatContact, patch: ChatContact) 
       merged[key] = patch[key];
     }
   });
+  // Si el poll no trajo cambios reales, conservar la referencia previa para
+  // que las filas memoizadas no se re-rendericen cada 20s.
+  try {
+    if (JSON.stringify(base) === JSON.stringify(merged)) return base;
+  } catch {
+    // sin fallback: un contacto no serializable simplemente se reemplaza
+  }
   return merged;
 }
 
@@ -4703,6 +4945,34 @@ function mergeChatContactPages(current: ChatContact[], incoming: ChatContact[]) 
     }
     merged[existingIndex] = mergeContactWithoutLosingAvatar(merged[existingIndex], contact);
   });
+  return merged;
+}
+
+// Silent-refresh merge: the fresh page 0 carries the server's newest ordering,
+// so it goes first; previously-loaded contacts not present in it (the deeper
+// paginated tail) are kept afterwards so scrolled depth is preserved. Mirrors
+// the web reconcileCachedChatTail behavior instead of blindly replacing.
+function mergeFreshChatPage(fresh: ChatContact[], previous: ChatContact[]) {
+  if (!fresh.length) return previous;
+  const previousById = new Map(previous.map((contact) => [contact.id, contact]));
+  const freshIds = new Set<string>();
+  const merged = fresh.map((contact) => {
+    if (contact?.id) {
+      freshIds.add(contact.id);
+      const prior = previousById.get(contact.id);
+      if (prior) return mergeContactWithoutLosingAvatar(prior, contact);
+    }
+    return contact;
+  });
+  previous.forEach((contact) => {
+    if (!contact?.id || freshIds.has(contact.id)) return;
+    merged.push(contact);
+  });
+  // Poll sin novedades => mismas referencias en el mismo orden => devolver el
+  // array anterior para que el setState sea un no-op de React.
+  if (merged.length === previous.length && merged.every((contact, index) => contact === previous[index])) {
+    return previous;
+  }
   return merged;
 }
 
@@ -4749,6 +5019,7 @@ function PaymentFormView({
   initialContact,
   mode,
   offlineOnly = false,
+  connectedGateways = [],
   timezone,
   onBack,
   onPaymentLinkReady,
@@ -4759,6 +5030,7 @@ function PaymentFormView({
   initialContact: ChatContact;
   mode: Exclude<PaymentView, 'select' | 'products'>;
   offlineOnly?: boolean;
+  connectedGateways?: PaymentGatewayProvider[];
   timezone: string;
   onBack: () => void;
   onPaymentLinkReady: (draft: PendingChatDraft) => void;
@@ -4804,7 +5076,62 @@ function PaymentFormView({
   const [frequency, setFrequency] = useState('monthly');
   const [frequencyDropdownOpen, setFrequencyDropdownOpen] = useState(false);
   const [provider, setProvider] = useState('stripe');
+  // Offer only the gateways the account actually connected, and default each
+  // selector to the first connected one, so the cobro doesn't POST to a
+  // disconnected gateway (e.g. the old hardcoded Stripe default) and fail.
+  const linkProviderOptions = useMemo(() => {
+    const filtered = PAYMENT_LINK_PROVIDER_OPTIONS.filter((option) => connectedGateways.includes(option.value as PaymentGatewayProvider));
+    return filtered.length ? filtered : PAYMENT_LINK_PROVIDER_OPTIONS;
+  }, [connectedGateways]);
+  const planProviderOptions = useMemo(() => {
+    const filtered = PAYMENT_PLAN_PROVIDER_OPTIONS.filter((option) => connectedGateways.includes(option.value as PaymentGatewayProvider));
+    return filtered.length ? filtered : PAYMENT_PLAN_PROVIDER_OPTIONS;
+  }, [connectedGateways]);
+  const subscriptionProviderOptions = useMemo(() => {
+    const filtered = SUBSCRIPTION_PROVIDER_OPTIONS.filter((option) => connectedGateways.includes(option.value as PaymentGatewayProvider));
+    return filtered.length ? filtered : SUBSCRIPTION_PROVIDER_OPTIONS;
+  }, [connectedGateways]);
+  useEffect(() => {
+    if (!linkProviderOptions.some((option) => option.value === paymentLinkProvider)) {
+      setPaymentLinkProvider(linkProviderOptions[0].value);
+    }
+  }, [linkProviderOptions, paymentLinkProvider]);
+  useEffect(() => {
+    if (!planProviderOptions.some((option) => option.value === planGatewayProvider)) {
+      setPlanGatewayProvider(planProviderOptions[0].value);
+    }
+  }, [planProviderOptions, planGatewayProvider]);
+  useEffect(() => {
+    if (!subscriptionProviderOptions.some((option) => option.value === provider)) {
+      setProvider(subscriptionProviderOptions[0].value);
+    }
+  }, [subscriptionProviderOptions, provider]);
   const [subscriptionCollectionMode, setSubscriptionCollectionMode] = useState<NativeSubscriptionCollectionMode>('authorization_link');
+  // Tax / IVA — optional, driven entirely by the account's payment settings.
+  // When taxes are disabled the toggle never shows and the amount is untouched.
+  const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(DEFAULT_MOBILE_TAX_SETTINGS);
+  const [includeIVA, setIncludeIVA] = useState(false);
+  const [taxCalculationMode, setTaxCalculationMode] = useState<'exclusive' | 'inclusive'>('exclusive');
+  useEffect(() => {
+    let cancelled = false;
+    api.getPaymentSettings()
+      .then((settings) => {
+        if (cancelled) return;
+        const taxes = settings?.taxes || DEFAULT_MOBILE_TAX_SETTINGS;
+        setPaymentTaxes(taxes);
+        setTaxCalculationMode(taxes.calculationMode === 'inclusive' ? 'inclusive' : 'exclusive');
+        setIncludeIVA(Boolean(taxes.enabled));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPaymentTaxes(DEFAULT_MOBILE_TAX_SETTINGS);
+        setIncludeIVA(false);
+      });
+    return () => { cancelled = true; };
+  }, [api]);
+  useEffect(() => {
+    if (!paymentTaxes.enabled && includeIVA) setIncludeIVA(false);
+  }, [paymentTaxes.enabled, includeIVA]);
   const [intervalType, setIntervalType] = useState('monthly');
   const [intervalCount, setIntervalCount] = useState('1');
   const [subscriptionStartDate, setSubscriptionStartDate] = useState(() => todayDateOnlyInTimezone(timezone));
@@ -4825,6 +5152,9 @@ function PaymentFormView({
     ? getProductPriceCurrency(selectedProduct, selectedPrice, currency)
     : currency;
   const resolvedAmount = normalizeAmountInput(chargeType === 'product' ? customProductAmount : amount);
+  const taxBreakdown = calculateConfiguredTax(resolvedAmount, paymentTaxes, includeIVA, taxCalculationMode);
+  const applyTaxFlag = taxBreakdown.includesTax;
+  const taxName = paymentTaxes.taxName?.trim() || 'Impuesto';
   const firstPaymentAmount = normalizeAmountInput(firstPayment);
   const remainingPlanTotal = planPayments.reduce((sum, payment) => sum + normalizeAmountInput(payment.amount), 0);
   const planDraftTotal = Math.round((firstPaymentAmount + remainingPlanTotal) * 100) / 100;
@@ -5389,6 +5719,26 @@ function PaymentFormView({
             return;
           }
           const linkProvider = paymentLinkProvider as PaymentGatewayProvider;
+          // MSI (meses sin intereses) availability, matching /movil's guards:
+          // MXN only, Stripe/CLIP need >= 300, Conekta needs a per-term minimum.
+          if (installmentsEnabled === 'enabled') {
+            const months = Math.max(2, Math.round(Number(maxInstallments) || 3));
+            if (resolvedCurrency.toUpperCase() !== 'MXN') {
+              Alert.alert('MSI no disponible', 'Los meses sin intereses solo aplican a cobros en pesos (MXN).');
+              return;
+            }
+            if ((linkProvider === 'stripe' || linkProvider === 'clip') && parsedAmount < 300) {
+              Alert.alert('Monto insuficiente para MSI', `${getPaymentProviderLabel(linkProvider)} requiere al menos ${formatCurrency(300, 'MXN')} para ofrecer meses sin intereses.`);
+              return;
+            }
+            if (linkProvider === 'conekta') {
+              const conektaMinimum = 100 * months;
+              if (parsedAmount < conektaMinimum) {
+                Alert.alert('Monto insuficiente para MSI', `Conekta requiere al menos ${formatCurrency(conektaMinimum, 'MXN')} para ${months} meses sin intereses.`);
+                return;
+              }
+            }
+          }
           const response = await api.createPaymentLink(linkProvider, {
             contactId: selectedContact.id,
             contactName: resolvedContactName,
@@ -5396,6 +5746,8 @@ function PaymentFormView({
             phone: resolvedContactPhone,
             amount: parsedAmount,
             currency: resolvedCurrency,
+            applyTax: applyTaxFlag,
+            taxCalculationMode: applyTaxFlag ? taxCalculationMode : undefined,
             title: paymentConcept,
             description: paymentDescription,
             source: 'native_mobile_payments',
@@ -5437,13 +5789,15 @@ function PaymentFormView({
             Alert.alert('Falta tarjeta guardada', 'Selecciona una tarjeta guardada del contacto.');
             return;
           }
-          await api.chargeSavedCard(selectedPlanSavedCard.provider, {
+          const chargeResponse = await api.chargeSavedCard(selectedPlanSavedCard.provider, {
             contactId: selectedContact.id,
             contactName: resolvedContactName,
             email: resolvedContactEmail,
             phone: resolvedContactPhone,
             amount: parsedAmount,
             currency: resolvedCurrency,
+            applyTax: applyTaxFlag,
+            taxCalculationMode: applyTaxFlag ? taxCalculationMode : undefined,
             title: paymentConcept,
             description: paymentDescription,
             dueDate: paymentDate || todayDateOnlyInTimezone(timezone),
@@ -5453,6 +5807,19 @@ function PaymentFormView({
             paymentSourceId: selectedPlanSavedCard.provider === 'conekta' ? selectedPlanSavedCard.paymentMethodId : undefined,
             rebillCardId: selectedPlanSavedCard.provider === 'rebill' ? selectedPlanSavedCard.paymentMethodId : undefined,
           });
+          // Only treat the charge as completed when the gateway confirms it;
+          // an authorization-required / processing status is surfaced instead of
+          // reporting a false "cobro realizado" (matches /movil).
+          const chargeStatus = String(
+            (chargeResponse as { status?: unknown })?.status
+            || (chargeResponse as { payment?: { status?: unknown } })?.payment?.status
+            || '',
+          ).toLowerCase();
+          if (chargeStatus && !SUCCESS_PAYMENT_STATUSES.has(chargeStatus)) {
+            Alert.alert('Cobro en proceso', 'El cobro con la tarjeta guardada quedó en proceso. Confirma el estado en unos minutos.');
+            onSaved();
+            return;
+          }
           onSaved(buildPaymentCompletionDraft(parsedAmount, paymentConcept));
           return;
         }
@@ -5476,6 +5843,17 @@ function PaymentFormView({
             ...productMetadata,
             source: 'native_mobile_payments',
             notes: notes.trim() || undefined,
+            ...(applyTaxFlag ? {
+              tax: {
+                applied: true,
+                name: taxName,
+                rate: getConfiguredTaxRate(paymentTaxes),
+                calculationMode: taxCalculationMode,
+                subtotalAmount: taxBreakdown.subtotalAmount,
+                taxAmount: taxBreakdown.taxAmount,
+                totalAmount: taxBreakdown.totalAmount,
+              },
+            } : {}),
           },
         });
         onSaved(buildPaymentCompletionDraft(parsedAmount, paymentConcept));
@@ -5523,6 +5901,8 @@ function PaymentFormView({
           },
           totalAmount: parsedAmount,
           currency: resolvedCurrency,
+          applyTax: applyTaxFlag,
+          taxCalculationMode: applyTaxFlag ? taxCalculationMode : undefined,
           concept: paymentConcept,
           description: paymentDescription,
           title: paymentConcept,
@@ -5531,6 +5911,8 @@ function PaymentFormView({
             name: paymentConcept,
             description: paymentDescription,
             currency: resolvedCurrency,
+            applyTax: applyTaxFlag,
+            taxCalculationMode: applyTaxFlag ? taxCalculationMode : undefined,
             items: lineItems,
             contactDetails: {
               id: selectedContact.id,
@@ -5592,6 +5974,8 @@ function PaymentFormView({
             : 'active',
         amount: parsedAmount,
         currency: resolvedCurrency,
+        applyTax: applyTaxFlag,
+        taxCalculationMode: applyTaxFlag ? taxCalculationMode : undefined,
         intervalType,
         intervalCount: Math.max(1, Math.round(Number(intervalCount) || 1)),
         startDate,
@@ -5861,6 +6245,40 @@ function PaymentFormView({
           )}
           <PaymentTextField label={mode === 'subscription' ? 'Nombre de la suscripción' : 'Concepto'} value={concept} onChangeText={setConcept} placeholder="Ej. Consulta inicial" />
           <PaymentTextField label="Descripción del producto / detalle" value={description} onChangeText={setDescription} placeholder="Ej. Pago de servicios, consulta, etc." multiline />
+          {paymentTaxes.enabled ? (
+            <>
+              <PaymentOptionGroup
+                label={taxName}
+                value={includeIVA ? 'con' : 'sin'}
+                options={[
+                  { value: 'sin', label: `Sin ${taxName}` },
+                  { value: 'con', label: `Con ${taxName}` },
+                ]}
+                onChange={(value) => setIncludeIVA(value === 'con')}
+              />
+              {includeIVA ? (
+                <>
+                  <PaymentOptionGroup
+                    label="Cálculo del impuesto"
+                    value={taxCalculationMode}
+                    options={[
+                      { value: 'exclusive', label: 'Se suma al monto' },
+                      { value: 'inclusive', label: 'Incluido en el monto' },
+                    ]}
+                    onChange={(value) => setTaxCalculationMode(value === 'inclusive' ? 'inclusive' : 'exclusive')}
+                  />
+                  <View style={styles.paymentSummaryRow}>
+                    <Text style={styles.paymentSummaryLabel}>{taxName} ({getConfiguredTaxRate(paymentTaxes)}%)</Text>
+                    <Text style={styles.paymentSummaryValue}>{formatCurrency(taxBreakdown.taxAmount, resolvedCurrency)}</Text>
+                  </View>
+                  <View style={styles.paymentSummaryRow}>
+                    <Text style={styles.paymentSummaryLabel}>Total</Text>
+                    <Text style={styles.paymentSummaryValue}>{formatCurrency(taxBreakdown.totalAmount, resolvedCurrency)}</Text>
+                  </View>
+                </>
+              ) : null}
+            </>
+          ) : null}
         </View>
         {mode === 'partial' ? renderPartialPlanSchedule() : null}
         </>
@@ -5952,7 +6370,7 @@ function PaymentFormView({
             <>
               {singleAction === 'payment_link' ? (
                 <>
-                  <PaymentOptionGroup label="Pasarela" value={paymentLinkProvider} options={PAYMENT_LINK_PROVIDER_OPTIONS} onChange={setPaymentLinkProvider} />
+                  <PaymentOptionGroup label="Pasarela" value={paymentLinkProvider} options={linkProviderOptions} onChange={setPaymentLinkProvider} />
                   <PaymentOptionGroup label="Meses sin intereses" value={installmentsEnabled} options={PAYMENT_INSTALLMENT_OPTIONS} onChange={setInstallmentsEnabled} />
                   {installmentsEnabled === 'enabled' ? (
                     <PaymentTextField label="Máximo de meses" value={maxInstallments} onChangeText={setMaxInstallments} placeholder="3" keyboardType="number-pad" />
@@ -5984,7 +6402,7 @@ function PaymentFormView({
             <>
               {effectivePlanCollectionMode === 'authorization_link' ? (
                 <>
-                  <PaymentOptionGroup label="Pasarela de domiciliación" value={planGatewayProvider} options={PAYMENT_PLAN_PROVIDER_OPTIONS} onChange={setPlanGatewayProvider} />
+                  <PaymentOptionGroup label="Pasarela de domiciliación" value={planGatewayProvider} options={planProviderOptions} onChange={setPlanGatewayProvider} />
                   <Text style={styles.paymentWarningText}>
                     {firstPaymentAmount > 0
                       ? 'Se registrará el primer pago y después se preparará el enlace para domiciliar los cobros restantes.'
@@ -5993,7 +6411,7 @@ function PaymentFormView({
                 </>
               ) : (
                 <>
-                  <PaymentOptionGroup label="Pasarela" value={planGatewayProvider} options={PAYMENT_PLAN_PROVIDER_OPTIONS} onChange={setPlanGatewayProvider} />
+                  <PaymentOptionGroup label="Pasarela" value={planGatewayProvider} options={planProviderOptions} onChange={setPlanGatewayProvider} />
                   <PaymentSavedCardList
                     cards={availablePlanSavedCards}
                     emptyText={`Este contacto no tiene tarjetas guardadas en ${getPaymentProviderLabel(planGatewayProvider)}. Regresa y usa efectivo o transferencia para enviar link de domiciliación.`}
@@ -6017,7 +6435,7 @@ function PaymentFormView({
                   onSelect={setSelectedPlanSavedCardKey}
                 />
               ) : (
-                <PaymentOptionGroup label="Pasarela" value={provider} options={SUBSCRIPTION_PROVIDER_OPTIONS} onChange={setProvider} />
+                <PaymentOptionGroup label="Pasarela" value={provider} options={subscriptionProviderOptions} onChange={setProvider} />
               )}
               <PaymentOptionGroup label="Frecuencia" value={intervalType} options={SUBSCRIPTION_INTERVAL_OPTIONS} onChange={setIntervalType} />
               <PaymentTextField label="Cada cuántos periodos" value={intervalCount} onChangeText={setIntervalCount} placeholder="1" keyboardType="number-pad" />
@@ -6151,7 +6569,7 @@ function PaymentSelectField({
         onPress={onPress}
         style={({ pressed }) => [styles.paymentSelectButton, open && styles.paymentSelectButtonOpen, pressed && styles.pressed]}
       >
-        <LiquidControlBackground selected={Boolean(open)} />
+        <LiquidControlBackground selected={Boolean(open)} variant="soft" />
         <View style={styles.paymentChoiceIcon}>
           <Icon size={18} color={COLORS.accent} strokeWidth={2.35} />
         </View>
@@ -6429,6 +6847,31 @@ function getEventStatus(event: CalendarEventItem) {
     rescheduled: 'Reprogramada',
   };
   return labels[raw] || raw || 'Programada';
+}
+
+// The six appointment statuses /movil exposes in its status selector.
+const APPOINTMENT_STATUS_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: 'pending', label: 'Pendiente' },
+  { value: 'confirmed', label: 'Confirmada' },
+  { value: 'cancelled', label: 'Cancelada' },
+  { value: 'showed', label: 'Asistió' },
+  { value: 'noshow', label: 'No asistió' },
+  { value: 'rescheduled', label: 'Reprogramada' },
+];
+
+function normalizeAppointmentStatus(value?: string) {
+  const raw = String(value || '').toLowerCase();
+  if (raw === 'canceled') return 'cancelled';
+  if (raw === 'no_show' || raw === 'no-show') return 'noshow';
+  return raw || 'confirmed';
+}
+
+// The backend returns this sentinel when no business context is stored; /movil
+// maps it to '' on load so it is not treated as user-entered content.
+const EMPTY_BUSINESS_CONTEXT_TEXT = 'No se proporcionaron detalles del negocio.';
+function normalizeBusinessContextDraft(value?: string | null) {
+  const text = String(value || '').trim();
+  return text === EMPTY_BUSINESS_CONTEXT_TEXT ? '' : text;
 }
 
 function getEventStart(event: CalendarEventItem) {
@@ -8144,7 +8587,7 @@ function CalendarYearOverview({
               pressed && styles.pressed,
             ]}
           >
-            <LiquidControlBackground selected={selected} />
+            <LiquidControlBackground selected={selected} variant="soft" />
             <Text style={[
               styles.calendarYearMonthTitle,
               today && styles.calendarYearMonthToday,
@@ -8318,9 +8761,9 @@ function CalendarTimelineView({
                 ]}
               >
                 <LiquidControlBackground selected={selected} />
-                <Text style={[styles.calendarWeekDayLabel, today && styles.calendarWeekDayToday]}>{CALENDAR_WEEKDAYS[dateOnlyToCalendarDate(dateOnly)?.getDay() || 0]}</Text>
+                <Text style={[styles.calendarWeekDayLabel, today && styles.calendarWeekDayToday, selected && styles.calendarWeekDayLabelSelected]}>{CALENDAR_WEEKDAYS[dateOnlyToCalendarDate(dateOnly)?.getDay() || 0]}</Text>
                 <Text style={[styles.calendarWeekDayNumber, selected && styles.calendarWeekDayNumberSelected]}>{formatDateOnlyDayNumber(dateOnly)}</Text>
-                {events.length ? <Text style={styles.calendarWeekDayCount}>{events.length}</Text> : null}
+                {events.length ? <Text style={[styles.calendarWeekDayCount, selected && styles.calendarWeekDayCountSelected]}>{events.length}</Text> : null}
               </Pressable>
             );
           })}
@@ -9561,7 +10004,33 @@ function AppointmentFormSheet({
               }}
             />
 
-            {showAssignmentPicker && scheduleMode === 'custom' ? (
+            <View style={styles.appointmentSection}>
+              <Text style={styles.appointmentFieldLabel}>Estado</Text>
+              <View style={styles.appointmentChipRow}>
+                {APPOINTMENT_STATUS_OPTIONS.map((option) => {
+                  const selected = normalizeAppointmentStatus(draft.appointmentStatus) === option.value;
+                  return (
+                    <Pressable
+                      key={option.value}
+                      accessibilityRole="button"
+                      onPress={() => updateDraft({ appointmentStatus: option.value })}
+                      style={({ pressed }) => [
+                        styles.appointmentChoiceChip,
+                        selected && styles.appointmentChoiceChipActive,
+                        pressed && styles.pressed,
+                      ]}
+                    >
+                      <LiquidControlBackground selected={selected} />
+                      <Text style={[styles.appointmentChoiceText, selected && styles.appointmentChoiceTextActive]}>
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+
+            {showAssignmentPicker ? (
               <View style={styles.appointmentSection}>
                 <Text style={styles.appointmentFieldLabel}>
                   {assignmentRequired ? 'Elegir miembro del equipo' : 'Persona asignada'}
@@ -9874,7 +10343,6 @@ function AppointmentSelectField({
           pressed && styles.pressed,
         ]}
       >
-        {onPress ? <LiquidControlBackground /> : null}
         {Icon ? <Icon size={compact ? 18 : 20} color={COLORS.muted} strokeWidth={2.35} /> : null}
         <Text
           adjustsFontSizeToFit={compact}
@@ -10488,7 +10956,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
               onPress={() => setPeriodMenuOpen((open) => !open)}
               style={({ pressed }) => [styles.analyticsPeriodToggle, periodMenuOpen && styles.analyticsPeriodToggleOpen, pressed && styles.pressed]}
             >
-              <LiquidControlBackground selected={periodMenuOpen} />
+              <LiquidControlBackground selected={periodMenuOpen} variant="soft" />
               <Text numberOfLines={1} style={styles.analyticsPeriodToggleText}>{activePeriodLabel}</Text>
               <ChevronDown size={16} color={COLORS.text} strokeWidth={2.6} />
             </Pressable>
@@ -10905,10 +11373,6 @@ function getNativeConversationComposerBackground() {
   return activeNativeThemeTone === 'light' ? CONVERSATION_COMPOSER_LIGHT_BACKGROUND : COLORS.panel;
 }
 
-function getNativeConversationKeyboardSurfaceBackground() {
-  return activeNativeThemeTone === 'light' ? CONVERSATION_KEYBOARD_LIGHT_BACKGROUND : CONVERSATION_KEYBOARD_DARK_BACKGROUND;
-}
-
 function getNativePhoneThemeBackground(tone: 'light' | 'dark') {
   return (tone === 'light' ? LIGHT_COLORS : DARK_COLORS).bg;
 }
@@ -11098,7 +11562,9 @@ function SettingsScreen({
     try {
       const status = await api.getAIAgentConfig();
       if (!settingsMountedRef.current) return;
-      const context = String(status.businessContext || '').trim();
+      // Map the backend's empty-context sentinel to '' so it never leaks into
+      // the editable draft as if the user had typed it (matches /movil).
+      const context = normalizeBusinessContextDraft(status.businessContext);
       setAiAgentConfig(status);
       setBusinessContextDraft(context);
       setSavedBusinessContext(context);
@@ -11112,13 +11578,30 @@ function SettingsScreen({
     }
   }, [api]);
 
+  const connectAIToken = useCallback(async (apiKey: string) => {
+    const status = await api.saveAIAgentConfig({ apiKey });
+    if (!settingsMountedRef.current) return;
+    if (status) {
+      const context = normalizeBusinessContextDraft(status.businessContext);
+      setAiAgentConfig(status);
+      setBusinessContextDraft(context);
+      setSavedBusinessContext(context);
+    } else {
+      await loadAIAgentStatus();
+    }
+  }, [api, loadAIAgentStatus]);
+
   const loadTemplates = useCallback(async () => {
     setTemplatesLoading(true);
     setTemplatesError('');
     try {
       const response = await api.getWhatsAppTemplates(null);
       if (!settingsMountedRef.current) return;
-      setTemplates(Array.isArray(response.items) ? response.items : []);
+      const responseItems = Array.isArray(response.items) ? response.items : [];
+      // Fall back to the templates surfaced by the WhatsApp status payload when
+      // the templates endpoint returns none, matching /movil.
+      const statusItems = (whatsappStatus as { templates?: { items?: typeof responseItems } } | null)?.templates?.items;
+      setTemplates(responseItems.length ? responseItems : (Array.isArray(statusItems) ? statusItems : []));
     } catch (err) {
       if (!settingsMountedRef.current) return;
       setTemplates([]);
@@ -11126,7 +11609,7 @@ function SettingsScreen({
     } finally {
       if (settingsMountedRef.current) setTemplatesLoading(false);
     }
-  }, [api]);
+  }, [api, whatsappStatus]);
 
   const loadWhatsAppStatus = useCallback(async (refresh = false) => {
     setWhatsappLoading(true);
@@ -11323,6 +11806,16 @@ function SettingsScreen({
       ? pushCalendarIds.filter((id) => id !== calendarId)
       : [...pushCalendarIds, calendarId];
     void saveUserPreference('calendar_push_notification_calendar_ids', next);
+  };
+
+  const handleCalendarPushToggle = (checked: boolean) => {
+    void saveUserPreference('calendar_push_notifications_enabled', checked);
+    // Enabling with exactly one calendar and no explicit selection: target it,
+    // so the alert clearly points at that calendar (matches /movil).
+    if (checked && calendars.length === 1 && pushCalendarIds.length === 0) {
+      const onlyId = String(calendars[0]?.id || calendars[0]?._id || '');
+      if (onlyId) void saveUserPreference('calendar_push_notification_calendar_ids', [onlyId]);
+    }
   };
 
   const selectWhatsAppNumbersMode = (mode: 'together' | 'separate') => {
@@ -11591,6 +12084,7 @@ function SettingsScreen({
       onBusinessContextMessageChange={setBusinessContextMessage}
       onSaveBusinessContext={saveRefinedBusinessContext}
       onSaveAppPreference={(key, value) => void saveAppPreference(key, value)}
+      onConnectToken={connectAIToken}
     />
   );
 
@@ -11673,7 +12167,7 @@ function SettingsScreen({
               onPress={() => void saveAppPreference('mobile_chat_theme_preference', id)}
               style={({ pressed }) => [styles.settingsChoiceButton, selected && styles.settingsChoiceActive, pressed && styles.pressed]}
             >
-              <LiquidControlBackground selected={selected} />
+              <LiquidControlBackground selected={selected} variant="soft" />
               <View style={[styles.settingsChoiceIcon, selected && styles.settingsChoiceIconActive]}>
                 <Icon size={18} color={getSettingsChoiceIconColor(selected)} strokeWidth={2.35} />
               </View>
@@ -11737,7 +12231,7 @@ function SettingsScreen({
         </Pressable>
       </View>
       <SettingsToggleRow title="Mensajes del chat" description="Avísame cuando llegue un WhatsApp nuevo." checked={chatPushEnabled} disabled={savingKey === 'chat_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('chat_push_notifications_enabled', checked)} />
-      <SettingsToggleRow title="Citas agendadas" description="Avísame cuando alguien reserve una cita nueva." checked={calendarPushEnabled} disabled={savingKey === 'calendar_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('calendar_push_notifications_enabled', checked)} />
+      <SettingsToggleRow title="Citas agendadas" description="Avísame cuando alguien reserve una cita nueva." checked={calendarPushEnabled} disabled={savingKey === 'calendar_push_notifications_enabled'} onChange={handleCalendarPushToggle} />
       {calendarPushEnabled ? (
         <View style={styles.settingsCard}>
           <View style={styles.calendarPickerHeader}>
@@ -11839,6 +12333,7 @@ function SettingsAgentPanel({
   onBusinessContextMessageChange,
   onSaveBusinessContext,
   onSaveAppPreference,
+  onConnectToken,
 }: {
   api: RistakApiClient;
   aiReady: boolean;
@@ -11855,8 +12350,24 @@ function SettingsAgentPanel({
   onBusinessContextMessageChange: (message: string) => void;
   onSaveBusinessContext: (answer: string) => Promise<boolean>;
   onSaveAppPreference: (key: string, value: ConfigValue) => void;
+  onConnectToken: (apiKey: string) => Promise<void>;
 }) {
   const [businessVoiceState, setBusinessVoiceState] = useState<BusinessVoiceState>('idle');
+  const [tokenDraft, setTokenDraft] = useState('');
+  const [tokenSaving, setTokenSaving] = useState(false);
+  const connectToken = async () => {
+    const apiKey = tokenDraft.trim();
+    if (!apiKey || tokenSaving) return;
+    setTokenSaving(true);
+    try {
+      await onConnectToken(apiKey);
+      setTokenDraft('');
+    } catch (err) {
+      Alert.alert('OpenAI', err instanceof Error ? err.message : 'No se pudo conectar el token de OpenAI.');
+    } finally {
+      setTokenSaving(false);
+    }
+  };
   const businessVoiceRecorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const businessVoiceActiveRef = useRef(false);
   const panelMountedRef = useRef(true);
@@ -11995,7 +12506,22 @@ function SettingsAgentPanel({
     <>
       <View style={styles.businessDescriptionPanel}>
         {!aiReady ? (
-          <SettingsEmptyState label={aiAgentConfig?.needsReconnect ? 'Reconecta OpenAI para activar el agente en este celular.' : 'Conecta OpenAI para activar el agente en este celular.'} />
+          <View style={styles.businessDescriptionField}>
+            <SettingsEmptyState label={aiAgentConfig?.needsReconnect ? 'Reconecta OpenAI para activar el agente en este celular.' : 'Conecta OpenAI para activar el agente en este celular.'} />
+            <TextInput
+              value={tokenDraft}
+              onChangeText={setTokenDraft}
+              editable={!tokenSaving}
+              autoCapitalize="none"
+              autoCorrect={false}
+              secureTextEntry
+              placeholder="Pega tu API key de OpenAI (sk-...)"
+              placeholderTextColor={COLORS.muted}
+              keyboardAppearance={getNativeKeyboardAppearance()}
+              style={styles.businessDescriptionInput}
+            />
+            <SecondaryButton label={tokenSaving ? 'Conectando…' : 'Conectar OpenAI'} onPress={connectToken} />
+          </View>
         ) : null}
         <View style={styles.businessDescriptionHeader}>
           <View style={styles.businessDescriptionIcon}><Sparkles size={19} color={COLORS.white} strokeWidth={2.25} /></View>
@@ -12312,6 +12838,7 @@ const SUBSCRIPTION_INTERVAL_OPTIONS = [
 type MobilePaymentAccess = {
   plan: string;
   hasConnectedGateway: boolean;
+  connectedGateways: PaymentGatewayProvider[];
   offlineOnly: boolean;
   canUsePaymentPlans: boolean;
   canUseSubscriptions: boolean;
@@ -12320,6 +12847,7 @@ type MobilePaymentAccess = {
 const DEFAULT_MOBILE_PAYMENT_ACCESS: MobilePaymentAccess = {
   plan: '',
   hasConnectedGateway: false,
+  connectedGateways: [],
   offlineOnly: true,
   canUsePaymentPlans: false,
   canUseSubscriptions: false,
@@ -12339,13 +12867,19 @@ function isLicenseFeatureEnabled(features: LicenseStatusResponse['features'] | u
   return true;
 }
 
+function isPaymentGatewayConnected(integrations: IntegrationsStatus | null | undefined, key: PaymentGatewayProvider) {
+  const status = integrations?.[key];
+  if (!status || typeof status !== 'object') return false;
+  const gateway = status as { connected?: unknown; configured?: unknown };
+  return gateway.connected === true || gateway.configured === true;
+}
+
+function getConnectedPaymentGateways(integrations: IntegrationsStatus | null | undefined): PaymentGatewayProvider[] {
+  return PAYMENT_GATEWAY_STATUS_KEYS.filter((key) => isPaymentGatewayConnected(integrations, key));
+}
+
 function hasConnectedPaymentGateway(integrations: IntegrationsStatus | null | undefined) {
-  return PAYMENT_GATEWAY_STATUS_KEYS.some((key) => {
-    const status = integrations?.[key];
-    if (!status || typeof status !== 'object') return false;
-    const gateway = status as { connected?: unknown; configured?: unknown };
-    return gateway.connected === true || gateway.configured === true;
-  });
+  return getConnectedPaymentGateways(integrations).length > 0;
 }
 
 function resolveMobilePaymentAccess(
@@ -12353,16 +12887,59 @@ function resolveMobilePaymentAccess(
   integrations: IntegrationsStatus | null | undefined,
 ): MobilePaymentAccess {
   const plan = normalizeMobileLicensePlan(license?.plan);
-  const isBasic = plan === 'basic';
-  const hasConnectedGateway = hasConnectedPaymentGateway(integrations);
-  const offlineOnly = isBasic || !hasConnectedGateway;
+  const connectedGateways = getConnectedPaymentGateways(integrations);
+  const hasConnectedGateway = connectedGateways.length > 0;
+  // /movil gates online payments purely on gateway connection (no license/plan
+  // check), so a connected 'basic' account keeps links/plans/subscriptions.
+  const offlineOnly = !hasConnectedGateway;
+  // Match /movil's usePaymentGatewayCapabilities: plans need a plan-capable
+  // gateway (stripe/conekta/rebill) and subscriptions a sub-capable one
+  // (stripe/conekta/mercadopago/rebill), so a clip-only or mercadopago-only
+  // account doesn't get plan/subscription cards it can't actually complete.
+  const planProviders = connectedGateways.filter((gateway) => ['stripe', 'conekta', 'rebill'].includes(gateway));
+  const subscriptionProviders = connectedGateways.filter((gateway) => ['stripe', 'conekta', 'mercadopago', 'rebill'].includes(gateway));
   return {
     plan,
     hasConnectedGateway,
+    connectedGateways,
     offlineOnly,
-    canUsePaymentPlans: !offlineOnly && isLicenseFeatureEnabled(license?.features, 'payment_plans'),
-    canUseSubscriptions: !offlineOnly && isLicenseFeatureEnabled(license?.features, 'subscriptions'),
+    canUsePaymentPlans: planProviders.length > 0 && isLicenseFeatureEnabled(license?.features, 'payment_plans'),
+    canUseSubscriptions: subscriptionProviders.length > 0 && isLicenseFeatureEnabled(license?.features, 'subscriptions'),
   };
+}
+
+const DEFAULT_MOBILE_TAX_SETTINGS: PaymentTaxSettings = {
+  enabled: false,
+  taxName: 'Impuesto',
+  rateValue: 16,
+  calculationMode: 'exclusive',
+};
+
+// Ported verbatim from /movil RecordPaymentModal so the tax split matches the
+// desktop exactly. When taxes are disabled (or the toggle is off) it returns the
+// amount untouched — identical to the current native behavior.
+function getConfiguredTaxRate(taxes: PaymentTaxSettings) {
+  const rateValue = Number(taxes.rateValue);
+  return Number.isFinite(rateValue) ? rateValue : 0;
+}
+
+function calculateConfiguredTax(
+  amount: number,
+  taxes: PaymentTaxSettings,
+  applyTax: boolean,
+  calculationMode: 'exclusive' | 'inclusive',
+) {
+  const rateValue = getConfiguredTaxRate(taxes);
+  const round = (value: number) => Math.round(value * 100) / 100;
+  if (!taxes.enabled || !applyTax || amount <= 0 || rateValue <= 0) {
+    return { subtotalAmount: amount, taxAmount: 0, totalAmount: amount, includesTax: false, calculationMode };
+  }
+  if (calculationMode === 'inclusive') {
+    const taxAmount = round(amount - amount / (1 + rateValue / 100));
+    return { subtotalAmount: round(amount - taxAmount), taxAmount, totalAmount: amount, includesTax: true, calculationMode };
+  }
+  const taxAmount = round(amount * (rateValue / 100));
+  return { subtotalAmount: amount, taxAmount, totalAmount: round(amount + taxAmount), includesTax: true, calculationMode };
 }
 
 function createEmptyProductForm() {
@@ -13789,12 +14366,17 @@ function NativeTemplatesSheet({
               {templates.map((template, index) => {
                 const body = getTemplateBody(template);
                 const key = template.id || template.name || body || `template-${index}`;
+                const templateStatus = template.source === 'whatsapp' ? String(template.status || '').toUpperCase() : '';
+                const templateBlocked = Boolean(templateStatus) && templateStatus !== 'APPROVED';
+                const subtitle = templateBlocked
+                  ? `WhatsApp · ${getTemplateStatusLabel(templateStatus) || templateStatus.toLowerCase()}`
+                  : (body || template.category || (template.source === 'local' ? 'Inserta una respuesta guardada.' : 'Enviar plantilla aprobada por WhatsApp.'));
                 return (
                   <SheetActionRow
                     key={key}
                     Icon={MessageCircle}
                     title={template.name || 'Plantilla'}
-                    subtitle={body || template.category || (template.source === 'local' ? 'Inserta una respuesta guardada.' : 'Enviar plantilla aprobada por WhatsApp.')}
+                    subtitle={subtitle}
                     busy={busyId === key}
                     onPress={() => onSend(template)}
                   />
@@ -14527,12 +15109,123 @@ async function createAssistantAttachmentDraft({
   return attachment;
 }
 
+// --- Assistant reply cleanup (ported from /movil AIAgentPanel) --------------
+// Strips OpenAI citation artifacts and the clarification-option list that the
+// backend sometimes embeds in the reply text, so options don't render twice
+// (once as text, once as tappable buttons) and citation glyphs don't leak.
+function stripCitationArtifacts(value: string) {
+  return String(value || '')
+    .replace(/\s*cite[^]*/g, '')
+    .replace(/\s*【[^】]*†[^】]*】/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\s+([.,;:!?])/g, '$1');
+}
+
+function normalizeClarificationText(value: string) {
+  return stripCitationArtifacts(value)
+    .replace(/\[[^\]]+\]\([^)]+\)/g, '$1')
+    .replace(/[`*_~]/g, '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function isMarkdownListLine(line: string) {
+  return /^\s*(?:[-*•]\s+|\d+[.)]\s+)/.test(line);
+}
+
+function stripMarkdownListMarker(line: string) {
+  return line.trim().replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, '');
+}
+
+function optionAppearsInLine(line: string, options: AIAgentClarificationOption[]) {
+  const normalizedLine = normalizeClarificationText(stripMarkdownListMarker(line));
+  if (!normalizedLine) return false;
+  return options.some((option) => {
+    const normalizedLabel = normalizeClarificationText(option.label || '');
+    if (normalizedLabel.length < 2) return false;
+    if (normalizedLine.includes(normalizedLabel)) return true;
+    const words = normalizedLabel.split(' ').filter((word) => word.length > 2);
+    if (words.length < 2) return false;
+    const matches = words.filter((word) => normalizedLine.includes(word)).length;
+    return matches >= 2 && matches / words.length >= 0.6;
+  });
+}
+
+function removeDanglingOptionsHeading(lines: string[]) {
+  let lastContentIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].trim()) {
+      lastContentIndex = index;
+      break;
+    }
+  }
+  if (lastContentIndex < 0) return;
+  const normalized = normalizeClarificationText(lines[lastContentIndex].replace(/:$/, ''));
+  const genericOptionHeadings = new Set([
+    'opciones', 'opciones disponibles', 'estas opciones',
+    'elige una opcion', 'elige una', 'selecciona una opcion', 'selecciona una',
+  ]);
+  if (genericOptionHeadings.has(normalized)) {
+    lines.splice(lastContentIndex, lines.length - lastContentIndex);
+  }
+}
+
+function stripClarificationOptionLists(content: string, options?: AIAgentClarificationOption[]) {
+  if (!options?.length) return stripCitationArtifacts(content);
+  const lines = stripCitationArtifacts(content).replace(/\r\n/g, '\n').split('\n');
+  const output: string[] = [];
+  for (let index = 0; index < lines.length;) {
+    if (!isMarkdownListLine(lines[index])) {
+      output.push(lines[index]);
+      index += 1;
+      continue;
+    }
+    const block: string[] = [];
+    let blockMentionsOptions = false;
+    while (index < lines.length) {
+      const line = lines[index];
+      if (isMarkdownListLine(line)) {
+        block.push(line);
+        blockMentionsOptions = blockMentionsOptions || optionAppearsInLine(line, options);
+        index += 1;
+        continue;
+      }
+      if (block.length && line.trim() && /^\s{2,}\S/.test(line)) {
+        block.push(line);
+        index += 1;
+        continue;
+      }
+      break;
+    }
+    if (blockMentionsOptions) {
+      removeDanglingOptionsHeading(output);
+      continue;
+    }
+    output.push(...block);
+  }
+  const cleaned = output.join('\n').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (cleaned) return cleaned;
+  return options.length === 1 ? 'Selecciona esta opción:' : 'Selecciona una opción:';
+}
+
 function prepareAssistantMessagesForApi(messages: AssistantConversationMessage[]) {
-  return messages
+  const windowed = messages
     .filter((message) => message.role === 'user' || message.role === 'assistant')
     .filter((message) => message.content.trim())
-    .slice(-24)
-    .map((message) => ({
+    .slice(-24);
+  // Mirror /movil: keep the full attachment payload only on the latest user
+  // message; older messages carry metadata only, so we don't re-upload every
+  // base64 dataUrl/text/thumbnail on every turn (avoids payload-size/timeouts).
+  let lastUserIndex = -1;
+  windowed.forEach((message, index) => {
+    if (message.role === 'user') lastUserIndex = index;
+  });
+  return windowed.map((message, index) => {
+    const keepHeavy = index === lastUserIndex;
+    return {
       role: message.role,
       content: message.content,
       ...(message.attachments?.length ? {
@@ -14542,13 +15235,14 @@ function prepareAssistantMessagesForApi(messages: AssistantConversationMessage[]
           mimeType: attachment.mimeType,
           size: attachment.size,
           kind: attachment.kind,
-          ...(attachment.dataUrl ? { dataUrl: attachment.dataUrl } : {}),
-          ...(attachment.text ? { text: attachment.text } : {}),
-          ...(attachment.thumbnailDataUrl ? { thumbnailDataUrl: attachment.thumbnailDataUrl } : {}),
+          ...(keepHeavy && attachment.dataUrl ? { dataUrl: attachment.dataUrl } : {}),
+          ...(keepHeavy && attachment.text ? { text: attachment.text } : {}),
+          ...(keepHeavy && attachment.thumbnailDataUrl ? { thumbnailDataUrl: attachment.thumbnailDataUrl } : {}),
         })),
       } : {}),
       ...(message.selectedClarificationOption ? { selectedClarificationOption: message.selectedClarificationOption } : {}),
-    }));
+    };
+  });
 }
 
 type AssistantConversationScreenProps = {
@@ -14561,6 +15255,9 @@ function AssistantConversationScreen({ api, onBack }: AssistantConversationScree
   const inputRef = useRef<TextInput>(null);
   const messagesRef = useRef<AssistantConversationMessage[]>([]);
   const mountedRef = useRef(true);
+  // Routing continuity: send the agent category that took the thread and adopt
+  // the one the backend routed to, instead of re-routing with 'auto' each turn.
+  const agentCategoryRef = useRef('auto');
   const [messages, setMessages] = useState<AssistantConversationMessage[]>(() => [
     createAssistantConversationMessage('assistant', 'Listo. Soy tu Asistente Personal AI en Ristak. Pregúntame lo que necesites revisar, decidir o preparar dentro del negocio.'),
   ]);
@@ -14568,7 +15265,7 @@ function AssistantConversationScreen({ api, onBack }: AssistantConversationScree
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<AIAgentConfigStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [attachments, setAttachments] = useState<AssistantAttachmentDraft[]>([]);
   const [attachmentSheetOpen, setAttachmentSheetOpen] = useState(false);
   const [voiceState, setVoiceState] = useState<AssistantVoiceState>('idle');
@@ -14577,9 +15274,7 @@ function AssistantConversationScreen({ api, onBack }: AssistantConversationScree
   const hasDraft = Boolean(draft.trim());
   const hasAssistantContent = hasDraft || attachments.length > 0;
   const voiceRecordingVisible = voiceState === 'recording' || voiceState === 'paused' || voiceState === 'processing';
-  const conversationFrameBackground = keyboardVisible
-    ? getNativeConversationKeyboardSurfaceBackground()
-    : getNativeConversationComposerBackground();
+  const conversationFrameBackground = getNativeConversationComposerBackground();
 
   useEffect(() => {
     messagesRef.current = messages;
@@ -14601,16 +15296,8 @@ function AssistantConversationScreen({ api, onBack }: AssistantConversationScree
         if (mountedRef.current) setStatusLoading(false);
       });
 
-    const show = Keyboard.addListener('keyboardWillShow', () => setKeyboardVisible(true));
-    const showDid = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
-    const hide = Keyboard.addListener('keyboardWillHide', () => setKeyboardVisible(false));
-    const hideDid = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
     return () => {
       mountedRef.current = false;
-      show.remove();
-      showDid.remove();
-      hide.remove();
-      hideDid.remove();
     };
   }, [api]);
 
@@ -14661,12 +15348,18 @@ function AssistantConversationScreen({ api, onBack }: AssistantConversationScree
       const result = await api.sendAIAgentMessage(
         prepareAssistantMessagesForApi(nextMessages),
         getNativeAIAgentViewContext(),
-        'auto',
+        agentCategoryRef.current,
       );
       if (!mountedRef.current) return;
+      const routedCategory = (result as { category?: string }).category;
+      if (routedCategory && routedCategory !== agentCategoryRef.current) {
+        agentCategoryRef.current = routedCategory;
+      }
+      const cleanedReply = stripClarificationOptionLists(result.reply || '', result.clarificationOptions)
+        || 'Listo. ¿Qué más revisamos?';
       setMessages((current) => [
         ...current,
-        createAssistantConversationMessage('assistant', result.reply || 'Listo. ¿Qué más revisamos?', {
+        createAssistantConversationMessage('assistant', cleanedReply, {
           sources: result.sources,
           clarificationOptions: result.clarificationOptions,
           trace: result.trace,
@@ -14864,7 +15557,7 @@ function AssistantConversationScreen({ api, onBack }: AssistantConversationScree
   ), [sendAssistantMessage]);
 
   return (
-    <AppFrame backgroundColor={conversationFrameBackground} keyboardAvoiding={false}>
+    <AppFrame backgroundColor={conversationFrameBackground}>
       <View style={styles.conversationHeader}>
         <Pressable onPress={onBack} style={styles.backButton}>
           <ChevronLeft size={30} color={COLORS.text} strokeWidth={2} />
@@ -14879,11 +15572,7 @@ function AssistantConversationScreen({ api, onBack }: AssistantConversationScree
           </Text>
         </View>
       </View>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'height' : undefined}
-        keyboardVerticalOffset={0}
-        style={[styles.conversationBody, keyboardVisible && styles.conversationBodyKeyboardActive]}
-      >
+      <View style={styles.conversationBody}>
         <View pointerEvents="none" style={styles.conversationWallpaper}>
           {CONVERSATION_WALLPAPER_DOTS.map((dot, index) => (
             <View
@@ -14920,66 +15609,74 @@ function AssistantConversationScreen({ api, onBack }: AssistantConversationScree
             </View>
           ) : null}
         />
-        {attachments.length && !voiceRecordingVisible ? (
-          <AssistantAttachmentTray attachments={attachments} onRemove={removeAssistantAttachment} />
-        ) : null}
-        {voiceRecordingVisible ? (
-          voiceState === 'processing' ? (
-            <View style={styles.aiVoiceProcessingPanel}>
-              <ActivityIndicator color={COLORS.accent} />
-              <Text style={styles.aiTypingText}>Interpretando audio...</Text>
-            </View>
+        <View
+          style={[
+            styles.conversationComposerDock,
+          ]}
+        >
+          {attachments.length && !voiceRecordingVisible ? (
+            <AssistantAttachmentTray attachments={attachments} onRemove={removeAssistantAttachment} />
+          ) : null}
+          {voiceRecordingVisible ? (
+            voiceState === 'processing' ? (
+              <View style={styles.aiVoiceProcessingPanel}>
+                <ActivityIndicator color={COLORS.accent} />
+                <Text style={styles.aiTypingText}>Interpretando audio...</Text>
+              </View>
+            ) : (
+              <NativeVoiceRecordingPanel
+                durationMs={Math.max(0, Number(audioRecorderState.durationMillis || 0))}
+                metering={audioRecorderState.metering}
+                paused={voiceState === 'paused' || !audioRecorderState.isRecording}
+                onCancel={() => void cancelAssistantVoiceRecording()}
+                onSend={() => void finishAssistantVoiceRecording()}
+                onTogglePause={toggleAssistantVoicePause}
+              />
+            )
           ) : (
-            <NativeVoiceRecordingPanel
-              durationMs={Math.max(0, Number(audioRecorderState.durationMillis || 0))}
-              metering={audioRecorderState.metering}
-              paused={voiceState === 'paused' || !audioRecorderState.isRecording}
-              onCancel={() => void cancelAssistantVoiceRecording()}
-              onSend={() => void finishAssistantVoiceRecording()}
-              onTogglePause={toggleAssistantVoicePause}
-            />
-          )
-        ) : (
-        <View style={[styles.composer, hasAssistantContent && styles.composerHasContent, styles.aiAssistantComposer, keyboardVisible && styles.composerKeyboardActive]}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Agregar archivo" onPress={() => setAttachmentSheetOpen(true)} style={styles.composerPlus}>
-            <Plus size={28} color={COLORS.text} strokeWidth={1.9} />
-          </Pressable>
-          <View style={styles.messageInputWrap}>
-            <TextInput
-              ref={inputRef}
-              value={draft}
-              onChangeText={setDraft}
-              multiline
-              editable={!sending}
-              autoCapitalize="sentences"
-              autoCorrect
-              placeholder="Pregúntale a tu asistente"
-              placeholderTextColor={COLORS.muted}
-              keyboardAppearance={getNativeKeyboardAppearance()}
-              textAlignVertical="center"
-              style={styles.composerInput}
-            />
-          </View>
-          <View style={[styles.composerTrailingActions, styles.composerTrailingActionsCompact]}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={hasAssistantContent ? 'Enviar mensaje al asistente' : 'Grabar nota de voz para el asistente'}
-              disabled={sending}
-              onPress={() => {
-                if (hasAssistantContent) {
-                  void sendAssistantMessage();
-                  return;
-                }
-                void startAssistantVoiceRecording();
-              }}
-              style={[styles.composerSendButton, hasAssistantContent && styles.composerSendButtonActive, sending && styles.disabledButton]}
-            >
-              {sending ? <ActivityIndicator color={COLORS.white} /> : hasAssistantContent ? <ArrowRight size={18} color={COLORS.white} strokeWidth={2.55} /> : <Mic size={26} color={COLORS.text} strokeWidth={1.9} />}
+          <View style={[styles.composer, hasAssistantContent && styles.composerHasContent, styles.aiAssistantComposer, composerFocused && styles.composerKeyboardActive]}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Agregar archivo" onPress={() => setAttachmentSheetOpen(true)} style={styles.composerPlus}>
+              <Plus size={28} color={COLORS.text} strokeWidth={1.9} />
             </Pressable>
+            <View style={styles.messageInputWrap}>
+              <TextInput
+                ref={inputRef}
+                value={draft}
+                onChangeText={setDraft}
+                multiline
+                editable={!sending}
+                autoCapitalize="sentences"
+                autoCorrect
+                onBlur={() => setComposerFocused(false)}
+                onFocus={() => setComposerFocused(true)}
+                placeholder="Pregúntale a tu asistente"
+                placeholderTextColor={COLORS.muted}
+                keyboardAppearance={getNativeKeyboardAppearance()}
+                textAlignVertical="center"
+                style={styles.composerInput}
+              />
+            </View>
+            <View style={[styles.composerTrailingActions, styles.composerTrailingActionsCompact]}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={hasAssistantContent ? 'Enviar mensaje al asistente' : 'Grabar nota de voz para el asistente'}
+                disabled={sending}
+                onPress={() => {
+                  if (hasAssistantContent) {
+                    void sendAssistantMessage();
+                    return;
+                  }
+                  void startAssistantVoiceRecording();
+                }}
+                style={[styles.composerSendButton, hasAssistantContent && styles.composerSendButtonActive, sending && styles.disabledButton]}
+              >
+                {sending ? <ActivityIndicator color={COLORS.white} /> : hasAssistantContent ? <ArrowRight size={18} color={COLORS.white} strokeWidth={2.55} /> : <Mic size={26} color={COLORS.text} strokeWidth={1.9} />}
+              </Pressable>
+            </View>
           </View>
+          )}
         </View>
-        )}
-      </KeyboardAvoidingView>
+      </View>
       <AssistantAttachmentSheet
         open={attachmentSheetOpen}
         onClose={() => setAttachmentSheetOpen(false)}
@@ -16965,23 +17662,27 @@ function getContactInitials(contact: ChatContact) {
 function ChatSelectionPanel({
   allVisibleSelected,
   archiveLabel,
+  muteLabel,
   busy,
   count,
   menuOpen,
   onArchiveSelected,
   onClear,
   onMarkRead,
+  onMuteSelected,
   onToggleMenu,
   onToggleVisible,
 }: {
   allVisibleSelected: boolean;
   archiveLabel: string;
+  muteLabel: string;
   busy: boolean;
   count: number;
   menuOpen: boolean;
   onArchiveSelected: () => void;
   onClear: () => void;
   onMarkRead: () => void;
+  onMuteSelected: () => void;
   onToggleMenu: () => void;
   onToggleVisible: () => void;
 }) {
@@ -17000,8 +17701,8 @@ function ChatSelectionPanel({
         </View>
         <Pressable accessibilityRole="button" accessibilityState={{ selected: allVisibleSelected }} onPress={onToggleVisible} style={styles.chatSelectionSelectAll}>
           <LiquidControlBackground selected={allVisibleSelected} />
-          <ListChecks size={16} color={COLORS.text} strokeWidth={2.6} />
-          <Text numberOfLines={1} style={styles.chatSelectionSelectAllText}>
+          <ListChecks size={16} color={allVisibleSelected ? COLORS.white : COLORS.text} strokeWidth={2.6} />
+          <Text numberOfLines={1} style={[styles.chatSelectionSelectAllText, allVisibleSelected && styles.chatSelectionSelectAllTextActive]}>
             {allVisibleSelected ? 'Quitar' : 'Visibles'}
           </Text>
         </Pressable>
@@ -17011,7 +17712,7 @@ function ChatSelectionPanel({
           onPress={onToggleMenu}
           style={[styles.chatSelectionMoreButton, busy && styles.disabledButton]}
         >
-          <LiquidControlBackground selected={menuOpen} />
+          <LiquidControlBackground selected={menuOpen} variant="soft" />
           <MoreHorizontal size={24} color={COLORS.text} strokeWidth={2.55} />
         </Pressable>
       </View>
@@ -17024,6 +17725,15 @@ function ChatSelectionPanel({
             <View style={styles.chatSelectionActionCopy}>
               <Text style={styles.chatSelectionActionTitle}>Marcar como leídos</Text>
               <Text style={styles.chatSelectionActionSubtitle}>Quita pendientes de los chats seleccionados.</Text>
+            </View>
+          </Pressable>
+          <Pressable disabled={busy} onPress={onMuteSelected} style={({ pressed }) => [styles.chatSelectionActionRow, pressed && styles.pressed]}>
+            <View style={styles.chatSelectionActionIcon}>
+              <BellOff size={18} color={COLORS.accent} strokeWidth={2.7} />
+            </View>
+            <View style={styles.chatSelectionActionCopy}>
+              <Text style={styles.chatSelectionActionTitle}>{muteLabel}</Text>
+              <Text style={styles.chatSelectionActionSubtitle}>Silencia o reactiva las notificaciones de los chats seleccionados.</Text>
             </View>
           </Pressable>
           <Pressable disabled={busy} onPress={onArchiveSelected} style={({ pressed }) => [styles.chatSelectionActionRow, pressed && styles.pressed]}>
@@ -17041,13 +17751,18 @@ function ChatSelectionPanel({
   );
 }
 
-function ChatRow({
+// Memoizada: el poll del inbox corre cada 20s y sin memo re-renderiza todas
+// las filas aunque nada cambie (el merge preserva identidad de contactos).
+const ChatRow = React.memo(function ChatRow({
   contact,
   archived,
   selected,
   selectionActive,
   showLastPreview,
   showUnreadIndicators,
+  // Prop declarada solo para invalidar el memo cuando cambia el tema (los
+  // estilos viven en un objeto global que se intercambia al vuelo).
+  themeTone: _themeTone,
   timezone,
   onPress,
   onLongPress,
@@ -17058,9 +17773,10 @@ function ChatRow({
   selectionActive: boolean;
   showLastPreview: boolean;
   showUnreadIndicators: boolean;
+  themeTone?: string;
   timezone: string;
-  onPress: () => void;
-  onLongPress?: () => void;
+  onPress: (contact: ChatContact) => void;
+  onLongPress?: (contact: ChatContact) => void;
 }) {
   const avatar = getContactAvatar(contact);
   const unread = getUnreadCount(contact);
@@ -17077,8 +17793,8 @@ function ChatRow({
         archived && styles.chatRowArchived,
         pressed && styles.pressed,
       ]}
-      onPress={onPress}
-      onLongPress={selectionActive ? undefined : onLongPress}
+      onPress={() => onPress(contact)}
+      onLongPress={selectionActive || !onLongPress ? undefined : () => onLongPress(contact)}
       delayLongPress={310}
     >
       {selectionActive ? (
@@ -17110,7 +17826,7 @@ function ChatRow({
       </View>
     </Pressable>
   );
-}
+});
 
 function FormattedChatPreview({ contact, unread }: { contact: ChatContact; unread?: boolean }) {
   const { prefix, text } = getChatPreviewParts(contact);
@@ -17271,15 +17987,25 @@ function NativeContactDetailScreen({
   };
 
   const savePhone = () => {
-    const nextPhone = phoneDraft.trim();
+    const rawPhone = phoneDraft.trim();
     setPhoneEditing(false);
-    if (nextPhone === (contact.phone || '')) return;
+    if (rawPhone === (contact.phone || '')) return;
+    // Normalize + validate like /movil: keep a leading +, strip other non-digits,
+    // require 7-15 digits before saving.
+    const normalized = rawPhone
+      ? `${rawPhone.startsWith('+') ? '+' : ''}${rawPhone.replace(/[^\d]/g, '')}`
+      : '';
+    if (normalized && !/^\+?\d{7,15}$/.test(normalized)) {
+      Alert.alert('Número incompleto', 'Escribe un teléfono válido (7 a 15 dígitos, opcionalmente con +).');
+      return;
+    }
+    if (normalized === (contact.phone || '')) return;
     Alert.alert(
       'Actualizar teléfono',
-      contact.phone ? `Cambiarás ${contact.phone} por ${nextPhone || 'Sin número'}.` : `Guardarás ${nextPhone}.`,
+      contact.phone ? `Cambiarás ${contact.phone} por ${normalized || 'Sin número'}.` : `Guardarás ${normalized}.`,
       [
         { text: 'Cancelar', style: 'cancel' },
-        { text: 'Guardar', onPress: () => onSave({ phone: nextPhone }) },
+        { text: 'Guardar', onPress: () => onSave({ phone: normalized }) },
       ],
     );
   };
@@ -17306,9 +18032,16 @@ function NativeContactDetailScreen({
     const nextId = phone?.id || '';
     setChangingOurNumberId(nextId || '__automatic__');
     try {
+      // Send the empty string (not undefined) when clearing so JSON.stringify
+      // keeps the key and the backend actually removes the pinned number. Also
+      // persist the routing metadata, mirroring /movil.
       onSave({
-        preferredWhatsAppPhoneNumberId: nextId || undefined,
-        preferred_whatsapp_phone_number_id: nextId || undefined,
+        preferredWhatsAppPhoneNumberId: nextId,
+        preferred_whatsapp_phone_number_id: nextId,
+        routingSource: 'manual',
+        routingReason: phone
+          ? `Cambio manual al número ${getBusinessPhoneValue(phone) || phone.id} desde la info del contacto`
+          : 'Cambio a automático desde la info del contacto',
       });
       setOurNumberOpen(false);
     } finally {
@@ -17451,7 +18184,7 @@ function NativeContactDetailScreen({
           archiveTab === 'media' ? (
             <View style={styles.contactInfoMediaGrid}>
               {visibleArchiveItems.map((item) => (
-                <Pressable key={item.id} onPress={() => item.url && Linking.openURL(item.url).catch(() => undefined)} style={styles.contactInfoMediaTile}>
+                <Pressable key={item.id} onPress={() => { if (!item.url) return; if (item.type === 'image') openImageViewer(item.url); else void openInAppBrowser(item.url); }} style={styles.contactInfoMediaTile}>
                   {item.url && item.type === 'image' ? (
                     <Image source={{ uri: item.url }} style={styles.contactInfoMediaImage as ImageStyle} />
                   ) : (
@@ -17475,7 +18208,7 @@ function NativeContactDetailScreen({
                 item.title,
                 item.direction === 'outbound' ? 'Enviado por ti' : 'Enviado por el contacto',
                 [getContactInfoDateShort(item.date, timezone), item.caption].filter(Boolean).join(' · '),
-                () => item.url && Linking.openURL(item.url).catch(() => undefined),
+                () => void openInAppBrowser(item.url),
               ))}
             </View>
           )
@@ -17681,16 +18414,18 @@ function NativeContactDetailScreen({
           </View>
         ) : null}
 
-        <View style={styles.contactInfoLightSection}>
-          <ContactInfoText style={styles.contactInfoSectionHeadingLight}>HISTORIAL DEL AGENTE</ContactInfoText>
-          <ContactInfoSummaryRow
-            Icon={Bot}
-            title={agentHistoryItems[0]?.title || 'Sin actividad del agente'}
-            subtitle={agentHistoryItems[0]?.subtitle || 'Aún no hay metas concretadas por el agente'}
-            action="Ver"
-            onPress={() => openPanel('agent_history')}
-          />
-        </View>
+        {agentHistoryItems.length > 0 ? (
+          <View style={styles.contactInfoLightSection}>
+            <ContactInfoText style={styles.contactInfoSectionHeadingLight}>HISTORIAL DEL AGENTE</ContactInfoText>
+            <ContactInfoSummaryRow
+              Icon={Bot}
+              title={agentHistoryItems[0].title}
+              subtitle={agentHistoryItems[0].subtitle || 'Meta concretada por el agente'}
+              action="Ver"
+              onPress={() => openPanel('agent_history')}
+            />
+          </View>
+        ) : null}
 
         <View style={styles.contactInfoLightSection}>
           <ContactInfoText style={styles.contactInfoSectionHeadingLight}>CAMPOS PERSONALIZADOS</ContactInfoText>
@@ -17989,19 +18724,18 @@ function NativeConversationScreen({
   onToggleMute: (contact: ChatContact) => void;
   pendingDraft?: PendingChatDraft | null;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => conversationMessageMemCache.get(contact.id) || []);
   const [journeyEvents, setJourneyEvents] = useState<JourneyEvent[]>([]);
-  const [, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
+  const [localActivityMarkers, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
   const [completionNotice, setCompletionNotice] = useState<NativeConversationSuccessNotice | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [loading, setLoading] = useState(() => !(conversationMessageMemCache.get(contact.id)?.length));
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSendChannel, setSelectedSendChannel] = useState<ComposerChannelRouteValue>(() => getDefaultComposerChannel(contact));
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [composerFocused, setComposerFocused] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<ConversationDraftAttachment[]>([]);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
@@ -18055,49 +18789,20 @@ function NativeConversationScreen({
   const activeConversationContactIdRef = useRef(contact.id);
   const onContactPatchRef = useRef(onContactPatch);
   const unreadCountRef = useRef(contact.unreadCount);
-  const conversationAtLatestRef = useRef(true);
-  const pendingConversationInitialScrollRef = useRef(true);
   const messagesRef = useRef<ChatMessage[]>([]);
   const agentStatesRef = useRef<ConversationAgentState[]>([]);
   const olderMessagesLoadingRef = useRef(false);
   const conversationHasOlderMessagesRef = useRef(false);
   const conversationHistoryExhaustedContactIdRef = useRef<string | null>(null);
-  const conversationManualScrollActiveRef = useRef(false);
-  const conversationManualScrollReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const clearConversationManualScrollReleaseTimer = useCallback(() => {
-    if (conversationManualScrollReleaseTimerRef.current) {
-      clearTimeout(conversationManualScrollReleaseTimerRef.current);
-      conversationManualScrollReleaseTimerRef.current = null;
-    }
-  }, []);
-
-  const markConversationManualScrollActive = useCallback(() => {
-    clearConversationManualScrollReleaseTimer();
-    conversationManualScrollActiveRef.current = true;
-    pendingConversationInitialScrollRef.current = false;
-  }, [clearConversationManualScrollReleaseTimer]);
-
-  const releaseConversationManualScrollSoon = useCallback(() => {
-    clearConversationManualScrollReleaseTimer();
-    conversationManualScrollReleaseTimerRef.current = setTimeout(() => {
-      conversationManualScrollReleaseTimerRef.current = null;
-      conversationManualScrollActiveRef.current = false;
-    }, 420);
-  }, [clearConversationManualScrollReleaseTimer]);
-
+  // La lista está invertida: offset 0 es el mensaje más reciente. Mantenerse
+  // pegado al último mensaje y compensar prepends lo hace el nativo vía
+  // maintainVisibleContentPosition — aquí solo queda el salto explícito al
+  // más reciente (enviar mensaje, borrador pendiente).
   const scrollConversationToLatest = useCallback((animated: boolean) => {
-    if (conversationManualScrollActiveRef.current) return;
     requestAnimationFrame(() => {
       listRef.current?.scrollToOffset({ offset: 0, animated });
-      conversationAtLatestRef.current = true;
     });
-  }, []);
-
-  const trackConversationScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const atLatest = event.nativeEvent.contentOffset.y <= CONVERSATION_LATEST_SCROLL_THRESHOLD;
-    conversationAtLatestRef.current = atLatest;
-    if (!atLatest) pendingConversationInitialScrollRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -18144,7 +18849,13 @@ function NativeConversationScreen({
 
   useEffect(() => {
     messagesRef.current = messages;
-  }, [messages]);
+    // Persistir la conversación (memoria + disco) para que al reabrirla —incluso
+    // tras cerrar la app— los mensajes anteriores aparezcan al instante.
+    if (messages.length) {
+      conversationMessageMemCache.set(contact.id, messages);
+      writeCache(conversationCacheKey(contact.id), messages.slice(0, CONVERSATION_MESSAGE_CACHE_LIMIT));
+    }
+  }, [messages, contact.id]);
 
   useEffect(() => {
     agentStatesRef.current = agentStates;
@@ -18152,42 +18863,19 @@ function NativeConversationScreen({
 
   useEffect(() => {
     activeConversationContactIdRef.current = contact.id;
-    conversationAtLatestRef.current = true;
-    pendingConversationInitialScrollRef.current = true;
-    conversationManualScrollActiveRef.current = false;
     olderMessagesLoadingRef.current = false;
     conversationHasOlderMessagesRef.current = false;
     conversationHistoryExhaustedContactIdRef.current = null;
     setOlderMessagesLoading(false);
     setPaymentLinkDraftPreview(null);
-    clearConversationManualScrollReleaseTimer();
   }, [contact.id]);
 
-  useEffect(() => {
-    const handleKeyboardShow = () => {
-      setKeyboardVisible(true);
-    };
-    const handleKeyboardDidHide = () => {
-      setKeyboardVisible(false);
-    };
-    const show = Keyboard.addListener('keyboardWillShow', handleKeyboardShow);
-    const hide = Keyboard.addListener('keyboardWillHide', handleKeyboardDidHide);
-    const showDid = Keyboard.addListener('keyboardDidShow', handleKeyboardShow);
-    const hideDid = Keyboard.addListener('keyboardDidHide', handleKeyboardDidHide);
-    return () => {
-      show.remove();
-      hide.remove();
-      showDid.remove();
-      hideDid.remove();
-    };
-  }, []);
-
-  const loadConversation = useCallback(async (silent = false) => {
+  const loadConversation = useCallback(async (silent = false, background = false) => {
     const requestId = loadRequestRef.current + 1;
     loadRequestRef.current = requestId;
-    if (silent) {
-      setRefreshing(true);
-    } else {
+    // Si ya hay mensajes en pantalla (caché hidratada), refrescamos sin spinner:
+    // la lista anterior se queda visible y se reemplaza cuando llega lo nuevo.
+    if (!silent && !background && !messagesRef.current.length) {
       setLoading(true);
     }
     try {
@@ -18197,7 +18885,12 @@ function NativeConversationScreen({
         api.getScheduledMessages(contact.id).catch(() => []),
       ]);
       if (requestId !== loadRequestRef.current) return;
-      setJourneyEvents(Array.isArray(fullJourney) ? fullJourney : Array.isArray(journey) ? journey : []);
+      const nextJourneyEvents = Array.isArray(fullJourney) ? fullJourney : Array.isArray(journey) ? journey : [];
+      // Un poll sin novedades debe ser un no-op de React: conservar las
+      // referencias actuales evita el re-render de todo el hilo cada 7s.
+      setJourneyEvents((current) => (
+        JSON.stringify(current) === JSON.stringify(nextJourneyEvents) ? current : nextJourneyEvents
+      ));
       const journeyMessages = buildMessagesFromJourney(contact.id, journey);
       const receivedFullPage = journeyMessages.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
       conversationHasOlderMessagesRef.current = receivedFullPage && conversationHistoryExhaustedContactIdRef.current !== contact.id;
@@ -18206,8 +18899,18 @@ function NativeConversationScreen({
       }
       const scheduledItems = buildScheduledMessages(contact.id, scheduled);
       const nextMessages = mergeNativeChatMessages(journeyMessages, scheduledItems);
-      setScheduledMessages(scheduledItems);
-      setMessages((current) => (silent ? mergeNativeChatMessages(current, nextMessages) : nextMessages));
+      setScheduledMessages((current) => (
+        JSON.stringify(current) === JSON.stringify(scheduledItems) ? current : scheduledItems
+      ));
+      setMessages((current) => {
+        if (!silent && !background) return nextMessages;
+        // El fetch de programados es autoritativo: retirar fantasmas
+        // `scheduled-*` que ya se enviaron o cancelaron en el servidor.
+        const scheduledIds = new Set(scheduledItems.map((item) => item.id));
+        const base = current.filter((message) => !message.id.startsWith('scheduled-') || scheduledIds.has(message.id));
+        const next = mergeNativeChatMessages(base, nextMessages);
+        return areNativeMessageArraysIdentical(current, next) ? current : next;
+      });
       void api.markChatRead(contact.id).catch(() => undefined);
       if (Number(unreadCountRef.current || 0) > 0) {
         unreadCountRef.current = 0;
@@ -18215,11 +18918,13 @@ function NativeConversationScreen({
       }
     } catch (err) {
       if (requestId !== loadRequestRef.current) return;
-      Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo cargar la conversación.');
+      // A background poll must never interrupt the user with an alert.
+      if (!background) {
+        Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo cargar la conversación.');
+      }
     } finally {
-      if (requestId === loadRequestRef.current) {
+      if (requestId === loadRequestRef.current && !silent && !background) {
         setLoading(false);
-        setRefreshing(false);
       }
     }
   }, [api, contact.id]);
@@ -18260,8 +18965,42 @@ function NativeConversationScreen({
     }
   }, [api, contact.id, loading]);
 
+  // Hidratar el hilo desde disco al abrirlo: si no hay copia en memoria (arranque
+  // en frío) leemos la última conversación guardada y la pintamos al instante
+  // mientras loadConversation trae los mensajes nuevos.
+  useEffect(() => {
+    if (conversationMessageMemCache.get(contact.id)?.length) return;
+    let alive = true;
+    void readCache<ChatMessage[]>(conversationCacheKey(contact.id), []).then((cached) => {
+      if (!alive || !cached.length) return;
+      conversationMessageMemCache.set(contact.id, cached);
+      setMessages((current) => (current.length ? current : cached));
+      setLoading(false);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [contact.id]);
+
   useEffect(() => {
     void loadConversation();
+  }, [loadConversation]);
+
+  // Keep the open thread live like /movil (which reconciles every ~7s): poll in
+  // the background and refresh when the app returns to the foreground, so inbound
+  // messages and delivered/read status update without a manual pull-to-refresh.
+  useEffect(() => {
+    const refresh = () => void loadConversation(true, true);
+    const interval = setInterval(refresh, CONVERSATION_REFRESH_INTERVAL_MS);
+    const appStateSub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refresh();
+    });
+    const pushSub = DeviceEventEmitter.addListener(CHAT_REFRESH_EVENT, refresh);
+    return () => {
+      clearInterval(interval);
+      appStateSub.remove();
+      pushSub.remove();
+    };
   }, [loadConversation]);
 
   const refreshAgentStates = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
@@ -18287,7 +19026,6 @@ function NativeConversationScreen({
 
   useEffect(() => () => {
     if (sheetCloseTimerRef.current) clearTimeout(sheetCloseTimerRef.current);
-    if (conversationManualScrollReleaseTimerRef.current) clearTimeout(conversationManualScrollReleaseTimerRef.current);
   }, []);
 
   const clearSheetCloseTimer = useCallback(() => {
@@ -18329,12 +19067,25 @@ function NativeConversationScreen({
     ].filter(Boolean).join(' ').toLowerCase().includes(needle));
   }, [messages, searchQuery]);
 
+  const activityMarkers = useMemo(
+    () => mergeConversationActivityMarkers(
+      buildConversationActivityMarkers(contact.id, journeyEvents, timezone, accountCurrency),
+      localActivityMarkers,
+    ),
+    [accountCurrency, contact.id, journeyEvents, localActivityMarkers, timezone],
+  );
+
+  const filteredActivityMarkers = useMemo(() => (
+    searchQuery.trim() ? [] : activityMarkers
+  ), [activityMarkers, searchQuery]);
+
   const conversationItems = useMemo<ConversationListItem[]>(() => {
     const items: ConversationListItem[] = [];
     let previousDay = '';
     const timelineItems = [
       ...filteredMessages.map((message) => ({ kind: 'message' as const, date: message.date, message })),
-    ].sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+      ...filteredActivityMarkers.map((marker) => ({ kind: 'activity' as const, date: marker.date, marker })),
+    ].sort((left, right) => getNativeMessageSortTime(left.date) - getNativeMessageSortTime(right.date));
     timelineItems.forEach((item) => {
       const key = getConversationDayKey(item.date, timezone);
       if (key !== previousDay) {
@@ -18345,37 +19096,44 @@ function NativeConversationScreen({
         });
         previousDay = key;
       }
+      if (item.kind === 'activity') {
+        items.push({ type: 'activity', id: `activity-${item.marker.kind}-${item.marker.id}`, marker: item.marker });
+        return;
+      }
       items.push({ type: 'message', id: item.message.id, message: item.message });
     });
     return items;
-  }, [filteredMessages, timezone]);
+  }, [filteredActivityMarkers, filteredMessages, timezone]);
 
+  // La lista invertida renderiza el índice 0 en la parte visual inferior, así
+  // que el timeline (viejo -> nuevo) se entrega volteado: el mensaje más
+  // reciente queda en data[0] y el orden visual es idéntico al anterior.
   const conversationRenderItems = useMemo<ConversationListItem[]>(
     () => {
-      const latestItems = [...conversationItems].reverse();
-      return completionNotice
-        ? [{ type: 'completionNotice', id: `completion-notice-${completionNotice.kind}`, notice: completionNotice }, ...latestItems]
-        : latestItems;
+      const items = completionNotice
+        ? [...conversationItems, { type: 'completionNotice' as const, id: `completion-notice-${completionNotice.kind}`, notice: completionNotice }]
+        : [...conversationItems];
+      items.reverse();
+      return items;
     },
     [completionNotice, conversationItems],
   );
 
-  const conversationHasItems = conversationRenderItems.length > 0;
   const conversationHasScheduledMessages = useMemo(() => (
     messages.some((message) => isScheduledMessage(message))
   ), [messages]);
 
-  const handleConversationContentSizeChange = useCallback(() => {
-    if (!conversationHasItems) return;
-    if (conversationManualScrollActiveRef.current) return;
-    if (pendingConversationInitialScrollRef.current) {
-      pendingConversationInitialScrollRef.current = false;
-      scrollConversationToLatest(false);
-      return;
-    }
-    if (!conversationAtLatestRef.current) return;
-    scrollConversationToLatest(false);
-  }, [conversationHasItems, scrollConversationToLatest]);
+  // Precalculado para no escanear todos los mensajes por burbuja por render.
+  const conversationReplyTargets = useMemo(() => {
+    const map = new Map<string, ChatMessage | null>();
+    messages.forEach((message) => {
+      if (!message.replyToMessageId && !message.replyToProviderMessageId) return;
+      map.set(message.id, findNativeReplyTarget(messages, message));
+    });
+    return map;
+  }, [messages]);
+
+  const conversationKeyExtractor = useCallback((item: ConversationListItem) => item.id, []);
 
   useEffect(() => {
     if (!conversationHasScheduledMessages) return undefined;
@@ -18399,6 +19157,20 @@ function NativeConversationScreen({
   const selectedChannelLabel = selectedChannelOption?.label || 'Sin canal conectado';
   const selectedRouteChannel = selectedChannelOption?.channel || getComposerRouteChannel(selectedSendChannel);
   const selectedRoutePhoneNumberId = selectedChannelOption?.phoneNumberId || getComposerRoutePhoneId(selectedSendChannel);
+  // Resolve the qr/api transport + reply-window state for the currently selected
+  // WhatsApp sender, mirroring /movil's resolvedTransport. Shared by every
+  // WhatsApp send path (text, media, location) so QR-only numbers route to QR.
+  const resolveWhatsAppSendTransport = useCallback(() => {
+    const phone = businessPhones.find((item) => item.id === selectedRoutePhoneNumberId)
+      || businessPhones.find((item) => item.is_default_sender)
+      || businessPhones[0]
+      || null;
+    const qrReady = isBusinessPhoneQrReady(phone);
+    const apiUnavailable = Boolean(phone) && phone?.api_send_enabled === false;
+    const replyWindowOpen = getNativeApiReplyWindowOpen(messagesRef.current);
+    const transport: 'qr' | 'api' = qrReady && (!replyWindowOpen || apiUnavailable) ? 'qr' : 'api';
+    return { phone, qrReady, apiUnavailable, replyWindowOpen, transport };
+  }, [businessPhones, selectedRoutePhoneNumberId]);
   const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0 || paymentLinkDraftPreview);
   const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
   const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
@@ -18407,9 +19179,7 @@ function NativeConversationScreen({
   const manualAgentSendLabel = useMemo(() => getManualAgentSendLabel(manualAgentPromptStates), [manualAgentPromptStates]);
   const voiceRecordingDurationMs = Math.round(audioRecorderState.durationMillis || audioRecorder.currentTime * 1000 || 0);
   const composerPlaceholder = '';
-  const conversationFrameBackground = keyboardVisible
-    ? getNativeConversationKeyboardSurfaceBackground()
-    : getNativeConversationComposerBackground();
+  const conversationFrameBackground = getNativeConversationComposerBackground();
   useEffect(() => {
     if (!pendingDraft || pendingDraft.contact.id !== contact.id || (!pendingDraft.text.trim() && !pendingDraft.paymentPreview && !pendingDraft.activityMarker && !pendingDraft.successNotice)) return;
     const pendingActivityMarker = pendingDraft.activityMarker;
@@ -18575,6 +19345,7 @@ function NativeConversationScreen({
         locationPayload.name,
         locationPayload.address,
         selectedRoutePhoneNumberId,
+        resolveWhatsAppSendTransport().transport,
       );
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
@@ -18588,7 +19359,7 @@ function NativeConversationScreen({
           : message
       )));
       onRefreshChats();
-      void loadConversation(true);
+      void loadConversation(true, true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No pude enviar la ubicación.';
       setMessages((current) => current.map((item) => (
@@ -18700,6 +19471,22 @@ function NativeConversationScreen({
       Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar por este canal.');
       return;
     }
+
+    // Resolve the WhatsApp transport (qr/api) and the 24h reply-window gate,
+    // mirroring /movil's resolvedTransport so QR-only numbers and closed-window
+    // chats route correctly instead of failing at the backend.
+    const contactChannelKind = getContactChannelKind(contact);
+    const isCommentContact = contactChannelKind === 'facebook_comment' || contactChannelKind === 'instagram_comment';
+    const sendingWhatsApp = selectedRouteChannel === 'whatsapp';
+    const whatsAppSend = sendingWhatsApp ? resolveWhatsAppSendTransport() : null;
+    if (whatsAppSend && !whatsAppSend.replyWindowOpen && !whatsAppSend.qrReady) {
+      // No API window and no QR fallback: free text can't be delivered. Route the
+      // user to the (already available) templates sheet, like /movil does.
+      openTemplatesSheet();
+      return;
+    }
+    const resolvedWhatsAppTransport = whatsAppSend?.transport;
+
     if (!options.skipAgentInterruptionConfirm) {
       const latestAgentStates = await refreshAgentStates({ silent: true });
       const activeStates = getActiveConversationAgentStates(latestAgentStates);
@@ -18759,12 +19546,13 @@ function NativeConversationScreen({
     setPaymentLinkDraftPreview(null);
     setReplyingToMessage(null);
     setMessages((current) => [...current, ...optimisticMessages]);
+    scrollConversationToLatest(false);
     updateContactPreview(attachmentsToSend.length ? (textToSend || getAttachmentLabel(attachmentsToSend[0]?.kind)) : textToSend, sentAt, optimisticChannel);
     setSending(true);
     try {
       if (attachmentsToSend.length > 0) {
         const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          sendDraftAttachment(api, contact, attachment, index === 0 ? textToSend : '', selectedRoutePhoneNumberId)
+          sendDraftAttachment(api, contact, attachment, index === 0 ? textToSend : '', selectedRoutePhoneNumberId, resolvedWhatsAppTransport)
         )));
         setMessages((current) => current.map((message) => {
           if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
@@ -18779,7 +19567,16 @@ function NativeConversationScreen({
           };
         }));
       } else {
-        const response = await api.sendText(contact, textToSend, selectedRouteChannel, replyPayload, selectedRoutePhoneNumberId);
+        const response = isCommentContact
+          ? await api.sendMetaSocialCommentReply({
+            contactId: contact.id,
+            platform: contactChannelKind === 'instagram_comment' ? 'instagram' : 'messenger',
+            message: textToSend,
+            // No public comment target is selectable natively yet, so start the
+            // conversation as a private reply (DM the commenter), like /movil.
+            replyType: 'private',
+          })
+          : await api.sendText(contact, textToSend, selectedRouteChannel, replyPayload, selectedRoutePhoneNumberId, resolvedWhatsAppTransport);
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
             ? {
@@ -18794,7 +19591,7 @@ function NativeConversationScreen({
         )));
       }
       onRefreshChats();
-      void loadConversation(true);
+      void loadConversation(true, true);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Intenta otra vez.';
       setMessages((current) => current.map((message) => (
@@ -18846,6 +19643,17 @@ function NativeConversationScreen({
     openSheet('messageActions');
   };
 
+  // Trampolines con identidad estable para las burbujas memoizadas: si estas
+  // callbacks cambiaran por render, React.memo no bloquearía ningún re-render.
+  const openMessageActionsRef = useRef(openMessageActions);
+  openMessageActionsRef.current = openMessageActions;
+  const handleMessageLongPress = useCallback((message: ChatMessage) => {
+    openMessageActionsRef.current(message);
+  }, []);
+  const handleMessageReplySwipe = useCallback((message: ChatMessage) => {
+    setReplyingToMessage(message);
+  }, []);
+
   const reactToMessage = async (message: ChatMessage, emoji: string) => {
     if (message.direction !== 'inbound') {
       closeSheet();
@@ -18889,7 +19697,7 @@ function NativeConversationScreen({
 
     try {
       await api.sendReaction(contact, message, emoji, localReactionId);
-      void loadConversation(true);
+      void loadConversation(true, true);
     } catch (err) {
       setMessages((current) => current.map((item) => (
         item.id === message.id
@@ -19029,6 +19837,18 @@ function NativeConversationScreen({
       return;
     }
 
+    // WhatsApp templates must be APPROVED to send, mirroring /movil's gate.
+    // Meta rejects pending/rejected/paused templates, so block them up front
+    // with an actionable message instead of a raw backend error.
+    const templateStatus = String(template.status || '').toUpperCase();
+    if (templateStatus && templateStatus !== 'APPROVED') {
+      Alert.alert(
+        'Plantilla no disponible',
+        `Solo puedes enviar plantillas aprobadas por WhatsApp. "${template.name || 'Esta plantilla'}" está ${(getTemplateStatusLabel(templateStatus) || templateStatus).toLowerCase()}.`,
+      );
+      return;
+    }
+
     const templateKey = template.id || template.name || localText;
     setTemplateBusyId(templateKey || 'template');
     try {
@@ -19046,7 +19866,7 @@ function NativeConversationScreen({
       }]);
       updateContactPreview(localText || template.name || 'Plantilla enviada', sentAt, 'whatsapp_api');
       closeSheet();
-      void loadConversation(true);
+      void loadConversation(true, true);
     } catch (err) {
       Alert.alert('Plantillas', err instanceof Error ? err.message : 'No se pudo enviar la plantilla.');
     } finally {
@@ -19120,7 +19940,7 @@ function NativeConversationScreen({
       }]);
       updateContactPreview('CLABE', sentAt, getBackendChannelForComposer(selectedRouteChannel));
       closeSheet();
-      void loadConversation(true);
+      void loadConversation(true, true);
     } catch (err) {
       Alert.alert('CLABE', err instanceof Error ? err.message : 'No se pudo enviar la CLABE.');
     } finally {
@@ -19300,17 +20120,34 @@ function NativeConversationScreen({
       Alert.alert('Programar mensaje', channelUnavailableReason);
       return;
     }
+    // Resolve the WhatsApp transport and enforce the 24h reply window for the
+    // FUTURE send time, mirroring /movil: a free-text message scheduled past the
+    // window can't be delivered via API without a QR fallback.
+    let scheduledTransport: 'qr' | 'api' | undefined;
+    if (selectedRouteChannel === 'whatsapp') {
+      const whatsAppSend = resolveWhatsAppSendTransport();
+      scheduledTransport = whatsAppSend.transport;
+      const lastInbound = getNativeLastReplyWindowInboundTime(messagesRef.current);
+      const windowEnd = lastInbound ? lastInbound + 24 * 60 * 60 * 1000 : 0;
+      const scheduledWithinWindow = windowEnd > 0 && scheduledDate.getTime() < windowEnd;
+      if (!whatsAppSend.qrReady && !scheduledWithinWindow) {
+        const reason = 'Para esa hora WhatsApp ya no permitirá un mensaje libre. Programa una plantilla aprobada o conecta este número por QR.';
+        setScheduleError(reason);
+        Alert.alert('Programar mensaje', reason);
+        return;
+      }
+    }
     setScheduleBusy(true);
     setScheduleError('');
     try {
       const editingId = scheduleEditingMessageId;
-      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedRouteChannel, editingId || undefined, selectedRoutePhoneNumberId);
+      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedRouteChannel, editingId || undefined, selectedRoutePhoneNumberId, { transport: scheduledTransport });
       closeSheet();
       setScheduleText('');
       setScheduleDraft(createDefaultScheduleDraft(timezone));
       setScheduleEditingMessageId(null);
       if (draft.trim() === text) setDraft('');
-      void loadConversation(true);
+      void loadConversation(true, true);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo programar el mensaje.';
       setScheduleError(message);
@@ -19444,7 +20281,7 @@ function NativeConversationScreen({
   }
 
   return (
-    <AppFrame backgroundColor={conversationFrameBackground} keyboardAvoiding={false}>
+    <AppFrame backgroundColor={conversationFrameBackground}>
       <View style={styles.conversationHeader}>
         <Pressable onPress={onBack} style={styles.backButton}>
           <ChevronLeft size={30} color={COLORS.text} strokeWidth={2} />
@@ -19503,11 +20340,7 @@ function NativeConversationScreen({
         </View>
       ) : null}
 
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'height' : undefined}
-        keyboardVerticalOffset={0}
-        style={[styles.conversationBody, keyboardVisible && styles.conversationBodyKeyboardActive]}
-      >
+      <View style={styles.conversationBody}>
         <ChatWallpaper parallaxX={conversationParallaxX} parallaxY={conversationParallaxY} />
         {loading ? (
           <View style={styles.centerState}>
@@ -19517,40 +20350,29 @@ function NativeConversationScreen({
           <FlatList
             ref={listRef}
             data={conversationRenderItems}
-            inverted={conversationHasItems}
-            keyExtractor={(item) => item.id}
-            alwaysBounceVertical={false}
-            bounces={false}
-            contentContainerStyle={styles.messageList}
+            keyExtractor={conversationKeyExtractor}
+            inverted
+            scrollsToTop={false}
+            alwaysBounceVertical
+            bounces
+            contentContainerStyle={styles.conversationMessageList}
             keyboardShouldPersistTaps="handled"
-            overScrollMode="never"
-            refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={() => void loadConversation(true)} />}
+            // Anclaje nativo estilo WhatsApp: en una lista invertida el "top"
+            // lógico es el mensaje más reciente, así que autoscrollToTopThreshold
+            // revela mensajes nuevos solo si el usuario ya está pegado abajo y
+            // nunca mueve el viewport cuando está leyendo historial.
+            maintainVisibleContentPosition={{ minIndexForVisible: 1, autoscrollToTopThreshold: 10 }}
             removeClippedSubviews={false}
-            onContentSizeChange={handleConversationContentSizeChange}
-            onEndReached={() => void loadOlderConversationMessages()}
-            onEndReachedThreshold={CHAT_CONVERSATION_OLDER_THRESHOLD}
+            initialNumToRender={20}
+            onEndReached={() => {
+              void loadOlderConversationMessages();
+            }}
+            onEndReachedThreshold={0.6}
             ListFooterComponent={olderMessagesLoading ? (
               <View style={styles.olderMessagesLoader}>
                 <ActivityIndicator color={COLORS.accent} size="small" />
               </View>
             ) : null}
-            scrollEventThrottle={16}
-            onScroll={trackConversationScroll}
-            onScrollBeginDrag={(event) => {
-              markConversationManualScrollActive();
-              trackConversationScroll(event);
-            }}
-            onMomentumScrollBegin={() => {
-              markConversationManualScrollActive();
-            }}
-            onScrollEndDrag={(event) => {
-              trackConversationScroll(event);
-              releaseConversationManualScrollSoon();
-            }}
-            onMomentumScrollEnd={(event) => {
-              trackConversationScroll(event);
-              releaseConversationManualScrollSoon();
-            }}
             ListEmptyComponent={(
               <View style={styles.emptyConversation}>
                 <MessageCircle size={30} color={COLORS.accent} strokeWidth={2.4} />
@@ -19573,165 +20395,174 @@ function NativeConversationScreen({
 	                  <NativeMessageBubble
 	                    contact={contact}
 	                    message={item.message}
-	                    replyTarget={findNativeReplyTarget(messages, item.message)}
+	                    replyTarget={conversationReplyTargets.get(item.message.id) || null}
 	                    searchActive={Boolean(searchQuery)}
-	                    scheduledCountdownNow={scheduledCountdownNow}
+	                    scheduledCountdownNow={isScheduledMessage(item.message) ? scheduledCountdownNow : 0}
 	                    starred={starredMessageIds.includes(item.message.id)}
+	                    themeTone={activeNativeThemeTone}
 	                    timezone={timezone}
-                    onLongPress={() => openMessageActions(item.message)}
-                    onReplySwipe={() => setReplyingToMessage(item.message)}
+                    onLongPress={handleMessageLongPress}
+                    onReplySwipe={handleMessageReplySwipe}
                   />
                 )
             )}
           />
         )}
 
-        {replyingToMessage ? (
-          <View style={styles.replyPreviewBar}>
-            <View style={styles.replyPreviewMarker} />
-            <View style={styles.replyPreviewCopy}>
-              <Text numberOfLines={1} style={styles.replyPreviewTitle}>Respondiendo a {replyingToMessage.direction === 'outbound' ? 'ti' : getContactName(contact)}</Text>
-              <Text numberOfLines={1} style={styles.replyPreviewText}>{getMessagePreviewText(replyingToMessage)}</Text>
-            </View>
-            <Pressable accessibilityRole="button" onPress={() => setReplyingToMessage(null)} style={styles.replyPreviewClose}>
-              <LiquidControlBackground />
-              <X size={16} color={COLORS.muted} strokeWidth={2.45} />
-            </Pressable>
-          </View>
-        ) : null}
-
-        {draftAttachments.length && !voiceDraftAttachment ? (
-          <View style={styles.draftAttachmentTray}>
-            <ScrollView
-              horizontal
-              keyboardShouldPersistTaps="handled"
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.draftAttachmentStrip}
-            >
-              {draftAttachments.map((attachment, index) => (
-                <View
-                  key={attachment.id}
-                  style={[
-                    styles.draftAttachment,
-                    attachment.kind === 'image' || attachment.kind === 'video' ? styles.draftAttachmentMediaCard : styles.draftAttachmentFileCard,
-                  ]}
-                >
-                  <NativeDraftAttachmentPreview attachment={attachment} />
-                  <View style={styles.draftAttachmentIndexBadge}>
-                    <Text style={styles.draftAttachmentIndexText}>{index + 1}</Text>
-                  </View>
-                  <Pressable accessibilityRole="button" onPress={() => removeDraftAttachment(attachment.id)} style={styles.draftAttachmentRemove}>
-                    <X size={14} color={COLORS.white} strokeWidth={2.6} />
-                  </Pressable>
-                </View>
-              ))}
-            </ScrollView>
-            <View style={styles.draftAttachmentTrayFooter}>
-              <Text numberOfLines={1} style={styles.draftAttachmentTrayText}>
-                {draftAttachments.length === 1 ? '1 archivo listo' : `${draftAttachments.length} archivos listos`}
-              </Text>
-              <Text numberOfLines={1} style={styles.draftAttachmentTrayHint}>Agrega texto o envía directo.</Text>
-            </View>
-          </View>
-        ) : null}
-
-        {voiceRecordingVisible ? (
-          <NativeVoiceRecordingPanel
-            durationMs={voiceRecordingDurationMs}
-            metering={audioRecorderState.metering}
-            paused={voiceRecordingPaused || !audioRecorderState.isRecording}
-            onCancel={() => void cancelVoiceRecording()}
-            onSend={() => void finishVoiceRecording()}
-            onTogglePause={toggleVoiceRecordingPause}
-          />
-        ) : null}
-
-        {voiceDraftAttachment && !voiceRecordingVisible ? (
-          <NativeVoicePreviewPanel
-            attachment={voiceDraftAttachment}
-            sending={sending}
-            onCancel={() => removeDraftAttachment(voiceDraftAttachment.id)}
-            onSend={() => void send()}
-          />
-        ) : null}
-
-        {paymentLinkDraftPreview && !voiceRecordingVisible && !voiceDraftAttachment ? (
-          <NativePaymentLinkDraftPreview
-            preview={paymentLinkDraftPreview}
-            onClose={() => setPaymentLinkDraftPreview(null)}
-          />
-        ) : null}
-
-        {!voiceRecordingVisible && !voiceDraftAttachment ? (
-          <View style={[styles.composer, hasComposerContent && styles.composerHasContent, styles.aiAssistantComposer, keyboardVisible && styles.composerKeyboardActive]}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Canal de envío: ${selectedChannelLabel}`}
-              onPress={() => openSheet('channel')}
-              style={({ pressed }) => [
-                styles.composerChannelButton,
-                pressed && styles.pressed,
-              ]}
-            >
-              <ChannelBadgeIcon color={selectedChannelColor} kind={selectedChannelKind} size={22} />
-            </Pressable>
-            <Pressable accessibilityRole="button" onPress={openAttachmentActions} style={styles.composerPlus}>
-              <Plus size={28} color={COLORS.text} strokeWidth={1.9} />
-            </Pressable>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Escribir mensaje"
-              onPress={() => composerInputRef.current?.focus()}
-              style={[styles.messageInputWrap, draft.trim() && styles.messageInputWrapWithSchedule]}
-            >
-              <TextInput
-                ref={composerInputRef}
-                value={draft}
-                onChangeText={setDraft}
-                multiline
-                editable={!sending}
-                placeholder={composerPlaceholder}
-                placeholderTextColor={COLORS.muted}
-                keyboardAppearance={getNativeKeyboardAppearance()}
-                textAlignVertical="center"
-                style={styles.composerInput}
-              />
-              {draft.trim() && !draftAttachments.length ? (
-                <Pressable accessibilityRole="button" onPress={() => {
-                  setScheduleEditingMessageId(null);
-                  setScheduleText(draft);
-                  setScheduleDraft(createDefaultScheduleDraft(timezone));
-                  setScheduleError('');
-                  openSheet('schedule');
-                }} style={styles.composerScheduleButton}>
-                  <LiquidControlBackground />
-                  <Clock size={17} color={COLORS.accent} strokeWidth={2.45} />
-                </Pressable>
-              ) : null}
-            </Pressable>
-            <View style={[styles.composerTrailingActions, hasComposerContent && styles.composerTrailingActionsCompact]}>
-              {!hasComposerContent ? (
-                <Pressable accessibilityRole="button" onPress={() => void pickMedia('camera')} style={styles.composerIconButton}>
-                  <Camera size={24} color={COLORS.text} strokeWidth={1.9} />
-                </Pressable>
-              ) : null}
-              <Pressable
-                disabled={sending}
-                onPress={() => {
-                  if (hasComposerContent) {
-                    void send();
-                    return;
-                  }
-                  void startVoiceRecording();
-                }}
-                style={[styles.composerSendButton, hasComposerContent && styles.composerSendButtonActive, sending && styles.disabledButton]}
-              >
-                {sending ? <ActivityIndicator color={COLORS.white} /> : hasComposerContent ? <ArrowRight size={18} color={COLORS.white} strokeWidth={2.55} /> : <Mic size={26} color={COLORS.text} strokeWidth={1.9} />}
+        <View
+          style={[
+            styles.conversationComposerDock,
+          ]}
+        >
+          {replyingToMessage ? (
+            <View style={styles.replyPreviewBar}>
+              <View style={styles.replyPreviewMarker} />
+              <View style={styles.replyPreviewCopy}>
+                <Text numberOfLines={1} style={styles.replyPreviewTitle}>Respondiendo a {replyingToMessage.direction === 'outbound' ? 'ti' : getContactName(contact)}</Text>
+                <Text numberOfLines={1} style={styles.replyPreviewText}>{getMessagePreviewText(replyingToMessage)}</Text>
+              </View>
+              <Pressable accessibilityRole="button" onPress={() => setReplyingToMessage(null)} style={styles.replyPreviewClose}>
+                <LiquidControlBackground />
+                <X size={16} color={COLORS.muted} strokeWidth={2.45} />
               </Pressable>
             </View>
-          </View>
-        ) : null}
-      </KeyboardAvoidingView>
+          ) : null}
+
+          {draftAttachments.length && !voiceDraftAttachment ? (
+            <View style={styles.draftAttachmentTray}>
+              <ScrollView
+                horizontal
+                keyboardShouldPersistTaps="handled"
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.draftAttachmentStrip}
+              >
+                {draftAttachments.map((attachment, index) => (
+                  <View
+                    key={attachment.id}
+                    style={[
+                      styles.draftAttachment,
+                      attachment.kind === 'image' || attachment.kind === 'video' ? styles.draftAttachmentMediaCard : styles.draftAttachmentFileCard,
+                    ]}
+                  >
+                    <NativeDraftAttachmentPreview attachment={attachment} />
+                    <View style={styles.draftAttachmentIndexBadge}>
+                      <Text style={styles.draftAttachmentIndexText}>{index + 1}</Text>
+                    </View>
+                    <Pressable accessibilityRole="button" onPress={() => removeDraftAttachment(attachment.id)} style={styles.draftAttachmentRemove}>
+                      <X size={14} color={COLORS.white} strokeWidth={2.6} />
+                    </Pressable>
+                  </View>
+                ))}
+              </ScrollView>
+              <View style={styles.draftAttachmentTrayFooter}>
+                <Text numberOfLines={1} style={styles.draftAttachmentTrayText}>
+                  {draftAttachments.length === 1 ? '1 archivo listo' : `${draftAttachments.length} archivos listos`}
+                </Text>
+                <Text numberOfLines={1} style={styles.draftAttachmentTrayHint}>Agrega texto o envía directo.</Text>
+              </View>
+            </View>
+          ) : null}
+
+          {voiceRecordingVisible ? (
+            <NativeVoiceRecordingPanel
+              durationMs={voiceRecordingDurationMs}
+              metering={audioRecorderState.metering}
+              paused={voiceRecordingPaused || !audioRecorderState.isRecording}
+              onCancel={() => void cancelVoiceRecording()}
+              onSend={() => void finishVoiceRecording()}
+              onTogglePause={toggleVoiceRecordingPause}
+            />
+          ) : null}
+
+          {voiceDraftAttachment && !voiceRecordingVisible ? (
+            <NativeVoicePreviewPanel
+              attachment={voiceDraftAttachment}
+              sending={sending}
+              onCancel={() => removeDraftAttachment(voiceDraftAttachment.id)}
+              onSend={() => void send()}
+            />
+          ) : null}
+
+          {paymentLinkDraftPreview && !voiceRecordingVisible && !voiceDraftAttachment ? (
+            <NativePaymentLinkDraftPreview
+              preview={paymentLinkDraftPreview}
+              onClose={() => setPaymentLinkDraftPreview(null)}
+            />
+          ) : null}
+
+          {!voiceRecordingVisible && !voiceDraftAttachment ? (
+            <View style={[styles.composer, hasComposerContent && styles.composerHasContent, styles.aiAssistantComposer, composerFocused && styles.composerKeyboardActive]}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Canal de envío: ${selectedChannelLabel}`}
+                onPress={() => openSheet('channel')}
+                style={({ pressed }) => [
+                  styles.composerChannelButton,
+                  pressed && styles.pressed,
+                ]}
+              >
+                <ChannelBadgeIcon color={selectedChannelColor} kind={selectedChannelKind} size={22} />
+              </Pressable>
+              <Pressable accessibilityRole="button" onPress={openAttachmentActions} style={styles.composerPlus}>
+                <Plus size={28} color={COLORS.text} strokeWidth={1.9} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Escribir mensaje"
+                onPress={() => composerInputRef.current?.focus()}
+                style={[styles.messageInputWrap, draft.trim() && styles.messageInputWrapWithSchedule]}
+              >
+                <TextInput
+                  ref={composerInputRef}
+                  value={draft}
+                  onChangeText={setDraft}
+                  multiline
+                  editable={!sending}
+                  onBlur={() => setComposerFocused(false)}
+                  onFocus={() => setComposerFocused(true)}
+                  placeholder={composerPlaceholder}
+                  placeholderTextColor={COLORS.muted}
+                  keyboardAppearance={getNativeKeyboardAppearance()}
+                  textAlignVertical="center"
+                  style={styles.composerInput}
+                />
+                {draft.trim() && !draftAttachments.length ? (
+                  <Pressable accessibilityRole="button" onPress={() => {
+                    setScheduleEditingMessageId(null);
+                    setScheduleText(draft);
+                    setScheduleDraft(createDefaultScheduleDraft(timezone));
+                    setScheduleError('');
+                    openSheet('schedule');
+                  }} style={styles.composerScheduleButton}>
+                    <LiquidControlBackground />
+                    <Clock size={17} color={COLORS.accent} strokeWidth={2.45} />
+                  </Pressable>
+                ) : null}
+              </Pressable>
+              <View style={[styles.composerTrailingActions, hasComposerContent && styles.composerTrailingActionsCompact]}>
+                {!hasComposerContent ? (
+                  <Pressable accessibilityRole="button" onPress={() => void pickMedia('camera')} style={styles.composerIconButton}>
+                    <Camera size={24} color={COLORS.text} strokeWidth={1.9} />
+                  </Pressable>
+                ) : null}
+                <Pressable
+                  disabled={sending}
+                  onPress={() => {
+                    if (hasComposerContent) {
+                      void send();
+                      return;
+                    }
+                    void startVoiceRecording();
+                  }}
+                  style={[styles.composerSendButton, hasComposerContent && styles.composerSendButtonActive, sending && styles.disabledButton]}
+                >
+                  {sending ? <ActivityIndicator color={COLORS.white} /> : hasComposerContent ? <ArrowRight size={18} color={COLORS.white} strokeWidth={2.55} /> : <Mic size={26} color={COLORS.text} strokeWidth={1.9} />}
+                </Pressable>
+              </View>
+            </View>
+          ) : null}
+        </View>
+      </View>
 
       <NativeManualAgentSendSheet
         agentLabel={manualAgentSendLabel}
@@ -20337,6 +21168,7 @@ function NativeMessageActionSheet({
                 message={message}
                 searchActive={false}
                 starred={starred}
+                themeTone={activeNativeThemeTone}
                 timezone={timezone}
               />
             </View>
@@ -20384,13 +21216,19 @@ function NativeMessageActionDropdownRow({
   );
 }
 
-function NativeMessageBubble({
+// Memoizada: el hilo mantiene ~100 burbujas montadas y el poll de fondo corre
+// cada 7s; sin memo cada tick re-renderiza todas. Requiere props con identidad
+// estable (mensajes preservados por el merge y callbacks trampoline).
+const NativeMessageBubble = React.memo(function NativeMessageBubble({
   contact,
   message,
   replyTarget,
   searchActive,
   scheduledCountdownNow,
   starred,
+  // El tema vive en un objeto global de estilos que se intercambia al vuelo;
+  // recibir el tono como prop hace que React.memo re-renderice al cambiarlo.
+  themeTone: _themeTone,
   timezone,
   onLongPress,
   onReplySwipe,
@@ -20401,9 +21239,10 @@ function NativeMessageBubble({
   searchActive?: boolean;
   scheduledCountdownNow?: number;
   starred?: boolean;
+  themeTone?: string;
   timezone: string;
-  onLongPress?: () => void;
-  onReplySwipe?: () => void;
+  onLongPress?: (message: ChatMessage) => void;
+  onReplySwipe?: (message: ChatMessage) => void;
 }) {
   const outbound = message.direction === 'outbound';
   const system = message.direction === 'system';
@@ -20457,7 +21296,7 @@ function NativeMessageBubble({
       resetReplySwipe();
       if (shouldReply) {
         void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => undefined);
-        onReplySwipe?.();
+        onReplySwipe?.(message);
       }
     },
     onPanResponderTerminationRequest: () => false,
@@ -20466,7 +21305,7 @@ function NativeMessageBubble({
       setReplySwipeDirection(null);
       resetReplySwipe();
     },
-  }), [onReplySwipe, outbound, replySwipeX, resetReplySwipe, system]);
+  }), [message, onReplySwipe, outbound, replySwipeX, resetReplySwipe, system]);
 
   if (system) {
     return (
@@ -20497,8 +21336,8 @@ function NativeMessageBubble({
         <Animated.View style={{ transform: [{ translateX: replySwipeX }] }}>
           <Pressable
             delayLongPress={260}
-            onLongPress={onLongPress}
-            onPress={scheduled ? onLongPress : undefined}
+            onLongPress={onLongPress ? () => onLongPress(message) : undefined}
+            onPress={scheduled && onLongPress ? () => onLongPress(message) : undefined}
             style={({ pressed }) => [
           styles.messageBubble,
           outbound ? styles.outboundBubble : styles.inboundBubble,
@@ -20579,7 +21418,7 @@ function NativeMessageBubble({
       </View>
     </View>
   );
-}
+});
 
 function NativeFormattedMessageText({ failed, outbound, text }: { failed?: boolean; outbound?: boolean; text: string }) {
   const segments = useMemo(() => parseWhatsAppFormattedText(text), [text]);
@@ -20742,7 +21581,7 @@ function NativeMessageLinkPreviewCard({
     <Pressable
       accessibilityRole="link"
       accessibilityLabel={preview.kind === 'payment_link' ? 'Abrir link de pago' : 'Abrir enlace'}
-      onPress={() => void Linking.openURL(preview.url).catch(() => undefined)}
+      onPress={() => void openInAppBrowser(preview.url)}
       style={({ pressed }) => [
         styles.messageLinkPreviewCard,
         outbound && !failed && styles.messageLinkPreviewCardOutbound,
@@ -20904,16 +21743,30 @@ function NativeMessageAttachment({
   return <NativeDocumentAttachment attachment={attachment} uri={uri} />;
 }
 
+// Cache de tamaños medidos: sin él cada montaje de burbuja re-mide la imagen,
+// el alto del item cambia después de pintar y el hilo "brinca" al cargar.
+const nativeImageSizeCache = new Map<string, { width: number; height: number }>();
+
 function NativeImageAttachment({ uri }: { uri: string }) {
-  const [size, setSize] = useState(() => ({ width: MESSAGE_IMAGE_MAX_WIDTH, height: Math.round(MESSAGE_IMAGE_MAX_WIDTH * 0.75) }));
+  const [size, setSize] = useState(() => (
+    nativeImageSizeCache.get(uri)
+    || { width: MESSAGE_IMAGE_MAX_WIDTH, height: Math.round(MESSAGE_IMAGE_MAX_WIDTH * 0.75) }
+  ));
 
   useEffect(() => {
+    if (nativeImageSizeCache.has(uri)) {
+      setSize(nativeImageSizeCache.get(uri)!);
+      return undefined;
+    }
     let mounted = true;
     Image.getSize(
       uri,
       (width, height) => {
-        if (!mounted) return;
-        setSize(getBoundedMediaSize(width, height, MESSAGE_IMAGE_MAX_WIDTH, MESSAGE_IMAGE_MAX_HEIGHT));
+        const bounded = getBoundedMediaSize(width, height, MESSAGE_IMAGE_MAX_WIDTH, MESSAGE_IMAGE_MAX_HEIGHT);
+        // No cachear data-URLs: la key sería el base64 completo y quedaría
+        // retenido en memoria para siempre.
+        if (!uri.startsWith('data:')) nativeImageSizeCache.set(uri, bounded);
+        if (mounted) setSize(bounded);
       },
       () => {
         if (mounted) setSize({ width: MESSAGE_IMAGE_MAX_WIDTH, height: Math.round(MESSAGE_IMAGE_MAX_WIDTH * 0.75) });
@@ -20927,7 +21780,7 @@ function NativeImageAttachment({ uri }: { uri: string }) {
   return (
     <Pressable
       accessibilityRole="imagebutton"
-      onPress={() => void Linking.openURL(uri).catch(() => undefined)}
+      onPress={() => openImageViewer(uri)}
       style={({ pressed }) => [styles.messageMediaCard, { width: size.width, height: size.height }, pressed && styles.pressed]}
     >
       <Image source={{ uri }} resizeMode="contain" style={styles.messageImage} />
@@ -20959,7 +21812,7 @@ function NativeDocumentAttachment({ attachment, uri }: { attachment: ChatAttachm
     <Pressable
       accessibilityRole="button"
       disabled={!uri}
-      onPress={() => uri ? Linking.openURL(uri).catch(() => undefined) : undefined}
+      onPress={() => openInAppBrowser(uri)}
       style={({ pressed }) => [styles.messageFileCard, pressed && styles.pressed]}
     >
       <View style={styles.messageFileIcon}>
@@ -21320,7 +22173,7 @@ function NativePaymentLinkDraftPreview({
         <Pressable
           accessibilityRole="link"
           accessibilityLabel="Abrir vista previa del link de pago"
-          onPress={() => void Linking.openURL(preview.url).catch(() => undefined)}
+          onPress={() => void openInAppBrowser(preview.url)}
           style={({ pressed }) => [styles.paymentLinkDraftPreviewMain, pressed && styles.pressed]}
         >
           <View style={styles.paymentLinkDraftPreviewIcon}>
@@ -21838,11 +22691,37 @@ function sendDraftAttachment(
   attachment: ConversationDraftAttachment,
   caption: string,
   phoneNumberId?: string,
+  transport?: 'qr' | 'api',
 ) {
-  if (attachment.kind === 'video') return api.sendVideo(contact, attachment.dataUrl, caption, phoneNumberId);
-  if (attachment.kind === 'audio') return api.sendAudio(contact, attachment.dataUrl, attachment.durationMs, phoneNumberId);
-  if (attachment.kind === 'document') return api.sendDocument(contact, attachment.dataUrl, attachment.name, attachment.mimeType, caption, phoneNumberId);
-  return api.sendImage(contact, attachment.dataUrl, caption, phoneNumberId);
+  if (attachment.kind === 'video') return api.sendVideo(contact, attachment.dataUrl, caption, phoneNumberId, transport);
+  if (attachment.kind === 'audio') return api.sendAudio(contact, attachment.dataUrl, attachment.durationMs, phoneNumberId, transport);
+  if (attachment.kind === 'document') return api.sendDocument(contact, attachment.dataUrl, attachment.name, attachment.mimeType, caption, phoneNumberId, transport);
+  return api.sendImage(contact, attachment.dataUrl, caption, phoneNumberId, transport);
+}
+
+// Native port of /movil's WhatsApp reply-window logic. An inbound WhatsApp
+// message opens a 24h window during which free text can be sent via the API.
+function nativeMessageOpensReplyWindow(message: ChatMessage) {
+  if (message.direction !== 'inbound') return false;
+  const probe = `${message.transport || ''} ${message.channel || ''}`.toLowerCase();
+  if (probe.includes('sms') || probe.includes('messenger') || probe.includes('instagram') || probe.includes('email')) return false;
+  return true;
+}
+
+function getNativeLastReplyWindowInboundTime(messages: ChatMessage[]) {
+  let newest = 0;
+  messages.forEach((message) => {
+    if (!nativeMessageOpensReplyWindow(message)) return;
+    const time = getNativeMessageSortTime(message.date);
+    if (time > newest) newest = time;
+  });
+  return newest;
+}
+
+function getNativeApiReplyWindowOpen(messages: ChatMessage[]) {
+  const newest = getNativeLastReplyWindowInboundTime(messages);
+  if (!newest) return false;
+  return Date.now() - newest < 24 * 60 * 60 * 1000;
 }
 
 function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessage[]): ChatMessage[] {
@@ -21884,15 +22763,123 @@ function getOldestNativeConversationMessageDate(messages: ChatMessage[]) {
   return oldestDate;
 }
 
+// Prefijos de mensajes optimistas creados localmente antes del ack del backend.
+const NATIVE_LOCAL_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'clabe-', 'location-'];
+
+function isNativeLocalMessageId(id: string) {
+  return NATIVE_LOCAL_MESSAGE_ID_PREFIXES.some((prefix) => id.startsWith(prefix));
+}
+
+function isSameNativeChatMessage(left: ChatMessage, right: ChatMessage) {
+  try {
+    return JSON.stringify(left) === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+// Ventana hacia adelante para emparejar un mensaje optimista con su copia del
+// servidor. Hacia atrás solo se tolera sesgo de reloj: la copia del servidor
+// no puede ser muy anterior al envío local, y una ventana simétrica absorbería
+// un mensaje viejo idéntico ("ok" repetido en pocos minutos).
+const NATIVE_OPTIMISTIC_RECONCILE_FORWARD_MS = 4 * 60 * 1000;
+const NATIVE_OPTIMISTIC_RECONCILE_BACKWARD_MS = 60 * 1000;
+
+// Familia de canal para no emparejar un envío de WhatsApp con un mensaje de
+// email/Meta con el mismo texto (la bandeja es multi-agente y multi-canal).
+function getNativeMessageChannelFamily(message: ChatMessage) {
+  const raw = `${message.channel || ''} ${message.transport || ''}`.toLowerCase();
+  if (raw.includes('meta') || raw.includes('messenger') || raw.includes('instagram') || raw.includes('social')) return 'meta';
+  if (raw.includes('email') || raw.includes('mail')) return 'email';
+  if (raw.includes('sms')) return 'sms';
+  // 'native' es el transport de los envíos optimistas; su channel ya trae la
+  // familia real, así que solo cae aquí cuando de verdad es WhatsApp.
+  if (raw.includes('whatsapp') || raw.includes('native')) return 'whatsapp';
+  return 'other';
+}
+
+// Un envío optimista conserva su id `local-*` para siempre, pero el poll trae
+// la copia persistida con id de proveedor: sin esta reconciliación ambas filas
+// conviven (burbuja duplicada) y el crecimiento de contenido dispara saltos.
+function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>) {
+  const localRows: ChatMessage[] = [];
+  const serverRows: ChatMessage[] = [];
+  byId.forEach((message) => {
+    if (message.direction !== 'outbound' || message.reactionEmoji || isScheduledMessage(message)) return;
+    if (isNativeLocalMessageId(message.id)) {
+      // Las filas pending siguen esperando el ack de send(): quitarlas antes
+      // de tiempo rompería el marcado de error si el envío falla.
+      if (!message.failed && !message.pending) localRows.push(message);
+    } else {
+      serverRows.push(message);
+    }
+  });
+  if (!localRows.length || !serverRows.length) return;
+
+  const consumedServerIds = new Set<string>();
+  localRows
+    .sort((left, right) => getNativeMessageSortTime(left.date) - getNativeMessageSortTime(right.date))
+    .forEach((localRow) => {
+      const localTime = getNativeMessageSortTime(localRow.date);
+      const localText = String(localRow.text || '').trim();
+      const localFamily = getNativeMessageChannelFamily(localRow);
+      let match: ChatMessage | null = null;
+      let matchDistance = Number.POSITIVE_INFINITY;
+      serverRows.forEach((serverRow) => {
+        if (consumedServerIds.has(serverRow.id)) return;
+        const serverTime = getNativeMessageSortTime(serverRow.date);
+        if (serverTime < localTime - NATIVE_OPTIMISTIC_RECONCILE_BACKWARD_MS) return;
+        const distance = Math.abs(serverTime - localTime);
+        if (distance > NATIVE_OPTIMISTIC_RECONCILE_FORWARD_MS || distance >= matchDistance) return;
+        const serverFamily = getNativeMessageChannelFamily(serverRow);
+        if (localFamily !== 'other' && serverFamily !== 'other' && localFamily !== serverFamily) return;
+        const serverText = String(serverRow.text || '').trim();
+        const textMatches = Boolean(localText) && localText === serverText;
+        const attachmentMatches = Boolean(localRow.attachment) && Boolean(serverRow.attachment)
+          && String(localRow.attachment?.type || '').toLowerCase() === String(serverRow.attachment?.type || '').toLowerCase()
+          && (!localText || localText === serverText);
+        const locationMatches = Boolean(localRow.location) && Boolean(serverRow.location) && !localText && !localRow.attachment;
+        if (!textMatches && !attachmentMatches && !locationMatches) return;
+        match = serverRow;
+        matchDistance = distance;
+      });
+      if (match) {
+        consumedServerIds.add((match as ChatMessage).id);
+        byId.delete(localRow.id);
+      }
+    });
+}
+
 function mergeNativeChatMessages(...groups: ChatMessage[][]) {
   const byId = new Map<string, ChatMessage>();
   groups.forEach((group) => {
     group.forEach((message) => {
       if (!message?.id) return;
-      byId.set(message.id, { ...(byId.get(message.id) || {}), ...message });
+      const existing = byId.get(message.id);
+      if (!existing) {
+        byId.set(message.id, message);
+        return;
+      }
+      if (existing === message) return;
+      const merged = { ...existing, ...message };
+      // Conservar la referencia previa cuando el contenido no cambió evita
+      // re-renderizar todas las burbujas en cada poll de fondo.
+      byId.set(message.id, isSameNativeChatMessage(existing, merged) ? existing : merged);
     });
   });
+  reconcileNativeOptimisticMessages(byId);
   return Array.from(byId.values()).sort((left, right) => getNativeMessageSortTime(left.date) - getNativeMessageSortTime(right.date));
+}
+
+// true cuando ambos arrays contienen exactamente las mismas referencias en el
+// mismo orden: permite que un poll sin cambios sea un no-op de React.
+function areNativeMessageArraysIdentical(left: ChatMessage[], right: ChatMessage[]) {
+  if (left === right) return true;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
 }
 
 function getNativeJourneyEventKey(event: JourneyEvent) {
@@ -22393,23 +23380,22 @@ function LiquidGlassLayer({
   return <View pointerEvents="none" style={[style, fallbackStyle]} />;
 }
 
-function LiquidControlSurface({ selected = false }: { selected?: boolean }) {
-  return (
-    <>
-      <LiquidGlassLayer
-        colorScheme={activeNativeThemeTone}
-        fallbackStyle={[styles.liquidControlSurfaceFallback, selected && styles.liquidControlSurfaceFallbackSelected]}
-        glassEffectStyle="regular"
-        style={styles.liquidControlSurface}
-        tintColor={activeNativeThemeTone === 'light' ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.08)'}
+type LiquidControlVariant = 'solid' | 'soft';
+
+function LiquidControlSurface({ selected = false, variant = 'solid' }: { selected?: boolean; variant?: LiquidControlVariant }) {
+  if (selected) {
+    return (
+      <View
+        pointerEvents="none"
+        style={variant === 'soft' ? styles.liquidControlSurfaceSoftSelected : styles.liquidControlSurfaceSelected}
       />
-      <View pointerEvents="none" style={[styles.liquidControlSurfaceStroke, selected && styles.liquidControlSurfaceStrokeSelected]} />
-    </>
-  );
+    );
+  }
+  return <View pointerEvents="none" style={styles.liquidControlSurfaceRest} />;
 }
 
-function LiquidControlBackground({ selected = false }: { selected?: boolean }) {
-  return <LiquidControlSurface selected={selected} />;
+function LiquidControlBackground({ selected = false, variant = 'solid' }: { selected?: boolean; variant?: LiquidControlVariant }) {
+  return <LiquidControlSurface selected={selected} variant={variant} />;
 }
 
 const APP_FONT_FAMILY = Platform.select({
@@ -22526,6 +23512,14 @@ function createAppStyles() {
   const dockBackground = isLight ? 'rgba(255,255,255,0.64)' : 'rgba(28,28,30,0.62)';
   const neutralSelectedSurface = isLight ? 'rgba(118,118,128,0.10)' : 'rgba(255,255,255,0.075)';
   const neutralSelectedBorder = isLight ? 'rgba(60,60,67,0.16)' : 'rgba(245,245,247,0.20)';
+  // Selectable inline controls (chips / tabs / segments / slots / toggles): flat, no glass,
+  // no outline, no per-chip shadow. Rest = quiet neutral track; selected = solid accent fill
+  // with white text. Soft variant (dropdown / menu-open triggers, rich option cards) keeps a
+  // subtle highlight so their existing dark text stays readable.
+  const controlRestSurface = isLight ? 'rgba(118,118,128,0.12)' : 'rgba(255,255,255,0.07)';
+  const controlSelectedFill = COLORS.accent;
+  const controlSoftSelectedSurface = isLight ? 'rgba(118,118,128,0.22)' : 'rgba(255,255,255,0.15)';
+  const controlSoftSelectedBorder = neutralSelectedBorder;
   const liquidControlShadow = {
     shadowColor: liquidShadowColor,
     shadowOffset: { width: 0, height: 8 },
@@ -22559,7 +23553,6 @@ function createAppStyles() {
   const chatWallpaperTint = isLight ? COLORS.muted : COLORS.meta;
   const chatWallpaperOpacity = isLight ? 0.82 : 0.5;
   const composerShellBackground = getNativeConversationComposerBackground();
-  const keyboardSurfaceBackground = getNativeConversationKeyboardSurfaceBackground();
   const composerInputBackground = isLight ? COLORS.white : 'rgba(28,28,30,0.72)';
   const composerInputBorder = isLight ? 'rgba(60,60,67,0.13)' : 'rgba(235,235,245,0.16)';
   const avatarFallbackBackground = isLight ? 'rgba(60,60,67,0.10)' : 'rgba(255,255,255,0.12)';
@@ -22743,25 +23736,22 @@ function createAppStyles() {
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: liquidBorderSelected,
   },
-  liquidControlSurface: {
+  liquidControlSurfaceRest: {
     ...StyleSheet.absoluteFill,
     borderRadius: 999,
-    ...liquidControlShadow,
+    backgroundColor: controlRestSurface,
   },
-  liquidControlSurfaceFallback: {
-    backgroundColor: liquidSurface,
-  },
-  liquidControlSurfaceFallbackSelected: {
-    backgroundColor: liquidSurfaceSelected,
-  },
-  liquidControlSurfaceStroke: {
+  liquidControlSurfaceSelected: {
     ...StyleSheet.absoluteFill,
     borderRadius: 999,
+    backgroundColor: controlSelectedFill,
+  },
+  liquidControlSurfaceSoftSelected: {
+    ...StyleSheet.absoluteFill,
+    borderRadius: 999,
+    backgroundColor: controlSoftSelectedSurface,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: liquidBorder,
-  },
-  liquidControlSurfaceStrokeSelected: {
-    borderColor: liquidBorderSelected,
+    borderColor: controlSoftSelectedBorder,
   },
   phoneDockItem: {
     flex: 1,
@@ -22982,7 +23972,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   settingsSegmentTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   settingsActionCard: {
     minHeight: 74,
@@ -23203,7 +24193,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   phoneNumberPillTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   templateRow: {
     minHeight: 76,
@@ -23585,7 +24575,7 @@ function createAppStyles() {
     fontWeight: '800',
   },
   calendarChipTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   calendarColorDot: {
     width: 9,
@@ -23740,7 +24730,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   recentPeriodTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   recentPaymentsState: {
     minHeight: 72,
@@ -24242,7 +25232,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   paymentOptionTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   paymentTabList: {
     minHeight: 48,
@@ -24276,7 +25266,7 @@ function createAppStyles() {
     textAlign: 'center',
   },
   paymentTabTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   paymentSelectButton: {
     minHeight: 66,
@@ -24642,7 +25632,7 @@ function createAppStyles() {
     textAlign: 'center',
   },
   analyticsPeriodOptionTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
     fontWeight: '900',
   },
   analyticsCustomSheetBody: {
@@ -24811,7 +25801,7 @@ function createAppStyles() {
     fontWeight: '800',
   },
   analyticsChipTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   analyticsSegmentedControl: {
     minHeight: 39,
@@ -24840,7 +25830,7 @@ function createAppStyles() {
     fontWeight: '800',
   },
   analyticsSegmentTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
     fontWeight: '900',
   },
   analyticsLegendRow: {
@@ -25630,7 +26620,7 @@ function createAppStyles() {
     fontWeight: '800',
   },
   appointmentChoiceTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   appointmentHint: {
     color: COLORS.muted,
@@ -25873,7 +26863,7 @@ function createAppStyles() {
     fontWeight: '600',
   },
   filterChipTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   filterChipCount: {
     minWidth: 20,
@@ -26023,7 +27013,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   filterManagerToggleTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   filterManagerSummary: {
     minHeight: 64,
@@ -26155,7 +27145,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   filterEditorMatchTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   filterEditorLoading: {
     minHeight: 40,
@@ -26213,7 +27203,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   filterEditorChipTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   filterEditorEmptyValue: {
     color: COLORS.muted,
@@ -26740,7 +27730,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   schedulePeriodTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   schedulePreview: {
     minHeight: 42,
@@ -27079,6 +28069,9 @@ function createAppStyles() {
     color: COLORS.text,
     fontSize: 12,
     fontWeight: '900',
+  },
+  chatSelectionSelectAllTextActive: {
+    color: COLORS.white,
   },
   chatSelectionMiniCheck: {
     width: 20,
@@ -27516,8 +28509,8 @@ function createAppStyles() {
     fontWeight: '400',
   },
   rowTimeUnread: {
-    color: COLORS.accent,
-    fontWeight: '600',
+    color: COLORS.success,
+    fontWeight: '700',
   },
   rowFooter: {
     marginTop: 4,
@@ -27559,7 +28552,7 @@ function createAppStyles() {
     minWidth: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: COLORS.accent,
+    backgroundColor: COLORS.success,
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 6,
@@ -27707,8 +28700,9 @@ function createAppStyles() {
     overflow: 'hidden',
     backgroundColor: conversationWallpaperBackground,
   },
-  conversationBodyKeyboardActive: {
-    backgroundColor: keyboardSurfaceBackground,
+  conversationComposerDock: {
+    backgroundColor: composerShellBackground,
+    overflow: 'hidden',
   },
   chatWallpaper: {
     position: 'absolute',
@@ -27740,6 +28734,15 @@ function createAppStyles() {
     paddingHorizontal: 12,
     paddingTop: 10,
     paddingBottom: 12,
+    gap: 8,
+  },
+  // Variante para la lista invertida del hilo: el contenedor se renderiza
+  // volteado, así que el padding superior/inferior va intercambiado para que
+  // visualmente quede igual que messageList.
+  conversationMessageList: {
+    paddingHorizontal: 12,
+    paddingTop: 12,
+    paddingBottom: 10,
     gap: 8,
   },
   olderMessagesLoader: {
@@ -28986,7 +29989,6 @@ function createAppStyles() {
   },
   composerKeyboardActive: {
     paddingBottom: CONVERSATION_COMPOSER_KEYBOARD_BOTTOM,
-    backgroundColor: keyboardSurfaceBackground,
   },
   composerChannelButton: {
     width: 31,
@@ -29157,7 +30159,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   appointmentPickerTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   appointmentWheelSheetBody: {
     paddingHorizontal: 14,
@@ -29276,7 +30278,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   appointmentGuestToggleTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   appointmentGuestCount: {
     minWidth: 25,
@@ -29567,7 +30569,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   calendarViewPickerTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   calendarWeekDayButton: {
     flex: 1,
@@ -29603,6 +30605,13 @@ function createAppStyles() {
     fontWeight: '900',
   },
   calendarWeekDayNumberSelected: {
+    color: COLORS.white,
+  },
+  calendarWeekDayLabelSelected: {
+    color: COLORS.white,
+  },
+  calendarWeekDayCountSelected: {
+    backgroundColor: COLORS.white,
     color: COLORS.accent,
   },
   calendarWeekDayToday: {
@@ -29629,7 +30638,7 @@ function createAppStyles() {
     ...liquidControlSelected,
   },
   calendarYearButtonSelectedText: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   calendarYearButtonText: {
     color: COLORS.text,
@@ -29671,7 +30680,7 @@ function createAppStyles() {
     fontWeight: '600',
   },
   freeSlotDateActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   freeSlotDateChip: {
     width: 132,
@@ -29707,7 +30716,7 @@ function createAppStyles() {
     marginTop: 3,
   },
   freeSlotTimeActive: {
-    color: COLORS.accent,
+    color: COLORS.white,
   },
   freeSlotTimeGrid: {
     flexDirection: 'row',
@@ -30101,7 +31110,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   contactInfoArchiveTabLabelActive: {
-    color: CONTACT_INFO_THEME.text,
+    color: COLORS.white,
   },
   contactInfoArchiveTabs: {
     marginHorizontal: phoneCompact(18),
@@ -30851,7 +31860,7 @@ function createAppStyles() {
     fontWeight: '900',
   },
   sheetPillTextActive: {
-    color: COLORS.text,
+    color: COLORS.white,
   },
   sheetTextArea: {
     minHeight: 96,
