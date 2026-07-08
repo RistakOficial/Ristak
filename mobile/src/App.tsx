@@ -134,7 +134,7 @@ import {
   writeAuthToken,
   writeJsonValue,
 } from './storage';
-import { readCache, writeCache, clearAllCache, setCacheNamespace } from './cache';
+import { readCache, writeCache, clearAllCache, setCacheNamespace, warmCache } from './cache';
 import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant } from './api';
@@ -1298,6 +1298,18 @@ export default function RistakNativeApp() {
       return;
     }
 
+    // Pre-carga TODO el caché local a memoria antes de pintar la app, para que
+    // cada pantalla (chat, analytics, pagos, ajustes) aparezca al instante desde
+    // la copia local —sin parpadeo de "cargando"— y solo se refresque cuando
+    // llega la data del servidor. Es el arranque estilo WhatsApp.
+    setCacheNamespace(storedBaseUrl);
+    try {
+      const entries = await warmCache();
+      entries.forEach(([key, value]) => cachedStateMemRegistry.set(key, value));
+    } catch {
+      // Best-effort: si falla, cada pantalla hidrata su caché por separado.
+    }
+
     try {
       setSession({ baseUrl: storedBaseUrl, token: storedToken, user: null });
       setScreen('shell');
@@ -2387,11 +2399,11 @@ function ChatScreen({
   const [cameraSending, setCameraSending] = useState(false);
   // Hidratar desde la caché en memoria: ChatScreen se desmonta al cambiar de
   // sección y sin esto cada regreso pinta vacío -> spinner -> lista (flash).
-  const [chats, setChats] = useState<ChatContact[]>(() => nativeInboxCache.get(api) || []);
+  const [chats, setChats] = useState<ChatContact[]>(() => nativeInboxCache.get(api) || (cachedStateMemRegistry.get(NATIVE_INBOX_CACHE_KEY) as ChatContact[] | undefined) || []);
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
   const [accountCurrency, setAccountCurrency] = useState(DEFAULT_ACCOUNT_CURRENCY);
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(() => !(nativeInboxCache.get(api)?.length));
+  const [loading, setLoading] = useState(() => !(nativeInboxCache.get(api)?.length || (cachedStateMemRegistry.get(NATIVE_INBOX_CACHE_KEY) as ChatContact[] | undefined)?.length));
   const [chatsLoadingMore, setChatsLoadingMore] = useState(false);
   const [chatsHasMore, setChatsHasMore] = useState(true);
   const [chatListOffset, setChatListOffset] = useState(0);
@@ -11106,10 +11118,10 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
               </View>
               <Text numberOfLines={1} style={styles.analyticsMetricTitle}>{title}</Text>
               <Text numberOfLines={1} adjustsFontSizeToFit style={styles.analyticsMetricValue}>
-                {loading || !metric ? '...' : formatter(Number(metric.value || 0))}
+                {!metric ? '...' : formatter(Number(metric.value || 0))}
               </Text>
               <Text numberOfLines={1} style={[styles.analyticsMetricDelta, variation >= 0 ? styles.analyticsDeltaPositive : styles.analyticsDeltaNegative]}>
-                {loading || !metric ? '' : `${getVariationLabel(variation)} vs antes`}
+                {!metric ? '' : `${getVariationLabel(variation)} vs antes`}
               </Text>
             </View>
           );

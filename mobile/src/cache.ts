@@ -76,7 +76,7 @@ export function writeCache<T>(key: string, value: T, debounceMs = 450): void {
     void (async () => {
       try {
         await ensureDir();
-        const payload = JSON.stringify({ v: value });
+        const payload = JSON.stringify({ k: key, v: value });
         await FileSystem.writeAsStringAsync(pathFor(key), payload);
       } catch {
         // Best-effort: a failed cache write must never break the app.
@@ -99,10 +99,42 @@ export async function writeCacheNow<T>(key: string, value: T): Promise<void> {
   }
   try {
     await ensureDir();
-    await FileSystem.writeAsStringAsync(pathFor(key), JSON.stringify({ v: value }));
+    await FileSystem.writeAsStringAsync(pathFor(key), JSON.stringify({ k: key, v: value }));
   } catch {
     // Best-effort.
   }
+}
+
+// Load every cached entry for the current namespace into memory in one pass, so
+// screens can read it synchronously on mount (no per-screen async disk read = no
+// empty "loading" flash — the WhatsApp feel). Returns [key, value] pairs; the app
+// seeds its in-memory registry with them at startup before rendering the shell.
+export async function warmCache(): Promise<Array<[string, unknown]>> {
+  const out: Array<[string, unknown]> = [];
+  if (!CACHE_ROOT) return out;
+  try {
+    await ensureDir();
+    const files = await FileSystem.readDirectoryAsync(CACHE_ROOT);
+    const prefix = `${namespace}__`;
+    await Promise.all(
+      files.map(async (file) => {
+        if (!file.endsWith('.json') || !file.startsWith(prefix)) return;
+        try {
+          const raw = await FileSystem.readAsStringAsync(`${CACHE_ROOT}${file}`);
+          if (!raw) return;
+          const parsed = JSON.parse(raw) as { k?: string; v?: unknown };
+          if (parsed && typeof parsed.k === 'string' && parsed.v !== undefined) {
+            out.push([parsed.k, parsed.v]);
+          }
+        } catch {
+          // skip corrupt file
+        }
+      }),
+    );
+  } catch {
+    // ignore
+  }
+  return out;
 }
 
 export async function removeCache(key: string): Promise<void> {
