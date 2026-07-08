@@ -316,6 +316,49 @@ const SITE_TYPES_WITH_PAGE_META = new Set(['landing_page', 'interactive_form', '
 const DEFAULT_SITE_META_PAGE_VIEW_EVENT_NAME = SITE_META_NO_EVENT
 const DEFAULT_SITE_META_FORM_SUBMIT_EVENT_NAME = 'Lead'
 const DEFAULT_SITE_META_CALENDAR_EVENT_NAME = 'Schedule'
+const IMPORTED_HTML_CONVERSION_TYPE_BY_ALIAS = new Map([
+  ['lead', 'form_submit'],
+  ['form', 'form_submit'],
+  ['form_submit', 'form_submit'],
+  ['form_submitted', 'form_submit'],
+  ['submit', 'form_submit'],
+  ['contact_form', 'form_submit'],
+  ['appointment', 'appointment_scheduled'],
+  ['appointment_booked', 'appointment_scheduled'],
+  ['appointment_scheduled', 'appointment_scheduled'],
+  ['booking', 'appointment_scheduled'],
+  ['booked', 'appointment_scheduled'],
+  ['calendar', 'appointment_scheduled'],
+  ['calendar_schedule', 'appointment_scheduled'],
+  ['schedule', 'appointment_scheduled'],
+  ['scheduled', 'appointment_scheduled'],
+  ['agenda', 'appointment_scheduled'],
+  ['cita', 'appointment_scheduled'],
+  ['cita_agendada', 'appointment_scheduled'],
+  ['payment', 'purchase'],
+  ['purchase', 'purchase'],
+  ['checkout', 'purchase'],
+  ['paid', 'purchase'],
+  ['sale', 'purchase'],
+  ['venta', 'purchase'],
+  ['pago', 'purchase'],
+  ['compra', 'purchase'],
+  ['registration', 'complete_registration'],
+  ['complete_registration', 'complete_registration'],
+  ['complete_registration_submit', 'complete_registration'],
+  ['registro', 'complete_registration'],
+  ['contact', 'contact'],
+  ['view_content', 'view_content'],
+  ['content_view', 'view_content']
+])
+const IMPORTED_HTML_CONVERSION_EVENT_BY_TYPE = {
+  form_submit: 'Lead',
+  appointment_scheduled: 'Schedule',
+  purchase: 'Purchase',
+  complete_registration: 'CompleteRegistration',
+  contact: 'Contact',
+  view_content: 'ViewContent'
+}
 const SITE_META_PARAMETER_FIELDS = {
   Lead: ['value', 'predictedLtv'],
   Schedule: ['value', 'predictedLtv'],
@@ -810,6 +853,151 @@ function normalizeSiteMetaEventParameters(value = {}) {
   if (custom.length) normalized.custom = custom
 
   return normalized
+}
+
+function normalizeImportedHtmlConversionAlias(value = '') {
+  return cleanString(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function getImportedHtmlConversionDefaultEventName(value = '') {
+  const conversionType = IMPORTED_HTML_CONVERSION_TYPE_BY_ALIAS.get(normalizeImportedHtmlConversionAlias(value)) || ''
+  return IMPORTED_HTML_CONVERSION_EVENT_BY_TYPE[conversionType] || ''
+}
+
+function normalizeImportedHtmlConversionType(value = '', eventName = '') {
+  const alias = normalizeImportedHtmlConversionAlias(value)
+  const explicitType = IMPORTED_HTML_CONVERSION_TYPE_BY_ALIAS.get(alias)
+  if (explicitType) return explicitType
+
+  if (eventName === 'Schedule') return 'appointment_scheduled'
+  if (eventName === 'Purchase') return 'purchase'
+  if (eventName === 'CompleteRegistration') return 'complete_registration'
+  if (eventName === 'Contact') return 'contact'
+  if (eventName === 'ViewContent') return 'view_content'
+  return 'form_submit'
+}
+
+function getImportedHtmlConversionSource(meta = {}) {
+  const source = meta && typeof meta === 'object' ? meta : {}
+  const candidate =
+    source.importedConversion ||
+    source.imported_conversion ||
+    source.rstkConversion ||
+    source.rstk_conversion ||
+    source.conversion ||
+    null
+
+  return candidate && typeof candidate === 'object' && !Array.isArray(candidate)
+    ? candidate
+    : null
+}
+
+function firstImportedHtmlConversionValue(source = {}, aliases = []) {
+  for (const alias of aliases) {
+    const value = source?.[alias]
+    if (value !== undefined && value !== null && cleanString(value)) return cleanString(value)
+  }
+  return ''
+}
+
+function buildImportedHtmlConversionParameterSource(source = {}) {
+  const data = source.data && typeof source.data === 'object' && !Array.isArray(source.data) ? source.data : {}
+  const customData = source.customData && typeof source.customData === 'object' && !Array.isArray(source.customData)
+    ? source.customData
+    : source.custom_data && typeof source.custom_data === 'object' && !Array.isArray(source.custom_data)
+      ? source.custom_data
+      : {}
+  const eventParameters = source.eventParameters && typeof source.eventParameters === 'object' && !Array.isArray(source.eventParameters)
+    ? source.eventParameters
+    : source.event_parameters && typeof source.event_parameters === 'object' && !Array.isArray(source.event_parameters)
+      ? source.event_parameters
+      : {}
+  const parameters = source.parameters && typeof source.parameters === 'object' && !Array.isArray(source.parameters)
+    ? source.parameters
+    : {}
+
+  return {
+    ...source,
+    ...data,
+    ...customData,
+    ...eventParameters,
+    ...parameters,
+    custom: Array.isArray(parameters.custom)
+      ? parameters.custom
+      : Array.isArray(eventParameters.custom)
+        ? eventParameters.custom
+        : Array.isArray(customData.custom)
+          ? customData.custom
+          : Array.isArray(data.custom)
+            ? data.custom
+            : Array.isArray(source.custom)
+              ? source.custom
+              : []
+  }
+}
+
+function normalizeImportedHtmlConversionMeta(meta = {}) {
+  const source = getImportedHtmlConversionSource(meta)
+  if (!source) return null
+
+  const parameterSource = buildImportedHtmlConversionParameterSource(source)
+  const rawEventName = firstImportedHtmlConversionValue(parameterSource, [
+    'eventName',
+    'event_name',
+    'metaEventName',
+    'meta_event_name',
+    'conversionEvent',
+    'conversion_event'
+  ])
+  const rawConversionType = firstImportedHtmlConversionValue(parameterSource, [
+    'conversionType',
+    'conversion_type',
+    'type',
+    'eventType',
+    'event_type'
+  ])
+  const fallbackEventName = getImportedHtmlConversionDefaultEventName(rawConversionType) || DEFAULT_SITE_META_FORM_SUBMIT_EVENT_NAME
+  const eventName = normalizeSiteMetaEventName(rawEventName, {
+    allowNone: true,
+    fallback: fallbackEventName
+  })
+
+  if (!rawEventName && !rawConversionType && !Object.keys(parameterSource).length) return null
+  if (eventName === SITE_META_NO_EVENT) return null
+
+  const conversionType = normalizeImportedHtmlConversionType(rawConversionType, eventName)
+  const status = firstImportedHtmlConversionValue(parameterSource, ['status', 'estado']) ||
+    (conversionType === 'appointment_scheduled'
+      ? 'booked'
+      : conversionType === 'purchase'
+        ? firstImportedHtmlConversionValue(parameterSource, ['paymentStatus', 'payment_status', 'paymentEstado']) || 'paid'
+        : '')
+
+  return {
+    enabled: true,
+    eventName,
+    conversionType,
+    parameters: pruneSiteMetaEventParametersForEvent(parameterSource, eventName),
+    label: firstImportedHtmlConversionValue(parameterSource, ['label', 'name', 'nombre']),
+    source: firstImportedHtmlConversionValue(parameterSource, ['source', 'conversionSource', 'conversion_source']),
+    status,
+    calendarId: firstImportedHtmlConversionValue(parameterSource, ['calendarId', 'calendar_id', 'calendarioId']),
+    calendarName: firstImportedHtmlConversionValue(parameterSource, ['calendarName', 'calendar_name', 'calendario']),
+    appointmentId: firstImportedHtmlConversionValue(parameterSource, ['appointmentId', 'appointment_id', 'citaId']),
+    appointmentStatus: firstImportedHtmlConversionValue(parameterSource, ['appointmentStatus', 'appointment_status', 'citaEstado']) || (conversionType === 'appointment_scheduled' ? status || 'booked' : ''),
+    appointmentStartTime: firstImportedHtmlConversionValue(parameterSource, ['appointmentStartTime', 'appointment_start_time', 'startTime', 'start_time', 'startsAt', 'starts_at']),
+    appointmentEndTime: firstImportedHtmlConversionValue(parameterSource, ['appointmentEndTime', 'appointment_end_time', 'endTime', 'end_time', 'endsAt', 'ends_at']),
+    paymentId: firstImportedHtmlConversionValue(parameterSource, ['paymentId', 'payment_id', 'publicPaymentId', 'public_payment_id', 'orderId', 'order_id']),
+    paymentStatus: firstImportedHtmlConversionValue(parameterSource, ['paymentStatus', 'payment_status']) || (conversionType === 'purchase' ? status || 'paid' : ''),
+    contentName: firstImportedHtmlConversionValue(parameterSource, ['contentName', 'content_name', 'productName', 'product_name', 'serviceName', 'service_name']),
+    contentCategory: firstImportedHtmlConversionValue(parameterSource, ['contentCategory', 'content_category']),
+    orderId: firstImportedHtmlConversionValue(parameterSource, ['orderId', 'order_id'])
+  }
 }
 
 function hasSiteMetaEventParameters(parameters = {}) {
@@ -6364,6 +6552,16 @@ Convenciones de formularios para Ristak:
 - Si hay teléfono, usa type="tel", name="phone", data-rstk-field="phone", autocomplete="tel".
 - Si hay email, usa type="email", name="email", data-rstk-field="email", autocomplete="email".
 
+Conversiones Meta/CAPI para HTML importado:
+- Declara la conversion en el <form> final o en su boton submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
+- Para formularios completados usa Lead o CompleteRegistration y conserva email y/o phone con data-rstk-field para que Meta pueda hacer match.
+- Para citas agendadas usa data-rstk-conversion-event="Schedule", data-rstk-conversion-type="appointment_scheduled", data-rstk-calendar-id/name si existen y data-rstk-appointment-start-time/data-rstk-appointment-end-time en ISO UTC solo si la hora ya quedo confirmada.
+- Para pagos confirmados usa data-rstk-conversion-event="Purchase", data-rstk-conversion-type="purchase", data-rstk-conversion-value, data-rstk-conversion-content-name y data-rstk-conversion-order-id o data-rstk-payment-id. No marques Purchase en intento de pago, precio mostrado o click de checkout; solo en confirmacion real o pagina de gracias.
+- Si el dato depende de un campo, marca ese campo con data-rstk-conversion-param="value|contentName|orderId|appointment_start_time|appointment_end_time|calendarName|paymentId|status".
+- La moneda de Purchase la pone Ristak desde la cuenta; no dependas de MXN/USD en el HTML salvo que sea texto visible del negocio.
+- Ejemplo cita: <form data-rstk-form-id="agenda" data-rstk-conversion-event="Schedule" data-rstk-conversion-type="appointment_scheduled" data-rstk-calendar-name="Consulta inicial"> ... <input type="hidden" data-rstk-conversion-param="appointment_start_time" value="2026-08-15T17:00:00Z"> ... </form>.
+- Ejemplo pago: <form data-rstk-form-id="checkout" data-rstk-conversion-event="Purchase" data-rstk-conversion-type="purchase" data-rstk-conversion-value="1499" data-rstk-conversion-content-name="Consulta premium" data-rstk-conversion-order-id="ORD-123"> ... </form>.
+
 JSON cuando falta información:
 {
   "status": "needs_more_info",
@@ -6420,7 +6618,7 @@ Modo edición:
 - Si recibes visualContext, úsalo como referencia visual de la página actual: ubica logos, imágenes, botones, formularios, colores, textos visibles y la página activa antes de editar.
 - Devuelve el HTML completo actualizado, no solo un fragmento.
 - Si recibes importedPages con varias páginas, conserva el embudo multipágina y responde con page.pages incluyendo todas las páginas completas. Mantén ids, title y filename de cada página salvo que el usuario pida renombrar, agregar, quitar o reordenar páginas.
-- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
+- Conserva formularios, ids, name, data-rstk-form, data-rstk-form-id, data-rstk-field, data-ristak-field, data-rstk-custom-field, data-rstk-edit-id, data-rstk-editable, data-rstk-edit-type, data-rstk-label, data-rstk-section, data-rstk-button-actions, data-rstk-button-action, data-rstk-button-url, data-rstk-button-page-id, data-rstk-button-message, data-rstk-choice-actions, data-rstk-conversion-*, data-rstk-appointment-*, data-rstk-calendar-*, data-rstk-payment-* y sus aliases data-ristak-* / data-ristack-* cuando el usuario no pida cambiarlos.
 - Si cambias campos, deja convenciones claras para que Ristak pueda redetectar y mapear.
 - Puedes cambiar título, imágenes, videos, orden de secciones, colores, layout, copy y campos segun lo que pida el usuario.
 - En ediciones de una zona seleccionada, las instrucciones de posición, orden o alineación como "centra el titular", "pon el video debajo" o "mueve el botón abajo" ya son suficientes. No respondas needs_more_info por no tener ids exactos; identifica título, video/player y CTA por jerarquía visual dentro de la zona y aplica el cambio.
@@ -20740,6 +20938,35 @@ function buildCalendarMetaBaseCustomData(calendar = {}, appointment = {}, extra 
   }
 }
 
+function buildImportedHtmlConversionBaseCustomData(conversion = {}, site = {}, options = {}) {
+  const conversionType = cleanString(conversion.conversionType) || 'form_submit'
+  const status = cleanString(conversion.status) || cleanString(options.status)
+  const accountCurrency = cleanString(options.currency)
+
+  return {
+    source: 'ristak_imported_html',
+    conversion_type: conversionType,
+    site_id: site.id,
+    site_name: site.name,
+    imported_html: true,
+    ...(conversion.label ? { imported_conversion_label: conversion.label } : {}),
+    ...(conversion.source ? { imported_conversion_source: conversion.source } : {}),
+    ...(accountCurrency ? { currency: accountCurrency } : {}),
+    ...(status ? { status } : {}),
+    ...(conversion.contentName ? { content_name: conversion.contentName } : { content_name: site.title || site.name }),
+    ...(conversion.contentCategory ? { content_category: conversion.contentCategory } : {}),
+    ...(conversion.orderId ? { order_id: conversion.orderId } : {}),
+    ...(conversion.calendarId ? { calendar_id: conversion.calendarId } : {}),
+    ...(conversion.calendarName ? { calendar_name: conversion.calendarName } : {}),
+    ...(conversion.appointmentId ? { appointment_id: conversion.appointmentId } : {}),
+    ...(conversion.appointmentStatus ? { appointment_status: conversion.appointmentStatus } : {}),
+    ...(conversion.appointmentStartTime ? { appointment_start_time: conversion.appointmentStartTime } : {}),
+    ...(conversion.appointmentEndTime ? { appointment_end_time: conversion.appointmentEndTime } : {}),
+    ...(conversion.paymentId ? { payment_id: conversion.paymentId } : {}),
+    ...(conversion.paymentStatus ? { payment_status: conversion.paymentStatus } : {})
+  }
+}
+
 export async function buildCalendarMetaPixelSnippet(calendar = {}, { trackingEnabled = true, preview = false, siteOverride = null } = {}) {
   const config = getCalendarSiteMetaEventConfig(calendar, siteOverride)
   // El pixel base (init + PageView) solo necesita que el Meta del calendario esté
@@ -20896,6 +21123,79 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
         });
         return actions;
       };
+      const parseObjectAttr = (element, names) => {
+        if (!element || !element.getAttribute) return {};
+        for (const name of names) {
+          const raw = element.getAttribute(name);
+          if (!raw) continue;
+          try {
+            const parsed = JSON.parse(raw);
+            return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+          } catch (_) {
+            return {};
+          }
+        }
+        return {};
+      };
+      const firstAttr = (element, names) => {
+        if (!element || !element.getAttribute) return '';
+        for (const name of names) {
+          const value = element.getAttribute(name);
+          if (value !== null && value !== undefined && String(value).trim()) return String(value).trim();
+        }
+        return '';
+      };
+      const setIfValue = (target, key, value) => {
+        if (value !== null && value !== undefined && String(value).trim()) target[key] = String(value).trim();
+      };
+      const readConversionConfig = (element) => {
+        const data = Object.assign({},
+          parseObjectAttr(element, ['data-rstk-conversion-data', 'data-ristak-conversion-data', 'data-ristack-conversion-data']),
+          parseObjectAttr(element, ['data-rstk-meta-data', 'data-ristak-meta-data', 'data-ristack-meta-data'])
+        );
+        setIfValue(data, 'eventName', firstAttr(element, ['data-rstk-conversion-event', 'data-ristak-conversion-event', 'data-ristack-conversion-event', 'data-rstk-meta-event-name', 'data-meta-event-name']));
+        setIfValue(data, 'conversionType', firstAttr(element, ['data-rstk-conversion-type', 'data-ristak-conversion-type', 'data-ristack-conversion-type']));
+        setIfValue(data, 'value', firstAttr(element, ['data-rstk-conversion-value', 'data-ristak-conversion-value', 'data-ristack-conversion-value']));
+        setIfValue(data, 'currency', firstAttr(element, ['data-rstk-conversion-currency', 'data-ristak-conversion-currency', 'data-ristack-conversion-currency']));
+        setIfValue(data, 'contentName', firstAttr(element, ['data-rstk-conversion-content-name', 'data-ristak-conversion-content-name', 'data-ristack-conversion-content-name']));
+        setIfValue(data, 'contentCategory', firstAttr(element, ['data-rstk-conversion-content-category', 'data-ristak-conversion-content-category', 'data-ristack-conversion-content-category']));
+        setIfValue(data, 'contentIds', firstAttr(element, ['data-rstk-conversion-content-ids', 'data-ristak-conversion-content-ids', 'data-ristack-conversion-content-ids']));
+        setIfValue(data, 'contentType', firstAttr(element, ['data-rstk-conversion-content-type', 'data-ristak-conversion-content-type', 'data-ristack-conversion-content-type']));
+        setIfValue(data, 'numItems', firstAttr(element, ['data-rstk-conversion-num-items', 'data-ristak-conversion-num-items', 'data-ristack-conversion-num-items']));
+        setIfValue(data, 'orderId', firstAttr(element, ['data-rstk-conversion-order-id', 'data-ristak-conversion-order-id', 'data-ristack-conversion-order-id']));
+        setIfValue(data, 'status', firstAttr(element, ['data-rstk-conversion-status', 'data-ristak-conversion-status', 'data-ristack-conversion-status']));
+        setIfValue(data, 'calendarId', firstAttr(element, ['data-rstk-calendar-id', 'data-ristak-calendar-id', 'data-ristack-calendar-id']));
+        setIfValue(data, 'calendarName', firstAttr(element, ['data-rstk-calendar-name', 'data-ristak-calendar-name', 'data-ristack-calendar-name']));
+        setIfValue(data, 'appointmentId', firstAttr(element, ['data-rstk-appointment-id', 'data-ristak-appointment-id', 'data-ristack-appointment-id']));
+        setIfValue(data, 'appointmentStatus', firstAttr(element, ['data-rstk-appointment-status', 'data-ristak-appointment-status', 'data-ristack-appointment-status']));
+        setIfValue(data, 'appointmentStartTime', firstAttr(element, ['data-rstk-appointment-start-time', 'data-ristak-appointment-start-time', 'data-ristack-appointment-start-time']));
+        setIfValue(data, 'appointmentEndTime', firstAttr(element, ['data-rstk-appointment-end-time', 'data-ristak-appointment-end-time', 'data-ristack-appointment-end-time']));
+        setIfValue(data, 'paymentId', firstAttr(element, ['data-rstk-payment-id', 'data-ristak-payment-id', 'data-ristack-payment-id']));
+        setIfValue(data, 'paymentStatus', firstAttr(element, ['data-rstk-payment-status', 'data-ristak-payment-status', 'data-ristack-payment-status']));
+        return data;
+      };
+      const collectConversionParamFields = (form) => {
+        const params = {};
+        Array.from(form.querySelectorAll('[data-rstk-conversion-param], [data-ristak-conversion-param], [data-ristack-conversion-param], [data-rstk-meta-param], [data-ristak-meta-param], [data-ristack-meta-param]')).forEach((field) => {
+          const key = firstAttr(field, ['data-rstk-conversion-param', 'data-ristak-conversion-param', 'data-ristack-conversion-param', 'data-rstk-meta-param', 'data-ristak-meta-param', 'data-ristack-meta-param']);
+          if (!key) return;
+          const value = readFieldValue(field, form);
+          if (Array.isArray(value) ? value.length > 0 : String(value || '').trim()) params[key] = value;
+        });
+        return params;
+      };
+      const collectImportedConversion = (form, submitter) => {
+        const data = Object.assign({},
+          readConversionConfig(form),
+          readConversionConfig(submitter),
+          collectConversionParamFields(form)
+        );
+        const keys = Object.keys(data).filter(key => {
+          const value = data[key];
+          return Array.isArray(value) ? value.length > 0 : String(value || '').trim();
+        });
+        return keys.length ? data : null;
+      };
       const resolveFormId = (form, index) => (
         form.getAttribute('data-ristack-form') ||
         form.getAttribute('data-ristak-form') ||
@@ -20980,6 +21280,7 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
           try {
             const rawFields = collectRawFields(form);
             const selectedChoiceActions = collectSelectedChoiceActions(form);
+            const importedConversion = collectImportedConversion(form, submitter);
             const disqualifyingAction = selectedChoiceActions.find(item => item.action === 'disqualify' || item.action === 'disqualify_after_submit') || null;
             // "Descalificar en esta página" corta el flujo al enviar (oculta el form);
             // "al terminar formulario" deja terminar y registra al contacto como no calificado.
@@ -21006,7 +21307,8 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
                   importedChoiceActions: selectedChoiceActions,
                   importedDisqualified: Boolean(disqualifyingAction),
                   importedDisqualifiedMessage: disqualifyingAction && disqualifyingAction.buttonMessage ? disqualifyingAction.buttonMessage : '',
-                  immediateDisqualify: form.dataset.rstkImmediateDisqualify === 'true'
+                  immediateDisqualify: form.dataset.rstkImmediateDisqualify === 'true',
+                  ...(importedConversion ? { importedConversion } : {})
                 }
               })
             });
@@ -21019,11 +21321,14 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
               ? submission.capi.eventId
               : (submission.submissionId ? 'site_' + SITE_ID + '_' + submission.submissionId : '');
             if (window.ristakMetaTrackSiteSubmit) {
-              window.ristakMetaTrackSiteSubmit(metaEventId, {
+              const capiCustomData = submission.capi && submission.capi.customData && typeof submission.capi.customData === 'object'
+                ? submission.capi.customData
+                : {};
+              window.ristakMetaTrackSiteSubmit(metaEventId, Object.assign({
                 status: submission.status || 'received',
                 conversion_type: 'form_submit',
                 imported_html: true
-              }, submission.capi && submission.capi.eventName);
+              }, capiCustomData), (submission.capi && submission.capi.eventName) || (importedConversion && importedConversion.eventName));
             }
             if (window.ristakNativeRememberContact && submission.contactId) {
               window.ristakNativeRememberContact(submission.contact || {
@@ -25040,21 +25345,25 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   const videoGateMetaConfig = siteMetaEnabled && isVideoGateSubmission
     ? getVideoFormGateMetaEventConfig(site, cleanString(requestMeta?.meta?.videoFormGateBlockId || requestMeta?.meta?.video_form_gate_block_id))
     : null
+  const importedConversionMeta = !videoGateMetaConfig ? normalizeImportedHtmlConversionMeta(requestMeta?.meta) : null
   const siteSubmitMeta = getSiteSubmitMetaConfig(site, submittedPageId)
   const embeddedSubmitMeta = !videoGateMetaConfig ? getRequestEmbeddedFormSubmitMetaConfig(requestMeta) : null
+  const useImportedConversionMeta = Boolean(!videoGateMetaConfig && importedConversionMeta?.enabled && siteMetaEnabled)
   const useEmbeddedSubmitMeta = Boolean(!videoGateMetaConfig && embeddedSubmitMeta?.enabled && !siteSubmitMeta.enabled)
 
   if (!siteMetaEnabled && !useEmbeddedSubmitMeta) {
     return { sent: false, reason: 'disabled' }
   }
 
-  const eventName = videoGateMetaConfig?.eventName || (useEmbeddedSubmitMeta ? embeddedSubmitMeta.eventName : siteSubmitMeta.eventName)
-  const configuredParameters = videoGateMetaConfig?.parameters || (useEmbeddedSubmitMeta ? embeddedSubmitMeta.parameters : siteSubmitMeta.parameters)
+  const eventName = videoGateMetaConfig?.eventName || (useImportedConversionMeta ? importedConversionMeta.eventName : useEmbeddedSubmitMeta ? embeddedSubmitMeta.eventName : siteSubmitMeta.eventName)
+  const configuredParameters = videoGateMetaConfig?.parameters || (useImportedConversionMeta ? importedConversionMeta.parameters : useEmbeddedSubmitMeta ? embeddedSubmitMeta.parameters : siteSubmitMeta.parameters)
   const eventType = videoGateMetaConfig
     ? 'site_video_form_submission'
-    : useEmbeddedSubmitMeta
-      ? 'site_embedded_form_submission'
-      : 'site_form_submission'
+    : useImportedConversionMeta
+      ? `site_imported_html_${importedConversionMeta.conversionType || 'conversion'}`
+      : useEmbeddedSubmitMeta
+        ? 'site_embedded_form_submission'
+        : 'site_form_submission'
   const eventId = `site_${site.id}_${submissionId}`
   if (eventName === SITE_META_NO_EVENT) {
     return { sent: false, reason: 'no_event_configured', eventId, eventName }
@@ -25063,9 +25372,11 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
   const submissionRules = requestMeta?.meta?.rules && typeof requestMeta.meta.rules === 'object' ? requestMeta.meta.rules : {}
   const submitCondition = videoGateMetaConfig
     ? 'always'
-    : useEmbeddedSubmitMeta
-      ? embeddedSubmitMeta.submitCondition
-      : siteSubmitMeta.submitCondition
+    : useImportedConversionMeta
+      ? siteSubmitMeta.submitCondition
+      : useEmbeddedSubmitMeta
+        ? embeddedSubmitMeta.submitCondition
+        : siteSubmitMeta.submitCondition
   if (submitCondition === 'qualified_only' && isDisqualifiedSiteFormSubmission(requestMeta)) {
     await logMetaEvent({
       contactId,
@@ -25128,6 +25439,43 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
     variableFields
   })
   const formDisqualified = isDisqualifiedSiteFormSubmission(requestMeta)
+  const fallbackConversionStatus = formDisqualified ? 'disqualified' : 'qualified'
+  const baseCustomData = useImportedConversionMeta
+    ? {
+      ...buildImportedHtmlConversionBaseCustomData(importedConversionMeta, site, {
+        currency: accountLocale?.currency || 'MXN',
+        status: fallbackConversionStatus
+      }),
+      form_status: templateContext.formStatus || (formDisqualified ? 'disqualified' : 'received'),
+      form_disqualified: formDisqualified
+    }
+    : {
+      source: 'ristak_site',
+      conversion_type: videoGateMetaConfig
+        ? 'video_form_gate_submit'
+        : useEmbeddedSubmitMeta
+          ? 'embedded_form_submit'
+          : 'form_submit',
+      site_id: site.id,
+      site_name: site.name,
+      ...(useEmbeddedSubmitMeta ? {
+        form_site_id: embeddedSubmitMeta.sourceSiteId || '',
+        form_site_name: embeddedSubmitMeta.sourceSiteName || ''
+      } : {}),
+      ...(videoGateMetaConfig ? {
+        video_block_id: videoGateMetaConfig.block?.id || '',
+        video_block_label: videoGateMetaConfig.block?.label || ''
+      } : {}),
+      currency: accountLocale?.currency || 'MXN',
+      status: fallbackConversionStatus,
+      form_status: templateContext.formStatus || (formDisqualified ? 'disqualified' : 'received'),
+      form_disqualified: formDisqualified,
+      content_name: site.title || site.name
+    }
+  const customData = mergeSiteMetaCustomData(
+    baseCustomData,
+    buildSiteMetaConfiguredCustomData(configuredParameters, eventName, templateContext)
+  )
   const userData = buildMetaParameterUserData({
     req: requestMeta?.req,
     requestMeta,
@@ -25147,7 +25495,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
       status: 'skipped',
       errorMessage: 'user_data insuficiente para Meta'
     })
-    return { sent: false, reason: 'insufficient_user_data', eventId, eventName }
+    return { sent: false, reason: 'insufficient_user_data', eventId, eventName, customData }
   }
 
   const payload = {
@@ -25159,29 +25507,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
         ...buildMetaEventUrlFields(signals, sourceUrl),
         event_id: eventId,
         user_data: userData,
-        custom_data: mergeSiteMetaCustomData({
-          source: 'ristak_site',
-          conversion_type: videoGateMetaConfig
-            ? 'video_form_gate_submit'
-            : useEmbeddedSubmitMeta
-              ? 'embedded_form_submit'
-              : 'form_submit',
-          site_id: site.id,
-          site_name: site.name,
-          ...(useEmbeddedSubmitMeta ? {
-            form_site_id: embeddedSubmitMeta.sourceSiteId || '',
-            form_site_name: embeddedSubmitMeta.sourceSiteName || ''
-          } : {}),
-          ...(videoGateMetaConfig ? {
-            video_block_id: videoGateMetaConfig.block?.id || '',
-            video_block_label: videoGateMetaConfig.block?.label || ''
-          } : {}),
-          currency: accountLocale?.currency || 'MXN',
-          status: formDisqualified ? 'disqualified' : 'qualified',
-          form_status: templateContext.formStatus || (formDisqualified ? 'disqualified' : 'received'),
-          form_disqualified: formDisqualified,
-          content_name: site.title || site.name
-        }, buildSiteMetaConfiguredCustomData(configuredParameters, eventName, templateContext))
+        custom_data: customData
 	      }
     ]
   }
@@ -25213,7 +25539,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
       responsePayload
     })
 
-    return { sent: true, eventId, eventName, responsePayload }
+    return { sent: true, eventId, eventName, customData, responsePayload }
   } catch (error) {
     await logMetaEvent({
       contactId,
@@ -25224,7 +25550,7 @@ async function sendSiteLeadMetaEvent({ site, submissionId, submittedPageId, cont
       requestPayload: payload,
       errorMessage: error.message
     })
-    return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName }
+    return { sent: false, reason: 'meta_error', error: error.message, eventId, eventName, customData }
   }
 }
 
@@ -25666,6 +25992,12 @@ async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, 
   const visitorId = cleanString(meta?.visitorId || meta?.visitor_id) || `site_visitor_${submissionId}`
   const sessionId = cleanString(meta?.sessionId || meta?.session_id) || `site_session_${submissionId}`
   const tracking = meta?.tracking && typeof meta.tracking === 'object' ? meta.tracking : {}
+  const importedConversionMeta = normalizeImportedHtmlConversionMeta(meta)
+  const importedConversionData = importedConversionMeta
+    ? buildImportedHtmlConversionBaseCustomData(importedConversionMeta, site, {
+      status: importedConversionMeta.status || (meta?.formDisqualified || meta?.form_disqualified ? 'disqualified' : '')
+    })
+    : {}
   const pages = normalizeSitePages(site)
   const page = pages.find(item => item.id === submittedPageId) || pages[0] || null
   const formContext = getNativeFormContext(site, blocks)
@@ -25674,6 +26006,7 @@ async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, 
 
   const data = {
     ...tracking,
+    ...importedConversionData,
     tracking_source: 'native_site',
     site_id: site.id,
     site_slug: site.slug,
@@ -25683,7 +26016,7 @@ async function recordNativeSiteConversionEvent({ site, blocks, submittedPageId, 
     form_site_name: explicitFormSiteName || formContext.formSiteName,
     public_page_id: submittedPageId || page?.id || '',
     public_page_title: page?.title || '',
-    conversion_type: 'form_submit',
+    conversion_type: importedConversionMeta?.conversionType || 'form_submit',
     submission_id: submissionId,
     url: cleanString(meta?.pageUrl) || tracking.url || `https://${site.domain || cleanString(meta?.host) || ''}`,
     referrer: cleanString(meta?.referrer) || tracking.referrer || null,

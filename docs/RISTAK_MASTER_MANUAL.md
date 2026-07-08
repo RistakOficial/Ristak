@@ -1570,6 +1570,21 @@ nativos/importados/creados por IA encienden `Lead` al enviar. Los bloques de
 calendario embebido nuevos nacen con `Schedule`. Las actualizaciones de sitios
 existentes no reactivan eventos que el usuario apago manualmente.
 
+En sitios HTML importados, el submit interceptado por Ristak puede declarar una
+conversion especifica para Meta con atributos `data-rstk-conversion-*` en el
+`<form>` final o en el boton submit. El contrato oficial es:
+`data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted"`
+y `data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content"`.
+Ristak valida el evento en backend, manda CAPI server-side con el mismo
+`event_id` que usa el Pixel del navegador y guarda el submit normal en
+`public_site_submissions`. Para `Schedule` se aceptan datos explicitos de
+calendario/cita (`data-rstk-calendar-*`, `data-rstk-appointment-*` o campos con
+`data-rstk-conversion-param`). Para `Purchase` se aceptan monto, producto,
+order id y payment id; la moneda enviada a Meta sigue saliendo de
+`account_currency`, no del HTML externo. Un HTML externo no debe marcar
+`Purchase` en clicks o intentos de pago: solo en confirmacion real/pagina de
+gracias.
+
 En landings en modo embudo, los bloques nuevos que ejecutan una accion posterior
 al evento (`calendario embebido`, `formulario embebido` y `pago`) nacen apuntando
 a `Ir a la siguiente pagina` solo si la pagina actual tiene otra pagina por

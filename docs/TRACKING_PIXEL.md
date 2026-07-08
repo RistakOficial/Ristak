@@ -191,6 +191,32 @@ window.ristakTrack('form_submit', {
 })
 ```
 
+## HTML Importado Y Conversiones Meta
+
+Los sitios HTML importados por Sites no deben depender de heuristicas visuales
+para saber si un formulario representa lead, cita o pago. El contrato oficial es
+declarar la conversion en el `<form>` final o en el boton submit:
+
+```html
+<form
+  data-rstk-form-id="agenda"
+  data-rstk-conversion-event="Schedule"
+  data-rstk-conversion-type="appointment_scheduled"
+  data-rstk-calendar-name="Consulta inicial">
+  <input name="email" type="email" data-rstk-field="email" autocomplete="email">
+  <input type="hidden" data-rstk-conversion-param="appointment_start_time" value="2026-08-15T17:00:00Z">
+  <button type="submit">Agendar</button>
+</form>
+```
+
+Eventos permitidos: `Lead`, `CompleteRegistration`, `Schedule`, `Purchase`,
+`Contact`, `ViewContent` y `FormSubmitted`. Para `Purchase`, manda
+`data-rstk-conversion-value`, `data-rstk-conversion-content-name` y un
+`data-rstk-conversion-order-id` o `data-rstk-payment-id` solo cuando el pago ya
+esta confirmado. Ristak manda CAPI server-side y el Pixel del navegador con el
+mismo `event_id`; Meta deduplica ambos. La moneda de `Purchase` sale de
+`account_currency`, no del HTML externo.
+
 ## Tabla `sessions`
 
 Schema creado por `backend/src/config/database.js`:
