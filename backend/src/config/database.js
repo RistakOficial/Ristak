@@ -164,6 +164,81 @@ function removeWhatsAppApiSystemCustomFieldsFromPayload(value) {
   return { changed: false, value: parsed }
 }
 
+function normalizeAuthEmail(value) {
+  return String(value || '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim()
+    .toLowerCase()
+}
+
+function isValidAuthEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeAuthEmail(value))
+}
+
+function maskAuthEmail(value) {
+  const email = normalizeAuthEmail(value)
+  const [local, domain] = email.split('@')
+  if (!local || !domain) return email ? '[correo-invalido]' : '[sin-correo]'
+  return `${local.slice(0, 2)}***@${domain}`
+}
+
+export async function backfillUserEmailsFromLegacyUsernames({ source = 'manual' } = {}) {
+  const rows = await db.all(`
+    SELECT id, username, email
+    FROM users
+    WHERE email IS NULL OR TRIM(email) = ''
+  `)
+
+  const stats = {
+    source,
+    scanned: rows.length,
+    updated: 0,
+    skippedInvalidUsername: 0,
+    skippedConflict: 0,
+    skippedRace: 0
+  }
+
+  for (const row of rows) {
+    const candidate = normalizeAuthEmail(row.username)
+    if (!isValidAuthEmail(candidate)) {
+      stats.skippedInvalidUsername += 1
+      continue
+    }
+
+    const conflict = await db.get(
+      'SELECT id FROM users WHERE id != ? AND LOWER(TRIM(email)) = LOWER(?) LIMIT 1',
+      [row.id, candidate]
+    )
+    if (conflict) {
+      stats.skippedConflict += 1
+      logger.warn(`Backfill users.email omitido por conflicto: ${maskAuthEmail(candidate)}`)
+      continue
+    }
+
+    const result = await db.run(
+      `UPDATE users
+       SET email = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND (email IS NULL OR TRIM(email) = '')`,
+      [candidate, row.id]
+    )
+
+    if (Number(result?.changes || 0) > 0) {
+      stats.updated += 1
+    } else {
+      stats.skippedRace += 1
+    }
+  }
+
+  if (stats.updated || stats.skippedConflict || stats.skippedInvalidUsername) {
+    logger.info(
+      `Backfill users.email (${source}): ${stats.updated} actualizado(s), ` +
+      `${stats.skippedConflict} conflicto(s), ${stats.skippedInvalidUsername} username(s) sin formato correo.`
+    )
+  }
+
+  return stats
+}
+
 async function cleanupWhatsAppApiSystemCustomFields() {
   const definitionRows = await db.all(`
     SELECT id
@@ -5063,6 +5138,7 @@ async function initTables() {
 
     await db.run('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)')
+    await backfillUserEmailsFromLegacyUsernames({ source: 'initTables' })
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS ai_agent_user_preferences (

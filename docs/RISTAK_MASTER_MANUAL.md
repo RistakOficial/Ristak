@@ -91,6 +91,7 @@ Flujo de arranque:
    - espera base de datos,
    - corre migraciones,
    - inicializa llave de cifrado,
+   - sanea usuarios legacy que guardaban el correo en `username`,
    - asegura usuario inicial/default,
    - sincroniza estado de licencia,
    - inicializa version Meta,
@@ -104,7 +105,7 @@ El proceso tiene soporte de shutdown graceful y estado de drain para deploys.
 
 Rutas protegidas por auth y/o feature flags:
 
-- `/api/auth`: setup, login, SSO, reset password, usuarios, perfil, API token.
+- `/api/auth`: setup, login por correo, SSO, reset password, usuarios, perfil, API token.
 - `/api/dashboard`: metricas principales.
 - `/api/contacts`: contactos, chats, tags, custom fields, bulk actions.
 - `/api/contact-tags`: etiquetas y carpetas.
