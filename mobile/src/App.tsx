@@ -212,6 +212,7 @@ import type {
   RistakUser,
   SavedPaymentMethodItem,
   ScheduledChatMessage,
+  SendTextResponse,
   SourceDatum,
   TransactionItem,
   WhatsAppTemplate,
@@ -2226,6 +2227,7 @@ function ChatScreen({
   const [assistantOpen, setAssistantOpen] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraSendLockedRef = useRef(false);
   const chatListGenerationRef = useRef(0);
   const chatListLoadedQueryRef = useRef('');
   const chatMountedRef = useRef(true);
@@ -2943,6 +2945,7 @@ function ChatScreen({
         setCameraAttachment(null);
         setCameraRecipients([]);
         setCameraCaption('');
+        cameraSendLockedRef.current = false;
         setCameraSending(false);
       }
     }, CHAT_SHEET_CLOSE_DURATION_MS + 40);
@@ -2960,6 +2963,7 @@ function ChatScreen({
     setCameraAttachment(null);
     setCameraRecipients([]);
     setCameraCaption('');
+    cameraSendLockedRef.current = false;
     setCameraSending(false);
     setSheetContact(null);
     openSheet('newChat');
@@ -2972,6 +2976,7 @@ function ChatScreen({
     setCameraAttachment(attachment);
     setCameraRecipients([]);
     setCameraCaption('');
+    cameraSendLockedRef.current = false;
     setCameraSending(false);
     setSheetContact(null);
     openSheet('cameraShare');
@@ -3183,7 +3188,7 @@ function ChatScreen({
   };
 
   const sendCameraShare = async () => {
-    if (!cameraAttachment || cameraSending) return;
+    if (!cameraAttachment || cameraSending || cameraSendLockedRef.current) return;
     if (!cameraRecipients.length) {
       Alert.alert('Elige destinatarios', 'Selecciona al menos un contacto para enviar.');
       return;
@@ -3200,6 +3205,7 @@ function ChatScreen({
     const caption = cameraCaption.trim();
     const sentAt = new Date().toISOString();
     const previewText = caption || getAttachmentLabel(cameraAttachment.kind);
+    cameraSendLockedRef.current = true;
     setCameraSending(true);
     try {
       const results = await Promise.allSettled(cameraRecipients.map((contact) => (
@@ -3236,6 +3242,7 @@ function ChatScreen({
     } catch (err) {
       Alert.alert('No se envió', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
+      cameraSendLockedRef.current = false;
       setCameraSending(false);
     }
   };
@@ -18356,6 +18363,7 @@ function NativeConversationScreen({
   const conversationAtLatestRef = useRef(true);
   const pendingConversationInitialScrollRef = useRef(true);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const sendLockedRef = useRef(false);
   const agentStatesRef = useRef<ConversationAgentState[]>([]);
   const olderMessagesLoadingRef = useRef(false);
   const conversationHasOlderMessagesRef = useRef(false);
@@ -18454,6 +18462,8 @@ function NativeConversationScreen({
     pendingConversationInitialScrollRef.current = true;
     conversationManualScrollActiveRef.current = false;
     olderMessagesLoadingRef.current = false;
+    sendLockedRef.current = false;
+    setSending(false);
     conversationHasOlderMessagesRef.current = false;
     conversationHistoryExhaustedContactIdRef.current = null;
     setOlderMessagesLoading(false);
@@ -18874,14 +18884,19 @@ function NativeConversationScreen({
         locationPayload.address,
         selectedRoutePhoneNumberId,
       );
+      const localMessageId = getSendResponseLocalMessageId(response);
+      const providerMessageId = getSendResponseProviderMessageId(response);
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
           ? {
             ...message,
+            id: localMessageId || message.id,
+            providerMessageId: providerMessageId || message.providerMessageId,
             pending: false,
             status: response.status || 'sent',
             channel: response.transport || message.channel,
             transport: response.transport || message.transport,
+            routingReason: response.routingReason || response.fallbackReason || message.routingReason,
           }
           : message
       )));
@@ -18977,7 +18992,7 @@ function NativeConversationScreen({
         : paymentPreviewToSend.url
       : text;
     const attachmentsToSend = draftAttachments;
-    if ((!textToSend && attachmentsToSend.length === 0) || sending) return;
+    if ((!textToSend && attachmentsToSend.length === 0) || sending || sendLockedRef.current) return;
     if (!selectedChannelCanSend) {
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
       return;
@@ -18998,6 +19013,8 @@ function NativeConversationScreen({
       Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar por este canal.');
       return;
     }
+    sendLockedRef.current = true;
+    setSending(true);
     if (!options.skipAgentInterruptionConfirm) {
       const latestAgentStates = await refreshAgentStates({ silent: true });
       const activeStates = getActiveConversationAgentStates(latestAgentStates);
@@ -19005,6 +19022,8 @@ function NativeConversationScreen({
         Keyboard.dismiss();
         setManualAgentSendPrompt(activeStates);
         if (activeSheet) closeSheet();
+        sendLockedRef.current = false;
+        setSending(false);
         return;
       }
     }
@@ -19058,7 +19077,6 @@ function NativeConversationScreen({
     setReplyingToMessage(null);
     setMessages((current) => [...current, ...optimisticMessages]);
     updateContactPreview(attachmentsToSend.length ? (textToSend || getAttachmentLabel(attachmentsToSend[0]?.kind)) : textToSend, sentAt, optimisticChannel);
-    setSending(true);
     try {
       if (attachmentsToSend.length > 0) {
         const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
@@ -19068,20 +19086,29 @@ function NativeConversationScreen({
           if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
           const index = Number(message.id.replace(`${optimisticId}-attachment-`, ''));
           const response = responses[index];
+          const localMessageId = getSendResponseLocalMessageId(response);
+          const providerMessageId = getSendResponseProviderMessageId(response);
           return {
             ...message,
+            id: localMessageId || message.id,
+            providerMessageId: providerMessageId || message.providerMessageId,
             pending: false,
             status: response?.status || 'sent',
             channel: response?.transport || message.channel,
             transport: response?.transport || message.transport,
+            routingReason: response?.routingReason || response?.fallbackReason || message.routingReason,
           };
         }));
       } else {
         const response = await api.sendText(contact, textToSend, selectedRouteChannel, replyPayload, selectedRoutePhoneNumberId);
+        const localMessageId = getSendResponseLocalMessageId(response);
+        const providerMessageId = getSendResponseProviderMessageId(response);
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
             ? {
               ...message,
+              id: localMessageId || message.id,
+              providerMessageId: providerMessageId || message.providerMessageId,
               pending: false,
               status: response.status || 'sent',
               channel: response.transport || message.channel,
@@ -19105,6 +19132,7 @@ function NativeConversationScreen({
       setPaymentLinkDraftPreview(paymentPreviewToSend);
       Alert.alert('No se envió', errorMessage);
     } finally {
+      sendLockedRef.current = false;
       setSending(false);
     }
   };
@@ -22187,6 +22215,14 @@ function sendDraftAttachment(
   if (attachment.kind === 'audio') return api.sendAudio(contact, attachment.dataUrl, attachment.durationMs, phoneNumberId);
   if (attachment.kind === 'document') return api.sendDocument(contact, attachment.dataUrl, attachment.name, attachment.mimeType, caption, phoneNumberId);
   return api.sendImage(contact, attachment.dataUrl, caption, phoneNumberId);
+}
+
+function getSendResponseLocalMessageId(response?: SendTextResponse | null) {
+  return typeof response?.localMessageId === 'string' ? response.localMessageId.trim() : '';
+}
+
+function getSendResponseProviderMessageId(response?: SendTextResponse | null) {
+  return typeof response?.id === 'string' ? response.id.trim() : '';
 }
 
 function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessage[]): ChatMessage[] {

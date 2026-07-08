@@ -208,6 +208,8 @@ export type ChatMessage = {
 };
 
 export type SendTextResponse = {
+  id?: string;
+  localMessageId?: string | null;
   status?: string;
   transport?: string;
   channel?: string;

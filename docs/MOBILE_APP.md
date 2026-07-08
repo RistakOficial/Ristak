@@ -161,6 +161,13 @@ header fusionadas dentro de una sola capsula compacta. El boton de canal puede
 colorear el glifo segun el canal, pero no debe volver a meterlo en un circulo
 solido.
 
+Los envios manuales desde la conversacion nativa deben tener un candado
+sincronico antes de cualquier validacion async del agente o del canal: un doble
+tap no puede crear dos requests API. Cuando el backend responde con
+`localMessageId`, el globo optimista debe adoptar ese ID real antes de refrescar
+el historial; si conserva el ID local temporal, el merge de conversacion puede
+mostrar el optimista y el mensaje persistido como dos burbujas.
+
 Los comentarios de Facebook e Instagram en la conversacion nativa deben mantener
 la misma paridad que escritorio y `/movil`: el globo muestra si fue comentario,
 respuesta publica o respuesta privada, y cuando el backend entrega contexto de
