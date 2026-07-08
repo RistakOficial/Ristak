@@ -3961,9 +3961,16 @@ export const createContact = async (req, res) => {
  */
 export const getContactStats = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query
+    const { startDate, endDate, search = '', filter = 'all' } = req.query
 
-    const { range, metrics } = await buildContactStats({ startDate, endDate })
+    const { range, metrics } = await buildContactStats({
+      startDate,
+      endDate,
+      search,
+      filter: normalizeContactListQuickFilter(filter),
+      trackingFilters: normalizeContactListTrackingFilters(req.query.trackingFilters || req.query.filters),
+      advancedFilters: normalizeContactAdvancedFilters(req.query.advancedFilters || req.query.conditions)
+    })
 
     const rangeLabel = range.isFiltered
       ? `${range.startUtc || '---'} -> ${range.endUtc || '---'} (${range.appliedTimezone})`
@@ -5364,6 +5371,7 @@ export const getContactJourney = async (req, res) => {
       const platform = cleanString(msg.platform)
       const source = getMetaSourceLabelForChat(platform, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
+      const provider = cleanString(rawPayload?.provider)
       const replyContextId = getMetaReplyContextId(rawPayload)
       const reactionTargetId = cleanString(msg.message_type).toLowerCase() === 'reaction'
         ? getMetaReactionTargetId(rawPayload) || cleanString(msg.meta_message_id)
@@ -5389,6 +5397,7 @@ export const getContactJourney = async (req, res) => {
           postback_payload: msg.postback_payload,
           referral_json: msg.referral_json,
           attribution_source: 'meta_social',
+          provider: provider || 'meta',
           meta_social_message_id: msg.meta_social_message_id,
           meta_message_id: msg.meta_message_id,
           provider_message_id: msg.meta_message_id,

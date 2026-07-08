@@ -208,7 +208,7 @@ Shell desktop protegido:
 
 Configuracion se organiza en:
 
-- Cuenta: cuenta, usuarios, notificaciones, aplicacion movil.
+- Cuenta: cuenta, usuarios, notificaciones, privacidad, aplicacion movil.
 - Integraciones: HighLevel, Meta, WhatsApp, correos, pagos, calendarios.
 - Datos y rastreo: rastreo web, dominios, costos, media.
 - Personalizacion: campos, variables, trigger links, etiquetas.
@@ -331,6 +331,19 @@ Capacidades:
   `payment_mode = test`, para poder probar checkouts sandbox de punta a punta.
   Las metricas financieras de la lista (`total_paid`, LTV, conteos live y
   reportes de ingresos) siguen excluyendo pagos test.
+- La pantalla `/contacts` usa paginacion real del lado servidor. La tabla pide
+  solamente la pagina visible (20 contactos) con el rango, busqueda, filtro
+  rapido, condiciones avanzadas y orden activo; no debe cargar el CRM completo en
+  segundo plano para simular paginacion local. Al cambiar de fecha, filtro,
+  busqueda u orden vuelve a la pagina 1; al avanzar de pagina se consulta solo
+  ese batch.
+- Las tarjetas KPI de Contactos no son metricas de la pagina visible: resumen el
+  conjunto completo que coincide con el rango y filtros activos. `/api/contacts/stats`
+  debe reutilizar los mismos filtros de `/api/contacts` sin `limit/offset`, para
+  que totales, clientes, LTV y promedio sigan siendo correctos aunque la tabla
+  muestre solo un batch. La ficha/modal del contacto hidrata el detalle completo
+  al abrirse; la lista debe usar datos suficientes para la tabla y no bloquearse
+  por datos pesados de contactos que no estan visibles.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
@@ -395,22 +408,31 @@ abrir Maps sin una franja secundaria de titulo/coordenadas dentro del mensaje.
 Si el texto recibido solo dice `location` o `Ubicacion`, se oculta para no
 duplicar el contenido debajo del mapa.
 
-El chat movil permite responder un globo especifico y reaccionar a mensajes
-recibidos cuando el canal expone soporte nativo. La respuesta a un globo normal
-se activa deslizando la burbuja hacia la derecha, igual que el flujo de
-comentarios: en mensajes normales abre la cajita/preview de respuesta del
-composer; en comentarios de publicaciones mantiene la respuesta publica al
-comentario. WhatsApp API/YCloud envia respuestas con `context.message_id` y
-reacciones con `type='reaction'`; WhatsApp QR/Baileys usa el mensaje citado
-(`quoted`) y `react.key`. Messenger e Instagram nativos usan `reply_to.mid` para
-respuestas y `sender_action='react'` para reacciones; en Meta la reaccion
-soportada por contrato es corazon (`love`). HighLevel, email y comentarios no
-deben simular quote/reaccion si la API del canal no lo soporta: la UI debe
-avisar al usuario y mandar un mensaje normal solo cuando cancele la respuesta
-seleccionada. El journey debe exponer `provider_message_id`,
+El chat desktop (`/chat`) y el chat movil (`/movil`) permiten responder un
+globo especifico y reaccionar a mensajes recibidos cuando el canal expone
+soporte nativo. En movil la respuesta a un globo normal se activa deslizando la
+burbuja hacia la derecha, igual que el flujo de comentarios: en mensajes
+normales abre la cajita/preview de respuesta del composer; en comentarios de
+publicaciones mantiene la respuesta publica al comentario. En desktop, las
+reacciones no aparecen al pasar el cursor: se abren con click derecho sobre el
+globo recibido, mostrando una tira horizontal de emojis rapidos y, cuando el
+canal lo permite, un boton `+` que despliega el picker de emojis frecuentes. La
+reaccion debe enviarse como reaccion nativa apuntando al `provider_message_id`
+de ese mensaje, no como un mensaje normal con emoji. La UI desktop solo debe
+mostrar esos iconos si el mensaje pertenece a una ruta nativa conectada y
+compatible; mensajes sincronizados desde HighLevel, email, SMS, webchat y
+comentarios no deben abrir el picker de reaccion. WhatsApp API/YCloud envia
+respuestas con
+`context.message_id` y reacciones con `type='reaction'`; WhatsApp QR/Baileys usa
+el mensaje citado (`quoted`) y `react.key`. Messenger e Instagram nativos usan
+`reply_to.mid` para respuestas y `sender_action='react'` para reacciones; en
+Meta la reaccion soportada por contrato es corazon (`love`). HighLevel, email y
+comentarios no deben simular quote/reaccion si la API del canal no lo soporta:
+la UI debe avisar al usuario y mandar un mensaje normal solo cuando cancele la
+respuesta seleccionada. El journey debe exponer `provider`, `provider_message_id`,
 `reply_to_provider_message_id`, `reaction_emoji` y
-`reaction_target_provider_message_id` para que las burbujas de `/movil` pinten
-el quote y peguen el emoji al globo correcto.
+`reaction_target_provider_message_id` para que las burbujas de `/chat` y
+`/movil` pinten el quote y peguen el emoji al globo correcto.
 
 Cuando el usuario abre o marca como leida una conversacion movil, el estado local
 se actualiza en `chat_read_states` y el backend debe encolar en background el
@@ -431,6 +453,17 @@ fantasma: lista cada numero de WhatsApp conectado como opcion separada y envia e
 `phoneNumberId` elegido en texto, adjuntos, ubicacion y mensajes programados.
 SMS aparece solo si HighLevel esta conectado, y Messenger/Instagram solo cuando
 Meta esta conectado y el contacto pertenece a ese canal.
+
+Los comentarios de Facebook e Instagram son un canal publico distinto de
+Messenger/Instagram DM. Si un contacto nace desde un comentario, el composer debe
+mostrar el canal `Comentario de Facebook` o `Comentario de Instagram` y enviar
+la respuesta como comentario publico en la publicacion. Si el humano cambia el
+canal a Messenger o Instagram DM, el texto se manda como respuesta privada al
+comentario. Si ya existia una conversacion privada y despues llega un comentario,
+la conversacion sigue en Messenger/Instagram DM; el canal publico solo aparece
+cuando ese comentario es el ultimo mensaje entrante del contacto. Si despues del
+comentario el contacto manda un DM, responder en la publicacion exige tocar el
+boton `Responder en la publicacion` del globo de comentario exacto.
 
 ### Correo electronico
 
@@ -615,6 +648,11 @@ Ristak debe guardar una copia de preview en `mediaStorageService` y persistir su
 `media_url` en `whatsapp_api_messages`. WhatsApp no debe recibir ese link si el
 proveedor acepta media ID, pero el historial interno si lo necesita para pintar
 la imagen en la burbuja del chat en vez de mostrar solo el nombre del archivo.
+Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el eco saliente
+que WhatsApp Web emite para esa foto no debe crear una segunda burbuja `QR` con
+el texto generico `Foto`. El backend debe marcar los envios API originados por
+Ristak y deduplicar ecos recientes de media sin caption por telefono, direccion,
+tipo de mensaje y ventana temporal antes de persistirlos como mensajes nuevos.
 
 Los mensajes entrantes estructurados de WhatsApp (plantillas, botones, listas,
 OTP/copy-code e interactivos) no deben degradarse a la etiqueta generica
@@ -638,6 +676,10 @@ webhook tardio de WhatsApp API con estado `failed` para un mensaje que ya quedo
 resuelto por QR, el historial debe conservar el transporte `qr` y mantener
 limpios esos campos de error. Solo se guarda error visible cuando no existe
 respaldo QR usable o cuando el respaldo QR tambien falla.
+Para media manual (foto, video, audio o documento), el fallback por ventana
+cerrada debe conservar el tipo real del contenido: una foto fuera de 24 horas se
+manda por WhatsApp QR como imagen, no como mensaje de texto ni como placeholder
+`Foto`.
 
 En automatizaciones de pago, si la plantilla configurada esta pendiente,
 rechazada, pausada o no sincronizada, Ristak no debe brincar directo a QR. Primero
@@ -850,6 +892,16 @@ debe sumar a LTV, ingresos reales, ROAS, reportes financieros ni conversiones
 reales de Meta.
 
 ### Tabla de transacciones
+
+La tabla principal de `/transactions` usa paginacion real del lado servidor. La
+pantalla pide solo la pagina visible de pagos (20 filas) con fecha, busqueda,
+estado y orden; al cambiar cualquiera de esos filtros vuelve a la pagina 1. El
+endpoint `/api/transactions` siempre debe devolver `pagination` y facets de
+estado calculados sobre todo el resultado filtrado, no solo sobre las filas de la
+pagina actual. Las tarjetas KPI de Pagos tampoco son metricas de la pagina
+visible: `/api/transactions/summary` debe recalcular ingresos, pagos
+completados, ticket promedio y reembolsos con los mismos filtros de fecha,
+busqueda y estado seleccionados.
 
 La tabla principal de `/transactions` separa tres conceptos que antes podian
 mezclarse en `payment_method`:

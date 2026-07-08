@@ -24,10 +24,10 @@ import {
 import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useLabels } from '@/contexts/LabelsContext'
-import { useUrlDateRangeSync } from '@/hooks'
+import { useAccountCurrency, useUrlDateRangeSync } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString } from '@/utils/format'
 import { parseSortableDateValue } from '@/utils/dateSort'
-import { contactsService, type Contact, type ContactStats } from '@/services/contactsService'
+import { contactsService, type Contact, type ContactsPagination, type ContactStats } from '@/services/contactsService'
 import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { whatsappApiService, type WhatsAppApiPhoneNumber } from '@/services/whatsappApiService'
 import { calendarsService, type CalendarEvent } from '@/services/calendarsService'
@@ -79,8 +79,7 @@ const APPOINTMENT_CANCELED_STATUSES = new Set([
 ])
 const REVENUE_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const DELETE_CONFIRMATION_WORD = 'ELIMINAR'
-const CONTACTS_PAGE_SIZE = 100
-const MAX_CONTACTS_BACKGROUND_PAGES = 100
+const CONTACTS_PAGE_SIZE = 20
 type ContactViewMode = 'all' | 'by-date'
 const contactViewModes: ContactViewMode[] = ['all', 'by-date']
 const contactFilters = ['all', 'leads', 'appointments', 'attendances', 'customers']
@@ -88,6 +87,28 @@ const isContactViewMode = (value?: string): value is ContactViewMode => contactV
 const isContactFilter = (value?: string) => Boolean(value && contactFilters.includes(value))
 const CUSTOM_FIELD_COLUMN_PREFIX = 'custom-field:'
 const LEGACY_TRACKING_FILTERS_URL_PARAM = 'filters'
+const CONTACT_TABLE_SORT_FIELDS: Record<string, string> = {
+  createdAt: 'created_at',
+  name: 'full_name',
+  status: 'priority',
+  phone: 'phone',
+  email: 'email',
+  ltv: 'total_paid'
+}
+
+const createEmptyContactsPagination = (page = 1): ContactsPagination => ({
+  page,
+  limit: CONTACTS_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  hasNext: false,
+  hasPrev: page > 1
+})
+
+const getDateRangeKeyPart = (value: unknown) => {
+  if (value instanceof Date) return String(value.getTime())
+  return String(value ?? '')
+}
 
 interface ContactCustomFieldColumnSpec {
   columnKey: string
@@ -529,6 +550,7 @@ const ContactsTable: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
   const { labels } = useLabels()
   const { formatLocalDateShort } = useTimezone()
+  const [accountCurrency] = useAccountCurrency()
   const { locationId, accessToken } = useAuth()
   const [contacts, setContacts] = useState<Contact[]>([])
   const [stats, setStats] = useState<ContactStats | null>(null)
@@ -564,6 +586,7 @@ const ContactsTable: React.FC = () => {
   const [deleteProgress, setDeleteProgress] = useState(0)
   const deleteCancelRef = useRef(false)
   const [loading, setLoading] = useState(false)
+  const [statsLoading, setStatsLoading] = useState(false)
   const [loadingEvents, setLoadingEvents] = useState(false) // Loading específico para eventos de calendarios
   const [viewMode, setViewMode] = useState<ContactViewMode>(routeState.viewMode)
   const [isClient, setIsClient] = useState(false)
@@ -579,12 +602,19 @@ const ContactsTable: React.FC = () => {
   const [hasLoadedContacts, setHasLoadedContacts] = useState(false)
   const [contactSearchTerm, setContactSearchTerm] = useState('')
   const [debouncedContactSearch, setDebouncedContactSearch] = useState('')
+  const [contactsPage, setContactsPage] = useState(1)
+  const [contactsPagination, setContactsPagination] = useState<ContactsPagination>(() => createEmptyContactsPagination())
+  const [tableSort, setTableSort] = useState<{ key: string; order: 'asc' | 'desc' }>({
+    key: 'createdAt',
+    order: 'desc'
+  })
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false)
   const [advancedFilterConfig, setAdvancedFilterConfig] = useState<ContactAdvancedFilterConfig>(() =>
     parseContactAdvancedConfig(searchParams.get(CONTACT_ADVANCED_FILTERS_URL_PARAM))
   )
   const handledOpenContactRef = useRef<string | null>(null)
   const fetchRequestRef = useRef(0)
+  const contactsQueryKeyRef = useRef('')
 
   const navigateContactsPath = useCallback((pathname: string, options?: { replace?: boolean }) => {
     navigate({ pathname, search: location.search }, options)
@@ -598,6 +628,29 @@ const ContactsTable: React.FC = () => {
     () => hasActiveContactAdvancedConfig(advancedFilterConfig),
     [advancedFilterConfig]
   )
+  const serializedAdvancedFilters = useMemo(
+    () => serializeContactAdvancedConfig(advancedFilterConfig),
+    [advancedFilterConfig]
+  )
+  const contactsQueryKey = useMemo(() => JSON.stringify({
+    viewMode,
+    filter,
+    search: debouncedContactSearch.trim(),
+    advancedFilters: serializedAdvancedFilters,
+    start: viewMode === 'by-date' ? getDateRangeKeyPart(dateRange.start) : '',
+    end: viewMode === 'by-date' ? getDateRangeKeyPart(dateRange.end) : '',
+    sortKey: tableSort.key,
+    sortOrder: tableSort.order
+  }), [
+    dateRange.end,
+    dateRange.start,
+    debouncedContactSearch,
+    filter,
+    serializedAdvancedFilters,
+    tableSort.key,
+    tableSort.order,
+    viewMode
+  ])
 
   const writeAdvancedFiltersToUrl = useCallback((nextConfig: ContactAdvancedFilterConfig) => {
     const normalized = normalizeContactAdvancedConfig(nextConfig)
@@ -724,8 +777,24 @@ const ContactsTable: React.FC = () => {
   }, [contactSearchTerm])
 
   useEffect(() => {
-    fetchData()
-  }, [dateRange, viewMode, debouncedContactSearch, filter, advancedFilterConfig])
+    const queryChanged = contactsQueryKeyRef.current !== contactsQueryKey
+    if (queryChanged) {
+      contactsQueryKeyRef.current = contactsQueryKey
+      if (contactsPage !== 1) {
+        setContactsPage(1)
+        return
+      }
+    }
+
+    fetchData(contactsPage)
+  }, [contactsPage, contactsQueryKey])
+
+  useEffect(() => {
+    const safeTotalPages = Math.max(contactsPagination.totalPages || 1, 1)
+    if (contactsPage > safeTotalPages) {
+      setContactsPage(safeTotalPages)
+    }
+  }, [contactsPage, contactsPagination.totalPages])
 
   useEffect(() => {
     setShowNewContactModal(routeState.create)
@@ -1183,21 +1252,21 @@ const ContactsTable: React.FC = () => {
     }
   }
 
-  const fetchData = async () => {
+  const fetchData = async (pageToLoad = contactsPage) => {
     const requestId = fetchRequestRef.current + 1
     fetchRequestRef.current = requestId
     const normalizedSearch = debouncedContactSearch.trim()
-    const serializedAdvancedFilters = serializeContactAdvancedConfig(advancedFilterConfig)
     const activeAdvancedFilters = serializedAdvancedFilters
       ? normalizeContactAdvancedConfig(advancedFilterConfig)
       : undefined
     const activeSort = activeAdvancedFilters?.sort || null
+    const tableSortBy = CONTACT_TABLE_SORT_FIELDS[tableSort.key] || 'created_at'
+    const tableSortOrder = tableSort.order === 'asc' ? 'ASC' : 'DESC'
     const contactsQueryOptions = {
       filter,
       advancedFilters: activeAdvancedFilters,
-      warmProfilePictures: true,
-      sortBy: activeSort?.by || 'created_at',
-      sortOrder: activeSort?.order || 'DESC' as const
+      sortBy: activeSort?.by || tableSortBy,
+      sortOrder: (activeSort?.order || tableSortOrder) as 'ASC' | 'DESC'
     }
     setLoading(true)
     try {
@@ -1211,7 +1280,14 @@ const ContactsTable: React.FC = () => {
       }
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los contactos
 
-      const statsPromise = contactsService.getStats(startDate, endDate)
+      setStatsLoading(true)
+      const statsPromise = contactsService.getStats({
+        startDate,
+        endDate,
+        filter,
+        advancedFilters: activeAdvancedFilters,
+        ...(normalizedSearch ? { search: normalizedSearch } : {})
+      })
         .then((statsData) => {
           if (fetchRequestRef.current === requestId) {
             setStats(statsData)
@@ -1222,11 +1298,16 @@ const ContactsTable: React.FC = () => {
             setStats(null)
           }
         })
+        .finally(() => {
+          if (fetchRequestRef.current === requestId) {
+            setStatsLoading(false)
+          }
+        })
 
-      const firstPage = await contactsService.getContactsPage({
+      const contactsPageResult = await contactsService.getContactsPage({
         startDate,
         endDate,
-        page: 1,
+        page: pageToLoad,
         limit: CONTACTS_PAGE_SIZE,
         ...contactsQueryOptions,
         ...(normalizedSearch ? { search: normalizedSearch } : {})
@@ -1236,54 +1317,17 @@ const ContactsTable: React.FC = () => {
         return
       }
 
-      setContacts(firstPage.contacts)
+      setContacts(contactsPageResult.contacts)
+      setContactsPagination(contactsPageResult.pagination)
       setHasLoadedContacts(true)
       setLoading(false)
 
       void statsPromise
-
-      if (firstPage.pagination.hasNext) {
-        const loadRemainingPages = async () => {
-          let page = firstPage.pagination.page + 1
-          let hasMore = true
-          let loadedContacts = firstPage.contacts
-
-          while (
-            hasMore &&
-            (normalizedSearch || page <= MAX_CONTACTS_BACKGROUND_PAGES) &&
-            fetchRequestRef.current === requestId
-          ) {
-            const nextPage = await contactsService.getContactsPage({
-              startDate,
-              endDate,
-              page,
-              limit: CONTACTS_PAGE_SIZE,
-              ...contactsQueryOptions,
-              ...(normalizedSearch ? { search: normalizedSearch } : {})
-            })
-
-            if (fetchRequestRef.current !== requestId) {
-              return
-            }
-
-            loadedContacts = [
-              ...loadedContacts,
-              ...nextPage.contacts
-            ]
-            setContacts(loadedContacts)
-
-            hasMore = nextPage.pagination.hasNext && nextPage.contacts.length > 0
-            page = nextPage.pagination.page + 1
-          }
-        }
-
-        loadRemainingPages().catch(() => {
-          // La primera página ya está visible; si el relleno falla, no bloqueamos al usuario.
-        })
-      }
     } catch (error) {
       // Error already shown to user via toast
       if (fetchRequestRef.current === requestId) {
+        setContactsPagination(createEmptyContactsPagination(pageToLoad))
+        setStatsLoading(false)
         showToast('error', 'No se pudieron cargar los contactos', 'Hubo un problema al obtener la información de contactos. Intenta refrescar la página.')
       }
     } finally {
@@ -1601,7 +1645,7 @@ const ContactsTable: React.FC = () => {
     {
       key: 'ltv',
       header: 'Pagos totales',
-      render: (value) => value > 0 ? formatCurrency(value) : '-',
+      render: (value) => value > 0 ? formatCurrency(value, accountCurrency) : '-',
       sortable: true
     },
     ...customFieldColumnSpecs.map((fieldColumn): Column<Contact> => ({
@@ -1794,6 +1838,7 @@ const ContactsTable: React.FC = () => {
   ) : null
 
   const contactsRefreshing = loading && hasLoadedContacts
+  const statsRefreshing = contactsRefreshing || statsLoading
 
   if (loading && !hasLoadedContacts) {
     return <Loading message="Cargando contactos..." page="contacts" />
@@ -1872,7 +1917,7 @@ const ContactsTable: React.FC = () => {
             value={formatNumber(statsData.total)}
             delta={statsData.totalChange}
             deltaLabel="vs periodo anterior"
-            loading={contactsRefreshing}
+            loading={statsRefreshing}
             icon={<Users className="text-[var(--color-text-tertiary)]" />}
           />
           <KpiCard
@@ -1880,23 +1925,23 @@ const ContactsTable: React.FC = () => {
             value={formatNumber(statsData.customers)}
             delta={statsData.customersChange}
             deltaLabel="vs periodo anterior"
-            loading={contactsRefreshing}
+            loading={statsRefreshing}
             icon={<User className="text-[var(--color-text-tertiary)]" />}
           />
           <KpiCard
             title="Pagos totales"
-            value={formatCurrency(statsData.ltvTotal)}
+            value={formatCurrency(statsData.ltvTotal, accountCurrency)}
             delta={statsData.ltvTotalChange}
             deltaLabel="vs periodo anterior"
-            loading={contactsRefreshing}
+            loading={statsRefreshing}
             icon={<DollarSign className="text-[var(--color-text-tertiary)]" />}
           />
           <KpiCard
             title="Pagos totales promedio"
-            value={formatCurrency(statsData.ltvPromedio)}
+            value={formatCurrency(statsData.ltvPromedio, accountCurrency)}
             delta={statsData.ltvPromedioChange}
             deltaLabel="vs periodo anterior"
-            loading={contactsRefreshing}
+            loading={statsRefreshing}
             icon={<TrendingUp className="text-[var(--color-text-tertiary)]" />}
           />
         </div>
@@ -1916,6 +1961,17 @@ const ContactsTable: React.FC = () => {
           onSearchTermChange={setContactSearchTerm}
           paginated={true}
           pageSize={20}
+          serverSidePagination={true}
+          currentPage={contactsPage}
+          totalItems={contactsPagination.total}
+          totalPages={contactsPagination.totalPages}
+          onPageChange={setContactsPage}
+          serverSideSort={true}
+          sortBy={tableSort.key}
+          sortOrder={tableSort.order}
+          onSortChange={(key, order) => {
+            setTableSort({ key, order })
+          }}
           filters={filterOptions}
           activeFilter={filter}
           onFilterChange={(value) => {
@@ -1957,7 +2013,7 @@ const ContactsTable: React.FC = () => {
             selectedKeys: selectedContactIds,
             onChange: setSelectedContactIds,
             getRowLabel: (item) => item.name || item.email || item.phone || 'contacto',
-            selectAllLabel: 'Seleccionar todos los contactos'
+            selectAllLabel: 'Seleccionar contactos de esta página'
           }}
         />
       </Card>

@@ -49,7 +49,7 @@ import {
   toDateTimeLocalInputValue,
   todayDateOnlyInTimezone
 } from '@/utils/timezone'
-import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan } from '@/services/transactionsService'
+import { transactionsService, type Transaction, type TransactionSummary, type PaymentPlan, type TransactionsPagination } from '@/services/transactionsService'
 import { subscribeToPaymentLiveEvents, type PaymentLiveEvent } from '@/services/paymentLiveEventsService'
 import { highLevelService } from '@/services/highLevelService'
 import { getIntegrationsStatus } from '@/services/integrationsService'
@@ -433,6 +433,16 @@ const TRANSACTION_STATUS_ORDER = [
   'failed',
   'deleted'
 ]
+const TRANSACTIONS_PAGE_SIZE = 20
+const EMPTY_TRANSACTIONS_PAGINATION: TransactionsPagination = {
+  page: 1,
+  limit: TRANSACTIONS_PAGE_SIZE,
+  total: 0,
+  totalPages: 1,
+  hasNext: false,
+  hasPrev: false
+}
+const getDateRangeKeyValue = (value: unknown) => value instanceof Date ? value.getTime() : String(value || '')
 
 const REFUNDABLE_TRANSACTION_STATUSES = ['paid']
 const VOIDABLE_HIGHLEVEL_TRANSACTION_STATUSES = new Set(['draft', 'sent', 'pending', 'overdue', 'partial'])
@@ -677,6 +687,13 @@ export const Transactions: React.FC = () => {
   const { showConfirm, showToast } = useNotification()
   const [accountCurrency] = useAccountCurrency()
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [transactionsPage, setTransactionsPage] = useState(1)
+  const [transactionsPagination, setTransactionsPagination] = useState<TransactionsPagination>(EMPTY_TRANSACTIONS_PAGINATION)
+  const [transactionStatusCounts, setTransactionStatusCounts] = useState<Record<string, number>>({})
+  const [transactionTableSort, setTransactionTableSort] = useState<{ key: string; order: 'asc' | 'desc' }>({
+    key: 'date',
+    order: 'desc'
+  })
   const [paymentPlans, setPaymentPlans] = useState<PaymentPlan[]>([])
   const [summary, setSummary] = useState<TransactionSummary | null>(null)
   const [loading, setLoading] = useState(false)
@@ -737,6 +754,7 @@ export const Transactions: React.FC = () => {
   const handledOpenPaymentPlanRef = useRef<string | null>(null)
   const paymentPlansUnavailableRedirectedRef = useRef(false)
   const transactionsRequestRef = useRef(0)
+  const transactionsQueryKeyRef = useRef('')
   const paymentPlansRequestRef = useRef(0)
   const paymentLiveRefreshTimerRef = useRef<number | null>(null)
   const paymentLiveRefreshInFlightRef = useRef(false)
@@ -857,11 +875,42 @@ export const Transactions: React.FC = () => {
     return () => window.clearTimeout(handle)
   }, [transactionSearchTerm])
 
+  const selectedTransactionStatuses = useMemo(
+    () => transactionStatusFilters.status || [],
+    [transactionStatusFilters]
+  )
+  const selectedTransactionStatusKey = selectedTransactionStatuses.join('|')
+  const transactionsQueryKey = useMemo(() => JSON.stringify({
+    viewMode,
+    start: viewMode === 'by-date' ? getDateRangeKeyValue(dateRange.start) : '',
+    end: viewMode === 'by-date' ? getDateRangeKeyValue(dateRange.end) : '',
+    search: debouncedTransactionSearch,
+    statuses: selectedTransactionStatusKey,
+    sortBy: transactionTableSort.key,
+    sortOrder: transactionTableSort.order
+  }), [
+    dateRange.end,
+    dateRange.start,
+    debouncedTransactionSearch,
+    selectedTransactionStatusKey,
+    transactionTableSort.key,
+    transactionTableSort.order,
+    viewMode
+  ])
+
   useEffect(() => {
-    if (paymentTableTab === 'transactions') {
-      fetchData()
+    if (paymentTableTab !== 'transactions') return
+
+    if (transactionsQueryKeyRef.current !== transactionsQueryKey) {
+      transactionsQueryKeyRef.current = transactionsQueryKey
+      if (transactionsPage !== 1) {
+        setTransactionsPage(1)
+        return
+      }
     }
-  }, [dateRange, viewMode, paymentTableTab, debouncedTransactionSearch])
+
+    fetchData({ page: transactionsPage })
+  }, [paymentTableTab, transactionsPage, transactionsQueryKey])
 
   useEffect(() => {
     if (paymentTableTab !== 'payment-plans') return
@@ -943,7 +992,9 @@ export const Transactions: React.FC = () => {
     }
   }, [paymentTableTab, selectedPaymentPlanIds.length])
 
-  const fetchData = async (forceSync = false) => {
+  const fetchData = async (options: boolean | { forceSync?: boolean; page?: number } = false) => {
+    const forceSync = typeof options === 'boolean' ? options : Boolean(options.forceSync)
+    const pageToLoad = typeof options === 'object' && options.page ? options.page : transactionsPage
     const requestId = transactionsRequestRef.current + 1
     transactionsRequestRef.current = requestId
     setLoading(true)
@@ -959,21 +1010,51 @@ export const Transactions: React.FC = () => {
       }
       // Si viewMode === 'all', no enviamos fechas para obtener TODOS los pagos
 
-      const [transactionsData, summaryData] = await Promise.all([
-        transactionsService.getTransactions(startDate, endDate, forceSync, search),
-        transactionsService.getSummary(startDate, endDate)
+      const [transactionsPageResult, summaryData] = await Promise.all([
+        transactionsService.getTransactionsPage({
+          startDate,
+          endDate,
+          forceSync,
+          search,
+          statuses: selectedTransactionStatuses,
+          page: pageToLoad,
+          limit: TRANSACTIONS_PAGE_SIZE,
+          sortBy: transactionTableSort.key,
+          sortOrder: transactionTableSort.order
+        }),
+        transactionsService.getSummary({
+          startDate,
+          endDate,
+          search,
+          statuses: selectedTransactionStatuses
+        })
       ])
 
       if (transactionsRequestRef.current !== requestId) {
         return
       }
 
-      setTransactions(transactionsData)
+      const safeTotalPages = Math.max(transactionsPageResult.pagination.totalPages || 1, 1)
+      if (pageToLoad > safeTotalPages) {
+        setTransactionsPage(safeTotalPages)
+        return
+      }
+
+      setTransactions(transactionsPageResult.transactions)
+      setTransactionsPagination(transactionsPageResult.pagination)
+      setTransactionStatusCounts(
+        transactionsPageResult.facets.statuses.reduce<Record<string, number>>((acc, status) => {
+          acc[status.value] = status.count
+          return acc
+        }, {})
+      )
       setSummary(summaryData)
     } catch (error) {
       // Error already shown to user via toast
       if (transactionsRequestRef.current === requestId) {
         showToast('error', 'No se pudieron cargar los pagos', 'Hubo un problema al obtener la información de pagos. Intenta refrescar la página.')
+        setTransactionsPagination(EMPTY_TRANSACTIONS_PAGINATION)
+        setTransactionStatusCounts({})
       }
     } finally {
       if (transactionsRequestRef.current === requestId) {
@@ -1084,6 +1165,7 @@ export const Transactions: React.FC = () => {
 
       let startDate: string | undefined
       let endDate: string | undefined
+      const search = debouncedTransactionSearch.trim()
 
       if (viewMode === 'by-date') {
         startDate = formatDateToISO(dateRange.start)
@@ -1091,12 +1173,35 @@ export const Transactions: React.FC = () => {
       }
 
       // Llamar al endpoint con sync=true para sincronización completa
-      const [transactionsData, summaryData] = await Promise.all([
-        transactionsService.getTransactions(startDate, endDate, true, debouncedTransactionSearch.trim()), // sync=true
-        transactionsService.getSummary(startDate, endDate)
+      const [transactionsPageResult, summaryData] = await Promise.all([
+        transactionsService.getTransactionsPage({
+          startDate,
+          endDate,
+          forceSync: true,
+          search,
+          statuses: selectedTransactionStatuses,
+          page: 1,
+          limit: TRANSACTIONS_PAGE_SIZE,
+          sortBy: transactionTableSort.key,
+          sortOrder: transactionTableSort.order
+        }),
+        transactionsService.getSummary({
+          startDate,
+          endDate,
+          search,
+          statuses: selectedTransactionStatuses
+        })
       ])
 
-      setTransactions(transactionsData)
+      setTransactionsPage(1)
+      setTransactions(transactionsPageResult.transactions)
+      setTransactionsPagination(transactionsPageResult.pagination)
+      setTransactionStatusCounts(
+        transactionsPageResult.facets.statuses.reduce<Record<string, number>>((acc, status) => {
+          acc[status.value] = status.count
+          return acc
+        }, {})
+      )
       setSummary(summaryData)
       showToast('success', 'Sincronización completa', 'Los pagos se actualizaron desde las pasarelas conectadas.')
     } catch (error) {
@@ -2621,26 +2726,23 @@ export const Transactions: React.FC = () => {
   const canDeletePaymentPlan = (_plan: PaymentPlan) => true
 
   const transactionStatusFilterData = useMemo(() => {
-    const counts = transactions.reduce<Record<string, number>>((acc, transaction) => {
-      const status = String(transaction.status || '').toLowerCase()
-      if (!status) return acc
-      acc[status] = (acc[status] || 0) + 1
-      return acc
-    }, {})
+    const counts = transactionStatusCounts
 
     const orderedStatuses = [
       ...TRANSACTION_STATUS_ORDER.filter(status => counts[status]),
+      ...selectedTransactionStatuses.filter(status => !TRANSACTION_STATUS_ORDER.includes(status) || !counts[status]),
       ...Object.keys(counts).filter(status => !TRANSACTION_STATUS_ORDER.includes(status)).sort()
     ]
+    const uniqueOrderedStatuses = Array.from(new Set(orderedStatuses))
 
     return {
-      statuses: orderedStatuses.map(status => ({
+      statuses: uniqueOrderedStatuses.map(status => ({
         name: TRANSACTION_STATUS_BADGES[status]?.label || status,
         value: status,
-        count: counts[status]
+        count: counts[status] || 0
       }))
     }
-  }, [transactions])
+  }, [selectedTransactionStatuses, transactionStatusCounts])
 
   const paymentPlanStatusFilterData = useMemo(() => {
     const counts = paymentPlans.reduce<Record<string, number>>((acc, plan) => {
@@ -2663,15 +2765,6 @@ export const Transactions: React.FC = () => {
       }))
     }
   }, [paymentPlans])
-
-  const filteredTransactions = useMemo(() => {
-    const selectedStatuses = transactionStatusFilters.status || []
-    if (!selectedStatuses.length) return transactions
-
-    return transactions.filter(transaction =>
-      selectedStatuses.includes(String(transaction.status || '').toLowerCase())
-    )
-  }, [transactionStatusFilters, transactions])
 
   const selectedTransactions = useMemo(() => {
     if (selectedTransactionIds.length === 0) return []
@@ -3405,7 +3498,7 @@ export const Transactions: React.FC = () => {
           <Table
             key="transactions_table"
             initialColumns={columns}
-            data={filteredTransactions}
+            data={transactions}
             keyExtractor={(item) => item.id}
             emptyMessage="No hay pagos disponibles"
             loading={transactionsRefreshing}
@@ -3414,8 +3507,20 @@ export const Transactions: React.FC = () => {
             serverSideSearch={true}
             searchTerm={transactionSearchTerm}
             onSearchTermChange={setTransactionSearchTerm}
+            serverSidePagination={true}
+            currentPage={transactionsPagination.page || transactionsPage}
+            totalItems={transactionsPagination.total}
+            totalPages={transactionsPagination.totalPages}
+            onPageChange={setTransactionsPage}
+            serverSideSort={true}
+            sortBy={transactionTableSort.key}
+            sortOrder={transactionTableSort.order}
+            onSortChange={(sortBy, sortOrder) => {
+              setTransactionTableSort({ key: sortBy, order: sortOrder })
+              setTransactionsPage(1)
+            }}
             paginated={true}
-            pageSize={20}
+            pageSize={TRANSACTIONS_PAGE_SIZE}
             searchPosition="left"
             tableId="transactions"
             initialSortBy="date"
@@ -3425,7 +3530,7 @@ export const Transactions: React.FC = () => {
               selectedKeys: selectedTransactionIds,
               onChange: setSelectedTransactionIds,
               getRowLabel: (item) => item.title || item.contactName || 'pago',
-              selectAllLabel: 'Seleccionar todos los pagos'
+              selectAllLabel: 'Seleccionar pagos de esta página'
             }}
           />
         ) : (

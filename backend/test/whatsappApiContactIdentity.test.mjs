@@ -16,6 +16,7 @@ import {
   getWhatsAppApiConfigKeys,
   processYCloudWhatsAppWebhook,
   repairStoredYCloudHistoryMessageDirections,
+  sendWhatsAppApiImageMessage,
   sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTextMessage,
   setYCloudFetchForTest,
@@ -27,6 +28,8 @@ import {
   resetWhatsAppQrServiceForTest,
   setBaileysRuntimeForTest
 } from '../src/services/whatsappQrService.js'
+
+const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 
 async function cleanup({ contactId, apiContactId, messageId, phone, eventId }) {
   await db.run('DELETE FROM whatsapp_api_attribution WHERE whatsapp_api_message_id = ? OR contact_id = ? OR phone = ?', [messageId, contactId, phone]).catch(() => undefined)
@@ -824,6 +827,100 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
   }
 })
 
+test('eco QR de foto API sin caption no crea globo Foto duplicado', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52992${suffix}`
+  const businessPhone = `+52656${suffix}`
+  const phoneNumberId = `phone_qr_api_photo_echo_${id}`
+  const contactId = `rstk_contact_qr_api_photo_echo_${id}`
+  const apiMessageId = `api_photo_no_caption_${id}`
+  const qrEchoWamid = `qr_photo_echo_${id}`
+  const messageAt = '2024-06-01T10:20:30.000Z'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+
+  await cleanup({ contactId, messageId: apiMessageId, phone })
+  await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ?', [qrEchoWamid]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_qr_api_photo_echo_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_qr_api_photo_echo_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_qr_api_photo_echo_test', ?, ?, 'QR API Photo Echo Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, full_name, first_name, source, created_at, updated_at
+        ) VALUES (?, ?, 'Cliente Foto Eco', 'Cliente', 'WhatsApp_API', ?, ?)
+      `, [contactId, phone, messageAt, messageAt])
+
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, ycloud_message_id, wamid, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, media_url, media_mime_type, media_filename, status,
+          message_timestamp, created_at, updated_at
+        ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, ?, 'api', 'outbound', 'image',
+          NULL, '/media/assets/api-photo-preview/file', 'image/jpeg', 'whatsapp-image.jpg', 'sent',
+          ?, ?, ?)
+      `, [
+        apiMessageId,
+        apiMessageId,
+        `wamid_api_photo_${id}`,
+        contactId,
+        phone,
+        businessPhone,
+        phone,
+        businessPhone,
+        phoneNumberId,
+        messageAt,
+        messageAt,
+        messageAt
+      ])
+
+      const result = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'outbound',
+        wamid: qrEchoWamid,
+        messageType: 'image',
+        text: '',
+        contactPhone: phone,
+        timestamp: messageAt
+      })
+
+      assert.equal(result.skipped, true)
+      assert.equal(result.reason, 'duplicate_recent')
+      assert.equal(result.messageId, apiMessageId)
+
+      const duplicate = await db.get('SELECT id FROM whatsapp_api_messages WHERE wamid = ?', [qrEchoWamid])
+      assert.ok(!duplicate)
+
+      const row = await db.get('SELECT transport, message_type, message_text FROM whatsapp_api_messages WHERE id = ?', [apiMessageId])
+      assert.equal(row.transport, 'api')
+      assert.equal(row.message_type, 'image')
+      assert.equal(row.message_text, null)
+    })
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ?', [qrEchoWamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId: apiMessageId, phone })
+  }
+})
+
 test('envio API fallido inmediato responde y persiste el respaldo QR limpio', async () => {
   const id = randomUUID()
   const phone = `+52994${Date.now().toString().slice(-7)}`
@@ -1104,6 +1201,149 @@ test('envio API fuera de ventana usa QR en preflight sin llamar YCloud', async (
       assert.equal(message.error_code, null)
       assert.equal(message.error_message, null)
       assert.equal(message.message_text, body)
+      assert.equal(message.routing_reason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId: inboundMessageId, phone })
+  }
+})
+
+test('envio de foto fuera de ventana usa QR como imagen y no como texto', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52988${suffix}`
+  const businessPhone = `+52652${suffix}`
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const phoneNumberId = `phone_api_qr_image_preflight_${id}`
+  const contactId = `rstk_contact_api_qr_image_preflight_${id}`
+  const inboundMessageId = `inbound_api_qr_image_preflight_${id}`
+  const externalId = `manual_chat_image_preflight_${id}`
+  const lastInboundAt = '2024-05-01T08:00:00.000Z'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
+  const sentMessages = []
+  let ycloudPostCalls = 0
+
+  await cleanup({ contactId, messageId: inboundMessageId, phone })
+  await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_qr_image_preflight_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.phoneNumberId, phoneNumberId)
+      await setAppConfig(keys.wabaId, 'waba_api_qr_image_preflight_test')
+      await setAppConfig(keys.provider, 'ycloud')
+
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, qr_connected_phone, status
+        ) VALUES (?, 'ycloud', 'waba_api_qr_image_preflight_test', ?, ?, 'API QR Image Preflight Test', 1, 1, 1, 'connected', ?, 'CONNECTED')
+      `, [phoneNumberId, businessPhone, businessPhone, businessPhone])
+
+      await db.run(`
+        INSERT INTO whatsapp_qr_sessions (
+          id, phone_number_id, expected_phone, connected_phone, status,
+          consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `qr_${phoneNumberId}`,
+        phoneNumberId,
+        businessPhone,
+        businessPhone,
+        QR_CONSENT_TEXT
+      ])
+
+      await db.run(`
+        INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+        VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+      `, [
+        phoneNumberId,
+        JSON.stringify({
+          me: { id: connectedJid },
+          registered: true
+        })
+      ])
+
+      await db.run(`
+        INSERT INTO contacts (
+          id, phone, full_name, first_name, source, created_at, updated_at
+        ) VALUES (?, ?, 'Cliente Foto QR', 'Cliente', 'WhatsApp_API', ?, ?)
+      `, [contactId, phone, lastInboundAt, lastInboundAt])
+
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, ycloud_message_id, contact_id, phone, from_phone, to_phone,
+          business_phone, business_phone_number_id, transport, direction, message_type,
+          message_text, status, message_timestamp, created_at, updated_at
+        ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, 'api', 'inbound', 'text', 'Respuesta vieja del cliente', 'received', ?, ?, ?)
+      `, [
+        inboundMessageId,
+        inboundMessageId,
+        contactId,
+        phone,
+        phone,
+        businessPhone,
+        businessPhone,
+        phoneNumberId,
+        lastInboundAt,
+        lastInboundAt,
+        lastInboundAt
+      ])
+
+      setBaileysRuntimeForTest(createFakeBaileysRuntime({ connectedJid, sentMessages }))
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        const path = parsed.pathname.replace(/^\/v2/, '')
+        const method = String(options.method || 'GET').toUpperCase()
+        if (path === '/whatsapp/messages' && method === 'POST') {
+          ycloudPostCalls += 1
+          throw new Error('YCloud no debe recibir fotos cuando el QR puede cubrir la ventana cerrada')
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      const result = await sendWhatsAppApiImageMessage({
+        to: phone,
+        from: businessPhone,
+        imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
+        externalId,
+        contactId,
+        phoneNumberId,
+        skipQrSendProtection: true
+      })
+
+      assert.equal(result.transport, 'qr')
+      assert.equal(result.fallback, true)
+      assert.equal(result.fallbackFrom, 'api')
+      assert.equal(ycloudPostCalls, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.equal(sentMessages[0].payload.text, undefined)
+      assert.equal(sentMessages[0].payload.image instanceof Buffer, true)
+
+      const message = await db.get(`
+        SELECT transport, routing_reason, status, message_type, message_text
+        FROM whatsapp_api_messages
+        WHERE contact_id = ? AND direction = 'outbound' AND message_type = 'image'
+        ORDER BY created_at DESC
+        LIMIT 1
+      `, [contactId])
+
+      assert.equal(message.transport, 'qr')
+      assert.equal(message.message_type, 'image')
+      assert.equal(message.message_text, null)
       assert.equal(message.routing_reason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
     })
   } finally {

@@ -10,7 +10,6 @@ import {
 // rutas declaradas en Settings.tsx.
 export type SettingsNavGroup =
   | 'Cuenta'
-  | 'Privacidad'
   | 'Agenda'
   | 'Cobros'
   | 'Plataformas conectadas'
@@ -29,8 +28,8 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/account', label: 'Cuenta', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/users-access', label: 'Usuarios', group: 'Cuenta', permissionKey: 'settings_users' },
   { to: '/settings/notifications', label: 'Notificaciones', group: 'Cuenta', permissionKey: 'settings_account' },
+  { to: '/settings/privacy', label: 'Privacidad', group: 'Cuenta', permissionKey: 'settings_account' },
   { to: '/settings/mobile-app', label: 'Aplicación móvil', group: 'Cuenta', permissionKey: 'settings_mobile' },
-  { to: '/settings/privacy', label: 'Privacidad', group: 'Privacidad', permissionKey: 'settings_account' },
   { to: '/settings/calendars', label: 'Calendarios', group: 'Agenda', permissionKey: 'settings_calendars' },
   { to: '/settings/payments', label: 'Pagos', group: 'Cobros', permissionKey: 'settings_payments' },
   { to: '/settings/highlevel', label: 'HighLevel', group: 'Plataformas conectadas', permissionKey: 'settings_integrations' },
@@ -50,7 +49,6 @@ export const settingsNavigation: SettingsNavItem[] = [
 
 export const settingsGroupOrder: SettingsNavGroup[] = [
   'Cuenta',
-  'Privacidad',
   'Agenda',
   'Cobros',
   'Plataformas conectadas',

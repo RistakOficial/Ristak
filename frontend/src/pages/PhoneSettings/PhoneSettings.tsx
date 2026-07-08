@@ -4,6 +4,7 @@ import {
   BellRing,
   Bot,
   Check,
+  CheckCheck,
   ChevronLeft,
   ChevronRight,
   CircleAlert,
@@ -39,10 +40,12 @@ import type { ContactCustomFieldDefinition } from '@/types'
 import { PHONE_APP_LOGIN_PATH, PHONE_APP_TENANT_PATH } from '@/utils/phoneAccess'
 import styles from './PhoneSettings.module.css'
 
-type SettingsSection = 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'notifications' | null
+type SettingsSection = 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'privacy' | 'notifications' | null
 type ConversationSortMode = 'recent' | 'unread'
 type PhoneNotificationPermission = NotificationPermission | 'native_granted' | 'native_denied' | 'native_prompt' | 'unsupported' | 'checking'
 type BusinessVoiceState = 'idle' | 'recording' | 'processing'
+
+const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 
 const PHONE_CHAT_THEME_OPTIONS: Array<{
   id: PhoneThemePreference
@@ -135,6 +138,7 @@ export const PhoneSettings: React.FC = () => {
   const [conversationSortMode, setConversationSortMode] = useAppConfig<ConversationSortMode>('mobile_chat_sort_mode', 'recent')
   const [showLastMessagePreview, setShowLastMessagePreview] = useAppConfig<boolean>('mobile_chat_show_last_preview', true)
   const [showUnreadIndicators, setShowUnreadIndicators] = useAppConfig<boolean>('mobile_chat_show_unread_indicators', true)
+  const [sendReadReceipts, setSendReadReceipts] = useAppConfig<boolean>(CHAT_SEND_READ_RECEIPTS_CONFIG_KEY, true)
   const [calendarPushEnabled, setCalendarPushEnabled] = useUserConfig<boolean>('calendar_push_notifications_enabled', false) // (MOB-006) preferencia por usuario
   const [appointmentConfirmationPushEnabled, setAppointmentConfirmationPushEnabled] = useUserConfig<boolean>('appointment_confirmation_push_notifications_enabled', true) // (MOB-006) preferencia por usuario
   const [chatPushEnabled, setChatPushEnabled] = useUserConfig<boolean>('chat_push_notifications_enabled', true) // (MOB-006) preferencia por usuario
@@ -595,6 +599,7 @@ export const PhoneSettings: React.FC = () => {
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: 'Todos', Icon: ListChecks, tone: 'gold' },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun, tone: 'blue' },
+      { id: 'privacy', title: 'Privacidad', description: 'Controla vistos de WhatsApp, Messenger e Instagram.', meta: sendReadReceipts ? 'Vistos activos' : 'Vistos apagados', Icon: CheckCheck, tone: 'blue' },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: permissionLabel, Icon: Bell, tone: 'red' }
     ]
 
@@ -838,6 +843,28 @@ export const PhoneSettings: React.FC = () => {
     </section>
   )
 
+  const renderPrivacy = () => (
+    <section className={styles.settingsSection}>
+      <div className={styles.sectionTitle}>
+        <CheckCheck size={18} />
+        <span>
+          <strong>Vistos de chat</strong>
+          <small>Decide si Ristak le avisa al proveedor cuando ya viste un mensaje.</small>
+        </span>
+      </div>
+      {renderToggle(
+        'Marcar mensajes como leídos o vistos',
+        'Envía el visto real al abrir o marcar leído un chat.',
+        sendReadReceipts,
+        (checked) => saveConfigPreference(setSendReadReceipts, checked)
+      )}
+      <p className={styles.hint}>
+        Si lo apagas, Ristak limpia los no leídos dentro de la app, pero no manda doble check,
+        mark seen ni acuse externo a WhatsApp API, WhatsApp QR, Messenger o Instagram.
+      </p>
+    </section>
+  )
+
   const renderNotifications = () => (
     <>
       {showPhoneActivation && (
@@ -913,6 +940,7 @@ export const PhoneSettings: React.FC = () => {
     if (activeSection === 'chats') return 'Lista de chats'
     if (activeSection === 'custom-fields') return 'Campos personalizados'
     if (activeSection === 'appearance') return 'Apariencia'
+    if (activeSection === 'privacy') return 'Privacidad'
     if (activeSection === 'notifications') return 'Notificaciones'
     return 'Ajustes'
   }, [activeSection])
@@ -929,6 +957,7 @@ export const PhoneSettings: React.FC = () => {
     if (activeSection === 'chats') return renderChats()
     if (activeSection === 'custom-fields') return renderCustomFields()
     if (activeSection === 'appearance') return renderAppearance()
+    if (activeSection === 'privacy') return renderPrivacy()
     if (activeSection === 'notifications') return renderNotifications()
     return renderMainList()
   }
@@ -958,6 +987,9 @@ export const PhoneSettings: React.FC = () => {
             </h1>
             {activeSection === 'custom-fields' && (
               <span className={styles.headerSubtitle}>Elige qué datos quieres ver en la info de cada contacto.</span>
+            )}
+            {activeSection === 'privacy' && (
+              <span className={styles.headerSubtitle}>Ajustes que afectan lo que tus clientes pueden saber de tu lectura.</span>
             )}
           </header>
           <div className={styles.content} data-phone-scrollable="true">

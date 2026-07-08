@@ -435,7 +435,7 @@ function cleanupRecentRistakQrOutboundAttempts() {
   }
 }
 
-function rememberRistakQrOutboundAttempt({ phoneId, contactPhone, type, text = '' } = {}) {
+export function rememberRistakQrOutboundAttempt({ phoneId, contactPhone, type, text = '' } = {}) {
   if (!cleanString(phoneId) || !normalizePhoneDigits(contactPhone)) return
   const key = qrOutboundAttemptKey({ phoneId, contactPhone, type, text })
   cleanupRecentRistakQrOutboundAttempts()

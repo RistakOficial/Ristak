@@ -65,6 +65,7 @@ export type ChatContact = {
   hasAppointments?: boolean;
   nextAppointmentDate?: string | null;
   hasCommentMessage?: boolean;
+  hasPrivateDm?: boolean;
   name?: string;
   contactName?: string;
   displayName?: string;
@@ -187,6 +188,14 @@ export type ChatMessage = {
   location?: ChatLocation;
   isComment?: boolean;
   commentReplyMode?: 'public' | 'private';
+  commentId?: string;
+  commentPlatform?: 'instagram' | 'messenger';
+  commentPost?: {
+    message?: string;
+    imageUrl?: string;
+    permalink?: string;
+    deleted?: boolean;
+  };
   linkPreview?: {
     kind?: string;
     title?: string;
@@ -220,6 +229,8 @@ export type ChatMessage = {
 };
 
 export type SendTextResponse = {
+  id?: string;
+  localMessageId?: string | null;
   status?: string;
   transport?: string;
   channel?: string;

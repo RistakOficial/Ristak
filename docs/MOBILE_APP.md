@@ -183,7 +183,11 @@ asistente personal. El composer del asistente mantiene `+` para enviar fotos y
 documentos como attachments al agente; los videos se bloquean en movil hasta que
 la app genere miniatura/contenido visual legible para el backend. El microfono
 graba nota de voz, la transcribe con `/api/ai-agent/transcribe` y manda el texto
-resultante al mismo chat.
+resultante al mismo chat. Las burbujas del asistente nativo deben renderizar el
+formato basico que ya usa el asistente de escritorio: negritas, italicas,
+tachado, codigo inline, links y listas no deben mostrar delimitadores crudos como
+`**`, `_`, `~` o marcadores Markdown; la UI interpreta el formato y conserva una
+burbuja legible.
 
 En la conversacion nativa, el composer inferior debe replicar la referencia
 visual de la app original: panel azul muy claro, campo de texto blanco,
@@ -192,6 +196,33 @@ contacto compacto para no comerse el nombre, y acciones de calendario/cobro del
 header fusionadas dentro de una sola capsula compacta. El boton de canal puede
 colorear el glifo segun el canal, pero no debe volver a meterlo en un circulo
 solido.
+
+Los envios manuales desde la conversacion nativa deben tener un candado
+sincronico antes de cualquier validacion async del agente o del canal: un doble
+tap no puede crear dos requests API. Cuando el backend responde con
+`localMessageId`, el globo optimista debe adoptar ese ID real antes de refrescar
+el historial; si conserva el ID local temporal, el merge de conversacion puede
+mostrar el optimista y el mensaje persistido como dos burbujas.
+
+Los comentarios de Facebook e Instagram en la conversacion nativa deben mantener
+la misma paridad que escritorio y `/movil`: el globo muestra si fue comentario,
+respuesta publica o respuesta privada, y cuando el backend entrega contexto de
+la publicacion comentada (`post_message`, `post_image_url`, `post_permalink` o
+`post_deleted`) se renderiza una ficha compacta de esa publicacion dentro del
+mismo globo. Si hay link, la ficha abre la publicacion; si Meta marca el post
+como eliminado, debe mostrarse como `Publicacion eliminada` sin perder el
+comentario conservado en Ristak.
+
+El canal de respuesta de comentarios tambien debe mantenerse en paridad. Un
+contacto creado desde comentario debe abrir el composer en `Comentario de
+Facebook` o `Comentario de Instagram` y publicar la respuesta en la publicacion.
+Si el usuario cambia el canal a Messenger/Instagram DM, la respuesta se manda por
+privado usando el comentario como origen. Si el contacto ya tenia una conversacion
+privada y luego comenta una publicacion, el chat sigue en el canal privado; el
+canal publico solo puede usarse automaticamente mientras ese comentario siga
+siendo el ultimo mensaje entrante del contacto. Si despues llega un DM, responder
+en la publicacion requiere tocar `Responder en la publicacion` dentro del globo
+del comentario exacto.
 
 El fondo de la conversacion nativa usa una textura sutil detras de los globos y
 un parallax real con `expo-sensors`/`DeviceMotion`: la inclinacion del iPhone
@@ -1082,8 +1113,8 @@ ultimo inbound pendiente, encola en background el visto real del proveedor:
 YCloud `markAsRead`, QR/Baileys `readMessages` y Meta Messenger/Instagram
 `sender_action='mark_seen'`. Correo queda fuera porque no es chat. Si el
 proveedor se tarda o falla, la UI local no debe esperarlo ni trabarse; el backend
-debe registrar el fallo. El switch Ajustes nativos > Privacidad y Configuracion
-> Privacidad >
+debe registrar el fallo. El switch Ajustes moviles > Privacidad, Ajustes
+nativos > Privacidad y Configuracion > Cuenta > Privacidad >
 `chat_send_read_receipts_enabled` permite apagar solo el acuse externo: el chat
 se limpia como leido dentro de Ristak, pero no se manda visto al proveedor.
 

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { db } from '../src/config/database.js'
-import { buildContactsList, buildReportMetrics } from '../src/services/analyticsService.js'
+import { buildContactsList, buildContactStats, buildReportMetrics } from '../src/services/analyticsService.js'
 
 async function cleanupContact(contactId) {
   await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId])
@@ -179,5 +179,111 @@ test('appointment attribution uses local Ristak appointments without HighLevel c
     })
   } finally {
     await cleanupContact(contactId)
+  }
+})
+
+test('contact stats honors contact list search, quick filter and date range', async () => {
+  const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const matchingContactId = `stats-filter-match-${suffix}`
+  const leadContactId = `stats-filter-lead-${suffix}`
+  const otherCustomerId = `stats-filter-other-${suffix}`
+  const matchingPaymentId = `stats-filter-payment-match-${suffix}`
+  const otherPaymentId = `stats-filter-payment-other-${suffix}`
+  const createdAt = '2026-07-01T18:00:00.000Z'
+
+  await Promise.all([
+    cleanupContact(matchingContactId),
+    cleanupContact(leadContactId),
+    cleanupContact(otherCustomerId)
+  ])
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, email, full_name, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      matchingContactId,
+      `+521${String(Date.now()).slice(-10)}`,
+      `ana-stats-match-${suffix}@local.invalid`,
+      `Ana Stats Match ${suffix}`,
+      createdAt,
+      createdAt
+    ])
+
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, email, full_name, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      leadContactId,
+      `+522${String(Date.now()).slice(-10)}`,
+      `ana-stats-lead-${suffix}@local.invalid`,
+      `Ana Stats Lead ${suffix}`,
+      createdAt,
+      createdAt
+    ])
+
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, email, full_name, created_at, updated_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?)
+    `, [
+      otherCustomerId,
+      `+523${String(Date.now()).slice(-10)}`,
+      `beto-stats-${suffix}@local.invalid`,
+      `Beto Stats ${suffix}`,
+      createdAt,
+      createdAt
+    ])
+
+    await db.run(`
+      INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode, date, created_at, updated_at
+      )
+      VALUES (?, ?, ?, 'MXN', 'succeeded', 'card', 'live', ?, ?, ?)
+    `, [
+      matchingPaymentId,
+      matchingContactId,
+      500,
+      createdAt,
+      createdAt,
+      createdAt
+    ])
+
+    await db.run(`
+      INSERT INTO payments (
+        id, contact_id, amount, currency, status, payment_method, payment_mode, date, created_at, updated_at
+      )
+      VALUES (?, ?, ?, 'MXN', 'succeeded', 'card', 'live', ?, ?, ?)
+    `, [
+      otherPaymentId,
+      otherCustomerId,
+      900,
+      createdAt,
+      createdAt,
+      createdAt
+    ])
+
+    const { metrics } = await buildContactStats({
+      startDate: '2026-07-01',
+      endDate: '2026-07-01',
+      search: `Ana Stats ${suffix}`,
+      filter: 'customers'
+    })
+
+    assert.equal(metrics.total, 1)
+    assert.equal(metrics.customers, 1)
+    assert.equal(metrics.ltvTotal, 500)
+    assert.equal(metrics.avgLtv, 500)
+  } finally {
+    await Promise.all([
+      cleanupContact(matchingContactId),
+      cleanupContact(leadContactId),
+      cleanupContact(otherCustomerId)
+    ])
   }
 })

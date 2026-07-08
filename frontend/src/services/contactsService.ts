@@ -101,6 +101,15 @@ interface ContactsPageParams {
   signal?: AbortSignal
 }
 
+interface ContactStatsParams {
+  startDate?: string
+  endDate?: string
+  search?: string
+  filter?: string
+  trackingFilters?: Record<string, string[]>
+  advancedFilters?: unknown
+}
+
 const normalizeContact = <T extends Record<string, any>>(contact: T): T => {
   if (!contact || typeof contact !== 'object') {
     return contact
@@ -191,6 +200,29 @@ const getAuthHeaders = () => {
   return headers
 }
 
+const appendContactsQueryParams = (
+  params: URLSearchParams,
+  {
+    startDate,
+    endDate,
+    search,
+    filter,
+    trackingFilters,
+    advancedFilters
+  }: Pick<ContactsPageParams, 'startDate' | 'endDate' | 'search' | 'filter' | 'trackingFilters' | 'advancedFilters'>
+) => {
+  if (startDate) params.append('startDate', startDate)
+  if (endDate) params.append('endDate', endDate)
+  if (search) params.append('search', search)
+  if (filter && filter !== 'all') params.append('filter', filter)
+  if (trackingFilters && Object.values(trackingFilters).some(values => values.length > 0)) {
+    params.append('trackingFilters', JSON.stringify(trackingFilters))
+  }
+  if (advancedFilters) {
+    params.append('advancedFilters', JSON.stringify(advancedFilters))
+  }
+}
+
 const requestContactsPage = async ({
   startDate,
   endDate,
@@ -210,16 +242,7 @@ const requestContactsPage = async ({
   params.append('limit', String(limit))
   params.append('sortBy', sortBy)
   params.append('sortOrder', sortOrder)
-  if (startDate) params.append('startDate', startDate)
-  if (endDate) params.append('endDate', endDate)
-  if (search) params.append('search', search)
-  if (filter && filter !== 'all') params.append('filter', filter)
-  if (trackingFilters && Object.values(trackingFilters).some(values => values.length > 0)) {
-    params.append('trackingFilters', JSON.stringify(trackingFilters))
-  }
-  if (advancedFilters) {
-    params.append('advancedFilters', JSON.stringify(advancedFilters))
-  }
+  appendContactsQueryParams(params, { startDate, endDate, search, filter, trackingFilters, advancedFilters })
   if (warmProfilePictures) params.append('warmProfilePictures', 'true')
 
   const url = apiUrl(`/api/contacts?${params.toString()}`)
@@ -295,13 +318,15 @@ export const contactsService = {
     }
   },
 
-  async getStats(startDate?: string, endDate?: string): Promise<ContactStats> {
+  async getStats(startOrParams?: string | ContactStatsParams, endDate?: string): Promise<ContactStats> {
     try {
-      const params: any = {}
-      if (startDate) params.startDate = startDate
-      if (endDate) params.endDate = endDate
+      const input = typeof startOrParams === 'object'
+        ? startOrParams
+        : { startDate: startOrParams, endDate }
+      const params = new URLSearchParams()
+      appendContactsQueryParams(params, input)
 
-      const data = await apiClient.get<ContactStats>('/contacts/stats', { params })
+      const data = await apiClient.get<ContactStats>('/contacts/stats', { params: Object.fromEntries(params.entries()) })
       return data
     } catch (error) {
       // TODO: Implement proper logging service

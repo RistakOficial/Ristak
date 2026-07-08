@@ -74,6 +74,7 @@ import {
   CreditCard,
   DollarSign,
   Edit3,
+  ExternalLink,
   FileText,
   FilePlus,
   Forward,
@@ -219,6 +220,7 @@ import type {
   RistakUser,
   SavedPaymentMethodItem,
   ScheduledChatMessage,
+  SendTextResponse,
   SourceDatum,
   TransactionItem,
   WhatsAppTemplate,
@@ -396,10 +398,13 @@ type JourneyEvent = {
 type CalendarViewMode = 'day' | 'week' | 'month' | 'year' | 'years';
 type CalendarSheetMode = 'calendar' | 'contactPicker' | 'event' | 'appointmentForm' | null;
 type AppointmentFormMode = 'create' | 'edit';
-type ComposerChannelRouteValue = NativeMessageChannel | `whatsapp:${string}`;
+type CommentComposerChannel = 'facebook_comment' | 'instagram_comment';
+type ComposerRouteChannel = NativeMessageChannel | CommentComposerChannel;
+type ComposerChannelRouteValue = ComposerRouteChannel | `whatsapp:${string}`;
+type NativeCommentReplyTarget = { messageId: string; commentId: string; platform: 'instagram' | 'messenger'; preview: string };
 type ComposerChannelOption = {
   value: ComposerChannelRouteValue;
-  channel: NativeMessageChannel;
+  channel: ComposerRouteChannel;
   label: string;
   description: string;
   kind: ChannelBadgeKind;
@@ -556,6 +561,20 @@ type AssistantAttachmentDraft = AIAgentAttachment & {
   uri: string;
 };
 type AssistantVoiceState = 'idle' | 'recording' | 'paused' | 'processing';
+type AssistantMessageInlineSegment = {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  strike?: boolean;
+  mono?: boolean;
+  url?: string;
+};
+type AssistantMessageBlock =
+  | { type: 'paragraph'; text: string }
+  | { type: 'heading'; text: string }
+  | { type: 'bulletList'; items: string[] }
+  | { type: 'orderedList'; items: string[] }
+  | { type: 'code'; text: string };
 type WhatsAppTextSegment = {
   text: string;
   bold?: boolean;
@@ -2325,6 +2344,7 @@ function ChatScreen({
   const [assistantOpen, setAssistantOpen] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cameraSendLockedRef = useRef(false);
   const chatListGenerationRef = useRef(0);
   const chatListLoadedQueryRef = useRef('');
   const chatMountedRef = useRef(true);
@@ -3118,6 +3138,7 @@ function ChatScreen({
         setCameraAttachment(null);
         setCameraRecipients([]);
         setCameraCaption('');
+        cameraSendLockedRef.current = false;
         setCameraSending(false);
       }
     }, CHAT_SHEET_CLOSE_DURATION_MS + 40);
@@ -3135,6 +3156,7 @@ function ChatScreen({
     setCameraAttachment(null);
     setCameraRecipients([]);
     setCameraCaption('');
+    cameraSendLockedRef.current = false;
     setCameraSending(false);
     setSheetContact(null);
     openSheet('newChat');
@@ -3147,6 +3169,7 @@ function ChatScreen({
     setCameraAttachment(attachment);
     setCameraRecipients([]);
     setCameraCaption('');
+    cameraSendLockedRef.current = false;
     setCameraSending(false);
     setSheetContact(null);
     openSheet('cameraShare');
@@ -3358,7 +3381,7 @@ function ChatScreen({
   };
 
   const sendCameraShare = async () => {
-    if (!cameraAttachment || cameraSending) return;
+    if (!cameraAttachment || cameraSending || cameraSendLockedRef.current) return;
     if (!cameraRecipients.length) {
       Alert.alert('Elige destinatarios', 'Selecciona al menos un contacto para enviar.');
       return;
@@ -3375,6 +3398,7 @@ function ChatScreen({
     const caption = cameraCaption.trim();
     const sentAt = new Date().toISOString();
     const previewText = caption || getAttachmentLabel(cameraAttachment.kind);
+    cameraSendLockedRef.current = true;
     setCameraSending(true);
     try {
       const results = await Promise.allSettled(cameraRecipients.map((contact) => (
@@ -3411,6 +3435,7 @@ function ChatScreen({
     } catch (err) {
       Alert.alert('No se envió', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
+      cameraSendLockedRef.current = false;
       setCameraSending(false);
     }
   };
@@ -15026,6 +15051,210 @@ function getAssistantAttachmentPromptText(attachments: AIAgentAttachment[]) {
   return `Analiza estos ${attachments.length} archivos adjuntos y dime qué encuentras.`;
 }
 
+function normalizeAssistantLinkUrl(value: string) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+function splitAssistantUrlPunctuation(value: string) {
+  const match = String(value || '').match(/^(.+?)([),.;:!?]+)?$/);
+  return {
+    urlText: match?.[1] || value,
+    trailing: match?.[2] || '',
+  };
+}
+
+function pushAssistantInlineSegment(segments: AssistantMessageInlineSegment[], segment: AssistantMessageInlineSegment) {
+  if (!segment.text) return;
+  const previous = segments[segments.length - 1];
+  if (
+    previous
+    && previous.bold === segment.bold
+    && previous.italic === segment.italic
+    && previous.strike === segment.strike
+    && previous.mono === segment.mono
+    && previous.url === segment.url
+  ) {
+    previous.text += segment.text;
+    return;
+  }
+  segments.push(segment);
+}
+
+function parseAssistantInlineMarkdown(text: string, active: Omit<AssistantMessageInlineSegment, 'text' | 'url'> = {}): AssistantMessageInlineSegment[] {
+  const pattern = /(!?\[[^\]]+]\([^)]+\)|https?:\/\/[^\s<>()]+|www\.[^\s<>()]+|```[\s\S]+?```|`[^`]+`|\*\*[\s\S]+?\*\*|\*[^\s*][\s\S]*?[^\s*]\*|_[^_\s][\s\S]*?[^_\s]_|~[^~\s][\s\S]*?[^~\s]~)/g;
+  const segments: AssistantMessageInlineSegment[] = [];
+  let index = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = pattern.exec(text)) !== null) {
+    if (match.index > index) {
+      pushAssistantInlineSegment(segments, { text: text.slice(index, match.index), ...active });
+    }
+
+    const token = match[0];
+    const markdownLink = token.match(/^!?\[([^\]]+)]\(([^)]+)\)$/);
+    if (markdownLink) {
+      const url = normalizeAssistantLinkUrl(markdownLink[2]);
+      pushAssistantInlineSegment(segments, { text: markdownLink[1], url, ...active });
+      index = pattern.lastIndex;
+      continue;
+    }
+
+    if (/^(https?:\/\/|www\.)/i.test(token)) {
+      const { urlText, trailing } = splitAssistantUrlPunctuation(token);
+      pushAssistantInlineSegment(segments, {
+        text: urlText,
+        url: normalizeAssistantLinkUrl(urlText),
+        ...active,
+      });
+      if (trailing) pushAssistantInlineSegment(segments, { text: trailing, ...active });
+      index = pattern.lastIndex;
+      continue;
+    }
+
+    if (token.startsWith('```') && token.endsWith('```')) {
+      pushAssistantInlineSegment(segments, { text: token.slice(3, -3).trim(), mono: true, ...active });
+      index = pattern.lastIndex;
+      continue;
+    }
+
+    if (token.startsWith('`') && token.endsWith('`')) {
+      pushAssistantInlineSegment(segments, { text: token.slice(1, -1), mono: true, ...active });
+      index = pattern.lastIndex;
+      continue;
+    }
+
+    const marker = token.startsWith('**') ? '**' : token[0];
+    const inner = token.slice(marker.length, -marker.length).trim();
+    const nextActive = {
+      ...active,
+      ...(marker === '**' || marker === '*' ? { bold: true } : {}),
+      ...(marker === '_' ? { italic: true } : {}),
+      ...(marker === '~' ? { strike: true } : {}),
+    };
+    parseAssistantInlineMarkdown(inner, nextActive).forEach((segment) => pushAssistantInlineSegment(segments, segment));
+    index = pattern.lastIndex;
+  }
+
+  if (index < text.length) {
+    pushAssistantInlineSegment(segments, { text: text.slice(index), ...active });
+  }
+
+  return segments.length ? segments : [{ text, ...active }];
+}
+
+function countAssistantMarker(value: string, marker: string) {
+  return (value.match(new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+}
+
+function hasUnclosedAssistantMarkdown(value: string) {
+  return countAssistantMarker(value, '**') % 2 === 1
+    || countAssistantMarker(value, '`') % 2 === 1
+    || countAssistantMarker(value, '~') % 2 === 1;
+}
+
+function shouldContinueAssistantListItem(item: string, nextLine: string) {
+  const trimmed = nextLine.trim();
+  if (!trimmed) return false;
+  if (/^\s+/.test(nextLine)) return true;
+  if (hasUnclosedAssistantMarkdown(item)) return true;
+  if (/^([*_~`]{1,3})/.test(trimmed)) return true;
+  return !/[.!?。)]["')\]]?$/.test(item.trim());
+}
+
+function parseAssistantMessageBlocks(content: string): AssistantMessageBlock[] {
+  const lines = String(content || '').replace(/\r\n/g, '\n').split('\n');
+  const blocks: AssistantMessageBlock[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    if (/^```/.test(trimmed)) {
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !/^```/.test(lines[index].trim())) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push({ type: 'code', text: codeLines.join('\n').trim() });
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^#{1,6}\s+(.+)$/);
+    if (headingMatch) {
+      blocks.push({ type: 'heading', text: headingMatch[1].replace(/^\*\*/, '').replace(/\*\*$/, '').trim() });
+      index += 1;
+      continue;
+    }
+
+    const bulletMatch = trimmed.match(/^[-*•]\s+(.+)$/);
+    const orderedMatch = trimmed.match(/^\d+[\.)]\s+(.+)$/);
+    if (bulletMatch || orderedMatch) {
+      const ordered = Boolean(orderedMatch);
+      const items: string[] = [];
+
+      while (index < lines.length) {
+        const current = lines[index];
+        const currentTrimmed = current.trim();
+        const currentMatch = ordered
+          ? currentTrimmed.match(/^\d+[\.)]\s+(.+)$/)
+          : currentTrimmed.match(/^[-*•]\s+(.+)$/);
+
+        if (!currentTrimmed) {
+          index += 1;
+          break;
+        }
+
+        if (!currentMatch) break;
+
+        let item = currentMatch[1].trim();
+        index += 1;
+        while (
+          index < lines.length
+          && lines[index].trim()
+          && !/^[-*•]\s+/.test(lines[index].trim())
+          && !/^\d+[\.)]\s+/.test(lines[index].trim())
+          && shouldContinueAssistantListItem(item, lines[index])
+        ) {
+          item = `${item}\n${lines[index].trim()}`;
+          index += 1;
+        }
+        items.push(item);
+      }
+
+      blocks.push({ type: ordered ? 'orderedList' : 'bulletList', items });
+      continue;
+    }
+
+    const paragraphLines: string[] = [];
+    while (
+      index < lines.length
+      && lines[index].trim()
+      && !/^```/.test(lines[index].trim())
+      && !/^#{1,6}\s+/.test(lines[index].trim())
+      && !/^[-*•]\s+/.test(lines[index].trim())
+      && !/^\d+[\.)]\s+/.test(lines[index].trim())
+    ) {
+      paragraphLines.push(lines[index].trim());
+      index += 1;
+    }
+
+    blocks.push({ type: 'paragraph', text: paragraphLines.join('\n') });
+  }
+
+  return blocks;
+}
+
 function formatMegabytes(bytes: number) {
   const value = bytes / 1024 / 1024;
   return Number.isInteger(value) ? String(value) : value.toFixed(1);
@@ -15711,7 +15940,7 @@ function AssistantMessageBubble({
             ))}
           </View>
         ) : null}
-        <Text style={[styles.aiMessageText, message.failed && styles.failedMessageText]}>{message.content}</Text>
+        <AssistantFormattedMessageContent failed={Boolean(message.failed)} text={message.content} />
         {message.sources?.length ? (
           <View style={styles.aiMessageSources}>
             <Link2 size={12} color={COLORS.meta} strokeWidth={2.4} />
@@ -15734,6 +15963,85 @@ function AssistantMessageBubble({
         ) : null}
       </View>
     </View>
+  );
+}
+
+function AssistantFormattedMessageContent({ failed, text }: { failed?: boolean; text: string }) {
+  const blocks = useMemo(() => parseAssistantMessageBlocks(text), [text]);
+  if (!blocks.length) return null;
+
+  return (
+    <View style={styles.aiRichMessage}>
+      {blocks.map((block, index) => {
+        if (block.type === 'heading') {
+          return <AssistantFormattedInlineText key={`heading-${index}`} failed={failed} text={block.text} variant="heading" />;
+        }
+
+        if (block.type === 'code') {
+          return (
+            <Text key={`code-${index}`} style={[styles.aiMessageText, styles.aiMessageCodeBlock, failed && styles.failedMessageText]}>
+              {block.text}
+            </Text>
+          );
+        }
+
+        if (block.type === 'bulletList' || block.type === 'orderedList') {
+          return (
+            <View key={`${block.type}-${index}`} style={styles.aiMessageList}>
+              {block.items.map((item, itemIndex) => (
+                <View key={`${block.type}-${index}-${itemIndex}`} style={styles.aiMessageListItem}>
+                  <Text style={[styles.aiMessageListMarker, failed && styles.failedMessageText]}>
+                    {block.type === 'orderedList' ? `${itemIndex + 1}.` : '•'}
+                  </Text>
+                  <AssistantFormattedInlineText failed={failed} text={item} variant="list" />
+                </View>
+              ))}
+            </View>
+          );
+        }
+
+        return <AssistantFormattedInlineText key={`paragraph-${index}`} failed={failed} text={block.text} />;
+      })}
+    </View>
+  );
+}
+
+function AssistantFormattedInlineText({
+  failed,
+  text,
+  variant = 'paragraph',
+}: {
+  failed?: boolean;
+  text: string;
+  variant?: 'paragraph' | 'heading' | 'list';
+}) {
+  const segments = useMemo(() => parseAssistantInlineMarkdown(text), [text]);
+  return (
+    <Text
+      style={[
+        styles.aiMessageText,
+        variant === 'heading' && styles.aiMessageHeadingText,
+        variant === 'list' && styles.aiMessageListText,
+        failed && styles.failedMessageText,
+      ]}
+    >
+      {segments.map((segment, index) => (
+        <Text
+          key={`${segment.text}-${index}`}
+          onPress={segment.url ? () => void Linking.openURL(segment.url || '').catch(() => undefined) : undefined}
+          style={[
+            segment.bold && styles.aiMessageTextBold,
+            segment.italic && styles.aiMessageTextItalic,
+            segment.strike && styles.aiMessageTextStrike,
+            segment.mono && styles.aiMessageTextMono,
+            segment.url && styles.aiMessageTextLink,
+            failed && styles.failedMessageText,
+          ]}
+        >
+          {segment.text}
+        </Text>
+      ))}
+    </Text>
   );
 }
 
@@ -15849,7 +16157,7 @@ function contactHasCommentActivity(contact: ChatContact) {
 
 function getContactChannelKind(contact: ChatContact): ChannelBadgeKind {
   const probe = getChannelProbe(contact);
-  if (contactHasCommentActivity(contact)) {
+  if (contactHasCommentActivity(contact) && contact.hasPrivateDm !== true) {
     return probe.includes('instagram') ? 'instagram_comment' : 'facebook_comment';
   }
   if (probe.includes('instagram') || probe.includes('ig_') || probe === 'ig') return 'instagram';
@@ -15869,7 +16177,25 @@ function getDefaultComposerChannel(contact: ChatContact): NativeMessageChannel {
   return 'whatsapp';
 }
 
-function getBackendChannelForComposer(channel: NativeMessageChannel) {
+function isCommentComposerRoute(value?: ComposerChannelRouteValue | ComposerRouteChannel | null): value is CommentComposerChannel {
+  return value === 'facebook_comment' || value === 'instagram_comment';
+}
+
+function getCommentComposerPlatform(value: CommentComposerChannel): 'messenger' | 'instagram' {
+  return value === 'instagram_comment' ? 'instagram' : 'messenger';
+}
+
+function getCommentComposerChannelForPlatform(platform: 'messenger' | 'instagram'): CommentComposerChannel {
+  return platform === 'instagram' ? 'instagram_comment' : 'facebook_comment';
+}
+
+function getCommentComposerLabel(platform: 'messenger' | 'instagram') {
+  return platform === 'instagram' ? 'Comentario de Instagram' : 'Comentario de Facebook';
+}
+
+function getBackendChannelForComposer(channel: ComposerRouteChannel) {
+  if (channel === 'facebook_comment') return 'messenger';
+  if (channel === 'instagram_comment') return 'instagram';
   if (channel === 'sms') return 'sms_qr';
   if (channel === 'email') return 'email';
   if (channel === 'messenger') return 'messenger';
@@ -15902,7 +16228,7 @@ function getComposerRoutePhoneId(value: ComposerChannelRouteValue) {
   return isWhatsAppComposerRoute(value) ? String(value).slice('whatsapp:'.length) : '';
 }
 
-function getComposerRouteChannel(value: ComposerChannelRouteValue): NativeMessageChannel {
+function getComposerRouteChannel(value: ComposerChannelRouteValue): ComposerRouteChannel {
   return isWhatsAppComposerRoute(value) ? 'whatsapp' : value;
 }
 
@@ -15911,6 +16237,42 @@ function getPreferredComposerPhoneId(contact: ChatContact) {
     || contact.preferred_whatsapp_phone_number_id
     || contact.lastBusinessPhoneNumberId
     || '';
+}
+
+function canStartNativeCommentPublicReply(message: ChatMessage) {
+  return Boolean(
+    message.isComment &&
+    message.direction === 'inbound' &&
+    !message.commentReplyMode &&
+    message.commentId
+  );
+}
+
+function buildNativeCommentReplyTarget(message: ChatMessage): NativeCommentReplyTarget | null {
+  if (!canStartNativeCommentPublicReply(message) || !message.commentId) return null;
+  return {
+    messageId: message.id,
+    commentId: message.commentId,
+    platform: message.commentPlatform || 'messenger',
+    preview: getMessagePreviewText(message).replace(/\s+/g, ' ').trim().slice(0, 60),
+  };
+}
+
+function getLatestEligibleNativeCommentReplyTarget(messages: ChatMessage[]): NativeCommentReplyTarget | null {
+  const latestComment = [...messages]
+    .filter(canStartNativeCommentPublicReply)
+    .sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date))[0];
+  if (!latestComment) return null;
+
+  const latestCommentTime = parseSortableDateValue(latestComment.date);
+  const hasLaterInboundPrivateMessage = messages.some((message) => (
+    message.direction === 'inbound' &&
+    !message.isComment &&
+    parseSortableDateValue(message.date) > latestCommentTime
+  ));
+  if (hasLaterInboundPrivateMessage) return null;
+
+  return buildNativeCommentReplyTarget(latestComment);
 }
 
 function isBusinessPhoneQrReady(phone?: WhatsAppApiPhoneNumber | null) {
@@ -15936,6 +16298,10 @@ function isNativeInstagramConnected(integrations?: IntegrationsStatus | null) {
 }
 
 function getDefaultComposerRoute(contact: ChatContact, options: ComposerChannelOption[]): ComposerChannelRouteValue {
+  if (contactHasCommentActivity(contact) && contact.hasPrivateDm !== true) {
+    const commentOption = options.find((option) => isCommentComposerRoute(option.channel) && !option.disabledReason);
+    if (commentOption) return commentOption.value;
+  }
   const preferredChannel = getDefaultComposerChannel(contact);
   const preferredPhoneId = getPreferredComposerPhoneId(contact);
   if (preferredChannel === 'whatsapp' && preferredPhoneId) {
@@ -15952,6 +16318,7 @@ function getComposerChannelOptions(
   contact: ChatContact,
   businessPhones: WhatsAppApiPhoneNumber[] = [],
   integrations?: IntegrationsStatus | null,
+  latestCommentReplyTarget?: NativeCommentReplyTarget | null,
 ): ComposerChannelOption[] {
   const kind = getContactChannelKind(contact);
   const hasPhone = Boolean(String(contact.phone || '').trim());
@@ -15972,6 +16339,19 @@ function getComposerChannelOptions(
       }))
     : [];
   const options: ComposerChannelOption[] = [...whatsappOptions];
+
+  if (latestCommentReplyTarget) {
+    const commentChannel = getCommentComposerChannelForPlatform(latestCommentReplyTarget.platform);
+    const commentConnected = latestCommentReplyTarget.platform === 'instagram' ? instagramConnected : messengerConnected;
+    options.unshift({
+      value: commentChannel,
+      channel: commentChannel,
+      label: getCommentComposerLabel(latestCommentReplyTarget.platform),
+      description: 'Responde público en la publicación.',
+      kind: commentChannel,
+      disabledReason: commentConnected ? undefined : 'Conecta Meta Ads para responder comentarios.',
+    });
+  }
 
   if (hasPhone && highLevelConnected) {
     options.push({
@@ -18735,9 +19115,12 @@ function NativeConversationScreen({
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSendChannel, setSelectedSendChannel] = useState<ComposerChannelRouteValue>(() => getDefaultComposerChannel(contact));
+  const selectedSendContactIdRef = useRef(contact.id);
+  const selectedSendManuallyRef = useRef(false);
   const [composerFocused, setComposerFocused] = useState(false);
   const [draftAttachments, setDraftAttachments] = useState<ConversationDraftAttachment[]>([]);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
+  const [commentReplyTarget, setCommentReplyTarget] = useState<NativeCommentReplyTarget | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
   const [activeSheet, setActiveSheet] = useState<ConversationSheetMode>(null);
   const [closingSheet, setClosingSheet] = useState<ConversationSheetMode>(null);
@@ -18790,6 +19173,7 @@ function NativeConversationScreen({
   const onContactPatchRef = useRef(onContactPatch);
   const unreadCountRef = useRef(contact.unreadCount);
   const messagesRef = useRef<ChatMessage[]>([]);
+  const sendLockedRef = useRef(false);
   const agentStatesRef = useRef<ConversationAgentState[]>([]);
   const olderMessagesLoadingRef = useRef(false);
   const conversationHasOlderMessagesRef = useRef(false);
@@ -18864,6 +19248,8 @@ function NativeConversationScreen({
   useEffect(() => {
     activeConversationContactIdRef.current = contact.id;
     olderMessagesLoadingRef.current = false;
+    sendLockedRef.current = false;
+    setSending(false);
     conversationHasOlderMessagesRef.current = false;
     conversationHistoryExhaustedContactIdRef.current = null;
     setOlderMessagesLoading(false);
@@ -19143,19 +19529,44 @@ function NativeConversationScreen({
   }, [conversationHasScheduledMessages]);
 
   const channelKind = getContactChannelKind(contact);
+  const latestEligibleCommentReplyTarget = useMemo(() => getLatestEligibleNativeCommentReplyTarget(messages), [messages]);
   const composerChannelOptions = useMemo(
-    () => getComposerChannelOptions(contact, businessPhones, integrationsStatus),
-    [businessPhones, contact, integrationsStatus],
+    () => getComposerChannelOptions(contact, businessPhones, integrationsStatus, latestEligibleCommentReplyTarget),
+    [businessPhones, contact, integrationsStatus, latestEligibleCommentReplyTarget],
   );
   useEffect(() => {
-    setSelectedSendChannel(getDefaultComposerRoute(contact, composerChannelOptions));
+    const contactChanged = selectedSendContactIdRef.current !== contact.id;
+    selectedSendContactIdRef.current = contact.id;
+    if (contactChanged) {
+      selectedSendManuallyRef.current = false;
+      setCommentReplyTarget(null);
+    }
+    setSelectedSendChannel((current) => {
+      const currentOption = composerChannelOptions.find((option) => option.value === current && !option.disabledReason);
+      const defaultRoute = getDefaultComposerRoute(contact, composerChannelOptions);
+      if (!contactChanged && selectedSendManuallyRef.current && currentOption) return current;
+      if (!contactChanged && currentOption && !(isCommentComposerRoute(defaultRoute) && !isCommentComposerRoute(current))) return current;
+      return defaultRoute;
+    });
   }, [composerChannelOptions, contact.id, contact.lastMessageChannel, contact.lastMessageTransport, contact.source]);
   const selectedChannelOption = composerChannelOptions.find((option) => option.value === selectedSendChannel) || composerChannelOptions[0];
-  const selectedChannelKind = selectedChannelOption?.kind || 'unknown';
+  const optionRouteChannel = selectedChannelOption?.channel || getComposerRouteChannel(selectedSendChannel);
+  const selectedCommentReplyTarget = commentReplyTarget || (isCommentComposerRoute(optionRouteChannel) ? latestEligibleCommentReplyTarget : null);
+  const selectedCommentRouteChannel = selectedCommentReplyTarget ? getCommentComposerChannelForPlatform(selectedCommentReplyTarget.platform) : null;
+  const selectedRouteChannel = selectedCommentRouteChannel || optionRouteChannel;
+  const selectedCommentPlatformConnected = selectedCommentReplyTarget?.platform === 'instagram'
+    ? isNativeInstagramConnected(integrationsStatus)
+    : selectedCommentReplyTarget?.platform === 'messenger'
+      ? isNativeMessengerConnected(integrationsStatus)
+      : false;
+  const selectedChannelKind = selectedCommentRouteChannel || selectedChannelOption?.kind || 'unknown';
   const selectedChannelColor = CHANNEL_BADGE_COLORS[selectedChannelKind] || COLORS.accent;
-  const selectedChannelCanSend = Boolean(selectedChannelOption && !selectedChannelOption.disabledReason);
-  const selectedChannelLabel = selectedChannelOption?.label || 'Sin canal conectado';
-  const selectedRouteChannel = selectedChannelOption?.channel || getComposerRouteChannel(selectedSendChannel);
+  const selectedChannelCanSend = selectedCommentReplyTarget
+    ? selectedCommentPlatformConnected
+    : Boolean(selectedChannelOption && !selectedChannelOption.disabledReason);
+  const selectedChannelLabel = selectedCommentReplyTarget
+    ? getCommentComposerLabel(selectedCommentReplyTarget.platform)
+    : selectedChannelOption?.label || 'Sin canal conectado';
   const selectedRoutePhoneNumberId = selectedChannelOption?.phoneNumberId || getComposerRoutePhoneId(selectedSendChannel);
   // Resolve the qr/api transport + reply-window state for the currently selected
   // WhatsApp sender, mirroring /movil's resolvedTransport. Shared by every
@@ -19347,14 +19758,19 @@ function NativeConversationScreen({
         selectedRoutePhoneNumberId,
         resolveWhatsAppSendTransport().transport,
       );
+      const localMessageId = getSendResponseLocalMessageId(response);
+      const providerMessageId = getSendResponseProviderMessageId(response);
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
           ? {
             ...message,
+            id: localMessageId || message.id,
+            providerMessageId: providerMessageId || message.providerMessageId,
             pending: false,
             status: response.status || 'sent',
             channel: response.transport || message.channel,
             transport: response.transport || message.transport,
+            routingReason: response.routingReason || response.fallbackReason || message.routingReason,
           }
           : message
       )));
@@ -19450,7 +19866,7 @@ function NativeConversationScreen({
         : paymentPreviewToSend.url
       : text;
     const attachmentsToSend = draftAttachments;
-    if ((!textToSend && attachmentsToSend.length === 0) || sending) return;
+    if ((!textToSend && attachmentsToSend.length === 0) || sending || sendLockedRef.current) return;
     if (!selectedChannelCanSend) {
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
       return;
@@ -19471,17 +19887,29 @@ function NativeConversationScreen({
       Alert.alert('Falta teléfono', 'Este contacto no tiene teléfono principal para enviar por este canal.');
       return;
     }
+    sendLockedRef.current = true;
+    setSending(true);
 
     // Resolve the WhatsApp transport (qr/api) and the 24h reply-window gate,
     // mirroring /movil's resolvedTransport so QR-only numbers and closed-window
     // chats route correctly instead of failing at the backend.
     const contactChannelKind = getContactChannelKind(contact);
     const isCommentContact = contactChannelKind === 'facebook_comment' || contactChannelKind === 'instagram_comment';
+    const privateCommentReply = !selectedCommentReplyTarget &&
+      isCommentContact &&
+      (selectedRouteChannel === 'messenger' || selectedRouteChannel === 'instagram');
+    const commentReplyMode: 'public' | 'private' | undefined = selectedCommentReplyTarget
+      ? 'public'
+      : privateCommentReply
+        ? 'private'
+        : undefined;
     const sendingWhatsApp = selectedRouteChannel === 'whatsapp';
     const whatsAppSend = sendingWhatsApp ? resolveWhatsAppSendTransport() : null;
     if (whatsAppSend && !whatsAppSend.replyWindowOpen && !whatsAppSend.qrReady) {
       // No API window and no QR fallback: free text can't be delivered. Route the
       // user to the (already available) templates sheet, like /movil does.
+      sendLockedRef.current = false;
+      setSending(false);
       openTemplatesSheet();
       return;
     }
@@ -19494,6 +19922,8 @@ function NativeConversationScreen({
         Keyboard.dismiss();
         setManualAgentSendPrompt(activeStates);
         if (activeSheet) closeSheet();
+        sendLockedRef.current = false;
+        setSending(false);
         return;
       }
     }
@@ -19539,6 +19969,8 @@ function NativeConversationScreen({
         paymentPreview: paymentPreviewToSend || undefined,
         replyToMessageId: replyPayload?.replyToMessageId,
         replyToProviderMessageId: replyPayload?.replyToProviderMessageId,
+        isComment: Boolean(commentReplyMode),
+        commentReplyMode,
       }];
 
     setDraft('');
@@ -19548,7 +19980,6 @@ function NativeConversationScreen({
     setMessages((current) => [...current, ...optimisticMessages]);
     scrollConversationToLatest(false);
     updateContactPreview(attachmentsToSend.length ? (textToSend || getAttachmentLabel(attachmentsToSend[0]?.kind)) : textToSend, sentAt, optimisticChannel);
-    setSending(true);
     try {
       if (attachmentsToSend.length > 0) {
         const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
@@ -19558,29 +19989,43 @@ function NativeConversationScreen({
           if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
           const index = Number(message.id.replace(`${optimisticId}-attachment-`, ''));
           const response = responses[index];
+          const localMessageId = getSendResponseLocalMessageId(response);
+          const providerMessageId = getSendResponseProviderMessageId(response);
           return {
             ...message,
+            id: localMessageId || message.id,
+            providerMessageId: providerMessageId || message.providerMessageId,
             pending: false,
             status: response?.status || 'sent',
             channel: response?.transport || message.channel,
             transport: response?.transport || message.transport,
+            routingReason: response?.routingReason || response?.fallbackReason || message.routingReason,
           };
         }));
       } else {
-        const response = isCommentContact
+        const response = commentReplyMode
           ? await api.sendMetaSocialCommentReply({
             contactId: contact.id,
-            platform: contactChannelKind === 'instagram_comment' ? 'instagram' : 'messenger',
+            platform: selectedCommentReplyTarget
+              ? selectedCommentReplyTarget.platform
+              : selectedRouteChannel === 'instagram'
+                ? 'instagram'
+                : contactChannelKind === 'instagram_comment'
+                  ? 'instagram'
+                  : 'messenger',
             message: textToSend,
-            // No public comment target is selectable natively yet, so start the
-            // conversation as a private reply (DM the commenter), like /movil.
-            replyType: 'private',
+            replyType: commentReplyMode,
+            commentId: selectedCommentReplyTarget?.commentId,
           })
-          : await api.sendText(contact, textToSend, selectedRouteChannel, replyPayload, selectedRoutePhoneNumberId, resolvedWhatsAppTransport);
+          : await api.sendText(contact, textToSend, selectedRouteChannel as NativeMessageChannel, replyPayload, selectedRoutePhoneNumberId, resolvedWhatsAppTransport);
+        const localMessageId = getSendResponseLocalMessageId(response);
+        const providerMessageId = getSendResponseProviderMessageId(response);
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
             ? {
               ...message,
+              id: localMessageId || message.id,
+              providerMessageId: providerMessageId || message.providerMessageId,
               pending: false,
               status: response.status || 'sent',
               channel: response.transport || message.channel,
@@ -19589,6 +20034,7 @@ function NativeConversationScreen({
             }
             : message
         )));
+        if (commentReplyMode) setCommentReplyTarget(null);
       }
       onRefreshChats();
       void loadConversation(true, true);
@@ -19604,6 +20050,7 @@ function NativeConversationScreen({
       setPaymentLinkDraftPreview(paymentPreviewToSend);
       Alert.alert('No se envió', errorMessage);
     } finally {
+      sendLockedRef.current = false;
       setSending(false);
     }
   };
@@ -19652,6 +20099,15 @@ function NativeConversationScreen({
   }, []);
   const handleMessageReplySwipe = useCallback((message: ChatMessage) => {
     setReplyingToMessage(message);
+    setCommentReplyTarget(null);
+  }, []);
+  const startCommentPublicReply = useCallback((message: ChatMessage) => {
+    const target = buildNativeCommentReplyTarget(message);
+    if (!target) return;
+    setCommentReplyTarget(target);
+    setReplyingToMessage(null);
+    selectedSendManuallyRef.current = true;
+    setSelectedSendChannel(getCommentComposerChannelForPlatform(target.platform));
   }, []);
 
   const reactToMessage = async (message: ChatMessage, emoji: string) => {
@@ -19923,10 +20379,14 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Conecta un canal para enviar esta CLABE.');
       return;
     }
+    if (isCommentComposerRoute(selectedRouteChannel)) {
+      Alert.alert('Canal no disponible', 'Envía la CLABE por Messenger o WhatsApp; el canal de comentario público es solo para responder publicaciones.');
+      return;
+    }
     setClabeBusyId(account.id);
     try {
       const text = buildClabeMessage(account);
-      await api.sendText(contact, text, selectedRouteChannel, undefined, selectedRoutePhoneNumberId);
+      await api.sendText(contact, text, selectedRouteChannel as NativeMessageChannel, undefined, selectedRoutePhoneNumberId);
       const sentAt = new Date().toISOString();
       setMessages((current) => [...current, {
         id: `clabe-${Date.now()}`,
@@ -20114,6 +20574,12 @@ function NativeConversationScreen({
       Alert.alert('Programar mensaje', reason);
       return;
     }
+    if (isCommentComposerRoute(selectedRouteChannel)) {
+      const reason = 'Las respuestas públicas a comentarios se envían al momento; no se pueden programar desde la app móvil.';
+      setScheduleError(reason);
+      Alert.alert('Programar mensaje', reason);
+      return;
+    }
     const channelUnavailableReason = getScheduleChannelUnavailableReason(selectedRouteChannel, target);
     if (channelUnavailableReason) {
       setScheduleError(channelUnavailableReason);
@@ -20141,7 +20607,7 @@ function NativeConversationScreen({
     setScheduleError('');
     try {
       const editingId = scheduleEditingMessageId;
-      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedRouteChannel, editingId || undefined, selectedRoutePhoneNumberId, { transport: scheduledTransport });
+      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedRouteChannel as NativeMessageChannel, editingId || undefined, selectedRoutePhoneNumberId, { transport: scheduledTransport });
       closeSheet();
       setScheduleText('');
       setScheduleDraft(createDefaultScheduleDraft(timezone));
@@ -20399,9 +20865,10 @@ function NativeConversationScreen({
 	                    searchActive={Boolean(searchQuery)}
 	                    scheduledCountdownNow={isScheduledMessage(item.message) ? scheduledCountdownNow : 0}
 	                    starred={starredMessageIds.includes(item.message.id)}
-	                    themeTone={activeNativeThemeTone}
-	                    timezone={timezone}
+                    themeTone={activeNativeThemeTone}
+                    timezone={timezone}
                     onLongPress={handleMessageLongPress}
+                    onCommentReply={startCommentPublicReply}
                     onReplySwipe={handleMessageReplySwipe}
                   />
                 )
@@ -20414,6 +20881,33 @@ function NativeConversationScreen({
             styles.conversationComposerDock,
           ]}
         >
+          {selectedCommentReplyTarget ? (
+            <View style={styles.commentReplyPreviewBar}>
+              <View style={styles.commentReplyPreviewMarker} />
+              <View style={styles.commentReplyPreviewCopy}>
+                <Text numberOfLines={1} style={styles.commentReplyPreviewTitle}>
+                  Respondiendo público {commentReplyTarget ? 'al comentario' : 'al último comentario'}
+                </Text>
+                <Text numberOfLines={1} style={styles.commentReplyPreviewText}>
+                  {selectedCommentReplyTarget.preview || getCommentComposerLabel(selectedCommentReplyTarget.platform)}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setCommentReplyTarget(null);
+                  if (isCommentComposerRoute(selectedSendChannel)) {
+                    selectedSendManuallyRef.current = true;
+                    setSelectedSendChannel(selectedCommentReplyTarget.platform === 'instagram' ? 'instagram' : 'messenger');
+                  }
+                }}
+                style={styles.replyPreviewClose}
+              >
+                <LiquidControlBackground />
+                <X size={16} color={COLORS.muted} strokeWidth={2.45} />
+              </Pressable>
+            </View>
+          ) : null}
           {replyingToMessage ? (
             <View style={styles.replyPreviewBar}>
               <View style={styles.replyPreviewMarker} />
@@ -20618,6 +21112,17 @@ function NativeConversationScreen({
             Alert.alert('Canal no disponible', option.disabledReason);
             return;
           }
+          if (isCommentComposerRoute(channel)) {
+            if (!latestEligibleCommentReplyTarget || latestEligibleCommentReplyTarget.platform !== getCommentComposerPlatform(channel)) {
+              Alert.alert('Canal no disponible', 'Para responder en la publicación toca el comentario exacto.');
+              return;
+            }
+            setCommentReplyTarget(latestEligibleCommentReplyTarget);
+            setReplyingToMessage(null);
+          } else {
+            setCommentReplyTarget(null);
+          }
+          selectedSendManuallyRef.current = true;
           setSelectedSendChannel(channel);
           closeSheet();
         }}
@@ -21230,6 +21735,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   // recibir el tono como prop hace que React.memo re-renderice al cambiarlo.
   themeTone: _themeTone,
   timezone,
+  onCommentReply,
   onLongPress,
   onReplySwipe,
 }: {
@@ -21241,6 +21747,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   starred?: boolean;
   themeTone?: string;
   timezone: string;
+  onCommentReply?: (message: ChatMessage) => void;
   onLongPress?: (message: ChatMessage) => void;
   onReplySwipe?: (message: ChatMessage) => void;
 }) {
@@ -21373,10 +21880,27 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
         {message.location ? <NativeMessageLocation location={message.location} /> : null}
         {message.isComment ? (
           <View style={styles.commentContext}>
-            <MessageCircle size={12} color={COLORS.accent} strokeWidth={2.5} />
-            <Text style={styles.commentContextText}>
-              {message.commentReplyMode === 'public' ? 'Respuesta pública al comentario' : message.commentReplyMode === 'private' ? 'Respuesta por privado' : 'Comentario'}
-            </Text>
+            <View style={styles.commentContextLabel}>
+              <MessageCircle size={12} color={COLORS.accent} strokeWidth={2.5} />
+              <Text style={styles.commentContextText}>
+                {message.commentReplyMode === 'public'
+                  ? 'Respuesta pública al comentario'
+                  : message.commentReplyMode === 'private'
+                    ? 'Respuesta por privado'
+                    : 'Comentó en tu publicación'}
+              </Text>
+            </View>
+            {message.commentPost ? <NativeCommentPostCard post={message.commentPost} /> : null}
+            {canStartNativeCommentPublicReply(message) ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => onCommentReply?.(message)}
+                style={({ pressed }) => [styles.commentReplyButton, pressed && styles.pressed]}
+              >
+                <MessageCircle size={12} color={COLORS.accent} strokeWidth={2.5} />
+                <Text style={styles.commentReplyButtonText}>Responder en la publicación</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
         {message.emailDetails ? (
@@ -21440,6 +21964,46 @@ function NativeFormattedMessageText({ failed, outbound, text }: { failed?: boole
         </Text>
       ))}
     </Text>
+  );
+}
+
+function NativeCommentPostCard({ post }: { post: NonNullable<ChatMessage['commentPost']> }) {
+  const visibleMessage = post.message && !(post.deleted && post.message === 'Publicación eliminada') ? post.message : '';
+  const mutedText = post.deleted ? 'Comentario conservado en Ristak' : 'Ver publicación';
+  const content = (
+    <>
+      {post.imageUrl ? (
+        <Image source={{ uri: post.imageUrl }} resizeMode="cover" style={styles.commentPostThumb as ImageStyle} />
+      ) : (
+        <View style={styles.commentPostThumbPlaceholder}>
+          <ImageIcon size={18} color={COLORS.meta} strokeWidth={2.35} />
+        </View>
+      )}
+      <View style={styles.commentPostMeta}>
+        <Text numberOfLines={1} style={styles.commentPostKind}>{post.deleted ? 'Publicación eliminada' : 'Publicación'}</Text>
+        {visibleMessage ? (
+          <Text numberOfLines={2} style={styles.commentPostText}>{visibleMessage}</Text>
+        ) : (
+          <Text numberOfLines={1} style={styles.commentPostTextMuted}>{mutedText}</Text>
+        )}
+      </View>
+      {post.permalink ? <ExternalLink size={13} color={COLORS.meta} strokeWidth={2.35} /> : null}
+    </>
+  );
+
+  if (!post.permalink) {
+    return <View style={[styles.commentPostChip, styles.commentPostChipStatic]}>{content}</View>;
+  }
+
+  return (
+    <Pressable
+      accessibilityRole="link"
+      accessibilityLabel="Abrir publicación"
+      onPress={() => void Linking.openURL(post.permalink || '').catch(() => undefined)}
+      style={({ pressed }) => [styles.commentPostChip, pressed && styles.pressed]}
+    >
+      {content}
+    </Pressable>
   );
 }
 
@@ -22722,6 +23286,14 @@ function getNativeApiReplyWindowOpen(messages: ChatMessage[]) {
   const newest = getNativeLastReplyWindowInboundTime(messages);
   if (!newest) return false;
   return Date.now() - newest < 24 * 60 * 60 * 1000;
+}
+
+function getSendResponseLocalMessageId(response?: SendTextResponse | null) {
+  return typeof response?.localMessageId === 'string' ? response.localMessageId.trim() : '';
+}
+
+function getSendResponseProviderMessageId(response?: SendTextResponse | null) {
+  return typeof response?.id === 'string' ? response.id.trim() : '';
 }
 
 function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessage[]): ChatMessage[] {
@@ -28271,6 +28843,63 @@ function createAppStyles() {
     lineHeight: 20,
     fontWeight: '500',
   },
+  aiRichMessage: {
+    gap: 7,
+    minWidth: 0,
+  },
+  aiMessageHeadingText: {
+    color: COLORS.text,
+    fontSize: 16,
+    lineHeight: 21,
+    fontWeight: '900',
+  },
+  aiMessageTextBold: {
+    fontWeight: '900',
+  },
+  aiMessageTextItalic: {
+    fontStyle: 'italic',
+  },
+  aiMessageTextStrike: {
+    textDecorationLine: 'line-through',
+  },
+  aiMessageTextMono: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontWeight: '700',
+  },
+  aiMessageTextLink: {
+    color: COLORS.accent,
+    textDecorationLine: 'underline',
+    fontWeight: '700',
+  },
+  aiMessageList: {
+    gap: 5,
+  },
+  aiMessageListItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 7,
+    minWidth: 0,
+  },
+  aiMessageListMarker: {
+    minWidth: 16,
+    color: COLORS.meta,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '900',
+    textAlign: 'right',
+  },
+  aiMessageListText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  aiMessageCodeBlock: {
+    borderRadius: 10,
+    backgroundColor: COLORS.panelSoft,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontWeight: '700',
+  },
   aiMessageAttachmentGrid: {
     gap: 6,
   },
@@ -29518,6 +30147,12 @@ function createAppStyles() {
   },
   commentContext: {
     alignSelf: 'flex-start',
+    width: '100%',
+    maxWidth: 286,
+    gap: 7,
+  },
+  commentContextLabel: {
+    alignSelf: 'flex-start',
     flexDirection: 'row',
     alignItems: 'center',
     gap: 5,
@@ -29529,6 +30164,78 @@ function createAppStyles() {
   commentContextText: {
     color: COLORS.meta,
     fontSize: 11,
+    fontWeight: '900',
+  },
+  commentPostChip: {
+    width: '100%',
+    minHeight: 58,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    padding: 6,
+    backgroundColor: isLight ? 'rgba(255,255,255,0.78)' : 'rgba(58,58,60,0.48)',
+    borderWidth: 1,
+    borderColor: isLight ? 'rgba(60,60,67,0.12)' : 'rgba(235,235,245,0.12)',
+  },
+  commentPostChipStatic: {
+    opacity: 0.94,
+  },
+  commentPostThumb: {
+    width: 46,
+    height: 46,
+    borderRadius: 9,
+    backgroundColor: COLORS.panelSoft,
+  },
+  commentPostThumbPlaceholder: {
+    width: 46,
+    height: 46,
+    borderRadius: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: isLight ? 'rgba(60,60,67,0.10)' : 'rgba(255,255,255,0.08)',
+  },
+  commentPostMeta: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  commentPostKind: {
+    color: messageBubbleMetaColor,
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+  commentPostText: {
+    color: messageBubbleTextColor,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  commentPostTextMuted: {
+    color: messageBubbleMetaColor,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '800',
+  },
+  commentReplyButton: {
+    minHeight: 34,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    backgroundColor: isLight ? 'rgba(0,122,255,0.10)' : 'rgba(10,132,255,0.14)',
+    borderWidth: 1,
+    borderColor: isLight ? 'rgba(0,122,255,0.22)' : 'rgba(10,132,255,0.26)',
+  },
+  commentReplyButtonText: {
+    color: COLORS.accent,
+    fontSize: 12,
+    lineHeight: 15,
     fontWeight: '900',
   },
   messageRoutingNote: {
@@ -29611,6 +30318,38 @@ function createAppStyles() {
     ...liquidControlBase,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  commentReplyPreviewBar: {
+    minHeight: 48,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+  },
+  commentReplyPreviewMarker: {
+    width: 3,
+    alignSelf: 'stretch',
+    borderRadius: 999,
+    backgroundColor: COLORS.accent,
+  },
+  commentReplyPreviewCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  commentReplyPreviewTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  commentReplyPreviewText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    marginTop: 1,
+    fontWeight: '700',
   },
   draftAttachmentStrip: {
     alignItems: 'center',
@@ -30035,11 +30774,16 @@ function createAppStyles() {
   composerScheduleButton: {
     width: 34,
     height: 34,
-    borderRadius: 17,
-    ...liquidControlBase,
+    borderWidth: 0,
+    borderColor: 'transparent',
+    backgroundColor: 'transparent',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 1,
+  },
+  composerScheduleButtonPressed: {
+    opacity: 0.58,
+    transform: [{ scale: 0.94 }],
   },
   composerTrailingActions: {
     minWidth: 72,

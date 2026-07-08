@@ -1347,7 +1347,9 @@ const GHL_CHAT_CHANNEL_LABELS: Record<HighLevelChatChannel, string> = {
   email: 'Correo'
 }
 type ComposerMessageChannelValue = HighLevelChatChannel | 'email'
-type ComposerMessageRouteValue = ComposerMessageChannelValue | `whatsapp:${string}`
+type CommentComposerMessageChannelValue = 'facebook_comment' | 'instagram_comment'
+type ComposerMessageRouteChannel = ComposerMessageChannelValue | CommentComposerMessageChannelValue
+type ComposerMessageRouteValue = ComposerMessageRouteChannel | `whatsapp:${string}`
 const COMPOSER_MESSAGE_CHANNEL_OPTIONS: Array<{
   value: ComposerMessageChannelValue
   label: string
@@ -3888,6 +3890,39 @@ function buildCommentReplyTarget(message: ChatMessage): CommentReplyTarget | nul
   }
 }
 
+function isCommentComposerMessageChannel(value: ComposerMessageRouteValue): value is CommentComposerMessageChannelValue {
+  return value === 'facebook_comment' || value === 'instagram_comment'
+}
+
+function getCommentComposerPlatform(value: CommentComposerMessageChannelValue): 'messenger' | 'instagram' {
+  return value === 'instagram_comment' ? 'instagram' : 'messenger'
+}
+
+function getCommentComposerChannelForPlatform(platform: 'messenger' | 'instagram'): CommentComposerMessageChannelValue {
+  return platform === 'instagram' ? 'instagram_comment' : 'facebook_comment'
+}
+
+function getCommentComposerLabel(platform: 'messenger' | 'instagram') {
+  return platform === 'instagram' ? 'Comentario de Instagram' : 'Comentario de Facebook'
+}
+
+function getLatestEligibleCommentReplyTarget(messages: ChatMessage[]): CommentReplyTarget | null {
+  const latestComment = [...messages]
+    .filter(canStartCommentPublicReply)
+    .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0]
+  if (!latestComment) return null
+
+  const latestCommentTime = getMessageTimeValue(latestComment.date)
+  const hasLaterInboundPrivateMessage = messages.some((message) => (
+    message.direction === 'inbound' &&
+    !message.isComment &&
+    getMessageTimeValue(message.date) > latestCommentTime
+  ))
+  if (hasLaterInboundPrivateMessage) return null
+
+  return buildCommentReplyTarget(latestComment)
+}
+
 function getMessageSwipeRawOffset(action: MessageSwipeAction, deltaX: number) {
   return action === 'info' ? -deltaX : deltaX
 }
@@ -4769,7 +4804,7 @@ function getComposerRoutePhoneId(value: ComposerMessageRouteValue) {
   return String(value).startsWith('whatsapp:') ? String(value).slice('whatsapp:'.length) : ''
 }
 
-function getComposerRouteChannel(value: ComposerMessageRouteValue): ComposerMessageChannelValue {
+function getComposerRouteChannel(value: ComposerMessageRouteValue): ComposerMessageRouteChannel {
   return isWhatsAppComposerRoute(value) ? 'whatsapp_api' : value
 }
 
@@ -6186,6 +6221,7 @@ export const PhoneChat: React.FC = () => {
   const businessPhones = whatsappStatus?.phoneNumbers || []
   const chatPhoneFilterEnabled = businessPhones.length > 1
   const activeContactBusinessPhoneOverrideId = activeContact?.id ? contactBusinessPhoneOverrides[activeContact.id] || '' : ''
+  const latestEligibleCommentReplyTarget = useMemo(() => getLatestEligibleCommentReplyTarget(messages), [messages])
   const composerMessageChannelOptions = useMemo<Array<{
     value: ComposerMessageRouteValue
     label: string
@@ -6202,12 +6238,20 @@ export const PhoneChat: React.FC = () => {
           label: 'WhatsApp',
           description: 'Mensaje por WhatsApp conectado.'
         }]
+    const commentOption = latestEligibleCommentReplyTarget
+      ? {
+          value: getCommentComposerChannelForPlatform(latestEligibleCommentReplyTarget.platform) as ComposerMessageRouteValue,
+          label: getCommentComposerLabel(latestEligibleCommentReplyTarget.platform),
+          description: 'Responde público en la publicación.'
+        }
+      : null
 
     return [
+      ...(commentOption ? [commentOption] : []),
       ...whatsappOptions,
       ...baseComposerMessageChannelOptions.filter((option) => option.value !== 'whatsapp_api')
     ]
-  }, [baseComposerMessageChannelOptions, businessPhones])
+  }, [baseComposerMessageChannelOptions, businessPhones, latestEligibleCommentReplyTarget])
   const selectedChatPhone = useMemo(() => (
     businessPhones.find((phone) => phone.id === selectedChatPhoneId) || null
   ), [businessPhones, selectedChatPhoneId])
@@ -6574,6 +6618,21 @@ export const PhoneChat: React.FC = () => {
   const outsideReplyWindow = Boolean(activeContact?.phone && !apiReplyWindowOpen)
   const inferredHighLevelChatChannel = useMemo(() => inferHighLevelChatChannel(activeContact, messages), [activeContact, messages])
   const activeContactHighLevelChannelOverride = activeContact?.id ? contactHighLevelChannelOverrides[activeContact.id] : undefined
+  const selectedCommentReplyTarget = commentReplyTarget || (
+    activeContact &&
+    !activeContactHighLevelChannelOverride &&
+    isCommentContact(activeContact)
+      ? latestEligibleCommentReplyTarget
+      : null
+  )
+  const selectedCommentComposerRoute = selectedCommentReplyTarget
+    ? getCommentComposerChannelForPlatform(selectedCommentReplyTarget.platform)
+    : ''
+  const selectedCommentPlatformConnected = selectedCommentReplyTarget?.platform === 'instagram'
+    ? Boolean(metaInstagramConnected && instagramCommentsEnabled)
+    : selectedCommentReplyTarget?.platform === 'messenger'
+      ? Boolean(metaMessengerConnected && facebookCommentsEnabled)
+      : false
   const inferredSocialHighLevelChannel = (highLevelConnected || metaMessengerConnected || metaInstagramConnected) && (inferredHighLevelChatChannel === 'instagram' || inferredHighLevelChatChannel === 'messenger')
     ? inferredHighLevelChatChannel
     : ''
@@ -6600,10 +6659,12 @@ export const PhoneChat: React.FC = () => {
   const activeHighLevelChannelNeedsPhone = effectiveHighLevelChatChannel === 'whatsapp_api' || effectiveHighLevelChatChannel === 'sms_qr'
   const selectedChannelCanSend = sendingThroughHighLevel
     ? Boolean(activeContact?.id && (!activeHighLevelChannelNeedsPhone || activeContact.phone))
+    : selectedCommentReplyTarget
+    ? selectedCommentPlatformConnected
     : sendingThroughMetaSocial
     ? Boolean(activeContact?.id)
     : Boolean(activeContact?.phone)
-  const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedQrReady && !sendingThroughHighLevel && !sendingThroughMetaSocial)
+  const composerBlockedByReplyWindow = Boolean(outsideReplyWindow && !selectedQrReady && !sendingThroughHighLevel && !sendingThroughMetaSocial && !selectedCommentReplyTarget)
   const composerTemplateOnlyMode = composerBlockedByReplyWindow
   const hasComposerText = Boolean(messageText.trim())
   const hasComposerContent = Boolean(hasComposerText || draftAttachments.length > 0 || voiceDraft)
@@ -12556,13 +12617,13 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    // Respuesta a un COMENTARIO. Dos caminos:
-    //  - commentReplyTarget (botón "Responder" en la tarjeta) → respuesta PÚBLICA
-    //    en el post, apuntando a ese comentario exacto (commentId).
-    //  - contacto que SOLO comentó (aún sin DM) → la barra manda respuesta PRIVADA
-    //    al comentario (inicia el chat privado).
-    // Un contacto con DM ya existente NO entra aquí por la barra (cae al DM normal).
-    if (commentReplyTarget || isCommentContact(activeContact)) {
+    // Respuesta a un COMENTARIO.
+    //  - Canal Facebook/Instagram comentario o botón "Responder" => público.
+    //  - Contacto nacido de comentario + canal Messenger/Instagram DM => privado.
+    const privateCommentReply = !selectedCommentReplyTarget &&
+      isCommentContact(activeContact) &&
+      (activeHighLevelChatChannel === 'messenger' || activeHighLevelChatChannel === 'instagram')
+    if (selectedCommentReplyTarget || privateCommentReply) {
       if (locationToSend) {
         showToast('warning', 'Solo texto', 'Las respuestas a comentarios no aceptan ubicación por ahora.')
         return
@@ -12576,10 +12637,12 @@ export const PhoneChat: React.FC = () => {
         return
       }
 
-      const replyType: 'public' | 'private' = commentReplyTarget ? 'public' : 'private'
-      const commentPlatform = commentReplyTarget
-        ? commentReplyTarget.platform
-        : (getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger')
+      const replyType: 'public' | 'private' = selectedCommentReplyTarget ? 'public' : 'private'
+      const commentPlatform = selectedCommentReplyTarget
+        ? selectedCommentReplyTarget.platform
+        : activeHighLevelChatChannel === 'instagram'
+          ? 'instagram'
+          : (getCommentPlatform(activeContact) === 'instagram' ? 'instagram' : 'messenger')
       const optimisticId = `local-comment-${Date.now()}`
       const sentAt = new Date().toISOString()
 
@@ -12626,7 +12689,7 @@ export const PhoneChat: React.FC = () => {
           platform: commentPlatform,
           message: text,
           replyType,
-          commentId: commentReplyTarget?.commentId
+          commentId: selectedCommentReplyTarget?.commentId
         })
         setCommentReplyTarget(null)
         setMessages((current) => current.map((message) => (
@@ -15885,23 +15948,33 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  // Banner de "respuesta pública al comentario" (cancelable). La barra manda
-  // privado por defecto; el modo público se activa desde el botón de la tarjeta.
+  // Banner de "respuesta pública al comentario" (cancelable). El modo público
+  // puede venir del canal de comentario o del botón de la tarjeta.
   const renderCommentReplyBanner = () => {
-    if (!commentReplyTarget) return null
+    if (!selectedCommentReplyTarget) return null
     return (
       <div className={styles.commentReplyBanner}>
         <span className={styles.commentReplyBannerLabel}>
           <MessageCircle size={13} aria-hidden="true" />
-          <span>Respondiendo <strong>público</strong> al comentario</span>
-          {commentReplyTarget.preview ? (
-            <span className={styles.commentReplyBannerPreview}>“{commentReplyTarget.preview}”</span>
+          <span>
+            Respondiendo <strong>público</strong> {commentReplyTarget ? 'al comentario' : 'al último comentario'}
+          </span>
+          {selectedCommentReplyTarget.preview ? (
+            <span className={styles.commentReplyBannerPreview}>“{selectedCommentReplyTarget.preview}”</span>
           ) : null}
         </span>
         <button
           type="button"
           className={styles.commentReplyBannerClose}
-          onClick={() => setCommentReplyTarget(null)}
+          onClick={() => {
+            setCommentReplyTarget(null)
+            if (activeContact?.id) {
+              setContactHighLevelChannelOverrides((current) => ({
+                ...current,
+                [activeContact.id]: selectedCommentReplyTarget.platform === 'instagram' ? 'instagram' : 'messenger'
+              }))
+            }
+          }}
           aria-label="Cancelar respuesta pública"
         >
           <X size={16} />
@@ -15910,15 +15983,17 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
-  // Aviso: la barra manda privado (se muestra cuando hay comentarios en la
-  // conversación, para que quede claro a dónde va lo que escribes).
+  // Aviso para conversaciones con comentarios cuando no está activo el modo
+  // público del composer.
   const renderComposerPrivateHint = () => {
-    if (commentReplyTarget || !activeContact) return null
+    if (selectedCommentReplyTarget || !activeContact) return null
     const hasComments = isCommentContact(activeContact) || messages.some((message) => message.isComment)
     if (!hasComments) return null
     return (
       <span className={styles.composerPrivateHint}>
-        Mensaje privado — para responder en la publicación usa “Responder” en el comentario.
+        {latestEligibleCommentReplyTarget
+          ? `Mensaje privado — para responder en publicación cambia el canal a ${getCommentComposerLabel(latestEligibleCommentReplyTarget.platform)}.`
+          : 'Mensaje privado — para responder en la publicación usa “Responder” en el comentario.'}
       </span>
     )
   }
@@ -16084,6 +16159,17 @@ export const PhoneChat: React.FC = () => {
   const getComposerMessageChannelDisabledReason = (value: ComposerMessageRouteValue) => {
     if (!activeContact) return 'Abre un chat para elegir canal.'
     if (value === 'email') return 'El correo electrónico se envía desde la vista completa de chats.'
+    if (isCommentComposerMessageChannel(value)) {
+      const platform = getCommentComposerPlatform(value)
+      if (!latestEligibleCommentReplyTarget || latestEligibleCommentReplyTarget.platform !== platform) {
+        return 'Para responder en la publicación toca el comentario exacto.'
+      }
+      if (platform === 'messenger' && !facebookCommentsEnabled) return 'Activa comentarios de Facebook en Configuración > Meta Ads > Redes sociales.'
+      if (platform === 'instagram' && !instagramCommentsEnabled) return 'Activa comentarios de Instagram en Configuración > Meta Ads > Redes sociales.'
+      if (platform === 'messenger' && !metaMessengerConnected) return 'Conecta Meta Ads para responder comentarios de Facebook.'
+      if (platform === 'instagram' && !metaInstagramConnected) return 'Conecta Meta Ads para responder comentarios de Instagram.'
+      return ''
+    }
     if (isWhatsAppComposerRoute(value)) {
       const routePhoneId = getComposerRoutePhoneId(value)
       const routePhone = routePhoneId
@@ -16122,7 +16208,16 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
+    if (isCommentComposerMessageChannel(value)) {
+      if (!latestEligibleCommentReplyTarget) return
+      setCommentReplyTarget(latestEligibleCommentReplyTarget)
+      setReplyingToMessageId(null)
+      setComposerChannelPickerOpen(false)
+      return
+    }
+
     const nextChannel = getComposerRouteChannel(value)
+    setCommentReplyTarget(null)
     setContactHighLevelChannelOverrides((current) => ({
       ...current,
       [activeContact.id]: nextChannel as HighLevelChatChannel
@@ -16150,11 +16245,11 @@ export const PhoneChat: React.FC = () => {
   const renderComposerChannelPicker = () => {
     if (!activeContact || aiAgentConversationOpen) return null
 
-    const activeValue: ComposerMessageRouteValue = activeHighLevelChatChannel === 'whatsapp_api'
+    const activeValue: ComposerMessageRouteValue = selectedCommentComposerRoute || (activeHighLevelChatChannel === 'whatsapp_api'
       ? selectedBusinessPhone?.id
         ? `whatsapp:${selectedBusinessPhone.id}`
         : 'whatsapp_api'
-      : activeHighLevelChatChannel
+      : activeHighLevelChatChannel)
     const activeLabel = activeValue === 'sms_qr'
       ? 'SMS'
       : composerMessageChannelOptions.find((option) => option.value === activeValue)?.label || 'WhatsApp'
