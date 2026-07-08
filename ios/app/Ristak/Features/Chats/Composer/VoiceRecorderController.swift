@@ -16,10 +16,16 @@ final class VoiceRecorderController: NSObject {
     }
 
     private(set) var phase: Phase = .idle
-    /// Segundos transcurridos (se actualiza ~4 veces por segundo).
+    /// Segundos transcurridos (se actualiza ~20 veces por segundo mientras graba).
     private(set) var elapsedSeconds: TimeInterval = 0
-    /// Nivel de metering normalizado 0…1 para la onda en vivo.
+    /// Nivel de metering normalizado 0…1 (última muestra) para el punto rojo vivo.
     private(set) var meterLevel: Double = 0
+    /// Historial reciente del nivel REAL del micrófono (0…1). La muestra más
+    /// nueva va al final; la onda en vivo la dibuja desplazándose de derecha a
+    /// izquierda (paridad /movil: gain real, no animación falsa).
+    private(set) var meterSamples: [Double] = []
+    /// Grabación pausada por el usuario (sigue en fase `.recording`).
+    private(set) var isPaused: Bool = false
     /// Archivo m4a de la última grabación terminada.
     private(set) var recordedFileURL: URL?
     /// Duración medida de la grabación terminada.
@@ -27,6 +33,10 @@ final class VoiceRecorderController: NSObject {
 
     private var recorder: AVAudioRecorder?
     private var meterTask: Task<Void, Never>?
+
+    /// Ventana de muestras visibles de la onda (≈8 s a 50 ms/muestra). Sobra
+    /// para llenar el ancho en iPad; el render toma solo las que caben.
+    private static let maxMeterSamples = 160
 
     var isRecording: Bool { phase == .recording }
     var hasPreview: Bool { phase == .preview && recordedFileURL != nil }
@@ -67,8 +77,24 @@ final class VoiceRecorderController: NSObject {
         recordedFileURL = nil
         recordedDurationMs = 0
         elapsedSeconds = 0
+        isPaused = false
+        // Base plana de barras mínimas: la onda existe desde el primer instante
+        // y crece con la voz real conforme llegan las muestras.
+        meterSamples = Array(repeating: 0.05, count: Self.maxMeterSamples)
         phase = .recording
         startMetering()
+    }
+
+    /// Pausa o reanuda la grabación en curso (paridad /movil): la onda se
+    /// congela/atenúa mientras está en pausa y el reloj deja de avanzar.
+    func togglePause() {
+        guard phase == .recording, let recorder else { return }
+        if isPaused {
+            if recorder.record() { isPaused = false }
+        } else {
+            recorder.pause()
+            isPaused = true
+        }
     }
 
     /// Detiene y deja la grabación lista en `preview` (o descarta si es muy corta).
@@ -79,6 +105,7 @@ final class VoiceRecorderController: NSObject {
         let duration = recorder.currentTime
         recorder.stop()
         stopMetering()
+        isPaused = false
         self.recorder = nil
 
         let durationMs = duration * 1000
@@ -104,6 +131,7 @@ final class VoiceRecorderController: NSObject {
         }
         recorder = nil
         stopMetering()
+        isPaused = false
         if let recordedFileURL {
             try? FileManager.default.removeItem(at: recordedFileURL)
         }
@@ -131,14 +159,32 @@ final class VoiceRecorderController: NSObject {
         meterTask?.cancel()
         meterTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                guard let self, let recorder = self.recorder, self.phase == .recording else { return }
+                // ~50 ms → onda fluida (paridad /movil).
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                guard let self else { return }
+                guard self.phase == .recording else { return }
+                // En pausa: congela la onda y el reloj; el loop sigue vivo para
+                // reanudar sin recrear el temporizador.
+                if self.isPaused { continue }
+                guard let recorder = self.recorder else { return }
                 recorder.updateMeters()
-                let power = recorder.averagePower(forChannel: 0) // -160…0 dB
-                let normalized = max(0, min(1, Double(power + 50) / 50))
+                let power = recorder.averagePower(forChannel: 0) // dBFS -160…0
+                // Normalización idéntica a /movil: (power + 60) / 42, clamp 0…1.
+                let normalized = max(0, min(1, Double(power + 60) / 42))
                 self.meterLevel = normalized
+                self.appendMeterSample(normalized)
                 self.elapsedSeconds = recorder.currentTime
             }
+        }
+    }
+
+    /// Empuja una muestra real al historial y descarta las más viejas para que
+    /// la onda se desplace de derecha a izquierda.
+    private func appendMeterSample(_ value: Double) {
+        meterSamples.append(value)
+        let overflow = meterSamples.count - Self.maxMeterSamples
+        if overflow > 0 {
+            meterSamples.removeFirst(overflow)
         }
     }
 
@@ -146,5 +192,6 @@ final class VoiceRecorderController: NSObject {
         meterTask?.cancel()
         meterTask = nil
         meterLevel = 0
+        meterSamples = []
     }
 }

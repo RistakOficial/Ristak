@@ -15,6 +15,9 @@ import UIKit
 struct ChatRemoteImage: View {
     let url: URL
     var contentMode: ContentMode = .fill
+    /// Notifica el tamaño natural (px) al cargar, para que el contenedor pueda
+    /// reservar la altura exacta y evitar saltos de layout (jank #8).
+    var onLoad: ((CGSize) -> Void)? = nil
 
     @State private var image: UIImage?
     @State private var failed = false
@@ -42,6 +45,7 @@ struct ChatRemoteImage: View {
             failed = false
             if let loaded = await RistakImageLoader.shared.imageIfAvailable(for: url) {
                 image = loaded
+                onLoad?(loaded.size)
             } else {
                 failed = true
             }
@@ -51,11 +55,37 @@ struct ChatRemoteImage: View {
 
 // MARK: - Imagen
 
+/// Caché de tamaños ya resueltos (por URL) para reservar la altura EXACTA al
+/// volver a ver una imagen mientras se hace scroll — así la fila no salta cuando
+/// la foto vuelve a entrar en pantalla (jank #8). Acceso solo desde main (vistas
+/// SwiftUI); `nonisolated(unsafe)` silencia el chequeo de concurrencia.
+enum ChatImageSizeCache {
+    nonisolated(unsafe) private static var sizes: [String: CGSize] = [:]
+    static func size(for key: String) -> CGSize? { sizes[key] }
+    static func store(_ size: CGSize, for key: String) { sizes[key] = size }
+}
+
 struct ImageAttachmentView: View {
     let attachment: ChatAttachment
 
     @State private var showsViewer = false
     @State private var localImage: UIImage?
+    /// Tamaño reservado del hueco de la imagen. Se inicializa con el tamaño en
+    /// caché (si ya se vio) o un default 4:3, para que la fila tenga altura
+    /// estable ANTES de que la foto termine de descargar.
+    @State private var displaySize: CGSize
+
+    /// Topes de tamaño idénticos a /movil (`MESSAGE_IMAGE_MAX_WIDTH/HEIGHT`).
+    private static let maxWidth: CGFloat = 252
+    private static let maxHeight: CGFloat = 318
+    /// Default mientras no se conocen las dimensiones (paridad /movil: 252×189).
+    private static let defaultSize = CGSize(width: 252, height: 189)
+
+    init(attachment: ChatAttachment) {
+        self.attachment = attachment
+        let cached = attachment.url.flatMap { ChatImageSizeCache.size(for: $0) }
+        _displaySize = State(initialValue: cached ?? Self.defaultSize)
+    }
 
     private var remoteURL: URL? {
         guard let raw = attachment.url, let url = URL(string: raw) else { return nil }
@@ -63,32 +93,41 @@ struct ImageAttachmentView: View {
     }
 
     var body: some View {
-        Group {
-            if let localImage {
-                Image(uiImage: localImage)
-                    .resizable()
-                    .scaledToFill()
-            } else if let remoteURL {
-                ChatRemoteImage(url: remoteURL)
-            } else {
-                unavailablePlaceholder
+        content
+            .frame(width: displaySize.width, height: displaySize.height)
+            .clipShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.small))
+            .contentShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.small))
+            .onTapGesture {
+                if remoteURL != nil || localImage != nil { showsViewer = true }
             }
-        }
-        .frame(maxWidth: 252, maxHeight: 318)
-        .clipShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.small))
-        .contentShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.small))
-        .onTapGesture {
-            if remoteURL != nil || localImage != nil { showsViewer = true }
-        }
-        .task(id: attachment.dataUrl ?? "") {
-            if let dataUrl = attachment.dataUrl, localImage == nil {
-                localImage = Self.decodeDataURL(dataUrl)
+            .task(id: attachment.dataUrl ?? "") {
+                if let dataUrl = attachment.dataUrl, localImage == nil,
+                   let decoded = Self.decodeDataURL(dataUrl) {
+                    localImage = decoded
+                    displaySize = Self.boundedSize(decoded.size)
+                }
             }
+            .fullScreenCover(isPresented: $showsViewer) {
+                FullScreenImageViewer(remoteURL: remoteURL, localImage: localImage)
+            }
+            .accessibilityLabel(attachment.name ?? "Foto")
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let localImage {
+            Image(uiImage: localImage)
+                .resizable()
+                .scaledToFill()
+        } else if let remoteURL {
+            ChatRemoteImage(url: remoteURL) { natural in
+                let bounded = Self.boundedSize(natural)
+                displaySize = bounded
+                if let raw = attachment.url { ChatImageSizeCache.store(bounded, for: raw) }
+            }
+        } else {
+            unavailablePlaceholder
         }
-        .fullScreenCover(isPresented: $showsViewer) {
-            FullScreenImageViewer(remoteURL: remoteURL, localImage: localImage)
-        }
-        .accessibilityLabel(attachment.name ?? "Foto")
     }
 
     private var unavailablePlaceholder: some View {
@@ -98,7 +137,23 @@ struct ImageAttachmentView: View {
                 .font(.subheadline)
         }
         .foregroundStyle(RistakTheme.textDim)
-        .padding(RistakTheme.Spacing.sm)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(RistakTheme.controlRest)
+    }
+
+    /// Escala las dimensiones naturales dentro de los topes conservando el aspecto
+    /// (paridad /movil `getBoundedMediaSize`, con piso de 96 pt).
+    static func boundedSize(_ natural: CGSize) -> CGSize {
+        let w = natural.width
+        let h = natural.height
+        guard w.isFinite, h.isFinite, w > 0, h > 0 else {
+            return CGSize(width: maxWidth, height: (maxWidth * 0.72).rounded())
+        }
+        let scale = min(maxWidth / w, maxHeight / h, 1)
+        return CGSize(
+            width: max(96, (w * scale).rounded()),
+            height: max(96, (h * scale).rounded())
+        )
     }
 
     static func decodeDataURL(_ dataUrl: String) -> UIImage? {
@@ -295,8 +350,20 @@ private struct VideoPlayerSheet: View {
 struct AudioMessageView: View {
     let attachment: ChatAttachment
     let isOutbound: Bool
+    /// Id del mensaje: clave para la cascada de audios (orden del timeline).
+    var messageID: String = ""
+    /// Nombre + foto del contacto para el avatar de la nota (paridad /movil, que
+    /// pinta el avatar del contacto junto al waveform).
+    var contactName: String = ""
+    var contactPhotoURL: URL? = nil
+    /// Se activa mientras se arrastra la ruedita del scrubber; el hilo lo lee para
+    /// desarmar el swipe-para-responder durante ese gesto (ambos son horizontales).
+    var isScrubbing: Binding<Bool> = .constant(false)
 
     @State private var controller = AudioPlaybackController()
+    /// Coordinador de cascada inyectado por el hilo (opcional: fuera del hilo la
+    /// vista sigue funcionando como reproductor aislado).
+    @Environment(AudioCascadeCoordinator.self) private var cascade: AudioCascadeCoordinator?
 
     private var audioURL: URL? {
         if let raw = attachment.url {
@@ -317,54 +384,182 @@ struct AudioMessageView: View {
                     .font(.footnote)
                     .foregroundStyle(RistakTheme.textDim)
             } else {
-                HStack(spacing: RistakTheme.Spacing.sm) {
-                    Button {
-                        if let audioURL {
-                            controller.togglePlayback(url: audioURL)
-                        }
-                    } label: {
-                        Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.headline)
-                            .foregroundStyle(RistakTheme.textPrimary)
-                            .frame(width: 34, height: 34)
-                            .background(Circle().fill(RistakTheme.controlRest))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(controller.isPlaying ? "Pausar" : "Reproducir")
-
-                    AudioWaveformView(progress: controller.progress)
-                        .frame(height: 26)
-
-                    Button {
-                        controller.cycleRate()
-                    } label: {
-                        Text(controller.rateLabel)
-                            .font(.caption2.weight(.bold))
-                            .monospacedDigit()
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(RistakTheme.controlRest))
-                    }
-                    .buttonStyle(.plain)
-                    .sensoryFeedback(.selection, trigger: controller.rateLabel)
-                    .accessibilityLabel("Velocidad \(controller.rateLabel)")
-                }
+                playerRow
+                Text(durationLabel)
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(RistakTheme.textDim)
             }
-
-            Text(durationLabel)
-                .font(.caption2)
-                .monospacedDigit()
-                .foregroundStyle(RistakTheme.textDim)
         }
-        .frame(minWidth: 190, alignment: .leading)
+        .frame(minWidth: 214, alignment: .leading)
+        .onAppear { registerWithCascade() }
         .onDisappear {
             controller.stop()
+            cascade?.unregister(id: messageID)
+        }
+        // Fin natural del audio → la cascada decide si encadena el siguiente.
+        .onChange(of: controller.finishedTick) { _, _ in
+            guard !messageID.isEmpty else { return }
+            cascade?.didFinishPlaying(id: messageID)
         }
     }
 
+    /// Fila del reproductor: avatar (según lado) + play/pausa + scrubber (paridad
+    /// /movil `messageAudioTopRow`: avatar a la izquierda en salientes, a la
+    /// derecha en entrantes).
+    private var playerRow: some View {
+        HStack(spacing: RistakTheme.Spacing.xs) {
+            if isOutbound { avatarButton }
+            playButton
+            scrubber
+            if !isOutbound { avatarButton }
+        }
+    }
+
+    private var playButton: some View {
+        Button {
+            togglePlayback()
+        } label: {
+            Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
+                .font(.title3)
+                .foregroundStyle(RistakTheme.bubbleMeta)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(controller.isPlaying ? "Pausar" : "Reproducir")
+    }
+
+    /// Scrubber arrastrable: pista (waveform con relleno hasta el progreso) + una
+    /// ruedita de acento que el usuario puede arrastrar para buscar. Al soltar,
+    /// libera el candado del swipe. Toques rápidos también saltan a esa posición.
+    private var scrubber: some View {
+        // Diámetro/radio de la ruedita arrastrable. Toda la pista se inseta este
+        // radio a cada lado (padding exterior) para que el círculo COMPLETO quepa
+        // siempre —incluidos los extremos 0 y 1— y jamás se recorte contra el
+        // borde de la burbuja (bug #1: la ruedita se veía "cortada"/hexagonal al
+        // inicio). Sin clipShape que recorte el círculo.
+        let knobDiameter: CGFloat = 13
+        let knobRadius = knobDiameter / 2
+        return GeometryReader { proxy in
+            let width = max(1, proxy.size.width)
+            // El centro de la ruedita viaja dentro de [radio, width - radio]: en
+            // progreso 0 el círculo queda tangente al borde interno de la pista y
+            // en 1 al opuesto, siempre entero.
+            let travel = max(1, width - knobDiameter)
+            let clamped = CGFloat(min(1, max(0, controller.progress)))
+            ZStack(alignment: .leading) {
+                AudioWaveformView(progress: controller.progress)
+                Circle()
+                    .fill(RistakTheme.accent)
+                    .frame(width: knobDiameter, height: knobDiameter)
+                    .shadow(color: .black.opacity(0.18), radius: 1, y: 0.5)
+                    // La onda vive en [0, width]; la ruedita (colocada a .leading,
+                    // x 0…13) se desplaza `travel * progreso`, cubriendo [0,13]…
+                    // [width-13, width]. Nunca sobresale de la pista inseteada.
+                    .offset(x: travel * clamped)
+            }
+            .frame(height: proxy.size.height, alignment: .center)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        isScrubbing.wrappedValue = true
+                        // Mapea el dedo dentro del área de recorrido (descontando
+                        // el radio) para que la ruedita lo siga con precisión.
+                        let localX = value.location.x - knobRadius
+                        seek(to: Double(max(0, min(1, localX / travel))))
+                    }
+                    .onEnded { _ in
+                        isScrubbing.wrappedValue = false
+                    }
+            )
+        }
+        .frame(height: 26)
+        // Clearance real: la pista se separa `knobRadius` de sus vecinos para que
+        // ni el borde de la burbuja ni la fila recorten la ruedita en los extremos.
+        .padding(.horizontal, knobRadius)
+    }
+
+    /// Avatar del contacto que, al tocarlo, cicla la velocidad 1×→2×→4× (paridad
+    /// /movil). Cuando la velocidad supera 1× aparece la píldora de velocidad en
+    /// la esquina; siempre lleva el distintivo de micrófono.
+    private var avatarButton: some View {
+        Button {
+            controller.cycleRate()
+        } label: {
+            ContactAvatarView(name: contactName, photoURL: contactPhotoURL, size: 44)
+                .overlay(alignment: .bottomTrailing) { micBadge }
+                .overlay(alignment: .topLeading) {
+                    if controller.rateIsBoosted { speedPill }
+                }
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .sensoryFeedback(.selection, trigger: controller.rateLabel)
+        .accessibilityLabel("Cambiar velocidad del audio. Actual \(controller.rateLabel)")
+    }
+
+    private var micBadge: some View {
+        Image(systemName: "mic.fill")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(RistakTheme.textDim)
+            .frame(width: 16, height: 16)
+            .background(Circle().fill(RistakTheme.surface))
+            .overlay(Circle().strokeBorder(RistakTheme.border, lineWidth: 0.5))
+            .offset(x: 3, y: 2)
+    }
+
+    private var speedPill: some View {
+        Text(controller.rateLabel)
+            .font(.system(size: 9, weight: .heavy))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 22, minHeight: 16)
+            .background(Capsule().fill(RistakTheme.accent))
+            .overlay(Capsule().strokeBorder(RistakTheme.surface, lineWidth: 1))
+            .offset(x: -4, y: -5)
+    }
+
+    private func seek(to progress: Double) {
+        guard let audioURL else { return }
+        controller.seek(toProgress: progress, url: audioURL)
+    }
+
+    /// Play/pausa desde el botón, notificando a la cascada el cambio de estado
+    /// para que solo suene un audio a la vez y sepa cuál está activo.
+    private func togglePlayback() {
+        guard let audioURL else { return }
+        let willPlay = !controller.isPlaying
+        if willPlay, !messageID.isEmpty {
+            cascade?.didStartPlaying(id: messageID)
+        } else if !messageID.isEmpty {
+            cascade?.didPause(id: messageID)
+        }
+        controller.togglePlayback(url: audioURL)
+    }
+
+    /// Registra los handlers de este audio en la cascada (reproducir / detener).
+    private func registerWithCascade() {
+        guard !messageID.isEmpty, let cascade else { return }
+        let url = audioURL
+        cascade.register(
+            id: messageID,
+            play: { if let url { controller.play(url: url) } },
+            stop: { controller.stop() }
+        )
+    }
+
+    /// Tiempo en formato de negocio: muestra el transcurrido mientras suena o se
+    /// arrastra la ruedita, y la duración total en reposo.
     private var durationLabel: String {
         if controller.durationSeconds > 0 {
-            return BusinessFormatters.audioDuration(seconds: controller.durationSeconds)
+            let showsElapsed = controller.progress > 0 && controller.progress < 1
+            let seconds = showsElapsed
+                ? controller.durationSeconds * controller.progress
+                : controller.durationSeconds
+            return BusinessFormatters.audioDuration(seconds: seconds)
         }
         if let durationMs = attachment.durationMs, durationMs > 0 {
             return BusinessFormatters.audioDuration(milliseconds: durationMs)
@@ -408,8 +603,13 @@ final class AudioPlaybackController {
     private(set) var progress: Double = 0
     private(set) var durationSeconds: TimeInterval = 0
     private(set) var playbackFailed = false
+    /// Se incrementa cada vez que el audio llega NATURALMENTE al final (no en
+    /// pausas manuales). Lo observa la vista para encadenar la cascada de audios.
+    private(set) var finishedTick = 0
 
-    private static let rates: [Float] = [1, 1.5, 2]
+    /// Velocidades del reproductor, idénticas a /movil
+    /// (`CONVERSATION_AUDIO_PLAYBACK_SPEEDS = [1, 2, 4]`).
+    private static let rates: [Float] = [1, 2, 4]
     private var rateIndex = 0
     private var player: AVPlayer?
     private var timeObserver: Any?
@@ -421,12 +621,23 @@ final class AudioPlaybackController {
         return rate == rate.rounded() ? "\(Int(rate))x" : String(format: "%.1fx", rate)
     }
 
+    /// La velocidad actual supera 1× (para mostrar la píldora sobre el avatar,
+    /// como /movil que solo dibuja el badge cuando `playbackSpeed > 1`).
+    var rateIsBoosted: Bool { rateIndex != 0 }
+
     func togglePlayback(url: URL) {
         if isPlaying {
             player?.pause()
             isPlaying = false
             return
         }
+        play(url: url)
+    }
+
+    /// Arranca la reproducción (idempotente si ya suena). Lo usa la cascada para
+    /// encadenar el siguiente audio sin ambigüedad de «toggle».
+    func play(url: URL) {
+        if isPlaying { return }
         if player == nil {
             preparePlayer(url: url)
         }
@@ -448,6 +659,27 @@ final class AudioPlaybackController {
         }
     }
 
+    /// Prepara el reproductor SIN sonar (para poder buscar/scrubbing antes de dar
+    /// play). Idempotente.
+    func prepareIfNeeded(url: URL) {
+        if player == nil { preparePlayer(url: url) }
+    }
+
+    /// Busca a una posición relativa (0…1) arrastrando la ruedita del scrubber.
+    /// Prepara el reproductor si aún no existe para poder mover el cabezal.
+    func seek(toProgress target: Double, url: URL) {
+        prepareIfNeeded(url: url)
+        let clamped = min(1, max(0, target))
+        progress = clamped
+        guard let player else { return }
+        let duration = durationSeconds > 0
+            ? durationSeconds
+            : (player.currentItem?.duration.seconds ?? 0)
+        guard duration.isFinite, duration > 0 else { return }
+        let time = CMTime(seconds: duration * clamped, preferredTimescale: 600)
+        player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
     func stop() {
         player?.pause()
         isPlaying = false
@@ -458,6 +690,9 @@ final class AudioPlaybackController {
     private func preparePlayer(url: URL) {
         playbackFailed = false
         let item = AVPlayerItem(url: url)
+        // Corrige el tono al acelerar (2×/4×) para que la voz no suene "chipmunk"
+        // — equivalente a `shouldCorrectPitch = true` de /movil.
+        item.audioTimePitchAlgorithm = .timeDomain
         let player = AVPlayer(playerItem: item)
         self.player = player
 
@@ -483,6 +718,8 @@ final class AudioPlaybackController {
                 guard let self else { return }
                 self.isPlaying = false
                 self.progress = 1
+                // Señal de fin natural → dispara la cascada al siguiente audio.
+                self.finishedTick &+= 1
             }
         }
 

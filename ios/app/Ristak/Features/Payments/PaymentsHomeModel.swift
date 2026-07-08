@@ -88,7 +88,7 @@ final class PaymentsHomeModel {
         let generation = loadGeneration
 
         if reset {
-            currentPage = 1
+            currentPage = 0
             isLoadingRecent = true
             recentError = nil
         } else {
@@ -103,37 +103,53 @@ final class PaymentsHomeModel {
         }
 
         let range = PaymentsDateMath.range(for: period, timeZone: timeZoneProvider())
-        let page = reset ? 1 : currentPage + 1
 
         do {
-            let result = try await PaymentsService.transactions(
-                page: page,
-                limit: Self.pageSize,
-                startDate: range.start,
-                endDate: range.end,
-                sortBy: "date",
-                sortOrder: "DESC"
-            )
-            guard generation == loadGeneration else { return }
+            // El backend pagina TODAS las transacciones (50/pág) y luego filtramos
+            // en cliente a "recibidos" (paid|partial, monto > 0). Si una página no
+            // trae ninguna recibida pero `hasNext`, hay que seguir pidiendo páginas:
+            // de lo contrario la lista se ve vacía en falso y el scroll infinito no
+            // se dispara (sin filas → sin onAppear). Paginamos hasta juntar al menos
+            // una recibida O agotar `pagination.hasNext`.
+            var collected: [PaymentTransaction] = []
+            var page = currentPage
+            var hasNext = false
 
-            let received = result.transactions.filter { transaction in
-                transaction.amount > 0 && (transaction.transactionStatus?.countsAsReceived == true)
-            }
+            repeat {
+                page += 1
+                let result = try await PaymentsService.transactions(
+                    page: page,
+                    limit: Self.pageSize,
+                    startDate: range.start,
+                    endDate: range.end,
+                    sortBy: "date",
+                    sortOrder: "DESC"
+                )
+                guard generation == loadGeneration else { return }
+
+                let received = result.transactions.filter { transaction in
+                    transaction.amount > 0 && (transaction.transactionStatus?.countsAsReceived == true)
+                }
+                collected.append(contentsOf: received)
+                currentPage = page
+                hasNext = result.pagination?.hasNext ?? false
+                // Sigue solo mientras no hayamos encontrado ninguna recibida todavía
+                // y aún queden páginas por delante.
+            } while hasNext && collected.isEmpty
 
             if reset {
-                recentPayments = received
+                recentPayments = collected
             } else {
                 var merged = recentPayments
                 let known = Set(merged.map(\.id))
-                merged.append(contentsOf: received.filter { !known.contains($0.id) })
+                merged.append(contentsOf: collected.filter { !known.contains($0.id) })
                 recentPayments = merged
             }
             recentPayments.sort { lhs, rhs in
                 (lhs.sortDate ?? .distantPast) > (rhs.sortDate ?? .distantPast)
             }
 
-            currentPage = page
-            hasMorePages = result.pagination?.hasNext ?? false
+            hasMorePages = hasNext
             accessDenied = false
             recentError = nil
         } catch let error as RistakAPIError {

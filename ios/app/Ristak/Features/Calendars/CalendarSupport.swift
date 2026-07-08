@@ -171,6 +171,27 @@ enum CalendarDateMath {
         return formatter("EEE d MMM", timeZone: timeZone).string(from: date)
     }
 
+    /// Título grande de la vista Día: `Miércoles, 8 de julio` (capitalizado).
+    static func longDayTitle(_ day: CalendarBusinessDay, timeZone: TimeZone) -> String {
+        let raw = dayHeader(day, timeZone: timeZone)
+        guard let first = raw.first else { return raw }
+        return String(first).uppercased() + raw.dropFirst()
+    }
+
+    /// Etiqueta `8 jul` para el rango de la vista Semana.
+    static func dayMonthLabel(_ day: CalendarBusinessDay, timeZone: TimeZone) -> String {
+        guard let date = startDate(of: day, timeZone: timeZone) else { return day.key }
+        return formatter("d MMM", timeZone: timeZone).string(from: date)
+    }
+
+    /// Título corto de mes para la vista Año: `Ene` … `Dic` (capitalizado).
+    static func monthShortTitle(month: Int) -> String {
+        guard month >= 1, month <= 12 else { return "" }
+        let raw = BusinessFormatters.shortMonths[month - 1]
+        guard let first = raw.first else { return raw }
+        return String(first).uppercased() + raw.dropFirst()
+    }
+
     /// Etiqueta de hora del timeline al estilo RN: `12 a.m. … 11 p.m.`.
     static func hourLabel(_ hour: Int) -> String {
         switch hour {
@@ -227,6 +248,34 @@ extension RistakCalendar {
     /// Color del calendario con fallback al acento de la app.
     var displayColor: Color {
         CalendarColorParser.color(fromHex: eventColor) ?? RistakTheme.accent
+    }
+
+    /// Duración de slot NORMALIZADA a minutos (unidad `hours` ⇒ ×60), clamp
+    /// 15–1440 (paridad RN `getCalendarSlotDurationMinutes`, App.tsx ~7014).
+    var normalizedSlotDurationMinutes: Int {
+        let raw = CalendarUnitMath.normalizedMinutes(value: slotDuration, unit: slotDurationUnit) ?? 60
+        return min(1440, max(15, raw))
+    }
+
+    /// Intervalo (snap) NORMALIZADO a minutos, clamp 5–60. Si no hay intervalo
+    /// válido cae al `slotDuration` normalizado (paridad RN
+    /// `getCalendarSnapMinutes`, App.tsx ~7024).
+    var normalizedSlotIntervalMinutes: Int {
+        let raw = CalendarUnitMath.normalizedMinutes(value: slotInterval, unit: slotIntervalUnit)
+            ?? CalendarUnitMath.normalizedMinutes(value: slotDuration, unit: slotDurationUnit)
+            ?? 15
+        return min(60, max(5, raw))
+    }
+}
+
+/// Normalización de duraciones/intervalos del calendario a minutos.
+/// Paridad RN `normalizeCalendarMinutes` (App.tsx ~7006): un valor con unidad
+/// que empieza por `hour` se multiplica por 60; valores ≤ 0 o inválidos → nil.
+enum CalendarUnitMath {
+    static func normalizedMinutes(value: Int?, unit: String?) -> Int? {
+        guard let value, value > 0 else { return nil }
+        let normalizedUnit = (unit ?? "mins").lowercased()
+        return normalizedUnit.hasPrefix("hour") ? value * 60 : value
     }
 }
 

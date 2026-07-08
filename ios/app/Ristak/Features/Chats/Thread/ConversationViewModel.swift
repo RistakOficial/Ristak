@@ -56,6 +56,12 @@ final class ConversationViewModel {
         return phone.isEmpty ? nil : phone
     }
 
+    /// Correo del contacto (para el proxy de cobro presentado desde el header).
+    var contactEmail: String? {
+        let email = contactDetail?.email ?? seedContact?.email ?? ""
+        return email.isEmpty ? nil : email
+    }
+
     var avatarURL: URL? {
         let raw = contactDetail?.profilePhotoUrl ?? seedContact?.profilePhotoUrl ?? ""
         return raw.isEmpty ? nil : URL(string: raw)
@@ -152,8 +158,16 @@ final class ConversationViewModel {
     /// Payloads de mensajes fallidos para «Reintentar» (repone al composer).
     private var failedPayloads: [String: FailedSendPayload] = [:]
 
+    /// `externalId`s cuyo POST sigue en vuelo (aún sin respuesta ni fallo). La
+    /// reconciliación JAMÁS elimina una burbuja en vuelo: evita que un eco
+    /// "ok" previo borre el globo que aún se está enviando (y con él su estado
+    /// de reintento/fallo).
+    private var inFlightExternalIds: Set<String> = []
+
     private var lastFullJourneyFetch: Date?
     private var realtimeTask: Task<Void, Never>?
+    /// Cadena serial de operaciones start/stop del engine SSE.
+    private var realtimeControl: Task<Void, Never>?
 
     struct FailedSendPayload {
         var text: String
@@ -314,14 +328,23 @@ final class ConversationViewModel {
 
         optimisticMessages.removeAll { optimistic in
             guard !optimistic.failed else { return false }
+            // Nunca reconciliar una burbuja cuyo POST sigue en vuelo: su eco
+            // real aún no existe; casarla con un mensaje previo la borraría.
+            guard !inFlightExternalIds.contains(optimistic.id) else { return false }
             guard let optimisticDate = optimistic.parsedDate else { return false }
             return outboundServer.contains { server in
                 guard let serverDate = server.parsedDate else { return false }
                 guard abs(serverDate.timeIntervalSince(optimisticDate)) <= window else { return false }
+                // 1) Coincidencia exacta por id de proveedor: siempre gana.
                 if let provider = optimistic.providerMessageId, !provider.isEmpty,
                    server.providerMessageId == provider {
                     return true
                 }
+                // 2) Respaldo por texto/adjunto/ubicación SOLO contra un mensaje
+                //    del servidor NO anterior al envío optimista (con pequeña
+                //    tolerancia de reloj). Así un "ok" que ya existía antes de
+                //    mandar el nuestro no puede reclamar el globo optimista.
+                guard serverDate.timeIntervalSince(optimisticDate) >= -5 else { return false }
                 let sameText = !optimistic.text.isEmpty
                     && optimistic.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         == server.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -431,23 +454,38 @@ final class ConversationViewModel {
         }
     }
 
+    /// Start/stop del engine SSE encadenados en serie: un `stop()` suelto que
+    /// aterrizara después de un `start()` nuevo mataría la conexión recién
+    /// abierta y el hilo se quedaría sin realtime.
     private func startRealtime() {
         guard realtimeTask == nil else { return }
-        realtimeTask = Task { [weak self] in
-            guard let self else { return }
-            let stream = await self.chatEventsClient.start()
+        let client = chatEventsClient
+        let previous = realtimeControl
+        let task = Task { [weak self] in
+            await previous?.value
+            if Task.isCancelled { return }
+            let stream = await client.start()
             for await event in stream {
+                if Task.isCancelled { return }
+                guard let self else { return }
                 if case .message(let payload) = event, payload.contactId == self.contactID {
                     await self.refreshSilently()
                 }
             }
         }
+        realtimeTask = task
+        realtimeControl = task
     }
 
     private func stopRealtime() {
         realtimeTask?.cancel()
         realtimeTask = nil
-        Task { await chatEventsClient.stop() }
+        let client = chatEventsClient
+        let previous = realtimeControl
+        realtimeControl = Task {
+            await previous?.value
+            await client.stop()
+        }
     }
 
     /// Nudge de push en foreground (NotificationRouter).
@@ -934,7 +972,11 @@ final class ConversationViewModel {
             mimeType: encoded.mimeType,
             durationMs: preview.durationMs
         )
-        appendOptimistic(optimistic, restore: FailedSendPayload(text: "", attachment: nil))
+        // Guardamos el audio ya codificado como borrador recuperable: si el
+        // envío falla, «Reintentar» rearma el composer con la nota de voz en
+        // vez de perderla (doc 05 §7.6).
+        let voiceDraft = ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil)
+        appendOptimistic(optimistic, restore: FailedSendPayload(text: "", attachment: voiceDraft))
 
         do {
             if selectedChannel == .sms {
@@ -972,10 +1014,10 @@ final class ConversationViewModel {
 
     // MARK: Meta social / HighLevel
 
-    private func sendMetaText(_ text: String) async {
+    private func sendMetaText(_ text: String, preserveComposer: Bool = false) async {
         guard let platform = selectedChannel.metaPlatform else { return }
         let externalId = MessageExternalIdFactory.meta()
-        let reply = replyTarget
+        let reply = preserveComposer ? nil : replyTarget
 
         var optimistic = makeOptimisticMessage(
             id: externalId,
@@ -985,7 +1027,11 @@ final class ConversationViewModel {
         optimistic.replyToMessageId = reply?.id
         optimistic.replyToProviderMessageId = reply?.providerMessageId
         appendOptimistic(optimistic, restore: FailedSendPayload(text: text, attachment: nil))
-        clearComposerAfterSend()
+        if preserveComposer {
+            scrollToBottomSignal &+= 1
+        } else {
+            clearComposerAfterSend()
+        }
 
         do {
             let result = try await messagingService.sendMetaSocialText(
@@ -1005,7 +1051,7 @@ final class ConversationViewModel {
         }
     }
 
-    private func sendHighLevel(text: String, drafts: [ComposerAttachmentDraft]) async {
+    private func sendHighLevel(text: String, drafts: [ComposerAttachmentDraft], preserveComposer: Bool = false) async {
         let externalId = MessageExternalIdFactory.highLevel()
         var optimistic = makeOptimisticMessage(id: externalId, text: text, transport: "ghl_sms")
         if let first = drafts.first {
@@ -1017,7 +1063,11 @@ final class ConversationViewModel {
             )
         }
         appendOptimistic(optimistic, restore: FailedSendPayload(text: text, attachment: drafts.first))
-        clearComposerAfterSend()
+        if preserveComposer {
+            scrollToBottomSignal &+= 1
+        } else {
+            clearComposerAfterSend()
+        }
 
         do {
             let result = try await messagingService.sendHighLevelMessage(
@@ -1118,10 +1168,18 @@ final class ConversationViewModel {
         }
 
         // Meta/SMS: la ubicación viaja como texto con link (doc 05 §2.3).
+        // Se envía como override SIN tocar el composer (patrón /movil
+        // textOverride + preserveComposer), para no pisar lo que el usuario
+        // esté escribiendo.
         if !selectedChannel.isWhatsApp {
             let link = ChatLocation.googleMapsURL(latitude: coordinate.latitude, longitude: coordinate.longitude)
-            draftText = "📍 Mi ubicación: \(link)"
-            sendCurrentDraft()
+            let text = "📍 Mi ubicación: \(link)"
+            switch selectedChannel {
+            case .messenger, .instagram:
+                await sendMetaText(text, preserveComposer: true)
+            default:
+                await sendHighLevel(text: text, drafts: [], preserveComposer: true)
+            }
             return
         }
 
@@ -1189,6 +1247,7 @@ final class ConversationViewModel {
     private func appendOptimistic(_ message: ChatMessage, restore: FailedSendPayload) {
         optimisticMessages.append(message)
         failedPayloads[message.id] = restore
+        inFlightExternalIds.insert(message.id)
         rebuildCombined()
         scrollToBottomSignal &+= 1
     }
@@ -1215,19 +1274,27 @@ final class ConversationViewModel {
                 }
             }
         }
+        inFlightExternalIds.remove(externalId)
         failedPayloads.removeValue(forKey: externalId)
     }
 
     private func handleSendFailure(_ error: Error, externalId: String, restoreOnWindowError: String?) {
-        // 400 de ventana de 24 h → quitar burbuja, reponer texto y ofrecer
-        // plantillas (doc 05 §1.1 / gap §10.5).
+        // El POST terminó (con error): sale de "en vuelo".
+        inFlightExternalIds.remove(externalId)
+
+        // 400 de ventana de 24 h (doc 05 §1.1 / gap §10.5).
         if WhatsAppReplyWindowRules.isReplyWindowError(error) {
-            removeOptimistic(id: externalId)
-            if let restoreOnWindowError, draftText.isEmpty {
-                draftText = restoreOnWindowError
+            if let restoreOnWindowError {
+                // Envío de texto: quita la burbuja, repone el texto al composer
+                // y ofrece plantillas.
+                removeOptimistic(id: externalId)
+                if draftText.isEmpty { draftText = restoreOnWindowError }
+                presentTemplatesSheet(reason: (error as? RistakAPIError)?.message)
+                return
             }
-            presentTemplatesSheet(reason: (error as? RistakAPIError)?.message)
-            return
+            // Adjunto/voz/ubicación: NO destruir el medio. Se conserva la
+            // burbuja fallida; «Reintentar» rearma el composer con el borrador
+            // guardado (doc 05 §7.6). Cae al marcado de fallo de abajo.
         }
 
         let message = (error as? RistakAPIError)?.message ?? "No se pudo enviar el mensaje."
@@ -1243,6 +1310,7 @@ final class ConversationViewModel {
     private func removeOptimistic(id: String) {
         optimisticMessages.removeAll { $0.id == id }
         failedPayloads.removeValue(forKey: id)
+        inFlightExternalIds.remove(id)
         rebuildCombined()
     }
 
@@ -1573,7 +1641,23 @@ final class ConversationViewModel {
             editingId: item.id,
             externalId: item.externalId.isEmpty ? nil : item.externalId,
             text: item.text,
-            date: RistakDateParsing.date(fromISO: item.scheduledAt) ?? Date().addingTimeInterval(15 * 60)
+            date: RistakDateParsing.date(fromISO: item.scheduledAt) ?? Date().addingTimeInterval(15 * 60),
+            // Conserva el shape original: reprogramar un template o un mensaje
+            // HighLevel NO debe reescribirlo como whatsapp_api + text.
+            origin: ScheduleSheetState.Origin(
+                provider: item.provider,
+                channel: item.channel,
+                transport: item.transport,
+                messageType: item.messageType,
+                templateId: item.templateId,
+                templateName: item.templateName,
+                templateLanguage: item.templateLanguage,
+                templateComponents: item.templateComponents,
+                templateVariables: item.templateVariables,
+                toPhone: item.toPhone,
+                fromPhone: item.fromPhone,
+                businessPhoneNumberId: item.businessPhoneNumberId
+            )
         )
     }
 
@@ -1588,32 +1672,62 @@ final class ConversationViewModel {
             alert = ConversationAlert(title: "Programado", message: "Elige una hora futura para programar el mensaje.")
             return false
         }
-        guard let phone = contactPhone, !phone.isEmpty else {
-            alert = ConversationAlert(title: "Programado", message: "Este contacto necesita teléfono para programar el mensaje.")
-            return false
-        }
-        let fromPhone = selectedWhatsAppPhone?.phoneNumber ?? selectedWhatsAppPhone?.displayPhoneNumber
-        guard let fromPhone, !fromPhone.isEmpty else {
-            alert = ConversationAlert(title: "Programado", message: "Elige el WhatsApp del negocio que mandará el mensaje.")
-            return false
+
+        let request: ScheduledMessageUpsertRequest
+        if let origin = state.origin, let editingId = state.editingId {
+            // EDICIÓN: solo cambian texto y hora. Se conserva EXACTAMENTE el
+            // shape original (provider/channel/transport/messageType + payload
+            // de plantilla + teléfonos) para no corromper templates ni GHL.
+            let isWhatsAppApi = origin.provider == "whatsapp_api"
+            let isTemplate = origin.messageType == "template"
+            request = ScheduledMessageUpsertRequest(
+                id: editingId,
+                contactId: contactID,
+                provider: origin.provider,
+                channel: isWhatsAppApi ? nil : (origin.channel.isEmpty ? nil : origin.channel),
+                transport: isWhatsAppApi ? (origin.transport.isEmpty ? resolveWhatsAppTransport().rawValue : origin.transport) : nil,
+                messageType: origin.messageType,
+                text: text,
+                templateId: isTemplate && !origin.templateId.isEmpty ? origin.templateId : nil,
+                templateName: isTemplate && !origin.templateName.isEmpty ? origin.templateName : nil,
+                templateLanguage: isTemplate && !origin.templateLanguage.isEmpty ? origin.templateLanguage : nil,
+                templateComponents: isTemplate ? origin.templateComponents : nil,
+                templateVariables: isTemplate ? origin.templateVariables : nil,
+                toPhone: origin.toPhone.isEmpty ? contactPhone : origin.toPhone,
+                fromPhone: origin.fromPhone.isEmpty ? nil : origin.fromPhone,
+                businessPhoneNumberId: origin.businessPhoneNumberId.isEmpty ? nil : origin.businessPhoneNumberId,
+                scheduledAt: RistakDateParsing.isoString(from: state.date),
+                externalId: state.externalId
+            )
+        } else {
+            // CREACIÓN: WhatsApp API texto (requiere teléfono del contacto y del
+            // número de negocio).
+            guard let phone = contactPhone, !phone.isEmpty else {
+                alert = ConversationAlert(title: "Programado", message: "Este contacto necesita teléfono para programar el mensaje.")
+                return false
+            }
+            let fromPhone = selectedWhatsAppPhone?.phoneNumber ?? selectedWhatsAppPhone?.displayPhoneNumber
+            guard let fromPhone, !fromPhone.isEmpty else {
+                alert = ConversationAlert(title: "Programado", message: "Elige el WhatsApp del negocio que mandará el mensaje.")
+                return false
+            }
+            request = ScheduledMessageUpsertRequest(
+                id: nil,
+                contactId: contactID,
+                provider: "whatsapp_api",
+                transport: resolveWhatsAppTransport().rawValue,
+                messageType: "text",
+                text: text,
+                toPhone: phone,
+                fromPhone: fromPhone,
+                businessPhoneNumberId: selectedWhatsAppPhone?.id,
+                scheduledAt: RistakDateParsing.isoString(from: state.date),
+                externalId: state.externalId
+            )
         }
 
         do {
-            _ = try await scheduledService.upsert(
-                ScheduledMessageUpsertRequest(
-                    id: state.editingId,
-                    contactId: contactID,
-                    provider: "whatsapp_api",
-                    transport: resolveWhatsAppTransport().rawValue,
-                    messageType: "text",
-                    text: text,
-                    toPhone: phone,
-                    fromPhone: fromPhone,
-                    businessPhoneNumberId: selectedWhatsAppPhone?.id,
-                    scheduledAt: RistakDateParsing.isoString(from: state.date),
-                    externalId: state.externalId
-                )
-            )
+            _ = try await scheduledService.upsert(request)
             if state.editingId == nil, draftText == state.text {
                 draftText = ""
             }

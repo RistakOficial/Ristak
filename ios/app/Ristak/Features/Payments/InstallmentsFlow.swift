@@ -333,7 +333,9 @@ final class InstallmentsPlanModel {
                 url: link,
                 gatewayName: gatewayName,
                 contactName: contact.displayName,
-                amountLabel: formatters.currency(firstPaymentAmount > 0 ? firstPaymentAmount : total)
+                amountLabel: formatters.currency(firstPaymentAmount > 0 ? firstPaymentAmount : total),
+                contactID: contact.id.isEmpty ? nil : contact.id,
+                contactPhone: contact.phone.isEmpty ? nil : contact.phone
             )
         } else if let link = cardSetupLink, !link.isEmpty {
             linkResult = PaymentLinkReadyPayload(
@@ -341,7 +343,9 @@ final class InstallmentsPlanModel {
                 url: link,
                 gatewayName: gatewayName,
                 contactName: contact.displayName,
-                amountLabel: formatters.currency(total)
+                amountLabel: formatters.currency(total),
+                contactID: contact.id.isEmpty ? nil : contact.id,
+                contactPhone: contact.phone.isEmpty ? nil : contact.phone
             )
         } else {
             successMessage = "\(scheduledCount) cobros quedaron programados."
@@ -453,6 +457,7 @@ struct InstallmentsFlowView: View {
             destinationSection
             confirmSection
         }
+        .paymentsKeyboardDismissable()
     }
 
     private var firstPaymentSection: some View {
@@ -591,16 +596,18 @@ struct InstallmentsFlowView: View {
 
     private var destinationSection: some View {
         Section("Crear el plan con") {
-            ForEach(destinations, id: \.self) { destination in
-                PaymentOptionRow(
-                    title: destination.label,
-                    subtitle: destinationCopy(destination),
-                    isSelected: model.destination == destination
-                ) {
-                    model.destination = destination
+            VStack(spacing: RistakTheme.Spacing.xs) {
+                ForEach(destinations, id: \.self) { destination in
+                    PaymentOptionRow(
+                        title: destination.label,
+                        subtitle: destinationCopy(destination),
+                        isSelected: model.destination == destination
+                    ) {
+                        model.destination = destination
+                    }
                 }
-                .listRowSeparator(.hidden)
             }
+            .listRowSeparator(.hidden)
         }
     }
 

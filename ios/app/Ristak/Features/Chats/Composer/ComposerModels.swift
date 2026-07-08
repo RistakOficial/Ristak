@@ -92,6 +92,29 @@ struct ScheduleSheetState: Identifiable {
     var externalId: String?
     var text: String
     var date: Date
+
+    /// Envoltura del mensaje ORIGINAL cuando se edita: se conserva tal cual
+    /// para no corromper plantillas / HighLevel al reprogramar (un edit no debe
+    /// convertir en `whatsapp_api` + `text` un mensaje que era template o GHL).
+    /// `nil` al crear (se usan los valores por defecto de WhatsApp API texto).
+    var origin: Origin?
+
+    struct Origin {
+        var provider: String
+        var channel: String
+        var transport: String
+        var messageType: String
+        var templateId: String
+        var templateName: String
+        var templateLanguage: String
+        var templateComponents: RistakJSONValue?
+        var templateVariables: RistakJSONValue?
+        // Enrutamiento original: al editar solo cambian texto y hora; los
+        // teléfonos y el número de negocio se reutilizan tal cual.
+        var toPhone: String
+        var fromPhone: String
+        var businessPhoneNumberId: String
+    }
 }
 
 /// Capacidad de reacción por canal (doc 04 §5).

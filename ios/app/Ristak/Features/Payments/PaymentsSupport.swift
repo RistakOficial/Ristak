@@ -157,13 +157,18 @@ enum PaymentsDateMath {
     /// hora) — paridad RN `formatPaymentDate`.
     static func paymentDateLabel(iso: String?, timeZone: TimeZone) -> String {
         guard let iso, let date = RistakDateParsing.date(fromISO: iso) else { return "" }
+        let hasTime = iso.contains("T") || iso.contains(":")
+
         let dayFormatter = DateFormatter()
         dayFormatter.locale = BusinessFormatters.locale
-        dayFormatter.timeZone = timeZone
+        // Los valores solo-fecha (`YYYY-MM-DD`) se parsean como medianoche UTC;
+        // formatearlos en la TZ del negocio (p. ej. UTC-6) los recorre al día
+        // anterior. Se formatean en UTC para que `2026-07-14` muestre `14 jul`,
+        // no `13 jul`. Los ISO con hora sí van en la TZ del negocio.
+        dayFormatter.timeZone = hasTime ? timeZone : TimeZone(identifier: "UTC")
         dayFormatter.dateFormat = "d MMM"
         let day = dayFormatter.string(from: date)
 
-        let hasTime = iso.contains("T") || iso.contains(":")
         guard hasTime else { return day }
 
         let timeFormatter = DateFormatter()
@@ -304,13 +309,22 @@ struct PaymentTaxBreakdown: Sendable, Equatable {
         )
     }
 
-    /// `metadata.tax` para pagos manuales.
+    /// `metadata.tax` para pagos manuales. Debe usar la forma EXACTA que el
+    /// backend honra en `getPaymentTax` (gigstackInvoiceService.js): solo
+    /// respeta el impuesto almacenado cuando `enabled` es truthy Y
+    /// `Number(taxAmount) > 0`, leyendo `taxName`, `rateValue`, `subtotalAmount`,
+    /// `taxAmount` y `totalAmount`. Enviar `{name, rate, amount, ...}` hacía que
+    /// el impuesto se descartara al facturar.
     var metadataValue: RistakJSONValue? {
         guard applied else { return nil }
+        let round2: (Double) -> Double = { ($0 * 100).rounded() / 100 }
         return .object([
-            "name": .string(name),
-            "rate": .number(rate),
-            "amount": .number((taxAmount * 100).rounded() / 100),
+            "enabled": .bool(true),
+            "taxName": .string(name),
+            "rateValue": .number(rate),
+            "subtotalAmount": .number(round2(subtotal)),
+            "taxAmount": .number(round2(taxAmount)),
+            "totalAmount": .number(round2(total)),
             "calculationMode": .string(mode),
         ])
     }

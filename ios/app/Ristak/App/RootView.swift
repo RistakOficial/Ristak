@@ -40,8 +40,14 @@ struct RootView: View {
                     await appConfig.load()
                     // Re-registro silencioso del token APNs si el permiso ya
                     // fue concedido (la activación explícita vive en Ajustes).
+                    // El filtro de calendarios solo aplica cuando el toggle de
+                    // citas está encendido; apagado = [] (= todos), para no
+                    // reimponer una selección vieja y perder pushes de otros
+                    // tipos (p. ej. citas confirmadas) — paridad RN.
                     await PushRegistrar.shared.registerAfterLoginIfPossible(
-                        calendarIDs: appConfig.calendarPushCalendarIDs
+                        calendarIDs: appConfig.calendarPushEnabled
+                            ? appConfig.calendarPushCalendarIDs
+                            : []
                     )
                 }
             case .loggedOut where oldPhase == .active:

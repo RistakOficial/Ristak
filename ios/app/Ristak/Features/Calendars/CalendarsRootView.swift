@@ -149,18 +149,16 @@ struct CalendarsRootView: View {
     // MARK: - Layout compacto (iPhone)
 
     private var compactLayout: some View {
-        VStack(spacing: 0) {
-            header
-                .padding(.horizontal, RistakTheme.Spacing.lg)
-                .padding(.bottom, RistakTheme.Spacing.sm)
-
-            eventsErrorBanner
-
+        // El ScrollView / timeline es el descendiente DIRECTO del NavigationStack
+        // (sin VStack contenedor) para que el tab bar rastree la dirección del
+        // scroll y se oculte al bajar / expanda al subir (#11). El header va como
+        // safeAreaInset superior fija.
+        Group {
             switch model.viewMode {
             case .month:
                 ScrollView {
                     VStack(spacing: RistakTheme.Spacing.lg) {
-                        CalendarMonthGridView(model: model, onCreateDay: canWrite ? { day in
+                        CalendarMonthPager(model: model, onCreateDay: canWrite ? { day in
                             startCreate(prefill: AppointmentPrefill(day: day))
                         } : nil)
 
@@ -174,55 +172,123 @@ struct CalendarsRootView: View {
                 .refreshable {
                     await model.refresh(appConfig: appConfig)
                 }
+                // Dock por dirección de scroll (#11) sobre el scroll principal
+                // (vista Mes, la predeterminada). Solo compacto; ver
+                // `ShellScrollTracking.swift`.
+                .reportsShellScroll()
+
+            case .year:
+                ScrollView {
+                    VStack(spacing: RistakTheme.Spacing.lg) {
+                        CalendarYearGridView(model: model)
+                        upcomingAgenda
+                    }
+                    .padding(.horizontal, RistakTheme.Spacing.lg)
+                    .padding(.bottom, RistakTheme.Spacing.xxl)
+                }
+                .refreshable {
+                    await model.refresh(appConfig: appConfig)
+                }
+
+            case .years:
+                ScrollView {
+                    CalendarYearsGridView(model: model)
+                        .padding(.horizontal, RistakTheme.Spacing.lg)
+                        .padding(.top, RistakTheme.Spacing.sm)
+                        .padding(.bottom, RistakTheme.Spacing.xxl)
+                }
+                .refreshable {
+                    await model.refresh(appConfig: appConfig)
+                }
 
             case .day, .week:
-                CalendarTimelinePane(
+                CalendarTimelinePager(
                     model: model,
-                    showsWeekColumns: false,
                     canCreate: canWrite,
                     onCreate: { prefill in startCreate(prefill: prefill) },
                     onEventTap: { event in detailAppointment = event }
                 )
             }
         }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, RistakTheme.Spacing.lg)
+                    .padding(.bottom, RistakTheme.Spacing.sm)
+                eventsErrorBanner
+            }
+            .background(RistakTheme.bg)
+        }
     }
 
     // MARK: - Layout regular (iPad)
 
     private var regularLayout: some View {
-        VStack(spacing: 0) {
-            header
-                .padding(.horizontal, RistakTheme.Spacing.xl)
-                .padding(.bottom, RistakTheme.Spacing.sm)
-
-            eventsErrorBanner
-
-            HStack(alignment: .top, spacing: 0) {
+        Group {
+            switch model.viewMode {
+            case .year:
                 ScrollView {
                     VStack(spacing: RistakTheme.Spacing.lg) {
-                        CalendarMonthGridView(model: model, onCreateDay: canWrite ? { day in
-                            startCreate(prefill: AppointmentPrefill(day: day))
-                        } : nil)
+                        CalendarYearGridView(model: model)
+                        upcomingAgenda
                     }
-                    .padding(RistakTheme.Spacing.lg)
+                    .padding(RistakTheme.Spacing.xl)
                 }
-                .frame(width: 400)
-                .refreshable {
-                    await model.refresh(appConfig: appConfig)
+                .refreshable { await model.refresh(appConfig: appConfig) }
+
+            case .years:
+                ScrollView {
+                    CalendarYearsGridView(model: model)
+                        .padding(RistakTheme.Spacing.xl)
                 }
+                .refreshable { await model.refresh(appConfig: appConfig) }
 
-                Divider()
+            case .month, .day, .week:
+                HStack(alignment: .top, spacing: 0) {
+                    ScrollView {
+                        VStack(spacing: RistakTheme.Spacing.lg) {
+                            CalendarMonthPager(model: model, onCreateDay: canWrite ? { day in
+                                startCreate(prefill: AppointmentPrefill(day: day))
+                            } : nil)
+                        }
+                        .padding(RistakTheme.Spacing.lg)
+                    }
+                    .frame(width: 400)
+                    .refreshable {
+                        await model.refresh(appConfig: appConfig)
+                    }
 
-                detailPanel
-                    .frame(maxWidth: .infinity)
+                    Divider()
+
+                    detailPanel
+                        .frame(maxWidth: .infinity)
+                }
             }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                header
+                    .padding(.horizontal, RistakTheme.Spacing.xl)
+                    .padding(.bottom, RistakTheme.Spacing.sm)
+                eventsErrorBanner
+            }
+            .background(RistakTheme.bg)
         }
     }
 
     @ViewBuilder
     private var detailPanel: some View {
         switch model.viewMode {
-        case .month:
+        case .day, .week:
+            CalendarTimelinePager(
+                model: model,
+                canCreate: canWrite,
+                onCreate: { prefill in startCreate(prefill: prefill) },
+                onEventTap: { event in detailAppointment = event }
+            )
+            .padding(.top, RistakTheme.Spacing.sm)
+
+        default:
             ScrollView {
                 CalendarDayAgendaView(model: model) { event in
                     detailAppointment = event
@@ -232,47 +298,36 @@ struct CalendarsRootView: View {
             .refreshable {
                 await model.refresh(appConfig: appConfig)
             }
-
-        case .day, .week:
-            CalendarTimelinePane(
-                model: model,
-                showsWeekColumns: model.viewMode == .week,
-                canCreate: canWrite,
-                onCreate: { prefill in startCreate(prefill: prefill) },
-                onEventTap: { event in detailAppointment = event }
-            )
-            .padding(.top, RistakTheme.Spacing.sm)
         }
     }
 
-    // MARK: - Header (título grande del mes + pastilla de año + vistas)
-
-    private var header: some View {
+    /// Agenda «Próximas citas» de la vista Año (paridad RN `nextUpcomingEvents`).
+    @ViewBuilder
+    private var upcomingAgenda: some View {
+        let events = model.upcomingEvents
         VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
-            HStack(alignment: .firstTextBaseline, spacing: RistakTheme.Spacing.sm) {
-                Text(model.monthTitle)
-                    .font(.largeTitle.bold())
+            HStack(alignment: .firstTextBaseline) {
+                Text("Próximas citas")
+                    .font(.headline)
                     .foregroundStyle(RistakTheme.textPrimary)
-                    .lineLimit(1)
-
-                yearPill
-
                 Spacer()
-
-                if model.isLoadingEvents {
-                    ProgressView()
-                        .controlSize(.small)
-                }
+                Text(events.isEmpty ? "Sin citas" : "\(events.count) en este rango")
+                    .font(.subheadline)
+                    .foregroundStyle(RistakTheme.textDim)
             }
 
-            HStack(spacing: 8) {
-                ForEach(CalendarsViewModel.ViewMode.allCases) { mode in
-                    RistakFilterChip(
-                        title: mode.title,
-                        isSelected: model.viewMode == mode
-                    ) {
-                        withAnimation(.snappy(duration: 0.18)) {
-                            model.viewMode = mode
+            if events.isEmpty {
+                RistakEmptyState(
+                    icon: "calendar",
+                    title: "No hay citas próximas",
+                    message: "Cambia de calendario o crea una cita nueva."
+                )
+                .frame(minHeight: 200)
+            } else {
+                VStack(spacing: RistakTheme.Spacing.xs) {
+                    ForEach(events) { event in
+                        AppointmentCardView(event: event, timeZone: model.timeZone) {
+                            detailAppointment = event
                         }
                     }
                 }
@@ -280,30 +335,109 @@ struct CalendarsRootView: View {
         }
     }
 
-    /// Pastilla de año: menú para saltar de año sin salir de la vista.
-    private var yearPill: some View {
-        Menu {
-            let currentYear = model.today.year
-            ForEach(Array((currentYear - 2)...(currentYear + 3)), id: \.self) { year in
-                Button {
-                    withAnimation(.snappy) { model.goToYear(year) }
-                } label: {
-                    if year == model.visibleMonth.year {
-                        Label(String(year), systemImage: "checkmark")
-                    } else {
-                        Text(String(year))
+    // MARK: - Header (título grande + toggle de dos vistas)
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: RistakTheme.Spacing.sm) {
+            Text(headerTitle)
+                .font(.largeTitle.bold())
+                .foregroundStyle(RistakTheme.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+
+            if model.isLoadingEvents {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
+            Spacer(minLength: RistakTheme.Spacing.sm)
+
+            // Toggle de EXACTAMENTE dos botones con las dos vistas NO actuales
+            // (User #7). Solo en Día/Semana/Mes; Año/Años se alcanzan por la
+            // pastilla de año.
+            viewToggle
+        }
+    }
+
+    /// Toggle de dos botones (Día/Semana/Mes) a la derecha del título. Ninguno
+    /// está «seleccionado»: ambos cambian a la vista NO actual, así que usan
+    /// relleno neutro (no acento). Al tocar uno, la vista cambia y el par se
+    /// actualiza (User #7).
+    @ViewBuilder
+    private var viewToggle: some View {
+        let alternatives = model.viewMode.toggleAlternatives
+        if !alternatives.isEmpty {
+            HStack(spacing: 6) {
+                ForEach(alternatives) { mode in
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            model.setViewMode(mode)
+                        }
+                    } label: {
+                        Text(mode.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(RistakTheme.textPrimary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Capsule().fill(RistakTheme.controlRest))
+                            .contentShape(Capsule())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Cambiar a vista \(mode.title)")
                 }
             }
-        } label: {
-            Text(String(model.visibleMonth.year))
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(RistakTheme.textPrimary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(Capsule().fill(RistakTheme.controlRest))
+            .fixedSize()
         }
-        .accessibilityLabel("Cambiar año")
+    }
+
+    /// Título grande según la vista (mes · año · rango de años · día · semana).
+    private var headerTitle: String {
+        switch model.viewMode {
+        case .month:
+            return model.monthTitle
+        case .year:
+            return String(model.visibleMonth.year)
+        case .years:
+            let grid = model.yearsGrid
+            return "\(grid.first ?? model.visibleMonth.year) - \(grid.last ?? model.visibleMonth.year)"
+        case .day:
+            return CalendarDateMath.longDayTitle(model.selectedDay, timeZone: model.timeZone)
+        case .week:
+            let days = CalendarDateMath.weekDays(containing: model.selectedDay, timeZone: model.timeZone)
+            let first = days.first ?? model.selectedDay
+            let last = days.last ?? model.selectedDay
+            return "\(CalendarDateMath.dayMonthLabel(first, timeZone: model.timeZone)) – \(CalendarDateMath.dayMonthLabel(last, timeZone: model.timeZone))"
+        }
+    }
+
+    /// Año que muestra la pastilla de año (User #7): el año del contexto actual.
+    private var yearPillLabel: String {
+        switch model.viewMode {
+        case .day, .week:
+            return String(model.selectedDay.year)
+        default:
+            return String(model.visibleMonth.year)
+        }
+    }
+
+    /// Pastilla de AÑO (reemplaza al botón «Hoy», User #7): muestra el año
+    /// actual; al tocarla sube a la vista anual (Mes/Día/Semana → Año), y de
+    /// nuevo sube a la vista de años/década (Año → Años). Es la ÚNICA entrada a
+    /// las vistas Año/Años.
+    private var yearPill: some View {
+        Button {
+            withAnimation(.snappy) { model.navigateUp() }
+        } label: {
+            HStack(spacing: 3) {
+                Text(yearPillLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .monospacedDigit()
+                Image(systemName: "chevron.up")
+                    .font(.caption2.weight(.bold))
+            }
+            .lineLimit(1)
+        }
+        .accessibilityLabel("Ver año \(yearPillLabel)")
     }
 
     @ViewBuilder
@@ -335,10 +469,7 @@ struct CalendarsRootView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            Button("Hoy") {
-                withAnimation(.snappy) { model.goToToday() }
-            }
-            .accessibilityLabel("Ir a hoy")
+            yearPill
         }
 
         ToolbarItem(placement: .topBarTrailing) {

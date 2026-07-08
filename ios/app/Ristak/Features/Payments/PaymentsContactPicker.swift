@@ -159,6 +159,7 @@ struct PaymentsContactPickerSheet: View {
                 .buttonStyle(.plain)
             }
             .listStyle(.plain)
+            .scrollDismissesKeyboard(.interactively)
         }
     }
 }
