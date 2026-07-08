@@ -159,6 +159,7 @@ interface MessageReactionMenuState {
   messageId: string
   x: number
   y: number
+  pickerOpen?: boolean
 }
 
 interface ContactChannelBadge {
@@ -379,6 +380,13 @@ const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
 const CHAT_REFRESH_INTERVAL_MS = 20000
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
+const MESSAGE_REACTION_PICKER_EMOJIS = [
+  '😀', '😃', '😄', '😁', '😆', '🥹', '😂', '🤣',
+  '🙂', '😉', '😊', '😍', '😘', '😎', '🤩', '🥳',
+  '😌', '😔', '😅', '😮‍💨', '🤔', '🙌', '👏', '🙏',
+  '👍', '👀', '🔥', '✨', '💯', '❤️', '💚', '💬',
+  '📸', '🎥', '📍', '📅', '⏰', '✅', '💵', '🚀'
+]
 const META_MESSAGE_REACTION_EMOJIS = ['❤️']
 // Lotes moderados: la bandeja calcula stats de mensajes y debe pintar rápido sin ahogar Postgres.
 const CHAT_LIST_PAGE_SIZE = 50
@@ -2664,6 +2672,12 @@ function getMessageReactionEmojis(channel: DesktopMessageReactionChannel) {
   return channel === 'messenger' || channel === 'instagram'
     ? META_MESSAGE_REACTION_EMOJIS
     : MESSAGE_REACTION_EMOJIS
+}
+
+function getMessageReactionPickerEmojis(channel: DesktopMessageReactionChannel) {
+  return channel === 'messenger' || channel === 'instagram'
+    ? META_MESSAGE_REACTION_EMOJIS
+    : MESSAGE_REACTION_PICKER_EMOJIS
 }
 
 function getMessageBusinessPhone(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
@@ -7056,38 +7070,13 @@ export const DesktopChat: React.FC = () => {
     )
   }
 
-  const renderMessageReactionPicker = (message: DesktopChatMessage) => {
-    const reactionChannel = getMessageReactionChannel(message)
-    if (!reactionChannel) return null
-
-    const emojis = getMessageReactionEmojis(reactionChannel)
-    const reacting = reactingMessageId === message.id
-
-    return (
-      <span className={styles.messageReactionPicker} aria-label="Reaccionar al mensaje" aria-busy={reacting}>
-        {emojis.map((emoji) => (
-          <button
-            key={emoji}
-            type="button"
-            className={styles.messageReactionButton}
-            onClick={() => { void handleReactToMessage(message, emoji) }}
-            disabled={reacting}
-            aria-label={`Reaccionar con ${emoji}`}
-          >
-            {emoji}
-          </button>
-        ))}
-      </span>
-    )
-  }
-
   const handleMessageReactionContextMenu = (message: DesktopChatMessage, event: React.MouseEvent<HTMLElement>) => {
     if (!canReactToMessage(message) || typeof window === 'undefined') return
     event.preventDefault()
     event.stopPropagation()
 
     const margin = 8
-    const menuWidth = 190
+    const menuWidth = 230
     const menuHeight = 42
     const maxX = Math.max(margin, window.innerWidth - menuWidth - margin)
     const maxY = Math.max(margin, window.innerHeight - menuHeight - margin)
@@ -7095,6 +7084,21 @@ export const DesktopChat: React.FC = () => {
       messageId: message.id,
       x: Math.min(Math.max(event.clientX, margin), maxX),
       y: Math.min(Math.max(event.clientY, margin), maxY)
+    })
+  }
+
+  const openMessageReactionEmojiPicker = () => {
+    if (typeof window === 'undefined') return
+    const margin = 8
+    const menuWidth = 312
+    setMessageReactionMenu((current) => {
+      if (!current) return current
+      const maxX = Math.max(margin, window.innerWidth - menuWidth - margin)
+      return {
+        ...current,
+        x: Math.min(current.x, maxX),
+        pickerOpen: true
+      }
     })
   }
 
@@ -7106,6 +7110,8 @@ export const DesktopChat: React.FC = () => {
     if (!message || !reactionChannel) return null
 
     const emojis = getMessageReactionEmojis(reactionChannel)
+    const pickerEmojis = getMessageReactionPickerEmojis(reactionChannel)
+    const showEmojiPickerButton = pickerEmojis.length > emojis.length
     const reacting = reactingMessageId === message.id
 
     return (
@@ -7120,22 +7126,57 @@ export const DesktopChat: React.FC = () => {
         aria-label="Reaccionar al mensaje"
         aria-busy={reacting}
       >
-        {emojis.map((emoji) => (
-          <button
-            key={emoji}
-            type="button"
-            className={styles.messageReactionButton}
-            onClick={() => {
-              setMessageReactionMenu(null)
-              void handleReactToMessage(message, emoji)
-            }}
-            disabled={reacting}
-            role="menuitem"
-            aria-label={`Reaccionar con ${emoji}`}
-          >
-            {emoji}
-          </button>
-        ))}
+        <div className={styles.messageReactionQuickList}>
+          {emojis.map((emoji) => (
+            <button
+              key={emoji}
+              type="button"
+              className={styles.messageReactionButton}
+              onClick={() => {
+                setMessageReactionMenu(null)
+                void handleReactToMessage(message, emoji)
+              }}
+              disabled={reacting}
+              role="menuitem"
+              aria-label={`Reaccionar con ${emoji}`}
+            >
+              {emoji}
+            </button>
+          ))}
+          {showEmojiPickerButton ? (
+            <button
+              type="button"
+              className={`${styles.messageReactionButton} ${styles.messageReactionMoreButton}`}
+              onClick={openMessageReactionEmojiPicker}
+              disabled={reacting}
+              role="menuitem"
+              aria-label="Mostrar más emojis"
+              aria-expanded={Boolean(messageReactionMenu.pickerOpen)}
+            >
+              <Plus size={15} aria-hidden="true" />
+            </button>
+          ) : null}
+        </div>
+        {messageReactionMenu.pickerOpen ? (
+          <div className={styles.messageReactionEmojiGrid} role="group" aria-label="Más emojis">
+            {pickerEmojis.map((emoji, index) => (
+              <button
+                key={`${emoji}-${index}`}
+                type="button"
+                className={styles.messageReactionEmojiButton}
+                onClick={() => {
+                  setMessageReactionMenu(null)
+                  void handleReactToMessage(message, emoji)
+                }}
+                disabled={reacting}
+                role="menuitem"
+                aria-label={`Reaccionar con ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </div>
     )
   }
@@ -8100,7 +8141,6 @@ export const DesktopChat: React.FC = () => {
                                   {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
                                   {renderScheduledMessageActions(message)}
                                 </article>
-                                {renderMessageReactionPicker(message)}
                               </div>
                               {renderMessageReactions(message)}
                               {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
