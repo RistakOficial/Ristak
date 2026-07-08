@@ -293,13 +293,16 @@ export const upsertManualBusinessExpense = async (req, res) => {
 
 export const getContactsList = async (req, res) => {
   try {
-    const { from, to, type = 'interesados', scope = 'all' } = req.query
+    const { from, to, type = 'interesados', scope = 'all', dedupe } = req.query
 
     const { range, contacts } = await buildContactsList({
       startDate: from,
       endDate: to,
       type,
-      scope
+      scope,
+      // (MET-CONSIST) dedupe=person -> el modal colapsa por email/teléfono para empatar el
+      // número de Reports (cuenta por persona). Dashboard no lo envía (cuenta por id).
+      dedupeByPerson: dedupe === 'person'
     })
 
     logger.info(`Lista de contactos (${type}) generada: ${contacts.length} registros`)

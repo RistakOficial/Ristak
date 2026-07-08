@@ -198,12 +198,15 @@ class ReportsService {
     return apiClient.get<ContactsReport>('/reports/contacts', { params: query })
   }
 
-  async getContactsList(params: { from?: string; to?: string; type?: 'interesados' | 'customers' | 'sales' | 'appointments' | 'attendances'; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed' }): Promise<{ contacts: ContactListItem[]; range: ReportRange }> {
+  async getContactsList(params: { from?: string; to?: string; type?: 'interesados' | 'customers' | 'sales' | 'appointments' | 'attendances'; scope?: 'all' | 'attribution' | 'campaigns' | 'attributed'; dedupe?: 'person' | 'record' }): Promise<{ contacts: ContactListItem[]; range: ReportRange }> {
     const query: Record<string, string> = {}
     if (params.from) query.from = params.from
     if (params.to) query.to = params.to
     if (params.type) query.type = params.type
     if (params.scope) query.scope = params.scope
+    // (MET-CONSIST) dedupe='person' pide al backend colapsar por email/teléfono para que el
+    // modal empate el número mostrado. Reports lo usa; Dashboard lo omite (cuenta por registro).
+    if (params.dedupe) query.dedupe = params.dedupe
 
     const response = await apiClient.get<{ contacts: ContactListItem[]; range: ReportRange }>(
       '/reports/contacts/list',

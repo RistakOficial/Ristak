@@ -2350,7 +2350,9 @@ export const Reports: React.FC = () => {
         from,
         to,
         type: type === 'customers' ? 'customers' : type,
-        scope: currentScope
+        scope: currentScope,
+        // (MET-CONSIST) Reports cuenta por persona -> el modal debe colapsar duplicados igual.
+        dedupe: 'person'
       })
       setModalState(prev => ({
         ...prev,
@@ -2382,7 +2384,9 @@ export const Reports: React.FC = () => {
             from,
             to,
             type: currentModalType === 'customers' ? 'customers' : currentModalType,
-            scope: currentScope
+            scope: currentScope,
+            // (MET-CONSIST) Reports cuenta por persona -> el modal debe colapsar duplicados igual.
+            dedupe: 'person'
           })
           setModalState(prev => ({
             ...prev,
@@ -2704,11 +2708,22 @@ export const Reports: React.FC = () => {
         visible: false,
         render: (value: number, row) => {
           const hasValue = (value || 0) > 0
+          // (MET-CONSIST) En cashflow el número ES filas de pago (COUNT(*) por p.date) -> modal
+          // de transacciones. En atribución/campañas el número son CONTACTOS atribuidos por
+          // created_at (getMetrics) -> debe abrir el modal de contactos ('sales' scope-aware),
+          // no el de transacciones por p.date (que traía pagos no atribuidos o salía vacío).
+          const openTransactionsCell = () => {
+            if (reportType === 'cashflow') {
+              handleOpenTransactionsModal(resolvePeriodRange(row.date, viewType))
+            } else {
+              handleOpenModal('sales', resolvePeriodRange(row.date, viewType))
+            }
+          }
           return hasValue ? (
             <button
               type="button"
               className={styles.metricLink}
-              onClick={() => handleOpenTransactionsModal(resolvePeriodRange(row.date, viewType))}
+              onClick={openTransactionsCell}
             >
               {formatNumber(value)}
             </button>

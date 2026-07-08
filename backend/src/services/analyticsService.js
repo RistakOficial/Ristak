@@ -971,12 +971,12 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const attributionCalendarIds = await getAttributionCalendarIds()
 
     // Cargar de ambas fuentes en paralelo
+    // (MET-CONSIST) NO prefiltrar por date_added en SQL: rompe la fecha canónica del
+    // merge('oldest_date') y el prefiltro TEXT contra range.startUtc (ISO con 'T') tumbaba
+    // las citas del día de inicio (celda mostraba 0 y el modal 7). El rango se aplica en JS
+    // abajo, idéntico al modal (buildContactsList type='appointments').
     const [dbAppointments, apiAppointments] = await Promise.all([
-      loadAppointmentsFromDB({
-        calendarIds: attributionCalendarIds,
-        startDate: range.startUtc,
-        endDate: range.endUtc
-      }),
+      loadAppointmentsFromDB({ calendarIds: attributionCalendarIds }),
       config && config.api_token
         ? loadAppointmentsFromAPI(config.location_id, config.api_token, attributionCalendarIds)
         : []
@@ -1157,6 +1157,14 @@ export async function buildReportMetrics ({ startDate, endDate, groupBy = 'day',
     const paymentConditions = buildRangeConditions('p.date', range, paymentParams)
 
     applySuccessStatusFilter(paymentConditions, paymentParams, 'p')
+
+    // (MET-CONSIST) Excluir contactos ocultos igual que el modal (getTransactionsList).
+    // Era la única query de esta función que omitía el filtro -> celda > modal con ocultos.
+    // El LEFT JOIN + COALESCE deja pasar pagos huérfanos (contacto NULL), igual que el modal.
+    const salesHiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+    if (salesHiddenCondition) {
+      paymentConditions.push(salesHiddenCondition)
+    }
 
     const paymentWhere = paymentConditions.length ? `WHERE ${paymentConditions.join(' AND ')}` : ''
     const paymentGroupExpr = getGroupExpression('p.date', groupBy, timezone)
@@ -1435,7 +1443,7 @@ export async function fetchAppointmentsForContacts(contactIds, range = {}) {
   }, new Map())
 }
 
-export async function buildContactsList ({ startDate, endDate, type = 'interesados', scope = 'all' } = {}) {
+export async function buildContactsList ({ startDate, endDate, type = 'interesados', scope = 'all', dedupeByPerson = false } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const useContactAttribution = scope === 'attribution' || scope === 'campaigns'
   const scopeAttributed = scope === 'campaigns'
@@ -1866,8 +1874,23 @@ export async function buildContactsList ({ startDate, endDate, type = 'interesad
   })
 
 
+  // (MET-CONSIST) Reports cuenta por PERSONA (buildReportMetrics usa buildContactKey), así que
+  // su modal debe colapsar duplicados por la MISMA clave para que #modal == #celda. Se activa
+  // solo cuando el caller lo pide (Reports); Dashboard cuenta por id y NO lo pide (queda por id).
+  const finalContacts = dedupeByPerson
+    ? (() => {
+        const seenKeys = new Set()
+        return result.filter(contact => {
+          const key = buildContactKey({ email: contact.email, phone: contact.phone, contact_id: contact.id }) ?? `id::${contact.id}`
+          if (seenKeys.has(key)) return false
+          seenKeys.add(key)
+          return true
+        })
+      })()
+    : result
+
   return {
     range,
-    contacts: result
+    contacts: finalContacts
   }
 }

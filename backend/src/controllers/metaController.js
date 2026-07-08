@@ -2420,6 +2420,19 @@ export const getContactsByType = async (req, res) => {
       contacts = contacts.filter(c => contactIdsWithMetric.has(c.id));
     }
 
+    // (MET-CONSIST) Colapsar por PERSONA (email>teléfono>id) para igualar el número de la
+    // celda, que cuenta por buildContactKey (getCampaigns). Sin esto, dos registros de la
+    // misma persona (mismo email/teléfono) salían como 2 filas mientras la celda mostraba 1.
+    // El ORDER BY (created_at DESC, id DESC) del query ya define el representante más reciente.
+    const seenContactKeys = new Set();
+    contacts = contacts.filter(contact => {
+      const key = buildContactKey({ email: contact.email, phone: contact.phone, contact_id: contact.id })
+        ?? `id::${contact.id}`;
+      if (seenContactKeys.has(key)) return false;
+      seenContactKeys.add(key);
+      return true;
+    });
+
     const contactIds = contacts.map(contact => contact.id).filter(Boolean);
 
     let paymentsMap = new Map();

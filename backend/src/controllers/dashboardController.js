@@ -734,11 +734,11 @@ export const getAppointmentsData = async (req, res) => {
       const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js');
 
       const [dbAppointments, apiAppointments] = await Promise.all([
-        loadAppointmentsFromDB({
-          calendarIds: attributionCalendarIds,
-          startDate: range.startUtc,
-          endDate: range.endUtc
-        }),
+        // (MET-CONSIST) NO prefiltrar por date_added en SQL: la fecha canónica de la
+        // cita se define en mergeAppointments('oldest_date') y el prefiltro TEXT contra
+        // range.startUtc (ISO con 'T') tumbaba las citas del día de inicio. El filtro por
+        // rango se aplica en JS más abajo, idéntico al del modal (buildContactsList).
+        loadAppointmentsFromDB({ calendarIds: attributionCalendarIds }),
         config && config.api_token
           ? loadAppointmentsFromAPI(config.location_id, config.api_token, attributionCalendarIds)
           : []
@@ -926,10 +926,13 @@ export const getSalesData = async (req, res) => {
     const dateExpression = getGroupExpression('date', groupBy, timezone);
 
     const successfulPayments = successfulPaymentStatusCondition();
+    // (MET-CONSIST) Contar CLIENTES únicos (no filas de pago): el modal de este punto
+    // ("Clientes que pagaron", buildContactsList type='sales') lista contactos DISTINCT.
+    // Con COUNT(*) un contacto con 2 pagos en el mismo bucket inflaba el número vs el modal.
     const query = `
       SELECT
         ${dateExpression} as periodo,
-        COUNT(*) as total
+        COUNT(DISTINCT contact_id) as total
       FROM payments
       WHERE ${successfulPayments.sql}
       AND ${nonTestPaymentCondition()}
@@ -1503,11 +1506,9 @@ export const getFunnelData = async (req, res) => {
       const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js')
 
       const [dbAppointments, apiAppointments] = await Promise.all([
-        loadAppointmentsFromDB({
-          calendarIds: attributionCalendarIds,
-          startDate: range.startUtc,
-          endDate: range.endUtc
-        }),
+        // (MET-CONSIST) NO prefiltrar por date_added en SQL (ver nota en getAppointmentsData):
+        // el rango se filtra en JS tras el merge, igual que el modal (buildContactsList).
+        loadAppointmentsFromDB({ calendarIds: attributionCalendarIds }),
         hlConfig && hlConfig.api_token
           ? loadAppointmentsFromAPI(hlConfig.location_id, hlConfig.api_token, attributionCalendarIds)
           : []
