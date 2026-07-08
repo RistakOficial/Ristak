@@ -21,6 +21,10 @@ final class CalendarsViewModel {
         case day
         case week
         case month
+        /// Rejilla de 12 meses (vista Año).
+        case year
+        /// Rejilla de años de la década (vista Años).
+        case years
 
         var id: String { rawValue }
 
@@ -29,8 +33,25 @@ final class CalendarsViewModel {
             case .day: return "Día"
             case .week: return "Semana"
             case .month: return "Mes"
+            case .year: return "Año"
+            case .years: return "Años"
             }
         }
+
+        /// Modos que aparecen como chips en el selector (paridad RN: Día/Semana/Mes).
+        static let pickerModes: [ViewMode] = [.day, .week, .month]
+
+        /// Los DOS modos base (Día/Semana/Mes) distintos al actual, en orden
+        /// fijo Día→Semana→Mes. Son los que muestra el toggle de dos botones a
+        /// la derecha del título (User #7: «solo tenemos 2 botones»). Vacío en
+        /// Año/Años (esas vistas solo se alcanzan por la pastilla de año).
+        var toggleAlternatives: [ViewMode] {
+            guard self == .day || self == .week || self == .month else { return [] }
+            return [.day, .week, .month].filter { $0 != self }
+        }
+
+        /// Vistas de timeline (día/semana).
+        var isTimeline: Bool { self == .day || self == .week }
     }
 
     /// Clave persistida del calendario elegido (paridad RN).
@@ -91,14 +112,30 @@ final class CalendarsViewModel {
     }
 
     /// Snap de minutos del timeline al `slotInterval` del calendario activo
-    /// (clamp 5–60, paridad RN).
+    /// (normaliza unidad `hours`, clamp 5–60 — paridad RN `getCalendarSnapMinutes`).
     var slotStepMinutes: Int {
-        min(60, max(5, selectedCalendar?.slotInterval ?? 30))
+        selectedCalendar?.normalizedSlotIntervalMinutes ?? 30
     }
 
-    /// Duración por defecto de cita nueva (clamp 15–1440, paridad RN).
+    /// Duración por defecto de cita nueva (normaliza unidad `hours`, clamp
+    /// 15–1440 — paridad RN `getCalendarSlotDurationMinutes`).
     var defaultDurationMinutes: Int {
-        min(1440, max(15, selectedCalendar?.slotDuration ?? 60))
+        selectedCalendar?.normalizedSlotDurationMinutes ?? 60
+    }
+
+    /// Década visible (12 años) para la vista Años (paridad RN `getYearsGridForDate`).
+    var yearsGrid: [Int] {
+        let start = (visibleMonth.year / 12) * 12
+        return Array(start..<(start + 12))
+    }
+
+    /// Próximas citas del rango cargado (máx 6) para la agenda de la vista Año.
+    var upcomingEvents: [CalendarAppointment] {
+        rawEvents
+            .filter { $0.startDate != nil }
+            .sorted { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
+            .prefix(6)
+            .map { $0 }
     }
 
     // MARK: - Carga
@@ -217,9 +254,19 @@ final class CalendarsViewModel {
     /// Recarga los eventos del rango visible (mes anterior → mes siguiente,
     /// exclusivo). Mantiene los datos previos en pantalla mientras carga.
     func reloadEvents(force: Bool) async {
-        let anchor = CalendarDateMath.firstOfMonth(visibleMonth)
-        let rangeStart = CalendarDateMath.addingMonths(-1, to: anchor)
-        let rangeEnd = CalendarDateMath.addingMonths(2, to: anchor)
+        let rangeStart: CalendarBusinessDay
+        let rangeEnd: CalendarBusinessDay
+        switch viewMode {
+        case .year, .years:
+            // Año completo (paridad RN: rango 1 ene – 31 dic del año visible).
+            let year = visibleMonth.year
+            rangeStart = CalendarBusinessDay(year: year, month: 1, day: 1)
+            rangeEnd = CalendarBusinessDay(year: year + 1, month: 1, day: 1)
+        default:
+            let anchor = CalendarDateMath.firstOfMonth(visibleMonth)
+            rangeStart = CalendarDateMath.addingMonths(-1, to: anchor)
+            rangeEnd = CalendarDateMath.addingMonths(2, to: anchor)
+        }
         guard let startDate = CalendarDateMath.startDate(of: rangeStart, timeZone: timeZone),
               let endDate = CalendarDateMath.startDate(of: rangeEnd, timeZone: timeZone) else { return }
 
@@ -282,21 +329,96 @@ final class CalendarsViewModel {
 
     // MARK: - Navegación de fecha
 
+    /// Botón «Hoy»: salta a hoy. Si estamos en Año/Años baja un nivel
+    /// (paridad RN `handleQuickReturn`).
     func goToToday() {
         let today = self.today
         selectedDay = today
         visibleMonth = CalendarDateMath.firstOfMonth(today)
+        switch viewMode {
+        case .year: viewMode = .month
+        case .years: viewMode = .year
+        default: break
+        }
         Task { await reloadEvents(force: false) }
+    }
+
+    /// Cambia de vista desde los chips (Día/Semana/Mes) anclando el mes visible
+    /// al día seleccionado (paridad RN `handleSelectCalendarView`).
+    func setViewMode(_ mode: ViewMode) {
+        guard mode != viewMode else { return }
+        viewMode = mode
+        if mode == .month || mode.isTimeline {
+            visibleMonth = CalendarDateMath.firstOfMonth(selectedDay)
+        }
+        Task { await reloadEvents(force: false) }
+    }
+
+    /// Pastilla de AÑO (User #7): sube un nivel de zoom hacia la vista anual.
+    /// Mes/Día/Semana → Año (rejilla de 12 meses); Año → Años (década);
+    /// Años → Año. Año/Años solo se alcanzan por aquí, nunca por el toggle.
+    func navigateUp() {
+        switch viewMode {
+        case .month:
+            viewMode = .year
+        case .day, .week:
+            // Ancla el año visible al día seleccionado antes de subir a anual.
+            visibleMonth = CalendarDateMath.firstOfMonth(selectedDay)
+            viewMode = .year
+        case .year:
+            viewMode = .years
+        case .years:
+            viewMode = .year
+        }
+        Task { await reloadEvents(force: false) }
+    }
+
+    /// Tap en un mes de la vista Año → baja a la vista Mes (paridad RN
+    /// `handleSelectMonthFromYear`).
+    func selectMonth(monthIndex: Int) {
+        let year = visibleMonth.year
+        let month = min(max(monthIndex + 1, 1), 12)
+        let maxDay = CalendarDateMath.daysInMonth(year: year, month: month, timeZone: timeZone)
+        let day = min(max(selectedDay.day, 1), maxDay)
+        selectedDay = CalendarBusinessDay(year: year, month: month, day: day)
+        visibleMonth = CalendarBusinessDay(year: year, month: month, day: 1)
+        viewMode = .month
+        Task { await reloadEvents(force: false) }
+    }
+
+    /// Tap en un año de la vista Años → baja a la vista Año (paridad RN
+    /// `handleSelectYear`).
+    func selectYear(_ year: Int) {
+        let month = visibleMonth.month
+        let maxDay = CalendarDateMath.daysInMonth(year: year, month: month, timeZone: timeZone)
+        let day = min(max(selectedDay.day, 1), maxDay)
+        selectedDay = CalendarBusinessDay(year: year, month: month, day: day)
+        visibleMonth = CalendarBusinessDay(year: year, month: month, day: 1)
+        viewMode = .year
+        Task { await reloadEvents(force: false) }
+    }
+
+    /// Swipe horizontal del periodo actual (paridad RN `movePeriod`):
+    /// Mes ±1 mes · Año ±1 año · Años ±1 década · Día ±1 día · Semana ±7 días.
+    func shiftPeriod(_ direction: Int) {
+        switch viewMode {
+        case .month:
+            goToMonth(offset: direction)
+        case .year:
+            visibleMonth = CalendarDateMath.addingMonths(direction * 12, to: visibleMonth)
+            Task { await reloadEvents(force: false) }
+        case .years:
+            visibleMonth = CalendarDateMath.addingMonths(direction * 12 * 12, to: visibleMonth)
+            Task { await reloadEvents(force: false) }
+        case .day:
+            shiftSelectedDay(by: direction)
+        case .week:
+            shiftSelectedDay(by: direction * 7)
+        }
     }
 
     func goToMonth(offset: Int) {
         visibleMonth = CalendarDateMath.addingMonths(offset, to: visibleMonth)
-        Task { await reloadEvents(force: false) }
-    }
-
-    func goToYear(_ year: Int) {
-        guard year != visibleMonth.year else { return }
-        visibleMonth = CalendarBusinessDay(year: year, month: visibleMonth.month, day: 1)
         Task { await reloadEvents(force: false) }
     }
 

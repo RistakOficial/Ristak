@@ -425,6 +425,7 @@ private struct ProductFormSheet: View {
                 }
             }
             .scrollContentBackground(.hidden)
+            .paymentsKeyboardDismissable()
         }
         .alert(
             model.validationTitle ?? "Producto",

@@ -690,6 +690,17 @@ enum ChatJourneyParser {
     }
 
     static func attachmentType(messageType: String, mimeType: String, filename: String, mediaUrl: String) -> ChatAttachment.Kind? {
+        // Tipo de mensaje explícito de nota de voz. WhatsApp marca las notas de
+        // voz salientes como `ptt` (push-to-talk) —y a veces `voice`— y su URL
+        // suele ser Opus/OGG SIN extensión reconocible, así que el sondeo por
+        // substring/extensión no las detecta y la nota terminaba mostrándose como
+        // el texto plano "Audio". Resolverlas por el tipo de mensaje ANTES del
+        // sondeo garantiza que una nota de voz enviada caiga en el mismo
+        // reproductor (AudioMessageView) que las recibidas.
+        let normalizedType = messageType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if ["audio", "voice", "ptt", "voice_note", "voicenote", "voice_message", "audiomessage"].contains(normalizedType) {
+            return .audio
+        }
         let probe = [messageType, mimeType, filename, mediaUrl]
             .filter { !$0.isEmpty }
             .joined(separator: " ")
@@ -701,7 +712,7 @@ enum ChatJourneyParser {
         if probe.contains("video") || probeMatchesExtension(probe, ["mp4", "mov", "m4v", "webm"]) {
             return .video
         }
-        if probe.contains("audio") || probe.contains("voice") || probeMatchesExtension(probe, ["mp3", "m4a", "ogg", "wav", "aac"]) {
+        if probe.contains("audio") || probe.contains("voice") || probeMatchesExtension(probe, ["mp3", "m4a", "ogg", "oga", "opus", "wav", "aac"]) {
             return .audio
         }
         if probe.contains("document") || probe.contains("file") || probeMatchesExtension(probe, ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "csv", "txt"]) {

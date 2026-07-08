@@ -6,22 +6,32 @@ import SwiftUI
 /// doble-tap (≤320 ms) = Nueva cita en ese día (paridad RN `handleDayPress`).
 struct CalendarMonthGridView: View {
     let model: CalendarsViewModel
+    /// Mes concreto a renderizar (el pager le pasa el mes ±1). Por defecto el
+    /// mes visible del modelo.
+    var month: CalendarBusinessDay
     /// Doble-tap en un día (nil = sin permiso de escritura).
     var onCreateDay: ((CalendarBusinessDay) -> Void)?
 
     @State private var lastTap: (day: CalendarBusinessDay, at: Date)?
 
+    /// Altura reservada por el pager: fila de letras + 6 semanas (celda 40 pt).
+    static let pagerHeight: CGFloat = 20 + (6 * 40)
+
     private var weeks: [[CalendarDateMath.GridDay]] {
         CalendarDateMath.monthGrid(
-            year: model.visibleMonth.year,
-            month: model.visibleMonth.month,
+            year: month.year,
+            month: month.month,
             timeZone: model.timeZone
         )
     }
 
     var body: some View {
-        VStack(spacing: RistakTheme.Spacing.xs) {
+        // Filas compactas (sin gap vertical entre semanas) para que la agenda
+        // del día quede visible sin scrollear (paridad RN: celdas de 40 pt).
+        // El swipe entre meses lo maneja `CalendarPeriodPager` (User #8).
+        VStack(spacing: 0) {
             weekdayRow
+                .padding(.bottom, 2)
 
             ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
                 HStack(spacing: 0) {
@@ -32,7 +42,6 @@ struct CalendarMonthGridView: View {
             }
         }
         .contentShape(Rectangle())
-        .gesture(monthSwipeGesture)
         .sensoryFeedback(.selection, trigger: model.selectedDay)
         .accessibilityElement(children: .contain)
     }
@@ -59,23 +68,32 @@ struct CalendarMonthGridView: View {
         return Button {
             handleTap(on: cell.day)
         } label: {
-            VStack(spacing: 3) {
+            ZStack {
                 Text("\(cell.day.day)")
                     .font(.callout.weight(isSelected || isToday ? .semibold : .regular))
                     .monospacedDigit()
                     .foregroundStyle(numberColor(cell, isSelected: isSelected, isToday: isToday))
-                    .frame(width: 36, height: 36)
-                    .background {
-                        if isSelected {
-                            // Regla de selección: relleno sólido de acento,
-                            // plano, sin glass ni contorno.
-                            Circle().fill(RistakTheme.accent)
-                        }
-                    }
 
-                dotsRow(count: eventCount, isSelected: isSelected)
+                if eventCount > 0 {
+                    // Puntos de evento superpuestos al pie del número (dentro
+                    // del círculo) para no ocupar altura extra — así la fila es
+                    // compacta y la agenda cabe debajo (paridad RN).
+                    VStack(spacing: 0) {
+                        Spacer(minLength: 0)
+                        dotsRow(count: eventCount, isSelected: isSelected)
+                    }
+                    .padding(.bottom, 3)
+                }
             }
-            .frame(maxWidth: .infinity, minHeight: 50)
+            .frame(width: 34, height: 34)
+            .background {
+                if isSelected {
+                    // Regla de selección: relleno sólido de acento,
+                    // plano, sin glass ni contorno.
+                    Circle().fill(RistakTheme.accent)
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 40)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -87,8 +105,11 @@ struct CalendarMonthGridView: View {
     private func dotsRow(count: Int, isSelected: Bool) -> some View {
         HStack(spacing: 3) {
             ForEach(0..<min(count, 3), id: \.self) { _ in
+                // Puntos superpuestos al pie del número: acento sobre fondo
+                // plano; blanco cuando el día está seleccionado (círculo de
+                // acento) para que sigan visibles (paridad RN `calendarDayMarker`).
                 Circle()
-                    .fill(isSelected ? RistakTheme.accent : RistakTheme.textDim)
+                    .fill(isSelected ? RistakTheme.onAccent : RistakTheme.accent)
                     .frame(width: 4, height: 4)
             }
         }
@@ -123,15 +144,156 @@ struct CalendarMonthGridView: View {
             model.select(day: day)
         }
     }
+}
 
-    private var monthSwipeGesture: some Gesture {
+// MARK: - Vista Año (rejilla de 12 meses)
+
+/// Rejilla de 12 mini-calendarios del año visible. Tap en un mes baja a la
+/// vista Mes (paridad RN `CalendarYearOverview`). Swipe horizontal cambia de año.
+struct CalendarYearGridView: View {
+    let model: CalendarsViewModel
+
+    private var year: Int { model.visibleMonth.year }
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(1...12, id: \.self) { month in
+                monthCell(month: month)
+            }
+        }
+        .contentShape(Rectangle())
+        .gesture(periodSwipeGesture)
+        .sensoryFeedback(.selection, trigger: model.visibleMonth)
+    }
+
+    private func monthCell(month: Int) -> some View {
+        let containsSelected = model.selectedDay.year == year && model.selectedDay.month == month
+        let containsToday = model.today.year == year && model.today.month == month
+        let weeks = CalendarDateMath.monthGrid(year: year, month: month, timeZone: model.timeZone)
+
+        return Button {
+            withAnimation(.snappy) { model.selectMonth(monthIndex: month - 1) }
+        } label: {
+            VStack(spacing: 6) {
+                Text(CalendarDateMath.monthShortTitle(month: month))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(containsSelected || containsToday ? RistakTheme.accent : RistakTheme.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                miniMonth(weeks: weeks)
+            }
+            .padding(.vertical, 10)
+            .padding(.horizontal, 8)
+            .background(
+                RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                    .fill(containsSelected ? RistakTheme.accentSoft : RistakTheme.controlRest)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                    .strokeBorder(containsSelected ? RistakTheme.accent.opacity(0.6) : Color.clear, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(CalendarDateMath.monthShortTitle(month: month)) \(year)")
+        .accessibilityAddTraits(containsSelected ? .isSelected : [])
+    }
+
+    private func miniMonth(weeks: [[CalendarDateMath.GridDay]]) -> some View {
+        VStack(spacing: 2) {
+            ForEach(Array(weeks.enumerated()), id: \.offset) { _, week in
+                HStack(spacing: 1) {
+                    ForEach(week) { cell in
+                        miniDay(cell)
+                    }
+                }
+            }
+        }
+    }
+
+    private func miniDay(_ cell: CalendarDateMath.GridDay) -> some View {
+        let inMonth = cell.inMonth
+        let isToday = cell.day == model.today
+        let hasEvents = inMonth && model.hasEvents(on: cell.day)
+        return Text("\(cell.day.day)")
+            .font(.system(size: 8, weight: hasEvents ? .bold : .regular))
+            .monospacedDigit()
+            .foregroundStyle(
+                !inMonth ? RistakTheme.textMute
+                : isToday ? RistakTheme.accent
+                : hasEvents ? RistakTheme.accent
+                : RistakTheme.textDim
+            )
+            .frame(maxWidth: .infinity, minHeight: 11)
+    }
+
+    private var periodSwipeGesture: some Gesture {
         DragGesture(minimumDistance: 24)
             .onEnded { value in
                 guard abs(value.translation.width) > abs(value.translation.height) else { return }
                 if value.translation.width <= -56 {
-                    withAnimation(.snappy) { model.goToMonth(offset: 1) }
+                    withAnimation(.snappy) { model.shiftPeriod(1) }
                 } else if value.translation.width >= 56 {
-                    withAnimation(.snappy) { model.goToMonth(offset: -1) }
+                    withAnimation(.snappy) { model.shiftPeriod(-1) }
+                }
+            }
+    }
+}
+
+// MARK: - Vista Años (rejilla de la década)
+
+/// Rejilla de años de la década visible. Tap en un año baja a la vista Año
+/// (paridad RN `CalendarYearsOverview`). El año seleccionado usa relleno sólido
+/// de acento (regla de selección de Ristak). Swipe horizontal cambia de década.
+struct CalendarYearsGridView: View {
+    let model: CalendarsViewModel
+
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
+
+    var body: some View {
+        LazyVGrid(columns: columns, spacing: 12) {
+            ForEach(model.yearsGrid, id: \.self) { year in
+                yearCell(year)
+            }
+        }
+        .contentShape(Rectangle())
+        .gesture(periodSwipeGesture)
+        .sensoryFeedback(.selection, trigger: model.visibleMonth)
+    }
+
+    private func yearCell(_ year: Int) -> some View {
+        let isSelected = year == model.selectedDay.year
+        let isCurrent = year == model.today.year
+
+        return Button {
+            withAnimation(.snappy) { model.selectYear(year) }
+        } label: {
+            Text(String(year))
+                .font(.title3.weight(.semibold))
+                .monospacedDigit()
+                .foregroundStyle(isSelected ? RistakTheme.onAccent : (isCurrent ? RistakTheme.accent : RistakTheme.textPrimary))
+                .frame(maxWidth: .infinity)
+                .frame(height: 64)
+                .background(
+                    RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                        .fill(isSelected ? AnyShapeStyle(RistakTheme.accent) : AnyShapeStyle(RistakTheme.controlRest))
+                )
+                .contentShape(RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(String(year))
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var periodSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { value in
+                guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                if value.translation.width <= -56 {
+                    withAnimation(.snappy) { model.shiftPeriod(1) }
+                } else if value.translation.width >= 56 {
+                    withAnimation(.snappy) { model.shiftPeriod(-1) }
                 }
             }
     }

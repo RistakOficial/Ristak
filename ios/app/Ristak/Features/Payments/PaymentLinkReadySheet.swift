@@ -44,16 +44,26 @@ struct PaymentLinkReadyPayload: Identifiable, Sendable, Equatable {
     let contactName: String?
     /// Monto ya formateado (con la moneda de la cuenta).
     let amountLabel: String?
+    /// Contacto destino para saltar al chat con el link listo para enviar.
+    var contactID: String?
+    var contactPhone: String?
 }
 
-/// Sheet «link listo»: URL + Copiar (portapapeles + haptic) + Compartir
-/// (`ShareLink`) + Abrir (Safari). Los links SIEMPRE se comparten manualmente
-/// (regla doc 08 §7.12: nunca auto-enviar).
+/// Sheet «link listo»: acción principal «Enviar por WhatsApp» (abre el chat del
+/// contacto con el mensaje listo para pegar y enviar) + Copiar (portapapeles +
+/// haptic) + Compartir (`ShareLink`) + Abrir (Safari). Los links SIEMPRE se
+/// mandan manualmente (regla doc 08 §7.12: nunca auto-enviar).
 struct PaymentLinkReadySheet: View {
     let payload: PaymentLinkReadyPayload
 
     @State private var copied = false
     @Environment(\.dismiss) private var dismiss
+    @Environment(ShellState.self) private var shell
+
+    /// Puede saltar al chat del contacto (hay `contactID`).
+    private var canOpenChat: Bool {
+        (payload.contactID?.isEmpty == false)
+    }
 
     private var shareText: String {
         let name = (payload.contactName?.isEmpty == false) ? payload.contactName! : "cliente"
@@ -61,6 +71,18 @@ struct PaymentLinkReadySheet: View {
             return "Hola \(name), te comparto tu enlace de pago por \(amount):\n\(payload.url)"
         }
         return "Hola \(name), te comparto tu enlace de pago:\n\(payload.url)"
+    }
+
+    /// Deja el mensaje en el portapapeles y abre el chat del contacto. Como
+    /// `ShellState` aún no tiene un campo de borrador prellenado, el fallback es
+    /// copiar el texto para que el usuario solo lo pegue y envíe (ver notas).
+    private func sendByWhatsApp() {
+        UIPasteboard.general.string = shareText
+        copied.toggle()
+        if let contactID = payload.contactID, !contactID.isEmpty {
+            shell.openChat(contactID: contactID)
+        }
+        dismiss()
     }
 
     var body: some View {
@@ -98,17 +120,44 @@ struct PaymentLinkReadySheet: View {
 
                     linkBox
 
+                    if canOpenChat {
+                        Button {
+                            sendByWhatsApp()
+                        } label: {
+                            Label("Enviar por WhatsApp", systemImage: "paperplane.fill")
+                                .font(.body.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+
+                        Text("Se copia el mensaje y se abre el chat del contacto para que solo lo pegues y lo envíes.")
+                            .font(.caption)
+                            .foregroundStyle(RistakTheme.textMute)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+
                     actions
 
-                    Button {
-                        dismiss()
-                    } label: {
-                        Text("Listo")
-                            .font(.body.weight(.semibold))
-                            .frame(maxWidth: .infinity)
+                    // Con CTA de WhatsApp arriba, «Listo» queda secundario; sin
+                    // ella es la acción principal.
+                    if canOpenChat {
+                        Button { dismiss() } label: {
+                            Text("Listo")
+                                .font(.body.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.large)
+                    } else {
+                        Button { dismiss() } label: {
+                            Text("Listo")
+                                .font(.body.weight(.semibold))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
                 }
                 .padding(.horizontal, RistakTheme.Spacing.lg)
                 .padding(.bottom, RistakTheme.Spacing.xl)

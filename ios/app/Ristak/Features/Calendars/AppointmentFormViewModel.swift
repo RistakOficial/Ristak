@@ -88,14 +88,6 @@ final class AppointmentFormViewModel {
     private(set) var teamPhase: TeamPhase = .idle
     private(set) var team: [CalendarUser] = []
 
-    // MARK: Invitados — buscador
-
-    var guestQuery: String = ""
-    private(set) var guestResults: [ChatContact] = []
-    private(set) var guestSearching = false
-    var guestManualName: String = ""
-    var guestManualContact: String = ""
-
     // MARK: Estado de guardado
 
     private(set) var busy = false
@@ -104,6 +96,17 @@ final class AppointmentFormViewModel {
     private(set) var saveSuccessCount = 0
 
     private var statusTouched = false
+
+    /// Al editar: horario/duración originales EXACTOS (sin truncar) + la
+    /// representación truncada con la que arrancan las ruedas. Si las ruedas
+    /// siguen en ese valor base al guardar, el usuario NO tocó la programación
+    /// y se reusa el horario exacto (no se reprograma la cita). Comparar contra
+    /// la base evita depender de observadores `didSet` en `@Observable`.
+    private let originalStartExact: Date?
+    private let originalDurationExact: Int?
+    private let baselineDay: CalendarBusinessDay?
+    private let baselineStartMinutes: Int?
+    private let baselineDurationMinutes: Int?
 
     // MARK: - Inits
 
@@ -139,13 +142,20 @@ final class AppointmentFormViewModel {
             self.isPM = false
         }
 
-        let duration = prefill.durationMinutes ?? min(1440, max(15, resolved?.slotDuration ?? 60))
+        let duration = prefill.durationMinutes ?? (resolved?.normalizedSlotDurationMinutes ?? 60)
         self.durationHours = min(duration / 60, 12)
         self.durationMinutesPart = duration % 60
 
         self.address = ""
         self.notesText = ""
         self.guests = []
+
+        // Crear: no hay horario original que preservar.
+        self.originalStartExact = nil
+        self.originalDurationExact = nil
+        self.baselineDay = nil
+        self.baselineStartMinutes = nil
+        self.baselineDurationMinutes = nil
     }
 
     /// Editar cita existente (abre en Personalizado, paridad RN).
@@ -184,16 +194,25 @@ final class AppointmentFormViewModel {
         self.day = businessDay
         let hour24 = startMinutes / 60
         self.hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
-        self.minute = min((startMinutes % 60) / 5 * 5, 55)
+        let truncatedMinute = min((startMinutes % 60) / 5 * 5, 55)
+        self.minute = truncatedMinute
         self.isPM = hour24 >= 12
 
         var duration = 60
         if let end = appointment.endDate, end > start {
             duration = Int(end.timeIntervalSince(start) / 60)
         }
-        duration = min(max(duration, 5), 12 * 60 + 59)
-        self.durationHours = min(duration / 60, 12)
-        self.durationMinutesPart = duration % 60
+        let clampedDuration = min(max(duration, 5), 12 * 60 + 59)
+        self.durationHours = min(clampedDuration / 60, 12)
+        self.durationMinutesPart = clampedDuration % 60
+
+        // Horario/duración originales EXACTOS (sin truncar) + la base que
+        // muestran las ruedas al abrir, para detectar cambios reales.
+        self.originalStartExact = appointment.startDate
+        self.originalDurationExact = (appointment.startDate != nil) ? duration : nil
+        self.baselineDay = businessDay
+        self.baselineStartMinutes = hour24 * 60 + truncatedMinute
+        self.baselineDurationMinutes = min(clampedDuration / 60, 12) * 60 + (clampedDuration % 60)
 
         self.address = appointment.address
         let parsed = AppointmentGuestNotesCodec.parse(notes: appointment.notes)
@@ -268,9 +287,10 @@ final class AppointmentFormViewModel {
         isEdit ? "Guardar cambios" : "Crear cita"
     }
 
-    /// Duración efectiva de un slot «Por defecto».
+    /// Duración efectiva de un slot «Por defecto» (normaliza unidad `hours`,
+    /// clamp 15–1440 — paridad RN `getCalendarSlotDurationMinutes`).
     var slotDurationMinutes: Int {
-        min(1440, max(5, selectedCalendar?.slotDuration ?? 60))
+        selectedCalendar?.normalizedSlotDurationMinutes ?? 60
     }
 
     /// Slots visibles del día elegido (máx 18, paridad RN).
@@ -405,45 +425,11 @@ final class AppointmentFormViewModel {
 
     // MARK: - Invitados
 
-    func searchGuests() async {
-        let query = guestQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard query.count >= 2 else {
-            guestResults = []
-            guestSearching = false
-            return
-        }
-        guestSearching = true
-        defer { guestSearching = false }
-        let results = (try? await ContactsService().searchContacts(query: query)) ?? []
-        guard query == guestQuery.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-        guestResults = Array(results.prefix(6))
-    }
-
-    func addGuest(from chat: ChatContact) {
-        let contactValue = chat.phone.isEmpty ? chat.email : chat.phone
-        addGuest(name: chat.name.isEmpty ? contactValue : chat.name, contactValue: contactValue)
-        guestQuery = ""
-        guestResults = []
-    }
-
+    /// Alta de invitado desde el buscador modal (User #4): usa teléfono o, en su
+    /// defecto, correo como valor de contacto para el bloque «Invitados:».
     func addGuest(selection: AppointmentContactSelection) {
         let contactValue = selection.phone.isEmpty ? selection.email : selection.phone
         addGuest(name: selection.displayName, contactValue: contactValue)
-    }
-
-    func addManualGuest() {
-        let name = guestManualName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let contactValue = guestManualContact.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, !contactValue.isEmpty else {
-            alert = FormAlert(
-                title: "Invitado incompleto",
-                message: "Agrega nombre y teléfono o correo para poder invitarlo."
-            )
-            return
-        }
-        addGuest(name: name, contactValue: contactValue)
-        guestManualName = ""
-        guestManualContact = ""
     }
 
     private func addGuest(name: String, contactValue: String) {
@@ -468,12 +454,25 @@ final class AppointmentFormViewModel {
 
     // MARK: - Guardado
 
+    /// Título al crear = nombre del contacto (paridad RN
+    /// `title || contactName || 'Cita'`).
+    private func createTitleFromContact() -> String {
+        let name = contact?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !name.isEmpty { return name }
+        let display = contact?.displayName ?? ""
+        return display.isEmpty ? "Cita" : display
+    }
+
     /// Guarda la cita. Devuelve la cita guardada o `nil` si hubo validación /
     /// error (el detalle queda en `alert`).
     func save(ignoringConflicts: Bool = false) async -> CalendarAppointment? {
         guard !busy else { return nil }
 
-        guard let contactID = contact?.id, !contactID.isEmpty else {
+        let contactID = contact?.id
+        // Contacto obligatorio SOLO al crear. Al editar, una cita espejada de
+        // Google/GHL puede no tener contacto y aun así debe poder guardarse
+        // (paridad RN: `requireContact` solo en modo `create`).
+        if !isEdit, (contactID ?? "").isEmpty {
             alert = FormAlert(title: "Contacto requerido", message: "Selecciona un contacto para crear la cita.")
             return nil
         }
@@ -492,6 +491,18 @@ final class AppointmentFormViewModel {
             }
             startDate = parsed
             durationMinutes = slotDurationMinutes
+        } else if isEdit,
+                  day == baselineDay,
+                  startMinutesOfDay == baselineStartMinutes,
+                  durationTotalMinutes == baselineDurationMinutes,
+                  let origStart = originalStartExact,
+                  let origDuration = originalDurationExact {
+            // Editar sin tocar la programación (las ruedas siguen en su valor
+            // base) → reusar el horario/duración EXACTOS originales para no
+            // reprogramar la cita al cambiar un campo no relacionado (paridad
+            // RN: conserva `draft.startTime`).
+            startDate = origStart
+            durationMinutes = origDuration
         } else {
             guard let parsed = customStartDate, durationTotalMinutes > 0 else {
                 alert = FormAlert(title: "Horario inválido", message: "Usa fecha YYYY-MM-DD y hora HH:mm.")
@@ -505,9 +516,10 @@ final class AppointmentFormViewModel {
         busy = true
         defer { busy = false }
 
-        // Pre-chequeo de bloqueos nativos SOLO al crear en calendarios no-GHL
-        // (paridad RN `getDraftBlockedConflict`; silencioso si el fetch falla).
-        if !isEdit, !ignoringConflicts, let calendar = selectedCalendar, !calendar.isGHLSynced {
+        // Pre-chequeo de bloqueos nativos al CREAR y al EDITAR en calendarios
+        // no-GHL (paridad RN `getDraftBlockedConflict`; silencioso si el fetch
+        // falla) — así reprogramar a un horario bloqueado avisa.
+        if !ignoringConflicts, let calendar = selectedCalendar, !calendar.isGHLSynced {
             if let conflict = await blockedConflict(start: startDate, end: endDate, calendarID: calendar.id) {
                 alert = FormAlert(title: "Horario bloqueado", message: conflict.conflictMessage)
                 return nil
@@ -517,14 +529,19 @@ final class AppointmentFormViewModel {
         let trimmedAddress = address.trimmingCharacters(in: .whitespacesAndNewlines)
         let draft = AppointmentDraftRequest(
             calendarId: selectedCalendarID.isEmpty ? nil : selectedCalendarID,
-            contactId: contactID,
-            title: isEdit ? editingAppointment?.title : nil,
+            contactId: (contactID?.isEmpty == false) ? contactID : nil,
+            // Al crear, el título es el NOMBRE DEL CONTACTO (paridad RN
+            // `title || contactName || 'Cita'`); si no, hereda el nombre del
+            // calendario en todos lados.
+            title: isEdit ? editingAppointment?.title : createTitleFromContact(),
             appointmentStatus: status.rawValue,
             startTime: RistakDateParsing.isoString(from: startDate),
             endTime: RistakDateParsing.isoString(from: endDate),
             timeZone: timeZone.identifier,
             notes: AppointmentGuestNotesCodec.compose(notes: notesText, guests: guests),
-            address: trimmedAddress.isEmpty ? nil : trimmedAddress,
+            // Al EDITAR siempre se envía la dirección (vacía la limpia); al crear
+            // se omite si está vacía (paridad RN App.tsx ~8107).
+            address: isEdit ? trimmedAddress : (trimmedAddress.isEmpty ? nil : trimmedAddress),
             assignedUserId: (assignedUserID?.isEmpty == false) ? assignedUserID : nil,
             ignoreAppointmentConflicts: ignoringConflicts ? true : nil
         )

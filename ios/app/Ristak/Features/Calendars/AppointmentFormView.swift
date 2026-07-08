@@ -9,6 +9,8 @@ struct AppointmentFormView: View {
     @Bindable var model: AppointmentFormViewModel
     let onSaved: (CalendarAppointment) -> Void
 
+    @State private var showGuestPicker = false
+
     var body: some View {
         Form {
             contactSection
@@ -31,10 +33,14 @@ struct AppointmentFormView: View {
         .task {
             await model.hydrateForEdit()
         }
-        .task(id: model.guestQuery) {
-            try? await Task.sleep(nanoseconds: 240_000_000)
-            guard !Task.isCancelled else { return }
-            await model.searchGuests()
+        .sheet(isPresented: $showGuestPicker) {
+            AppointmentContactPickerSheet(
+                title: "Agregar invitados",
+                emptyHint: "Busca un contacto para invitar."
+            ) { selection in
+                model.addGuest(selection: selection)
+            }
+            .presentationDetents([.medium, .large])
         }
         .alert(
             model.alert?.title ?? "",
@@ -288,6 +294,7 @@ struct AppointmentFormView: View {
                     }
                 }
             }
+            .ristakEdgeToEdgeChips(horizontalInset: 4)
 
             Text("Horario")
                 .font(.footnote)
@@ -424,69 +431,27 @@ struct AppointmentFormView: View {
 
     // MARK: - Invitados
 
+    /// Sin campos en línea (User #4): solo chips removibles de los invitados
+    /// elegidos + un botón «Agregar invitados» que abre el MISMO buscador de
+    /// contactos del alta de cita (contactos existentes + «Nuevo contacto»).
+    /// Los invitados se siguen serializando en el bloque «Invitados:» de notas.
     private var guestsSection: some View {
         Section {
-            ForEach(model.guests, id: \.self) { guest in
-                HStack(spacing: RistakTheme.Spacing.sm) {
-                    ContactAvatarView(name: guest.name, size: 32)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(guest.name)
-                            .font(.subheadline)
-                            .foregroundStyle(RistakTheme.textPrimary)
-                        Text(guest.contact)
-                            .font(.footnote)
-                            .foregroundStyle(RistakTheme.textDim)
-                    }
-                    Spacer()
-                    Button {
-                        model.removeGuest(guest)
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(RistakTheme.textDim)
-                            .frame(width: 26, height: 26)
-                            .background(Circle().fill(RistakTheme.controlRest))
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Quitar invitado \(guest.name)")
-                }
-            }
-
-            TextField("Buscar contacto", text: $model.guestQuery, prompt: Text("Buscar contacto para invitar"))
-                .autocorrectionDisabled()
-
-            if model.guestSearching {
-                HStack(spacing: RistakTheme.Spacing.xs) {
-                    ProgressView()
-                    Text("Buscando contactos...")
-                        .font(.footnote)
-                        .foregroundStyle(RistakTheme.textDim)
-                }
-            }
-
-            ForEach(model.guestResults) { result in
-                Button {
-                    model.addGuest(from: result)
-                } label: {
-                    HStack(spacing: RistakTheme.Spacing.sm) {
-                        ContactAvatarView(name: result.name, size: 32)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(result.name.isEmpty ? result.phone : result.name)
-                                .font(.subheadline)
-                                .foregroundStyle(RistakTheme.textPrimary)
-                            Text(result.phone.isEmpty ? result.email : result.phone)
-                                .font(.footnote)
-                                .foregroundStyle(RistakTheme.textDim)
-                        }
-                        Spacer()
-                        Image(systemName: "plus.circle")
-                            .foregroundStyle(RistakTheme.accent)
+            if !model.guests.isEmpty {
+                FlowChips(spacing: 8) {
+                    ForEach(model.guests, id: \.self) { guest in
+                        guestChip(guest)
                     }
                 }
-                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 8, leading: 4, bottom: 8, trailing: 4))
+                .listRowBackground(Color.clear)
             }
 
-            manualGuestRows
+            Button {
+                showGuestPicker = true
+            } label: {
+                Label("Agregar invitados", systemImage: "person.badge.plus")
+            }
         } header: {
             Text("Invitados")
         } footer: {
@@ -494,19 +459,27 @@ struct AppointmentFormView: View {
         }
     }
 
-    @ViewBuilder
-    private var manualGuestRows: some View {
-        TextField("Nombre", text: $model.guestManualName, prompt: Text("Nombre del invitado"))
-        TextField("Teléfono o correo", text: $model.guestManualContact, prompt: Text("Teléfono o correo"))
-            .keyboardType(.emailAddress)
-            .autocorrectionDisabled()
-            .textInputAutocapitalization(.never)
-
-        Button {
-            model.addManualGuest()
-        } label: {
-            Label("Agregar invitado", systemImage: "person.badge.plus")
+    /// Chip removible de invitado (nombre + ✕), relleno neutro.
+    private func guestChip(_ guest: AppointmentGuestEntry) -> some View {
+        HStack(spacing: 6) {
+            Text(guest.name)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(RistakTheme.textPrimary)
+                .lineLimit(1)
+            Button {
+                model.removeGuest(guest)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(RistakTheme.textDim)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Quitar invitado \(guest.name)")
         }
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
+        .padding(.vertical, 7)
+        .background(Capsule().fill(RistakTheme.controlRest))
     }
 
     // MARK: - Notas

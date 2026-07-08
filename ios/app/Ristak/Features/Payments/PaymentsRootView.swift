@@ -240,6 +240,9 @@ private struct PaymentsHomeView: View {
         .refreshable {
             await home.refreshAll()
         }
+        // Dock por dirección de scroll (#11) sobre el home compacto de Pagos.
+        // Solo compacto; ver `ShellScrollTracking.swift`.
+        .reportsShellScroll()
     }
 
     private func pinnedContactCard(_ contact: PickedPaymentContact) -> some View {
@@ -323,7 +326,7 @@ private struct PaymentsChoiceList: View {
     @Environment(PaymentsHomeModel.self) private var home
 
     var body: some View {
-        VStack(spacing: RistakTheme.Spacing.sm) {
+        VStack(spacing: RistakTheme.Spacing.xs) {
             PaymentChoiceCard(
                 icon: "creditcard",
                 title: "Registrar pago único",
@@ -393,6 +396,8 @@ private struct RecentPaymentsSection: View {
                     }
                 }
             }
+            .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+            .padding(.horizontal, -RistakTheme.Spacing.md)
 
             content
         }

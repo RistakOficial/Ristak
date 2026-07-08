@@ -27,9 +27,14 @@ struct ChatRowView: View {
             ContactAvatarView(
                 name: ChatRowSignals.displayName(contact),
                 photoURL: contact.profilePhotoUrl.flatMap(URL.init(string:)),
-                size: 48,
+                size: 54,
                 channel: ChatRowSignals.badgeChannel(contact)
             )
+            // El avatar crece a 54pt pero su HUELLA de layout se mantiene en
+            // 48×48: se centra y sobresale ~3pt hacia el gap/padding existentes
+            // (sin recortarse), así la fila conserva su altura táctil y el
+            // texto/separador siguen alineados al inset de 60pt.
+            .frame(width: 48, height: 48)
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: RistakTheme.Spacing.xs) {

@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Pantalla de la bandeja de chats (lista + chips + estados, doc research/03).
 /// Se usa igual como raíz del stack (iPhone) y como sidebar del split (iPad).
@@ -12,6 +13,9 @@ struct InboxScreen: View {
     @Environment(ShellState.self) private var shell
 
     @State private var activeSheet: InboxSheet?
+    /// Cámara global (foto/video) del header — flujo separado de `activeSheet`.
+    @State private var cameraPickerPresented = false
+    @State private var cameraShareVM: CameraShareViewModel?
 
     enum InboxSheet: Identifiable {
         case more(ChatContact)
@@ -40,7 +44,16 @@ struct InboxScreen: View {
                 viewModel.searchTextDidChange()
             }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    // Cámara global (a la IZQUIERDA del «+»): toma foto/video y
+                    // lo manda a uno o varios contactos por WhatsApp.
+                    Button {
+                        cameraPickerPresented = true
+                    } label: {
+                        Image(systemName: "camera")
+                    }
+                    .accessibilityLabel("Cámara")
+
                     Button {
                         activeSheet = .newChat
                     } label: {
@@ -52,6 +65,16 @@ struct InboxScreen: View {
             .sheet(item: $activeSheet) { sheet in
                 sheetContent(sheet)
                     .presentationDetents([.medium, .large])
+            }
+            .fullScreenCover(isPresented: $cameraPickerPresented) {
+                InboxCameraPicker { capture in
+                    handleCameraCapture(capture)
+                }
+                .ignoresSafeArea()
+            }
+            .sheet(item: $cameraShareVM) { shareVM in
+                CameraShareSheet(viewModel: shareVM)
+                    .presentationDetents([.large])
             }
             .sensoryFeedback(.selection, trigger: viewModel.selectionHapticTick)
             .sensoryFeedback(.impact(weight: .medium), trigger: viewModel.impactHapticTick)
@@ -117,14 +140,17 @@ struct InboxScreen: View {
             if viewModel.showsAssistantRow {
                 AssistantChatRow()
                     .onTapGesture { onOpenAssistant() }
+                    .ristakRowSeparator()
             }
 
             if viewModel.archivedViewActive {
                 ArchivedAccessRow(count: viewModel.archivedCount, isBackRow: true)
                     .onTapGesture { viewModel.closeArchivedView() }
+                    .ristakRowSeparator()
             } else if viewModel.showsArchivedRow {
                 ArchivedAccessRow(count: viewModel.archivedCount, isBackRow: false)
                     .onTapGesture { viewModel.openArchivedView() }
+                    .ristakRowSeparator()
             }
 
             ForEach(viewModel.displayRows) { contact in
@@ -140,8 +166,14 @@ struct InboxScreen: View {
                     tagNames: viewModel.tagNames(for: contact)
                 )
                 .onTapGesture { handleTap(contact) }
-                .onLongPressGesture(minimumDuration: 0.35) { handleLongPress(contact) }
+                // Long-press más ágil (~0.3s, paridad con `delayLongPress={310}`
+                // de la app RN): abre «Más acciones» sin sentirse pesado, pero
+                // sigue siendo claramente distinto del tap.
+                .onLongPressGesture(minimumDuration: 0.3) { handleLongPress(contact) }
                 .onAppear { viewModel.loadMoreIfNeeded(currentRow: contact) }
+                // Separador uniforme en TODA la bandeja (mismo inset y tinte
+                // sutil) — el usuario reportó líneas incongruentes/opacas.
+                .ristakRowSeparator()
             }
 
             if viewModel.isLoadingMore {
@@ -165,6 +197,9 @@ struct InboxScreen: View {
         .refreshable {
             await viewModel.refreshNow()
         }
+        // Dock por dirección de scroll (#11): bajar oculta el tab bar, subir lo
+        // muestra. Solo compacto; ver `ShellScrollTracking.swift`.
+        .reportsShellScroll()
     }
 
     private func handleTap(_ contact: ChatContact) {
@@ -204,8 +239,8 @@ struct InboxScreen: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Más filtros")
             }
-            .padding(.horizontal, RistakTheme.Spacing.md)
         }
+        .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
     }
 
     @ViewBuilder
@@ -268,6 +303,7 @@ struct InboxScreen: View {
                 Section {
                     ForEach(viewModel.contactSuggestions) { contact in
                         suggestionRow(contact)
+                            .ristakRowSeparator()
                     }
                 } header: {
                     Text("Contactos encontrados")
@@ -323,9 +359,12 @@ struct InboxScreen: View {
             ContactAvatarView(
                 name: ChatRowSignals.displayName(contact),
                 photoURL: contact.profilePhotoUrl.flatMap(URL.init(string:)),
-                size: 40,
+                size: 54,
                 channel: ChatRowSignals.badgeChannel(contact)
             )
+            // Misma huella (48×48) que las filas de chat: alineación de texto y
+            // separador uniformes en toda la bandeja.
+            .frame(width: 48, height: 48)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(ChatRowSignals.displayName(contact))
@@ -401,6 +440,36 @@ struct InboxScreen: View {
         Task {
             try? await Task.sleep(nanoseconds: 420_000_000)
             activeSheet = sheet
+        }
+    }
+
+    // MARK: - Cámara global (header)
+
+    /// Codifica la foto/video capturado (mismos límites del composer) y abre el
+    /// sheet «Enviar media» para elegir destinatarios. El pequeño respiro deja
+    /// que la cámara termine de cerrarse antes de presentar el sheet.
+    private func handleCameraCapture(_ capture: InboxCameraCapture) {
+        cameraPickerPresented = false
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            do {
+                let media: EncodedChatMedia
+                let preview: UIImage?
+                switch capture {
+                case .image(let image):
+                    media = try MediaEncoder.encodeImage(image)
+                    preview = image
+                case .video(let url):
+                    media = try await Task.detached(priority: .userInitiated) {
+                        try MediaEncoder.encodeVideoFile(at: url)
+                    }.value
+                    preview = InboxCameraThumbnail.generate(from: url)
+                }
+                cameraShareVM = CameraShareViewModel(media: media, previewImage: preview, inbox: viewModel)
+            } catch {
+                viewModel.transientAlertMessage = (error as? LocalizedError)?.errorDescription
+                    ?? "No pude preparar la foto o video."
+            }
         }
     }
 

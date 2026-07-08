@@ -65,6 +65,14 @@ enum RistakAppConfigKey {
     static let showLastPreview = "mobile_chat_show_last_preview"
     static let showUnreadIndicators = "mobile_chat_show_unread_indicators"
     static let themePreference = "mobile_chat_theme_preference"
+    /// Señal de tono claro/oscuro del CRM de ESCRITORIO (`ThemeContext.tsx` →
+    /// `theme_color`, `'light' | 'dark'`). La app móvil la LEE para heredar el
+    /// claro/oscuro elegido en el escritorio y la ESCRIBE al cambiar el tema
+    /// para que escritorio y otras sesiones se sincronicen. El escritorio NUNCA
+    /// codifica claro/oscuro en `theme_dir` (esa clave es solo la familia visual
+    /// Aurora/Onyx/Brut/Nimbus), así que la única señal de tono válida es
+    /// `theme_color`. (Añadido para #6 THEME SYNC — no existe en la app RN.)
+    static let desktopThemeColor = "theme_color"
     static let selectedWhatsAppPhoneID = "mobile_chat_selected_whatsapp_phone_id"
     static let sendReadReceipts = "chat_send_read_receipts_enabled"
     static let defaultCalendarID = "default_calendar_id"
@@ -82,6 +90,7 @@ enum RistakAppConfigKey {
         showLastPreview,
         showUnreadIndicators,
         themePreference,
+        desktopThemeColor,
         selectedWhatsAppPhoneID,
         sendReadReceipts,
         defaultCalendarID,

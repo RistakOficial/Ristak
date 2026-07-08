@@ -23,7 +23,7 @@ struct BusinessFormatters: Sendable {
     // MARK: - Fechas relativas de la bandeja (doc 03 §4.5 + audit resolution)
 
     /// Fecha relativa de una fila de la bandeja:
-    /// - Mismo día de negocio → hora `14:32` (24 h). Nunca "Hoy" en filas.
+    /// - Mismo día de negocio → hora `7:47 p.m.` (12 h es-MX). Nunca "Hoy".
     /// - Día anterior → `Ayer`.
     /// - 2–6 días atrás → día de semana capitalizado (`Miércoles`).
     /// - ≥7 días → formato corto `04-jul`.
@@ -49,10 +49,11 @@ struct BusinessFormatters: Sendable {
         return inboxRelativeDate(date, now: now)
     }
 
-    /// Hora de bandeja en 24 h (`14:32`).
+    /// Hora de bandeja en 12 h es-MX (`7:47 p.m.` — contrato normativo
+    /// docs/MOBILE_APP.md §fechas de bandeja, igual que RN).
     func inboxTime(_ date: Date) -> String {
         BusinessFormatterCache.shared.dateFormatter(
-            format: "HH:mm",
+            format: "h:mm a",
             timeZone: timeZone,
             locale: Self.locale
         ).string(from: date)

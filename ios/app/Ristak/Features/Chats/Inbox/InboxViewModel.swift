@@ -85,6 +85,9 @@ final class InboxViewModel {
     private var refreshInFlight = false
     private var refreshQueued = false
     private var realtimeTask: Task<Void, Never>?
+    /// Cadena serial de operaciones start/stop del engine SSE (ver
+    /// `startEventsStream`/`enqueueEventsStop`).
+    private var realtimeControl: Task<Void, Never>?
     private var isScenePaused = false
 
     // MARK: Búsqueda
@@ -195,19 +198,20 @@ final class InboxViewModel {
         async let statusTask = try? WhatsAppNumbersService.status()
         async let labelsTask = try? AnalyticsService.customLabels()
         async let integrationsTask = try? IntegrationsService.status()
-        async let metaFlagsTask = fetchMetaMessagingFlags()
+        async let metaFlagsTask = fetchMetaCommentsFlags()
         async let tagsTask = try? tagsService.fetchTags()
 
         whatsAppStatus = await statusTask
         if let labels = await labelsTask { customLabels = labels }
         if let integrations = await integrationsTask {
             openAIConfigured = integrations.openai?.isUsable == true
-            let metaConnected = integrations.meta?.isUsable == true
-            if let flags = await metaFlagsTask {
-                commentsFeatureEnabled = metaConnected && (flags.messenger || flags.instagram)
-            } else {
-                commentsFeatureEnabled = metaConnected
-            }
+        }
+        // Chip «Comentarios»: /movil lo gatea con los switches de COMENTARIOS
+        // (no los de DMs) y con OR, sin exigir integración Meta conectada
+        // (PhoneChat.tsx: commentsFeatureEnabled = fb || ig). Fetch fallido →
+        // fail-open (deja `true` por defecto).
+        if let flags = await metaFlagsTask {
+            commentsFeatureEnabled = flags.facebook || flags.instagram
         }
         if let tags = await tagsTask {
             tagsCatalog = tags
@@ -215,15 +219,15 @@ final class InboxViewModel {
         }
     }
 
-    private func fetchMetaMessagingFlags() async -> (messenger: Bool, instagram: Bool)? {
+    private func fetchMetaCommentsFlags() async -> (facebook: Bool, instagram: Bool)? {
         let payload: RistakKeyedConfigPayload? = try? await APIClient.shared.get(
             "/api/config",
-            query: ["keys": "meta_messenger_messaging_enabled,meta_instagram_messaging_enabled"]
+            query: ["keys": "meta_facebook_comments_enabled,meta_instagram_comments_enabled"]
         )
         guard let payload else { return nil }
-        let messenger = RistakStringBool.parse(payload.config["meta_messenger_messaging_enabled"] ?? nil) ?? false
-        let instagram = RistakStringBool.parse(payload.config["meta_instagram_messaging_enabled"] ?? nil) ?? false
-        return (messenger, instagram)
+        let facebook = RistakStringBool.parse(payload.config["meta_facebook_comments_enabled"] ?? nil) ?? false
+        let instagram = RistakStringBool.parse(payload.config["meta_instagram_comments_enabled"] ?? nil) ?? false
+        return (facebook, instagram)
     }
 
     /// Restaura `mobile_chat_selected_whatsapp_phone_id` al abrir (doc 03 §3.2):
@@ -284,14 +288,21 @@ final class InboxViewModel {
             // Si el usuario cambió query/número mientras esta carga volaba,
             // descartar el lote (llega otro reload con los params nuevos).
             guard fetchKey == currentFetchKey else { return }
-            if rows.isEmpty || isShowingCachedData || loadedFetchKey != fetchKey {
+            let isReplace = rows.isEmpty || isShowingCachedData || loadedFetchKey != fetchKey
+            if isReplace {
                 rows = page
+                // Reemplazo total: el offset y hasMore se rebobinan a 1 página.
+                serverOffset = page.count
+                hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
             } else {
+                // Refresh vivo: conservar la profundidad de scroll ya cargada.
+                // Rehacer serverOffset/hasMore desde la primera página atascaría
+                // el scroll infinito (pediría offsets ya cargados) y reviviría
+                // fetches fantasma tras llegar al final (doc 03 §4.9).
                 rows = ChatInboxPaginator.mergeRefresh(rows, freshFirstPage: page)
+                serverOffset = max(serverOffset, page.count)
             }
             loadedFetchKey = fetchKey
-            serverOffset = page.count
-            hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
             loadErrorMessage = nil
             isAccessDenied = false
             isShowingCachedData = false
@@ -376,25 +387,44 @@ final class InboxViewModel {
         startEventsStream()
     }
 
+    /// Las operaciones start/stop del engine SSE se encadenan en serie: un
+    /// `stop()` suelto que aterrizara después de un `start()` nuevo mataría la
+    /// conexión recién abierta y el realtime quedaría muerto hasta el próximo
+    /// cambio de escena.
     private func startEventsStream() {
         realtimeTask?.cancel()
-        realtimeTask = Task { [weak self] in
-            guard let self else { return }
-            let stream = await self.eventsClient.start()
+        let client = eventsClient
+        let previous = realtimeControl
+        let task = Task { [weak self] in
+            await previous?.value
+            if Task.isCancelled { return }
+            let stream = await client.start()
             for await event in stream {
                 if Task.isCancelled { return }
+                guard let self else { return }
                 if case .message = event {
                     self.requestSilentRefresh()
                 }
             }
         }
+        realtimeTask = task
+        realtimeControl = task
+    }
+
+    private func enqueueEventsStop() {
+        realtimeTask?.cancel()
+        realtimeTask = nil
+        let client = eventsClient
+        let previous = realtimeControl
+        realtimeControl = Task {
+            await previous?.value
+            await client.stop()
+        }
     }
 
     func stopRealtime() {
-        realtimeTask?.cancel()
-        realtimeTask = nil
         pollingClock.cancelAll()
-        Task { await eventsClient.stop() }
+        enqueueEventsStop()
     }
 
     /// scenePhase: pausar polls y cortar SSE en background; al volver,
@@ -404,9 +434,7 @@ final class InboxViewModel {
         isScenePaused = paused
         pollingClock.setPaused(paused)
         if paused {
-            realtimeTask?.cancel()
-            realtimeTask = nil
-            Task { await eventsClient.stop() }
+            enqueueEventsStop()
         } else if configured {
             startEventsStream()
             requestSilentRefresh()
@@ -856,6 +884,163 @@ final class InboxViewModel {
                 self.transientAlertMessage = "No se guardó el filtro"
             }
         }
+    }
+
+    // MARK: - Editor de filtros condicionales (paridad /movil, App.tsx §filterEditor)
+
+    /// Catálogo de campos para el editor (Chat / Contacto / Etiquetas). Las
+    /// opciones de número de WhatsApp y de etiquetas salen del contexto vivo.
+    var conditionFieldGroups: [ChatConditionFieldGroup] {
+        ChatConditionFieldCatalog.groups(phoneNumbers: phoneNumbers, tags: tagsCatalog)
+    }
+
+    var conditionFields: [ChatConditionField] {
+        conditionFieldGroups.flatMap(\.fields)
+    }
+
+    func conditionField(forKey key: String) -> ChatConditionField? {
+        conditionFields.first { $0.key == key }
+    }
+
+    var defaultConditionField: ChatConditionField? {
+        conditionField(forKey: ChatConditionFieldCatalog.defaultFieldKey) ?? conditionFields.first
+    }
+
+    /// Regla nueva con el operador por defecto del campo dado.
+    func makeConditionRule(field: ChatConditionField?) -> ChatCustomFilterDraftRule {
+        let target = field ?? defaultConditionField
+        return ChatCustomFilterDraftRule(
+            field: target?.key ?? ChatConditionFieldCatalog.defaultFieldKey,
+            op: ChatConditionOperators.defaultOperator(for: target)
+        )
+    }
+
+    /// Borrador para «Nuevo filtro» (una condición vacía por defecto).
+    func makeNewFilterDraft() -> ChatCustomFilterDraft {
+        ChatCustomFilterDraft(rules: [makeConditionRule(field: defaultConditionField)])
+    }
+
+    /// Borrador para editar un preset existente.
+    func makeEditDraft(for preset: ChatFilterPreset) -> ChatCustomFilterDraft {
+        let rules = preset.rules.map { rule in
+            ChatCustomFilterDraftRule(
+                id: rule.id,
+                field: rule.field,
+                op: rule.op,
+                value: rule.values.first ?? "",
+                valueTo: rule.valueTo ?? ""
+            )
+        }
+        return ChatCustomFilterDraft(
+            id: preset.id,
+            label: preset.label,
+            matchAll: preset.matchAll,
+            rules: rules.isEmpty ? [makeConditionRule(field: defaultConditionField)] : rules
+        )
+    }
+
+    /// Al cambiar el campo de una regla: reinicia operador y valores (paridad
+    /// `setCustomFilterRuleField`).
+    func changeRuleField(in draft: inout ChatCustomFilterDraft, ruleID: String, fieldKey: String) {
+        let field = conditionField(forKey: fieldKey) ?? defaultConditionField
+        guard let index = draft.rules.firstIndex(where: { $0.id == ruleID }) else { return }
+        draft.rules[index].field = field?.key ?? ChatConditionFieldCatalog.defaultFieldKey
+        draft.rules[index].op = ChatConditionOperators.defaultOperator(for: field)
+        draft.rules[index].value = ""
+        draft.rules[index].valueTo = ""
+    }
+
+    /// Al cambiar el operador de una regla: limpia valores que ya no aplican.
+    func changeRuleOperator(in draft: inout ChatCustomFilterDraft, ruleID: String, op: String) {
+        guard let index = draft.rules.firstIndex(where: { $0.id == ruleID }) else { return }
+        draft.rules[index].op = op
+        if !ChatConditionOperators.needsValue(op) { draft.rules[index].value = "" }
+        if !ChatConditionOperators.usesRange(op) { draft.rules[index].valueTo = "" }
+    }
+
+    func addRule(to draft: inout ChatCustomFilterDraft) {
+        draft.rules.append(makeConditionRule(field: defaultConditionField))
+    }
+
+    func removeRule(from draft: inout ChatCustomFilterDraft, ruleID: String) {
+        draft.rules.removeAll { $0.id == ruleID }
+        if draft.rules.isEmpty {
+            draft.rules = [makeConditionRule(field: defaultConditionField)]
+        }
+    }
+
+    /// ¿La regla está completa? (paridad `isPhoneChatConditionRuleComplete`).
+    func isRuleComplete(_ rule: ChatCustomFilterDraftRule) -> Bool {
+        guard conditionField(forKey: rule.field) != nil else { return false }
+        if !ChatConditionOperators.needsValue(rule.op) { return true }
+        let value = rule.value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ChatConditionOperators.usesRange(rule.op) {
+            let to = rule.valueTo.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !value.isEmpty && !to.isEmpty
+        }
+        return !value.isEmpty
+    }
+
+    /// Guarda (crea o edita) un preset condicional en
+    /// `mobile_chat_custom_filter_presets`, en el formato que consume el
+    /// evaluador y que sincroniza con /movil. Devuelve un mensaje de error para
+    /// mostrar en el editor, o `nil` si arrancó el guardado.
+    @discardableResult
+    func saveCustomPreset(_ draft: ChatCustomFilterDraft) -> String? {
+        guard let appConfig else { return "No se pudo guardar el filtro." }
+        let label = draft.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { return "Ponle nombre al filtro." }
+
+        let completeRules: [ChatFilterPresetRule] = draft.rules.compactMap { rule in
+            guard isRuleComplete(rule) else { return nil }
+            let needsValue = ChatConditionOperators.needsValue(rule.op)
+            let usesRange = ChatConditionOperators.usesRange(rule.op)
+            let value = rule.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            let valueTo = rule.valueTo.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ChatFilterPresetRule(
+                id: rule.id,
+                field: rule.field,
+                op: rule.op,
+                values: needsValue ? [value] : [],
+                valueTo: usesRange ? valueTo : nil
+            )
+        }
+        guard !completeRules.isEmpty else { return "Agrega al menos una condición completa." }
+
+        let presetID = draft.id.isEmpty ? Self.makeCustomPresetID() : draft.id
+        let preset = ChatFilterPreset(id: presetID, label: label, matchAll: draft.matchAll, rules: completeRules)
+
+        var presets = customPresets
+        if let index = presets.firstIndex(where: { $0.id == presetID }) {
+            presets[index] = preset
+        } else {
+            presets.insert(preset, at: 0)
+        }
+        let json = ChatFilterPreset.serializeList(presets)
+
+        // El chip nuevo queda visible (si no lo estaba) y se activa el filtro.
+        var chips = visibleChipIDs
+        let chipID = "custom:\(presetID)"
+        if !chips.contains(chipID) { chips.append(chipID) }
+        persistVisibleChips(chips)
+
+        Task {
+            do {
+                try await appConfig.setAppConfigValue(json, forKey: RistakAppConfigKey.customFilterPresets)
+                self.select(filter: .custom(presetID))
+                self.successHapticTick &+= 1
+            } catch {
+                self.transientAlertMessage = "No se guardó el filtro"
+            }
+        }
+        return nil
+    }
+
+    /// Id estable de preset (paridad `makePhoneChatCustomFilterId`).
+    private static func makeCustomPresetID() -> String {
+        let stamp = String(Int(Date().timeIntervalSince1970 * 1000), radix: 36)
+        let rand = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6)).lowercased()
+        return "filter_\(stamp)_\(rand)"
     }
 
     // MARK: - Etiquetas (sheet «Agregar etiqueta», doc 03 §4.4)

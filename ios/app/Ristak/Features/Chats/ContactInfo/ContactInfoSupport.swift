@@ -167,6 +167,42 @@ enum ContactInfoDates {
     }
 }
 
+// MARK: - Canal de conversión (etiqueta legible del origen)
+
+/// Traduce el `source`/atribución crudo del contacto a un nombre de canal
+/// legible ("WhatsApp", "Instagram", "Sitio web"…). Devuelve "" para orígenes
+/// genéricos/vacíos (la fila se oculta cuando no hay canal identificable).
+enum ContactInfoChannelLabel {
+    private static let genericSources: Set<String> = ["directo", "desconocido", "otro", "unknown", "direct", "none"]
+
+    static func friendly(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let lower = trimmed.lowercased()
+        if genericSources.contains(lower) { return "" }
+
+        // Sitio web / formularios / landings.
+        if ["site", "web", "form", "landing", "pagina", "página"].contains(where: lower.contains) {
+            return "Sitio web"
+        }
+        if let channel = RistakChatChannel(raw: trimmed) {
+            switch channel {
+            case .whatsapp: return "WhatsApp"
+            case .facebook: return "Facebook"
+            case .messenger: return "Messenger"
+            case .instagram: return "Instagram"
+            case .gmail: return "Correo"
+            }
+        }
+        // Meta / otros: título legible (snake/kebab → palabras capitalizadas).
+        return trimmed
+            .replacingOccurrences(of: "[_-]+", with: " ", options: .regularExpression)
+            .split(separator: " ")
+            .map { $0.prefix(1).uppercased() + $0.dropFirst() }
+            .joined(separator: " ")
+    }
+}
+
 // MARK: - Validación de teléfono (regla móvil, doc 06 §5.1)
 
 enum ContactInfoPhoneValidation {

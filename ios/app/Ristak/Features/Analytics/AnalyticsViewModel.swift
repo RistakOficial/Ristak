@@ -146,7 +146,10 @@ final class AnalyticsViewModel {
     private(set) var accessDenied = false
 
     private var configStore: AppConfigStore?
-    private var started = false
+    /// La primera carga completa TERMINÓ sin ser cancelada. Si el `.task` de la
+    /// vista se cancela (cambio de tab) antes de terminar, esto queda en `false`
+    /// para que al volver al tab se reintente en vez de dejar KPIs en `$0.00`.
+    private var loadCompleted = false
 
     // MARK: - Arranque / cambios de zona horaria
 
@@ -159,9 +162,16 @@ final class AnalyticsViewModel {
         let rangeChanged = newRange != range
         range = newRange
 
-        if !started || rangeChanged {
-            started = true
-            await reloadAll()
+        // Recarga si aún no hay una carga completada con éxito o si el rango
+        // cambió. Nota: si una carga previa se canceló (tab switch), los paneles
+        // quedaron EN «cargando» (nunca en 0 falso) y `loadCompleted` sigue en
+        // `false`, así que al reaparecer la vista se recarga solo.
+        guard !loadCompleted || rangeChanged else { return }
+        await reloadAll()
+        // Solo consolidamos la carga si el task no fue cancelado a mitad
+        // (al reaparecer, `.task(id:)` vuelve a llamar `start` y recargará).
+        if !Task.isCancelled {
+            loadCompleted = true
         }
     }
 
@@ -297,11 +307,11 @@ final class AnalyticsViewModel {
             metrics.isLoading = false
         } catch {
             guard self.range == range else { return }
-            metrics.isLoading = false
             switch classify(error) {
-            case .message(let message): metrics.errorMessage = message
-            case .silentEmpty: metrics.value = nil
-            case .ignored: break
+            case .message(let message): metrics.isLoading = false; metrics.errorMessage = message
+            case .silentEmpty: metrics.isLoading = false; metrics.value = nil
+            case .cancelled: break // conserva isLoading = true → recarga al reaparecer
+            case .ignored: metrics.isLoading = false
             }
         }
     }
@@ -343,11 +353,11 @@ final class AnalyticsViewModel {
             chart.isLoading = false
         } catch {
             guard isCurrentChartRequest(range, kind, scope) else { return }
-            chart.isLoading = false
             switch classify(error) {
-            case .message(let message): chart.errorMessage = message
-            case .silentEmpty: chart.value = []
-            case .ignored: break
+            case .message(let message): chart.isLoading = false; chart.errorMessage = message
+            case .silentEmpty: chart.isLoading = false; chart.value = []
+            case .cancelled: break // conserva isLoading = true → recarga al reaparecer
+            case .ignored: chart.isLoading = false
             }
         }
     }
@@ -375,11 +385,11 @@ final class AnalyticsViewModel {
             funnel.isLoading = false
         } catch {
             guard self.range == range, funnelScope == scope else { return }
-            funnel.isLoading = false
             switch classify(error) {
-            case .message(let message): funnel.errorMessage = message
-            case .silentEmpty: funnel.value = []
-            case .ignored: break
+            case .message(let message): funnel.isLoading = false; funnel.errorMessage = message
+            case .silentEmpty: funnel.isLoading = false; funnel.value = []
+            case .cancelled: break // conserva isLoading = true → recarga al reaparecer
+            case .ignored: funnel.isLoading = false
             }
         }
     }
@@ -403,11 +413,11 @@ final class AnalyticsViewModel {
         } catch {
             _ = await phonesLoad
             guard self.range == range else { return }
-            origin.isLoading = false
             switch classify(error) {
-            case .message(let message): origin.errorMessage = message
-            case .silentEmpty: origin.value = nil
-            case .ignored: break
+            case .message(let message): origin.isLoading = false; origin.errorMessage = message
+            case .silentEmpty: origin.isLoading = false; origin.value = nil
+            case .cancelled: break // conserva isLoading = true → recarga al reaparecer
+            case .ignored: origin.isLoading = false
             }
         }
     }
@@ -421,18 +431,21 @@ final class AnalyticsViewModel {
     private enum LoadFailure {
         case message(String)
         case silentEmpty
+        /// Task cancelado (cambio de tab): se CONSERVA el estado de carga para
+        /// no pintar `$0.00` como si fuera real; la vista recarga al reaparecer.
+        case cancelled
         case ignored
     }
 
     private func classify(_ error: Error) -> LoadFailure {
-        if error is CancellationError { return .ignored }
+        if error is CancellationError { return .cancelled }
         guard let api = error as? RistakAPIError else {
             return .message("No se pudo cargar la información.")
         }
         if api.kind == .network,
            let urlError = api.underlying as? URLError,
            urlError.code == .cancelled {
-            return .ignored
+            return .cancelled
         }
         switch api.kind {
         case .accessDenied:

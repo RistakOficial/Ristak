@@ -1,8 +1,10 @@
 import SwiftUI
 
 /// Avatar de contacto: foto vía `AsyncImage` con fallback de iniciales sobre
-/// color determinístico, y slot opcional de badge de canal (esquina inferior
-/// derecha, separado con aro del color de fondo).
+/// color determinístico. El avatar es circular; el badge de canal (esquina
+/// inferior derecha) se pinta como ícono libre vía `ChannelBadgeView` — SIN aro
+/// ni fondo alrededor (paridad mobile/: badge transparente que sobresale un
+/// poco del círculo).
 struct ContactAvatarView: View {
     let name: String
     var photoURL: URL? = nil
@@ -16,16 +18,17 @@ struct ContactAvatarView: View {
             .overlay(alignment: .bottomTrailing) {
                 if let channel {
                     ChannelBadgeView(channel: channel, size: badgeSize)
-                        .padding(1.5)
-                        .background(Circle().fill(RistakTheme.bg))
-                        .offset(x: size * 0.08, y: size * 0.08)
+                        // Sobresale ligeramente del círculo, como en mobile/
+                        // (`avatarChannelBadge`: right -4, bottom -3).
+                        .offset(x: size * 0.07, y: size * 0.05)
                 }
             }
             .accessibilityLabel(name.isEmpty ? "Contacto" : name)
     }
 
+    /// Badge ≈0.38 del avatar (mobile/: 22pt sobre 58pt), mínimo 18pt.
     private var badgeSize: CGFloat {
-        max(14, size * 0.38)
+        max(18, size * 0.38)
     }
 
     @ViewBuilder

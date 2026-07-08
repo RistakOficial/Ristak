@@ -50,6 +50,8 @@ struct AnalyticsFunnelPanel: View {
                 }
             }
         }
+        .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+        .padding(.horizontal, -RistakTheme.Spacing.md)
     }
 
     @ViewBuilder

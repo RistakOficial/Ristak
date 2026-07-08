@@ -1,5 +1,34 @@
 import SwiftUI
 
+// MARK: - Teclado de los formularios de Pagos (#13)
+
+extension View {
+    /// Garantiza que el teclado de un formulario de Pagos siempre se pueda
+    /// cerrar: arrastrar hacia abajo para ocultarlo + botón «Listo» sobre el
+    /// teclado. Indispensable porque los teclados numéricos
+    /// (`decimalPad`/`numberPad`) no traen tecla de retorno y, sin esto, quedan
+    /// atrapados al capturar montos o cantidades al crear un cobro.
+    func paymentsKeyboardDismissable() -> some View {
+        modifier(PaymentsKeyboardDismissable())
+    }
+}
+
+private struct PaymentsKeyboardDismissable: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .scrollDismissesKeyboard(.interactively)
+            .toolbar {
+                ToolbarItemGroup(placement: .keyboard) {
+                    Spacer()
+                    Button("Listo") {
+                        KeyboardDismisser.dismiss()
+                    }
+                    .font(.body.weight(.semibold))
+                }
+            }
+    }
+}
+
 // MARK: - Tarjeta de elección del home (doc 08 §6.1)
 
 struct PaymentChoiceCard: View {

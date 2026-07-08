@@ -1,6 +1,44 @@
 import SwiftUI
 import Observation
 
+// MARK: - Tarjeta guardada seleccionable
+
+/// Tarjeta guardada de un contacto etiquetada con su pasarela (Stripe/Conekta/
+/// Rebill). El backend no dice a qué pasarela pertenece cada tarjeta, así que la
+/// llevamos aquí para saber a qué endpoint cobrar. Paridad RN
+/// `NativePlanSavedCardOption`.
+struct SavedCardOption: Identifiable, Equatable, Sendable {
+    let gateway: PaymentGateway
+    let card: SavedGatewayCard
+
+    /// Clave estable pasarela+tarjeta (un contacto puede tener tarjetas de
+    /// varias pasarelas con ids que colisionan).
+    var id: String { "\(gateway.rawValue):\(card.id)" }
+
+    /// Token que se manda al cobrar (pm_… / src_… / card_…).
+    var chargeToken: String? { card.chargeToken(for: gateway) }
+
+    /// Ej. «VISA •••• 4242» o el `label` que ya viene del backend.
+    var displayLabel: String {
+        if let label = card.label, !label.isEmpty { return label }
+        let brand = (card.brand?.isEmpty == false) ? card.brand!.uppercased() : "Tarjeta"
+        if let last4 = card.last4, !last4.isEmpty { return "\(brand) •••• \(last4)" }
+        return brand
+    }
+
+    /// Ej. «Stripe · vence 12/27».
+    var detailLabel: String {
+        var parts: [String] = [gateway.displayName]
+        if let expires = card.expiresLabel, !expires.isEmpty {
+            parts.append(expires)
+        } else if let month = card.expMonth, let year = card.expYear {
+            parts.append("vence \(String(format: "%02d", month))/\(String(year % 100))")
+        }
+        if card.isDefault { parts.append("Predeterminada") }
+        return parts.joined(separator: " · ")
+    }
+}
+
 // MARK: - Modelo del wizard de pago único (doc 08 §6.3)
 
 @MainActor
@@ -20,7 +58,16 @@ final class SinglePaymentModel {
 
     enum Method: Equatable {
         case link
+        case savedCard
         case manual
+    }
+
+    /// Resultado de un cobro con tarjeta guardada.
+    enum SavedCardOutcome: Equatable {
+        /// La pasarela confirmó el cobro (paid|partial).
+        case charged
+        /// La pasarela lo dejó en proceso / pendiente de autorización.
+        case processing
     }
 
     /// Métodos del pago manual (doc 08 §6.3.2 etapa `manual`).
@@ -91,6 +138,12 @@ final class SinglePaymentModel {
     var manualReference = ""
     var manualNotes = ""
 
+    // Tarjetas guardadas del contacto (Stripe/Conekta/Rebill).
+    private(set) var savedCards: [SavedCardOption] = []
+    private(set) var isLoadingSavedCards = false
+    private(set) var didLoadSavedCards = false
+    var selectedSavedCardID: String?
+
     // Envío.
     private(set) var isSubmitting = false
     /// Clave estable de idempotencia para el POST manual (PAY-007): reintentos
@@ -99,6 +152,8 @@ final class SinglePaymentModel {
     var validationMessage: String?
     var linkResult: PaymentLinkReadyPayload?
     var manualSuccess = false
+    /// Resultado del cobro con tarjeta guardada (nil = aún no hay resultado).
+    var savedCardOutcome: SavedCardOutcome?
 
     init(contact: PickedPaymentContact) {
         self.contact = contact
@@ -118,6 +173,22 @@ final class SinglePaymentModel {
 
     var enteredAmount: Double? {
         PaymentsAmountParser.amount(from: amountText)
+    }
+
+    /// Tarjeta guardada elegida para cobrar.
+    var selectedSavedCard: SavedCardOption? {
+        guard let selectedSavedCardID else { return nil }
+        return savedCards.first { $0.id == selectedSavedCardID }
+    }
+
+    /// Descripción del pago manual: concepto + notas internas unidos por salto de
+    /// línea (paridad web `RecordPaymentModal`:
+    /// `description = [summary, notes].filter(Boolean).join('\n')`).
+    var manualDescription: String? {
+        let parts = [descriptionText, manualNotes]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return parts.isEmpty ? nil : parts.joined(separator: "\n")
     }
 
     /// Desglose vigente de impuestos (base = monto capturado).
@@ -159,6 +230,51 @@ final class SinglePaymentModel {
         defer { isLoadingProducts = false }
         if let result = try? await ProductsService.products(limit: 100) {
             products = result.products.filter { !$0.effectiveID.isEmpty }
+        }
+    }
+
+    /// Carga las tarjetas guardadas del contacto en cada pasarela conectada que
+    /// las soporta (Stripe → `payment-methods`; Conekta/Rebill →
+    /// `payment-sources`). Tolerante a fallos por pasarela (paridad RN: cada
+    /// `catch(() => [])`). Una sola vez por flujo salvo `force`.
+    func loadSavedCards(connectedGateways: [PaymentGateway], force: Bool = false) async {
+        guard !contact.id.isEmpty else { return }
+        let capable = connectedGateways.filter { $0.supportsSavedCards }
+        // Sin pasarelas de tarjetas guardadas conectadas todavía: no marcamos
+        // como cargado para que un `.task(id:)` reintente cuando lleguen.
+        guard !capable.isEmpty else { return }
+        if !force, didLoadSavedCards { return }
+        guard !isLoadingSavedCards else { return }
+        isLoadingSavedCards = true
+        defer {
+            isLoadingSavedCards = false
+            didLoadSavedCards = true
+        }
+
+        let contactID = contact.id
+        var collected: [SavedCardOption] = []
+        await withTaskGroup(of: [SavedCardOption].self) { group in
+            for gateway in capable {
+                group.addTask {
+                    let cards = (try? await PaymentLinksService.savedCards(gateway: gateway, contactID: contactID)) ?? []
+                    return cards.map { SavedCardOption(gateway: gateway, card: $0) }
+                }
+            }
+            for await chunk in group {
+                collected.append(contentsOf: chunk)
+            }
+        }
+
+        // Orden estable: predeterminadas primero, luego por pasarela y etiqueta.
+        collected.sort { lhs, rhs in
+            if lhs.card.isDefault != rhs.card.isDefault { return lhs.card.isDefault }
+            if lhs.gateway.rawValue != rhs.gateway.rawValue { return lhs.gateway.rawValue < rhs.gateway.rawValue }
+            return lhs.displayLabel < rhs.displayLabel
+        }
+        savedCards = collected
+
+        if selectedSavedCardID == nil || !collected.contains(where: { $0.id == selectedSavedCardID }) {
+            selectedSavedCardID = collected.first(where: { $0.card.isDefault })?.id ?? collected.first?.id
         }
     }
 
@@ -256,6 +372,11 @@ final class SinglePaymentModel {
         switch method {
         case .manual:
             return nil
+        case .savedCard:
+            if isLoadingSavedCards { return "Buscando tarjetas guardadas…" }
+            if savedCards.isEmpty { return "Este contacto no tiene tarjetas guardadas" }
+            if selectedSavedCard == nil { return "Selecciona una tarjeta guardada" }
+            return nil
         case .link:
             guard let gateway = selectedGateway else { return "Selecciona una pasarela" }
             if gateway == .clip, contact.email.isEmpty || contact.phone.isEmpty {
@@ -277,6 +398,8 @@ final class SinglePaymentModel {
         switch method {
         case .manual:
             return "Registrar pago"
+        case .savedCard:
+            return "Cobrar tarjeta"
         case .link:
             guard let gateway = selectedGateway else { return "Continuar" }
             return "Crear link \(gateway.displayName)"
@@ -337,7 +460,7 @@ final class SinglePaymentModel {
                     status: "paid",
                     reference: manualReference.isEmpty ? nil : manualReference,
                     title: title.isEmpty ? "Pago" : title,
-                    description: descriptionText.isEmpty ? nil : descriptionText,
+                    description: manualDescription,
                     date: PaymentsDateMath.dateString(manualDate, timeZone: timeZone),
                     contactId: contact.id,
                     contactName: contact.name.isEmpty ? nil : contact.name,
@@ -347,6 +470,47 @@ final class SinglePaymentModel {
                 )
                 _ = try await PaymentsService.createManualPayment(request, idempotencyKey: idempotencyKey)
                 manualSuccess = true
+                return true
+
+            case .savedCard:
+                guard let option = selectedSavedCard, let token = option.chargeToken, !token.isEmpty else {
+                    validationMessage = "Selecciona una tarjeta guardada válida."
+                    return false
+                }
+                let gateway = option.gateway
+                var request = SavedCardPaymentRequest(
+                    contactId: contact.id,
+                    contactName: contact.name.isEmpty ? nil : contact.name,
+                    email: contact.email.isEmpty ? nil : contact.email,
+                    phone: contact.phone.isEmpty ? nil : contact.phone,
+                    // `amount` = base gravable; el backend recalcula el impuesto.
+                    amount: enteredAmount ?? 0,
+                    currency: accountCurrency,
+                    applyTax: breakdown.applied,
+                    taxCalculationMode: breakdown.applied ? breakdown.mode : nil,
+                    title: title.isEmpty ? "Pago" : title,
+                    description: descriptionText.isEmpty ? nil : descriptionText,
+                    dueDate: PaymentsDateMath.dateString(Date(), timeZone: timeZone),
+                    source: "ios_native_payments_saved_card",
+                    lineItems: lineItems
+                )
+                // Stripe usa `paymentMethodId`; Conekta/Rebill usan `paymentSourceId`
+                // (el backend de Rebill también acepta `paymentSourceId`).
+                if gateway == .stripe {
+                    request.paymentMethodId = token
+                } else {
+                    request.paymentSourceId = token
+                }
+                let result = try await PaymentLinksService.chargeSavedCard(gateway: gateway, request)
+                // Solo se marca como cobrado cuando la pasarela lo confirma; un
+                // estado de proceso/autorización se comunica como pendiente (no
+                // reportar un falso "cobro realizado"). Paridad RN.
+                let status = result.payment?.status ?? ""
+                if !status.isEmpty, PaymentTransactionStatus.parse(status)?.countsAsReceived != true {
+                    savedCardOutcome = .processing
+                } else {
+                    savedCardOutcome = .charged
+                }
                 return true
 
             case .link:
@@ -379,7 +543,9 @@ final class SinglePaymentModel {
                     url: url,
                     gatewayName: gateway.displayName,
                     contactName: contact.displayName,
-                    amountLabel: formatters.currency(breakdown.total)
+                    amountLabel: formatters.currency(breakdown.total),
+                    contactID: contact.id.isEmpty ? nil : contact.id,
+                    contactPhone: contact.phone.isEmpty ? nil : contact.phone
                 )
                 return true
             }
@@ -559,6 +725,7 @@ struct SinglePaymentFlowView: View {
                 .listRowInsets(EdgeInsets())
             }
         }
+        .paymentsKeyboardDismissable()
     }
 
     @ViewBuilder
@@ -631,14 +798,22 @@ struct SinglePaymentOptionsView: View {
                 }
             }
 
+            if model.method == .savedCard {
+                savedCardSection
+            }
+
             if model.method == .manual {
                 manualSection
             }
 
             confirmSection
         }
+        .paymentsKeyboardDismissable()
         .navigationTitle("Cobrar")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: (home.capabilities?.connectedGateways ?? []).map(\.rawValue)) {
+            await model.loadSavedCards(connectedGateways: home.capabilities?.connectedGateways ?? [])
+        }
         .sensoryFeedback(.success, trigger: successHaptic)
         .alert(
             "Revisa el cobro",
@@ -658,6 +833,23 @@ struct SinglePaymentOptionsView: View {
             }
         } message: {
             Text("El pago quedó guardado y aparecerá en el historial del contacto.")
+        }
+        .alert(
+            model.savedCardOutcome == .processing ? "Cobro en proceso" : "Cobro realizado",
+            isPresented: Binding(
+                get: { model.savedCardOutcome != nil },
+                set: { if !$0 { model.savedCardOutcome = nil } }
+            )
+        ) {
+            Button("Listo") {
+                model.savedCardOutcome = nil
+                home.refreshRecentSilently()
+                onDone()
+            }
+        } message: {
+            Text(model.savedCardOutcome == .processing
+                 ? "El cobro con la tarjeta guardada quedó en proceso. Confirma el estado en unos minutos."
+                 : "El cobro con la tarjeta guardada se completó y aparecerá en el historial del contacto.")
         }
         .sheet(item: $model.linkResult) { payload in
             PaymentLinkReadySheet(payload: payload)
@@ -695,30 +887,91 @@ struct SinglePaymentOptionsView: View {
         }
     }
 
+    /// Hay alguna pasarela conectada que maneje tarjetas guardadas.
+    private var savedCardCapableConnected: Bool {
+        (home.capabilities?.connectedGateways ?? []).contains { $0.supportsSavedCards }
+    }
+
+    private var savedCardOptionSubtitle: String {
+        if model.isLoadingSavedCards { return "Buscando tarjetas guardadas del contacto…" }
+        let count = model.savedCards.count
+        if count == 0 { return "Este contacto todavía no tiene tarjetas guardadas." }
+        return "Cobra una tarjeta guardada del contacto (\(count) disponible\(count == 1 ? "" : "s"))."
+    }
+
     private var methodSection: some View {
         Section("¿Cómo quieres cobrar?") {
-            if !(home.capabilities?.offlineOnly ?? true) {
+            VStack(spacing: RistakTheme.Spacing.xs) {
+                if !(home.capabilities?.offlineOnly ?? true) {
+                    PaymentOptionRow(
+                        title: "Enviar enlace de pago",
+                        subtitle: linkOptionSubtitle,
+                        isSelected: model.method == .link
+                    ) {
+                        model.method = .link
+                        if model.selectedGateway == nil {
+                            model.selectedGateway = home.capabilities?.connectedGateways.first
+                        }
+                    }
+
+                    if savedCardCapableConnected {
+                        PaymentOptionRow(
+                            title: "Cobrar tarjeta guardada",
+                            subtitle: savedCardOptionSubtitle,
+                            isSelected: model.method == .savedCard,
+                            isDisabled: !model.isLoadingSavedCards && model.savedCards.isEmpty
+                        ) {
+                            model.method = .savedCard
+                        }
+                    }
+                }
+
                 PaymentOptionRow(
-                    title: "Enviar enlace de pago",
-                    subtitle: linkOptionSubtitle,
-                    isSelected: model.method == .link
+                    title: "Registrar pago manual",
+                    subtitle: "Registra el pago en Ristak (efectivo, transferencia, etc.)",
+                    isSelected: model.method == .manual
                 ) {
-                    model.method = .link
-                    if model.selectedGateway == nil {
-                        model.selectedGateway = home.capabilities?.connectedGateways.first
+                    model.method = .manual
+                }
+            }
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    private var savedCardSection: some View {
+        Section("Tarjeta a cobrar") {
+            if model.isLoadingSavedCards {
+                HStack(spacing: RistakTheme.Spacing.sm) {
+                    ProgressView().controlSize(.small)
+                    Text("Buscando tarjetas guardadas…")
+                        .font(.subheadline)
+                        .foregroundStyle(RistakTheme.textDim)
+                }
+                .listRowSeparator(.hidden)
+            } else if model.savedCards.isEmpty {
+                Text("Este contacto no tiene tarjetas guardadas. Regresa y usa un enlace de pago o registra el pago manual.")
+                    .font(.subheadline)
+                    .foregroundStyle(RistakTheme.textDim)
+                    .listRowSeparator(.hidden)
+            } else {
+                VStack(spacing: RistakTheme.Spacing.xs) {
+                    ForEach(model.savedCards) { option in
+                        PaymentOptionRow(
+                            title: option.displayLabel,
+                            subtitle: option.detailLabel,
+                            isSelected: model.selectedSavedCardID == option.id
+                        ) {
+                            model.selectedSavedCardID = option.id
+                        }
                     }
                 }
                 .listRowSeparator(.hidden)
-            }
 
-            PaymentOptionRow(
-                title: "Registrar pago manual",
-                subtitle: "Registra el pago en Ristak (efectivo, transferencia, etc.)",
-                isSelected: model.method == .manual
-            ) {
-                model.method = .manual
+                Text("Si el contacto tiene varias tarjetas de la misma pasarela, se muestran por separado.")
+                    .font(.caption)
+                    .foregroundStyle(RistakTheme.textMute)
+                    .listRowSeparator(.hidden)
             }
-            .listRowSeparator(.hidden)
         }
     }
 
@@ -733,18 +986,20 @@ struct SinglePaymentOptionsView: View {
 
     private var gatewaySection: some View {
         Section("Pasarela") {
-            ForEach(home.capabilities?.connectedGateways ?? [], id: \.rawValue) { gateway in
-                PaymentOptionRow(
-                    title: gateway.displayName,
-                    subtitle: gatewayCopy(gateway),
-                    isSelected: model.selectedGateway == gateway
-                ) {
-                    model.selectedGateway = gateway
-                    model.msiEnabled = false
-                    model.maxInstallments = defaultTerm(for: gateway)
+            VStack(spacing: RistakTheme.Spacing.xs) {
+                ForEach(home.capabilities?.connectedGateways ?? [], id: \.rawValue) { gateway in
+                    PaymentOptionRow(
+                        title: gateway.displayName,
+                        subtitle: gatewayCopy(gateway),
+                        isSelected: model.selectedGateway == gateway
+                    ) {
+                        model.selectedGateway = gateway
+                        model.msiEnabled = false
+                        model.maxInstallments = defaultTerm(for: gateway)
+                    }
                 }
-                .listRowSeparator(.hidden)
             }
+            .listRowSeparator(.hidden)
         }
     }
 

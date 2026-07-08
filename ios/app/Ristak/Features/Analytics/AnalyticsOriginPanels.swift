@@ -44,6 +44,8 @@ struct AnalyticsOriginPanel: View {
                 }
             }
         }
+        .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+        .padding(.horizontal, -RistakTheme.Spacing.md)
     }
 
     @ViewBuilder

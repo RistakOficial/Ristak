@@ -115,6 +115,41 @@ enum RistakTheme {
         dark: rgba(58, 58, 60, 0.92)
     )
 
+    /// Alias canónicos usados por `RistakChatBubble` (paridad mobile/):
+    /// entrante = `bubbleIncoming`, saliente = `bubbleOutgoing`.
+    static let bubbleInbound = bubbleIncoming
+    static let bubbleOutbound = bubbleOutgoing
+
+    /// Texto dentro de la burbuja (igual entrante/saliente en mobile/):
+    /// `COLORS.text` (#1d1d1f) claro / `#f5f5f7` oscuro.
+    static let bubbleTextInbound = dynamic(
+        light: rgb(0x1D, 0x1D, 0x1F),
+        dark: rgb(0xF5, 0xF5, 0xF7)
+    )
+    static let bubbleTextOutbound = bubbleTextInbound
+
+    /// Meta de la burbuja (hora, estado): `COLORS.muted` claro /
+    /// `rgba(235,235,245,0.78)` oscuro.
+    static let bubbleMeta = dynamic(
+        light: rgb(0x6E, 0x6E, 0x73),
+        dark: rgba(235, 235, 245, 0.78)
+    )
+
+    /// Borde punteado de burbuja programada: `rgba(60,60,67,0.18)` /
+    /// `rgba(235,235,245,0.22)` (mobile/ `scheduledBubbleBorder`).
+    static let bubbleScheduledBorder = dynamic(
+        light: rgba(60, 60, 67, 0.18),
+        dark: rgba(235, 235, 245, 0.22)
+    )
+
+    /// Color efectivo de la sombra de burbuja: en mobile/ es
+    /// `shadowColor × shadowOpacity` → claro `rgba(60,60,67,0.28)×0.12`,
+    /// oscuro `#000×0.24`. Radio 1, offset y 1 los aplica la burbuja.
+    static let bubbleShadow = dynamic(
+        light: rgba(60, 60, 67, 0.0336),
+        dark: rgba(0, 0, 0, 0.24)
+    )
+
     /// Burbuja de mensaje programado: `#f0f1f4` / `rgba(72,72,74,0.48)`.
     static let bubbleScheduled = dynamic(
         light: rgb(0xF0, 0xF1, 0xF4),
@@ -137,6 +172,30 @@ enum RistakTheme {
     static let daySeparator = dynamic(
         light: rgba(245, 245, 247, 0.92),
         dark: rgba(44, 44, 46, 0.82)
+    )
+
+    /// Fondo base del hilo bajo el wallpaper (mobile/ `conversationWallpaperBackground`):
+    /// `#f5f5f7` claro / `#050506` oscuro.
+    static let chatWallpaperBase = dynamic(
+        light: rgb(0xF5, 0xF5, 0xF7),
+        dark: rgb(0x05, 0x05, 0x06)
+    )
+
+    /// Tinte monocromo del wallpaper (mobile/ `chatWallpaperTint` = muted/meta):
+    /// `#6e6e73` claro / `#c7c7cc` oscuro. La opacidad (0.82/0.5) la aplica la vista.
+    static let chatWallpaperTint = dynamic(
+        light: rgb(0x6E, 0x6E, 0x73),
+        dark: rgb(0xC7, 0xC7, 0xCC)
+    )
+
+    // MARK: - Separadores de lista
+
+    /// Separador uniforme de filas (bandeja): hairline sutil y semitransparente,
+    /// idéntico en toda la lista. Claro `rgba(60,60,67,0.12)` /
+    /// oscuro `rgba(235,235,245,0.12)`.
+    static let rowSeparator = dynamic(
+        light: rgba(60, 60, 67, 0.12),
+        dark: rgba(235, 235, 245, 0.12)
     )
 
     // MARK: - Espaciado
