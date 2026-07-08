@@ -1565,10 +1565,9 @@ La biblioteca de sitios y formularios permite seleccionar varios elementos con
 checkboxes en vista galeria, lista o tabla y eliminarlos juntos con confirmacion
 destructiva. Los controles masivos de `Todos los visibles` y `Eliminar` aparecen
 solo despues de marcar al menos un elemento; en vista tabla viven dentro de la
-toolbar de seleccion comun de las tablas. El selector de paginas del editor
-tambien permite marcar varias
-paginas borrables y eliminarlas en una sola accion; las paginas fijas de
-resultado de formularios no se pueden seleccionar para borrado masivo.
+toolbar de seleccion comun de las tablas. Esta seleccion multiple no aparece
+dentro del selector de paginas del editor de sitios; ahi las paginas se eliminan
+una por una desde su menu.
 
 La ruta publica puede depender de dominio, slug, host o rutas internas. Cualquier
 cambio a Sites debe revisar editor, renderer publico, submissions y tracking.

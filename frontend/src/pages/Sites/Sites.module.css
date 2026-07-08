@@ -16738,49 +16738,6 @@
   font-weight: var(--font-weight-semibold, 600);
 }
 
-.pagesBulkBar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 9px;
-  margin-top: 12px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  padding: 10px;
-}
-
-.pagesBulkSelectAll {
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text);
-  font-size: 0.82rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.pagesBulkSelectAll input {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.pagesBulkCount {
-  color: var(--text-dim);
-  font-size: 0.8rem;
-  line-height: 1.35;
-}
-
-.pagesBulkActions {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .pagesDropdownList {
   width: 100%;
   display: grid;
@@ -16818,19 +16775,10 @@
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.pagesDropdownItemSelectable {
-  grid-template-columns: 32px 44px minmax(0, 1fr) auto;
-}
-
 .pagesDropdownItem:hover,
 .pagesDropdownItemActive {
   border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border-subtle, rgba(148, 163, 184, 0.28)) 58%);
   background: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-primary) 18%);
-}
-
-.pagesDropdownItemSelected {
-  border-color: var(--accent);
-  background: var(--accent-soft);
 }
 
 .pagesDropdownItemLocked {
@@ -16957,58 +16905,6 @@
 .pagesDropdownItemFixed .pagesDropdownDragHandle {
   opacity: 0.42;
   cursor: default;
-}
-
-.pagesDropdownItemSelect {
-  position: relative;
-  width: 30px;
-  height: 54px;
-  display: inline-grid;
-  place-items: center;
-  cursor: pointer;
-}
-
-.pagesDropdownItemSelect input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-.pagesDropdownItemSelect span {
-  width: 21px;
-  height: 21px;
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--on-accent);
-  box-shadow: var(--shadow-xs);
-}
-
-.pagesDropdownItemSelect span svg {
-  opacity: 0;
-  transform: scale(0.86);
-  transition: opacity 0.12s ease, transform 0.12s ease;
-}
-
-.pagesDropdownItemSelect input:checked + span {
-  border-color: var(--accent);
-  background: var(--accent);
-}
-
-.pagesDropdownItemSelect input:checked + span svg {
-  opacity: 1;
-  transform: scale(1);
-}
-
-.pagesDropdownItemSelect input:focus-visible + span {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .pagesDropdownTitleCell {
@@ -18249,10 +18145,6 @@
   border-radius: 8px;
   background: var(--sites-editor-control-bg);
   padding: 0 10px;
-}
-
-.pageFrame .containerFocused .pagesDropdownItemSelectable {
-  grid-template-columns: 28px 34px minmax(0, 1fr) auto;
 }
 
 .pageFrame .containerFocused .pagesDropdownItem:hover,
