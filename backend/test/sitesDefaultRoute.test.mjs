@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import JSZip from 'jszip'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
@@ -234,6 +235,42 @@ test('imported HTML pages resolve clean public routes and can be domain root', a
   } finally {
     if (site) await deleteSite(site.id).catch(() => undefined)
     await restoreDomainConfig(previousConfig)
+  }
+})
+
+test('imported ZIP pages honor trailing numeric filename order', async () => {
+  const suffix = Date.now()
+  let site
+
+  try {
+    const zip = new JSZip()
+    zip.file('Landing-01.html', '<!doctype html><html><head><title>Landing-01</title></head><body><main><h1>Landing</h1><a href="./Form-02.html">Aplicar</a></main></body></html>')
+    zip.file('Booked-03.html', '<!doctype html><html><head><title>Booked-03</title></head><body><main><h1>Booked</h1></main></body></html>')
+    zip.file('Form-02.html', '<!doctype html><html><head><title>Form-02</title></head><body><main><h1>Form</h1><a href="./Booked-03.html">Agendar</a></main></body></html>')
+    const buffer = await zip.generateAsync({ type: 'nodebuffer' })
+
+    const created = await createImportedSiteFromHtml({
+      name: `HTML importado ordenado ${suffix}`,
+      filename: `ordered-pages-${suffix}.zip`,
+      siteType: 'landing_page',
+      fileBase64: buffer.toString('base64')
+    })
+    site = created.site
+
+    assert.deepEqual(
+      site.theme.pages.map(page => page.importedAssetPath),
+      ['Landing-01.html', 'Form-02.html', 'Booked-03.html']
+    )
+    assert.deepEqual(
+      site.theme.pages.map(page => page.title),
+      ['Landing-01', 'Form-02', 'Booked-03']
+    )
+    assert.deepEqual(
+      site.theme.pages.map(page => page.slug),
+      ['rstk01', 'rstk02', 'rstk03']
+    )
+  } finally {
+    if (site) await deleteSite(site.id).catch(() => undefined)
   }
 })
 

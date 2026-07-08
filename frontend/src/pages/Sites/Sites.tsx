@@ -2071,6 +2071,7 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Acciones de botón: usa data-rstk-button-action="url|next_page|specific_page|submit|disqualify|open_popup|close_popup" y data-rstk-button-actions='[{"id":"action-1","action":"url","buttonUrl":"https://..."}]'.
 - Si un botón envía formulario, debe vivir dentro del mismo <form data-rstk-form-id="..."> que sus campos.
 - Formularios HTML propios: usa <form data-rstk-form-id="lead-form"> y campos con name, id, data-rstk-edit-type="form_field", data-rstk-label y placeholder.
+- Orden de páginas: si entregas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.
 - Elementos nativos Ristak en HTML externo: reserva una zona con data-rstk-native-element="form|calendar|payment|video" y data-rstk-native-id único. Ejemplo: <div data-rstk-native-element="form" data-rstk-native-id="lead-form-slot" data-rstk-label="Formulario principal"></div>. Ristak detecta esa zona y te deja elegir el formulario, calendario, pago o video real desde el editor.
 - Solo se aceptan estos elementos nativos: formularios, calendarios, pagos y videos. No uses data-rstk-native-element para otros widgets.
 - Formularios nativos Ristak: la zona data-rstk-native-element="form" debe ser un contenedor vacío; no pongas <form>, campos ni botones de envío dentro o pegados a esa zona. Ristak renderiza el formulario completo con su propio botón y sus acciones "Al enviar"; si necesitas ir a otra página, configúralo en el editor.
@@ -25933,6 +25934,7 @@ const buildExternalAICompatibilityText = (answers: ExternalAICompatibilityAnswer
     '- Marca textos, imágenes, botones, campos y videos editables con data-rstk-editable="true", data-rstk-edit-type y data-rstk-edit-id único.',
     '- Para botones usa data-rstk-button-actions como JSON cuando conozcas la acción. Acciones válidas: url, next_page, specific_page, submit, disqualify, open_popup y close_popup.',
     '- Solo uses next_page cuando la página tenga claramente otra página después en el orden del embudo. En la última página no pongas next_page; usa specific_page, url o deja la acción configurable.',
+    '- Si generas varias páginas, nombra title y filename con sufijo numérico de dos dígitos según el flujo real, por ejemplo Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar; no dependas del orden alfabético.',
     '- Usa data-rstk-section="Hero|Formulario|Agenda|Pago|Gracias" para que el editor ubique rápido cada zona.',
     '- Evita navegación automática, window.open, submits automáticos o scripts que intenten saltarse el editor de Ristak.',
     ''

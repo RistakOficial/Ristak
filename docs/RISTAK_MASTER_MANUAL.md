@@ -1673,6 +1673,13 @@ configurado; el sitio publicado conserva la ruta publica normal.
 Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
 pero las reglas copiables nuevas deben preferir `data-rstk-*`.
 
+En HTML importado multipagina, los nombres de pagina y archivo deben poder
+expresar el orden real del flujo. La convencion nueva para reglas copiables y
+HTML generado es usar sufijo numerico de dos digitos en `title` y `filename`,
+por ejemplo `Landing-01.html`, `Form-02.html`, `Booked-03.html`. Ristak usa ese
+numero para ordenar paginas importadas o generadas; no debe depender del orden
+alfabetico del ZIP ni de nombres como `Pagina 1`.
+
 En el flujo de crear un sitio, la opcion `Hacer la mia con ChatGPT/Claude`
 vive dentro del grupo de Editor HTML, despues de `Subir HTML o ZIP`. Esta opcion
 no llama a ninguna API de IA ni crea paginas por el usuario: solo abre un

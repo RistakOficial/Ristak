@@ -6569,6 +6569,7 @@ Reglas duras:
 - Entrega un documento HTML completo con <!doctype html>, <html lang="es">, <head>, <meta charset>, <meta viewport>, <title>, meta description y CSS dentro de <style>.
 - Si el embudo necesita varias páginas, devuelve cada página por separado en page.pages. No juntes todo en una sola página cuando el flujo naturalmente tiene pasos separados.
 - Cada página de page.pages debe traer id, title, filename, description y html completo. Usa nombres claros de negocio: Inicio, Video de venta, Agenda, Aplicacion, Gracias, Diagnostico, Oferta, Checkout, etc. No uses "Página 1" si puedes nombrarla mejor.
+- Ordena páginas multipágina con sufijo numérico de dos dígitos en title y filename según el flujo real: Landing-01.html, Form-02.html, Booked-03.html. Ristak usa ese número para ordenar y no debe depender del orden alfabético.
 - Cuando un botón mande a otra página del mismo embudo, usa data-rstk-button-action="specific_page" y data-rstk-button-page-id con el id exacto de la página destino. Si solo avanza, usa data-rstk-button-action="next_page".
 - La página debe ser responsiva, profesional y lista para publicarse.
 - Copy corto: titulares de 4 a 10 palabras cuando sea posible, párrafos breves de 1 a 2 líneas, listas cortas para explicar detalles.
@@ -8926,6 +8927,35 @@ function getImportedHtmlDescription(html = '', fallback = '') {
   return limitString(fallback, 220)
 }
 
+function getImportedPageOrderHint(value = '') {
+  const leaf = cleanString(value).split('/').pop() || ''
+  const base = leaf.replace(/\.[^.]+$/, '').trim()
+  const trailing = base.match(/(?:^|[-_\s])(\d{1,3})$/)
+  const leading = base.match(/^(\d{1,3})(?:[-_\s]|$)/)
+  const raw = trailing?.[1] || leading?.[1] || ''
+  if (!raw) return null
+  const order = Number.parseInt(raw, 10)
+  return Number.isFinite(order) && order > 0 ? order : null
+}
+
+function compareImportedPageOrderHints(leftValue = '', rightValue = '') {
+  const leftOrder = getImportedPageOrderHint(leftValue)
+  const rightOrder = getImportedPageOrderHint(rightValue)
+  if (leftOrder !== null && rightOrder !== null && leftOrder !== rightOrder) return leftOrder - rightOrder
+  if (leftOrder !== null && rightOrder === null) return -1
+  if (leftOrder === null && rightOrder !== null) return 1
+  return 0
+}
+
+function compareImportedZipHtmlPathOrder(left = '', right = '') {
+  const orderCompare = compareImportedPageOrderHints(left, right)
+  if (orderCompare) return orderCompare
+  const leftDepth = left.split('/').length
+  const rightDepth = right.split('/').length
+  if (leftDepth !== rightDepth) return leftDepth - rightDepth
+  return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })
+}
+
 function pickImportedZipMainHtmlPath(paths = [], filename = '') {
   const sorted = [...paths].sort((left, right) => {
     const leftDepth = left.split('/').length
@@ -8940,6 +8970,9 @@ function pickImportedZipMainHtmlPath(paths = [], filename = '') {
   const nestedIndex = sorted.find(assetPath => /(^|\/)index\.html?$/i.test(assetPath))
   if (nestedIndex) return nestedIndex
 
+  const orderedHtml = [...paths].sort(compareImportedZipHtmlPathOrder).find(assetPath => getImportedPageOrderHint(assetPath) !== null)
+  if (orderedHtml) return orderedHtml
+
   const filenameBase = normalizeImportedFieldKey(filename.replace(/\.[^.]+$/, ''), '')
   const namedHtml = filenameBase
     ? sorted.find(assetPath => normalizeImportedFieldKey((assetPath.split('/').pop() || '').replace(/\.[^.]+$/, ''), '') === filenameBase)
@@ -8948,12 +8981,7 @@ function pickImportedZipMainHtmlPath(paths = [], filename = '') {
 }
 
 function sortImportedZipHtmlPaths(paths = [], mainPath = '') {
-  const sorted = [...paths].sort((left, right) => {
-    const leftDepth = left.split('/').length
-    const rightDepth = right.split('/').length
-    if (leftDepth !== rightDepth) return leftDepth - rightDepth
-    return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })
-  })
+  const sorted = [...paths].sort(compareImportedZipHtmlPathOrder)
 
   return [
     mainPath,
@@ -9017,8 +9045,39 @@ function normalizeGeneratedImportedPageAssetPath(page = {}, index = 0, usedPaths
   return candidate
 }
 
+function getGeneratedImportedPageOrderHint(page = {}) {
+  return [
+    page.filename,
+    page.fileName,
+    page.assetPath,
+    page.path,
+    page.title,
+    page.name,
+    page.id
+  ].reduce((found, value) => (
+    found !== null ? found : getImportedPageOrderHint(value)
+  ), null)
+}
+
+function sortGeneratedImportedPagesByDeclaredOrder(sourcePages = []) {
+  const decorated = sourcePages.map((page, index) => ({
+    page,
+    index,
+    order: getGeneratedImportedPageOrderHint(page)
+  }))
+  if (!decorated.some(item => item.order !== null)) return sourcePages
+  return decorated
+    .sort((left, right) => {
+      if (left.order !== null && right.order !== null && left.order !== right.order) return left.order - right.order
+      if (left.order !== null && right.order === null) return -1
+      if (left.order === null && right.order !== null) return 1
+      return left.index - right.index
+    })
+    .map(item => item.page)
+}
+
 function normalizeGeneratedImportedPages(rawPages = [], fallback = {}) {
-  const sourcePages = Array.isArray(rawPages) ? rawPages : []
+  const sourcePages = sortGeneratedImportedPagesByDeclaredOrder(Array.isArray(rawPages) ? rawPages : [])
   const usedIds = new Set()
   const usedPaths = new Set()
 
