@@ -1137,6 +1137,18 @@
   align-items: center;
 }
 
+.messageBubbleWrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.messageRowOutbound .messageBubbleWrap {
+  justify-content: flex-end;
+}
+
 .dayDivider {
   align-self: center;
   padding: 4px 9px;
@@ -1149,6 +1161,7 @@
 }
 
 .messageBubble {
+  min-width: 0;
   max-width: 100%;
   padding: 10px 12px 8px;
   border: 1px solid var(--chat-border);
@@ -1192,6 +1205,84 @@
   border-radius: 18px 18px 6px 18px;
   background: color-mix(in srgb, var(--chat-soft-strong) 72%, var(--color-background-primary));
   color: var(--color-text-primary);
+}
+
+.messageReactionPicker {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-4px);
+  transition: opacity 0.16s ease, transform 0.16s ease;
+}
+
+.messageRow:hover .messageReactionPicker,
+.messageRow:focus-within .messageReactionPicker {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.messageReactionButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.14s ease, transform 0.14s ease;
+}
+
+.messageReactionButton:hover,
+.messageReactionButton:focus-visible {
+  background: var(--surface-hover);
+  transform: translateY(-1px);
+}
+
+.messageReactionButton:disabled {
+  cursor: wait;
+  opacity: 0.58;
+  transform: none;
+}
+
+.messageReactions {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 2px;
+  margin-top: -4px;
+  margin-left: 12px;
+  padding: 2px 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  box-shadow: var(--shadow-xs);
+  line-height: 1;
+}
+
+.messageRowOutbound .messageReactions {
+  align-self: flex-end;
+  margin-right: 12px;
+  margin-left: 0;
+}
+
+.messageReaction {
+  font-size: 13px;
+  line-height: 1;
 }
 
 .messageEmail {

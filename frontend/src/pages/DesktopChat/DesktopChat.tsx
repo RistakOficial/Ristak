@@ -204,6 +204,7 @@ interface ChatListCacheSnapshot {
 interface DesktopChatMessage {
   id: string
   optimisticId?: string
+  providerMessageId?: string
   text: string
   subject?: string
   date: string
@@ -212,6 +213,7 @@ interface DesktopChatMessage {
   errorReason?: string
   scheduledAt?: string
   scheduledMessageId?: string
+  messageType?: string
   sentAt?: string
   deliveredAt?: string
   readAt?: string
@@ -219,6 +221,16 @@ interface DesktopChatMessage {
   businessPhoneNumberId?: string
   transport?: string
   routingReason?: string
+  replyToMessageId?: string
+  replyToProviderMessageId?: string
+  reactionEmoji?: string
+  reactionTargetMessageId?: string
+  reactionTargetProviderMessageId?: string
+  reactions?: Array<{
+    id: string
+    emoji: string
+    direction: 'inbound' | 'outbound' | 'system'
+  }>
   // Comentarios de FB/IG: globo distinto + contexto de la publicación comentada.
   isComment?: boolean
   commentReplyMode?: 'public' | 'private'
@@ -358,6 +370,7 @@ const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
 const CHAT_REFRESH_INTERVAL_MS = 20000
+const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
 // Lotes moderados: la bandeja calcula stats de mensajes y debe pintar rápido sin ahogar Postgres.
 const CHAT_LIST_PAGE_SIZE = 50
 // Distancia mínima al fondo para empezar a prefetch del siguiente lote. El disparo real
@@ -1178,6 +1191,7 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
   return [
     message.id,
     message.optimisticId,
+    message.providerMessageId,
     message.text,
     message.subject,
     message.date,
@@ -1186,6 +1200,7 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
     message.errorReason,
     message.scheduledAt,
     message.scheduledMessageId,
+    message.messageType,
     message.sentAt,
     message.deliveredAt,
     message.readAt,
@@ -1193,6 +1208,12 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
     message.businessPhoneNumberId,
     message.transport,
     message.routingReason,
+    message.replyToMessageId,
+    message.replyToProviderMessageId,
+    message.reactionEmoji,
+    message.reactionTargetMessageId,
+    message.reactionTargetProviderMessageId,
+    message.reactions?.map((reaction) => [reaction.id, reaction.emoji, reaction.direction].map(compactCompareValue).join(':')).join('|'),
     attachment?.type,
     attachment?.url,
     attachment?.dataUrl,
@@ -1215,6 +1236,10 @@ function normalizeMessageMatchText(value?: string) {
 
 function getMessageTimeValue(value?: string) {
   return parseSortableDateValue(value)
+}
+
+function getMessageProviderMessageId(message: DesktopChatMessage) {
+  return String(message.providerMessageId || '').trim()
 }
 
 function isOptimisticDesktopMessage(message: DesktopChatMessage) {
@@ -1299,7 +1324,38 @@ function mergeDesktopMessagesById(messages: DesktopChatMessage[]) {
     merged.set(message.id, message)
   })
 
-  return Array.from(merged.values())
+  const mergedMessages = Array.from(merged.values())
+  const byLocalId = new Map(mergedMessages.map((message) => [message.id, message]))
+  const byProviderId = new Map(
+    mergedMessages
+      .map((message) => [getMessageProviderMessageId(message), message] as const)
+      .filter(([providerMessageId]) => Boolean(providerMessageId))
+  )
+  const visibleMessages: DesktopChatMessage[] = []
+
+  mergedMessages.forEach((message) => {
+    if (String(message.messageType || '').toLowerCase() === 'reaction' && message.reactionEmoji) {
+      const target = (message.reactionTargetMessageId ? byLocalId.get(message.reactionTargetMessageId) : null) ||
+        (message.reactionTargetProviderMessageId ? byProviderId.get(message.reactionTargetProviderMessageId) : null)
+
+      if (target) {
+        const nextReactions = [
+          ...(target.reactions || []).filter((reaction) => reaction.id !== message.id),
+          { id: message.id, emoji: message.reactionEmoji, direction: message.direction }
+        ]
+        const updatedTarget = { ...target, reactions: nextReactions }
+        byLocalId.set(updatedTarget.id, updatedTarget)
+        const providerMessageId = getMessageProviderMessageId(updatedTarget)
+        if (providerMessageId) byProviderId.set(providerMessageId, updatedTarget)
+        return
+      }
+    }
+
+    visibleMessages.push(message)
+  })
+
+  return visibleMessages
+    .map((message) => byLocalId.get(message.id) || message)
     .sort((left, right) => getMessageTimeValue(left.date) - getMessageTimeValue(right.date))
 }
 
@@ -1323,12 +1379,18 @@ function getJourneyEventSignature(event: JourneyEvent) {
     data.whatsapp_message_id,
     data.meta_social_message_id,
     data.meta_message_id,
+    data.provider_message_id,
     data.email_message_id,
     data.smtp_message_id,
     data.appointment_id,
     data.id,
     data.message_text,
     data.message_type,
+    data.reply_to_message_id,
+    data.reply_to_provider_message_id,
+    data.reaction_emoji,
+    data.reaction_target_message_id,
+    data.reaction_target_provider_message_id,
     data.direction,
     data.status,
     data.error_message,
@@ -2110,6 +2172,15 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const direction = normalizeWhatsAppBusinessDirection(data.direction || data.message_direction || data.from_type)
   const date = pickMessageTimestamp(data, ['date', 'timestamp', 'created_at', 'createdAt', 'message_timestamp', 'messageTimestamp']) || event.date
   const status = String(data.status || data.message_status || '').trim()
+  const providerMessageId = String(data.provider_message_id || data.providerMessageId || data.whatsapp_message_id || data.meta_message_id || '').trim()
+  const replyToProviderMessageId = String(data.reply_to_provider_message_id || data.replyToProviderMessageId || '').trim()
+  const reactionEmoji = String(data.reaction_emoji || data.reactionEmoji || (normalizedMessageType === 'reaction' ? text : '')).trim()
+  const reactionTargetMessageId = String(data.reaction_target_message_id || data.reactionTargetMessageId || '').trim()
+  const reactionTargetProviderMessageId = String(
+    data.reaction_target_provider_message_id ||
+    data.reactionTargetProviderMessageId ||
+    (normalizedMessageType === 'reaction' ? replyToProviderMessageId : '')
+  ).trim()
   const postDeleted = isTruthyDataFlag(data.post_deleted || data.postDeleted || data.post_removed || data.postRemoved || data.post_unavailable || data.postUnavailable)
   const rawEmailHtml = event.type === 'email_message'
     ? String(data.html_body || data.htmlBody || '').trim()
@@ -2149,12 +2220,14 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
       data.id ||
       `${event.type}-${event.date}-${index}`
     ),
+    providerMessageId: providerMessageId || undefined,
     text: effectiveText || fallbackText,
     subject,
     date,
     direction,
     status,
     errorReason,
+    messageType,
     sentAt: pickMessageTimestamp(data, ['sent_at', 'sentAt']),
     deliveredAt: pickMessageTimestamp(data, ['delivered_at', 'deliveredAt']),
     readAt: pickMessageTimestamp(data, ['read_at', 'readAt']),
@@ -2162,6 +2235,11 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     businessPhoneNumberId: String(data.business_phone_number_id || data.businessPhoneNumberId || '').trim(),
     transport,
     routingReason: String(data.routing_reason || data.routingReason || data.fallbackReason || '').trim(),
+    replyToMessageId: String(data.reply_to_message_id || data.replyToMessageId || '').trim() || undefined,
+    replyToProviderMessageId: replyToProviderMessageId || undefined,
+    reactionEmoji: reactionEmoji || undefined,
+    reactionTargetMessageId: reactionTargetMessageId || undefined,
+    reactionTargetProviderMessageId: reactionTargetProviderMessageId || undefined,
     isComment: isCommentMessageType(messageType),
     commentReplyMode: normalizedMessageType === 'comment_reply_public' ? 'public' : normalizedMessageType === 'comment_reply_private' ? 'private' : undefined,
     commentId: String(data.comment_id || data.commentId || '').trim() || undefined,
@@ -2518,6 +2596,32 @@ function desktopMessageCanOpenWhatsAppReplyWindow(message: DesktopChatMessage) {
   return !transport || ['api', 'qr', 'whatsapp', 'whatsapp_api', 'whatsapp_qr', 'baileys', 'bailey'].includes(transport)
 }
 
+function getMetaPlatformForDesktopMessage(message: DesktopChatMessage, contact?: DesktopChatContact | Contact | null): 'messenger' | 'instagram' | null {
+  const messageProbe = normalizeFilterProbe([
+    message.transport,
+    message.commentPlatform
+  ])
+  if (messageProbe.includes('instagram') || messageProbe.includes('ig_')) return 'instagram'
+  if (messageProbe.includes('messenger') || messageProbe.includes('facebook_messenger')) return 'messenger'
+  if (messageProbe.includes('facebook') && !message.isComment) return 'messenger'
+  if (messageProbe && !messageProbe.includes('meta') && !messageProbe.includes('social') && messageProbe !== 'dm') return null
+
+  const contactRecord = (contact || {}) as Record<string, unknown>
+  const contactProbe = normalizeFilterProbe([
+    getRecordValue(contactRecord, 'lastMessageChannel'),
+    getRecordValue(contactRecord, 'lastMessageTransport')
+  ])
+  if (contactProbe.includes('instagram') || contactProbe.includes('ig_')) return 'instagram'
+  if (contactProbe.includes('messenger') || contactProbe.includes('facebook_messenger')) return 'messenger'
+  if (contactProbe.includes('facebook') && !message.isComment) return 'messenger'
+  return null
+}
+
+function isHighLevelMessageTransport(message: DesktopChatMessage) {
+  const transport = String(message.transport || '').trim().toLowerCase()
+  return transport.startsWith('ghl_') || transport === 'sms_qr'
+}
+
 function getMessageBusinessPhone(message: DesktopChatMessage, status?: WhatsAppApiStatus | null) {
   const phones = status?.phoneNumbers || []
   if (message.businessPhoneNumberId) {
@@ -2700,6 +2804,7 @@ export const DesktopChat: React.FC = () => {
   const [, setVoiceElapsedMs] = useState(0)
   const [playingAudioId, setPlayingAudioId] = useState('')
   const [messageAudioProgress, setMessageAudioProgress] = useState<Record<string, { currentTime: number; duration: number }>>({})
+  const [reactingMessageId, setReactingMessageId] = useState<string | null>(null)
   const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null)
   const [highLevelConnected, setHighLevelConnected] = useState(false)
   const [metaMessengerConnected, setMetaMessengerConnected] = useState(false)
@@ -6189,6 +6294,87 @@ export const DesktopChat: React.FC = () => {
 	    }
 	  }
 
+  const handleReactToMessage = async (message: DesktopChatMessage, emoji: string) => {
+    if (!activeContact || reactingMessageId === message.id) return
+    if (message.direction !== 'inbound') {
+      showToast('info', 'Solo mensajes recibidos', 'Las APIs oficiales reaccionan a mensajes que te mandó el contacto.')
+      return
+    }
+    if (message.isComment || message.email || isHighLevelMessageTransport(message)) {
+      showToast('warning', 'Canal sin reacción nativa', 'Ese canal no expone una reacción real al globo desde su API.')
+      return
+    }
+
+    const providerMessageId = getMessageProviderMessageId(message)
+    if (!providerMessageId) {
+      showToast('warning', 'Falta ID del mensaje', 'Este mensaje no tiene el ID remoto necesario para reaccionar.')
+      return
+    }
+
+    const metaPlatform = getMetaPlatformForDesktopMessage(message, activeContact)
+    if (metaPlatform && emoji !== '❤️') {
+      showToast('warning', 'Meta solo permite corazón', 'Messenger e Instagram solo aceptan corazón como reacción desde la API.')
+      return
+    }
+
+    const optimisticReactionId = `desktop-reaction-${Date.now()}`
+    setReactingMessageId(message.id)
+    setMessages((current) => current.map((item) => (
+      item.id === message.id
+        ? {
+            ...item,
+            reactions: [
+              ...(item.reactions || []).filter((reaction) => reaction.direction !== 'outbound'),
+              { id: optimisticReactionId, emoji, direction: 'outbound' as const }
+            ]
+          }
+        : item
+    )))
+
+    try {
+      if (metaPlatform) {
+        await whatsappApiService.sendMetaSocialReaction({
+          contactId: activeContact.id,
+          platform: metaPlatform,
+          emoji,
+          targetMessageId: message.id,
+          targetProviderMessageId: providerMessageId,
+          externalId: optimisticReactionId
+        })
+      } else {
+        if (!activeContact.phone) throw new Error('Guarda el teléfono del contacto antes de reaccionar.')
+        const fromPhone = message.businessPhone || selectedBusinessPhoneValue
+        if (!fromPhone) throw new Error('Selecciona el número de WhatsApp del negocio.')
+        await whatsappApiService.sendReaction({
+          to: activeContact.phone,
+          from: fromPhone,
+          contactId: activeContact.id,
+          emoji,
+          targetMessageId: message.id,
+          targetProviderMessageId: providerMessageId,
+          externalId: optimisticReactionId,
+          transport: isQrTransport(message.transport) ? 'qr' : 'api',
+          phoneNumberId: message.businessPhoneNumberId || selectedBusinessPhone?.id || undefined,
+          messageOrigin: 'manual_chat'
+        })
+      }
+
+      await Promise.all([
+        loadConversation(activeContact.id, { silent: true, useCache: false }),
+        loadChats({ silent: true })
+      ])
+    } catch (error) {
+      setMessages((current) => current.map((item) => (
+        item.id === message.id
+          ? { ...item, reactions: (item.reactions || []).filter((reaction) => reaction.id !== optimisticReactionId) }
+          : item
+      )))
+      showToast('error', 'No se pudo reaccionar', getErrorMessage(error, 'Intenta reaccionar otra vez.'))
+    } finally {
+      setReactingMessageId((current) => (current === message.id ? null : current))
+    }
+  }
+
   const handleManualAgentSendDecision = async (action: ManualAgentInterruptionAction) => {
     if (!manualAgentSendPrompt || !activeContact?.id) return false
     if (manualAgentSendPrompt.contactId !== activeContact.id) {
@@ -6760,6 +6946,53 @@ export const DesktopChat: React.FC = () => {
       showToast('error', 'No se pudo reproducir el audio', 'Intenta abrirlo otra vez.')
     }
   }, [showToast])
+
+  const canReactToMessage = (message: DesktopChatMessage) => (
+    message.direction === 'inbound' &&
+    !message.isComment &&
+    !message.email &&
+    !isHighLevelMessageTransport(message) &&
+    Boolean(getMessageProviderMessageId(message))
+  )
+
+  const renderMessageReactions = (message: DesktopChatMessage) => {
+    if (!message.reactions?.length) return null
+    const reactions = message.reactions.slice(-3)
+    return (
+      <span className={styles.messageReactions} aria-label="Reacciones">
+        {reactions.map((reaction) => (
+          <span key={reaction.id} className={styles.messageReaction}>
+            {reaction.emoji}
+          </span>
+        ))}
+      </span>
+    )
+  }
+
+  const renderMessageReactionPicker = (message: DesktopChatMessage) => {
+    if (!canReactToMessage(message)) return null
+
+    const metaPlatform = getMetaPlatformForDesktopMessage(message, activeContact)
+    const emojis = metaPlatform ? ['❤️'] : MESSAGE_REACTION_EMOJIS
+    const reacting = reactingMessageId === message.id
+
+    return (
+      <span className={styles.messageReactionPicker} aria-label="Reaccionar al mensaje" aria-busy={reacting}>
+        {emojis.map((emoji) => (
+          <button
+            key={emoji}
+            type="button"
+            className={styles.messageReactionButton}
+            onClick={() => { void handleReactToMessage(message, emoji) }}
+            disabled={reacting}
+            aria-label={`Reaccionar con ${emoji}`}
+          >
+            {emoji}
+          </button>
+        ))}
+      </span>
+    )
+  }
 
   const renderScheduledMessageActions = (message: DesktopChatMessage) => {
     if (!isMessageScheduled(message)) return null
@@ -7635,90 +7868,94 @@ export const DesktopChat: React.FC = () => {
                           >
                             {renderMessageErrorBadge(message)}
                             <div className={styles.messageStack}>
-                              <article
-                                className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
-                              >
-                                {message.isComment ? (
-                                  <div className={styles.commentCard}>
-                                    <span className={styles.commentContextLabel}>
-                                      <MessageCircle size={13} aria-hidden="true" />
-                                      {message.commentReplyMode === 'public'
-                                        ? 'Respuesta pública al comentario'
-                                        : message.commentReplyMode === 'private'
-                                          ? 'Respuesta por privado'
-                                          : 'Comentó en tu publicación'}
-                                    </span>
-                                    {message.commentPost ? (
-                                      (() => {
-                                        const visiblePostMessage = message.commentPost.message && !(message.commentPost.deleted && message.commentPost.message === 'Publicación eliminada')
-                                          ? message.commentPost.message
-                                          : ''
-                                        const postInner = (
-                                          <>
-                                            {message.commentPost.imageUrl ? (
-                                              <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
-                                            ) : (
-                                              <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
-                                            )}
-                                            <span className={styles.commentPostMeta}>
-                                              <span className={styles.commentPostKind}>{message.commentPost.deleted ? 'Publicación eliminada' : 'Publicación'}</span>
-                                              {visiblePostMessage ? (
-                                                <span className={styles.commentPostText}>{visiblePostMessage}</span>
-                                              ) : (
-                                                <span className={styles.commentPostTextMuted}>{message.commentPost.deleted ? 'Comentario conservado en Ristak' : 'Ver publicación'}</span>
-                                              )}
-                                            </span>
-                                            {message.commentPost.permalink ? (
-                                              <ExternalLink size={14} className={styles.commentPostExternal} aria-hidden="true" />
-                                            ) : null}
-                                          </>
-                                        )
-                                        return message.commentPost.permalink ? (
-                                          <a className={styles.commentPostChip} href={message.commentPost.permalink} target="_blank" rel="noopener noreferrer">
-                                            {postInner}
-                                          </a>
-                                        ) : (
-                                          <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
-                                            {postInner}
-                                          </div>
-                                        )
-                                      })()
-                                    ) : null}
-                                    {message.text ? <WhatsAppFormattedText text={message.text} className={styles.commentBody} /> : null}
-                                    {renderMessageMeta(message, routingDetails.label)}
-                                    {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
-                                      <button
-                                        type="button"
-                                        className={styles.commentReplyButton}
-                                        onClick={() => setCommentReplyTarget({
-                                          messageId: message.id,
-                                          commentId: message.commentId as string,
-                                          platform: message.commentPlatform || 'messenger',
-                                          preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
-                                        })}
-                                      >
+                              <div className={styles.messageBubbleWrap}>
+                                <article
+                                  className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
+                                >
+                                  {message.isComment ? (
+                                    <div className={styles.commentCard}>
+                                      <span className={styles.commentContextLabel}>
                                         <MessageCircle size={13} aria-hidden="true" />
-                                        Responder en la publicación
-                                      </button>
-                                    ) : null}
-                                  </div>
-                                ) : (
-                                  <>
-                                    {message.email ? (
-                                      <EmailChatMessageBubble email={message.email} />
-                                    ) : (
-                                      <>
-                                        {message.location ? renderLocationMessage(message) : null}
-                                        {renderAttachment(message)}
-                                        {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
-                                        {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}
-                                      </>
-                                    )}
-                                  </>
-                                )}
-                                {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
-                                {renderScheduledMessageActions(message)}
-                              </article>
+                                        {message.commentReplyMode === 'public'
+                                          ? 'Respuesta pública al comentario'
+                                          : message.commentReplyMode === 'private'
+                                            ? 'Respuesta por privado'
+                                            : 'Comentó en tu publicación'}
+                                      </span>
+                                      {message.commentPost ? (
+                                        (() => {
+                                          const visiblePostMessage = message.commentPost.message && !(message.commentPost.deleted && message.commentPost.message === 'Publicación eliminada')
+                                            ? message.commentPost.message
+                                            : ''
+                                          const postInner = (
+                                            <>
+                                              {message.commentPost.imageUrl ? (
+                                                <img src={message.commentPost.imageUrl} alt="" className={styles.commentPostThumb} loading="lazy" />
+                                              ) : (
+                                                <span className={styles.commentPostThumbPlaceholder}><ImageIcon size={30} aria-hidden="true" /></span>
+                                              )}
+                                              <span className={styles.commentPostMeta}>
+                                                <span className={styles.commentPostKind}>{message.commentPost.deleted ? 'Publicación eliminada' : 'Publicación'}</span>
+                                                {visiblePostMessage ? (
+                                                  <span className={styles.commentPostText}>{visiblePostMessage}</span>
+                                                ) : (
+                                                  <span className={styles.commentPostTextMuted}>{message.commentPost.deleted ? 'Comentario conservado en Ristak' : 'Ver publicación'}</span>
+                                                )}
+                                              </span>
+                                              {message.commentPost.permalink ? (
+                                                <ExternalLink size={14} className={styles.commentPostExternal} aria-hidden="true" />
+                                              ) : null}
+                                            </>
+                                          )
+                                          return message.commentPost.permalink ? (
+                                            <a className={styles.commentPostChip} href={message.commentPost.permalink} target="_blank" rel="noopener noreferrer">
+                                              {postInner}
+                                            </a>
+                                          ) : (
+                                            <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
+                                              {postInner}
+                                            </div>
+                                          )
+                                        })()
+                                      ) : null}
+                                      {message.text ? <WhatsAppFormattedText text={message.text} className={styles.commentBody} /> : null}
+                                      {renderMessageMeta(message, routingDetails.label)}
+                                      {message.direction === 'inbound' && !message.commentReplyMode && message.commentId ? (
+                                        <button
+                                          type="button"
+                                          className={styles.commentReplyButton}
+                                          onClick={() => setCommentReplyTarget({
+                                            messageId: message.id,
+                                            commentId: message.commentId as string,
+                                            platform: message.commentPlatform || 'messenger',
+                                            preview: String(message.text || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+                                          })}
+                                        >
+                                          <MessageCircle size={13} aria-hidden="true" />
+                                          Responder en la publicación
+                                        </button>
+                                      ) : null}
+                                    </div>
+                                  ) : (
+                                    <>
+                                      {message.email ? (
+                                        <EmailChatMessageBubble email={message.email} />
+                                      ) : (
+                                        <>
+                                          {message.location ? renderLocationMessage(message) : null}
+                                          {renderAttachment(message)}
+                                          {message.subject ? <strong className={styles.emailMessageSubject}>{message.subject}</strong> : null}
+                                          {message.text ? <WhatsAppFormattedText text={message.text} className={styles.messageText} /> : null}
+                                        </>
+                                      )}
+                                    </>
+                                  )}
+                                  {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
+                                  {renderScheduledMessageActions(message)}
+                                </article>
+                                {renderMessageReactionPicker(message)}
+                              </div>
+                              {renderMessageReactions(message)}
                               {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}
                               {!message.isComment ? renderMessageMeta(message, routingDetails.label) : null}
                             </div>
