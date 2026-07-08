@@ -1691,11 +1691,30 @@ function buildImportedPageQueryHref(pageId = '', search = '', hash = '') {
   return `?${params.toString()}${hash || ''}`
 }
 
+function buildImportedPageHref(pageId = '', search = '', hash = '', options = {}) {
+  const cleanPageId = cleanString(pageId)
+  if (!cleanPageId) return hash || '#'
+  if (options?.linkStyle === 'path' && options?.site) {
+    return `${buildPublicPageRoutePath(options.site, cleanPageId)}${search || ''}${hash || ''}`
+  }
+  return buildImportedPageQueryHref(cleanPageId, search, hash)
+}
+
 function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availablePaths, options = {}) {
   const raw = String(value || '')
   if (isImportedExternalReference(raw)) return raw
 
   const { pathname, search, hash } = splitImportedUrlReference(raw)
+  if (options?.preferPageHref && options?.site) {
+    const params = new URLSearchParams(String(search || '').replace(/^\?/, ''))
+    const queryPageId = cleanString(params.get('page'))
+    const queryPageExists = queryPageId && normalizeSitePages(options.site).some(page => page.id === queryPageId)
+    if (queryPageExists) {
+      params.delete('page')
+      const nextSearch = params.toString() ? `?${params.toString()}` : ''
+      return buildImportedPageHref(queryPageId, nextSearch, hash, options)
+    }
+  }
   const resolvedPath = resolveImportedRelativeReference(pathname, currentAssetPath)
   const publicAssetPath = getImportedAssetPathFromPublicUrl(pathname, siteId)
   if (!resolvedPath && !publicAssetPath) return raw
@@ -1714,7 +1733,7 @@ function rewriteImportedReferenceValue(value, currentAssetPath, siteId, availabl
 
   const pageIdByAssetPath = options?.pageIdByAssetPath instanceof Map ? options.pageIdByAssetPath : null
   if (options?.preferPageHref && pageIdByAssetPath?.has(assetPath)) {
-    return buildImportedPageQueryHref(pageIdByAssetPath.get(assetPath), search, hash)
+    return buildImportedPageHref(pageIdByAssetPath.get(assetPath), search, hash, options)
   }
 
   return `${getImportedAssetPublicUrl(siteId, assetPath)}${search}${hash}`
@@ -1787,9 +1806,11 @@ async function getImportedSiteAvailableAssetPaths(siteId) {
   return new Set(rows.map(row => normalizeImportedAssetPath(row.asset_path)).filter(Boolean))
 }
 
-function rewriteImportedHtmlForRender(site, html = '', currentAssetPath = '', availablePaths = new Set()) {
+function rewriteImportedHtmlForRender(site, html = '', currentAssetPath = '', availablePaths = new Set(), options = {}) {
   const pages = normalizeSitePages(site)
   return rewriteImportedHtmlReferences(html, currentAssetPath, site.id, availablePaths, {
+    site,
+    linkStyle: options.linkStyle || 'query',
     pageIdByAssetPath: buildImportedPageIdByAssetPath(pages)
   })
 }
@@ -8987,11 +9008,16 @@ function normalizeGeneratedImportedPages(rawPages = [], fallback = {}) {
     .filter(Boolean)
 }
 
+function getImportedPageDefaultSlug(index = 0) {
+  return `rstk${String(index + 1).padStart(2, '0')}`
+}
+
 function makeImportedZipPage(assetPath, index = 0, originalTitle = '', pageId = '') {
   const title = getImportedPageDisplayTitle(originalTitle, index)
   return {
     id: cleanString(pageId) || (index === 0 ? DEFAULT_FUNNEL_PAGE_ID : `page-${index + 1}`),
     title,
+    slug: getImportedPageDefaultSlug(index),
     sortOrder: index,
     importedAssetPath: normalizeImportedAssetPath(assetPath),
     ...(cleanString(originalTitle) ? { importedOriginalTitle: cleanString(originalTitle) } : {}),
@@ -11691,7 +11717,7 @@ async function getConfiguredDefaultPublicRoute({ clearMissing = false, domainRec
     : cleanString(await getAppConfig(SITES_PUBLIC_DEFAULT_ROUTE_PAGE_CONFIG_KEY))
   if (!configuredPageId) return { site, pageId: '' }
 
-  if (site.siteType !== 'landing_page' || isImportedHtmlSite(site)) {
+  if (site.siteType !== 'landing_page') {
     if (clearMissing) {
       if (useDomainRecord) {
         await db.run(`
@@ -11884,7 +11910,7 @@ async function resolvePublicDefaultRouteTarget(siteIdValue, pageIdValue = '') {
   }
 
   if (pageId) {
-    if (site.siteType !== 'landing_page' || isImportedHtmlSite(site)) {
+    if (site.siteType !== 'landing_page') {
       const error = new Error('Solo las landings ruteables pueden usar una página como ruta predeterminada')
       error.status = 400
       throw error
@@ -12481,7 +12507,7 @@ async function findSitePageByRoutePath(pathValue) {
 
   for (const row of rows) {
     const site = mapSite(row)
-    if (!site || isImportedHtmlSite(site)) continue
+    if (!site) continue
     const page = resolvePageByPathSegments(site, segments)
     if (page) return { site, pageId: page.id, pagePath: segments }
   }
@@ -21396,16 +21422,20 @@ function buildImportedFormCaptureScript(site, imported, { pageId = DEFAULT_FUNNE
   </script>`
 }
 
-function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID } = {}) {
-  const pages = normalizeSitePages(site).map(page => ({
+function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID, linkStyle = 'query' } = {}) {
+  const pages = normalizeSitePages(site)
+  const pageList = pages.map(page => ({
     id: page.id,
     title: page.title || page.id
   }))
+  const pageHrefs = Object.fromEntries(pages.map(page => [page.id, buildPublicPageRoutePath(site, page.id)]))
 
   return `
   <script>
     (() => {
-      const PAGES = ${scriptJson(pages)};
+      const PAGES = ${scriptJson(pageList)};
+      const PAGE_HREFS = ${scriptJson(pageHrefs)};
+      const LINK_STYLE = ${scriptJson(linkStyle)};
       const CURRENT_PAGE_ID = ${scriptJson(pageId || DEFAULT_FUNNEL_PAGE_ID)};
       // Conservar los params de la URL original (UTMs, fbclid, gclid, etc.)
       // en cualquier navegación o redirect disparado por acciones de botones.
@@ -21414,6 +21444,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
       );
       const getPageHref = (targetPageId) => {
         if (!targetPageId) return '#';
+        if (LINK_STYLE === 'path' && PAGE_HREFS[targetPageId]) return preserveUrl(PAGE_HREFS[targetPageId]);
         const nextUrl = new URL(window.location.href);
         nextUrl.searchParams.set('page', targetPageId);
         return preserveUrl(nextUrl.toString());
@@ -21645,7 +21676,7 @@ function buildImportedButtonActionScript(site, { pageId = DEFAULT_FUNNEL_PAGE_ID
   </script>`
 }
 
-async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '', preview = false } = {}) {
+async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabled = true, pageId = DEFAULT_FUNNEL_PAGE_ID, pageTitle = '', preview = false, linkStyle = 'query' } = {}) {
   const activePageId = cleanString(pageId) || DEFAULT_FUNNEL_PAGE_ID
   const activePage = getSitePage(site, activePageId) || { id: activePageId, title: pageTitle || site.title || site.name }
   const metaPixel = await buildMetaPixelSnippet(site, trackingEnabled, {
@@ -21666,7 +21697,7 @@ async function buildImportedHtmlRuntimeInjection(site, imported, { trackingEnabl
     })
     : ''
   const videoTrackingScript = trackingEnabled ? buildVideoPlaybackTrackingScript({ enabled: true }) : ''
-  const buttonActionScript = buildImportedButtonActionScript(site, { pageId: activePageId })
+  const buttonActionScript = buildImportedButtonActionScript(site, { pageId: activePageId, linkStyle })
   const captureScript = buildImportedFormCaptureScript(site, imported, { pageId: activePageId })
   const popupHtml = renderSitePopup(site)
   // El script de preservación de params va primero: define los helpers globales
@@ -21691,10 +21722,14 @@ function injectImportedHtmlRuntime(html = '', injection = '') {
   return `${html}${injection}`
 }
 
-function getImportedRenderPage(site, pageId = '') {
+function getImportedRenderPage(site, pageId = '', pagePath = []) {
   const pages = normalizeSitePages(site)
   const requestedPageId = cleanString(pageId)
-  return pages.find(page => page.id === requestedPageId) || pages[0] || null
+  const requestedPage = pages.find(page => page.id === requestedPageId)
+  if (requestedPage) return requestedPage
+
+  const pathPage = resolvePageByPathSegments(site, pagePath)
+  return pathPage || pages[0] || null
 }
 
 function getImportedRenderPageByAssetPath(site, assetPath = '') {
@@ -22209,14 +22244,14 @@ function renderImportedNativeElementWrapper(attrs = {}, slot = {}, content = '',
   })}>${content}</div>`
 }
 
-function buildImportedNativeRenderContext(site, { pageId = DEFAULT_FUNNEL_PAGE_ID, trackingEnabled = true, preview = false } = {}) {
+function buildImportedNativeRenderContext(site, { pageId = DEFAULT_FUNNEL_PAGE_ID, trackingEnabled = true, preview = false, linkStyle = 'query' } = {}) {
   return {
     site,
     pages: normalizeSitePages(site),
     pageId,
     noTrack: !trackingEnabled || preview,
     preview,
-    linkStyle: 'query'
+    linkStyle
   }
 }
 
@@ -22469,7 +22504,7 @@ function buildImportedNativeElementRuntimeInjection(runtimeState = {}) {
   ].filter(Boolean).join('')
 }
 
-async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled = true, preview = false } = {}) {
+async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], trackingEnabled = true, preview = false } = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
     return renderDomainErrorHtml({
@@ -22478,9 +22513,10 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     })
   }
 
-  const activePage = getImportedRenderPage(site, pageId)
+  const activePage = getImportedRenderPage(site, pageId, pagePath)
   const importedAssetPath = normalizeImportedAssetPath(activePage?.importedAssetPath || activePage?.imported_asset_path)
   const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
+  const linkStyle = preview ? 'query' : 'path'
   let html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
 
   if (importedAssetPath) {
@@ -22489,7 +22525,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
       html = asset.content.toString('utf8')
     }
   }
-  html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths)
+  html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths, { linkStyle })
   site = {
     ...site,
     blocks: await hydrateEmbeddedForms(await listSiteBlocks(site.id))
@@ -22502,7 +22538,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     pages: normalizeSitePages(site),
     noTrack: !trackingEnabled || preview,
     preview,
-    linkStyle: 'query',
+    linkStyle,
     videoStreamAssetsByStorageUrl: new Map(),
     videoStorageAssetsByStreamVideoId: new Map()
   }
@@ -22510,7 +22546,8 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
   const importedNativeRenderContext = buildImportedNativeRenderContext(site, {
     pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
     trackingEnabled,
-    preview
+    preview,
+    linkStyle
   })
   const importedNativeRender = await replaceImportedNativeElementSlots(
     html,
@@ -22525,7 +22562,8 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', trackingEnabled
     trackingEnabled: trackingEnabled && !preview,
     pageId: activePage?.id || DEFAULT_FUNNEL_PAGE_ID,
     pageTitle: activePage?.title || site.title || site.name,
-    preview
+    preview,
+    linkStyle
   })
   const htmlWithHeaderTracking = injectHtmlBeforeHeadClose(
     annotateImportedEditableHtml(html),
@@ -22702,7 +22740,7 @@ function renderSiteNav(site, { activePageId, linkStyle } = {}) {
 
 export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEnabled = true, preview = false } = {}) {
   if (isImportedHtmlSite(site)) {
-    return renderImportedPublicSiteHtml(site, { pageId, trackingEnabled, preview })
+    return renderImportedPublicSiteHtml(site, { pageId, pagePath, trackingEnabled, preview })
   }
 
   // Estado visual compartido (contrato editor/público): una sola función calcula

@@ -1528,13 +1528,17 @@ diseno/estilo, para no duplicar la misma decision en dos superficies.
 
 La ruta publica puede depender de dominio, slug, host o rutas internas. Cualquier
 cambio a Sites debe revisar editor, renderer publico, submissions y tracking.
-En landings ruteables, cada pagina puede tener su propia ruta publica del dominio
-sin quedar obligada a vivir debajo del slug del sitio: una pagina principal puede
-usar `/promo`, `/agenda` o cualquier slug valido, y las subpaginas usan la
-jerarquia de su pagina padre (`/promo/detalles`). Las paginas nuevas sin ruta
-manual nacen con slugs neutrales secuenciales (`/rstk01`, `/rstk02`, etc.) para
-evitar rutas automaticas tipo `/sitio-01` o colisiones entre paginas nuevas. La
-ruta legacy del sitio
+En landings ruteables, incluidas las paginas subidas como HTML importado, cada
+pagina puede tener su propia ruta publica del dominio sin quedar obligada a vivir
+debajo del slug del sitio: una pagina principal puede usar `/promo`, `/agenda` o
+cualquier slug valido. En landings nativas con modo sitio web, las subpaginas
+usan la jerarquia de su pagina padre (`/promo/detalles`); en HTML importado las
+paginas se rutean como paginas principales del archivo importado. Las paginas
+nuevas o importadas sin ruta manual nacen con slugs neutrales secuenciales
+(`/rstk01`, `/rstk02`, etc.) para evitar rutas automaticas tipo `/sitio-01` o colisiones
+entre paginas nuevas. En publicado, los links internos del HTML importado que
+apuntan a otra pagina del mismo import tambien se reescriben hacia esa ruta
+limpia en lugar de depender de `?page=`. La ruta legacy del sitio
 `/<site-slug>` se conserva por compatibilidad y abre la landing como antes. La
 opcion "Cambiar ruta" en el menu de tres puntos de cada pagina abre el editor de
 ruta de esa pagina especifica, separado de "Cambiar nombre". La

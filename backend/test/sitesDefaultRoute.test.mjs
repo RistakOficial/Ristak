@@ -3,11 +3,14 @@ import assert from 'node:assert/strict'
 
 import { db, getAppConfig, setAppConfig } from '../src/config/database.js'
 import {
+  createImportedSiteFromHtml,
   createSite,
   deleteSite,
   getSitesDomainSettings,
+  renderPublicSiteHtml,
   resolvePublicSiteForHost,
-  setSitesPublicDefaultRoute
+  setSitesPublicDefaultRoute,
+  updateSite
 } from '../src/services/sitesService.js'
 
 const DOMAIN_KEYS = {
@@ -143,6 +146,91 @@ test('public domain root can use a configured default site page route', async ()
     assert.equal(legacySiteResolution.ok, true)
     assert.equal(legacySiteResolution.site.id, site.id)
     assert.equal(legacySiteResolution.pageId, '')
+  } finally {
+    if (site) await deleteSite(site.id).catch(() => undefined)
+    await restoreDomainConfig(previousConfig)
+  }
+})
+
+test('imported HTML pages resolve clean public routes and can be domain root', async () => {
+  const previousConfig = await snapshotDomainConfig()
+  const suffix = Date.now()
+  let site
+
+  try {
+    await configureVerifiedPublicDomain()
+
+    const created = await createImportedSiteFromHtml({
+      name: `HTML importado con rutas ${suffix}`,
+      filename: `imported-routes-${suffix}.html`,
+      siteType: 'landing_page',
+      pages: [
+        {
+          title: 'Inicio importado',
+          filename: 'index.html',
+          html: '<!doctype html><html><body><main><h1>Inicio importado</h1><a href="./offer.html">Ver oferta</a></main></body></html>'
+        },
+        {
+          title: 'Oferta importada',
+          filename: 'offer.html',
+          html: '<!doctype html><html><body><main><h1>Oferta importada</h1></main></body></html>'
+        }
+      ]
+    })
+    const importedPages = created.site.theme.pages
+    const homePageId = importedPages.find(page => page.title === 'Inicio importado')?.id
+    const offerPageId = importedPages.find(page => page.title === 'Oferta importada')?.id
+    assert.ok(homePageId)
+    assert.ok(offerPageId)
+    assert.equal(importedPages.find(page => page.id === homePageId)?.slug, 'rstk01')
+    assert.equal(importedPages.find(page => page.id === offerPageId)?.slug, 'rstk02')
+
+    site = await updateSite(created.site.id, {
+      status: 'published',
+      theme: {
+        ...created.site.theme,
+        pages: importedPages.map(page => (
+          page.id === offerPageId ? { ...page, slug: 'oferta' } : page
+        ))
+      }
+    })
+
+    const pageResolution = await resolvePublicSiteForHost('example.test', { path: '/oferta' })
+    assert.equal(pageResolution.ok, true)
+    assert.equal(pageResolution.site.id, site.id)
+    assert.equal(pageResolution.pageId, offerPageId)
+
+    const pageHtml = await renderPublicSiteHtml(pageResolution.site, {
+      pageId: pageResolution.pageId,
+      pagePath: pageResolution.pagePath,
+      trackingEnabled: false
+    })
+    assert.match(pageHtml, /<h1[^>]*>Oferta importada<\/h1>/)
+    assert.doesNotMatch(pageHtml, /<h1[^>]*>Inicio importado<\/h1>/)
+
+    const homeHtml = await renderPublicSiteHtml(site, {
+      pageId: homePageId,
+      trackingEnabled: false
+    })
+    assert.match(homeHtml, /href="\/oferta"/)
+
+    const settings = await setSitesPublicDefaultRoute(site.id, offerPageId)
+    assert.equal(settings.defaultRoute.siteId, site.id)
+    assert.equal(settings.defaultRoute.pageId, offerPageId)
+    assert.equal(settings.defaultRoute.path, '/')
+    assert.equal(settings.defaultRoute.pagePath, '/oferta')
+
+    const rootResolution = await resolvePublicSiteForHost('example.test', { path: '/' })
+    assert.equal(rootResolution.ok, true)
+    assert.equal(rootResolution.site.id, site.id)
+    assert.equal(rootResolution.pageId, offerPageId)
+
+    const rootHtml = await renderPublicSiteHtml(rootResolution.site, {
+      pageId: rootResolution.pageId,
+      pagePath: rootResolution.pagePath,
+      trackingEnabled: false
+    })
+    assert.match(rootHtml, /<h1[^>]*>Oferta importada<\/h1>/)
   } finally {
     if (site) await deleteSite(site.id).catch(() => undefined)
     await restoreDomainConfig(previousConfig)

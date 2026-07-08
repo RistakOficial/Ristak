@@ -5056,6 +5056,9 @@ const MAX_WEBSITE_PAGE_DEPTH = 2 // top-level = 0, subpage = 1, sub-subpage = 2
 const getSitePageMode = (site?: PublicSite | null): 'funnel' | 'website' =>
   isLanding(site) && !isImportedHtmlSite(site) && site?.theme?.pageMode === 'website' ? 'website' : 'funnel'
 
+// Landings visuales e HTML importados comparten rutas limpias por página.
+const hasRoutableSitePages = (site?: PublicSite | null) => site?.siteType === 'landing_page'
+
 const getPageDepth = (page: SitePage | undefined, pages: SitePage[]): number => {
   if (!page) return 0
   const byId = new Map(pages.map(p => [p.id, p]))
@@ -5194,7 +5197,7 @@ const getPageSlugSegment = (page: SitePage): string =>
 const getRootPageSlugReservations = (sites: PublicSite[], currentSiteId: string) => {
   const slugs = new Set<string>()
   sites.forEach(site => {
-    if (site.id === currentSiteId || !isLanding(site) || isImportedHtmlSite(site)) return
+    if (site.id === currentSiteId || !hasRoutableSitePages(site)) return
     normalizeFunnelPages(site)
       .filter(page => !page.parentPageId)
       .forEach(page => {
@@ -10562,7 +10565,7 @@ export const Sites: React.FC = () => {
     if (!site || !hasEditablePages(site)) return
     const beforePages = normalizeFunnelPages(site)
     const orderedPages = getOrderedPagesForSite(site, nextPages)
-    const finalPages = (isLanding(site) && !isImportedHtmlSite(site)) ? ensureSitePageSlugs(site, orderedPages) : orderedPages
+    const finalPages = hasRoutableSitePages(site) ? ensureSitePageSlugs(site, orderedPages) : orderedPages
     const normalizedBeforePages = normalizePagesForSave(beforePages)
     const normalizedAfterPages = normalizePagesForSave(finalPages)
     const targetPageId = nextActivePageId || activePageId
@@ -10638,7 +10641,7 @@ export const Sites: React.FC = () => {
 
   const handleAddPage = () => {
     if (!selectedSite || !hasEditablePages(selectedSite) || !canManagePages(selectedSite)) return
-    const pageSlug = isLanding(selectedSite) && !isImportedHtmlSite(selectedSite)
+    const pageSlug = hasRoutableSitePages(selectedSite)
       ? getNextPageSlugForParent(pages, '', getPageRootSlugReservationsForSite(selectedSite))
       : undefined
     const nextPage = withConnectedMetaDefaultsForNewPage(
@@ -10994,7 +10997,7 @@ export const Sites: React.FC = () => {
     if (!selectedSite || !canManagePages(selectedSite)) return
     const cleanTitle = title.trim()
     if (!cleanTitle) return
-    const routable = isLanding(selectedSite) && !isImportedHtmlSite(selectedSite)
+    const routable = hasRoutableSitePages(selectedSite)
     const nextPages = pages.map((page, index) => {
       if (page.id !== pageId) return page
       const nextTitle = cleanTitle || `Página ${index + 1}`
@@ -11010,7 +11013,7 @@ export const Sites: React.FC = () => {
 
   const handleRenamePageSlug = (pageId: string, slug: string) => {
     if (!selectedSite || !canManagePages(selectedSite)) return
-    if (!isLanding(selectedSite) || isImportedHtmlSite(selectedSite)) return
+    if (!hasRoutableSitePages(selectedSite)) return
     const cleanSlug = normalizeRouteInput(slug)
     const nextPages = pages.map(page => page.id === pageId
       ? { ...page, slug: cleanSlug || undefined }
@@ -13166,7 +13169,7 @@ export const Sites: React.FC = () => {
       domainConfig={domainConfig}
       onOpenPageRoute={handleOpenEditorPageRoute}
       onSetDefaultPageRoute={handleSetDefaultDomainPageRoute}
-      sitePathPrefix={(isLanding(editorSite) && !isImportedHtmlSite(editorSite)) ? '/' : undefined}
+      sitePathPrefix={hasRoutableSitePages(editorSite) ? '/' : undefined}
       onPatchTheme={patchSiteTheme}
       onSaveSite={() => handleSaveSite(undefined, { silent: true })}
     />
@@ -28061,7 +28064,7 @@ const SiteSettingsPanelContent: React.FC<{
   const routePreview = `${publicDomain}/${routeValue || routePlaceholder}`
   const rootUrl = getPublicDomainRootUrl(domainConfig)
   const activePageIsOfficial = activePage ? isDefaultPublicRoutePage(site, domainConfig, activePage.id) : false
-  const canUseOfficialRootPage = isLanding(site) && !isImportedHtmlSite(site) && hasEditablePages(site) && Boolean(activePage)
+  const canUseOfficialRootPage = hasRoutableSitePages(site) && hasEditablePages(site) && Boolean(activePage)
   const antiTrackingEnabled = site.antiTrackingEnabled !== false
   const showFormSubmitMetaSettings = hasFormSubmitMetaSettings ?? (metaDetectedForms.length > 0 || isFormSite(site))
   const formSurfaces = showFormSubmitMetaSettings
@@ -41241,7 +41244,7 @@ const DomainsPanel: React.FC<DomainsPanelProps> = ({
   const selectedRootPageValue = domainConfig.defaultRoute?.siteId && domainConfig.defaultRoute?.pageId
     ? encodeDomainRootPageValue(domainConfig.defaultRoute.siteId, domainConfig.defaultRoute.pageId)
     : ''
-  const routableSites = sites.filter(site => isLanding(site) && !isImportedHtmlSite(site) && hasEditablePages(site))
+  const routableSites = sites.filter(site => hasRoutableSitePages(site) && hasEditablePages(site))
   const rootUrl = getPublicDomainRootUrl({ ...domainConfig, domain: domainInput || domainConfig.domain })
 
   return (
