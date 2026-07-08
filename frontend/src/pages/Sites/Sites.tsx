@@ -23577,7 +23577,7 @@ const ImportedHtmlReviewModal: React.FC<{
 
   return (
     <div className={styles.importReviewOverlay} role="dialog" aria-modal="true" aria-labelledby="import-review-title" data-overlay>
-      <div className={styles.importReviewDialog} data-modal>
+      <div className={styles.importReviewDialog}>
         <header className={styles.importReviewHeader}>
           <div>
             <span>Ruta de datos</span>
