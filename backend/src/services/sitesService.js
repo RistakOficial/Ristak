@@ -22404,6 +22404,8 @@ function getImportedNativeElementSlot(attrs = {}, index = 0) {
 
 function isImportedNativeElementBlock(block = {}, slot = {}) {
   const settings = block.settings || {}
+  const slotPageId = cleanString(slot.pageId || slot.page_id)
+  const blockPageId = cleanString(settings.pageId || settings.page_id)
   const expectedBlockType = slot.type === 'form'
     ? 'form_embed'
     : slot.type === 'calendar'
@@ -22417,7 +22419,8 @@ function isImportedNativeElementBlock(block = {}, slot = {}) {
     block.blockType === expectedBlockType &&
     normalizeBoolean(settings.importedHtmlNativeElement || settings.imported_html_native_element) &&
     cleanString(settings.importedHtmlNativeSlotId || settings.imported_html_native_slot_id) === cleanString(slot.id) &&
-    cleanString(settings.importedHtmlNativeType || settings.imported_html_native_type) === cleanString(slot.type)
+    cleanString(settings.importedHtmlNativeType || settings.imported_html_native_type) === cleanString(slot.type) &&
+    (!slotPageId || !blockPageId || blockPageId === slotPageId)
 }
 
 function findImportedNativeElementBlock(blocks = [], slot = {}) {
@@ -22473,7 +22476,13 @@ function buildImportedNativeRenderContext(site, {
   const pages = normalizeSitePages(site)
   const blocks = Array.isArray(site?.blocks) ? site.blocks : []
   const popupBlocks = getPopupBlocks(site)
-  const videoLookupBlocks = [...blocks, ...popupBlocks]
+  const pageScopedVideoLookupBlocks = [
+    ...blocks.filter(block => {
+      const blockPageId = cleanString(block?.settings?.pageId || block?.settings?.page_id)
+      return !pageId || !blockPageId || blockPageId === pageId
+    }),
+    ...popupBlocks
+  ]
   return {
     site,
     pages,
@@ -22484,8 +22493,8 @@ function buildImportedNativeRenderContext(site, {
     importedNativePreviewMock,
     videoStreamAssetsByStorageUrl,
     videoStorageAssetsByStreamVideoId,
-    videoActionTargetIds: collectVideoActionTargetIds(videoLookupBlocks),
-    videoActionInitialHiddenTargetIds: collectVideoActionInitialHiddenTargetIds(videoLookupBlocks)
+    videoActionTargetIds: collectVideoActionTargetIds(pageScopedVideoLookupBlocks),
+    videoActionInitialHiddenTargetIds: collectVideoActionInitialHiddenTargetIds(pageScopedVideoLookupBlocks)
   }
 }
 
@@ -22654,6 +22663,7 @@ async function replaceImportedNativeElementSlots(html = '', blocks = [], context
     const attrs = parseHtmlAttributes(attrsText)
     const slot = getImportedNativeElementSlot(attrs, index)
     if (!slot) continue
+    slot.pageId = cleanString(context.pageId || context.page_id)
     index += 1
     output += html.slice(lastIndex, match.index)
     output += await renderImportedNativeElementSlot(match[1].toLowerCase(), attrs, match[3] || '', slot, blocks, context, runtimeState)
@@ -22668,6 +22678,7 @@ async function replaceImportedNativeElementSlots(html = '', blocks = [], context
     if (cleanString(attrs['data-rstk-native-mounted']) || cleanString(attrs['data-ristak-native-mounted'])) return full
     const slot = getImportedNativeElementSlot(attrs, index)
     if (!slot) return full
+    slot.pageId = cleanString(context.pageId || context.page_id)
     index += 1
     return renderImportedNativeElementSlot(tagName.toLowerCase(), attrs, '', slot, blocks, context, runtimeState)
   })

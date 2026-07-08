@@ -1643,8 +1643,16 @@ preview con ajuste basico de tamano de letra; en el modo codigo ese cambio queda
 como borrador de HTML hasta guardar el sitio. El panel de codigo puede
 arrastrarse hasta ocultarse y queda una tira con flecha para recuperar el editor
 cuando se necesite revisar el HTML. Cuando no hay borradores de HTML sin guardar,
-la previsualizacion usa el render del backend para mostrar los elementos nativos
-ya montados tal como se veran en vivo. Para pagos, ese preview usa un snapshot temporal de la
+la previsualizacion usa el render del backend de la pagina activa para mostrar
+los elementos nativos ya montados tal como se veran en vivo; las respuestas de
+preview viejas no deben repintar otra pagina si el usuario cambio de pagina
+mientras cargaba. Los slots nativos y las acciones de video se resuelven por
+`data-rstk-native-id` + tipo + pagina, de modo que dos paginas importadas no
+compartan accidentalmente un formulario, calendario, pago, video o target con el
+mismo identificador. El inspector derecho guarda automaticamente cambios validos
+de video, calendario y pago con bajo ruido, y el boton de guardado manual sigue
+mostrando validaciones cuando falta una configuracion obligatoria. Para pagos,
+ese preview usa un snapshot temporal de la
 configuracion del inspector derecho y dibuja una maqueta de checkout con pasarela,
 monto, campos, boton, modo test y ayuda del proveedor; no monta SDKs reales ni
 intenta iniciar cobros hasta que el sitio publicado confirme el pago. Los

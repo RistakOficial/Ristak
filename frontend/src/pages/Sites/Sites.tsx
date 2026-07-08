@@ -1739,6 +1739,7 @@ type ImportedNativeElementRenderMode = 'ristak' | 'custom'
 type ImportedNativeElementSlot = {
   key: string
   id: string
+  pageId?: string
   type: ImportedNativeElementType
   renderMode: ImportedNativeElementRenderMode
   label: string
@@ -1972,10 +1973,13 @@ const getImportedNativeElementBlockSettings = (slot: ImportedNativeElementSlot, 
 
 const isImportedNativeElementBlock = (block: SiteBlock, slot: ImportedNativeElementSlot) => {
   const settings = block.settings || {}
+  const slotPageId = String(slot.pageId || '').trim()
+  const blockPageId = getSettingString(settings, 'pageId') || getSettingString(settings, 'page_id')
   return Boolean(settings.importedHtmlNativeElement) &&
     getSettingString(settings, 'importedHtmlNativeSlotId') === slot.id &&
     getSettingString(settings, 'importedHtmlNativeType') === slot.type &&
-    block.blockType === importedNativeElementBlockTypes[slot.type]
+    block.blockType === importedNativeElementBlockTypes[slot.type] &&
+    (!slotPageId || !blockPageId || blockPageId === slotPageId)
 }
 
 const findImportedNativeElementBlock = (blocks: SiteBlock[] = [], slot: ImportedNativeElementSlot) =>
@@ -19342,6 +19346,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewLoading, setPreviewLoading] = useState(true)
   const [previewError, setPreviewError] = useState('')
   const [previewVersion, setPreviewVersion] = useState(0)
+  const previewRequestIdRef = useRef(0)
+  const previewHtmlContextKeyRef = useRef('')
   const [inlineEditor, setInlineEditor] = useState<ImportedInlineEditorState | null>(null)
   const [buttonEditor, setButtonEditor] = useState<ImportedButtonEditorState | null>(null)
   const [videoEditor, setVideoEditor] = useState<ImportedVideoEditorState | null>(null)
@@ -19377,6 +19383,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [selectedImportedNativeElementKey, setSelectedImportedNativeElementKey] = useState('')
   const [importedNativeElementDrafts, setImportedNativeElementDrafts] = useState<Record<string, Record<string, unknown>>>({})
   const [importedNativeElementSavingKey, setImportedNativeElementSavingKey] = useState('')
+  const importedNativeElementDraftsRef = useRef<Record<string, Record<string, unknown>>>({})
+  const importedNativeElementAutosaveTimersRef = useRef<Record<string, number>>({})
   const importedNativeElementSiteRef = useRef(site)
   const importedPages = pages.length ? pages : [{ id: DEFAULT_FUNNEL_PAGE_ID, title: 'Página 1', sortOrder: 0 }]
   const activeImportedPage = importedPages.find(page => page.id === activePageId) || importedPages[0]
@@ -19406,13 +19414,19 @@ const ImportedHtmlEditorPanel: React.FC<{
       role: 'main_html'
     }]
   }, [activeImportedPage?.id, activeImportedPage?.title, importData])
-  const activePageCodeFile = useMemo(() => (
-    codeFiles.find(file => file.pageId && file.pageId === activeImportedPage?.id) ||
-    codeFiles.find(file => file.path && file.path === activeImportedPage?.importedAssetPath) ||
-    codeFiles.find(file => file.language === 'html') ||
-    codeFiles[0] ||
-    null
-  ), [activeImportedPage?.id, activeImportedPage?.importedAssetPath, codeFiles])
+  const activePageCodeFile = useMemo(() => {
+    const byPageId = codeFiles.find(file => file.pageId && file.pageId === activeImportedPage?.id)
+    if (byPageId) return byPageId
+    const byImportedPath = activeImportedPage?.importedAssetPath
+      ? codeFiles.find(file => file.path && file.path === activeImportedPage.importedAssetPath)
+      : null
+    if (byImportedPath) return byImportedPath
+
+    const htmlFiles = codeFiles.filter(file => file.language === 'html')
+    if (importedPages.length <= 1) return htmlFiles[0] || codeFiles[0] || null
+
+    return null
+  }, [activeImportedPage?.id, activeImportedPage?.importedAssetPath, codeFiles, importedPages.length])
   const activeCodeFile = popupCodeActive ? popupCodeFile : activePageCodeFile
   const activeCodeKey = activeCodeFile ? getImportedCodeFileKey(activeCodeFile.path) : ''
   const activeCodeValue = activeCodeFile ? codeDrafts[activeCodeKey] ?? activeCodeFile.content : ''
@@ -19422,10 +19436,15 @@ const ImportedHtmlEditorPanel: React.FC<{
   const importedNativeElementDetectionHtml = activeCodeFile?.language === 'html'
     ? activeCodeValue
     : editorPreviewHtml
-  const importedNativeElementSlots = useMemo(
-    () => detectImportedNativeElementSlots(importedNativeElementDetectionHtml),
-    [importedNativeElementDetectionHtml]
-  )
+  const importedNativeElementSlots = useMemo(() => {
+    const pageId = activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
+    return detectImportedNativeElementSlots(importedNativeElementDetectionHtml)
+      .map(slot => ({
+        ...slot,
+        pageId,
+        key: `${pageId}:${slot.key}`
+      }))
+  }, [activeImportedPage?.id, activePageId, importedNativeElementDetectionHtml])
   const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || importedNativeElementSlots[0] || null
   const guardedEditorPreviewHtml = useMemo(
     () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
@@ -19458,7 +19477,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const getImportedNativeElementDefaultSettingsForSlot = useCallback((slot: ImportedNativeElementSlot) => {
     const blockType = importedNativeElementBlockTypes[slot.type]
-    const pageId = activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
+    const pageId = slot.pageId || activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
     const payload = defaultBlockPayload(blockType, site, undefined, pageId)
     const nativeSettings = getImportedNativeElementBlockSettings(slot, pageId)
     const baseSettings = {
@@ -19484,11 +19503,12 @@ const ImportedHtmlEditorPanel: React.FC<{
     const currentSite = importedNativeElementSiteRef.current || site
     const block = findImportedNativeElementBlock(currentSite.blocks || [], slot)
     const defaults = getImportedNativeElementDefaultSettingsForSlot(slot)
+    const pageId = slot.pageId || activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID
     return {
       ...defaults,
       ...(block?.settings || {}),
-      ...(importedNativeElementDrafts[slot.key] || {}),
-      ...getImportedNativeElementBlockSettings(slot, activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID)
+      ...(importedNativeElementDraftsRef.current[slot.key] || importedNativeElementDrafts[slot.key] || {}),
+      ...getImportedNativeElementBlockSettings(slot, pageId)
     }
   }, [activeImportedPage?.id, activePageId, getImportedNativeElementDefaultSettingsForSlot, importedNativeElementDrafts, site])
 
@@ -19506,7 +19526,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
     }
     const blockType = importedNativeElementBlockTypes[slot.type]
-    const payload = defaultBlockPayload(blockType, currentSite, undefined, activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID)
+    const payload = defaultBlockPayload(blockType, currentSite, undefined, slot.pageId || activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID)
     return {
       id: `imported-native-draft-${slot.key}`,
       siteId: currentSite.id,
@@ -19524,13 +19544,15 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeImportedPage?.id, activePageId, getImportedNativeElementDraftSettings, site])
 
   const patchImportedNativeElementDraft = useCallback((slot: ImportedNativeElementSlot, patch: Record<string, unknown>) => {
-    setImportedNativeElementDrafts(current => ({
-      ...current,
+    const nextDrafts = {
+      ...importedNativeElementDraftsRef.current,
       [slot.key]: {
-        ...(current[slot.key] || {}),
+        ...(importedNativeElementDraftsRef.current[slot.key] || {}),
         ...patch
       }
-    }))
+    }
+    importedNativeElementDraftsRef.current = nextDrafts
+    setImportedNativeElementDrafts(nextDrafts)
   }, [])
 
   const validateImportedNativeElementSlotSettings = useCallback((slot: ImportedNativeElementSlot, settings: Record<string, unknown>) => {
@@ -19549,7 +19571,23 @@ const ImportedHtmlEditorPanel: React.FC<{
     return ''
   }, [accountCurrency])
 
-  const saveImportedNativeElementSlot = useCallback(async (slot: ImportedNativeElementSlot) => {
+  const saveImportedNativeElementSlot = useCallback(async (
+    slot: ImportedNativeElementSlot,
+    options: {
+      notify?: boolean
+      silentValidation?: boolean
+      showSaving?: boolean
+      clearDraft?: boolean
+      refreshPreview?: boolean
+    } = {}
+  ) => {
+    const {
+      notify = true,
+      silentValidation = false,
+      showSaving = true,
+      clearDraft = true,
+      refreshPreview = true
+    } = options
     const currentSite = importedNativeElementSiteRef.current || site
     const existing = findImportedNativeElementBlock(currentSite.blocks || [], slot)
     const blockType = importedNativeElementBlockTypes[slot.type]
@@ -19561,11 +19599,11 @@ const ImportedHtmlEditorPanel: React.FC<{
         : ''
     const validationError = validateImportedNativeElementSlotSettings(slot, settings)
     if (validationError) {
-      showToast('warning', 'Falta configuración', validationError)
+      if (notify && !silentValidation) showToast('warning', 'Falta configuración', validationError)
       return
     }
 
-    setImportedNativeElementSavingKey(slot.key)
+    if (showSaving) setImportedNativeElementSavingKey(slot.key)
     try {
       const saved = existing
         ? await sitesService.updateBlock(currentSite.id, existing.id, {
@@ -19574,7 +19612,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           settings
         })
         : await sitesService.createBlock(currentSite.id, {
-          ...defaultBlockPayload(blockType, currentSite, undefined, activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID),
+          ...defaultBlockPayload(blockType, currentSite, undefined, slot.pageId || activeImportedPage?.id || activePageId || DEFAULT_FUNNEL_PAGE_ID),
           label: slot.label || importedNativeElementTypeLabels[slot.type],
           content,
           settings
@@ -19582,30 +19620,55 @@ const ImportedHtmlEditorPanel: React.FC<{
       const normalized = normalizeSiteForEditor(saved)
       importedNativeElementSiteRef.current = normalized
       onPatchSite(normalized)
-      setImportedNativeElementDrafts(current => {
-        const next = { ...current }
-        delete next[slot.key]
-        return next
-      })
-      try {
-        const html = await sitesService.getPreviewHtml(normalized.id, activeImportedPage?.id, {
-          test: true,
-          draftSite: normalized
+      if (clearDraft) {
+        setImportedNativeElementDrafts(current => {
+          const next = { ...current }
+          delete next[slot.key]
+          importedNativeElementDraftsRef.current = next
+          return next
         })
-        setPreviewHtml(html)
-        setPreviewError('')
-        setPreviewVersion(current => current + 1)
-      } catch {
-        // La configuración ya quedó guardada; si el preview falla, el próximo refresh
-        // o cambio de página lo vuelve a pedir al backend.
       }
-      showToast('success', 'Elemento Ristak guardado', `${importedNativeElementTypeLabels[slot.type]} conectado con el HTML importado.`)
+      if (refreshPreview) {
+        try {
+          const html = await sitesService.getPreviewHtml(normalized.id, activeImportedPage?.id, {
+            test: true,
+            draftSite: normalized
+          })
+          setPreviewHtml(html)
+          setPreviewError('')
+          setPreviewVersion(current => current + 1)
+        } catch {
+          // La configuración ya quedó guardada; si el preview falla, el próximo refresh
+          // o cambio de página lo vuelve a pedir al backend.
+        }
+      }
+      if (notify) showToast('success', 'Elemento Ristak guardado', `${importedNativeElementTypeLabels[slot.type]} conectado con el HTML importado.`)
     } catch (error) {
-      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Revisa la configuración e intenta otra vez.')
+      if (notify) showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'Revisa la configuración e intenta otra vez.')
     } finally {
-      setImportedNativeElementSavingKey('')
+      if (showSaving) setImportedNativeElementSavingKey('')
     }
   }, [activeImportedPage?.id, activePageId, getImportedNativeElementDraftSettings, onPatchSite, showToast, site, validateImportedNativeElementSlotSettings])
+
+  const scheduleImportedNativeElementAutosave = useCallback((slot: ImportedNativeElementSlot) => {
+    const existingTimer = importedNativeElementAutosaveTimersRef.current[slot.key]
+    if (existingTimer) window.clearTimeout(existingTimer)
+    importedNativeElementAutosaveTimersRef.current[slot.key] = window.setTimeout(() => {
+      delete importedNativeElementAutosaveTimersRef.current[slot.key]
+      void saveImportedNativeElementSlot(slot, {
+        notify: false,
+        silentValidation: true,
+        showSaving: false,
+        clearDraft: false,
+        refreshPreview: false
+      })
+    }, 450)
+  }, [saveImportedNativeElementSlot])
+
+  useEffect(() => () => {
+    Object.values(importedNativeElementAutosaveTimersRef.current).forEach(timer => window.clearTimeout(timer))
+    importedNativeElementAutosaveTimersRef.current = {}
+  }, [])
 
   const getImportedNativeElementPreviewSite = useCallback((): PublicSite | undefined => {
     if (!importedNativeElementSlots.length) return undefined
@@ -19818,6 +19881,13 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [stopCodeAssistantProgress])
 
   const loadInlinePreview = useCallback(async () => {
+    const requestId = previewRequestIdRef.current + 1
+    previewRequestIdRef.current = requestId
+    const requestContextKey = `${site.id}:${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}:${site.updatedAt || ''}`
+    if (previewHtmlContextKeyRef.current && previewHtmlContextKeyRef.current !== requestContextKey) {
+      setPreviewHtml('')
+      setPreviewVersion(current => current + 1)
+    }
     setPreviewLoading(true)
     setPreviewError('')
     try {
@@ -19825,13 +19895,16 @@ const ImportedHtmlEditorPanel: React.FC<{
         test: true,
         draftSite: getImportedNativeElementPreviewSite()
       })
+      if (previewRequestIdRef.current !== requestId) return
+      previewHtmlContextKeyRef.current = requestContextKey
       setPreviewHtml(html)
       setPreviewVersion(current => current + 1)
     } catch (error) {
+      if (previewRequestIdRef.current !== requestId) return
       setPreviewHtml('')
       setPreviewError(error instanceof Error ? error.message : 'No se pudo cargar la vista previa')
     } finally {
-      setPreviewLoading(false)
+      if (previewRequestIdRef.current === requestId) setPreviewLoading(false)
     }
   }, [activeImportedPage?.id, getImportedNativeElementPreviewSite, site.id, site.updatedAt])
 
@@ -23013,23 +23086,36 @@ const ImportedHtmlEditorPanel: React.FC<{
 
     const patchSelectedVideoSettings = (patch: Record<string, unknown>) => {
       if (!selectedSlot) return
-      patchImportedNativeElementDraft(selectedSlot, patch)
+      const currentSettings = draftBlock?.settings || {}
+      const nextMediaUrl = typeof patch.mediaUrl === 'string'
+        ? patch.mediaUrl
+        : getSettingString(currentSettings, 'mediaUrl')
+      patchImportedNativeElementDraft(selectedSlot, cleanImportedVideoSettings({
+        ...currentSettings,
+        ...patch
+      }, nextMediaUrl))
     }
 
     const patchSelectedVideoBlock = (patch: Partial<SiteBlock>) => {
       if (!selectedSlot) return
-      const nextSettings = {
-        ...(patch.settings || {})
-      }
-      if (typeof patch.content === 'string') {
-        nextSettings.mediaUrl = patch.content
-      }
-      if (Object.keys(nextSettings).length) {
-        patchImportedNativeElementDraft(selectedSlot, nextSettings)
-      }
+      const currentSettings = draftBlock?.settings || {}
+      const patchSettings = patch.settings || {}
+      const nextMediaUrl = typeof patch.content === 'string'
+        ? patch.content
+        : typeof patchSettings.mediaUrl === 'string'
+          ? patchSettings.mediaUrl
+          : getSettingString(currentSettings, 'mediaUrl')
+      patchImportedNativeElementDraft(selectedSlot, cleanImportedVideoSettings({
+        ...currentSettings,
+        ...patchSettings,
+        ...(typeof patch.content === 'string' ? { mediaUrl: patch.content } : {})
+      }, nextMediaUrl))
     }
 
-    const noopImportedNativeElementSave = () => undefined
+    const autosaveSelectedNativeElement = () => {
+      if (!selectedSlot) return
+      scheduleImportedNativeElementAutosave(selectedSlot)
+    }
 
     return (
       <div className={styles.importedFormFieldsBox}>
@@ -23094,6 +23180,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                       embeddedTheme: undefined,
                       embeddedSiteType: undefined
                     })
+                    window.setTimeout(autosaveSelectedNativeElement, 0)
                   }}
                 >
                   <option value="">Selecciona un formulario</option>
@@ -23115,7 +23202,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                   pages={pages}
                   activePageId={activeImportedPage?.id || activePageId}
                   onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
-                  onSave={() => undefined}
+                  onSave={autosaveSelectedNativeElement}
                 />
                 {selectedSlot.renderMode === 'custom' && (
                   <p className={styles.importedFormFieldsHint}>
@@ -23130,7 +23217,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 <PaymentGateControls
                   value={getPaymentGateFromSettings(draftSettings, accountCurrency)}
                   onChange={(paymentGate) => patchImportedNativeElementDraft(selectedSlot, { paymentGate })}
-                  onCommit={() => undefined}
+                  onCommit={autosaveSelectedNativeElement}
                   title="Cobro de esta zona"
                   description="El checkout publicado usa la pasarela y reglas configuradas aquí."
                   currencyFallback={accountCurrency}
@@ -23141,7 +23228,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                   pages={pages}
                   activePageId={activeImportedPage?.id || activePageId}
                   onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
-                  onSave={() => undefined}
+                  onSave={autosaveSelectedNativeElement}
                 />
               </>
             )}
@@ -23172,7 +23259,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                             loadingSocialProfiles={false}
                             onPatchBlock={patchSelectedVideoBlock}
                             onPatchSettings={patchSelectedVideoSettings}
-                            onSave={noopImportedNativeElementSave}
+                            onSave={autosaveSelectedNativeElement}
                           />
                         </AccordionSection>
                       </AccordionGroup>
@@ -23191,7 +23278,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                           mode="all"
                           device={device}
                           onPatchSettings={patchSelectedVideoSettings}
-                          onSave={noopImportedNativeElementSave}
+                          onSave={autosaveSelectedNativeElement}
                         />
                         <AccordionSection id="imported-native-video-player" title="Reproductor" defaultGroupOpen>
                           <VideoPlayerSettingsControls
@@ -23199,7 +23286,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                             mediaUrl={getSettingString(draftSettings, 'mediaUrl')}
                             sections="chrome"
                             onPatchSettings={patchSelectedVideoSettings}
-                            onSave={noopImportedNativeElementSave}
+                            onSave={autosaveSelectedNativeElement}
                           />
                         </AccordionSection>
                       </AccordionGroup>
@@ -23224,7 +23311,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                         forms={forms}
                         customFields={activeImportedCustomFields}
                         onPatchSettings={patchSelectedVideoSettings}
-                        onSave={noopImportedNativeElementSave}
+                        onSave={autosaveSelectedNativeElement}
                         onTargetHover={(targetId) => hoverImportedVideoActionTarget(targetId, codePreviewIframeRef.current || iframeRef.current)}
                       />
                     )
@@ -23541,7 +23628,7 @@ const ImportedHtmlEditorPanel: React.FC<{
               </div>
             ) : activeCodePreviewHtml ? (
               <iframe
-                key={`${site.id}-${activeCodeKey}-${activeCodeValue.length}-${device}`}
+                key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${activeCodeKey}-${activeCodeValue.length}-${previewVersion}-${device}`}
                 ref={codePreviewIframeRef}
                 className={styles.importedCodePreviewFrame}
                 title={`Vista previa de ${popupCodeActive ? 'Pop up' : activeImportedPage?.title || site.name}`}
@@ -27393,7 +27480,7 @@ const MediaUploadControl: React.FC<{
   currentUrl?: string
   onUploaded: (url: string, asset?: MediaAsset) => void
   onCommit?: () => void
-}> = ({ kind, label, moduleEntityId, currentUrl, onUploaded }) => {
+}> = ({ kind, label, moduleEntityId, currentUrl, onUploaded, onCommit }) => {
   const [pickerOpen, setPickerOpen] = useState(false)
   const buttonLabel = label || (currentUrl ? (kind === 'image' ? 'Cambiar imagen' : 'Cambiar video') : (kind === 'image' ? 'Elegir imagen' : 'Elegir video'))
 
@@ -27408,7 +27495,10 @@ const MediaUploadControl: React.FC<{
           kind={kind}
           moduleEntityId={moduleEntityId}
           onClose={() => setPickerOpen(false)}
-          onSelect={onUploaded}
+          onSelect={(url, asset) => {
+            onUploaded(url, asset)
+            window.setTimeout(() => onCommit?.(), 0)
+          }}
         />
       )}
     </div>

@@ -298,3 +298,102 @@ test('imported HTML native video slots render the real Ristak player and video a
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
 })
+
+test('imported HTML native slots and video action targets stay scoped to the active page', async () => {
+  let siteId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      name: `HTML native page scoped slots ${Date.now()}`,
+      filename: `native-page-scope-${Date.now()}.html`,
+      siteType: 'landing_page',
+      pages: [
+        {
+          title: 'Página video uno',
+          filename: 'index.html',
+          html: `
+            <!doctype html>
+            <html>
+              <body>
+                <main>
+                  <section data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+                  <button id="cta-final">CTA página uno</button>
+                </main>
+              </body>
+            </html>
+          `
+        },
+        {
+          title: 'Página video dos',
+          filename: 'video-dos.html',
+          html: `
+            <!doctype html>
+            <html>
+              <body>
+                <main>
+                  <section data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+                  <button id="cta-final">CTA página dos</button>
+                </main>
+              </body>
+            </html>
+          `
+        }
+      ]
+    })
+    siteId = created.site.id
+
+    const pageOneId = created.site.theme.pages.find(page => page.title === 'Página video uno')?.id
+    const pageTwoId = created.site.theme.pages.find(page => page.title === 'Página video dos')?.id
+    assert.ok(pageOneId)
+    assert.ok(pageTwoId)
+
+    await createBlock(siteId, {
+      blockType: 'video',
+      label: 'Video principal página uno',
+      settings: {
+        pageId: pageOneId,
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/video-page-one.mp4',
+        videoActions: [{
+          id: 'page-one-action',
+          timeSeconds: 3,
+          action: 'show',
+          targetBlockId: 'cta-final',
+          targetBlockIds: ['cta-final'],
+          before: 'hidden'
+        }]
+      }
+    })
+
+    await createBlock(siteId, {
+      blockType: 'video',
+      label: 'Video principal página dos',
+      settings: {
+        pageId: pageTwoId,
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/video-page-two.mp4',
+        videoActions: []
+      }
+    })
+
+    const currentSite = await getSite(siteId, { includeBlocks: true })
+    const pageOneHtml = await renderPublicSiteHtml(currentSite, { pageId: pageOneId, trackingEnabled: false, preview: false })
+    const pageTwoHtml = await renderPublicSiteHtml(currentSite, { pageId: pageTwoId, trackingEnabled: false, preview: false })
+
+    assert.match(pageOneHtml, /video-page-one\.mp4/)
+    assert.doesNotMatch(pageOneHtml, /video-page-two\.mp4/)
+    assert.match(pageOneHtml, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
+
+    assert.match(pageTwoHtml, /video-page-two\.mp4/)
+    assert.doesNotMatch(pageTwoHtml, /video-page-one\.mp4/)
+    assert.doesNotMatch(pageTwoHtml, /id="cta-final"[^>]*data-rstk-video-action-hidden="true"/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
