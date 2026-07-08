@@ -495,24 +495,19 @@
   min-height: 0;
   height: 100%;
   max-height: 100%;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-  border: 1px solid var(--color-border-subtle);
-  border-radius: 8px;
-  background: var(--color-background-primary);
-  overflow: hidden;
-  overscroll-behavior: contain;
+  display: block;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
 }
 
 .importedCodeNativeInspectorPane .importedFormFieldsBox {
   min-height: 0;
-  height: 100%;
+  height: auto;
   align-content: start;
-  padding: 12px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
+  padding: 0 0 24px;
+  overflow: visible;
 }
 
 .importedCodeSourcePane,
@@ -21701,4 +21696,36 @@
     grid-template-columns: 1fr;
     grid-template-rows: 0 40px minmax(520px, 1fr) minmax(360px, auto);
   }
+}
+
+.pageFrame .containerFocused .sitesShellFocused .importedNativeElementInspector,
+.pageFrame .containerFocused:has(.builder) .importedNativeElementInspector,
+.containerFocused .importedNativeElementInspector {
+  position: static;
+  height: auto;
+  max-height: none;
+  border: 0;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .importedNativeElementInspector .inspectorStickyTop,
+.containerFocused .importedNativeElementInspector .inspectorStickyTop {
+  position: static;
+  margin: 0;
+  padding: 0 0 12px;
+  border-bottom: 1px solid var(--sites-editor-section-border, var(--color-border-subtle));
+  background: transparent;
+}
+
+.pageFrame .containerFocused .sitesShellFocused .importedNativeElementInspector .propertiesBody,
+.containerFocused .importedNativeElementInspector .propertiesBody {
+  gap: 12px;
+  padding: 12px 0 0;
 }

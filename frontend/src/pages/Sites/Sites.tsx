@@ -23242,6 +23242,7 @@ const ImportedHtmlEditorPanel: React.FC<{
                 key={`imported-native-video-${selectedSlot.key}`}
                 title="Video"
                 subtitle="Misma configuración del editor de sitios"
+                className={styles.importedNativeElementInspector}
                 defaultTab="edit"
                 tabs={[
                   {
@@ -23649,7 +23650,7 @@ const ImportedHtmlEditorPanel: React.FC<{
           </div>
         </section>
         {importedNativeElementsPanel && (
-          <aside className={styles.importedCodeNativeInspectorPane} aria-label="Configurar elementos Ristak detectados">
+          <aside className={`${styles.propertiesPanel} ${styles.importedCodeNativeInspectorPane}`} aria-label="Configurar elementos Ristak detectados">
             {importedNativeElementsPanel}
           </aside>
         )}

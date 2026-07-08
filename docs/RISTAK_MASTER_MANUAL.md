@@ -1651,17 +1651,19 @@ En el editor HTML importado, estos elementos se configuran desde un inspector
 derecho independiente del panel de codigo. El panel de codigo se conserva para
 editar HTML/IA externa, mientras el inspector de elementos Ristak administra
 formularios, calendarios, pagos y videos con la misma configuracion del editor
-visual. Al seleccionar una zona nativa en la previsualizacion, el editor abre la
-configuracion en ese inspector derecho y no muestra popovers de configuracion
-sobre la pagina. El texto editable puede modificarse directamente desde el
-preview con ajuste basico de tamano de letra; en el modo codigo ese cambio queda
-como borrador de HTML hasta guardar el sitio. El panel de codigo puede
-arrastrarse hasta ocultarse y queda una tira con flecha para recuperar el editor
-cuando se necesite revisar el HTML. Cuando no hay borradores de HTML sin guardar,
-la previsualizacion usa el render del backend de la pagina activa para mostrar
-los elementos nativos ya montados tal como se veran en vivo; las respuestas de
-preview viejas no deben repintar otra pagina si el usuario cambio de pagina
-mientras cargaba. Los slots nativos y las acciones de video se resuelven por
+visual. Ese inspector debe scrollear con rueda, trackpad y tactil como el panel
+derecho del editor visual; los controles internos no deben bloquear el scroll
+del panel principal. Al seleccionar una zona nativa en la previsualizacion, el
+editor abre la configuracion en ese inspector derecho y no muestra popovers de
+configuracion sobre la pagina. El texto editable puede modificarse directamente
+desde el preview con ajuste basico de tamano de letra; en el modo codigo ese
+cambio queda como borrador de HTML hasta guardar el sitio. El panel de codigo
+puede arrastrarse hasta ocultarse y queda una tira con flecha para recuperar el
+editor cuando se necesite revisar el HTML. Cuando no hay borradores de HTML sin
+guardar, la previsualizacion usa el render del backend de la pagina activa para
+mostrar los elementos nativos ya montados tal como se veran en vivo; las
+respuestas de preview viejas no deben repintar otra pagina si el usuario cambio
+de pagina mientras cargaba. Los slots nativos y las acciones de video se resuelven por
 `data-rstk-native-id` + tipo + pagina, de modo que dos paginas importadas no
 compartan accidentalmente un formulario, calendario, pago, video o target con el
 mismo identificador. El inspector derecho guarda automaticamente cambios validos
