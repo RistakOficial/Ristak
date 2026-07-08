@@ -20334,7 +20334,10 @@ function renderContentBlock(block, context = {}) {
     // (con Meta del sitio encendido), ese evento overridea el del calendario embebido. Sin
     // override, el calendario usa su propio evento (fallback, no mudo). No se propaga en preview.
     const calendarMetaOverride = resolveCalendarMetaOverride(context, block)
-    const baseCalendarSrc = appendCalendarEmbedParams(`/calendar/${encodeURIComponent(calendarSlug)}?test=1`, settings, {
+    const calendarBasePath = context.preview
+      ? `/api/sites/public/calendar-preview/${encodeURIComponent(calendarSlug)}?test=1`
+      : `/calendar/${encodeURIComponent(calendarSlug)}?test=1`
+    const baseCalendarSrc = appendCalendarEmbedParams(calendarBasePath, settings, {
       preview: context.preview,
       bookingBridge: Boolean(calendarCompletionRedirect),
       ...buildCalendarEmbedMetaParams(calendarMetaOverride)

@@ -77,7 +77,7 @@ test('site calendar preview is interactive but flagged as non-booking preview', 
 
   const url = getCalendarFrameUrl(html)
 
-  assert.equal(url.pathname, '/calendar/agenda-principal')
+  assert.equal(url.pathname, '/api/sites/public/calendar-preview/agenda-principal')
   assert.equal(url.searchParams.get('test'), '1')
   assert.equal(url.searchParams.get('embed'), '1')
   assert.equal(url.searchParams.get('editor_preview'), '1')

@@ -106,7 +106,7 @@ test('imported HTML native calendar slots render the selected Ristak calendar if
 
     assert.match(html, /data-rstk-native-slot-id="agenda-slot"/)
     assert.match(html, /iframe class="rstk-embed rstk-calendar-embed"/)
-    assert.match(html, /\/calendar\/consulta-inicial\?test=1/)
+    assert.match(html, /\/api\/sites\/public\/calendar-preview\/consulta-inicial\?test=1/)
     assert.match(html, /ristak:calendar-embed-height/)
     assert.doesNotMatch(html, /Selecciona un calendario de Ristak/)
   } finally {

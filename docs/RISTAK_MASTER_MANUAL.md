@@ -1615,7 +1615,10 @@ editar HTML/IA externa, mientras el inspector de elementos Ristak administra
 formularios, calendarios, pagos y videos con la misma configuracion del editor
 visual. Cuando no hay borradores de HTML sin guardar, la previsualizacion usa el
 render del backend para mostrar los elementos nativos ya montados tal como se
-veran en vivo.
+veran en vivo. Los calendarios nativos dentro del preview usan la ruta interna
+`/api/sites/public/calendar-preview/:slug`, no `/calendar/:slug`, para que el
+editor pueda mostrarlos sin depender de que el dominio publico ya este
+configurado; el sitio publicado conserva la ruta publica normal.
 
 Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
 pero las reglas copiables nuevas deben preferir `data-rstk-*`.
