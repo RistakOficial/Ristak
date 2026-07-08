@@ -213,6 +213,8 @@ const CHAT_LIST_PREFETCH_VIEWPORTS = 3
 // Precargamos un bloque razonable en segundo plano. El resto sigue por scroll, sin ráfagas enormes.
 const CHAT_LIST_BACKGROUND_LOAD_CAP = 250
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
+const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000
+const CHAT_OPEN_THREAD_REFRESH_INTERVAL_MS = 4000
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
 const CHAT_CONVERSATION_TOP_LOAD_GAP_PX = 96
 const OPTIMISTIC_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'local-meta-', 'local-ghl-']
@@ -7315,7 +7317,7 @@ export const PhoneChat: React.FC = () => {
       setChatsLoading(false)
       setChatsRefreshing(showCacheRefresh)
       // Pintamos el caché al instante y disparamos UNA recarga silenciosa (una página
-      // fusionada) para traer lo fresco de inmediato, sin esperar al intervalo de 20s.
+      // fusionada) para traer lo fresco de inmediato, sin esperar al intervalo de respaldo.
       void loadChats({ silent: true })
       return
     }
@@ -8991,7 +8993,7 @@ export const PhoneChat: React.FC = () => {
         loadChats({ silent: true, useCache: false })
         loadAgentData({ includeDefinitions: false })
       }
-    }, 20000)
+    }, CHAT_INBOX_REFRESH_INTERVAL_MS)
 
     window.addEventListener('focus', refreshVisibleChats)
     document.addEventListener('visibilitychange', refreshVisibleChats)
@@ -9153,7 +9155,7 @@ export const PhoneChat: React.FC = () => {
   // interval de arriba solo corre si hay salientes con acuse pendiente
   // (shouldRefreshReceipts), así que un chat con puros mensajes ENTRANTES no se
   // reconciliaba nunca y el globo se quedaba congelado hasta salir/entrar si se
-  // perdía el frame SSE. Aquí reconciliamos la conversación abierta cada 7s y al
+  // perdía el frame SSE. Aquí reconciliamos la conversación abierta con un intervalo corto y al
   // volver a foco/visibilidad (p. ej. tras tocar la notificación push). Es no-op
   // visual cuando no hay cambios (areMessagesEquivalent), sin spinner ni salto.
   useEffect(() => {
@@ -9163,7 +9165,7 @@ export const PhoneChat: React.FC = () => {
       if (document.visibilityState !== 'visible') return
       void loadConversation(openId, { silent: true, useCache: false })
     }
-    const interval = window.setInterval(reconcileOpenThread, 7000)
+    const interval = window.setInterval(reconcileOpenThread, CHAT_OPEN_THREAD_REFRESH_INTERVAL_MS)
     window.addEventListener('focus', reconcileOpenThread)
     document.addEventListener('visibilitychange', reconcileOpenThread)
     return () => {

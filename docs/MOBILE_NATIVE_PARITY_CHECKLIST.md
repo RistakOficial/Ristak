@@ -243,6 +243,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   - Avance: la lista nativa ya usa pull to refresh, textos de loading/error y
     vacios equivalentes de primer pase. Aun falta el estado cache-refresh exacto
     de `/movil` cuando se muestra cache y actualiza en segundo plano.
+- [x] Replicar recepcion viva de chat.
+  - Avance: `mobile/` ya escucha `/api/chat-events/stream` con bearer, emite un
+    nudge local para bandeja/hilo abierto y conserva polling de respaldo corto
+    sin duplicar cargas en rafaga.
 - [ ] Replicar empty/loading/cache-refresh states.
 - [ ] Validar visualmente contra `/movil` en telefono.
 

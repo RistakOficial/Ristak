@@ -4,7 +4,7 @@ import Observation
 /// Reloj de polling de reconciliación (doc research/11 §1, §10.3). El polling
 /// NO es opcional: el SSE no re-entrega eventos perdidos.
 ///
-/// Cadencias estándar: bandeja 20 s, hilo abierto 7 s, acuses 12 s. Un tick
+/// Cadencias estándar: bandeja 12 s, hilo abierto 4 s, acuses 12 s. Un tick
 /// sin cambios debe ser no-op visual (responsabilidad del `action`).
 ///
 /// Hook de scenePhase: el shell llama `setPaused(true)` al pasar a background
@@ -15,10 +15,10 @@ import Observation
 final class PollingClock {
     /// Intervalos estándar en segundos.
     enum Cadence {
-        /// Bandeja de chats: 20 s.
-        static let inbox: TimeInterval = 20
-        /// Hilo de conversación abierto: 7 s.
-        static let thread: TimeInterval = 7
+        /// Bandeja de chats: 12 s.
+        static let inbox: TimeInterval = 12
+        /// Hilo de conversación abierto: 4 s.
+        static let thread: TimeInterval = 4
         /// Acuses (receipts) de mensajes salientes: 12 s.
         static let receipts: TimeInterval = 12
     }

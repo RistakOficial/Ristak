@@ -91,7 +91,7 @@ struct ChatConnectedFramePayload: Decodable, Sendable {
 /// Cliente SSE de chat — `GET /api/chat-events/stream` (doc research/11 §2).
 /// Requiere sesión + módulo `chat` (403 detiene el stream). Broadcast global:
 /// avisa de TODOS los contactos; usarlo únicamente para disparar refresh.
-/// El polling de reconciliación (20 s bandeja / 7 s hilo) NO es opcional:
+/// El polling de reconciliación (12 s bandeja / 4 s hilo) NO es opcional:
 /// los eventos perdidos en reconexión no se re-entregan.
 final class ChatEventsClient: Sendable {
     private let engine = RistakSSEStreamEngine(path: "/api/chat-events/stream")

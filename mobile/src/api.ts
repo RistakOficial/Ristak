@@ -61,6 +61,12 @@ import { cleanBaseUrl } from './format';
 
 const DEFAULT_INSTALLER_API_BASE_URL = 'https://www.ristak.com';
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes';
+const CHAT_STREAM_ENDPOINT = '/chat-events/stream';
+const CHAT_STREAM_INITIAL_RECONNECT_MS = 1000;
+const CHAT_STREAM_MAX_RECONNECT_MS = 15000;
+const XHR_HEADERS_RECEIVED = 2;
+const XHR_LOADING = 3;
+const XHR_DONE = 4;
 
 type RequestOptions = RequestInit & {
   params?: Record<string, string | number | boolean | undefined>;
@@ -70,6 +76,30 @@ type ChatListQueryOptions = {
   businessPhoneNumberId?: string;
   businessPhone?: string;
   warmProfilePictures?: boolean;
+};
+
+export type ChatLiveMessageEvent = {
+  type: 'chat_message';
+  contactId: string;
+  messageId?: string;
+  channel?: string;
+  provider?: string;
+  transport?: string;
+  direction?: string;
+  messageType?: string;
+  messageTimestamp?: string;
+  isNew?: boolean;
+  receivedAt?: string;
+};
+
+type ChatLiveSubscribeOptions = {
+  onMessage: (event: ChatLiveMessageEvent) => void;
+  onError?: (error: unknown) => void;
+};
+
+type SseFrame = {
+  event: string;
+  data: string;
 };
 
 type MessageReplyPayload = {
@@ -206,6 +236,40 @@ function getInstallerApiBaseUrl() {
 function buildInstallerUrl(path: string) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   return `${getInstallerApiBaseUrl()}${normalizedPath}`;
+}
+
+function parseSseFrame(frame: string): SseFrame | null {
+  const lines = frame.split(/\r?\n/);
+  let event = 'message';
+  const data: string[] = [];
+
+  for (const line of lines) {
+    if (!line || line.startsWith(':')) continue;
+    const separatorIndex = line.indexOf(':');
+    const field = separatorIndex >= 0 ? line.slice(0, separatorIndex) : line;
+    const rawValue = separatorIndex >= 0 ? line.slice(separatorIndex + 1) : '';
+    const value = rawValue.startsWith(' ') ? rawValue.slice(1) : rawValue;
+
+    if (field === 'event') event = value || 'message';
+    if (field === 'data') data.push(value);
+  }
+
+  if (data.length === 0) return null;
+  return { event, data: data.join('\n') };
+}
+
+function dispatchChatSseFrame(frame: string, options: ChatLiveSubscribeOptions) {
+  const parsed = parseSseFrame(frame);
+  if (!parsed || parsed.event !== 'chat_message') return;
+
+  try {
+    const payload = JSON.parse(parsed.data) as Partial<ChatLiveMessageEvent>;
+    if (payload?.type === 'chat_message' && typeof payload.contactId === 'string' && payload.contactId.trim()) {
+      options.onMessage(payload as ChatLiveMessageEvent);
+    }
+  } catch (error) {
+    options.onError?.(error);
+  }
 }
 
 function getNativeContactChannel(contact: ChatContact): NativeMessageChannel {
@@ -352,6 +416,116 @@ export class RistakApiClient {
         warmProfilePictures: options.warmProfilePictures || undefined,
       },
     });
+  }
+
+  subscribeToChatLiveEvents(options: ChatLiveSubscribeOptions) {
+    if (typeof XMLHttpRequest === 'undefined') return () => undefined;
+
+    let stopped = false;
+    let reconnectMs = CHAT_STREAM_INITIAL_RECONNECT_MS;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let activeRequest: XMLHttpRequest | null = null;
+
+    const clearReconnectTimer = () => {
+      if (!reconnectTimer) return;
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    };
+
+    const scheduleReconnect = () => {
+      if (stopped || reconnectTimer) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connect();
+      }, reconnectMs);
+      reconnectMs = Math.min(reconnectMs * 2, CHAT_STREAM_MAX_RECONNECT_MS);
+    };
+
+    const connect = () => {
+      if (stopped) return;
+
+      let responseOffset = 0;
+      let frameBuffer = '';
+      let finished = false;
+      const request = new XMLHttpRequest();
+      activeRequest = request;
+
+      const finish = (shouldReconnect = true) => {
+        if (finished) return;
+        finished = true;
+        if (activeRequest === request) activeRequest = null;
+        if (shouldReconnect) scheduleReconnect();
+      };
+
+      const consumeResponse = () => {
+        const responseText = request.responseText || '';
+        if (responseText.length <= responseOffset) return;
+
+        frameBuffer += responseText.slice(responseOffset);
+        responseOffset = responseText.length;
+
+        const frames = frameBuffer.split(/\r?\n\r?\n/);
+        frameBuffer = frames.pop() || '';
+        frames.forEach((frame) => dispatchChatSseFrame(frame, options));
+      };
+
+      request.onreadystatechange = () => {
+        if (request.readyState >= XHR_HEADERS_RECEIVED && (request.status === 401 || request.status === 403)) {
+          stopped = true;
+          finish(false);
+          request.abort();
+          return;
+        }
+
+        if (request.readyState === XHR_HEADERS_RECEIVED && request.status === 200) {
+          reconnectMs = CHAT_STREAM_INITIAL_RECONNECT_MS;
+        }
+
+        if (request.readyState === XHR_LOADING || request.readyState === XHR_DONE) {
+          consumeResponse();
+        }
+
+        if (request.readyState === XHR_DONE) {
+          if (request.status && request.status !== 200) {
+            options.onError?.(new Error(`Chat live stream unavailable: ${request.status}`));
+          }
+          finish(!stopped);
+        }
+      };
+
+      request.onprogress = () => {
+        consumeResponse();
+      };
+
+      request.onerror = () => {
+        options.onError?.(new Error('Chat live stream network error'));
+        finish(!stopped);
+      };
+
+      request.ontimeout = () => {
+        options.onError?.(new Error('Chat live stream timeout'));
+        finish(!stopped);
+      };
+
+      try {
+        request.open('GET', this.buildUrl(CHAT_STREAM_ENDPOINT), true);
+        request.setRequestHeader('Accept', 'text/event-stream');
+        if (this.token) request.setRequestHeader('Authorization', `Bearer ${this.token}`);
+        request.send();
+      } catch (error) {
+        options.onError?.(error);
+        finish(!stopped);
+      }
+    };
+
+    connect();
+
+    return () => {
+      stopped = true;
+      clearReconnectTimer();
+      activeRequest?.abort();
+      activeRequest = null;
+    };
   }
 
   searchContacts(query: string) {

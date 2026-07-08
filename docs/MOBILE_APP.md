@@ -101,6 +101,15 @@ mensajes optimistas `local-*` se reconcilian con la copia del servidor al
 llegar, y las filas (`NativeMessageBubble`, `ChatRow`) van en `React.memo` con
 callbacks de identidad estable.
 
+Recepcion viva del chat nativo: `mobile/` debe suscribirse a
+`/api/chat-events/stream` con la misma sesion bearer que usa para REST. Cada
+`chat_message` se trata como nudge local: refresca la bandeja y solo refresca el
+hilo si el `contactId` coincide con la conversacion abierta. Ese refresh debe ir
+coalescido para no disparar varias cargas simultaneas cuando llegan mensajes en
+rafaga. El polling sigue existiendo como reconciliacion de respaldo: bandeja cada
+12 s e hilo abierto cada 4 s, sin spinner, sin borrar cache visible y sin mover
+el scroll si no hubo cambios reales.
+
 Regla de dueño unico del teclado: en cada ruta visible solo puede haber UN
 keyboard avoider habilitado. Dos `KeyboardAvoidingView` apilados (p. ej. el
 `AppFrame` de una pantalla host mas el `AppFrame` de una ruta overlay montada

@@ -11,7 +11,7 @@ import UIKit
 ///   sin cambios es no-op de render (memoria del proyecto: jamás reemplazar el
 ///   array si es igual, jamás ids por índice).
 /// - Paginación hacia atrás con `beforeMessageDate` + merge por id.
-/// - Polling del hilo cada 7 s, acuses cada 12 s (solo con salientes
+/// - Polling del hilo cada 4 s, acuses cada 12 s (solo con salientes
 ///   pendientes), programados autoritativos en cada poll.
 /// - Envíos optimistas con `externalId` idempotente y reconciliación con la
 ///   copia del servidor (ventana ±4 min, paridad RN).
@@ -218,7 +218,7 @@ final class ConversationViewModel {
         Task { await loadInitial() }
     }
 
-    /// Poll silencioso (7 s / foreground / SSE). Nunca alerta ni muestra spinner.
+    /// Poll silencioso (4 s / foreground / SSE). Nunca alerta ni muestra spinner.
     func refreshSilently() async {
         guard hasLoadedOnce else { return }
         try? await loadConversation(reset: false)

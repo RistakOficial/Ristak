@@ -137,7 +137,7 @@ import {
 import { readCache, writeCache, clearAllCache, setCacheNamespace } from './cache';
 import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
-import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant } from './api';
+import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveMessageEvent } from './api';
 import { hasPhoneSectionAccess } from './access';
 import {
   configureNativeNotificationListeners,
@@ -757,7 +757,8 @@ const PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD = 'chat_segment';
 const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
 const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
 const CHAT_LIST_PAGE_SIZE = 50;
-const CHAT_INBOX_REFRESH_INTERVAL_MS = 20000;
+const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000;
+const CHAT_REALTIME_REFRESH_DEBOUNCE_MS = 80;
 // Última bandeja cargada por cliente API (WeakMap: una sesión nueva crea otro
 // cliente y no hereda la bandeja de la cuenta anterior). Permite pintar la
 // lista al instante cuando ChatScreen se remonta al cambiar de sección.
@@ -769,7 +770,7 @@ const NATIVE_INBOX_CACHE_LIMIT = 200;
 const CONVERSATION_MESSAGE_CACHE_LIMIT = 150;
 const conversationMessageMemCache = new Map<string, ChatMessage[]>();
 const conversationCacheKey = (contactId: string) => `conv:${contactId}`;
-const CONVERSATION_REFRESH_INTERVAL_MS = 7000;
+const CONVERSATION_REFRESH_INTERVAL_MS = 4000;
 // Emitted when a push notification is received while the app is in the
 // foreground, so the inbox and open conversation can refresh instantly.
 const CHAT_REFRESH_EVENT = 'ristak:chat-refresh';
@@ -2358,6 +2359,9 @@ function ChatScreen({
   const chatListLoadedQueryRef = useRef('');
   const chatMountedRef = useRef(true);
   const chatsRef = useRef(chats);
+  const chatRealtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const chatRealtimeRefreshInFlightRef = useRef(false);
+  const chatRealtimeRefreshQueuedRef = useRef(false);
   useEffect(() => {
     chatsRef.current = chats;
     // Solo la bandeja sin búsqueda alimenta la caché de remontaje.
@@ -2412,6 +2416,10 @@ function ChatScreen({
   useEffect(() => () => {
     chatMountedRef.current = false;
     chatListGenerationRef.current += 1;
+    if (chatRealtimeRefreshTimeoutRef.current) {
+      clearTimeout(chatRealtimeRefreshTimeoutRef.current);
+      chatRealtimeRefreshTimeoutRef.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -2490,31 +2498,59 @@ function ChatScreen({
     }
   }, [api, chatListPhoneFilterParams, query]);
 
+  const requestSilentInboxRefresh = useCallback(() => {
+    if (!chatMountedRef.current) return;
+    if (chatRealtimeRefreshTimeoutRef.current) {
+      clearTimeout(chatRealtimeRefreshTimeoutRef.current);
+    }
+
+    chatRealtimeRefreshTimeoutRef.current = setTimeout(() => {
+      chatRealtimeRefreshTimeoutRef.current = null;
+      if (chatRealtimeRefreshInFlightRef.current) {
+        chatRealtimeRefreshQueuedRef.current = true;
+        return;
+      }
+
+      chatRealtimeRefreshInFlightRef.current = true;
+      void loadChats(true).finally(() => {
+        chatRealtimeRefreshInFlightRef.current = false;
+        if (chatRealtimeRefreshQueuedRef.current) {
+          chatRealtimeRefreshQueuedRef.current = false;
+          requestSilentInboxRefresh();
+        }
+      });
+    }, CHAT_REALTIME_REFRESH_DEBOUNCE_MS);
+  }, [loadChats]);
+
   const finishCloseChatConversation = useCallback(() => {
     setSelected(null);
     setConversationClosing(false);
-    void loadChats(true);
-  }, [loadChats]);
+    requestSilentInboxRefresh();
+  }, [requestSilentInboxRefresh]);
 
-  // Keep the inbox live like /movil: a silent periodic refresh plus a refresh
-  // whenever the app returns to the foreground. Both merge (see loadChats) so
-  // new inbound messages and unread badges appear without a manual pull.
+  // SSE gives the fast path; the interval stays as reconciliation if the stream
+  // drops or the app wakes up after being suspended.
   useEffect(() => {
-    const refreshInboxSilently = () => {
-      if (!chatMountedRef.current) return;
-      void loadChats(true);
-    };
-    const interval = setInterval(refreshInboxSilently, CHAT_INBOX_REFRESH_INTERVAL_MS);
+    const interval = setInterval(requestSilentInboxRefresh, CHAT_INBOX_REFRESH_INTERVAL_MS);
     const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refreshInboxSilently();
+      if (state === 'active') requestSilentInboxRefresh();
     });
-    const pushSub = DeviceEventEmitter.addListener(CHAT_REFRESH_EVENT, refreshInboxSilently);
+    const pushSub = DeviceEventEmitter.addListener(CHAT_REFRESH_EVENT, requestSilentInboxRefresh);
     return () => {
       clearInterval(interval);
       appStateSub.remove();
       pushSub.remove();
     };
-  }, [loadChats]);
+  }, [requestSilentInboxRefresh]);
+
+  useEffect(() => api.subscribeToChatLiveEvents({
+    onMessage: (event: ChatLiveMessageEvent) => {
+      DeviceEventEmitter.emit(CHAT_REFRESH_EVENT, event);
+    },
+    onError: (error) => {
+      console.warn('[RistakNative][chat] live stream unavailable', error);
+    },
+  }), [api]);
 
   useEffect(() => {
     if (!selected) {
@@ -4956,7 +4992,7 @@ function mergeContactWithoutLosingAvatar(base: ChatContact, patch: ChatContact) 
     }
   });
   // Si el poll no trajo cambios reales, conservar la referencia previa para
-  // que las filas memoizadas no se re-rendericen cada 20s.
+  // que las filas memoizadas no se re-rendericen en cada reconciliación.
   try {
     if (JSON.stringify(base) === JSON.stringify(merged)) return base;
   } catch {
@@ -18140,7 +18176,7 @@ function ChatSelectionPanel({
   );
 }
 
-// Memoizada: el poll del inbox corre cada 20s y sin memo re-renderiza todas
+// Memoizada: el poll del inbox corre seguido y sin memo re-renderiza todas
 // las filas aunque nada cambie (el merge preserva identidad de contactos).
 const ChatRow = React.memo(function ChatRow({
   contact,
@@ -19194,6 +19230,9 @@ function NativeConversationScreen({
   const conversationParallaxX = useRef(new Animated.Value(0)).current;
   const conversationParallaxY = useRef(new Animated.Value(0)).current;
   const loadRequestRef = useRef(0);
+  const conversationRealtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const conversationRealtimeRefreshInFlightRef = useRef(false);
+  const conversationRealtimeRefreshQueuedRef = useRef(false);
   const activeConversationContactIdRef = useRef(contact.id);
   const onContactPatchRef = useRef(onContactPatch);
   const unreadCountRef = useRef(contact.unreadCount);
@@ -19303,7 +19342,7 @@ function NativeConversationScreen({
       if (requestId !== loadRequestRef.current) return;
       const nextJourneyEvents = Array.isArray(fullJourney) ? fullJourney : Array.isArray(journey) ? journey : [];
       // Un poll sin novedades debe ser un no-op de React: conservar las
-      // referencias actuales evita el re-render de todo el hilo cada 7s.
+      // referencias actuales evita el re-render de todo el hilo en cada reconciliación.
       setJourneyEvents((current) => (
         JSON.stringify(current) === JSON.stringify(nextJourneyEvents) ? current : nextJourneyEvents
       ));
@@ -19402,22 +19441,45 @@ function NativeConversationScreen({
     void loadConversation();
   }, [loadConversation]);
 
-  // Keep the open thread live like /movil (which reconciles every ~7s): poll in
-  // the background and refresh when the app returns to the foreground, so inbound
-  // messages and delivered/read status update without a manual pull-to-refresh.
+  const requestSilentConversationRefresh = useCallback((event?: Partial<ChatLiveMessageEvent>) => {
+    const eventContactId = String(event?.contactId || '').trim();
+    if (eventContactId && eventContactId !== contact.id) return;
+
+    if (conversationRealtimeRefreshTimeoutRef.current) {
+      clearTimeout(conversationRealtimeRefreshTimeoutRef.current);
+    }
+
+    conversationRealtimeRefreshTimeoutRef.current = setTimeout(() => {
+      conversationRealtimeRefreshTimeoutRef.current = null;
+      if (conversationRealtimeRefreshInFlightRef.current) {
+        conversationRealtimeRefreshQueuedRef.current = true;
+        return;
+      }
+
+      conversationRealtimeRefreshInFlightRef.current = true;
+      void loadConversation(true, true).finally(() => {
+        conversationRealtimeRefreshInFlightRef.current = false;
+        if (conversationRealtimeRefreshQueuedRef.current) {
+          conversationRealtimeRefreshQueuedRef.current = false;
+          requestSilentConversationRefresh();
+        }
+      });
+    }, CHAT_REALTIME_REFRESH_DEBOUNCE_MS);
+  }, [contact.id, loadConversation]);
+
+  // SSE is the fast path; polling/app-state remains the reconciliation fallback.
   useEffect(() => {
-    const refresh = () => void loadConversation(true, true);
-    const interval = setInterval(refresh, CONVERSATION_REFRESH_INTERVAL_MS);
+    const interval = setInterval(requestSilentConversationRefresh, CONVERSATION_REFRESH_INTERVAL_MS);
     const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refresh();
+      if (state === 'active') requestSilentConversationRefresh();
     });
-    const pushSub = DeviceEventEmitter.addListener(CHAT_REFRESH_EVENT, refresh);
+    const pushSub = DeviceEventEmitter.addListener(CHAT_REFRESH_EVENT, requestSilentConversationRefresh);
     return () => {
       clearInterval(interval);
       appStateSub.remove();
       pushSub.remove();
     };
-  }, [loadConversation]);
+  }, [requestSilentConversationRefresh]);
 
   const refreshAgentStates = useCallback(async ({ silent = false }: { silent?: boolean } = {}) => {
     if (!silent) setAgentLoading(true);
@@ -19442,6 +19504,10 @@ function NativeConversationScreen({
 
   useEffect(() => () => {
     if (sheetCloseTimerRef.current) clearTimeout(sheetCloseTimerRef.current);
+    if (conversationRealtimeRefreshTimeoutRef.current) {
+      clearTimeout(conversationRealtimeRefreshTimeoutRef.current);
+      conversationRealtimeRefreshTimeoutRef.current = null;
+    }
   }, []);
 
   const clearSheetCloseTimer = useCallback(() => {
@@ -21755,7 +21821,7 @@ function NativeMessageActionDropdownRow({
 }
 
 // Memoizada: el hilo mantiene ~100 burbujas montadas y el poll de fondo corre
-// cada 7s; sin memo cada tick re-renderiza todas. Requiere props con identidad
+// seguido; sin memo cada tick re-renderiza todas. Requiere props con identidad
 // estable (mensajes preservados por el merge y callbacks trampoline).
 const NativeMessageBubble = React.memo(function NativeMessageBubble({
   contact,

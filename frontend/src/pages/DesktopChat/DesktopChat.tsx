@@ -401,7 +401,8 @@ const CHAT_CACHE_ENTRY_LIMIT = 400
 const CHAT_CONVERSATION_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const CHAT_CONVERSATION_CACHE_MAX_ENTRY_CHARS = 360_000
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 50
-const CHAT_REFRESH_INTERVAL_MS = 20000
+const CHAT_REFRESH_INTERVAL_MS = 12000
+const CHAT_LIVE_REFRESH_DEBOUNCE_MS = 80
 const MESSAGE_REACTION_EMOJIS = ['❤️', '👍', '😂', '😮', '🙏']
 const MESSAGE_REACTION_PICKER_EMOJIS = [
   '😀', '😃', '😄', '😁', '😆', '🥹', '😂', '🤣',
@@ -4401,7 +4402,7 @@ export const DesktopChat: React.FC = () => {
             refreshFromLiveChatEvent()
           }
         })
-    }, 250)
+    }, CHAT_LIVE_REFRESH_DEBOUNCE_MS)
   }, [loadChats, loadConversation])
 
   useEffect(() => {

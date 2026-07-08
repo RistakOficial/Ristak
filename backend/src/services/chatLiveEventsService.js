@@ -29,6 +29,7 @@ function writeSseEvent(res, event, data = {}) {
   res.write(`id: ${nextEventId()}\n`)
   res.write(`event: ${event}\n`)
   res.write(`data: ${JSON.stringify(data)}\n\n`)
+  res.flush?.()
   return true
 }
 
@@ -58,6 +59,7 @@ export function subscribeChatLiveEvents(req, res) {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no'
   })
+  res.socket?.setNoDelay?.(true)
   res.flushHeaders?.()
 
   const heartbeatId = setInterval(() => {
@@ -66,6 +68,7 @@ export function subscribeChatLiveEvents(req, res) {
       return
     }
     res.write(`: heartbeat ${Date.now()}\n\n`)
+    res.flush?.()
   }, HEARTBEAT_INTERVAL_MS)
 
   clients.set(clientId, { res, heartbeatId, userId })

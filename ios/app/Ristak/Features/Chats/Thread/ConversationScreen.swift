@@ -5,7 +5,7 @@ import SwiftUI
 /// - Hilo con ids estables y merges identity-preserving (memoria del
 ///   proyecto): jamás scroll-jumps en refresh; «bajar al final» flotante.
 /// - Composer como `safeAreaInset(bottom)` — un solo dueño del teclado.
-/// - Presencia (start/stop con scenePhase + appear), polling 7 s/12 s,
+/// - Presencia (start/stop con scenePhase + appear), polling 4 s/12 s,
 ///   SSE + nudges de push en foreground.
 struct ConversationScreen: View {
     @State private var viewModel: ConversationViewModel

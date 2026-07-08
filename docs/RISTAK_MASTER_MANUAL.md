@@ -572,6 +572,19 @@ completo de todas las conversaciones de la bandeja. Al insertar mensajes antiguo
 arriba del hilo, la UI debe conservar la posicion visible del usuario y nunca
 forzar scroll al ultimo mensaje.
 
+La recepcion rapida de mensajes de chat usa `/api/chat-events/stream` como
+camino principal en desktop (`/chat`), movil web (`/movil`), cliente nativo
+React Native (`mobile/`) y app iOS Swift. El evento SSE `chat_message` es solo
+un nudge: no transporta el texto completo del mensaje, sino `contactId` y
+metadatos minimos para que el cliente haga un refetch silencioso y coalescido
+de la bandeja y, si corresponde, del hilo abierto. El backend debe publicar este
+evento desde cada servicio que inserte o actualice mensajes reales de chat
+entrantes o salientes; despues de escribir el frame debe intentar flush inmediato
+para no dejarlo retenido por buffers. El polling queda como red de seguridad,
+no como camino principal: bandeja cada 12 s, hilo abierto cada 4 s y acuses de
+salientes cada 12 s. Si se pierde el stream por proxy, reconexion o app
+suspendida, el siguiente tick reconcilia sin spinner ni salto de scroll.
+
 Cuando llega una push de chat o el usuario abre `/movil` desde esa notificacion,
 el cliente debe priorizar el hilo afectado sobre la bandeja completa. La push web
 o nativa propaga `contactId`, `messageId`, `title` y `body`; el chat movil pinta

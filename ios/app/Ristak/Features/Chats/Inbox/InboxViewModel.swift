@@ -367,7 +367,7 @@ final class InboxViewModel {
         }
     }
 
-    /// Arranca SSE + ticker de bandeja (20 s). Idempotente.
+    /// Arranca SSE + ticker de bandeja (12 s). Idempotente.
     func startRealtime() {
         guard configured else { return }
         pollingClock.schedule("inbox", every: PollingClock.Cadence.inbox) { [weak self] in
