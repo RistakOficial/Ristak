@@ -873,6 +873,16 @@ reales de Meta.
 
 ### Tabla de transacciones
 
+La tabla principal de `/transactions` usa paginacion real del lado servidor. La
+pantalla pide solo la pagina visible de pagos (20 filas) con fecha, busqueda,
+estado y orden; al cambiar cualquiera de esos filtros vuelve a la pagina 1. El
+endpoint `/api/transactions` siempre debe devolver `pagination` y facets de
+estado calculados sobre todo el resultado filtrado, no solo sobre las filas de la
+pagina actual. Las tarjetas KPI de Pagos tampoco son metricas de la pagina
+visible: `/api/transactions/summary` debe recalcular ingresos, pagos
+completados, ticket promedio y reembolsos con los mismos filtros de fecha,
+busqueda y estado seleccionados.
+
 La tabla principal de `/transactions` separa tres conceptos que antes podian
 mezclarse en `payment_method`:
 

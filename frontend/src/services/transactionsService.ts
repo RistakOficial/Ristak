@@ -1,4 +1,5 @@
 import apiClient from './apiClient'
+import { apiUrl } from './apiBaseUrl'
 
 export interface Transaction {
   id: string
@@ -45,6 +46,28 @@ export interface TransactionSummary {
   refundsPrev: number
 }
 
+export interface TransactionsPagination {
+  page: number
+  limit: number
+  total: number
+  totalPages: number
+  hasNext: boolean
+  hasPrev: boolean
+}
+
+export interface TransactionStatusFacet {
+  value: string
+  count: number
+}
+
+export interface TransactionsPageResult {
+  transactions: Transaction[]
+  pagination: TransactionsPagination
+  facets: {
+    statuses: TransactionStatusFacet[]
+  }
+}
+
 export interface PaymentPlan {
   id: string
   name: string
@@ -71,7 +94,127 @@ export interface PaymentPlan {
   raw?: Record<string, any>
 }
 
+interface TransactionsPageParams {
+  startDate?: string
+  endDate?: string
+  page?: number
+  limit?: number
+  forceSync?: boolean
+  search?: string
+  statuses?: string[]
+  sortBy?: string
+  sortOrder?: 'ASC' | 'DESC' | 'asc' | 'desc'
+  signal?: AbortSignal
+}
+
+interface TransactionSummaryParams {
+  startDate?: string
+  endDate?: string
+  search?: string
+  statuses?: string[]
+}
+
+const EMPTY_TRANSACTION_SUMMARY: TransactionSummary = {
+  totalRevenue: 0,
+  totalRevenuePrev: 0,
+  completedPayments: 0,
+  completedPaymentsPrev: 0,
+  averageTicket: 0,
+  averageTicketPrev: 0,
+  refunds: 0,
+  refundsPrev: 0
+}
+
+const getAuthHeaders = () => {
+  const headers = new Headers()
+
+  try {
+    const token = localStorage.getItem('auth_token')
+    if (token) {
+      headers.set('Authorization', `Bearer ${token}`)
+    }
+  } catch {
+    // Local storage can be unavailable during early hydration.
+  }
+
+  return headers
+}
+
+const appendTransactionQueryParams = (
+  params: URLSearchParams,
+  {
+    startDate,
+    endDate,
+    search,
+    statuses
+  }: Pick<TransactionsPageParams, 'startDate' | 'endDate' | 'search' | 'statuses'>
+) => {
+  if (startDate) params.append('startDate', startDate)
+  if (endDate) params.append('endDate', endDate)
+  if (search?.trim()) params.append('q', search.trim())
+  if (statuses?.length) params.append('status', statuses.join(','))
+}
+
+const requestTransactionsPage = async ({
+  startDate,
+  endDate,
+  page = 1,
+  limit = 50,
+  forceSync,
+  search,
+  statuses,
+  sortBy = 'date',
+  sortOrder = 'DESC',
+  signal
+}: TransactionsPageParams = {}): Promise<TransactionsPageResult> => {
+  const params = new URLSearchParams()
+  params.append('page', String(page))
+  params.append('limit', String(limit))
+  params.append('sortBy', sortBy)
+  params.append('sortOrder', String(sortOrder).toUpperCase())
+  appendTransactionQueryParams(params, { startDate, endDate, search, statuses })
+  if (forceSync) params.append('sync', 'true')
+
+  const response = await fetch(apiUrl(`/api/transactions?${params.toString()}`), {
+    headers: getAuthHeaders(),
+    signal
+  })
+
+  if (!response.ok) {
+    throw new Error(`No se pudieron cargar los pagos (${response.status})`)
+  }
+
+  const json = await response.json()
+  const transactions = Array.isArray(json?.data) ? json.data as Transaction[] : []
+  const pagination = json?.pagination || {}
+  const facets = json?.facets || {}
+
+  return {
+    transactions,
+    pagination: {
+      page: Number(pagination.page || page),
+      limit: Number(pagination.limit || limit),
+      total: Number(pagination.total || transactions.length),
+      totalPages: Number(pagination.totalPages || 1),
+      hasNext: Boolean(pagination.hasNext),
+      hasPrev: Boolean(pagination.hasPrev)
+    },
+    facets: {
+      statuses: Array.isArray(facets.statuses)
+        ? facets.statuses.map((status: any) => ({
+          value: String(status.value || '').trim().toLowerCase(),
+          count: Number(status.count || 0)
+        })).filter((status: TransactionStatusFacet) => status.value)
+        : []
+    }
+  }
+}
+
 export const transactionsService = {
+  getTransactionsPage(params: TransactionsPageParams = {}): Promise<TransactionsPageResult> {
+    return requestTransactionsPage(params)
+  },
+
   async getTransactions(
     startDate?: string,
     endDate?: string,
@@ -79,18 +222,14 @@ export const transactionsService = {
     searchTerm?: string
   ): Promise<Transaction[]> {
     try {
-      const params: Record<string, string> = {}
-      if (startDate) params.startDate = startDate
-      if (endDate) params.endDate = endDate
-      if (searchTerm && searchTerm.trim()) params.q = searchTerm.trim()
-
-      // Forzar sincronización cuando se especifica (después de crear invoice)
-      if (forceSync) params.sync = 'true'
-
-      const data = await apiClient.get<Transaction[]>('/transactions', {
-        params
+      const result = await requestTransactionsPage({
+        startDate,
+        endDate,
+        forceSync,
+        search: searchTerm,
+        limit: 250
       })
-      return data
+      return result.transactions
     } catch (error) {
       // TODO: Implement proper logging service
       return []
@@ -101,11 +240,16 @@ export const transactionsService = {
     return await apiClient.get<Transaction>(`/transactions/${id}`)
   },
 
-  async getSummary(startDate?: string, endDate?: string): Promise<TransactionSummary> {
+  async getSummary(startOrParams?: string | TransactionSummaryParams, endDate?: string): Promise<TransactionSummary> {
     try {
+      const input = typeof startOrParams === 'object'
+        ? startOrParams
+        : { startDate: startOrParams, endDate }
       const params: Record<string, string> = {}
-      if (startDate) params.startDate = startDate
-      if (endDate) params.endDate = endDate
+      if (input.startDate) params.startDate = input.startDate
+      if (input.endDate) params.endDate = input.endDate
+      if (input.search?.trim()) params.q = input.search.trim()
+      if (input.statuses?.length) params.status = input.statuses.join(',')
 
       const data = await apiClient.get<TransactionSummary>('/transactions/summary', {
         params
@@ -113,16 +257,7 @@ export const transactionsService = {
 
       return data
     } catch (error) {
-      return {
-        totalRevenue: 0,
-        totalRevenuePrev: 0,
-        completedPayments: 0,
-        completedPaymentsPrev: 0,
-        averageTicket: 0,
-        averageTicketPrev: 0,
-        refunds: 0,
-        refundsPrev: 0
-      }
+      return EMPTY_TRANSACTION_SUMMARY
     }
   },
 

@@ -9,6 +9,12 @@ import {
   resolveDateRangeWithGHLTimezone
 } from '../utils/dateUtils.js'
 import { buildTransactionStats, buildTransactionSummary } from '../services/analyticsService.js'
+import {
+  buildTransactionListWhere,
+  buildTransactionStatusGroupExpression,
+  normalizeTransactionPagination,
+  normalizeTransactionStatusFilters
+} from '../services/transactionQueryService.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { syncAllInvoices, syncLocalPaymentsToHighLevel } from '../services/invoicesSyncService.js'
@@ -28,7 +34,6 @@ import {
 import { formatInvoiceMultilineText, formatInvoiceSingleLineText } from '../utils/invoiceTextFormatter.js'
 import { findContactByPhoneCandidates, generateContactId } from '../services/contactIdentityService.js'
 import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLocale.js'
-import { buildContactSearchClause, containsPattern, normalizePhoneDigits } from '../utils/searchText.js'
 import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
@@ -814,7 +819,9 @@ export const getTransactions = async (req, res) => {
       page = 1,
       limit,
       status = '',
+      statuses = '',
       q = '',
+      search = '',
       startDate,
       endDate,
       sortBy = 'date',
@@ -822,22 +829,18 @@ export const getTransactions = async (req, res) => {
       sync = 'false' // Por defecto NO sincroniza (más rápido)
     } = req.query
 
-    const searchTerm = cleanString(q)
-    const searchPattern = containsPattern(searchTerm, 500)
-    const searchDigits = normalizePhoneDigits(searchTerm)
-    const hasSearch = Boolean(searchPattern && searchPattern !== '__no_text_match__')
+    const searchTerm = cleanString(q || search)
+    const selectedStatuses = normalizeTransactionStatusFilters([
+      ...(Array.isArray(status) ? status : [status]),
+      ...(Array.isArray(statuses) ? statuses : [statuses])
+    ])
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
     const rangeLabel = range.isFiltered
       ? `${range.startUtc || '---'} -> ${range.endUtc || '---'}`
       : 'todos'
+    const { pageNumber, limitNumber, offset } = normalizeTransactionPagination({ page, limit })
 
-    // Si NO hay filtro de fechas (modo "TODOS"), traer TODOS los registros sin límite
-    const usePagination = (range.isFiltered || limit) && !hasSearch
-    const limitNumber = usePagination ? Math.min(Number(limit) || 50, 5000) : 999999
-    const pageNumber = usePagination ? (Number(page) || 1) : 1
-    const offset = usePagination ? Math.max((pageNumber - 1) * limitNumber, 0) : 0
-
-    logger.info(`Obteniendo transacciones - página ${pageNumber}, límite ${limitNumber}, rango: ${rangeLabel}, paginación: ${usePagination}`)
+    logger.info(`Obteniendo transacciones - página ${pageNumber}, límite ${limitNumber}, rango: ${rangeLabel}`)
 
     // Sincronizar invoices desde HighLevel antes de devolver datos
     if (sync !== 'false') {
@@ -855,104 +858,55 @@ export const getTransactions = async (req, res) => {
     const hiddenFilters = await getHiddenContactFilters()
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
 
-    const filters = []
-    const params = []
+    const listWhere = buildTransactionListWhere({
+      range,
+      statuses: selectedStatuses,
+      search: searchTerm,
+      hiddenCondition,
+      paymentAlias: 'p',
+      contactAlias: 'c'
+    })
+    const facetsWhere = buildTransactionListWhere({
+      range,
+      statuses: [],
+      search: searchTerm,
+      hiddenCondition,
+      paymentAlias: 'p',
+      contactAlias: 'c'
+    })
 
-    if (status) {
-      filters.push('p.status = ?')
-      params.push(status)
-    }
-
-    if (range.startUtc) {
-      filters.push('p.date >= ?')
-      params.push(range.startUtc)
-    }
-
-    if (range.endUtc) {
-      filters.push('p.date <= ?')
-      params.push(range.endUtc)
-    }
-
-    // Agregar filtro de contactos ocultos (mostrar pagos sin contacto O con contacto NO oculto)
-    if (hiddenCondition) {
-      filters.push(`(p.contact_id IS NULL OR p.contact_id IN (SELECT c.id FROM contacts c WHERE ${hiddenCondition}))`)
-    }
-
-    filters.push(`
-      NOT EXISTS (
-        SELECT 1
-        FROM installment_payments ip
-        WHERE ip.payment_id = p.id
-          AND LOWER(COALESCE(p.status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')
-      )
-    `)
-    filters.push(`
-      NOT EXISTS (
-        SELECT 1
-        FROM payment_flows pf
-        WHERE pf.first_payment_invoice_id = p.id
-          AND pf.payment_provider = 'stripe'
-          AND COALESCE(p.public_payment_id, '') = ''
-          AND COALESCE(p.payment_url, '') = ''
-          AND LOWER(COALESCE(p.status, 'pending')) NOT IN ('paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted')
-      )
-    `)
-
-    // Ocultar intentos de checkout de SITIO (site_checkout / site_form) que NUNCA se
-    // completaron. Un visitante que abre el checkout, escribe su correo o abandona sin
-    // terminar el pago NO debe aparecer como "pago incompleto" en el CRM: solo importan
-    // los pagos reales (paid) o los rechazos reales (failed). Los enlaces de pago del
-    // panel (otro origen) sí muestran su estado 'sent'/'pending' porque son intencionales.
-    filters.push(`
-      NOT (
-        (COALESCE(p.metadata_json, '') LIKE '%site_checkout%' OR COALESCE(p.metadata_json, '') LIKE '%site_form%')
-        AND LOWER(COALESCE(p.status, '')) IN ('sent', 'pending', 'processing', 'requires_action', 'requires_payment_method', 'incomplete', 'draft', 'initiated')
-      )
-    `)
-
-    if (hasSearch) {
-      const contactSearch = buildContactSearchClause('c', searchTerm, { includeSource: true })
-      const paymentSearch = `(
-        LOWER(COALESCE(p.reference, '')) LIKE ?
-        OR LOWER(COALESCE(p.title, '')) LIKE ?
-        OR LOWER(COALESCE(p.description, '')) LIKE ?
-        OR LOWER(COALESCE(p.invoice_number, '')) LIKE ?
-        OR LOWER(COALESCE(p.public_payment_id, '')) LIKE ?
-        OR LOWER(COALESCE(p.payment_provider, '')) LIKE ?
-        OR LOWER(COALESCE(p.payment_method, '')) LIKE ?
-        OR LOWER(COALESCE(p.status, '')) LIKE ?
-        OR COALESCE(p.id, '') LIKE ?
-        OR ${searchDigits ? `REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(p.id, ''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '') LIKE ?` : '1 = 0'}
-      )`
-      const paymentSearchParams = [
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchPattern,
-        searchDigits ? `%${searchDigits}%` : '__no_phone_match__',
-        searchDigits ? `%${searchDigits}%` : '__no_phone_match__'
-      ]
-      filters.push(`(${contactSearch.condition} OR ${paymentSearch})`)
-      params.push(...contactSearch.params)
-      params.push(...paymentSearchParams)
-    }
-
-    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : ''
-    const countResult = await db.get(`SELECT COUNT(*) as total FROM payments p ${whereClause}`, params)
+    const countResult = await db.get(
+      `SELECT COUNT(*) as total
+       FROM payments p
+       LEFT JOIN contacts c ON p.contact_id = c.id
+       ${listWhere.whereClause}`,
+      listWhere.params
+    )
     const totalTransactions = countResult?.total || 0
+    const statusGroupExpression = buildTransactionStatusGroupExpression('p')
+    const statusFacetRows = await db.all(
+      `SELECT ${statusGroupExpression} as status, COUNT(*) as count
+       FROM payments p
+       LEFT JOIN contacts c ON p.contact_id = c.id
+       ${facetsWhere.whereClause}
+       GROUP BY ${statusGroupExpression}`,
+      facetsWhere.params
+    )
 
     const dateSortExpression = timestampSortExpression('p.date')
     const createdAtSortExpression = timestampSortExpression('p.created_at')
     const sortableMap = {
       date: dateSortExpression,
       created_at: createdAtSortExpression,
+      createdAt: createdAtSortExpression,
       amount: 'p.amount',
-      status: 'p.status'
+      status: statusGroupExpression,
+      contactName: "LOWER(COALESCE(c.full_name, ''))",
+      email: "LOWER(COALESCE(c.email, ''))",
+      method: "LOWER(COALESCE(p.payment_method, ''))",
+      paymentType: "LOWER(COALESCE(p.payment_method, ''))",
+      paymentChannel: "LOWER(COALESCE(p.payment_provider, ''))",
+      title: "LOWER(COALESCE(p.title, p.description, ''))"
     }
 
     const safeSortBy = sortableMap[sortBy] || dateSortExpression
@@ -1003,15 +957,15 @@ export const getTransactions = async (req, res) => {
         c.phone as contact_phone
       FROM payments p
       LEFT JOIN contacts c ON p.contact_id = c.id
-      ${whereClause}
+      ${listWhere.whereClause}
       ORDER BY ${safeSortBy} ${orderDirection}, ${orderTieBreaker}
       LIMIT ? OFFSET ?
     `
 
-    let transactions = await db.all(transactionsQuery, [...params, limitNumber, offset])
+    let transactions = await db.all(transactionsQuery, [...listWhere.params, limitNumber, offset])
 
     if (await refreshStripeTransactionsForRows(transactions)) {
-      transactions = await db.all(transactionsQuery, [...params, limitNumber, offset])
+      transactions = await db.all(transactionsQuery, [...listWhere.params, limitNumber, offset])
     }
 
     // Mapear campos de base de datos a nombres esperados por frontend
@@ -1019,7 +973,7 @@ export const getTransactions = async (req, res) => {
     const mappedTransactions = transactions.map(transaction => mapTransactionRow(transaction, responseBaseUrl))
 
     // Calcular información de paginación
-    const totalPages = Math.ceil(totalTransactions / limitNumber)
+    const totalPages = Math.max(Math.ceil(totalTransactions / limitNumber), 1)
 
     logger.debug(
       `Transacciones obtenidas (${rangeLabel}) -> ${transactions.length} registros en esta página, ${totalTransactions} total`
@@ -1035,6 +989,14 @@ export const getTransactions = async (req, res) => {
         totalPages,
         hasNext: pageNumber < totalPages,
         hasPrev: pageNumber > 1
+      },
+      facets: {
+        statuses: statusFacetRows
+          .map(row => ({
+            value: String(row.status || '').trim(),
+            count: Number(row.count || 0)
+          }))
+          .filter(row => row.value)
       }
     })
 
@@ -1196,8 +1158,17 @@ export const getTransactionStats = async (req, res) => {
  */
 export const getTransactionSummary = async (req, res) => {
   try {
-    const { startDate, endDate } = req.query
-    const { range, summary } = await buildTransactionSummary({ startDate, endDate })
+    const { startDate, endDate, status = '', statuses = '', q = '', search = '' } = req.query
+    const selectedStatuses = normalizeTransactionStatusFilters([
+      ...(Array.isArray(status) ? status : [status]),
+      ...(Array.isArray(statuses) ? statuses : [statuses])
+    ])
+    const { range, summary } = await buildTransactionSummary({
+      startDate,
+      endDate,
+      search: cleanString(q || search),
+      statuses: selectedStatuses
+    })
 
     const rangeLabel = range.isFiltered
       ? `${range.startUtc || '---'} -> ${range.endUtc || '---'} (${range.appliedTimezone})`

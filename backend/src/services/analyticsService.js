@@ -19,6 +19,13 @@ import {
   normalizeContactListQuickFilter,
   normalizeContactListTrackingFilters
 } from './contactListFilterService.js'
+import {
+  buildLivePaymentCondition,
+  buildRefundedTransactionCondition,
+  buildSuccessfulTransactionCondition,
+  buildTransactionListWhere,
+  normalizeTransactionStatusFilters
+} from './transactionQueryService.js'
 
 const isPostgres = Boolean(process.env.DATABASE_URL)
 const ACTIVE_PAYMENT_STATUSES = new Set(SUCCESS_PAYMENT_STATUSES)
@@ -491,76 +498,67 @@ export async function buildTransactionStats ({ startDate, endDate, scope = 'all'
   }
 }
 
-export async function buildTransactionSummary ({ startDate, endDate, scope = 'all' } = {}) {
+export async function buildTransactionSummary ({ startDate, endDate, scope = 'all', search = '', statuses = [] } = {}) {
   const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
   const scopeAttributed = scope === 'campaigns'
 
-  // Obtener filtro de contactos ocultos
-  const { getHiddenContactFilters, buildHiddenContactsCondition } = await import('../utils/hiddenContactsFilter.js')
   const hiddenFilters = await getHiddenContactFilters()
-  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', true)
+  const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+  const selectedStatuses = normalizeTransactionStatusFilters(statuses)
+  const extraContactConditions = scopeAttributed
+    ? [attributionMatchCondition('c', 'created_at', range.appliedTimezone)]
+    : []
 
-  // Construir condiciones de contacto (ocultos + atribución)
-  const contactConditions = []
-  if (hiddenCondition) {
-    contactConditions.push(hiddenCondition.replace('AND ', ''))
+  const buildSummaryWhere = (summaryRange) => buildTransactionListWhere({
+    range: summaryRange,
+    search,
+    statuses: selectedStatuses,
+    hiddenCondition,
+    extraContactConditions,
+    paymentAlias: 'p',
+    contactAlias: 'c'
+  })
+
+  const appendSummaryConditions = (baseWhere, ...conditions) => {
+    const filters = [...baseWhere.filters]
+    const params = [...baseWhere.params]
+
+    for (const condition of conditions) {
+      if (!condition) continue
+      if (typeof condition === 'string') {
+        filters.push(condition)
+        continue
+      }
+      filters.push(condition.condition)
+      params.push(...condition.params)
+    }
+
+    return {
+      whereClause: filters.length ? `WHERE ${filters.join(' AND ')}` : '',
+      params
+    }
   }
-  if (scopeAttributed) {
-    contactConditions.push(attributionMatchCondition('c', 'created_at', range.appliedTimezone))
-  }
 
-  // Usar TODOS los status válidos de pago (no solo 'succeeded')
-  const statusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
-  const successFilters = [`LOWER(status) IN (${statusPlaceholders})`, nonTestPaymentCondition()]
-  const successParams = [...SUCCESS_PAYMENT_STATUSES]
-
-  if (range.startUtc) {
-    successFilters.push('date >= ?')
-    successParams.push(range.startUtc)
-  }
-
-  if (range.endUtc) {
-    successFilters.push('date <= ?')
-    successParams.push(range.endUtc)
-  }
-
-  if (contactConditions.length > 0) {
-    successFilters.push(`contact_id IN (
-      SELECT c.id FROM contacts c
-      WHERE ${contactConditions.join(' AND ')}
-    )`)
-  }
-
-  const whereClause = `WHERE ${successFilters.join(' AND ')}`
+  const currentBaseWhere = buildSummaryWhere(range)
+  const successCondition = buildSuccessfulTransactionCondition('p')
+  const livePaymentCondition = buildLivePaymentCondition('p')
+  const currentSuccessWhere = appendSummaryConditions(currentBaseWhere, successCondition, livePaymentCondition)
   const currentResult = await db.get(
-    `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total, COALESCE(AVG(amount), 0) as average FROM payments ${whereClause}`,
-    successParams
+    `SELECT COUNT(*) as count, COALESCE(SUM(p.amount), 0) as total, COALESCE(AVG(p.amount), 0) as average
+     FROM payments p
+     LEFT JOIN contacts c ON p.contact_id = c.id
+     ${currentSuccessWhere.whereClause}`,
+    currentSuccessWhere.params
   )
 
-  const refundsFilters = ['status = ?', nonTestPaymentCondition()]
-  const refundsParams = ['refunded']
-
-  if (range.startUtc) {
-    refundsFilters.push('date >= ?')
-    refundsParams.push(range.startUtc)
-  }
-
-  if (range.endUtc) {
-    refundsFilters.push('date <= ?')
-    refundsParams.push(range.endUtc)
-  }
-
-  if (contactConditions.length > 0) {
-    refundsFilters.push(`contact_id IN (
-      SELECT c.id FROM contacts c
-      WHERE ${contactConditions.join(' AND ')}
-    )`)
-  }
-
-  const refundsWhere = `WHERE ${refundsFilters.join(' AND ')}`
+  const refundCondition = buildRefundedTransactionCondition('p')
+  const currentRefundsWhere = appendSummaryConditions(currentBaseWhere, refundCondition, livePaymentCondition)
   const refundsResult = await db.get(
-    `SELECT COUNT(*) as count FROM payments ${refundsWhere}`,
-    refundsParams
+    `SELECT COUNT(*) as count
+     FROM payments p
+     LEFT JOIN contacts c ON p.contact_id = c.id
+     ${currentRefundsWhere.whereClause}`,
+    currentRefundsWhere.params
   )
 
   let previousResult = { count: 0, total: 0, average: 0 }
@@ -569,31 +567,28 @@ export async function buildTransactionSummary ({ startDate, endDate, scope = 'al
   const previousRange = await fetchPreviousRange(range, range.isFiltered ? null : 'month')
 
   if (previousRange) {
-    const prevStatusPlaceholders = SUCCESS_PAYMENT_STATUSES.map(() => '?').join(', ')
-    const prevSuccessFilters = [`LOWER(status) IN (${prevStatusPlaceholders})`, nonTestPaymentCondition(), 'date BETWEEN ? AND ?']
-    const prevSuccessParams = [...SUCCESS_PAYMENT_STATUSES, previousRange.startUtc, previousRange.endUtc]
-    if (contactConditions.length > 0) {
-      prevSuccessFilters.push(`contact_id IN (
-        SELECT c.id FROM contacts c
-        WHERE ${contactConditions.join(' AND ')}
-      )`)
-    }
+    const previousBaseWhere = buildSummaryWhere({
+      ...range,
+      startUtc: previousRange.startUtc,
+      endUtc: previousRange.endUtc,
+      isFiltered: true
+    })
+    const previousSuccessWhere = appendSummaryConditions(previousBaseWhere, successCondition, livePaymentCondition)
     previousResult = await db.get(
-      `SELECT COUNT(*) as count, COALESCE(SUM(amount), 0) as total, COALESCE(AVG(amount), 0) as average FROM payments WHERE ${prevSuccessFilters.join(' AND ')}`,
-      prevSuccessParams
+      `SELECT COUNT(*) as count, COALESCE(SUM(p.amount), 0) as total, COALESCE(AVG(p.amount), 0) as average
+       FROM payments p
+       LEFT JOIN contacts c ON p.contact_id = c.id
+       ${previousSuccessWhere.whereClause}`,
+      previousSuccessWhere.params
     ) || { count: 0, total: 0, average: 0 }
 
-    const prevRefundFilters = ['status = ?', nonTestPaymentCondition(), 'date BETWEEN ? AND ?']
-    const prevRefundParams = ['refunded', previousRange.startUtc, previousRange.endUtc]
-    if (contactConditions.length > 0) {
-      prevRefundFilters.push(`contact_id IN (
-        SELECT c.id FROM contacts c
-        WHERE ${contactConditions.join(' AND ')}
-      )`)
-    }
+    const previousRefundsWhere = appendSummaryConditions(previousBaseWhere, refundCondition, livePaymentCondition)
     refundsPrevResult = await db.get(
-      `SELECT COUNT(*) as count FROM payments WHERE ${prevRefundFilters.join(' AND ')}`,
-      prevRefundParams
+      `SELECT COUNT(*) as count
+       FROM payments p
+       LEFT JOIN contacts c ON p.contact_id = c.id
+       ${previousRefundsWhere.whereClause}`,
+      previousRefundsWhere.params
     ) || { count: 0 }
   }
 
