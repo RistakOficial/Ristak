@@ -10961,6 +10961,124 @@ export const Sites: React.FC = () => {
     showToast('success', 'Página eliminada', `${getSiteTypeLabel(currentSite)} se actualizo. Guarda para conservar el cambio.`)
   }
 
+  const deletePagesLocally = (pageIds: string[]) => {
+    const site = selectedSiteRef.current || selectedSite
+    if (!site || !hasEditablePages(site) || !canManagePages(site)) return false
+    const uniquePageIds = [...new Set(pageIds.filter(Boolean))]
+    if (!uniquePageIds.length) return false
+
+    const blockedIds = new Set<string>()
+    const rootIds = uniquePageIds.filter(pageId => {
+      if (isStandardForm(site) && isFormFinalPageId(pageId)) {
+        blockedIds.add(pageId)
+        return false
+      }
+      return pages.some(page => page.id === pageId)
+    })
+    if (!rootIds.length) {
+      showToast('warning', 'No se puede eliminar', 'Las páginas seleccionadas no se pueden borrar.')
+      return false
+    }
+
+    const websiteMode = getSitePageMode(site) === 'website'
+    const idsToDelete = websiteMode
+      ? rootIds.flatMap(pageId => [pageId, ...getDescendantPageIds(pageId, pages)])
+      : rootIds
+    const idsToDeleteSet = new Set(idsToDelete)
+    const remainingPageCount = isStandardForm(site)
+      ? getFormContentPages(pages).filter(page => !idsToDeleteSet.has(page.id)).length
+      : pages.filter(page => !idsToDeleteSet.has(page.id)).length
+    if (remainingPageCount < 1) {
+      showToast('warning', 'No se puede eliminar', `${getSiteTypeLabel(site)} debe tener al menos una página.`)
+      return false
+    }
+
+    const firstDeletedIndex = Math.max(0, pages.findIndex(page => idsToDeleteSet.has(page.id)))
+    const nextPages = pages.filter(page => !idsToDeleteSet.has(page.id))
+    const currentSite = selectedSiteRef.current || site
+    const orderedPages = getOrderedPagesForSite(currentSite, nextPages)
+    const normalizedBeforePages = normalizePagesForSave(pages)
+    const normalizedAfterPages = normalizePagesForSave(orderedPages)
+    const nextActive = idsToDeleteSet.has(activePageId)
+      ? orderedPages[Math.max(0, firstDeletedIndex - 1)]?.id || orderedPages[0]?.id
+      : activePageId
+    const deletedBlocks = (currentSite.blocks || [])
+      .filter(block => !isGlobalHeaderBlock(block) && idsToDeleteSet.has(getBlockPageId(block, pages)))
+      .map(block => cloneJson(block))
+    const pageBlockIds = deletedBlocks.map(block => block.id)
+    const deletedCreatedBlockIds = pageBlockIds.filter(id => pendingCreatedBlockIdsRef.current.has(id))
+    const deletedPendingSaveBlockIds = pageBlockIds.filter(id => pendingBlockSaveIdsRef.current.has(id))
+
+    markBlocksDeletedLocal(pageBlockIds)
+    pushEditorHistory({
+      action: 'pages',
+      siteId: currentSite.id,
+      pageId: nextActive || DEFAULT_FUNNEL_PAGE_ID,
+      selectedBefore: selectedBlockId,
+      selectedAfter: '',
+      beforeBlockIds: [],
+      afterBlockIds: [],
+      beforePages: normalizedBeforePages,
+      afterPages: normalizedAfterPages,
+      activePageBefore: activePageId,
+      activePageAfter: nextActive || DEFAULT_FUNNEL_PAGE_ID,
+      deletedBlocks,
+      deletedCreatedBlockIds,
+      deletedPendingSaveBlockIds
+    })
+    const nextSite = {
+      ...currentSite,
+      blocks: (currentSite.blocks || []).filter(block => !pageBlockIds.includes(block.id)),
+      theme: {
+        ...(currentSite.theme || {}),
+        pages: normalizedAfterPages
+      }
+    }
+    applySelectedSiteLocal(nextSite, {
+      activePageId: nextActive || DEFAULT_FUNNEL_PAGE_ID,
+      selectedBlockId: '',
+      navigate: true
+    })
+
+    const skippedCount = blockedIds.size
+    showToast(
+      skippedCount ? 'warning' : 'success',
+      skippedCount ? 'Páginas eliminadas parcialmente' : 'Páginas eliminadas',
+      skippedCount
+        ? `Se eliminaron ${idsToDeleteSet.size} páginas. ${skippedCount} páginas fijas se conservaron. Guarda para conservar el cambio.`
+        : `Se eliminaron ${idsToDeleteSet.size} páginas. Guarda para conservar el cambio.`
+    )
+    return true
+  }
+
+  const handleBulkDeletePages = async (pageIds: string[]) => {
+    const uniquePageIds = [...new Set(pageIds.filter(Boolean))]
+    if (!uniquePageIds.length) return false
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const finish = (deleted: boolean) => {
+        if (settled) return
+        settled = true
+        resolve(deleted)
+      }
+
+      showConfirm(
+        'Eliminar páginas',
+        `Vas a eliminar ${uniquePageIds.length} página${uniquePageIds.length === 1 ? '' : 's'} seleccionada${uniquePageIds.length === 1 ? '' : 's'}. Si una página tiene subpáginas, también se eliminarán. Esta acción no se puede deshacer después de guardar.`,
+        () => {
+          const deleted = deletePagesLocally(uniquePageIds)
+          finish(deleted)
+          return deleted
+        },
+        'Eliminar',
+        'Cancelar',
+        () => finish(false),
+        { typeToConfirm: 'ELIMINAR' }
+      )
+    })
+  }
+
   const orderPagesByIds = (sourcePages: SitePage[], pageIds?: string[]) => {
     if (!pageIds?.length) return sourcePages
     const byId = new Map(sourcePages.map(page => [page.id, page]))
@@ -11710,8 +11828,9 @@ export const Sites: React.FC = () => {
 
   const handleDeleteSite = async (siteToDelete = selectedSite) => {
     if (!siteToDelete) return
+    const siteKindLabel = isLanding(siteToDelete) ? 'sitio' : 'formulario'
     showConfirm(
-      'Eliminar sitio',
+      `Eliminar ${siteKindLabel}`,
       `Se eliminará "${siteToDelete.name}" y sus respuestas. Esta acción no se puede deshacer.`,
       () => {
         const deleteSite = async () => {
@@ -11739,6 +11858,77 @@ export const Sites: React.FC = () => {
       undefined,
       { typeToConfirm: 'ELIMINAR' }
     )
+  }
+
+  const handleBulkDeleteSites = async (sitesToDelete: PublicSite[]): Promise<string[]> => {
+    const uniqueSites = [...new Map(sitesToDelete.filter(Boolean).map(site => [site.id, site])).values()]
+    if (!uniqueSites.length) return []
+
+    const landingCount = uniqueSites.filter(isLanding).length
+    const formCount = uniqueSites.length - landingCount
+    const itemLabel = landingCount && formCount
+      ? `${landingCount} sitio${landingCount === 1 ? '' : 's'} y ${formCount} formulario${formCount === 1 ? '' : 's'}`
+      : landingCount
+        ? `${landingCount} sitio${landingCount === 1 ? '' : 's'}`
+        : `${formCount} formulario${formCount === 1 ? '' : 's'}`
+
+    return new Promise<string[]>((resolve) => {
+      let settled = false
+      const finish = (deletedIds: string[]) => {
+        if (settled) return
+        settled = true
+        resolve(deletedIds)
+      }
+
+      showConfirm(
+        'Eliminar seleccionados',
+        `Vas a eliminar ${itemLabel} y sus respuestas. Esta acción no se puede deshacer.`,
+        async () => {
+          const results = await Promise.allSettled(
+            uniqueSites.map(async (site) => {
+              await sitesService.deleteSite(site.id)
+              return site.id
+            })
+          )
+          const deletedIds = results
+            .filter((result): result is PromiseFulfilledResult<string> => result.status === 'fulfilled')
+            .map(result => result.value)
+          const failedCount = results.length - deletedIds.length
+
+          if (deletedIds.length > 0) {
+            const deletedIdSet = new Set(deletedIds)
+            setSites(current => current.filter(site => !deletedIdSet.has(site.id)))
+            const currentSelectedSite = selectedSiteRef.current || selectedSite
+            if (currentSelectedSite && deletedIdSet.has(currentSelectedSite.id)) {
+              markEditorExitInProgress()
+              setSelectedSite(null)
+              selectedSiteRef.current = null
+              setSelectedBlockId('')
+              navigateSitesSection(getSiteSection(currentSelectedSite))
+              clearEditorDirtyState()
+            }
+          }
+
+          if (failedCount > 0) {
+            showToast(
+              deletedIds.length > 0 ? 'warning' : 'error',
+              deletedIds.length > 0 ? 'Eliminación parcial' : 'No se pudo eliminar',
+              deletedIds.length > 0
+                ? `Se eliminaron ${deletedIds.length}, pero ${failedCount} fallaron. Intenta de nuevo con los pendientes.`
+                : 'No se pudo eliminar ningún elemento seleccionado.'
+            )
+          } else {
+            showToast('success', 'Eliminados', `Se eliminaron ${deletedIds.length} elemento${deletedIds.length === 1 ? '' : 's'}.`)
+          }
+
+          finish(deletedIds)
+        },
+        'Eliminar',
+        'Cancelar',
+        () => finish([]),
+        { typeToConfirm: 'ELIMINAR' }
+      )
+    })
   }
 
   const warnDuplicateSystemFormField = (preset: SystemFormFieldPreset) => {
@@ -12125,6 +12315,61 @@ export const Sites: React.FC = () => {
     const fallbackFields = getEmbeddedFormPageFields(nextFields, nextPages, fallbackPage.id)
     patchEmbeddedFormFieldsLocal(nextFields, fallbackFields[0]?.id || '', nextPages)
     setActiveEmbeddedFormPageId(fallbackPage.id)
+  }
+
+  const deleteEmbeddedFormPagesLocally = (pageIds: string[]) => {
+    const context = getCurrentEmbeddedFormContext()
+    if (!context || context.pages.length <= 1) return false
+    const idsToDeleteSet = new Set(pageIds.filter(pageId => context.pages.some(page => page.id === pageId)))
+    if (!idsToDeleteSet.size) return false
+
+    const nextPages = context.pages.filter(page => !idsToDeleteSet.has(page.id))
+    if (!nextPages.length) {
+      showToast('warning', 'No se puede eliminar', 'El formulario debe tener al menos una página.')
+      return false
+    }
+
+    const firstDeletedIndex = Math.max(0, context.pages.findIndex(page => idsToDeleteSet.has(page.id)))
+    const fallbackPage = nextPages[Math.max(0, firstDeletedIndex - 1)] || nextPages[0]
+    const nextFields = context.fields.map(field => (
+      idsToDeleteSet.has(getBlockPageId(field, context.pages))
+        ? { ...field, settings: { ...(field.settings || {}), pageId: fallbackPage.id } }
+        : field
+    ))
+    const nextActivePageId = idsToDeleteSet.has(context.activePageId) ? fallbackPage.id : context.activePageId
+    const fallbackFields = getEmbeddedFormPageFields(nextFields, nextPages, nextActivePageId)
+    patchEmbeddedFormFieldsLocal(nextFields, fallbackFields[0]?.id || '', nextPages)
+    setActiveEmbeddedFormPageId(nextActivePageId)
+    showToast('success', 'Páginas eliminadas', `Se eliminaron ${idsToDeleteSet.size} páginas del formulario. Guarda para conservar el cambio.`)
+    return true
+  }
+
+  const handleBulkDeleteEmbeddedFormPages = async (pageIds: string[]) => {
+    const uniquePageIds = [...new Set(pageIds.filter(Boolean))]
+    if (!uniquePageIds.length) return false
+
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const finish = (deleted: boolean) => {
+        if (settled) return
+        settled = true
+        resolve(deleted)
+      }
+
+      showConfirm(
+        'Eliminar páginas',
+        `Vas a eliminar ${uniquePageIds.length} página${uniquePageIds.length === 1 ? '' : 's'} del formulario. Los campos de esas páginas se moverán a una página sobreviviente. Esta acción no se puede deshacer después de guardar.`,
+        () => {
+          const deleted = deleteEmbeddedFormPagesLocally(uniquePageIds)
+          finish(deleted)
+          return deleted
+        },
+        'Eliminar',
+        'Cancelar',
+        () => finish(false),
+        { typeToConfirm: 'ELIMINAR' }
+      )
+    })
   }
 
   const handleAddEmbeddedFormField = (blockType: SiteBlockType, insertIndex?: number, initialSettings: Record<string, unknown> = {}) => {
@@ -13201,6 +13446,7 @@ export const Sites: React.FC = () => {
       onAddPage={handleAddPage}
       onDuplicatePage={handleDuplicatePage}
       onDeletePage={handleDeletePage}
+      onDeletePages={handleBulkDeletePages}
       onReorderPages={handleReorderPages}
       onRenamePage={handleRenamePage}
       onRenamePageSlug={handleRenamePageSlug}
@@ -13230,6 +13476,7 @@ export const Sites: React.FC = () => {
       onAddPage={addEmbeddedFormPage}
       onDuplicatePage={() => {}}
       onDeletePage={deleteEmbeddedFormPage}
+      onDeletePages={handleBulkDeleteEmbeddedFormPages}
       onReorderPages={() => {}}
       onRenamePage={renameEmbeddedFormPage}
     />
@@ -13742,6 +13989,7 @@ export const Sites: React.FC = () => {
                 onSetDefaultRoute={handleSetDefaultDomainRoute}
                 onOpenSettings={(site) => { void openLibrarySettings(site) }}
                 onDelete={(site) => void handleDeleteSite(site)}
+                onBulkDelete={handleBulkDeleteSites}
                 domainConfig={domainConfig}
               />
             ) : editorSite ? (
@@ -23942,6 +24190,21 @@ interface SitesLibraryPanelProps {
   onSetDefaultRoute: (site: PublicSite) => Promise<void>
   onOpenSettings: (site: PublicSite) => void
   onDelete: (site: PublicSite) => void
+  onBulkDelete: (sites: PublicSite[]) => Promise<string[]>
+}
+
+interface BulkSelectCheckboxProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  indeterminate?: boolean
+}
+
+const BulkSelectCheckbox: React.FC<BulkSelectCheckboxProps> = ({ indeterminate = false, ...props }) => {
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = indeterminate
+  }, [indeterminate])
+
+  return <input ref={inputRef} type="checkbox" {...props} />
 }
 
 const LibrarySitePreview: React.FC<{
@@ -24125,7 +24388,8 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   onUpdateRoute,
   onSetDefaultRoute,
   onOpenSettings,
-  onDelete
+  onDelete,
+  onBulkDelete
 }) => {
   const isLandingLibrary = section === 'landings'
   const librarySection: 'landings' | 'forms' = isLandingLibrary ? 'landings' : 'forms'
@@ -24140,6 +24404,8 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   const [draggingSiteId, setDraggingSiteId] = useState('')
   const [dragOverFolderId, setDragOverFolderId] = useState('')
   const [moveModalSite, setMoveModalSite] = useState<PublicSite | null>(null)
+  const [selectedSiteIds, setSelectedSiteIds] = useState<string[]>([])
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const stopCardAction = (event: React.SyntheticEvent) => event.stopPropagation()
   const sectionFolders = useMemo<LibraryFolderDefinition[]>(() => {
     const customFolders = folders
@@ -24175,12 +24441,23 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     })
   ), [activeFolderId, domainConfig, normalizedQuery, sites])
   const canShowFolders = activeFolderId === SITE_LIBRARY_ROOT_ID && !normalizedQuery
+  const selectedSiteIdSet = useMemo(() => new Set(selectedSiteIds), [selectedSiteIds])
+  const visibleSiteIds = useMemo(() => visibleSites.map(site => site.id), [visibleSites])
+  const selectedVisibleCount = visibleSiteIds.filter(siteId => selectedSiteIdSet.has(siteId)).length
+  const allVisibleSelected = visibleSiteIds.length > 0 && selectedVisibleCount === visibleSiteIds.length
+  const someVisibleSelected = selectedVisibleCount > 0 && !allVisibleSelected
+  const selectedSites = useMemo(
+    () => sites.filter(site => selectedSiteIdSet.has(site.id)),
+    [selectedSiteIdSet, sites]
+  )
+  const selectedCount = selectedSites.length
 
   useEffect(() => {
     setActiveFolderId(SITE_LIBRARY_ROOT_ID)
     setSearchQuery('')
     setFolderCreateOpen(false)
     setFolderDraft('')
+    setSelectedSiteIds([])
   }, [librarySection])
 
   useEffect(() => {
@@ -24189,6 +24466,47 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
       setActiveFolderId(SITE_LIBRARY_ROOT_ID)
     }
   }, [activeFolderId, sectionFolders])
+
+  useEffect(() => {
+    const existingIds = new Set(sites.map(site => site.id))
+    setSelectedSiteIds(current => {
+      const next = current.filter(siteId => existingIds.has(siteId))
+      return next.length === current.length ? current : next
+    })
+  }, [sites])
+
+  const toggleSiteSelection = (siteId: string, checked: boolean) => {
+    setSelectedSiteIds(current => {
+      if (checked) return current.includes(siteId) ? current : [...current, siteId]
+      return current.filter(id => id !== siteId)
+    })
+  }
+
+  const toggleVisibleSelection = (checked: boolean) => {
+    setSelectedSiteIds(current => {
+      const visibleSet = new Set(visibleSiteIds)
+      if (!checked) return current.filter(siteId => !visibleSet.has(siteId))
+      const next = new Set(current)
+      visibleSiteIds.forEach(siteId => next.add(siteId))
+      return [...next]
+    })
+  }
+
+  const clearSiteSelection = () => setSelectedSiteIds([])
+
+  const deleteSelectedSites = async () => {
+    if (!selectedSites.length || bulkDeleting) return
+    setBulkDeleting(true)
+    try {
+      const deletedIds = await onBulkDelete(selectedSites)
+      if (deletedIds.length) {
+        const deletedIdSet = new Set(deletedIds)
+        setSelectedSiteIds(current => current.filter(siteId => !deletedIdSet.has(siteId)))
+      }
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
 
   const startRouteEdit = (site: PublicSite) => {
     setRouteEditingId(site.id)
@@ -24332,18 +24650,50 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
       <span>Predeterminado</span>
     </span>
   ) : null
+  const renderSiteSelectionControl = (site: PublicSite, variant: 'card' | 'row' | 'table' = 'row') => {
+    const checked = selectedSiteIdSet.has(site.id)
+    const variantClass = variant === 'card'
+      ? styles.librarySelectControlCard
+      : variant === 'table'
+        ? styles.librarySelectControlTable
+        : styles.librarySelectControlRow
+
+    return (
+      <label
+        className={`${styles.librarySelectControl} ${variantClass}`}
+        data-library-card-action="true"
+        title={`Seleccionar ${site.name}`}
+        onPointerDown={(event) => event.stopPropagation()}
+        onMouseDown={(event) => event.stopPropagation()}
+        onMouseUp={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <BulkSelectCheckbox
+          checked={checked}
+          disabled={bulkDeleting}
+          aria-label={`Seleccionar ${site.name}`}
+          onChange={(event) => toggleSiteSelection(site.id, event.currentTarget.checked)}
+        />
+        <span aria-hidden="true">
+          <Check size={14} />
+        </span>
+      </label>
+    )
+  }
   const renderGalleryCard = (site: PublicSite) => {
     const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
+    const selected = selectedSiteIdSet.has(site.id)
 
     return (
       <article
         key={site.id}
-        className={`${styles.libraryCard} ${selectedSiteId === site.id ? styles.libraryCardActive : ''} ${draggingSiteId === site.id ? styles.explorerItemDragging : ''}`}
+        className={`${styles.libraryCard} ${styles.libraryCardSelectable} ${selectedSiteId === site.id ? styles.libraryCardActive : ''} ${selected ? styles.libraryCardSelected : ''} ${draggingSiteId === site.id ? styles.explorerItemDragging : ''}`}
         draggable
         onDragStart={(event) => handleDragStart(event, site)}
         onDragEnd={handleDragEnd}
       >
         <div className={styles.libraryCardPreview}>
+          {renderSiteSelectionControl(site, 'card')}
           <span className={styles.libraryThumbLabel}>{getSiteTypeLabel(site)}</span>
           <span className={styles.libraryCardStatus}>{renderSiteStatus(site)}</span>
           <LibrarySitePreview site={site} forms={forms} calendars={calendars} />
@@ -24377,14 +24727,16 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
   }
   const renderListItem = (site: PublicSite) => {
     const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
+    const selected = selectedSiteIdSet.has(site.id)
     return (
       <article
         key={site.id}
-        className={`${styles.explorerListItem} ${selectedSiteId === site.id ? styles.explorerListItemActive : ''} ${draggingSiteId === site.id ? styles.explorerItemDragging : ''}`}
+        className={`${styles.explorerListItem} ${styles.explorerListItemSelectable} ${selectedSiteId === site.id ? styles.explorerListItemActive : ''} ${selected ? styles.explorerListItemSelected : ''} ${draggingSiteId === site.id ? styles.explorerItemDragging : ''}`}
         draggable
         onDragStart={(event) => handleDragStart(event, site)}
         onDragEnd={handleDragEnd}
       >
+        {renderSiteSelectionControl(site, 'row')}
         <button type="button" className={styles.explorerListMain} onClick={() => onEdit(site.id)}>
           <span className={styles.explorerFileIcon}>{isLanding(site) ? <LayoutTemplate size={18} /> : <FormInput size={18} />}</span>
           <span>
@@ -24531,6 +24883,44 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
         </div>
       </div>
 
+      {visibleSites.length > 0 && (
+        <div className={styles.libraryBulkBar} aria-live="polite">
+          <label className={styles.libraryBulkSelectAll}>
+            <BulkSelectCheckbox
+              checked={allVisibleSelected}
+              indeterminate={someVisibleSelected}
+              disabled={bulkDeleting}
+              aria-label={isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'}
+              onChange={(event) => toggleVisibleSelection(event.currentTarget.checked)}
+            />
+            <span>{allVisibleSelected ? 'Todos los visibles' : 'Seleccionar visibles'}</span>
+          </label>
+          <span className={styles.libraryBulkCount}>
+            {selectedCount > 0
+              ? `${selectedCount} ${isLandingLibrary ? 'sitio' : 'formulario'}${selectedCount === 1 ? '' : 's'} seleccionado${selectedCount === 1 ? '' : 's'}`
+              : 'Marca varios elementos para borrarlos juntos.'}
+          </span>
+          <div className={styles.libraryBulkActions}>
+            {selectedCount > 0 && (
+              <Button type="button" variant="ghost" size="sm" onClick={clearSiteSelection} disabled={bulkDeleting}>
+                Limpiar
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="danger"
+              size="sm"
+              leftIcon={<Trash2 size={15} />}
+              onClick={() => { void deleteSelectedSites() }}
+              loading={bulkDeleting}
+              disabled={selectedCount === 0}
+            >
+              Eliminar seleccionados
+            </Button>
+          </div>
+        </div>
+      )}
+
       {canShowFolders && sectionFolders.length > 0 && renderFolderCards()}
 
       {viewMode === 'gallery' ? (
@@ -24559,6 +24949,15 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           <table data-ristak-table-element>
             <thead>
               <tr>
+                <th className={styles.explorerSheetSelectColumn}>
+                  <BulkSelectCheckbox
+                    checked={allVisibleSelected}
+                    indeterminate={someVisibleSelected}
+                    disabled={bulkDeleting || visibleSites.length === 0}
+                    aria-label={isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'}
+                    onChange={(event) => toggleVisibleSelection(event.currentTarget.checked)}
+                  />
+                </th>
                 <th>Nombre</th>
                 <th>Tipo</th>
                 <th>Estado</th>
@@ -24569,14 +24968,18 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
             <tbody>
               {visibleSites.map(site => {
                 const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
+                const selected = selectedSiteIdSet.has(site.id)
                 return (
                   <tr
                     key={site.id}
                     draggable
-                    className={draggingSiteId === site.id ? styles.explorerItemDragging : undefined}
+                    className={`${draggingSiteId === site.id ? styles.explorerItemDragging : ''} ${selected ? styles.explorerSheetRowSelected : ''}`}
                     onDragStart={(event) => handleDragStart(event, site)}
                     onDragEnd={handleDragEnd}
                   >
+                    <td className={styles.explorerSheetSelectColumn}>
+                      {renderSiteSelectionControl(site, 'table')}
+                    </td>
                     <td>
                       <button type="button" className={styles.explorerSheetName} onClick={() => onEdit(site.id)}>
                         <span className={styles.explorerFileIcon}>{isLanding(site) ? <LayoutTemplate size={17} /> : <FormInput size={17} />}</span>
@@ -29041,6 +29444,7 @@ interface FunnelPagesPanelProps {
   onAddPage: () => void
   onDuplicatePage: (pageId: string) => void
   onDeletePage: (pageId: string) => void
+  onDeletePages?: (pageIds: string[]) => boolean | Promise<boolean>
   onReorderPages: (sourcePageId: string, targetPageId: string, orderedPageIds?: string[]) => void
   onRenamePage: (pageId: string, title: string) => void
   onRenamePageSlug?: (pageId: string, slug: string) => void
@@ -29072,6 +29476,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   onAddPage,
   onDuplicatePage,
   onDeletePage,
+  onDeletePages,
   onReorderPages,
   onRenamePage,
   onRenamePageSlug,
@@ -29088,6 +29493,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
   const [open, setOpen] = useState(false)
   const [draggingPageId, setDraggingPageId] = useState<string | null>(null)
   const [dragOrderedPageIds, setDragOrderedPageIds] = useState<string[] | null>(null)
+  const [selectedPageIds, setSelectedPageIds] = useState<string[]>([])
+  const [bulkDeletingPages, setBulkDeletingPages] = useState(false)
   const dragOrderedPageIdsRef = useRef<string[] | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
   const activePage = pages.find(page => page.id === activePageId) || pages[0] || null
@@ -29117,6 +29524,17 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
     const nextItems = dragOrderedPageIds.map(pageId => orderedItemById.get(pageId)).filter((item): item is { page: SitePage; depth: number } => Boolean(item))
     return nextItems.length === orderedItems.length ? nextItems : orderedItems
   }, [dragOrderedPageIds, orderedItemById, orderedItems])
+  const canBulkSelectPages = Boolean(onDeletePages) && !locked
+  const selectedPageIdSet = useMemo(() => new Set(selectedPageIds), [selectedPageIds])
+  const selectablePageIds = useMemo(
+    () => visibleOrderedItems
+      .filter(({ page }) => !locked && canDeletePage(page))
+      .map(({ page }) => page.id),
+    [canDeletePage, locked, visibleOrderedItems]
+  )
+  const selectedSelectableCount = selectablePageIds.filter(pageId => selectedPageIdSet.has(pageId)).length
+  const allSelectablePagesSelected = selectablePageIds.length > 0 && selectedSelectableCount === selectablePageIds.length
+  const someSelectablePagesSelected = selectedSelectableCount > 0 && !allSelectablePagesSelected
 
   useEffect(() => {
     if (!open) return
@@ -29153,8 +29571,47 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
       setDraggingPageId(null)
       setDragOrderedPageIds(null)
       dragOrderedPageIdsRef.current = null
+      setSelectedPageIds([])
     }
   }, [open])
+
+  useEffect(() => {
+    const selectable = new Set(selectablePageIds)
+    setSelectedPageIds(current => {
+      const next = current.filter(pageId => selectable.has(pageId))
+      return next.length === current.length ? current : next
+    })
+  }, [selectablePageIds])
+
+  const togglePageSelection = (pageId: string, checked: boolean) => {
+    setSelectedPageIds(current => {
+      if (checked) return current.includes(pageId) ? current : [...current, pageId]
+      return current.filter(id => id !== pageId)
+    })
+  }
+
+  const toggleSelectablePageSelection = (checked: boolean) => {
+    setSelectedPageIds(current => {
+      const selectable = new Set(selectablePageIds)
+      if (!checked) return current.filter(pageId => !selectable.has(pageId))
+      const next = new Set(current)
+      selectablePageIds.forEach(pageId => next.add(pageId))
+      return [...next]
+    })
+  }
+
+  const clearPageSelection = () => setSelectedPageIds([])
+
+  const deleteSelectedPages = async () => {
+    if (!onDeletePages || selectedPageIds.length === 0 || bulkDeletingPages) return
+    setBulkDeletingPages(true)
+    try {
+      const deleted = await onDeletePages(selectedPageIds)
+      if (deleted !== false) setSelectedPageIds([])
+    } finally {
+      setBulkDeletingPages(false)
+    }
+  }
 
   const handleSelectPage = (pageId: string) => {
     onSelectPage(pageId)
@@ -29306,6 +29763,43 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
             <span>{websiteMode ? 'Páginas y subpáginas' : 'Páginas'}</span>
             <strong>{pages.length}</strong>
           </div>
+          {canBulkSelectPages && selectablePageIds.length > 0 && (
+            <div className={styles.pagesBulkBar}>
+              <label className={styles.pagesBulkSelectAll}>
+                <BulkSelectCheckbox
+                  checked={allSelectablePagesSelected}
+                  indeterminate={someSelectablePagesSelected}
+                  disabled={bulkDeletingPages}
+                  aria-label="Seleccionar páginas borrables"
+                  onChange={(event) => toggleSelectablePageSelection(event.currentTarget.checked)}
+                />
+                <span>{allSelectablePagesSelected ? 'Todas las borrables' : 'Seleccionar borrables'}</span>
+              </label>
+              <span className={styles.pagesBulkCount}>
+                {selectedPageIds.length > 0
+                  ? `${selectedPageIds.length} página${selectedPageIds.length === 1 ? '' : 's'} seleccionada${selectedPageIds.length === 1 ? '' : 's'}`
+                  : 'Marca varias páginas para eliminarlas juntas.'}
+              </span>
+              <div className={styles.pagesBulkActions}>
+                {selectedPageIds.length > 0 && (
+                  <Button type="button" variant="ghost" size="sm" onClick={clearPageSelection} disabled={bulkDeletingPages}>
+                    Limpiar
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  leftIcon={<Trash2 size={14} />}
+                  onClick={() => { void deleteSelectedPages() }}
+                  loading={bulkDeletingPages}
+                  disabled={selectedPageIds.length === 0}
+                >
+                  Eliminar
+                </Button>
+              </div>
+            </div>
+          )}
           <DndContext
             sensors={pageSensors}
             collisionDetection={closestCenter}
@@ -29356,6 +29850,8 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       pageToneClass={pageToneClass}
                       canDelete={pageCanDelete}
                       canDuplicate={pageCanDuplicate}
+                      selectable={canBulkSelectPages && pageCanDelete}
+                      selected={selectedPageIdSet.has(page.id)}
                       showAddSubpage={canAddSubpage}
                       websiteMode={websiteMode}
                       routeEditable={routeEditable}
@@ -29364,6 +29860,7 @@ const FunnelPagesPanel: React.FC<FunnelPagesPanelProps> = ({
                       onAddSubpage={onAddSubpage ? () => { onAddSubpage(page.id) } : undefined}
                       onPromote={onPromotePage ? () => { onPromotePage(page.id) } : undefined}
                       onDemote={onDemotePage ? () => { onDemotePage(page.id) } : undefined}
+                      onSelectionChange={(checked) => togglePageSelection(page.id, checked)}
                       onSelect={() => handleSelectPage(page.id)}
                       onStartRename={() => {
                         onSelectPage(page.id)
@@ -29463,6 +29960,8 @@ interface FunnelPageDropdownItemProps {
   pageToneClass: string
   canDelete: boolean
   canDuplicate: boolean
+  selectable?: boolean
+  selected?: boolean
   showAddSubpage?: boolean
   websiteMode?: boolean
   routeEditable?: boolean
@@ -29471,6 +29970,7 @@ interface FunnelPageDropdownItemProps {
   onAddSubpage?: () => void
   onPromote?: () => void
   onDemote?: () => void
+  onSelectionChange?: (checked: boolean) => void
   onSelect: () => void
   onStartRename: () => void
   onStartRouteEdit?: () => void
@@ -29503,6 +30003,8 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   pageToneClass,
   canDelete,
   canDuplicate,
+  selectable = false,
+  selected = false,
   showAddSubpage = false,
   websiteMode = false,
   routeEditable = false,
@@ -29511,6 +30013,7 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
   onAddSubpage,
   onPromote,
   onDemote,
+  onSelectionChange,
   onSelect,
   onStartRename,
   onStartRouteEdit,
@@ -29605,8 +30108,27 @@ const FunnelPageDropdownItem: React.FC<FunnelPageDropdownItemProps> = ({
       className={`${styles.pagesDropdownItemWrap} ${dragging || isDragging ? styles.pagesDropdownItemDragging : ''}`}
     >
       <div
-        className={`${styles.pagesDropdownItem} ${pageToneClass} ${fixedPage ? styles.pagesDropdownItemFixed : ''} ${locked ? styles.pagesDropdownItemLocked : ''} ${active ? styles.pagesDropdownItemActive : ''}`}
+        className={`${styles.pagesDropdownItem} ${selectable ? styles.pagesDropdownItemSelectable : ''} ${selected ? styles.pagesDropdownItemSelected : ''} ${pageToneClass} ${fixedPage ? styles.pagesDropdownItemFixed : ''} ${locked ? styles.pagesDropdownItemLocked : ''} ${active ? styles.pagesDropdownItemActive : ''}`}
       >
+        {selectable && (
+          <label
+            className={styles.pagesDropdownItemSelect}
+            title={`Seleccionar ${title}`}
+            onPointerDown={(event) => event.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
+            onMouseUp={(event) => event.stopPropagation()}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <BulkSelectCheckbox
+              checked={selected}
+              aria-label={`Seleccionar ${title}`}
+              onChange={(event) => onSelectionChange?.(event.currentTarget.checked)}
+            />
+            <span aria-hidden="true">
+              <Check size={13} />
+            </span>
+          </label>
+        )}
         <span
           className={`${styles.pagesDropdownDragHandle} ${dragDisabled ? styles.pagesDropdownDragHandleDisabled : ''}`}
           {...(!dragDisabled ? attributes : {})}

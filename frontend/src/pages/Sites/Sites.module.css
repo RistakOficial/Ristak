@@ -4849,6 +4849,63 @@
   min-width: 0;
 }
 
+.libraryBulkBar {
+  min-width: 0;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text-dim);
+  padding: 8px 10px;
+}
+
+.libraryBulkSelectAll {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.libraryBulkSelectAll input,
+.explorerSheetSelectColumn > input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.libraryBulkSelectAll input:disabled,
+.explorerSheetSelectColumn > input:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.libraryBulkCount {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.libraryBulkActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
 .explorerViewSwitch {
   display: inline-flex;
   align-items: center;
@@ -4983,10 +5040,19 @@
   transition: border-color 0.16s ease, background 0.16s ease;
 }
 
+.explorerListItemSelectable {
+  grid-template-columns: auto minmax(220px, 1fr) minmax(140px, auto) auto minmax(92px, auto) auto;
+}
+
 .explorerListItem:hover,
 .explorerListItemActive {
   border-color: var(--accent);
   background: var(--surface-hover);
+}
+
+.explorerListItemSelected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .explorerListMain,
@@ -5097,9 +5163,18 @@
   background: var(--surface-2);
 }
 
+.explorerSheetRowSelected td {
+  background: var(--accent-soft);
+}
+
 .explorerSheet td:last-child,
 .explorerSheet th:last-child {
   text-align: right;
+}
+
+.explorerSheetSelectColumn {
+  width: 44px;
+  text-align: center !important;
 }
 
 .explorerItemDragging {
@@ -5326,6 +5401,16 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .libraryBulkBar {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: stretch;
+  }
+
+  .libraryBulkActions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
   .explorerViewSwitch {
     width: fit-content;
     max-width: 100%;
@@ -5337,6 +5422,10 @@
     align-items: start;
   }
 
+  .explorerListItemSelectable {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
   .explorerListType,
   .explorerListStatus,
   .explorerListDate {
@@ -5345,7 +5434,7 @@
 
   .explorerListActions {
     grid-row: 1;
-    grid-column: 2;
+    grid-column: -2 / -1;
   }
 
   .formResponsesHeader {
@@ -5419,6 +5508,12 @@
   box-shadow: var(--shadow-pop);
 }
 
+.libraryCardSelected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: var(--shadow-pop);
+}
+
 .createLibraryIcon {
   width: 46px;
   height: 46px;
@@ -5472,6 +5567,84 @@
   top: 10px;
   left: 10px;
   z-index: 2;
+}
+
+.libraryCardSelectable .libraryCardStatus {
+  left: 52px;
+}
+
+.librarySelectControl {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 32px;
+  cursor: pointer;
+}
+
+.librarySelectControl input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.librarySelectControl input:disabled {
+  cursor: not-allowed;
+}
+
+.librarySelectControl span {
+  width: 22px;
+  height: 22px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-xs);
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.librarySelectControl span svg {
+  opacity: 0;
+  transform: scale(0.86);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.librarySelectControl input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.librarySelectControl input:checked + span svg {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.librarySelectControl input:focus-visible + span {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.librarySelectControl input:disabled + span {
+  opacity: 0.56;
+}
+
+.librarySelectControlCard {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 5;
+}
+
+.librarySelectControlRow,
+.librarySelectControlTable {
+  position: relative;
 }
 
 .libraryThumbLabel {
@@ -16336,6 +16509,49 @@
   font-weight: var(--font-weight-semibold, 600);
 }
 
+.pagesBulkBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 9px;
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 10px;
+}
+
+.pagesBulkSelectAll {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pagesBulkSelectAll input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.pagesBulkCount {
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.pagesBulkActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .pagesDropdownList {
   width: 100%;
   display: grid;
@@ -16373,10 +16589,19 @@
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
+.pagesDropdownItemSelectable {
+  grid-template-columns: 32px 44px minmax(0, 1fr) auto;
+}
+
 .pagesDropdownItem:hover,
 .pagesDropdownItemActive {
   border-color: color-mix(in srgb, var(--color-primary) 42%, var(--color-border-subtle, rgba(148, 163, 184, 0.28)) 58%);
   background: color-mix(in srgb, var(--color-background-tertiary) 82%, var(--color-primary) 18%);
+}
+
+.pagesDropdownItemSelected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 
 .pagesDropdownItemLocked {
@@ -16503,6 +16728,58 @@
 .pagesDropdownItemFixed .pagesDropdownDragHandle {
   opacity: 0.42;
   cursor: default;
+}
+
+.pagesDropdownItemSelect {
+  position: relative;
+  width: 30px;
+  height: 54px;
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+}
+
+.pagesDropdownItemSelect input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.pagesDropdownItemSelect span {
+  width: 21px;
+  height: 21px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--on-accent);
+  box-shadow: var(--shadow-xs);
+}
+
+.pagesDropdownItemSelect span svg {
+  opacity: 0;
+  transform: scale(0.86);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.pagesDropdownItemSelect input:checked + span {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.pagesDropdownItemSelect input:checked + span svg {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.pagesDropdownItemSelect input:focus-visible + span {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .pagesDropdownTitleCell {
@@ -17721,6 +17998,10 @@
   border-radius: 8px;
   background: var(--sites-editor-control-bg);
   padding: 0 10px;
+}
+
+.pageFrame .containerFocused .pagesDropdownItemSelectable {
+  grid-template-columns: 28px 34px minmax(0, 1fr) auto;
 }
 
 .pageFrame .containerFocused .pagesDropdownItem:hover,
