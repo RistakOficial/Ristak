@@ -99,6 +99,7 @@ import {
   serializeCssVars,
   computeSitePageRenderState,
   buildStyleSheet,
+  rescopeSiteCssForCanvas,
   buildEmbeddedFormTheme,
   popupSurfaceDefaults,
   // Superficies embebidas (Paquete D): popup, calendario embebido y proxy del gate.
@@ -23120,10 +23121,33 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 @keyframes rstkCheckoutSpin{to{transform:rotate(360deg)}}
 </style>`
 
-function buildImportedNativeElementRuntimeInjection(runtimeState = {}) {
+// Tematiza los elementos nativos importados IGUAL que el editor de sitios: inyecta el
+// stylesheet base del sitio (RSTK_BASE_CSS + :root de tema) pero ESCOPADO a
+// .rstk-imported-native-slot con el mismo motor que usa el canvas del editor
+// (rescopeSiteCssForCanvas: :root/body/html -> scope, selectores genéricos -> descendientes
+// del scope, @media -> @container). Así video/pago/calendario/formulario usan los tokens del
+// tema del usuario en vez de caer a CanvasText/Canvas del sistema, y NO se filtra ni una regla
+// al CSS del HTML importado (todo cuelga del scope). El scope se declara como container para
+// que las @container generadas por el rescope resuelvan sus anchos.
+function buildImportedNativeThemeStyle(site) {
+  try {
+    const state = computeSitePageRenderState(site)
+    const scoped = rescopeSiteCssForCanvas(buildStyleSheet(state), { scope: '.rstk-imported-native-slot' })
+    if (!scoped || !scoped.trim()) return ''
+    return `<style data-rstk-imported-native-theme>\n.rstk-imported-native-slot{container-type:inline-size;container-name:rstk-canvas}\n${scoped}\n</style>`
+  } catch (error) {
+    logger.warn(`No se pudo tematizar elementos nativos importados: ${error.message}`)
+    return ''
+  }
+}
+
+function buildImportedNativeElementRuntimeInjection(runtimeState = {}, site = null) {
   if (!runtimeState.hasNativeElements && !(runtimeState.customCalendarConfigs || []).length) return ''
   return [
     IMPORTED_NATIVE_ELEMENT_CSS,
+    // El tema escopado va DESPUÉS del CSS base importado: ante conflictos de igual
+    // especificidad gana el tema del usuario (adiós a los fallbacks CanvasText).
+    site ? buildImportedNativeThemeStyle(site) : '',
     runtimeState.hasPayment ? buildPaymentCheckoutRuntimeScript() : '',
     runtimeState.hasCalendar ? buildImportedCalendarBridgeScript() : '',
     buildImportedCustomCalendarRuntimeScript(runtimeState.customCalendarConfigs || [])
@@ -23192,7 +23216,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
     importedNativeRenderContext
   )
   html = importedNativeRender.html
-  const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState)
+  const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState, site)
   const importedVideoRuntime = buildImportedVideoRuntimeInjection(html, {
     actionsEnabled: true,
     actionsPreviewSafe: preview
@@ -23277,7 +23301,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       importedNativeRenderContext
     )
     html = importedNativeRender.html
-    const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState)
+    const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState, site)
     const importedVideoRuntime = buildImportedVideoRuntimeInjection(html)
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
