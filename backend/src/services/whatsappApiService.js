@@ -15,6 +15,7 @@ import {
   disconnectWhatsAppQrConnection,
   getWhatsAppQrSession,
   getWhatsAppQrSessions,
+  rememberRistakQrOutboundAttempt,
   sendWhatsAppQrAudioMessage,
   sendWhatsAppQrDocumentMessage,
   sendWhatsAppQrImageMessage,
@@ -4629,6 +4630,142 @@ function getMessageMediaId(message = {}) {
 }
 
 const QR_MEDIA_MESSAGE_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
+const OUTBOUND_API_MEDIA_QR_ECHO_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
+
+function recentMessageWindowExpressions() {
+  return {
+    lowerBoundExpr: isPostgres() ? "(?::timestamp - INTERVAL '2 minutes')" : "datetime(?, '-2 minutes')",
+    upperBoundExpr: isPostgres() ? "(?::timestamp + INTERVAL '2 minutes')" : "datetime(?, '+2 minutes')",
+    messageTimeExpr: isPostgres()
+      ? 'COALESCE(message_timestamp, created_at)::timestamp'
+      : 'datetime(COALESCE(message_timestamp, created_at))'
+  }
+}
+
+function storedMessageLooksFailed(row = {}) {
+  const status = normalizeMessageDeliveryStatus(row.status)
+  const hasError = Boolean(cleanString(row.error_code || row.error_message))
+  return ['failed', 'error', 'undelivered', 'rejected', 'cancelled'].includes(status) || hasError
+}
+
+async function handleRecentQrEchoDuplicate({
+  duplicate,
+  cleanDirection,
+  cleanWamid,
+  raw,
+  messageType,
+  messageTimestamp
+} = {}) {
+  const duplicateTransport = cleanString(duplicate?.transport).toLowerCase()
+  if (cleanDirection === 'outbound' && duplicateTransport !== 'qr' && storedMessageLooksFailed(duplicate)) {
+    await db.run(`
+      UPDATE whatsapp_api_messages
+      SET transport = 'qr',
+          routing_reason = ?,
+          status = 'sent',
+          error_code = NULL,
+          error_message = NULL,
+          wamid = COALESCE(NULLIF(?, ''), wamid),
+          raw_payload_json = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [
+      'Capturado desde la sesión de WhatsApp Web.',
+      cleanWamid,
+      safeJson({
+        fallbackFrom: 'api',
+        fallbackTransport: 'qr',
+        qrEcho: true,
+        clearedApiError: {
+          code: cleanString(duplicate.error_code) || null,
+          message: cleanString(duplicate.error_message) || null
+        },
+        whatsappMessage: {
+          id: cleanWamid,
+          status: 'sent',
+          transport: 'qr'
+        },
+        ...(raw ? { raw } : {})
+      }),
+      duplicate.id
+    ])
+
+    publishChatMessageEvent({
+      contactId: duplicate.contact_id,
+      messageId: duplicate.id,
+      channel: 'whatsapp',
+      provider: PROVIDER_NAME,
+      transport: 'qr',
+      direction: duplicate.direction || cleanDirection,
+      messageType: cleanString(duplicate.message_type || messageType) || messageType,
+      messageTimestamp: duplicate.message_timestamp || duplicate.created_at || messageTimestamp,
+      isNew: false
+    })
+
+    return {
+      skipped: false,
+      repaired: true,
+      reason: 'duplicate_failed_api_repaired',
+      messageId: duplicate.id,
+      contactId: duplicate.contact_id,
+      transport: 'qr',
+      status: 'sent'
+    }
+  }
+
+  return { skipped: true, reason: 'duplicate_recent', messageId: duplicate?.id }
+}
+
+async function findRecentOutboundApiMediaDuplicate({
+  cleanContactPhone,
+  cleanDirection,
+  cleanMessageType,
+  cleanWamid,
+  messageTimestamp
+} = {}) {
+  if (cleanDirection !== 'outbound') return null
+  if (!OUTBOUND_API_MEDIA_QR_ECHO_TYPES.has(cleanMessageType)) return null
+
+  const {
+    lowerBoundExpr,
+    upperBoundExpr,
+    messageTimeExpr
+  } = recentMessageWindowExpressions()
+
+  return db.get(`
+    SELECT
+      id,
+      contact_id,
+      status,
+      transport,
+      routing_reason,
+      error_code,
+      error_message,
+      direction,
+      message_type,
+      message_timestamp,
+      created_at
+    FROM whatsapp_api_messages
+    WHERE phone = ?
+      AND direction = ?
+      AND LOWER(COALESCE(message_type, '')) = ?
+      AND COALESCE(message_text, '') = ''
+      AND LOWER(COALESCE(transport, 'api')) != 'qr'
+      AND COALESCE(wamid, '') != ?
+      AND ${messageTimeExpr} BETWEEN ${lowerBoundExpr} AND ${upperBoundExpr}
+    ORDER BY updated_at DESC, created_at DESC
+    LIMIT 1
+  `, [cleanContactPhone, cleanDirection, cleanMessageType, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
+}
+
+function rememberOfficialApiOutboundForQrEcho({ phoneNumberId, toPhone, type, text = '' } = {}) {
+  rememberRistakQrOutboundAttempt({
+    phoneId: phoneNumberId,
+    contactPhone: toPhone,
+    type,
+    text
+  })
+}
 
 // Traduce el tipo de mensaje a la clave que `extractMessageMedia` sabe leer en el objeto
 // del mensaje (message.image / message.audio / etc.).
@@ -6271,11 +6408,11 @@ export async function captureQrChatMessage({
     // PAY-006-DB-005: datetime(?, '±2 minutes') es SQLite-only y truena en Postgres
     // (la query iba en un .catch que ocultaba el error => el dedupe nunca corría en prod).
     // Se ramifica a INTERVAL en Postgres manteniendo el mismo orden de parámetros.
-    const lowerBoundExpr = isPostgres() ? "(?::timestamp - INTERVAL '2 minutes')" : "datetime(?, '-2 minutes')"
-    const upperBoundExpr = isPostgres() ? "(?::timestamp + INTERVAL '2 minutes')" : "datetime(?, '+2 minutes')"
-    const messageTimeExpr = isPostgres()
-      ? 'COALESCE(message_timestamp, created_at)::timestamp'
-      : 'datetime(COALESCE(message_timestamp, created_at))'
+    const {
+      lowerBoundExpr,
+      upperBoundExpr,
+      messageTimeExpr
+    } = recentMessageWindowExpressions()
     const duplicate = await db.get(`
       SELECT
         id,
@@ -6298,66 +6435,33 @@ export async function captureQrChatMessage({
       LIMIT 1
     `, [cleanContactPhone, cleanDirection, messageText, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
     if (duplicate) {
-      const duplicateStatus = normalizeMessageDeliveryStatus(duplicate.status)
-      const duplicateTransport = cleanString(duplicate.transport).toLowerCase()
-      const duplicateHasError = Boolean(cleanString(duplicate.error_code || duplicate.error_message))
-      const duplicateFailed = ['failed', 'error', 'undelivered', 'rejected', 'cancelled'].includes(duplicateStatus) || duplicateHasError
-      if (cleanDirection === 'outbound' && duplicateTransport !== 'qr' && duplicateFailed) {
-        await db.run(`
-          UPDATE whatsapp_api_messages
-          SET transport = 'qr',
-              routing_reason = ?,
-              status = 'sent',
-              error_code = NULL,
-              error_message = NULL,
-              wamid = COALESCE(NULLIF(?, ''), wamid),
-              raw_payload_json = ?,
-              updated_at = CURRENT_TIMESTAMP
-          WHERE id = ?
-        `, [
-          'Capturado desde la sesión de WhatsApp Web.',
-          cleanWamid,
-          safeJson({
-            fallbackFrom: 'api',
-            fallbackTransport: 'qr',
-            qrEcho: true,
-            clearedApiError: {
-              code: cleanString(duplicate.error_code) || null,
-              message: cleanString(duplicate.error_message) || null
-            },
-            whatsappMessage: {
-              id: cleanWamid,
-              status: 'sent',
-              transport: 'qr'
-            },
-            ...(raw ? { raw } : {})
-          }),
-          duplicate.id
-        ])
-
-        publishChatMessageEvent({
-          contactId: duplicate.contact_id,
-          messageId: duplicate.id,
-          channel: 'whatsapp',
-          provider: PROVIDER_NAME,
-          transport: 'qr',
-          direction: duplicate.direction || cleanDirection,
-          messageType: cleanString(duplicate.message_type || messageType) || messageType,
-          messageTimestamp: duplicate.message_timestamp || duplicate.created_at || messageTimestamp,
-          isNew: false
-        })
-
-        return {
-          skipped: false,
-          repaired: true,
-          reason: 'duplicate_failed_api_repaired',
-          messageId: duplicate.id,
-          contactId: duplicate.contact_id,
-          transport: 'qr',
-          status: 'sent'
-        }
-      }
-      return { skipped: true, reason: 'duplicate_recent', messageId: duplicate.id }
+      return handleRecentQrEchoDuplicate({
+        duplicate,
+        cleanDirection,
+        cleanWamid,
+        raw,
+        messageType,
+        messageTimestamp
+      })
+    }
+  } else {
+    const cleanMessageType = cleanString(messageType).toLowerCase()
+    const duplicate = await findRecentOutboundApiMediaDuplicate({
+      cleanContactPhone,
+      cleanDirection,
+      cleanMessageType,
+      cleanWamid,
+      messageTimestamp
+    })
+    if (duplicate) {
+      return handleRecentQrEchoDuplicate({
+        duplicate,
+        cleanDirection,
+        cleanWamid,
+        raw,
+        messageType: cleanMessageType || messageType,
+        messageTimestamp
+      })
     }
   }
 
@@ -9515,6 +9619,13 @@ export async function sendWhatsAppApiTextMessage({
   }
   throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
+  rememberOfficialApiOutboundForQrEcho({
+    phoneNumberId,
+    toPhone,
+    type: 'text',
+    text: body
+  })
+
   let response
   try {
     response = await ycloudRequest('/whatsapp/messages', {
@@ -10122,6 +10233,13 @@ export async function sendWhatsAppApiImageMessage({
     ...(externalId ? { externalId } : {})
   }
 
+  rememberOfficialApiOutboundForQrEcho({
+    phoneNumberId,
+    toPhone,
+    type: 'image',
+    text: cleanCaption
+  })
+
   let response
   try {
     response = await ycloudRequest('/whatsapp/messages', {
@@ -10339,6 +10457,13 @@ export async function sendWhatsAppApiDocumentMessage({
     filterBlocked: true,
     ...(externalId ? { externalId } : {})
   }
+
+  rememberOfficialApiOutboundForQrEcho({
+    phoneNumberId,
+    toPhone,
+    type: 'document',
+    text: cleanCaption || requestDocument.filename || ''
+  })
 
   let response
   try {
@@ -10576,6 +10701,13 @@ export async function sendWhatsAppApiVideoMessage({
     ...(externalId ? { externalId } : {})
   }
 
+  rememberOfficialApiOutboundForQrEcho({
+    phoneNumberId,
+    toPhone,
+    type: 'video',
+    text: cleanCaption
+  })
+
   let response
   try {
     response = await ycloudRequest('/whatsapp/messages', {
@@ -10780,6 +10912,13 @@ export async function sendWhatsAppApiAudioMessage({
     filterBlocked: true,
     ...(externalId ? { externalId } : {})
   }
+
+  rememberOfficialApiOutboundForQrEcho({
+    phoneNumberId,
+    toPhone,
+    type: 'audio',
+    text: ''
+  })
 
   let response
   try {

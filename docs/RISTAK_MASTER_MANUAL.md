@@ -628,6 +628,11 @@ Ristak debe guardar una copia de preview en `mediaStorageService` y persistir su
 `media_url` en `whatsapp_api_messages`. WhatsApp no debe recibir ese link si el
 proveedor acepta media ID, pero el historial interno si lo necesita para pintar
 la imagen en la burbuja del chat en vez de mostrar solo el nombre del archivo.
+Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el eco saliente
+que WhatsApp Web emite para esa foto no debe crear una segunda burbuja `QR` con
+el texto generico `Foto`. El backend debe marcar los envios API originados por
+Ristak y deduplicar ecos recientes de media sin caption por telefono, direccion,
+tipo de mensaje y ventana temporal antes de persistirlos como mensajes nuevos.
 
 Los mensajes entrantes estructurados de WhatsApp (plantillas, botones, listas,
 OTP/copy-code e interactivos) no deben degradarse a la etiqueta generica
@@ -651,6 +656,10 @@ webhook tardio de WhatsApp API con estado `failed` para un mensaje que ya quedo
 resuelto por QR, el historial debe conservar el transporte `qr` y mantener
 limpios esos campos de error. Solo se guarda error visible cuando no existe
 respaldo QR usable o cuando el respaldo QR tambien falla.
+Para media manual (foto, video, audio o documento), el fallback por ventana
+cerrada debe conservar el tipo real del contenido: una foto fuera de 24 horas se
+manda por WhatsApp QR como imagen, no como mensaje de texto ni como placeholder
+`Foto`.
 
 En automatizaciones de pago, si la plantilla configurada esta pendiente,
 rechazada, pausada o no sincronizada, Ristak no debe brincar directo a QR. Primero
