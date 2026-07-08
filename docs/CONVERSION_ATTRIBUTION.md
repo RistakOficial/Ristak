@@ -21,6 +21,25 @@ Son dos conceptos SEPARADOS que nunca deben mezclarse:
    web; si fue en el checkout web, dice website aunque el ultimo anuncio haya
    sido de Messenger.
 
+## Adquisicion del contacto vs retouches
+
+`contacts.attribution_ad_id` y `contacts.attribution_ad_name` son la atribucion
+de **primer registro / adquisicion inicial** del contacto. Ese dato se congela
+cuando el contacto obtiene su primer anuncio real y no debe moverse por mensajes
+posteriores, retargeting, reactivaciones ni nuevos marcadores `rstkad_id`.
+
+Los anuncios posteriores del mismo contacto se guardan como touches de historial
+en `whatsapp_api_messages`/`whatsapp_api_attribution`, `whatsapp_attribution`,
+`sessions` o `meta_social_messages` segun el canal. Esos touches posteriores SI
+pueden ganar credito de una compra/cita si son el ultimo paid touch valido antes
+de la conversion, pero no deben pisar la adquisicion inicial del contacto.
+
+La vista de reportes **Identificados de anuncios** y la pagina de Publicidad usan
+`contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
+exista en `meta_ads` el mismo dia local en que se creo el contacto. Por eso
+`contacts.attribution_ad_id` debe permanecer estable: representa de que anuncio
+nacio el registro, no el ultimo anuncio que reabrio la conversacion.
+
 ## Servicio canonico
 
 `backend/src/services/conversionAttributionService.js`:

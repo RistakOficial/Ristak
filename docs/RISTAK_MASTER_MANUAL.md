@@ -346,6 +346,16 @@ Capacidades:
   por datos pesados de contactos que no estan visibles.
 - Acciones masivas con job propio.
 - Atribucion por UTMs, click IDs, WhatsApp referrals, Meta y tracking identity.
+- `contacts.attribution_ad_id` y `contacts.attribution_ad_name` representan el
+  primer registro/adquisicion inicial del contacto. Una vez que el contacto tiene
+  un anuncio real, esos campos no se pisan por retargeting, reactivaciones,
+  mensajes posteriores ni marcadores `rstkad_id`; los anuncios posteriores se
+  conservan como touches del historial (`whatsapp_api_attribution`, sesiones o
+  mensajes sociales) para conversiones.
+- Reportes en vista `Identificados de anuncios` y Publicidad miden registros por
+  `contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
+  exista en `meta_ads` el mismo dia local de creacion del contacto. Por eso ese
+  `ad_id` debe quedarse congelado como origen de registro.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
   legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
   compras. Si un evento trae metadata de mensaje social o email, el tooltip debe
@@ -1450,7 +1460,9 @@ Ristak usa Meta en varias areas:
   atribucion la decide el ultimo paid/ad touch valido del contacto
   (`backend/src/services/conversionAttributionService.js`) y el payload CAPI lo
   decide la superficie real donde ocurrio la conversion. Nunca se falsifica
-  `action_source`. Detalle completo en `docs/CONVERSION_ATTRIBUTION.md`.
+  `action_source`. Ese ultimo touch puede ser un anuncio posterior guardado en el
+  historial, pero no debe pisar `contacts.attribution_ad_id`, porque ese campo
+  es adquisicion inicial. Detalle completo en `docs/CONVERSION_ATTRIBUTION.md`.
 - Social messaging nativo separa los contratos de envio: Messenger envia por
   `graph.facebook.com/{PAGE_ID}/messages` con token de Pagina derivado de
   `meta_config.access_token`; Instagram DM envia por

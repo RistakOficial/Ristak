@@ -210,7 +210,7 @@ hidden_contact_filters:
   id, filter_text, match_type, created_at
 
 Relaciones clave para atribución de publicidad:
-- contacts.attribution_ad_id se une con meta_ads.ad_id para saber de qué anuncio, adset y campaña vino cada contacto (meta_ads tiene campaign_name, adset_name, ad_name).
+- contacts.attribution_ad_id se une con meta_ads.ad_id para saber de qué anuncio, adset y campaña nació el primer registro del contacto; es first-touch de adquisición y no se pisa por retouches posteriores (meta_ads tiene campaign_name, adset_name, ad_name).
 - payments.contact_id, appointments.contact_id y sessions.contact_id se unen con contacts.id.
 `
 
@@ -233,7 +233,7 @@ Definiciones del dashboard:
 
 Atribución de campañas, anuncios y publicidad (modelo oficial de la página de Publicidad/Campañas):
 - Sí puedes medir resultados por campaña, adset y anuncio: leads, citas, asistencias, ventas e ingresos. NUNCA digas que no se puede amarrar ventas o ingresos a una campaña, ni pidas UTMs nuevos ni una "ventana de pago"; este modelo ya existe y es el mismo que usa la página de Publicidad.
-- Vínculo: contacts.attribution_ad_id = meta_ads.ad_id. El nombre de campaña, adset y anuncio sale de meta_ads (campaign_name, adset_name, ad_name).
+- Vínculo: contacts.attribution_ad_id = meta_ads.ad_id. Ese campo representa el primer registro/adquisición del contacto y no el ultimo retouch; el nombre de campaña, adset y anuncio sale de meta_ads (campaign_name, adset_name, ad_name).
 - Fecha de atribución = contacts.created_at (el día en que se creó el contacto). TODO (lead, cita, venta e ingreso) se cuenta en el día en que se creó el contacto, no en la fecha del pago ni de la cita.
 - Validación obligatoria (idéntica a la página de Publicidad): solo cuenta un contacto si su anuncio estuvo activo ese mismo día local del negocio, es decir, si existe una fila en meta_ads con ese ad_id y la misma fecha local que contacts.created_at.
 - Métricas por campaña/adset/anuncio, siempre sobre el cohort de contactos atribuidos y contadas por created_at dentro del rango:
@@ -14969,7 +14969,7 @@ async function createQueryPlan(apiKey, { messages, viewContext, runtimeContext, 
     'Si el último mensaje es un seguimiento corto como "intenta de nuevo", "otra vez", "ahora sí", "dale", "continúa" o similar, interpreta la intención usando la conversación anterior. No lo trates como una búsqueda nueva, nombre de contacto o entidad nueva.',
     'Ya se ejecutó un mapa base de la DB con rangos, histórico mensual, rentabilidad por campaña (campañas_ultimos_90_dias y campañas_por_mes), rentabilidad por anuncio específico (anuncios_todo_historico) y valores comunes. Úsalo para decidir consultas específicas sin repetir lo que ya está cubierto.',
     'Cuando necesites buscar un contacto por nombre y no tengas contact_id, usa busqueda tipo contiene y tolerante a acentos: compara contra full_name, first_name + last_name, email, phone e id. Si salen varios contactos plausibles, pregunta cuál es antes de responder o ejecutar acciones.',
-    'Para medir resultados de una campaña o anuncio (leads, citas, asistencias, ventas, ingresos, ROAS), usa el modelo de atribución de Publicidad: une contacts.attribution_ad_id con meta_ads.ad_id, atribuye por contacts.created_at, valida que el anuncio existiera ese día (EXISTS en meta_ads con la misma fecha) y suma contacts.total_paid como ingreso. No uses payments.date ni ventanas de pago para atribuir a campañas.',
+    'Para medir resultados de una campaña o anuncio (leads, citas, asistencias, ventas, ingresos, ROAS), usa el modelo de atribución de Publicidad: une contacts.attribution_ad_id con meta_ads.ad_id. Ese ad_id es el primer registro/adquisición del contacto, no el último retouch; atribuye por contacts.created_at, valida que el anuncio existiera ese día (EXISTS en meta_ads con la misma fecha) y suma contacts.total_paid como ingreso. No uses payments.date ni ventanas de pago para atribuir a campañas.',
     'Si el usuario pide anuncio/ad/anunciación específico, usa anuncios_todo_historico y responde con columnas anuncio, ad_id, conjunto_anuncios y campana. No respondas con campana como si fuera anuncio.',
     'Si la pregunta es sobre campañas/anuncios o su rendimiento (ROAS, retorno, rentabilidad, cuál jala, cuál escalar): el mapa base YA trae campañas_ultimos_90_dias (gasto, leads, citas, asistencias, ventas, ingresos atribuidos, utilidad y ROAS de los últimos ~90 días) y campañas_por_mes (lo mismo desglosado por mes para todo el histórico). NO repitas esas consultas. Sólo genera SQL extra si el usuario pide un corte que esas no cubren (ej. una campaña específica por nombre, un rango exacto de fechas distinto, o desglose por adset/anuncio); en ese caso usa el modelo de atribución: gasto = SUM(meta_ads.spend), leads/citas/asistencias/ventas/ingresos atribuidos por contacts.created_at y validación de meta_ads por el mismo ad_id y la misma fecha. Nunca dejes que la respuesta concluya con solo el mes actual cuando el usuario pidió un rango mayor.',
     'Si el usuario menciona meses por nombre ("febrero y marzo", "desde febrero", "marzo a mayo"), eso es un rango calendario explícito del año aplicable; no lo sustituyas por últimos 90 días. Usa campañas_por_mes si alcanza o genera SQL con fechas absolutas de esos meses.',

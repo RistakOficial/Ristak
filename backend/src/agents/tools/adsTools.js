@@ -244,7 +244,7 @@ export async function getCampaignReturn({ startDate, endDate, groupBy = 'campaig
     startDate: safeStartDate,
     endDate: safeEndDate,
     groupBy: safeGroupBy,
-    attributionModel: 'contacts.attribution_ad_id = meta_ads.ad_id, validando que el anuncio existiera el mismo día local en que se creó el contacto; ventas/ingresos = payments exitosos en vivo del contacto atribuido, sumados como LTV y atribuidos al día de creación del contacto.',
+    attributionModel: 'contacts.attribution_ad_id = meta_ads.ad_id first-touch de adquisición, validando que el anuncio existiera el mismo día local en que se creó el contacto; ventas/ingresos = payments exitosos en vivo del contacto atribuido, sumados como LTV y atribuidos al día de creación del contacto. Retouches posteriores se guardan en historial, pero no pisan este ad_id.',
     total: results.length,
     results
   }

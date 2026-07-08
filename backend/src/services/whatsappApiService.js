@@ -5195,16 +5195,11 @@ async function upsertLocalContact({ contactId, phone, profileName, messageTimest
   }
 
   if (attribution.sourceId) {
-    const currentAdId = cleanString(existing.attribution_ad_id)
-    const shouldOverwriteAdId = !currentAdId ||
-      (sourceLooksWhatsAppApi && currentAdId !== attribution.sourceId && hasWhatsAppAdAttributionSignal(attribution))
-    updates.push(shouldOverwriteAdId
-      ? 'attribution_ad_id = ?'
-      : 'attribution_ad_id = COALESCE(NULLIF(attribution_ad_id, \'\'), ?)')
+    // Contact attribution is acquisition first-touch. Later WhatsApp ad touches
+    // stay in whatsapp_api_attribution and are used by conversion snapshots.
+    updates.push('attribution_ad_id = COALESCE(NULLIF(attribution_ad_id, \'\'), ?)')
     params.push(attribution.sourceId)
-    updates.push(shouldOverwriteAdId
-      ? 'attribution_ad_name = ?'
-      : 'attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, \'\'), ?)')
+    updates.push('attribution_ad_name = COALESCE(NULLIF(attribution_ad_name, \'\'), ?)')
     params.push(attribution.headline || attribution.sourceId)
   }
 
