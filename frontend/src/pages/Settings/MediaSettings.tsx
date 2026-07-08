@@ -291,17 +291,31 @@ function formatStorageStatus(usage: StorageUsage | null) {
   return provider
 }
 
+function stripTechnicalStorageRoot(parts: string[], asset: MediaAsset) {
+  if (parts[0] === 'businesses') return parts.slice(parts.length > 2 ? 2 : 1)
+  if (parts[0] === 'accounts') return parts.slice(parts.length > 2 ? 2 : 1)
+
+  const metadata = getMetadataRecord(asset)
+  const account = metadata.clientAccount || metadata.client_account
+  if (!account || typeof account !== 'object') return parts
+
+  const accountRecord = account as Record<string, unknown>
+  const rootPath = readString(accountRecord.rootPath || accountRecord.root_path)
+  const rootParts = pathSegments(rootPath)
+  if (!rootParts.length) return parts
+
+  return rootParts.every((segment, index) => parts[index] === segment)
+    ? parts.slice(rootParts.length)
+    : parts
+}
+
 function normalizeAssetPath(asset: MediaAsset) {
   const rawParts = (asset.bunnyPath || '')
     .split('/')
     .map((part) => part.trim())
     .filter(Boolean)
 
-  let parts = rawParts
-  if (rawParts[0] === 'businesses') {
-    parts = rawParts.slice(rawParts.length > 2 ? 2 : 1)
-  }
-
+  const parts = stripTechnicalStorageRoot(rawParts, asset)
   const displayName = getAssetDisplayName(asset, rawParts[rawParts.length - 1])
   if (!parts.length) {
     return [asset.module || asset.mediaType || 'other', displayName].filter(Boolean)
@@ -418,6 +432,10 @@ function getCurrentFolderLabel(currentPath: string) {
   const parts = pathSegments(currentPath)
   if (!parts.length) return 'Mi unidad'
   return formatFolderSegment(parts[parts.length - 1])
+}
+
+function getMediaFilterLabel(filter: MediaFilter) {
+  return mediaTabs.find((tab) => tab.value === filter)?.label || 'Media'
 }
 
 function getArchiveEntryPath(file: ExplorerFile) {
@@ -574,19 +592,22 @@ export const MediaSettings: React.FC = () => {
       : files.filter((file) => file.asset.mediaType === activeFilter)
   ), [activeFilter, files])
   const normalizedQuery = query.trim().toLowerCase()
+  const browsingGlobalType = activeFilter !== 'all' && !currentPath && !normalizedQuery
   const visibleFiles = useMemo(() => {
     const scopedFiles = normalizedQuery
       ? typeFilteredFiles.filter((file) => file.searchText.includes(normalizedQuery))
-      : typeFilteredFiles.filter((file) => fileMatchesPath(file, currentPath))
+      : browsingGlobalType
+        ? typeFilteredFiles
+        : typeFilteredFiles.filter((file) => fileMatchesPath(file, currentPath))
 
     return [...scopedFiles].sort((a, b) => {
       return parseSortableDateValue(b.asset.updatedAt || b.asset.createdAt) -
         parseSortableDateValue(a.asset.updatedAt || a.asset.createdAt)
     })
-  }, [currentPath, normalizedQuery, typeFilteredFiles])
+  }, [browsingGlobalType, currentPath, normalizedQuery, typeFilteredFiles])
   const folderSummaries = useMemo(() => (
-    normalizedQuery ? [] : buildFolderSummaries(typeFilteredFiles, currentPath)
-  ), [currentPath, normalizedQuery, typeFilteredFiles])
+    normalizedQuery || browsingGlobalType ? [] : buildFolderSummaries(typeFilteredFiles, currentPath)
+  ), [browsingGlobalType, currentPath, normalizedQuery, typeFilteredFiles])
   const rootFolders = useMemo(() => buildFolderSummaries(typeFilteredFiles, ''), [typeFilteredFiles])
   const allFolderOptions = useMemo(() => buildAllFolderSummaries(files), [files])
   const visibleSelectionKeys = useMemo(() => [
@@ -615,8 +636,8 @@ export const MediaSettings: React.FC = () => {
     return Array.from(selected.values())
   }, [files, filesById, selectedItemKeys])
   const selectedFile = useMemo(() => (
-    files.find((file) => file.asset.id === selectedAssetId) || visibleFiles[0] || null
-  ), [files, selectedAssetId, visibleFiles])
+    visibleFiles.find((file) => file.asset.id === selectedAssetId) || visibleFiles[0] || null
+  ), [selectedAssetId, visibleFiles])
   const selectedVideoFile = useMemo(() => {
     if (selectedFile?.asset.mediaType === 'video') return selectedFile
     if (activeFilter === 'video') return visibleFiles.find((file) => file.asset.mediaType === 'video') || null
@@ -715,6 +736,15 @@ export const MediaSettings: React.FC = () => {
   const handleFolderOpen = (path: string) => {
     setCurrentPath(path)
     setSelectedAssetId(null)
+    setSelectedItemKeys(new Set())
+  }
+
+  const handleMediaFilterChange = (value: string) => {
+    const nextFilter = isMediaFilter(value) ? value : 'all'
+    setActiveFilter(nextFilter)
+    if (nextFilter !== 'all' && currentPath) setCurrentPath('')
+    setSelectedAssetId(null)
+    setSelectedItemKeys(new Set())
   }
 
   const toggleSelection = (key: string) => {
@@ -1565,7 +1595,7 @@ export const MediaSettings: React.FC = () => {
           <TabList
             tabs={mediaTabs}
             activeTab={activeFilter}
-            onTabChange={(value) => setActiveFilter(value as MediaFilter)}
+            onTabChange={handleMediaFilterChange}
             variant="compact"
             className={styles.typeTabs}
           />
@@ -1595,6 +1625,8 @@ export const MediaSettings: React.FC = () => {
         <div className={styles.breadcrumbBar}>
           {normalizedQuery ? (
             <span className={styles.searchResultLabel}>Resultados para "{query.trim()}"</span>
+          ) : browsingGlobalType ? (
+            <span className={styles.searchResultLabel}>{getMediaFilterLabel(activeFilter)} en toda la unidad</span>
           ) : (
             <nav className={styles.breadcrumbs} aria-label="Ruta actual">
               <button type="button" onClick={() => handleFolderOpen('')}>Mi unidad</button>
@@ -1685,7 +1717,7 @@ export const MediaSettings: React.FC = () => {
               ) : null}
               <div className={styles.paneHeader}>
                 <div>
-                  <h2>{normalizedQuery ? 'Resultados' : getCurrentFolderLabel(currentPath)}</h2>
+                  <h2>{normalizedQuery ? 'Resultados' : browsingGlobalType ? getMediaFilterLabel(activeFilter) : getCurrentFolderLabel(currentPath)}</h2>
                   <p>{folderSummaries.length} carpeta{folderSummaries.length === 1 ? '' : 's'} · {visibleFiles.length} archivo{visibleFiles.length === 1 ? '' : 's'}</p>
                 </div>
                 {selectedElementCount > 0 ? (

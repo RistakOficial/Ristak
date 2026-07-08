@@ -63,6 +63,11 @@ The installer must send `Authorization: Bearer <INTERNAL_INSTALLER_TOKEN>` or `x
 - Ristak creates or reuses a Bunny Stream collection named `Ristak Sites & Forms` unless `BUNNY_STREAM_COLLECTION_ID` is configured.
 - Bunny Stream video metadata is stored under `media_assets.metadata_json.stream` and can be refreshed with `POST /api/media/assets/:id/stream/sync` after transcoding finishes.
 
+## App media explorer
+
+- `Configuracion > Media` reconstructs folders from `media_assets.bunny_path`, but must hide technical storage roots such as `accounts/<slug>` and legacy `businesses/<id>`. Users should start at business categories like Media, Cuenta, Chats, Sitios or the first real folder, never at the bucket/account root.
+- Quick filters such as Fotos, Videos, Audio, Docs and Otros are global views from the root of Media. Selecting one resets the current folder and shows matching files directly, while normal folder browsing remains available when the user opens a folder.
+
 ## Quotas
 
 Every business starts with 5 GB. Usage is recalculated from active `media_assets` rows and cached in `storage_quotas.used_bytes`.
