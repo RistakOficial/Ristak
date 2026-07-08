@@ -119,6 +119,9 @@ import {
   type PaymentGateConfig as CommonPaymentGateConfig,
   CustomSelect,
   SearchField,
+  Table,
+  TableSelectionToolbar,
+  type Column,
   Switch,
   TabList,
   SegmentTabs,
@@ -25127,10 +25130,10 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     }
   }
 
-  const startRouteEdit = (site: PublicSite) => {
+  const startRouteEdit = useCallback((site: PublicSite) => {
     setRouteEditingId(site.id)
     setRouteDraft(getRouteEditorValue(site))
-  }
+  }, [])
   const cancelRouteEdit = () => {
     if (routeSavingId) return
     setRouteEditingId(null)
@@ -25195,7 +25198,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     if (!site || getSiteLibraryFolderId(site) === folderId) return
     onMoveToFolder(site, folderId)
   }
-  const renderActionsMenu = (site: PublicSite, siteKindLabel: string, buttonClassName = styles.libraryCardMenuButton) => (
+  const renderActionsMenu = useCallback((site: PublicSite, siteKindLabel: string, buttonClassName = styles.libraryCardMenuButton) => (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
@@ -25259,16 +25262,16 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
-  )
-  const renderSiteStatus = (site: PublicSite) => (
+  ), [domainConfig, onDelete, onEdit, onOpenResponses, onOpenSettings, onSetDefaultRoute, startRouteEdit])
+  const renderSiteStatus = useCallback((site: PublicSite) => (
     <Badge variant={getStatusVariant(site, domainConfig)}>{getStatusLabel(site, domainConfig)}</Badge>
-  )
-  const renderDefaultRouteMarker = (site: PublicSite) => isDefaultPublicRoute(site, domainConfig) ? (
+  ), [domainConfig])
+  const renderDefaultRouteMarker = useCallback((site: PublicSite) => isDefaultPublicRoute(site, domainConfig) ? (
     <span className={styles.libraryDefaultRouteMarker} title="Ruta principal del dominio público">
       <Star size={13} fill="currentColor" />
       <span>Predeterminado</span>
     </span>
-  ) : null
+  ) : null, [domainConfig])
   const renderSiteSelectionControl = (site: PublicSite, variant: 'card' | 'row' | 'table' = 'row') => {
     const checked = selectedSiteIdSet.has(site.id)
     const variantClass = variant === 'card'
@@ -25293,9 +25296,6 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           aria-label={`Seleccionar ${site.name}`}
           onChange={(event) => toggleSiteSelection(site.id, event.currentTarget.checked)}
         />
-        <span aria-hidden="true">
-          <Check size={14} />
-        </span>
       </label>
     )
   }
@@ -25376,6 +25376,100 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
       </article>
     )
   }
+  const siteSelectionToolbar = selectedCount > 0 ? (
+    <TableSelectionToolbar
+      count={selectedCount}
+      singularLabel={isLandingLibrary ? 'sitio seleccionado' : 'formulario seleccionado'}
+      pluralLabel={isLandingLibrary ? 'sitios seleccionados' : 'formularios seleccionados'}
+      onClearSelection={clearSiteSelection}
+    >
+      <label className={styles.libraryBulkSelectAll}>
+        <BulkSelectCheckbox
+          checked={allVisibleSelected}
+          indeterminate={someVisibleSelected}
+          disabled={bulkDeleting || visibleSites.length === 0}
+          aria-label={isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'}
+          onChange={(event) => toggleVisibleSelection(event.currentTarget.checked)}
+        />
+        <span>Todos los visibles</span>
+      </label>
+      <Button
+        type="button"
+        variant="danger"
+        size="sm"
+        loading={bulkDeleting}
+        onClick={() => { void deleteSelectedSites() }}
+      >
+        <Trash2 size={16} />
+        Eliminar
+      </Button>
+    </TableSelectionToolbar>
+  ) : null
+  const siteTableColumns = useMemo<Column<PublicSite>[]>(() => [
+    {
+      key: 'name',
+      header: 'Nombre',
+      width: '44%',
+      fixed: true,
+      sortable: true,
+      searchable: true,
+      sortValue: (_value, site) => site.name,
+      searchValue: (_value, site) => [site.name, getPublicRouteLabel(site, domainConfig)],
+      render: (_value, site) => (
+        <button type="button" className={styles.explorerSheetName} onClick={() => onEdit(site.id)}>
+          <span className={styles.explorerFileIcon}>{isLanding(site) ? <LayoutTemplate size={17} /> : <FormInput size={17} />}</span>
+          <span>
+            <strong>{site.name}</strong>
+            {renderDefaultRouteMarker(site)}
+            <small>{getPublicRouteLabel(site, domainConfig)}</small>
+          </span>
+        </button>
+      )
+    },
+    {
+      key: 'type',
+      header: 'Tipo',
+      width: '14%',
+      sortable: true,
+      searchValue: (_value, site) => getSiteTypeLabel(site),
+      sortValue: (_value, site) => getSiteTypeLabel(site),
+      render: (_value, site) => getSiteTypeLabel(site)
+    },
+    {
+      key: 'status',
+      header: 'Estado',
+      width: '14%',
+      sortable: true,
+      searchValue: (_value, site) => getStatusLabel(site, domainConfig),
+      sortValue: (_value, site) => getStatusLabel(site, domainConfig),
+      render: (_value, site) => renderSiteStatus(site)
+    },
+    {
+      key: 'updatedAt',
+      header: 'Actualización',
+      width: '16%',
+      sortable: true,
+      sortValue: (_value, site) => site.updatedAt || '',
+      render: (_value, site) => formatSiteEdited(site.updatedAt) || 'Sin cambios'
+    },
+    {
+      key: 'actions',
+      header: '',
+      width: '96px',
+      fixed: true,
+      render: (_value, site) => {
+        const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
+        return (
+          <div className={styles.explorerSheetActions} data-library-card-action="true">
+            <button type="button" onClick={() => onPreview(site)} aria-label={`Previsualizar ${site.name}`}>
+              {isPublicSiteLive(site, domainConfig) ? <ExternalLink size={16} /> : <Eye size={16} />}
+            </button>
+            {renderActionsMenu(site, siteKindLabel, styles.explorerActionButton)}
+          </div>
+        )
+      }
+    }
+  ], [domainConfig, onEdit, onPreview, renderActionsMenu, renderDefaultRouteMarker, renderSiteStatus])
   const renderFolderCards = () => (
     <div className={styles.explorerFolderGrid}>
       {sectionFolders.map(folder => (
@@ -25502,7 +25596,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
         </div>
       </div>
 
-      {visibleSites.length > 0 && (
+      {visibleSites.length > 0 && selectedCount > 0 && viewMode !== 'table' && (
         <div className={styles.libraryBulkBar} aria-live="polite">
           <label className={styles.libraryBulkSelectAll}>
             <BulkSelectCheckbox
@@ -25512,19 +25606,15 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
               aria-label={isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'}
               onChange={(event) => toggleVisibleSelection(event.currentTarget.checked)}
             />
-            <span>{allVisibleSelected ? 'Todos los visibles' : 'Seleccionar visibles'}</span>
+            <span>Todos los visibles</span>
           </label>
           <span className={styles.libraryBulkCount}>
-            {selectedCount > 0
-              ? `${selectedCount} ${isLandingLibrary ? 'sitio' : 'formulario'}${selectedCount === 1 ? '' : 's'} seleccionado${selectedCount === 1 ? '' : 's'}`
-              : 'Marca varios elementos para borrarlos juntos.'}
+            {selectedCount} {isLandingLibrary ? 'sitio' : 'formulario'}{selectedCount === 1 ? '' : 's'} seleccionado{selectedCount === 1 ? '' : 's'}
           </span>
           <div className={styles.libraryBulkActions}>
-            {selectedCount > 0 && (
-              <Button type="button" variant="ghost" size="sm" onClick={clearSiteSelection} disabled={bulkDeleting}>
-                Limpiar
-              </Button>
-            )}
+            <Button type="button" variant="ghost" size="sm" onClick={clearSiteSelection} disabled={bulkDeleting}>
+              Limpiar
+            </Button>
             <Button
               type="button"
               variant="danger"
@@ -25564,68 +25654,30 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
           {visibleSites.map(renderListItem)}
         </div>
       ) : (
-        <div className={styles.explorerSheet} data-ristak-table>
-          <table data-ristak-table-element>
-            <thead>
-              <tr>
-                <th className={styles.explorerSheetSelectColumn}>
-                  <BulkSelectCheckbox
-                    checked={allVisibleSelected}
-                    indeterminate={someVisibleSelected}
-                    disabled={bulkDeleting || visibleSites.length === 0}
-                    aria-label={isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'}
-                    onChange={(event) => toggleVisibleSelection(event.currentTarget.checked)}
-                  />
-                </th>
-                <th>Nombre</th>
-                <th>Tipo</th>
-                <th>Estado</th>
-                <th>Actualización</th>
-                <th aria-label="Acciones" />
-              </tr>
-            </thead>
-            <tbody>
-              {visibleSites.map(site => {
-                const siteKindLabel = isLanding(site) ? 'sitio' : 'formulario'
-                const selected = selectedSiteIdSet.has(site.id)
-                return (
-                  <tr
-                    key={site.id}
-                    draggable
-                    className={`${draggingSiteId === site.id ? styles.explorerItemDragging : ''} ${selected ? styles.explorerSheetRowSelected : ''}`}
-                    onDragStart={(event) => handleDragStart(event, site)}
-                    onDragEnd={handleDragEnd}
-                  >
-                    <td className={styles.explorerSheetSelectColumn}>
-                      {renderSiteSelectionControl(site, 'table')}
-                    </td>
-                    <td>
-                      <button type="button" className={styles.explorerSheetName} onClick={() => onEdit(site.id)}>
-                        <span className={styles.explorerFileIcon}>{isLanding(site) ? <LayoutTemplate size={17} /> : <FormInput size={17} />}</span>
-                        <span>
-                          <strong>{site.name}</strong>
-                          {renderDefaultRouteMarker(site)}
-                          <small>{getPublicRouteLabel(site, domainConfig)}</small>
-                        </span>
-                      </button>
-                    </td>
-                    <td>{getSiteTypeLabel(site)}</td>
-                    <td>{renderSiteStatus(site)}</td>
-                    <td>{formatSiteEdited(site.updatedAt) || 'Sin cambios'}</td>
-                    <td>
-                      <div className={styles.explorerSheetActions}>
-                        <button type="button" onClick={() => onPreview(site)} aria-label={`Previsualizar ${site.name}`}>
-                          {isPublicSiteLive(site, domainConfig) ? <ExternalLink size={16} /> : <Eye size={16} />}
-                        </button>
-                        {renderActionsMenu(site, siteKindLabel, styles.explorerActionButton)}
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+        <Table
+          key={`sites-${librarySection}-table`}
+          initialColumns={siteTableColumns}
+          data={visibleSites}
+          keyExtractor={(site) => site.id}
+          emptyMessage={normalizedQuery ? 'No se encontraron resultados' : activeFolder ? 'Esta carpeta no tiene elementos' : 'No hay elementos'}
+          searchable={false}
+          paginated={false}
+          showColumnEditor={false}
+          tableId={`sites_${librarySection}_library`}
+          selectionActions={siteSelectionToolbar}
+          rowClassName={(site) => draggingSiteId === site.id ? styles.explorerItemDragging : undefined}
+          getRowProps={(site) => ({
+            draggable: true,
+            onDragStart: (event) => handleDragStart(event, site),
+            onDragEnd: handleDragEnd
+          })}
+          rowSelection={{
+            selectedKeys: selectedSiteIds,
+            onChange: setSelectedSiteIds,
+            getRowLabel: (site) => site.name,
+            selectAllLabel: isLandingLibrary ? 'Seleccionar sitios visibles' : 'Seleccionar formularios visibles'
+          }}
+        />
       )}
 
       {!visibleSites.length && (

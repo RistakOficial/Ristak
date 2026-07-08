@@ -5642,21 +5642,22 @@
 
 .librarySelectControl {
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   display: inline-grid;
   place-items: center;
-  flex: 0 0 32px;
+  flex: 0 0 24px;
   cursor: pointer;
 }
 
 .librarySelectControl input {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  position: static;
+  inset: auto;
+  width: 19px;
+  height: 19px;
   margin: 0;
-  opacity: 0;
+  opacity: 1;
+  accent-color: var(--accent);
   cursor: pointer;
 }
 
@@ -5665,16 +5666,7 @@
 }
 
 .librarySelectControl span {
-  width: 22px;
-  height: 22px;
-  display: inline-grid;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  color: var(--on-accent);
-  box-shadow: var(--shadow-xs);
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+  display: none;
 }
 
 .librarySelectControl span svg {
