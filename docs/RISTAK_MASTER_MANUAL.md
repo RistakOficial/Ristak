@@ -1635,6 +1635,10 @@ detectados tambien deben ignorar snippets tecnicos de Ristak (`data-rstk-*`,
 acciones `open_popup/close_popup`, JSON de acciones de boton) y caer al titulo
 humano cercano o a `Formulario N`, para no mostrar atributos internos en el
 modal ni en formularios fuente.
+Si el HTML importado solo usa elementos nativos de Ristak o no tiene campos de
+formulario propios detectados, la revision de "Ruta de datos" no debe abrirse:
+no hay campos HTML que enrutar y el formulario nativo se configura desde su
+inspector correspondiente.
 
 En landings en modo embudo, los bloques nuevos que ejecutan una accion posterior
 al evento (`calendario embebido`, `formulario embebido` y `pago`) nacen apuntando

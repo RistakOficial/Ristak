@@ -7040,6 +7040,25 @@ const hasImportedFormSubmitSurface = (importData?: ImportedSiteImport | null) =>
   ))
 }
 
+const hasImportedMappingFields = (mappings?: ImportedSiteFormMapping[] | null) => (
+  Array.isArray(mappings) && mappings.some(mapping => (
+    Array.isArray(mapping.fields) && mapping.fields.length > 0
+  ))
+)
+
+const hasImportedDataRouteFields = (importData?: ImportedSiteImport | null) => (
+  Boolean(importData) && hasImportedMappingFields(importData?.formMappings)
+)
+
+const buildImportReviewState = (
+  site: PublicSite,
+  importData?: ImportedSiteImport | null
+): ImportReviewState | null => (
+  importData && hasImportedDataRouteFields(importData)
+    ? { site, importData }
+    : null
+)
+
 const hasFormSubmitMetaSurface = (
   site?: PublicSite | null,
   blocks: SiteBlock[] = [],
@@ -9583,7 +9602,7 @@ export const Sites: React.FC = () => {
       if (importData?.siteId) {
         setSelectedImportData(importData)
         if (wrappedDetail && (detail as { reviewMapping?: boolean }).reviewMapping) {
-          setImportReview({ site, importData })
+          setImportReview(buildImportReviewState(site, importData))
         }
       }
     }
@@ -11270,7 +11289,8 @@ export const Sites: React.FC = () => {
       setCreateFlow('closed')
       clearEditorDirtyState()
       setSelectedImportData(result.import)
-      setImportReview({ site: normalizedSite, importData: result.import })
+      const importReviewState = buildImportReviewState(normalizedSite, result.import)
+      setImportReview(importReviewState)
       setAiCreationModal(null)
       pendingAIGenerationSiteRef.current = null
       setAiEditorGeneration(null)
@@ -11278,7 +11298,9 @@ export const Sites: React.FC = () => {
       showToast(
         'success',
         editSite ? 'Página actualizada con IA' : 'Página creada con IA',
-        'Ristak ya revisó el HTML. Confirma la ruta de datos antes de publicar.'
+        importReviewState
+          ? 'Ristak ya revisó el HTML. Confirma la ruta de datos antes de publicar.'
+          : 'Ristak importó el HTML. No hay campos propios de formulario para enrutar.'
       )
       return null
     } catch (error) {
@@ -11322,7 +11344,7 @@ export const Sites: React.FC = () => {
       setCreateFlow('closed')
       clearEditorDirtyState()
       setSelectedImportData(result.import)
-      setImportReview(result.import.detectedForms?.length ? { site, importData: result.import } : null)
+      setImportReview(buildImportReviewState(site, result.import))
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
@@ -11368,14 +11390,21 @@ export const Sites: React.FC = () => {
       setCreateFlow('closed')
       clearEditorDirtyState()
       setSelectedImportData(result.import)
-      setImportReview({ site, importData: result.import })
+      const importReviewState = buildImportReviewState(site, result.import)
+      setImportReview(importReviewState)
       navigate(buildSitesEditorPath({
         section: getSiteSection(site),
         siteId: site.id,
         pageId: nextPageId,
         device
       }))
-      showToast('success', 'HTML importado', 'Revisa los campos detectados antes de publicar.')
+      showToast(
+        'success',
+        'HTML importado',
+        importReviewState
+          ? 'Revisa los campos detectados antes de publicar.'
+          : 'No hay campos propios de formulario para enrutar; si usas elementos nativos, configúralos desde el inspector.'
+      )
     } catch (error) {
       showToast('error', 'Error', error instanceof Error ? error.message : 'No se pudo importar el HTML')
     } finally {
@@ -11409,7 +11438,11 @@ export const Sites: React.FC = () => {
         ? selectedImportData
         : await sitesService.getImportMapping(site.id)
       setSelectedImportData(importData)
-      setImportReview({ site, importData })
+      const importReviewState = buildImportReviewState(site, importData)
+      setImportReview(importReviewState)
+      if (!importReviewState) {
+        showToast('info', 'Sin campos para enrutar', 'Este HTML no tiene campos propios de formulario. Si usa formulario nativo, configúralo desde el inspector.')
+      }
     } catch (error) {
       showToast('error', 'No se pudo abrir la ruta de datos', error instanceof Error ? error.message : 'Inténtalo otra vez.')
     } finally {
