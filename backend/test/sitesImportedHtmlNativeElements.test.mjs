@@ -72,6 +72,76 @@ test('imported HTML native payment slots render the real Ristak checkout runtime
   }
 })
 
+test('imported HTML native payment slots render editor payment mock from preview draft blocks', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <main>
+            <h1>Reserva tu diagnostico</h1>
+            <div class="checkout-shell" data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>
+          </main>
+        </body>
+      </html>
+    `, `HTML native payment draft ${Date.now()}`)
+    siteId = site.id
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    currentSite.blocks = [{
+      id: 'imported-native-draft-payment',
+      siteId: site.id,
+      blockType: 'payment',
+      label: 'Pago principal',
+      content: 'Pago requerido',
+      placeholder: '',
+      required: false,
+      options: [],
+      sortOrder: 0,
+      createdAt: '',
+      updatedAt: '',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'checkout-principal',
+        importedHtmlNativeType: 'payment',
+        importedHtmlNativeRenderMode: 'ristak',
+        paymentGate: {
+          enabled: true,
+          mode: 'test',
+          gateway: 'stripe',
+          amount: 985,
+          currency: 'MXN',
+          productName: 'Diagnostico inicial',
+          description: 'Completa el pago para reservar.',
+          buttonText: 'Completar pago'
+        }
+      }
+    }]
+
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true
+    })
+
+    assert.match(html, /data-rstk-native-mounted="true"/)
+    assert.match(html, /data-rstk-payment-preview="true"/)
+    assert.match(html, /rstk-checkout-fields-mock/)
+    assert.match(html, /Número de tarjeta/)
+    assert.match(html, /Diagnostico inicial/)
+    assert.match(html, /Completar pago/)
+    assert.doesNotMatch(html, /data-rstk-checkout/)
+    assert.doesNotMatch(html, /\/api\/sites\/public\/checkout\/init/)
+    assert.doesNotMatch(html, /Configura el pago de Ristak/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
 test('imported HTML native calendar slots render the selected Ristak calendar iframe and bridge', async () => {
   let siteId = ''
 

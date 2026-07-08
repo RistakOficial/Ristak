@@ -19869,9 +19869,157 @@ function renderPaymentTestGuide(provider = '') {
   `
 }
 
+function renderPaymentPreviewMockInput(label = '', value = '', className = '') {
+  return `
+    <span class="rstk-mock-lbl">${escapeHtml(label)}</span>
+    <div class="rstk-mock-input ${escapeHtml(className)}">
+      <span class="rstk-mock-ph">${escapeHtml(value)}</span>
+    </div>
+  `
+}
+
+function renderPaymentPreviewCardFields({
+  isStripe = false,
+  isConekta = false,
+  collectEmail = false,
+  collectPhone = false,
+  showCountry = true
+} = {}) {
+  return `
+    <div class="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
+      ${collectEmail ? renderPaymentPreviewMockInput('Correo electrónico', 'tu@correo.com') : ''}
+      ${collectPhone ? renderPaymentPreviewMockInput('Teléfono', '55 1234 5678') : ''}
+      ${isConekta ? renderPaymentPreviewMockInput('Nombre del titular', 'Como aparece en la tarjeta') : ''}
+      <span class="rstk-mock-lbl">Número de tarjeta</span>
+      <div class="rstk-mock-input rstk-mock-card">
+        <span class="rstk-mock-ph">1234 1234 1234 1234</span>
+        <span class="rstk-mock-brands">
+          <span class="rstk-mock-brand rstk-mock-visa">VISA</span>
+          <span class="rstk-mock-brand rstk-mock-mc"><span></span><span></span></span>
+          <span class="rstk-mock-brand rstk-mock-amex">AMEX</span>
+        </span>
+      </div>
+      <div class="rstk-mock-cols">
+        <div class="rstk-mock-col">
+          ${renderPaymentPreviewMockInput('Fecha de caducidad', 'MM / AA')}
+        </div>
+        <div class="rstk-mock-col">
+          ${renderPaymentPreviewMockInput('Código de seguridad', 'CVC')}
+        </div>
+      </div>
+      ${isStripe && showCountry ? renderPaymentPreviewMockInput('País', 'México', 'rstk-mock-country') : ''}
+      ${isStripe ? '<label class="rstk-mock-save"><span class="rstk-mock-check"></span><span>Guardar mi información para un pago más rápido</span></label>' : ''}
+    </div>
+  `
+}
+
+function renderPaymentPreviewMercadoPagoBrick() {
+  return `
+    <div class="rstk-checkout-fields rstk-mp-brick" aria-hidden="true">
+      ${renderPaymentPreviewMockInput('Número de tarjeta', '1234 1234 1234 1234', 'rstk-mp-input')}
+      <div class="rstk-mp-cols">
+        <div class="rstk-mp-field">${renderPaymentPreviewMockInput('Vencimiento', 'MM/AA', 'rstk-mp-input')}</div>
+        <div class="rstk-mp-field">${renderPaymentPreviewMockInput('Código de seguridad', 'Ej.: 123', 'rstk-mp-input')}</div>
+      </div>
+      ${renderPaymentPreviewMockInput('Nombre del titular como aparece en la tarjeta', 'María Clara López Roldán', 'rstk-mp-input')}
+      <span class="rstk-mp-section">Completa tu información</span>
+      ${renderPaymentPreviewMockInput('E-mail', 'ejemplo@email.com', 'rstk-mp-input')}
+      <button type="button" class="rstk-mp-pay" disabled>Pagar</button>
+    </div>
+  `
+}
+
+function renderPaymentPreviewHostedFields(providerLabel = '') {
+  return `
+    <div class="rstk-checkout-fields rstk-checkout-fields-mock" aria-hidden="true">
+      <p class="rstk-checkout-secure">
+        Se abrirá el checkout seguro de ${escapeHtml(providerLabel)} para completar el pago.
+      </p>
+    </div>
+  `
+}
+
+function renderPaymentPreviewBlock(block = {}) {
+  const settings = block.settings || {}
+  const paymentGate = getPaymentGateFromBlock(block)
+  const layout = normalizePaymentBlockLayout(settings.paymentLayout || settings.payment_layout)
+  const productName = cleanString(paymentGate.productName || block.content || block.label) || 'Pago requerido'
+  const description = cleanString(paymentGate.description) || ''
+  const buttonLabel = cleanString(paymentGate.buttonText) || 'Pagar'
+  const amountText = formatPaymentAmount(paymentGate.amount, paymentGate.currency)
+  const isSubscriptionCheckout = paymentGate.billingType === 'subscription'
+  const amountDisplayText = isSubscriptionCheckout ? `${amountText} / ${formatPaymentSubscriptionCadence(paymentGate)}` : amountText
+  const gateway = cleanString(paymentGate.gateway)
+  const providerLabel = getPaymentGatewayLabel(gateway)
+  const gateEnabled = isPaymentGateEnabled(paymentGate)
+  const showKicker = settings.paymentShowGatewayName !== false
+  const showSecure = settings.paymentShowSecureNote !== false
+  const showCountry = settings.paymentShowCountry !== false
+  const secureNote = cleanString(settings.paymentSecureNote) || PAYMENT_SECURE_NOTE_DEFAULT
+  const providerCollectsIdentity = gateway === 'clip' || gateway === 'mercadopago' || gateway === 'rebill'
+  const collectEmail = isSubscriptionCheckout ? true : settings.paymentCollectEmail !== false
+  const collectPhone = isSubscriptionCheckout ? true : settings.paymentCollectPhone !== false
+  const showIdentityFields = (isSubscriptionCheckout || !providerCollectsIdentity) && (collectEmail || collectPhone)
+  const checkoutAlign = blockHorizontalAlign(settings, 'paymentTextAlign', 'left')
+  const fieldTextColor = cleanString(settings.paymentFieldTextColor).replace(/[^a-zA-Z0-9#().,%\s/-]/g, '')
+  const payButtonAlign = blockButtonAlign(settings, 'full')
+  const payButtonWidthPct = Number(settings.buttonWidth)
+  const payWidth = payButtonAlign === 'full' || !(payButtonWidthPct > 0) ? '100%' : `${Math.min(100, Math.max(10, Math.round(payButtonWidthPct)))}%`
+  const payJustify = payWidth === '100%' ? 'stretch' : (payButtonAlign === 'left' ? 'start' : payButtonAlign === 'right' ? 'end' : 'center')
+  const checkoutStyle = `--rstk-checkout-align:${checkoutAlign};--rstk-checkout-pay-width:${payWidth};--rstk-checkout-pay-justify:${payJustify}${fieldTextColor ? `;--rstk-checkout-field-text:${fieldTextColor}` : ''}`
+  const fields = isSubscriptionCheckout || gateway === 'clip' || gateway === 'rebill'
+    ? renderPaymentPreviewHostedFields(providerLabel)
+    : gateway === 'mercadopago'
+      ? renderPaymentPreviewMercadoPagoBrick()
+      : renderPaymentPreviewCardFields({
+        isStripe: gateway === 'stripe' || !gateway,
+        isConekta: gateway === 'conekta',
+        collectEmail: showIdentityFields && collectEmail,
+        collectPhone: showIdentityFields && collectPhone,
+        showCountry
+      })
+  const paymentTestGuide = paymentGate.mode === 'test' ? renderPaymentTestGuide(paymentGate.gateway) : ''
+
+  return `
+    <section class="rstk-payment-block rstk-payment-${escapeHtml(layout)}"
+      style="${escapeHtml(checkoutStyle)}"
+      data-rstk-payment-block
+      data-rstk-payment-preview="true"
+      data-payment-block-id="${escapeHtml(block.id || '')}"
+      data-provider="${escapeHtml(paymentGate.gateway)}"
+      data-billing-type="${isSubscriptionCheckout ? 'subscription' : 'single'}"
+      data-amount="${escapeHtml(String(paymentGate.amount || ''))}"
+      data-currency="${escapeHtml(paymentGate.currency || '')}">
+      ${gateEnabled ? '' : '<span class="rstkPaymentUnpublishedBadge" aria-hidden="true">No visible en el sitio publicado</span>'}
+      <div class="rstk-checkout-card">
+        <div class="rstk-checkout-inner">
+          <div class="rstk-checkout-head">
+            ${showKicker ? `<span class="rstk-payment-kicker">${escapeHtml(providerLabel)}</span>` : ''}
+            <strong class="rstk-checkout-title">${escapeHtml(productName)}</strong>
+            ${description ? `<p class="rstk-checkout-desc">${escapeHtml(description)}</p>` : ''}
+            <span class="rstk-checkout-amount">${escapeHtml(amountDisplayText)}</span>
+          </div>
+          ${paymentGate.mode === 'test' ? '<p class="rstk-checkout-testbadge">Modo prueba · no es un cobro real</p>' : ''}
+          <div class="rstk-checkout-body">
+            ${fields}
+            ${gateway === 'mercadopago' ? '' : `
+              <button type="button" class="rstk-button-link rstk-checkout-pay" disabled>
+                ${renderSubmitButtonContent(`${buttonLabel} · ${amountDisplayText}`, '', settings)}
+              </button>
+            `}
+            ${paymentTestGuide}
+            ${showSecure ? `<p class="rstk-checkout-secure">${escapeHtml(secureNote)}</p>` : ''}
+          </div>
+        </div>
+      </div>
+    </section>
+  `
+}
+
 function renderPaymentBlock(block = {}, context = {}) {
   const settings = block.settings || {}
   const paymentGate = getPaymentGateFromBlock(block)
+  if (context.importedNativePreviewMock) return renderPaymentPreviewBlock(block)
   if (!isPaymentGateEnabled(paymentGate)) return ''
   const layout = normalizePaymentBlockLayout(settings.paymentLayout || settings.payment_layout)
   const pages = Array.isArray(context.pages) ? context.pages : normalizeSitePages(context.site)
@@ -22272,6 +22420,7 @@ function buildImportedNativeRenderContext(site, {
   trackingEnabled = true,
   preview = false,
   linkStyle = 'query',
+  importedNativePreviewMock = false,
   videoStreamAssetsByStorageUrl = new Map(),
   videoStorageAssetsByStreamVideoId = new Map()
 } = {}) {
@@ -22286,6 +22435,7 @@ function buildImportedNativeRenderContext(site, {
     noTrack: !trackingEnabled || preview,
     preview,
     linkStyle,
+    importedNativePreviewMock,
     videoStreamAssetsByStorageUrl,
     videoStorageAssetsByStreamVideoId,
     videoActionTargetIds: collectVideoActionTargetIds(videoLookupBlocks),
@@ -22354,7 +22504,7 @@ async function renderImportedNativeElementSlot(tagName = 'div', attrs = {}, inne
     return renderImportedCustomCalendarSlot(tagName, attrs, innerHtml, slot, block || {}, context, runtimeState)
   }
   if (!block) return renderImportedNativeElementWrapper(attrs, slot, renderImportedNativeElementPlaceholder(slot))
-  if (slot.type === 'payment') runtimeState.hasPayment = true
+  if (slot.type === 'payment' && !context.importedNativePreviewMock) runtimeState.hasPayment = true
   if (slot.type === 'calendar') runtimeState.hasCalendar = true
   if (slot.type === 'video') runtimeState.hasVideo = true
 
@@ -22516,7 +22666,7 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-form-frame{display:block;width:100%;min-height:720px;border:0;background:transparent}
 .rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
 .rstk-imported-native-video .rstk-video{width:100%}
-.rstk-payment-block{width:100%;text-align:var(--rstk-checkout-align,left);font-family:inherit;color:inherit}
+.rstk-payment-block{position:relative;width:100%;text-align:var(--rstk-checkout-align,left);font-family:inherit;color:inherit}
 .rstk-checkout-card{width:100%;border:1px solid color-mix(in srgb, CanvasText 12%, transparent);border-radius:18px;background:color-mix(in srgb, Canvas 94%, CanvasText 6%);box-shadow:0 12px 30px color-mix(in srgb, CanvasText 10%, transparent);overflow:hidden}
 .rstk-checkout-inner{display:grid;gap:16px;padding:24px}
 .rstk-checkout-head{display:grid;gap:6px}
@@ -22528,10 +22678,33 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-checkout-loading{display:flex;align-items:center;gap:8px;color:color-mix(in srgb, CanvasText 68%, transparent);font-size:14px}
 .rstk-checkout-spinner{width:16px;height:16px;border:2px solid color-mix(in srgb, CanvasText 18%, transparent);border-top-color:CanvasText;border-radius:50%;animation:rstkCheckoutSpin .8s linear infinite}
 .rstk-checkout-fields,.rstk-checkout-installments{display:grid;gap:10px}
+.rstk-mock-lbl{font-size:13px;color:var(--rstk-checkout-field-text,CanvasText);font-weight:600;text-align:left}
+.rstk-mock-input{display:flex;align-items:center;gap:8px;min-height:44px;min-width:0;padding:0 12px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);border:1px solid color-mix(in srgb, CanvasText 16%, transparent);border-radius:12px;text-align:left}
+.rstk-mock-ph{flex:1;min-width:0;color:color-mix(in srgb, CanvasText 58%, transparent);font-size:14px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rstk-mock-cols,.rstk-mp-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.rstk-mock-col,.rstk-mp-field{display:grid;gap:6px;min-width:0}
+.rstk-mock-brands{display:inline-flex;align-items:center;gap:4px}
+.rstk-mock-brand{height:16px;min-width:25px;padding:0 3px;border-radius:3px;display:inline-flex;align-items:center;justify-content:center;font-size:8px;font-weight:800;color:#fff}
+.rstk-mock-visa{background:#1a1f71}
+.rstk-mock-amex{background:#2e77bc}
+.rstk-mock-mc{background:#fff;border:1px solid #eee;gap:0}
+.rstk-mock-mc span{width:10px;height:10px;border-radius:50%}
+.rstk-mock-mc span:first-child{background:#eb001b;margin-right:-4px}
+.rstk-mock-mc span:last-child{background:#f79e1b;opacity:.9}
+.rstk-mock-save{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--rstk-checkout-field-text,CanvasText);text-align:left}
+.rstk-mock-check{flex:0 0 auto;width:16px;height:16px;border:1px solid color-mix(in srgb, CanvasText 16%, transparent);border-radius:4px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%)}
+.rstk-mp-brick{display:grid;gap:14px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;text-align:left}
+.rstk-mp-brick .rstk-mock-lbl{color:#333;font-weight:400}
+.rstk-mp-brick .rstk-mock-input{background:#fff;border:1px solid #e0e0e0;border-radius:6px;box-shadow:0 1px 1px rgba(0,0,0,.04)}
+.rstk-mp-brick .rstk-mock-ph{color:#999}
+.rstk-mp-section{margin-top:6px;font-size:15px;font-weight:700;color:#1a1a1a}
+.rstk-mp-pay{display:inline-flex;align-items:center;justify-content:center;gap:8px;margin-top:8px;width:100%;min-height:48px;padding:0 16px;border:0;border-radius:6px;background:#3483fa;color:#fff;font:600 16px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:default}
 .rstk-imported-native-payment .rstk-button-link,.rstk-imported-native-payment .rstk-checkout-pay{display:inline-flex;align-items:center;justify-content:center;justify-self:var(--rstk-checkout-pay-justify,stretch);width:var(--rstk-checkout-pay-width,100%);min-height:48px;border:0;border-radius:12px;background:CanvasText;color:Canvas;font:800 15px/1 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-decoration:none;cursor:pointer;padding:0 18px}
 .rstk-checkout-pay:disabled{opacity:.62;cursor:not-allowed}
+.rstk-imported-native-payment [data-rstk-payment-preview="true"] .rstk-checkout-pay:disabled,.rstk-imported-native-payment .rstk-mp-pay:disabled{opacity:1;cursor:default}
 .rstk-checkout-success{border-radius:12px;background:color-mix(in srgb, CanvasText 8%, transparent);padding:14px}
 .rstk-checkout-testbadge{margin:0;border-radius:999px;background:color-mix(in srgb, CanvasText 9%, transparent);color:CanvasText;font-size:12px;font-weight:800;padding:7px 10px;width:max-content}
+.rstkPaymentUnpublishedBadge{position:absolute;top:8px;right:8px;z-index:3;padding:3px 8px;border-radius:999px;background:color-mix(in srgb, CanvasText 78%, transparent);color:Canvas;font-size:12px;font-weight:700;pointer-events:none}
 @keyframes rstkCheckoutSpin{to{transform:rotate(360deg)}}
 </style>`
 
@@ -22545,7 +22718,7 @@ function buildImportedNativeElementRuntimeInjection(runtimeState = {}) {
   ].filter(Boolean).join('')
 }
 
-async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], trackingEnabled = true, preview = false } = {}) {
+async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], trackingEnabled = true, preview = false, importedNativePreviewMock = false } = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
     return renderDomainErrorHtml({
@@ -22567,9 +22740,10 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
     }
   }
   html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths, { linkStyle })
+  const importedSourceBlocks = Array.isArray(site.blocks) ? site.blocks : await listSiteBlocks(site.id)
   site = {
     ...site,
-    blocks: await hydrateEmbeddedForms(await listSiteBlocks(site.id))
+    blocks: await hydrateEmbeddedForms(importedSourceBlocks)
   }
   if (!trackingEnabled || preview) {
     html = await rewriteImportedBunnyStreamPlayersForNoTrack(html)
@@ -22595,6 +22769,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
     trackingEnabled,
     preview,
     linkStyle,
+    importedNativePreviewMock,
     videoStreamAssetsByStorageUrl,
     videoStorageAssetsByStreamVideoId
   })
@@ -22795,9 +22970,9 @@ function renderSiteNav(site, { activePageId, linkStyle } = {}) {
     + `</div></nav>`
 }
 
-export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEnabled = true, preview = false } = {}) {
+export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEnabled = true, preview = false, importedNativePreviewMock = false } = {}) {
   if (isImportedHtmlSite(site)) {
-    return renderImportedPublicSiteHtml(site, { pageId, pagePath, trackingEnabled, preview })
+    return renderImportedPublicSiteHtml(site, { pageId, pagePath, trackingEnabled, preview, importedNativePreviewMock })
   }
 
   // Estado visual compartido (contrato editor/público): una sola función calcula

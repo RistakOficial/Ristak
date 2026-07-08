@@ -509,12 +509,17 @@ export async function previewSiteHandler(req, res) {
     if (!site) {
       return res.status(404).json({ success: false, error: 'Site no encontrado' })
     }
+    const draftSite = req.method === 'POST'
+      ? await buildPreviewSiteDraft(site, req.body?.draftSite)
+      : null
+    const renderSite = draftSite || site
 
     res.set('Cache-Control', 'no-store')
-    res.status(200).type('html').send(await renderPublicSiteHtml(site, {
+    res.status(200).type('html').send(await renderPublicSiteHtml(renderSite, {
       pageId: req.query?.page,
       trackingEnabled: false,
-      preview: true
+      preview: true,
+      importedNativePreviewMock: req.method === 'POST' && req.body?.importedNativePreviewMock === true
     }))
   } catch (error) {
     logger.error(`Error previsualizando site: ${error.message}`)

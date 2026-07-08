@@ -1621,7 +1621,11 @@ editar HTML/IA externa, mientras el inspector de elementos Ristak administra
 formularios, calendarios, pagos y videos con la misma configuracion del editor
 visual. Cuando no hay borradores de HTML sin guardar, la previsualizacion usa el
 render del backend para mostrar los elementos nativos ya montados tal como se
-veran en vivo. Los calendarios nativos dentro del preview usan la ruta interna
+veran en vivo. Para pagos, ese preview usa un snapshot temporal de la
+configuracion del inspector derecho y dibuja una maqueta de checkout con pasarela,
+monto, campos, boton, modo test y ayuda del proveedor; no monta SDKs reales ni
+intenta iniciar cobros hasta que el sitio publicado confirme el pago. Los
+calendarios nativos dentro del preview usan la ruta interna
 `/api/sites/public/calendar-preview/:slug`, no `/calendar/:slug`, para que el
 editor pueda mostrarlos sin depender de que el dominio publico ya este
 configurado; el sitio publicado conserva la ruta publica normal.

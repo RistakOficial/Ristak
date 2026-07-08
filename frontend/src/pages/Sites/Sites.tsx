@@ -19146,7 +19146,10 @@ const ImportedHtmlEditorPanel: React.FC<{
         return next
       })
       try {
-        const html = await sitesService.getPreviewHtml(normalized.id, activeImportedPage?.id, { test: true })
+        const html = await sitesService.getPreviewHtml(normalized.id, activeImportedPage?.id, {
+          test: true,
+          draftSite: normalized
+        })
         setPreviewHtml(html)
         setPreviewError('')
         setPreviewVersion(current => current + 1)
@@ -19161,6 +19164,23 @@ const ImportedHtmlEditorPanel: React.FC<{
       setImportedNativeElementSavingKey('')
     }
   }, [activeImportedPage?.id, activePageId, getImportedNativeElementDraftSettings, onPatchSite, showToast, site, validateImportedNativeElementSlotSettings])
+
+  const getImportedNativeElementPreviewSite = useCallback((): PublicSite | undefined => {
+    if (!importedNativeElementSlots.length) return undefined
+    const currentSite = importedNativeElementSiteRef.current || site
+    const sourceBlocks = currentSite.blocks || []
+    const nativeBlocks = importedNativeElementSlots.map(slot => makeImportedNativeElementDraftBlock(slot))
+    const nonNativeBlocks = sourceBlocks.filter(block => (
+      !importedNativeElementSlots.some(slot => isImportedNativeElementBlock(block, slot))
+    ))
+    return {
+      ...currentSite,
+      blocks: [...nonNativeBlocks, ...nativeBlocks].map((block, index) => ({
+        ...block,
+        sortOrder: Number.isFinite(Number(block.sortOrder)) ? Number(block.sortOrder) : index
+      }))
+    }
+  }, [importedNativeElementSlots, makeImportedNativeElementDraftBlock, site])
 
   useEffect(() => {
     if (customFields.length) return
@@ -19354,7 +19374,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     setPreviewLoading(true)
     setPreviewError('')
     try {
-      const html = await sitesService.getPreviewHtml(site.id, activeImportedPage?.id, { test: true })
+      const html = await sitesService.getPreviewHtml(site.id, activeImportedPage?.id, {
+        test: true,
+        draftSite: getImportedNativeElementPreviewSite()
+      })
       setPreviewHtml(html)
       setPreviewVersion(current => current + 1)
     } catch (error) {
@@ -19363,7 +19386,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     } finally {
       setPreviewLoading(false)
     }
-  }, [activeImportedPage?.id, site.id, site.updatedAt])
+  }, [activeImportedPage?.id, getImportedNativeElementPreviewSite, site.id, site.updatedAt])
 
   useEffect(() => {
     void loadInlinePreview()

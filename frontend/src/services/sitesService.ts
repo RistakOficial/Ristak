@@ -1152,13 +1152,22 @@ export const sitesService = {
     return apiClient.get<PublicSite>(`/sites/${siteId}`)
   },
 
-  async getPreviewHtml(siteId: string, pageId?: string, options: { test?: boolean } = {}) {
+  async getPreviewHtml(siteId: string, pageId?: string, options: { test?: boolean; draftSite?: PublicSite } = {}) {
     const searchParams = new URLSearchParams()
     if (pageId) searchParams.set('page', pageId)
     if (options.test) searchParams.set('test', '1')
     const params = searchParams.toString() ? `?${searchParams.toString()}` : ''
+    const draftSite = options.draftSite
     const response = await fetch(apiUrl(`/api/sites/${siteId}/preview${params}`), {
-      headers: getAuthHeaders(),
+      method: draftSite ? 'POST' : 'GET',
+      headers: {
+        ...getAuthHeaders(),
+        ...(draftSite ? { 'Content-Type': 'application/json' } : {})
+      },
+      body: draftSite ? JSON.stringify({
+        draftSite,
+        importedNativePreviewMock: true
+      }) : undefined,
       cache: 'no-store'
     })
 
