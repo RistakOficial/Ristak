@@ -71,6 +71,7 @@ import {
   normalizeWhatsAppProfileName,
   shouldReplaceWhatsAppApiContactName
 } from '../utils/whatsappContactProfile.js'
+import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
 import { getEmailStatus } from '../services/emailService.js'
 import fetch from 'node-fetch'
@@ -2075,20 +2076,27 @@ const loadMetaAdsByAdIds = async (adIds = []) => {
 }
 
 const enrichWhatsAppJourneyEventsWithMetaAds = async (events = []) => {
+  const getAdId = (data = {}) => {
+    const detected = detectWhatsAppAttributionFields({ data }, [
+      data.message_text,
+      data.message_content,
+      data.message,
+      data.body,
+      data.text,
+      data.caption
+    ])
+    return cleanString(data.attribution_ad_id || data.referral_source_id || data.ad_id_thru_message || detected.sourceId)
+  }
   const adIds = events.flatMap(event => {
     const data = event?.data || {}
-    return [
-      data.attribution_ad_id,
-      data.referral_source_id,
-      data.ad_id_thru_message
-    ]
+    return [getAdId(data)]
   })
   const metaByAdId = await loadMetaAdsByAdIds(adIds)
   if (metaByAdId.size === 0) return events
 
   return events.map(event => {
     const data = event?.data || {}
-    const adId = cleanString(data.attribution_ad_id || data.referral_source_id || data.ad_id_thru_message)
+    const adId = getAdId(data)
     const metaAttribution = metaByAdId.get(adId)
     if (!metaAttribution) return event
 
@@ -2100,7 +2108,9 @@ const enrichWhatsAppJourneyEventsWithMetaAds = async (events = []) => {
         campaign_name: metaAttribution.campaignName || data.campaign_name || null,
         adset_id: metaAttribution.adsetId || data.adset_id || null,
         adset_name: metaAttribution.adsetName || data.adset_name || null,
-        attribution_ad_id: metaAttribution.adId || data.attribution_ad_id || data.referral_source_id || null,
+        referral_source_id: data.referral_source_id || adId || null,
+        referral_source_type: data.referral_source_type || (adId ? 'ad' : null),
+        attribution_ad_id: metaAttribution.adId || data.attribution_ad_id || data.referral_source_id || adId || null,
         attribution_ad_name: metaAttribution.adName || data.attribution_ad_name || data.referral_headline || null,
         creative_thumbnail_url: metaAttribution.creativeThumbnailUrl || data.creative_thumbnail_url || null,
         creative_image_url: metaAttribution.creativeImageUrl || data.creative_image_url || null,
@@ -5143,26 +5153,28 @@ export const getContactJourney = async (req, res) => {
     )
 
     whatsappMessages.forEach(msg => {
+      const detectedAttribution = detectWhatsAppAttributionFields({ row: msg }, [msg.message_content])
+      const referralSourceId = cleanString(msg.referral_source_id || msg.ad_id_thru_message || detectedAttribution.sourceId)
       const data = {
         source: 'WhatsApp',
         phone: msg.phone,
         message_text: msg.message_content,
         referral_source_url: msg.referral_source_url,
-        referral_source_type: msg.referral_source_type,
-        referral_source_id: msg.referral_source_id || msg.ad_id_thru_message,
-        referral_headline: msg.referral_headline,
-        referral_body: msg.referral_body,
+        referral_source_type: msg.referral_source_type || detectedAttribution.sourceType,
+        referral_source_id: referralSourceId,
+        referral_headline: msg.referral_headline || detectedAttribution.headline,
+        referral_body: msg.referral_body || detectedAttribution.body,
         referral_image_url: msg.referral_image_url,
         referral_video_url: msg.referral_video_url,
         referral_thumbnail_url: msg.referral_thumbnail_url,
-        referral_ctwa_clid: msg.referral_ctwa_clid,
+        referral_ctwa_clid: msg.referral_ctwa_clid || detectedAttribution.ctwaClid,
         attribution_source: 'whatsapp_attribution',
         attribution_record_id: msg.id,
-        ad_id_thru_message: msg.ad_id_thru_message
+        ad_id_thru_message: msg.ad_id_thru_message || referralSourceId
       }
       const isAdAttributed = hasRealWhatsAppAdAttribution({
         ...data,
-        ad_id_thru_message: msg.ad_id_thru_message
+        ad_id_thru_message: data.ad_id_thru_message
       })
 
       whatsappJourneyEvents.push({
@@ -5245,6 +5257,9 @@ export const getContactJourney = async (req, res) => {
       const payloadLocation = getWhatsAppLocationFromPayload(msg.raw_payload_json, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
       const context = parseJsonObject(msg.context_json)
+      const detectedAttribution = detectWhatsAppAttributionFields({ row: msg, rawPayload, context }, [msg.message_text])
+      const detectedSourceId = cleanString(msg.detected_source_id || detectedAttribution.sourceId)
+      const detectedSourceType = cleanString(msg.detected_source_type || detectedAttribution.sourceType)
       const replyContextId = getWhatsAppReplyContextId(context, rawPayload)
       const reactionEmoji = cleanString(msg.message_type).toLowerCase() === 'reaction'
         ? getWhatsAppReactionEmoji(rawPayload, context, msg.message_text)
@@ -5269,16 +5284,16 @@ export const getContactJourney = async (req, res) => {
         message_type: msg.message_type,
         ...media,
         ...payloadLocation,
-        referral_source_url: msg.detected_source_url,
-        referral_source_type: msg.detected_source_type,
-        referral_ctwa_clid: msg.detected_ctwa_clid,
-        referral_source_id: msg.detected_source_id,
-        referral_headline: msg.detected_headline,
-        referral_body: msg.detected_body,
-        referral_source_app: msg.detected_source_app,
-        referral_entry_point: msg.detected_entry_point,
-        referral_conversion_data: msg.detected_conversion_data,
-        referral_ctwa_payload: msg.detected_ctwa_payload,
+        referral_source_url: msg.detected_source_url || detectedAttribution.sourceUrl,
+        referral_source_type: detectedSourceType,
+        referral_ctwa_clid: msg.detected_ctwa_clid || detectedAttribution.ctwaClid,
+        referral_source_id: detectedSourceId,
+        referral_headline: msg.detected_headline || detectedAttribution.headline,
+        referral_body: msg.detected_body || detectedAttribution.body,
+        referral_source_app: msg.detected_source_app || detectedAttribution.sourceApp,
+        referral_entry_point: msg.detected_entry_point || detectedAttribution.entryPoint,
+        referral_conversion_data: msg.detected_conversion_data || detectedAttribution.conversionData,
+        referral_ctwa_payload: msg.detected_ctwa_payload || detectedAttribution.ctwaPayload,
         attribution_source: 'whatsapp_api',
         attribution_record_id: msg.attribution_id || null,
         whatsapp_api_message_id: msg.whatsapp_api_message_id,

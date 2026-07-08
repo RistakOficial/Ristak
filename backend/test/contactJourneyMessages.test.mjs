@@ -66,6 +66,71 @@ async function insertRow(table, values) {
   )
 }
 
+test('contact journey enriches WhatsApp messages that only carry rstkad_id marker text', async () => {
+  const id = randomUUID()
+  const contactId = `journey_rstkad_${id}`
+  const phone = `+52991${Date.now().toString().slice(-7)}`
+  const adId = `343${Date.now().toString().slice(-10)}`
+
+  await cleanup(contactId, phone)
+  await db.run('DELETE FROM meta_ads WHERE ad_id = ?', [adId]).catch(() => undefined)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente RSTKAD',
+      first_name: 'Cliente',
+      source: 'WhatsApp_API',
+      created_at: '2099-07-04T12:00:00.000Z',
+      updated_at: '2099-07-04T12:00:00.000Z'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-07-04',
+      ad_account_id: `act_rstkad_${id}`,
+      campaign_id: `camp_rstkad_${id}`,
+      campaign_name: 'Campaña marcador RSTKAD',
+      adset_id: `adset_rstkad_${id}`,
+      adset_name: 'Conjunto marcador RSTKAD',
+      ad_id: adId,
+      ad_name: 'Anuncio marcador RSTKAD',
+      creative_thumbnail_url: 'https://example.test/thumb.jpg',
+      creative_preview_url: 'https://example.test/preview'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_rstkad_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: `Hola me gustaria saber costos rstkad_id=${adId}! mi cel termina en 7788`,
+      message_timestamp: '2099-07-04T12:01:00.000Z',
+      created_at: '2099-07-04T12:01:00.000Z'
+    })
+
+    const journey = await readJourney(contactId)
+    const message = journey.find((event) => event.type === 'whatsapp_message')
+
+    assert.ok(message)
+    assert.equal(message.data.referral_source_id, adId)
+    assert.equal(message.data.referral_source_type, 'ad')
+    assert.equal(message.data.is_ad_attributed, true)
+    assert.equal(message.data.attribution_ad_id, adId)
+    assert.equal(message.data.campaign_name, 'Campaña marcador RSTKAD')
+    assert.equal(message.data.adset_name, 'Conjunto marcador RSTKAD')
+    assert.equal(message.data.attribution_ad_name, 'Anuncio marcador RSTKAD')
+    assert.equal(message.data.creative_thumbnail_url, 'https://example.test/thumb.jpg')
+    assert.equal(message.data.creative_preview_url, 'https://example.test/preview')
+  } finally {
+    await db.run('DELETE FROM meta_ads WHERE ad_id = ?', [adId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+  }
+})
+
 test('chat contacts caps oversized pages for safer inbox prefetch', async () => {
   const id = randomUUID().replace(/-/g, '')
   const prefix = `chat_page_${id}`

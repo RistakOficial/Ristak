@@ -146,6 +146,9 @@ type ManualAgentInterruptionAction = 'pause' | 'skip'
 type ManualAgentSendOptions = { skipAgentInterruptionConfirm?: boolean }
 type DesktopMessageReactionChannel = 'whatsapp_api' | 'whatsapp_qr' | 'messenger' | 'instagram'
 
+const RISTAK_AD_ID_PATTERN = /\brstkad_id\s*=\s*(\d+)!/i
+const RISTAK_AD_ID_MARKER_PATTERN = /\brstkad_id\s*=\s*\d+!/ig
+
 type ChatLocation = {
   latitude: number
   longitude: number
@@ -1491,6 +1494,14 @@ function getJourneyEventSignature(event: JourneyEvent) {
     data.appointment_id,
     data.id,
     data.message_text,
+    data.messageText,
+    data.message,
+    data.body,
+    data.text,
+    data.message_body,
+    data.messageBody,
+    data.content,
+    data.caption,
     data.message_type,
     data.reply_to_message_id,
     data.reply_to_provider_message_id,
@@ -1913,6 +1924,18 @@ function pickMessageText(data: Record<string, unknown>) {
   return ''
 }
 
+function extractRistakAdIdFromMessageText(value = '') {
+  const match = String(value || '').match(RISTAK_AD_ID_PATTERN)
+  return match?.[1]?.trim() || ''
+}
+
+function removeRistakAdIdMarkersFromMessageText(value = '') {
+  return String(value || '')
+    .replace(RISTAK_AD_ID_MARKER_PATTERN, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function getMessageTypeLabel(type = '', fallback = 'Mensaje') {
   const normalized = type.toLowerCase()
   if (normalized.includes('gif')) return 'GIF'
@@ -1945,7 +1968,8 @@ function pickReadableDataValue(data: Record<string, unknown>, keys: string[]) {
 function buildMessageAdPreview(data: Record<string, unknown>, direction: DesktopChatMessage['direction']): MessageAdPreview | undefined {
   if (direction !== 'inbound') return undefined
 
-  const sourceId = pickReadableDataValue(data, ['attribution_ad_id', 'referral_source_id', 'ad_id', 'ad_id_thru_message'])
+  const messageTextAdId = extractRistakAdIdFromMessageText(pickMessageText(data))
+  const sourceId = pickReadableDataValue(data, ['attribution_ad_id', 'referral_source_id', 'ad_id', 'ad_id_thru_message']) || messageTextAdId
   const sourceUrl = pickReadableDataValue(data, ['referral_source_url', 'source_url', 'attribution_url'])
   const ctwaClid = pickReadableDataValue(data, ['referral_ctwa_clid', 'ctwa_clid', 'attribution_ctwa_clid'])
   const hasAdSignal = isTruthyDataFlag(data.is_ad_attributed) || Boolean(sourceId || sourceUrl || ctwaClid)
@@ -1966,7 +1990,7 @@ function buildMessageAdPreview(data: Record<string, unknown>, direction: Desktop
   const previewUrl = pickReadableDataValue(data, ['creative_preview_url'])
   const campaignName = pickReadableDataValue(data, ['campaign_name'])
   const adsetName = pickReadableDataValue(data, ['adset_name'])
-  const sourceType = pickReadableDataValue(data, ['referral_source_type', 'source_type'])
+  const sourceType = pickReadableDataValue(data, ['referral_source_type', 'source_type']) || (messageTextAdId ? 'ad' : '')
 
   return {
     platform,
@@ -2348,7 +2372,8 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const data = event.data || {}
   const attachment = getJourneyMediaAttachment(event)
   const location = getJourneyLocation(event)
-  const text = cleanLocationMessageText(cleanAttachmentMessageText(pickMessageText(data), attachment), location)
+  const rawText = pickMessageText(data)
+  const text = cleanLocationMessageText(cleanAttachmentMessageText(removeRistakAdIdMarkersFromMessageText(rawText), attachment), location)
   const messageType = String(data.message_type || data.messageType || data.type || '').trim()
   const normalizedMessageType = messageType.toLowerCase()
   const subject = String(data.subject || '').trim()

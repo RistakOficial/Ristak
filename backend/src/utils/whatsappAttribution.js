@@ -36,6 +36,7 @@ const CTWA_PAYLOAD_KEYS = ['ctwaPayload', 'ctwaSignals', 'ctwa_payload', 'ctwa_s
 
 const MAX_TEXT_LENGTH = 50000
 const MAX_JSON_CANDIDATES = 50
+const RISTAK_AD_ID_PATTERN = /\brstkad_id\s*=\s*(\d+)!/i
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -51,6 +52,23 @@ function cleanAttributionId(value) {
   if (!cleanValue || cleanValue === '[object Object]') return ''
   if (cleanValue.length > 256) return ''
   return cleanValue
+}
+
+export function extractRistakAdIdFromText(value) {
+  const text = cleanString(value)
+  if (!text || text.length > MAX_TEXT_LENGTH) return ''
+
+  const match = text.match(RISTAK_AD_ID_PATTERN)
+  return cleanAttributionId(match?.[1] || '')
+}
+
+function findRistakAdIdInTexts(texts = []) {
+  for (const text of texts) {
+    const adId = extractRistakAdIdFromText(text)
+    if (adId) return adId
+  }
+
+  return ''
 }
 
 function keyMatches(key, wanted) {
@@ -158,7 +176,7 @@ function collectCandidateTexts(payload, extraTexts = []) {
   const addText = (value) => {
     const text = cleanString(value)
     if (!text || text.length > MAX_TEXT_LENGTH) return
-    if (!/[{[]|source_id|sourceId|referral_source_id|ad_id|adId|ctwa/i.test(text)) return
+    if (!/[{[]|source_id|sourceId|referral_source_id|ad_id|adId|ctwa|rstkad_id/i.test(text)) return
     texts.push(text)
   }
 
@@ -208,12 +226,15 @@ function findFirstIdByKeyGroups(payload, keyGroups) {
 
 export function detectWhatsAppAttributionFields(payload, extraTexts = []) {
   const searchRoot = buildSearchRoot(payload, extraTexts)
+  const ristakAdId = findRistakAdIdInTexts(extraTexts)
+  const sourceId = findFirstIdByKeyGroups(searchRoot, [SOURCE_ID_KEYS, AD_ID_KEYS]) || ristakAdId
+  const sourceType = findFirstStringByKeys(searchRoot, SOURCE_TYPE_KEYS) || (ristakAdId ? 'ad' : '')
 
   return {
     ctwaClid: findFirstStringByKeys(searchRoot, CTWA_KEYS),
-    sourceId: findFirstIdByKeyGroups(searchRoot, [SOURCE_ID_KEYS, AD_ID_KEYS]),
+    sourceId,
     sourceUrl: findFirstStringByKeys(searchRoot, SOURCE_URL_KEYS),
-    sourceType: findFirstStringByKeys(searchRoot, SOURCE_TYPE_KEYS),
+    sourceType,
     sourceApp: findFirstStringByKeys(searchRoot, SOURCE_APP_KEYS),
     entryPoint: findFirstStringByKeys(searchRoot, ENTRY_POINT_KEYS),
     headline: findFirstStringByKeys(searchRoot, HEADLINE_KEYS),

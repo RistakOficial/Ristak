@@ -416,6 +416,11 @@ texto del contacto. La tarjeta se arma con `is_ad_attributed`,
 con `meta_ads`, usa `creative_image_url`/`creative_thumbnail_url`,
 `creative_preview_url`, campana, conjunto y nombre del anuncio. Si no hay senal
 real de anuncio, el chat no debe inventar previews ni decorar mensajes directos.
+Como fallback operativo, si el texto recibido contiene el marcador
+`rstkad_id=<ad_id>!`, Ristak extrae solo los digitos entre `=` y `!`, lo trata
+como `referral_source_id` de anuncio y oculta ese marcador del texto visible del
+mensaje. El `!` es obligatorio para no atribuir por accidente otros numeros que
+el contacto haya escrito.
 
 El chat desktop (`/chat`) y el chat movil (`/movil`) permiten responder un
 globo especifico y reaccionar a mensajes recibidos cuando el canal expone
