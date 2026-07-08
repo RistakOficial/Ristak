@@ -356,6 +356,12 @@ Capacidades:
   `contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
   exista en `meta_ads` el mismo dia local de creacion del contacto. Por eso ese
   `ad_id` debe quedarse congelado como origen de registro.
+- El backend ejecuta un backfill automatico versionado para datos historicos de
+  WhatsApp API: `repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })`
+  corre una vez y queda marcado en
+  `app_config.whatsapp_api_first_ad_attribution_backfill_version`. Si detecta
+  que un contacto quedo atribuido a un retouch posterior, restaura el primer
+  anuncio real del historial sin borrar los touches posteriores.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
   legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
   compras. Si un evento trae metadata de mensaje social o email, el tooltip debe

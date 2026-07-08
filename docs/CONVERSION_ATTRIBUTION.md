@@ -40,6 +40,16 @@ exista en `meta_ads` el mismo dia local en que se creo el contacto. Por eso
 `contacts.attribution_ad_id` debe permanecer estable: representa de que anuncio
 nacio el registro, no el ultimo anuncio que reabrio la conversacion.
 
+Para datos historicos afectados por imports o retouches anteriores, el arranque
+del backend ejecuta una vez el backfill
+`repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })`, marcado en
+`app_config.whatsapp_api_first_ad_attribution_backfill_version`. El backfill
+revisa el historial WhatsApp API en orden cronologico y, si el contacto quedo
+con un anuncio posterior que existe en el historial, restaura el primer anuncio
+real como `contacts.attribution_ad_id`/`attribution_ad_name`/`ctwa_clid`. Los
+retouches posteriores siguen vivos en `whatsapp_api_messages` y
+`whatsapp_api_attribution`.
+
 ## Servicio canonico
 
 `backend/src/services/conversionAttributionService.js`:

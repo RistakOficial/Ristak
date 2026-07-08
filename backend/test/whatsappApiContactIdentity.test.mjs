@@ -2655,3 +2655,203 @@ test('repara attribution_ad_id cuando YCloud importó un sourceId genérico ante
     await cleanup({ contactId, apiContactId, messageId, phone })
   }
 })
+
+test('backfill restaura el primer anuncio cuando un retouch posterior pisó el contacto', async () => {
+  const id = randomUUID()
+  const phone = `+52997${Date.now().toString().slice(-7)}`
+  const contactId = `rstk_contact_test_${id}`
+  const apiContactId = `waapi_profile_test_${id}`
+  const firstMessageId = `waapi_msg_first_ad_${id}`
+  const retouchMessageId = `waapi_msg_retouch_ad_${id}`
+  const firstAdId = '238555000111222'
+  const retouchAdId = '238555000999888'
+
+  await cleanup({ contactId, apiContactId, messageId: firstMessageId, phone })
+
+  try {
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source,
+        attribution_ad_id, attribution_ad_name, attribution_ctwa_clid,
+        attribution_url, attribution_medium, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Cliente Retouch',
+      'Cliente',
+      'WhatsApp_API',
+      retouchAdId,
+      'Anuncio junio',
+      'ctwa_retouch_456',
+      'https://fb.me/retouch',
+      'ad',
+      '2024-05-10T10:00:00.000Z',
+      '2024-06-11T12:13:14.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, raw_profile_json,
+        first_seen_at, last_seen_at, message_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      apiContactId,
+      contactId,
+      phone,
+      'Cliente Retouch',
+      JSON.stringify({ nickname: 'Cliente Retouch' }),
+      '2024-05-10T10:00:00.000Z',
+      '2024-06-11T12:13:14.000Z',
+      2,
+      '2024-05-10T10:00:00.000Z',
+      '2024-06-11T12:13:14.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, origin, ycloud_message_id, whatsapp_api_contact_id,
+        contact_id, phone, from_phone, to_phone, direction, message_type,
+        message_text, status, message_timestamp, raw_payload_json, referral_json,
+        detected_ctwa_clid, detected_source_id, detected_source_url,
+        detected_source_type, detected_headline, detected_body,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      firstMessageId,
+      'ycloud',
+      'whatsapp.inbound_message.received',
+      'ycloud_first_ad',
+      apiContactId,
+      contactId,
+      phone,
+      phone,
+      '+526561000000',
+      'inbound',
+      'text',
+      'Quiero informes',
+      'received',
+      '2024-05-10T10:00:00.000Z',
+      JSON.stringify({
+        id: 'ycloud_first_ad',
+        customerProfile: { name: 'Cliente Retouch' },
+        from: phone,
+        to: '+526561000000',
+        sendTime: '2024-05-10T10:00:00.000Z',
+        type: 'text',
+        text: { body: 'Quiero informes' },
+        referral: {
+          source_url: 'https://fb.me/first',
+          source_type: 'ad',
+          source_id: firstAdId,
+          headline: 'Anuncio mayo',
+          body: 'Agenda por WhatsApp',
+          ctwa_clid: 'ctwa_first_123'
+        }
+      }),
+      JSON.stringify({
+        source_url: 'https://fb.me/first',
+        source_type: 'ad',
+        source_id: firstAdId,
+        headline: 'Anuncio mayo',
+        body: 'Agenda por WhatsApp',
+        ctwa_clid: 'ctwa_first_123'
+      }),
+      'ctwa_first_123',
+      firstAdId,
+      'https://fb.me/first',
+      'ad',
+      'Anuncio mayo',
+      'Agenda por WhatsApp',
+      '2024-05-10T10:00:00.000Z',
+      '2024-05-10T10:00:00.000Z'
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, origin, ycloud_message_id, whatsapp_api_contact_id,
+        contact_id, phone, from_phone, to_phone, direction, message_type,
+        message_text, status, message_timestamp, raw_payload_json, referral_json,
+        detected_ctwa_clid, detected_source_id, detected_source_url,
+        detected_source_type, detected_headline, detected_body,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      retouchMessageId,
+      'ycloud',
+      'whatsapp.inbound_message.received',
+      'ycloud_retouch_ad',
+      apiContactId,
+      contactId,
+      phone,
+      phone,
+      '+526561000000',
+      'inbound',
+      'text',
+      `Hola otra vez rstkad_id=${retouchAdId}!`,
+      'received',
+      '2024-06-11T12:13:14.000Z',
+      JSON.stringify({
+        id: 'ycloud_retouch_ad',
+        customerProfile: { name: 'Cliente Retouch' },
+        from: phone,
+        to: '+526561000000',
+        sendTime: '2024-06-11T12:13:14.000Z',
+        type: 'text',
+        text: { body: `Hola otra vez rstkad_id=${retouchAdId}!` },
+        referral: {
+          source_url: 'https://fb.me/retouch',
+          source_type: 'ad',
+          source_id: retouchAdId,
+          headline: 'Anuncio junio',
+          body: 'Agenda por WhatsApp',
+          ctwa_clid: 'ctwa_retouch_456'
+        }
+      }),
+      JSON.stringify({
+        source_url: 'https://fb.me/retouch',
+        source_type: 'ad',
+        source_id: retouchAdId,
+        headline: 'Anuncio junio',
+        body: 'Agenda por WhatsApp',
+        ctwa_clid: 'ctwa_retouch_456'
+      }),
+      'ctwa_retouch_456',
+      retouchAdId,
+      'https://fb.me/retouch',
+      'ad',
+      'Anuncio junio',
+      'Agenda por WhatsApp',
+      '2024-06-11T12:13:14.000Z',
+      '2024-06-11T12:13:14.000Z'
+    ])
+
+    const repaired = await repairWhatsAppApiContactIdentityFromMessages({ limit: 100 })
+    assert.ok(repaired.contacts >= 1)
+    assert.equal(repaired.restoredFirstAdAttributions, 1)
+
+    const contact = await db.get(`
+      SELECT attribution_ad_id, attribution_ad_name, attribution_ctwa_clid,
+             attribution_url, attribution_medium
+      FROM contacts
+      WHERE id = ?
+    `, [contactId])
+
+    assert.equal(contact.attribution_ad_id, firstAdId)
+    assert.equal(contact.attribution_ad_name, 'Anuncio mayo')
+    assert.equal(contact.attribution_ctwa_clid, 'ctwa_first_123')
+    assert.equal(contact.attribution_url, 'https://fb.me/first')
+    assert.equal(contact.attribution_medium, 'ad')
+
+    const retouchMessage = await db.get(`
+      SELECT detected_source_id, detected_ctwa_clid
+      FROM whatsapp_api_messages
+      WHERE id = ?
+    `, [retouchMessageId])
+
+    assert.equal(retouchMessage.detected_source_id, retouchAdId)
+    assert.equal(retouchMessage.detected_ctwa_clid, 'ctwa_retouch_456')
+  } finally {
+    await cleanup({ contactId, apiContactId, messageId: firstMessageId, phone })
+  }
+})

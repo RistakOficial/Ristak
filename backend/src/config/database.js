@@ -53,6 +53,8 @@ const DEFAULT_REPORT_TABLE_CONFIG_VALUE = JSON.stringify(DEFAULT_REPORT_TABLE_CO
 const DEFAULT_REPORT_TABLE_CONFIG_KEYS = ['cashflow', 'attribution', 'campaigns']
   .flatMap(reportType => ['day', 'month', 'year'].map(viewType => `table_reports_metrics_${reportType}_${viewType}`))
 const DEFAULT_OPENAI_MODEL_COLUMN = `TEXT DEFAULT '${DEFAULT_OPENAI_MODEL}'`
+const WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY = 'whatsapp_api_first_ad_attribution_backfill_version'
+const WHATSAPP_API_FIRST_AD_BACKFILL_VERSION = '2026-07-08-first-ad-attribution-v1'
 
 const POSTGRES_CONNECT_RETRY_CODES = new Set([
   'ECONNREFUSED',
@@ -978,39 +980,50 @@ function sourceTypeLooksLikeAd(value = '') {
   return ['ad', 'ads', 'advertisement', 'click_to_whatsapp', 'ctwa'].includes(normalized)
 }
 
-function pickWhatsAppApiAdAttribution(messages = []) {
+function normalizeWhatsAppApiAdAttributionCandidate(message = {}) {
+  const rawPayload = parseJsonMaybe(message.raw_payload_json, null)
+  const referral = parseJsonMaybe(message.referral_json, null)
+  const detected = detectWhatsAppAttributionFields({
+    message: rawPayload,
+    referral,
+    row: message
+  }, [message.message_text || ''])
+
+  const sourceId = cleanRepairText(message.detected_source_id || detected.sourceId)
+  if (!sourceId) return null
+
+  const ctwaClid = cleanRepairText(message.detected_ctwa_clid || detected.ctwaClid)
+  const sourceType = cleanRepairText(message.detected_source_type || detected.sourceType)
+  const sourceUrl = cleanRepairText(message.detected_source_url || detected.sourceUrl)
+  const headline = cleanRepairText(message.detected_headline || detected.headline)
+
+  if (!ctwaClid && !sourceTypeLooksLikeAd(sourceType) && !sourceUrl && !headline) return null
+
+  return {
+    sourceId,
+    ctwaClid,
+    sourceUrl,
+    sourceType,
+    sourceApp: cleanRepairText(message.detected_source_app || detected.sourceApp),
+    entryPoint: cleanRepairText(message.detected_entry_point || detected.entryPoint),
+    headline,
+    body: cleanRepairText(message.detected_body || detected.body),
+    at: parseStoredDate(message.message_timestamp || message.attribution_created_at || message.created_at)
+  }
+}
+
+function collectWhatsAppApiAdAttributions(messages = []) {
+  const candidates = []
   for (const message of messages) {
-    const rawPayload = parseJsonMaybe(message.raw_payload_json, null)
-    const referral = parseJsonMaybe(message.referral_json, null)
-    const detected = detectWhatsAppAttributionFields({
-      message: rawPayload,
-      referral,
-      row: message
-    }, [message.message_text || ''])
-
-    const sourceId = cleanRepairText(message.detected_source_id || detected.sourceId)
-    if (!sourceId) continue
-
-    const ctwaClid = cleanRepairText(message.detected_ctwa_clid || detected.ctwaClid)
-    const sourceType = cleanRepairText(message.detected_source_type || detected.sourceType)
-    const sourceUrl = cleanRepairText(message.detected_source_url || detected.sourceUrl)
-    const headline = cleanRepairText(message.detected_headline || detected.headline)
-
-    if (!ctwaClid && !sourceTypeLooksLikeAd(sourceType) && !sourceUrl && !headline) continue
-
-    return {
-      sourceId,
-      ctwaClid,
-      sourceUrl,
-      sourceType,
-      sourceApp: cleanRepairText(message.detected_source_app || detected.sourceApp),
-      entryPoint: cleanRepairText(message.detected_entry_point || detected.entryPoint),
-      headline,
-      body: cleanRepairText(message.detected_body || detected.body)
-    }
+    const candidate = normalizeWhatsAppApiAdAttributionCandidate(message)
+    if (candidate) candidates.push(candidate)
   }
 
-  return null
+  return candidates
+}
+
+function pickWhatsAppApiAdAttribution(messages = []) {
+  return collectWhatsAppApiAdAttributions(messages)[0] || null
 }
 
 async function isKnownMetaAdId(adId = '') {
@@ -1020,12 +1033,17 @@ async function isKnownMetaAdId(adId = '') {
   return Boolean(row?.found)
 }
 
-async function shouldReplaceWhatsAppApiAdAttribution(row = {}, candidate = null) {
+async function shouldReplaceWhatsAppApiAdAttribution(row = {}, candidate = null, candidates = []) {
   if (!candidate?.sourceId) return false
 
   const currentAdId = cleanRepairText(row.attribution_ad_id)
   if (!currentAdId) return true
   if (currentAdId === candidate.sourceId) return false
+
+  const currentIsLaterWhatsappTouch = candidates
+    .slice(1)
+    .some(item => cleanRepairText(item.sourceId) === currentAdId)
+  if (currentIsLaterWhatsappTouch) return true
 
   const rawProfile = parseJsonMaybe(row.raw_profile_json, null)
   const ycloudContactSourceId = cleanRepairText(rawProfile?.sourceId || rawProfile?.source_id)
@@ -1063,7 +1081,12 @@ function shouldClearNameOnlyWhatsAppApiAdAttribution(row = {}, profileName = '')
 }
 
 export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 5000 } = {}) {
-  const rowLimit = Math.max(Number(limit) || 5000, 5000)
+  const normalizedLimit = Number(limit)
+  const rowLimit = Number.isFinite(normalizedLimit) && normalizedLimit > 0
+    ? Math.max(Math.floor(normalizedLimit), 1)
+    : null
+  const limitClause = rowLimit ? 'LIMIT ?' : ''
+  const limitParams = rowLimit ? [rowLimit] : []
   const rows = await db.all(`
     SELECT
       c.id,
@@ -1106,11 +1129,12 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
         ELSE 1
       END,
       COALESCE(c.updated_at, c.created_at, wac.updated_at, wac.first_seen_at) DESC
-    LIMIT ?
-  `, [rowLimit]).catch(() => [])
+    ${limitClause}
+  `, limitParams).catch(() => [])
 
   let repairedContacts = 0
   let repairedApiContacts = 0
+  let restoredFirstAdAttributions = 0
 
   for (const row of rows) {
     const phone = normalizePhoneForStorage(row.phone) || String(row.phone || '').trim()
@@ -1121,6 +1145,7 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
         msg.message_text,
         msg.raw_payload_json,
         msg.referral_json,
+        attr.created_at AS attribution_created_at,
         COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) AS detected_ctwa_clid,
         COALESCE(attr.detected_source_id, msg.detected_source_id) AS detected_source_id,
         COALESCE(attr.detected_source_url, msg.detected_source_url) AS detected_source_url,
@@ -1132,13 +1157,54 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
       FROM whatsapp_api_messages msg
       LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
       WHERE msg.contact_id = ?
+        OR attr.contact_id = ?
         OR (? != '' AND msg.phone = ?)
-      ORDER BY COALESCE(msg.message_timestamp, msg.created_at) ASC, msg.created_at ASC
+        OR (? != '' AND attr.phone = ?)
+      ORDER BY COALESCE(msg.message_timestamp, attr.created_at, msg.created_at) ASC, msg.created_at ASC
       LIMIT 500
-    `, [row.id, phone || '', phone || '']).catch(() => [])
+    `, [row.id, row.id, phone || '', phone || '', phone || '', phone || '']).catch(() => [])
+    const adMessages = await db.all(`
+      SELECT
+        msg.message_timestamp,
+        msg.created_at,
+        msg.message_text,
+        msg.raw_payload_json,
+        msg.referral_json,
+        attr.created_at AS attribution_created_at,
+        COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid) AS detected_ctwa_clid,
+        COALESCE(attr.detected_source_id, msg.detected_source_id) AS detected_source_id,
+        COALESCE(attr.detected_source_url, msg.detected_source_url) AS detected_source_url,
+        COALESCE(attr.detected_source_type, msg.detected_source_type) AS detected_source_type,
+        COALESCE(attr.detected_source_app, msg.detected_source_app) AS detected_source_app,
+        COALESCE(attr.detected_entry_point, msg.detected_entry_point) AS detected_entry_point,
+        COALESCE(attr.detected_headline, msg.detected_headline) AS detected_headline,
+        COALESCE(attr.detected_body, msg.detected_body) AS detected_body
+      FROM whatsapp_api_messages msg
+      LEFT JOIN whatsapp_api_attribution attr ON attr.whatsapp_api_message_id = msg.id
+      WHERE (msg.contact_id = ? OR attr.contact_id = ?
+        OR (? != '' AND msg.phone = ?)
+        OR (? != '' AND attr.phone = ?))
+        AND LOWER(COALESCE(msg.direction, 'inbound')) NOT IN ('outbound', 'business_echo')
+        AND (
+          COALESCE(attr.detected_ctwa_clid, msg.detected_ctwa_clid, '') != ''
+          OR COALESCE(attr.detected_source_id, msg.detected_source_id, '') != ''
+          OR COALESCE(attr.detected_source_url, msg.detected_source_url, '') != ''
+          OR COALESCE(attr.detected_source_type, msg.detected_source_type, '') != ''
+          OR COALESCE(attr.detected_headline, msg.detected_headline, '') != ''
+          OR COALESCE(msg.referral_json, '') != ''
+          OR LOWER(COALESCE(msg.message_text, '')) LIKE '%rstkad_id=%!%'
+          OR LOWER(COALESCE(msg.raw_payload_json, '')) LIKE '%rstkad_id%'
+          OR LOWER(COALESCE(msg.raw_payload_json, '')) LIKE '%source_id%'
+          OR LOWER(COALESCE(msg.raw_payload_json, '')) LIKE '%sourceid%'
+          OR LOWER(COALESCE(msg.raw_payload_json, '')) LIKE '%ad_id%'
+        )
+      ORDER BY COALESCE(msg.message_timestamp, attr.created_at, msg.created_at) ASC, msg.created_at ASC
+      LIMIT 2000
+    `, [row.id, row.id, phone || '', phone || '', phone || '', phone || '']).catch(() => [])
     const firstMessage = messages.find(message => message.message_timestamp || message.created_at)
     const firstMessageAt = parseStoredDate(
       firstMessage?.message_timestamp ||
+      firstMessage?.attribution_created_at ||
       firstMessage?.created_at ||
       row.first_seen_at
     )
@@ -1153,8 +1219,11 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
 
     const contactUpdates = []
     const contactParams = []
-    const adAttribution = pickWhatsAppApiAdAttribution(messages)
-    const shouldReplaceAdAttribution = await shouldReplaceWhatsAppApiAdAttribution(row, adAttribution)
+    const adAttributionCandidates = collectWhatsAppApiAdAttributions(adMessages.length ? adMessages : messages)
+    const adAttribution = adAttributionCandidates[0] || pickWhatsAppApiAdAttribution(messages)
+    const shouldReplaceAdAttribution = await shouldReplaceWhatsAppApiAdAttribution(row, adAttribution, adAttributionCandidates)
+    const currentAdId = cleanRepairText(row.attribution_ad_id)
+    const isReplacingDifferentAdId = shouldReplaceAdAttribution && currentAdId && currentAdId !== adAttribution?.sourceId
 
     if (!shouldReplaceAdAttribution && shouldClearNameOnlyWhatsAppApiAdAttribution(row, profileName)) {
       contactUpdates.push('attribution_ad_name = NULL')
@@ -1175,26 +1244,33 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
     if (shouldReplaceAdAttribution) {
       contactUpdates.push('attribution_ad_id = ?')
       contactParams.push(adAttribution.sourceId)
-      if (adAttribution.ctwaClid) {
+      if (adAttribution.ctwaClid || isReplacingDifferentAdId) {
         contactUpdates.push('attribution_ctwa_clid = ?')
-        contactParams.push(adAttribution.ctwaClid)
+        contactParams.push(adAttribution.ctwaClid || null)
       }
-      if (adAttribution.headline) {
+      if (adAttribution.headline || isReplacingDifferentAdId) {
         contactUpdates.push('attribution_ad_name = ?')
-        contactParams.push(adAttribution.headline)
+        contactParams.push(adAttribution.headline || adAttribution.sourceId)
       }
       if (adAttribution.sourceUrl) {
-        contactUpdates.push('attribution_url = COALESCE(NULLIF(attribution_url, \'\'), ?)')
+        contactUpdates.push(isReplacingDifferentAdId
+          ? 'attribution_url = ?'
+          : 'attribution_url = COALESCE(NULLIF(attribution_url, \'\'), ?)')
         contactParams.push(adAttribution.sourceUrl)
       }
       if (adAttribution.sourceApp || adAttribution.entryPoint) {
-        contactUpdates.push('attribution_session_source = COALESCE(NULLIF(attribution_session_source, \'\'), ?)')
+        contactUpdates.push(isReplacingDifferentAdId
+          ? 'attribution_session_source = ?'
+          : 'attribution_session_source = COALESCE(NULLIF(attribution_session_source, \'\'), ?)')
         contactParams.push(adAttribution.sourceApp || adAttribution.entryPoint)
       }
       if (adAttribution.sourceType) {
-        contactUpdates.push('attribution_medium = COALESCE(NULLIF(attribution_medium, \'\'), ?)')
+        contactUpdates.push(isReplacingDifferentAdId
+          ? 'attribution_medium = ?'
+          : 'attribution_medium = COALESCE(NULLIF(attribution_medium, \'\'), ?)')
         contactParams.push(adAttribution.sourceType)
       }
+      if (isReplacingDifferentAdId) restoredFirstAdAttributions += 1
     }
 
     if (contactUpdates.length) {
@@ -1228,10 +1304,13 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
   }
 
   if (repairedContacts > 0 || repairedApiContacts > 0) {
-    logger.success(`✅ Reparación WhatsApp API: ${repairedContacts} contactos y ${repairedApiContacts} perfiles ajustados con historial real`)
+    const firstAdText = restoredFirstAdAttributions
+      ? `; ${restoredFirstAdAttributions} atribuciones de primer anuncio restauradas`
+      : ''
+    logger.success(`✅ Reparación WhatsApp API: ${repairedContacts} contactos y ${repairedApiContacts} perfiles ajustados con historial real${firstAdText}`)
   }
 
-  return { contacts: repairedContacts, apiContacts: repairedApiContacts }
+  return { contacts: repairedContacts, apiContacts: repairedApiContacts, restoredFirstAdAttributions }
 }
 
 const SUBSCRIPTION_MERCADOPAGO_COLUMNS = [
@@ -5773,9 +5852,15 @@ async function initTables() {
     }
 
     try {
-      await repairWhatsAppApiContactIdentityFromMessages()
+      const currentFirstAdBackfillVersion = await getAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY).catch(() => '')
+      if (currentFirstAdBackfillVersion !== WHATSAPP_API_FIRST_AD_BACKFILL_VERSION) {
+        await repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })
+        await setAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY, WHATSAPP_API_FIRST_AD_BACKFILL_VERSION)
+      } else {
+        await repairWhatsAppApiContactIdentityFromMessages()
+      }
     } catch (err) {
-      logger.warn('Advertencia al reparar nombres/fechas de WhatsApp API:', err.message)
+      logger.warn('Advertencia al reparar nombres/fechas/primer anuncio de WhatsApp API:', err.message)
     }
 
     try {
