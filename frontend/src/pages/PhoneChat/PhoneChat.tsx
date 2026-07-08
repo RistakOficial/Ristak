@@ -66,11 +66,13 @@ import { FaFacebook, FaFacebookMessenger, FaInstagram, FaMicrophone, FaWhatsapp 
 import { MdArchive } from 'react-icons/md'
 import {
   AppointmentModal,
+  ContentFocusModal,
   ContactCustomFieldsPanel,
   Icon,
   Modal,
   RecordPaymentModal,
-  WhatsAppFormattedText
+  WhatsAppFormattedText,
+  type ContentFocusItem
 } from '@/components/common'
 import { AgentRobot } from '@/components/ai'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
@@ -5243,6 +5245,7 @@ export const PhoneChat: React.FC = () => {
   // acción explícita: el botón o swipe derecho en la tarjeta fijan este target y
   // la barra entra en modo "respuesta pública" (con banner cancelable).
   const [commentReplyTarget, setCommentReplyTarget] = useState<CommentReplyTarget | null>(null)
+  const [contentFocusItem, setContentFocusItem] = useState<ContentFocusItem | null>(null)
   const [socialProfiles, setSocialProfiles] = useState<LinkedSocialProfile[]>([])
   const [linkedSocialContacts, setLinkedSocialContacts] = useState<LinkedSocialContact[]>([])
   const [facebookCommentsEnabled] = useAppConfig<boolean>('meta_facebook_comments_enabled', false)
@@ -14960,6 +14963,61 @@ export const PhoneChat: React.FC = () => {
     )
   }
 
+  const openMessageAttachmentFocus = (message: ChatMessage) => {
+    const attachment = message.attachment
+    const url = attachment?.dataUrl || attachment?.url
+    if (!attachment || !url) return
+    setContentFocusItem({
+      url,
+      title: attachment.name || getMessageTypeLabel(attachment.type, 'Archivo'),
+      caption: String(message.text || '').trim(),
+      kind: attachment.type === 'image'
+        ? 'image'
+        : attachment.type === 'video'
+          ? 'video'
+          : attachment.type === 'document'
+            ? 'document'
+            : 'file',
+      mimeType: attachment.mimeType,
+      isGif: attachment.isGif
+    })
+  }
+
+  const openArchiveItemFocus = (item: ContactInfoArchiveItem) => {
+    if (!item.url) return
+    setContentFocusItem({
+      url: item.url,
+      title: item.title,
+      caption: item.caption,
+      kind: item.tab === 'media'
+        ? item.type === 'video'
+          ? 'video'
+          : 'image'
+        : item.tab === 'links'
+          ? 'link'
+          : 'document',
+      mimeType: item.mimeType,
+      isGif: item.isGif
+    })
+  }
+
+  const openAIAgentAttachmentFocus = (attachment: AIAgentAttachment) => {
+    const url = attachment.dataUrl || attachment.thumbnailDataUrl || ''
+    if (!url) return
+    setContentFocusItem({
+      url,
+      title: attachment.name || 'Archivo',
+      kind: attachment.kind === 'image'
+        ? 'image'
+        : attachment.kind === 'video'
+          ? 'video'
+          : attachment.kind === 'pdf'
+            ? 'document'
+            : 'file',
+      mimeType: attachment.mimeType
+    })
+  }
+
   const renderMessageFile = (message: ChatMessage) => {
     const attachment = message.attachment
     if (!attachment || !['document', 'file'].includes(attachment.type)) return null
@@ -14981,9 +15039,9 @@ export const PhoneChat: React.FC = () => {
 
     if (fileUrl) {
       return (
-        <a className={styles.messageFile} href={fileUrl} target="_blank" rel="noreferrer">
+        <button type="button" className={styles.messageFile} onClick={() => openMessageAttachmentFocus(message)}>
           {content}
-        </a>
+        </button>
       )
     }
 
@@ -15011,16 +15069,15 @@ export const PhoneChat: React.FC = () => {
       )
 
       return item.url ? (
-        <a
+        <button
+          type="button"
           key={item.id}
           className={styles.contactInfoMediaTile}
-          href={item.url}
-          target="_blank"
-          rel="noreferrer"
+          onClick={() => openArchiveItemFocus(item)}
           aria-label={`Abrir ${item.title}`}
         >
           {mediaContent}
-        </a>
+        </button>
       ) : (
         <span key={item.id} className={`${styles.contactInfoMediaTile} ${styles.contactInfoMediaTileUnavailable}`}>
           {mediaContent}
@@ -15045,9 +15102,9 @@ export const PhoneChat: React.FC = () => {
 
     if (item.url) {
       return (
-        <a key={item.id} className={styles.contactInfoArchiveRow} href={item.url} target="_blank" rel="noreferrer">
+        <button type="button" key={item.id} className={styles.contactInfoArchiveRow} onClick={() => openArchiveItemFocus(item)}>
           {rowContent}
-        </a>
+        </button>
       )
     }
 
@@ -15665,12 +15722,19 @@ export const PhoneChat: React.FC = () => {
 
     if (attachment.kind === 'image' && attachmentUrl) {
       return (
-        <img
+        <button
           key={attachment.id}
-          className={styles.messageImage}
-          src={attachmentUrl}
-          alt={attachment.name || 'Imagen enviada al agente'}
-        />
+          type="button"
+          className={styles.messageMediaButton}
+          onClick={() => openAIAgentAttachmentFocus(attachment)}
+          aria-label={`Abrir ${attachment.name || 'imagen enviada al agente'}`}
+        >
+          <img
+            className={styles.messageImage}
+            src={attachmentUrl}
+            alt={attachment.name || 'Imagen enviada al agente'}
+          />
+        </button>
       )
     }
 
@@ -15688,9 +15752,9 @@ export const PhoneChat: React.FC = () => {
 
     if (attachment.dataUrl) {
       return (
-        <a key={attachment.id} className={styles.messageFile} href={attachment.dataUrl} target="_blank" rel="noreferrer">
+        <button key={attachment.id} type="button" className={styles.messageFile} onClick={() => openAIAgentAttachmentFocus(attachment)}>
           {content}
-        </a>
+        </button>
       )
     }
 
@@ -15861,6 +15925,16 @@ export const PhoneChat: React.FC = () => {
                             const visiblePostMessage = post.message && !(post.deleted && post.message === 'Publicación eliminada')
                               ? post.message
                               : ''
+                            const postFocusUrl = post.imageUrl || post.permalink || ''
+                            const openPostFocus = () => {
+                              if (!postFocusUrl) return
+                              setContentFocusItem({
+                                url: postFocusUrl,
+                                title: post.deleted ? 'Publicación eliminada' : 'Publicación',
+                                caption: visiblePostMessage || post.permalink || '',
+                                kind: post.imageUrl ? 'image' : 'link'
+                              })
+                            }
                             const postInner = (
                               <>
                                 {post.imageUrl ? (
@@ -15881,10 +15955,10 @@ export const PhoneChat: React.FC = () => {
                                 ) : null}
                               </>
                             )
-                            return post.permalink ? (
-                              <a className={styles.commentPostChip} href={post.permalink} target="_blank" rel="noopener noreferrer">
+                            return postFocusUrl ? (
+                              <button type="button" className={styles.commentPostChip} onClick={openPostFocus}>
                                 {postInner}
-                              </a>
+                              </button>
                             ) : (
                               <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
                                 {postInner}
@@ -15895,20 +15969,38 @@ export const PhoneChat: React.FC = () => {
                       </div>
                     )}
                     {message.attachment?.type === 'image' && (message.attachment.dataUrl || message.attachment.url) && (
-                      <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || (message.attachment.isGif ? 'GIF enviado' : 'Foto enviada')} />
+                      <button
+                        type="button"
+                        className={styles.messageMediaButton}
+                        onClick={() => openMessageAttachmentFocus(message)}
+                        aria-label={message.attachment.name || (message.attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}
+                      >
+                        <img className={styles.messageImage} src={message.attachment.dataUrl || message.attachment.url} alt={message.attachment.name || (message.attachment.isGif ? 'GIF enviado' : 'Foto enviada')} />
+                      </button>
                     )}
                     {isVideoMessage && (
-                      <video
-                        className={styles.messageVideo}
-                        src={message.attachment?.dataUrl || message.attachment?.url}
-                        controls={!isGifVideoMessage}
-                        autoPlay={isGifVideoMessage}
-                        muted={isGifVideoMessage}
-                        loop={isGifVideoMessage}
-                        playsInline
-                        preload={isGifVideoMessage ? 'auto' : 'metadata'}
-                        aria-label={isGifVideoMessage ? (message.attachment?.name || 'GIF enviado') : undefined}
-                      />
+                      <span className={styles.messageVideoFocusWrap}>
+                        <video
+                          className={styles.messageVideo}
+                          src={message.attachment?.dataUrl || message.attachment?.url}
+                          controls={!isGifVideoMessage}
+                          autoPlay={isGifVideoMessage}
+                          muted={isGifVideoMessage}
+                          loop={isGifVideoMessage}
+                          playsInline
+                          preload={isGifVideoMessage ? 'auto' : 'metadata'}
+                          aria-label={isGifVideoMessage ? (message.attachment?.name || 'GIF enviado') : undefined}
+                        />
+                        <button
+                          type="button"
+                          className={styles.messageMediaFocusButton}
+                          onClick={() => openMessageAttachmentFocus(message)}
+                          aria-label={isGifVideoMessage ? (message.attachment?.name || 'Abrir GIF') : (message.attachment?.name || 'Abrir video')}
+                        >
+                          <ExternalLink size={12} />
+                          Ver
+                        </button>
+                      </span>
                     )}
                     {isFileMessage && renderMessageFile(message)}
                     {isAudioMessage && renderAudioMessage(message)}
@@ -22273,6 +22365,8 @@ export const PhoneChat: React.FC = () => {
           )}
         </div>
       </Modal>
+
+      <ContentFocusModal item={contentFocusItem} onClose={() => setContentFocusItem(null)} />
 
     </main>
   )

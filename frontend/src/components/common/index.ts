@@ -59,6 +59,8 @@ export { Badge } from './Badge'
 export type { BadgeVariant } from './Badge'
 export { ChatMessageSurface } from './ChatMessageSurface'
 export type { ChatMessageSurfaceProps } from './ChatMessageSurface'
+export { ContentFocusModal } from './ContentFocusModal'
+export type { ContentFocusItem, ContentFocusKind } from './ContentFocusModal'
 export {
   EmailChatMessageBubble,
   buildEmailChatMessageData,

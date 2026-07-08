@@ -44,6 +44,7 @@ import {
   Button,
   ChatMessageSurface,
   ContactAvatar,
+  ContentFocusModal,
   ContactCustomFieldsPanel,
   CustomSelect,
   ContactPhoneSelector,
@@ -68,7 +69,8 @@ import {
   plainTextToEmailHtml,
   sanitizeEmailRichHtmlForEditor,
   type EmailChatMessageData,
-  type EmailRichTextVariable
+  type EmailRichTextVariable,
+  type ContentFocusItem
 } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import { AgentRobot } from '@/components/ai'
@@ -2891,6 +2893,7 @@ export const DesktopChat: React.FC = () => {
 
   const [composerText, setComposerText] = useState('')
   const [composerChannel, setComposerChannel] = useState<ComposerChannel>('whatsapp')
+  const [contentFocusItem, setContentFocusItem] = useState<ContentFocusItem | null>(null)
   // Responder PÚBLICO a un comentario puede venir del canal de comentario
   // seleccionado o del botón de la tarjeta, que fija el target exacto.
   const [commentReplyTarget, setCommentReplyTarget] = useState<CommentReplyTarget | null>(null)
@@ -7383,6 +7386,24 @@ export const DesktopChat: React.FC = () => {
     if (!message.attachment) return null
     const { attachment } = message
     const attachmentSrc = getAttachmentSource(attachment)
+    const attachmentCaption = String(message.text || '').trim()
+    const openAttachmentFocus = () => {
+      if (!attachmentSrc) return
+      setContentFocusItem({
+        url: attachmentSrc,
+        title: attachment.name || getMessageTypeLabel(attachment.type, 'Archivo'),
+        caption: attachmentCaption,
+        kind: attachment.type === 'image'
+          ? 'image'
+          : attachment.type === 'video'
+            ? 'video'
+            : attachment.type === 'document'
+              ? 'document'
+              : 'file',
+        mimeType: attachment.mimeType,
+        isGif: attachment.isGif
+      })
+    }
 
     if (attachment.type === 'audio') {
       const progress = messageAudioProgress[message.id]
@@ -7457,9 +7478,14 @@ export const DesktopChat: React.FC = () => {
       }
 
       return (
-        <a className={`${styles.mediaAttachment} ${styles.mediaAttachmentImage}`} href={attachmentSrc} target="_blank" rel="noreferrer" aria-label={attachment.name || (attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}>
+        <button
+          type="button"
+          className={`${styles.mediaAttachment} ${styles.mediaAttachmentImage}`}
+          onClick={openAttachmentFocus}
+          aria-label={attachment.name || (attachment.isGif ? 'Abrir GIF' : 'Abrir foto')}
+        >
           <img src={attachmentSrc} alt={attachment.name || (attachment.isGif ? 'GIF enviado' : 'Foto enviada')} loading="lazy" />
-        </a>
+        </button>
       )
     }
 
@@ -7486,6 +7512,15 @@ export const DesktopChat: React.FC = () => {
             preload={isGifVideo ? 'auto' : 'metadata'}
             aria-label={isGifVideo ? (attachment.name || 'GIF enviado') : undefined}
           />
+          <button
+            type="button"
+            className={styles.mediaAttachmentFocusButton}
+            onClick={openAttachmentFocus}
+            aria-label={isGifVideo ? (attachment.name || 'Abrir GIF') : (attachment.name || 'Abrir video')}
+          >
+            <ExternalLink size={13} />
+            Ver en grande
+          </button>
         </div>
       )
     }
@@ -7505,9 +7540,9 @@ export const DesktopChat: React.FC = () => {
     )
 
     return attachmentSrc ? (
-      <a className={styles.fileAttachment} href={attachmentSrc} target="_blank" rel="noreferrer" aria-label={`Abrir ${fileMeta.name}`}>
+      <button type="button" className={styles.fileAttachment} onClick={openAttachmentFocus} aria-label={`Abrir ${fileMeta.name}`}>
         {fileContent}
-      </a>
+      </button>
     ) : (
       <span className={`${styles.fileAttachment} ${styles.attachmentUnavailable}`}>
         {fileContent}
@@ -8198,6 +8233,16 @@ export const DesktopChat: React.FC = () => {
                                           const visiblePostMessage = message.commentPost.message && !(message.commentPost.deleted && message.commentPost.message === 'Publicación eliminada')
                                             ? message.commentPost.message
                                             : ''
+                                          const postFocusUrl = message.commentPost.imageUrl || message.commentPost.permalink || ''
+                                          const openPostFocus = () => {
+                                            if (!postFocusUrl) return
+                                            setContentFocusItem({
+                                              url: postFocusUrl,
+                                              title: message.commentPost?.deleted ? 'Publicación eliminada' : 'Publicación',
+                                              caption: visiblePostMessage || message.commentPost?.permalink || '',
+                                              kind: message.commentPost?.imageUrl ? 'image' : 'link'
+                                            })
+                                          }
                                           const postInner = (
                                             <>
                                               {message.commentPost.imageUrl ? (
@@ -8218,10 +8263,10 @@ export const DesktopChat: React.FC = () => {
                                               ) : null}
                                             </>
                                           )
-                                          return message.commentPost.permalink ? (
-                                            <a className={styles.commentPostChip} href={message.commentPost.permalink} target="_blank" rel="noopener noreferrer">
+                                          return postFocusUrl ? (
+                                            <button type="button" className={styles.commentPostChip} onClick={openPostFocus}>
                                               {postInner}
-                                            </a>
+                                            </button>
                                           ) : (
                                             <div className={`${styles.commentPostChip} ${styles.commentPostChipStatic}`}>
                                               {postInner}
@@ -8899,6 +8944,8 @@ export const DesktopChat: React.FC = () => {
           )}
         </aside>
       </section>
+
+      <ContentFocusModal item={contentFocusItem} onClose={() => setContentFocusItem(null)} />
 
       <RecordPaymentModal
         isOpen={paymentOpen}

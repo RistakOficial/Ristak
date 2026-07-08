@@ -388,6 +388,15 @@ function withStartupTimeout<T>(promise: Promise<T>, timeoutMs: number, label: st
   });
 }
 type ContactInfoArchiveTab = 'media' | 'documents' | 'links';
+type NativeContentFocusKind = 'image' | 'video' | 'document' | 'file' | 'link';
+type NativeContentFocusItem = {
+  url: string;
+  title: string;
+  kind: NativeContentFocusKind;
+  caption?: string;
+  mimeType?: string;
+  isGif?: boolean;
+};
 type JourneyEvent = {
   id?: string;
   type: string;
@@ -18318,6 +18327,7 @@ function NativeContactDetailScreen({
   const [archiveTab, setArchiveTab] = useState<ContactInfoArchiveTab>('media');
   const [ourNumberOpen, setOurNumberOpen] = useState(false);
   const [changingOurNumberId, setChangingOurNumberId] = useState<string | null>(null);
+  const [contentFocusItem, setContentFocusItem] = useState<NativeContentFocusItem | null>(null);
 
   useEffect(() => {
     setNameDraft(getContactName(contact));
@@ -18394,6 +18404,17 @@ function NativeContactDetailScreen({
     setRecordDetail(null);
     setPanel(nextPanel);
   };
+
+  const openArchiveContentFocus = useCallback((item: ContactInfoArchiveItem) => {
+    if (!item.url) return;
+    setContentFocusItem({
+      url: item.url,
+      title: item.title || (item.type === 'link' ? 'Enlace compartido' : 'Archivo compartido'),
+      kind: item.type,
+      caption: item.caption,
+      mimeType: item.mimeType,
+    });
+  }, []);
 
   const goBackFromPanel = () => {
     if (recordDetail) {
@@ -18546,6 +18567,7 @@ function NativeContactDetailScreen({
         ? 'Aún no hay documentos compartidos en este chat.'
         : 'Aún no hay enlaces compartidos en este chat.';
     return (
+      <>
       <ContactInfoLightPage title="Archivos del chat" onBack={goBackFromPanel}>
         <View style={styles.contactInfoArchiveTabs}>
           {([
@@ -18564,7 +18586,7 @@ function NativeContactDetailScreen({
           archiveTab === 'media' ? (
             <View style={styles.contactInfoMediaGrid}>
               {visibleArchiveItems.map((item) => (
-                <Pressable key={item.id} onPress={() => { if (!item.url) return; if (item.type === 'image') openImageViewer(item.url); else void openInAppBrowser(item.url); }} style={styles.contactInfoMediaTile}>
+                <Pressable key={item.id} onPress={() => openArchiveContentFocus(item)} style={styles.contactInfoMediaTile}>
                   {item.url && item.type === 'image' ? (
                     <Image source={{ uri: item.url }} style={styles.contactInfoMediaImage as ImageStyle} />
                   ) : (
@@ -18588,12 +18610,14 @@ function NativeContactDetailScreen({
                 item.title,
                 item.direction === 'outbound' ? 'Enviado por ti' : 'Enviado por el contacto',
                 [getContactInfoDateShort(item.date, timezone), item.caption].filter(Boolean).join(' · '),
-                () => void openInAppBrowser(item.url),
+                () => openArchiveContentFocus(item),
               ))}
             </View>
           )
         ) : <ContactInfoText style={styles.contactInfoLightEmpty}>{archiveEmptyText}</ContactInfoText>}
       </ContactInfoLightPage>
+      <NativeContentFocusModal item={contentFocusItem} onClose={() => setContentFocusItem(null)} />
+      </>
     );
   }
 
@@ -19121,6 +19145,7 @@ function NativeConversationScreen({
   const [draftAttachments, setDraftAttachments] = useState<ConversationDraftAttachment[]>([]);
   const [replyingToMessage, setReplyingToMessage] = useState<ChatMessage | null>(null);
   const [commentReplyTarget, setCommentReplyTarget] = useState<NativeCommentReplyTarget | null>(null);
+  const [contentFocusItem, setContentFocusItem] = useState<NativeContentFocusItem | null>(null);
   const [selectedMessage, setSelectedMessage] = useState<ChatMessage | null>(null);
   const [activeSheet, setActiveSheet] = useState<ConversationSheetMode>(null);
   const [closingSheet, setClosingSheet] = useState<ConversationSheetMode>(null);
@@ -19187,6 +19212,11 @@ function NativeConversationScreen({
     requestAnimationFrame(() => {
       listRef.current?.scrollToOffset({ offset: 0, animated });
     });
+  }, []);
+
+  const openNativeContentFocus = useCallback((item: NativeContentFocusItem) => {
+    if (!item.url) return;
+    setContentFocusItem(item);
   }, []);
 
   useEffect(() => {
@@ -20867,10 +20897,11 @@ function NativeConversationScreen({
 	                    starred={starredMessageIds.includes(item.message.id)}
                     themeTone={activeNativeThemeTone}
                     timezone={timezone}
-                    onLongPress={handleMessageLongPress}
-                    onCommentReply={startCommentPublicReply}
-                    onReplySwipe={handleMessageReplySwipe}
-                  />
+	                    onLongPress={handleMessageLongPress}
+	                    onCommentReply={startCommentPublicReply}
+                      onOpenContent={openNativeContentFocus}
+	                    onReplySwipe={handleMessageReplySwipe}
+	                  />
                 )
             )}
           />
@@ -21274,6 +21305,8 @@ function NativeConversationScreen({
         onClose={closeSheet}
         onSubmit={createAppointmentForContact}
       />
+
+      <NativeContentFocusModal item={contentFocusItem} onClose={() => setContentFocusItem(null)} />
     </AppFrame>
   );
 }
@@ -21737,6 +21770,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   timezone,
   onCommentReply,
   onLongPress,
+  onOpenContent,
   onReplySwipe,
 }: {
   contact: ChatContact;
@@ -21749,6 +21783,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
   timezone: string;
   onCommentReply?: (message: ChatMessage) => void;
   onLongPress?: (message: ChatMessage) => void;
+  onOpenContent?: (item: NativeContentFocusItem) => void;
   onReplySwipe?: (message: ChatMessage) => void;
 }) {
   const outbound = message.direction === 'outbound';
@@ -21875,6 +21910,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
             metaLabel={metaLabel}
             pending={Boolean(message.pending)}
             status={status}
+            onOpenContent={onOpenContent}
           />
         ) : null}
         {message.location ? <NativeMessageLocation location={message.location} /> : null}
@@ -21890,7 +21926,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
                     : 'Comentó en tu publicación'}
               </Text>
             </View>
-            {message.commentPost ? <NativeCommentPostCard post={message.commentPost} /> : null}
+            {message.commentPost ? <NativeCommentPostCard post={message.commentPost} onOpenContent={onOpenContent} /> : null}
             {canStartNativeCommentPublicReply(message) ? (
               <Pressable
                 accessibilityRole="button"
@@ -21913,7 +21949,12 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
         ) : null}
         {visibleMessageText && !message.location && !message.emailDetails ? <NativeFormattedMessageText failed={Boolean(message.failed)} outbound={outbound && !scheduled} text={visibleMessageText} /> : null}
         {linkPreview && !message.location ? (
-          <NativeMessageLinkPreviewCard failed={Boolean(message.failed)} outbound={outbound && !scheduled} preview={linkPreview.preview} />
+          <NativeMessageLinkPreviewCard
+            failed={Boolean(message.failed)}
+            outbound={outbound && !scheduled}
+            preview={linkPreview.preview}
+            onOpenContent={onOpenContent}
+          />
         ) : null}
         {starred ? (
           <View style={styles.messageStarredFlag}>
@@ -21967,9 +22008,30 @@ function NativeFormattedMessageText({ failed, outbound, text }: { failed?: boole
   );
 }
 
-function NativeCommentPostCard({ post }: { post: NonNullable<ChatMessage['commentPost']> }) {
+function NativeCommentPostCard({
+  onOpenContent,
+  post,
+}: {
+  onOpenContent?: (item: NativeContentFocusItem) => void;
+  post: NonNullable<ChatMessage['commentPost']>;
+}) {
   const visibleMessage = post.message && !(post.deleted && post.message === 'Publicación eliminada') ? post.message : '';
   const mutedText = post.deleted ? 'Comentario conservado en Ristak' : 'Ver publicación';
+  const postFocusUrl = post.imageUrl || post.permalink || '';
+  const canOpenPost = Boolean(postFocusUrl && (onOpenContent || post.permalink));
+  const openPostFocus = () => {
+    if (!postFocusUrl) return;
+    if (onOpenContent) {
+      onOpenContent({
+        url: postFocusUrl,
+        title: post.deleted ? 'Publicación eliminada' : 'Publicación',
+        kind: post.imageUrl ? 'image' : 'link',
+        caption: visibleMessage || post.permalink || '',
+      });
+      return;
+    }
+    if (post.permalink) void Linking.openURL(post.permalink).catch(() => undefined);
+  };
   const content = (
     <>
       {post.imageUrl ? (
@@ -21991,15 +22053,15 @@ function NativeCommentPostCard({ post }: { post: NonNullable<ChatMessage['commen
     </>
   );
 
-  if (!post.permalink) {
+  if (!canOpenPost) {
     return <View style={[styles.commentPostChip, styles.commentPostChipStatic]}>{content}</View>;
   }
 
   return (
     <Pressable
-      accessibilityRole="link"
+      accessibilityRole="button"
       accessibilityLabel="Abrir publicación"
-      onPress={() => void Linking.openURL(post.permalink || '').catch(() => undefined)}
+      onPress={openPostFocus}
       style={({ pressed }) => [styles.commentPostChip, pressed && styles.pressed]}
     >
       {content}
@@ -22106,10 +22168,12 @@ function NativeEmailMessageCard({
 function NativeMessageLinkPreviewCard({
   failed,
   outbound,
+  onOpenContent,
   preview,
 }: {
   failed?: boolean;
   outbound?: boolean;
+  onOpenContent?: (item: NativeContentFocusItem) => void;
   preview: NativeMessageLinkPreviewData;
 }) {
   const [metadata, setMetadata] = useState<NativeUrlPreviewMetadata | null | undefined>(() => nativeUrlPreviewCache.get(preview.url));
@@ -22145,7 +22209,22 @@ function NativeMessageLinkPreviewCard({
     <Pressable
       accessibilityRole="link"
       accessibilityLabel={preview.kind === 'payment_link' ? 'Abrir link de pago' : 'Abrir enlace'}
-      onPress={() => void openInAppBrowser(preview.url)}
+      onPress={() => {
+        if (preview.kind === 'payment_link') {
+          void openInAppBrowser(preview.url);
+          return;
+        }
+        if (onOpenContent) {
+          onOpenContent({
+            url: preview.url,
+            title,
+            kind: 'link',
+            caption: subtitle,
+          });
+          return;
+        }
+        void openInAppBrowser(preview.url);
+      }}
       style={({ pressed }) => [
         styles.messageLinkPreviewCard,
         outbound && !failed && styles.messageLinkPreviewCardOutbound,
@@ -22172,6 +22251,93 @@ function NativeMessageLinkPreviewCard({
         </View>
       </View>
     </Pressable>
+  );
+}
+
+function getNativeContentFocusLabel(kind: NativeContentFocusKind) {
+  if (kind === 'image') return 'Imagen';
+  if (kind === 'video') return 'Video';
+  if (kind === 'link') return 'Enlace';
+  if (kind === 'document') return 'Documento';
+  return 'Archivo';
+}
+
+function getNativeContentFocusIcon(kind: NativeContentFocusKind) {
+  if (kind === 'image') return ImageIcon;
+  if (kind === 'video') return Play;
+  if (kind === 'link') return Link2;
+  return FileText;
+}
+
+function NativeContentFocusVideo({ uri }: { uri: string }) {
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.loop = false;
+    instance.muted = false;
+  });
+  return <VideoView player={player} style={styles.contentFocusVideo} contentFit="contain" nativeControls />;
+}
+
+function NativeContentFocusModal({
+  item,
+  onClose,
+}: {
+  item: NativeContentFocusItem | null;
+  onClose: () => void;
+}) {
+  const { height } = useWindowDimensions();
+  const stageHeight = Math.max(phoneCompact(300), Math.round(height * 0.58));
+  const Icon = item ? getNativeContentFocusIcon(item.kind) : FileText;
+  const caption = [item?.caption, item?.mimeType].filter(Boolean).join(' · ');
+  return (
+    <Modal visible={Boolean(item)} transparent animationType="fade" onRequestClose={onClose}>
+      <View style={styles.contentFocusRoot}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Cerrar contenido" onPress={onClose} style={styles.contentFocusBackdrop} />
+        {item ? (
+          <View style={styles.contentFocusPanel}>
+            <View style={styles.contentFocusHeader}>
+              <View style={styles.contentFocusTitleBlock}>
+                <Text numberOfLines={1} style={styles.contentFocusKicker}>{getNativeContentFocusLabel(item.kind)}</Text>
+                <Text numberOfLines={2} style={styles.contentFocusTitle}>{item.title || getNativeContentFocusLabel(item.kind)}</Text>
+              </View>
+              <Pressable accessibilityRole="button" accessibilityLabel="Cerrar contenido" onPress={onClose} style={({ pressed }) => [styles.contentFocusClose, pressed && styles.pressed]}>
+                <X size={22} color={COLORS.white} strokeWidth={2.65} />
+              </Pressable>
+            </View>
+
+            <View style={[styles.contentFocusStage, { height: stageHeight }]}>
+              {item.kind === 'image' ? (
+                <Image source={{ uri: item.url }} resizeMode="contain" style={styles.contentFocusImage as ImageStyle} />
+              ) : item.kind === 'video' ? (
+                <NativeContentFocusVideo uri={item.url} />
+              ) : (
+                <View style={styles.contentFocusFileCard}>
+                  <View style={styles.contentFocusFileIcon}>
+                    <Icon size={36} color={COLORS.accent} strokeWidth={2.35} />
+                  </View>
+                  <Text numberOfLines={2} style={styles.contentFocusFileTitle}>{item.title || getNativeContentFocusLabel(item.kind)}</Text>
+                  {caption ? <Text numberOfLines={3} style={styles.contentFocusFileSubtitle}>{caption}</Text> : null}
+                </View>
+              )}
+            </View>
+
+            {caption && (item.kind === 'image' || item.kind === 'video') ? (
+              <Text numberOfLines={2} style={styles.contentFocusCaption}>{caption}</Text>
+            ) : null}
+
+            <View style={styles.contentFocusActions}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => void openInAppBrowser(item.url)}
+                style={({ pressed }) => [styles.contentFocusExternalButton, pressed && styles.pressed]}
+              >
+                <ExternalLink size={17} color={COLORS.white} strokeWidth={2.45} />
+                <Text style={styles.contentFocusExternalButtonText}>Abrir fuera</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+      </View>
+    </Modal>
   );
 }
 
@@ -22262,6 +22428,7 @@ function NativeMessageAttachment({
   direction,
   failed,
   metaLabel,
+  onOpenContent,
   pending,
   status,
   transportBadge,
@@ -22271,6 +22438,7 @@ function NativeMessageAttachment({
   direction: ChatMessage['direction'];
   failed?: boolean;
   metaLabel: string;
+  onOpenContent?: (item: NativeContentFocusItem) => void;
   pending?: boolean;
   status: 'sent' | 'delivered' | 'read' | 'pending' | 'failed';
   transportBadge?: string;
@@ -22280,11 +22448,11 @@ function NativeMessageAttachment({
     ? getNativeAudioAttachmentUri(attachment)
     : (attachment.dataUrl || attachment.url);
   if (kind === 'image' && uri) {
-    return <NativeImageAttachment uri={uri} />;
+    return <NativeImageAttachment attachment={attachment} uri={uri} onOpenContent={onOpenContent} />;
   }
 
   if (kind === 'video' && uri) {
-    return <NativeVideoAttachment attachment={attachment} uri={uri} />;
+    return <NativeVideoAttachment attachment={attachment} uri={uri} onOpenContent={onOpenContent} />;
   }
 
   if (kind === 'audio') {
@@ -22304,14 +22472,37 @@ function NativeMessageAttachment({
     );
   }
 
-  return <NativeDocumentAttachment attachment={attachment} uri={uri} />;
+  return <NativeDocumentAttachment attachment={attachment} uri={uri} onOpenContent={onOpenContent} />;
 }
 
 // Cache de tamaños medidos: sin él cada montaje de burbuja re-mide la imagen,
 // el alto del item cambia después de pintar y el hilo "brinca" al cargar.
 const nativeImageSizeCache = new Map<string, { width: number; height: number }>();
 
-function NativeImageAttachment({ uri }: { uri: string }) {
+function buildNativeAttachmentFocusItem(attachment: ChatAttachment, uri?: string): NativeContentFocusItem | null {
+  const kind = getNativeAttachmentKind(attachment);
+  if (kind === 'audio') return null;
+  const url = uri || attachment.dataUrl || attachment.url || '';
+  if (!url) return null;
+  return {
+    url,
+    title: attachment.name || getAttachmentLabel(attachment),
+    kind: kind === 'document' ? 'document' : kind,
+    caption: attachment.caption,
+    mimeType: attachment.mimeType,
+    isGif: attachment.isGif,
+  };
+}
+
+function NativeImageAttachment({
+  attachment,
+  onOpenContent,
+  uri,
+}: {
+  attachment: ChatAttachment;
+  onOpenContent?: (item: NativeContentFocusItem) => void;
+  uri: string;
+}) {
   const [size, setSize] = useState(() => (
     nativeImageSizeCache.get(uri)
     || { width: MESSAGE_IMAGE_MAX_WIDTH, height: Math.round(MESSAGE_IMAGE_MAX_WIDTH * 0.75) }
@@ -22344,7 +22535,14 @@ function NativeImageAttachment({ uri }: { uri: string }) {
   return (
     <Pressable
       accessibilityRole="imagebutton"
-      onPress={() => openImageViewer(uri)}
+      onPress={() => {
+        const focusItem = buildNativeAttachmentFocusItem(attachment, uri);
+        if (focusItem && onOpenContent) {
+          onOpenContent(focusItem);
+          return;
+        }
+        openImageViewer(uri);
+      }}
       style={({ pressed }) => [styles.messageMediaCard, { width: size.width, height: size.height }, pressed && styles.pressed]}
     >
       <Image source={{ uri }} resizeMode="contain" style={styles.messageImage} />
@@ -22352,14 +22550,34 @@ function NativeImageAttachment({ uri }: { uri: string }) {
   );
 }
 
-function NativeVideoAttachment({ attachment, uri }: { attachment: ChatAttachment; uri: string }) {
+function NativeVideoAttachment({
+  attachment,
+  onOpenContent,
+  uri,
+}: {
+  attachment: ChatAttachment;
+  onOpenContent?: (item: NativeContentFocusItem) => void;
+  uri: string;
+}) {
   const player = useVideoPlayer(uri, (instance) => {
     instance.loop = false;
     instance.muted = false;
   });
+  const openFocusedVideo = () => {
+    const focusItem = buildNativeAttachmentFocusItem(attachment, uri);
+    if (focusItem && onOpenContent) {
+      onOpenContent(focusItem);
+      return;
+    }
+    void Linking.openURL(uri).catch(() => undefined);
+  };
   return (
     <View style={styles.messageVideoCard}>
       <VideoView player={player} style={styles.messageVideo} contentFit="cover" nativeControls />
+      <Pressable accessibilityRole="button" accessibilityLabel="Ver video en grande" onPress={openFocusedVideo} style={({ pressed }) => [styles.messageVideoFocusButton, pressed && styles.pressed]}>
+        <ExternalLink size={14} color={COLORS.white} strokeWidth={2.45} />
+        <Text style={styles.messageVideoFocusButtonText}>Ver</Text>
+      </Pressable>
       <View style={styles.messageVideoInfo}>
         <View style={styles.messageVideoPlayBadge}>
           <Play size={13} color={COLORS.white} fill={COLORS.white} strokeWidth={2.4} />
@@ -22371,12 +22589,27 @@ function NativeVideoAttachment({ attachment, uri }: { attachment: ChatAttachment
   );
 }
 
-function NativeDocumentAttachment({ attachment, uri }: { attachment: ChatAttachment; uri?: string }) {
+function NativeDocumentAttachment({
+  attachment,
+  onOpenContent,
+  uri,
+}: {
+  attachment: ChatAttachment;
+  onOpenContent?: (item: NativeContentFocusItem) => void;
+  uri?: string;
+}) {
   return (
     <Pressable
       accessibilityRole="button"
       disabled={!uri}
-      onPress={() => openInAppBrowser(uri)}
+      onPress={() => {
+        const focusItem = buildNativeAttachmentFocusItem(attachment, uri);
+        if (focusItem && onOpenContent) {
+          onOpenContent(focusItem);
+          return;
+        }
+        if (uri) void openInAppBrowser(uri);
+      }}
       style={({ pressed }) => [styles.messageFileCard, pressed && styles.pressed]}
     >
       <View style={styles.messageFileIcon}>
@@ -29803,6 +30036,23 @@ function createAppStyles() {
     width: '100%',
     height: '100%',
   },
+  messageVideoFocusButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    minHeight: 30,
+    borderRadius: 15,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 9,
+    backgroundColor: 'rgba(0,0,0,0.58)',
+  },
+  messageVideoFocusButtonText: {
+    color: COLORS.white,
+    fontSize: 11,
+    fontWeight: '900',
+  },
   messageVideoInfo: {
     position: 'absolute',
     left: 8,
@@ -30604,6 +30854,141 @@ function createAppStyles() {
     lineHeight: 16,
     fontWeight: '800',
     marginTop: 1,
+  },
+  contentFocusRoot: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: phoneCompact(16),
+    paddingVertical: phoneCompact(28),
+  },
+  contentFocusBackdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.82)',
+  },
+  contentFocusPanel: {
+    width: '100%',
+    maxWidth: 520,
+    alignSelf: 'center',
+    borderRadius: phoneCompact(26),
+    overflow: 'hidden',
+    backgroundColor: isLight ? 'rgba(20,20,24,0.96)' : 'rgba(12,12,14,0.98)',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.18)',
+  },
+  contentFocusHeader: {
+    minHeight: phoneCompact(70),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(12),
+    paddingHorizontal: phoneCompact(16),
+    paddingVertical: phoneCompact(12),
+  },
+  contentFocusTitleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+  contentFocusKicker: {
+    color: 'rgba(255,255,255,0.62)',
+    fontSize: phoneCompact(12),
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    fontWeight: '900',
+  },
+  contentFocusTitle: {
+    color: COLORS.white,
+    fontSize: phoneCompact(20),
+    lineHeight: phoneCompact(24),
+    fontWeight: '900',
+    marginTop: phoneCompact(2),
+  },
+  contentFocusClose: {
+    width: phoneCompact(42),
+    height: phoneCompact(42),
+    borderRadius: phoneCompact(21),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  contentFocusStage: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.black,
+  },
+  contentFocusImage: {
+    width: '100%',
+    height: '100%',
+  },
+  contentFocusVideo: {
+    width: '100%',
+    height: '100%',
+  },
+  contentFocusFileCard: {
+    width: '82%',
+    maxWidth: 360,
+    minHeight: phoneCompact(210),
+    borderRadius: phoneCompact(24),
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: phoneCompact(12),
+    paddingHorizontal: phoneCompact(22),
+    paddingVertical: phoneCompact(24),
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: 'rgba(255,255,255,0.16)',
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  contentFocusFileIcon: {
+    width: phoneCompact(72),
+    height: phoneCompact(72),
+    borderRadius: phoneCompact(24),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  contentFocusFileTitle: {
+    color: COLORS.white,
+    fontSize: phoneCompact(20),
+    lineHeight: phoneCompact(25),
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  contentFocusFileSubtitle: {
+    color: 'rgba(255,255,255,0.68)',
+    fontSize: phoneCompact(14),
+    lineHeight: phoneCompact(19),
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  contentFocusCaption: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: phoneCompact(14),
+    lineHeight: phoneCompact(19),
+    fontWeight: '700',
+    paddingHorizontal: phoneCompact(16),
+    paddingTop: phoneCompact(12),
+  },
+  contentFocusActions: {
+    minHeight: phoneCompact(68),
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingHorizontal: phoneCompact(16),
+    paddingVertical: phoneCompact(12),
+  },
+  contentFocusExternalButton: {
+    minHeight: phoneCompact(42),
+    borderRadius: phoneCompact(21),
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: phoneCompact(7),
+    paddingHorizontal: phoneCompact(15),
+    backgroundColor: COLORS.accent,
+  },
+  contentFocusExternalButtonText: {
+    color: COLORS.white,
+    fontSize: phoneCompact(14),
+    fontWeight: '900',
   },
   messageActionOverlayRoot: {
     flex: 1,

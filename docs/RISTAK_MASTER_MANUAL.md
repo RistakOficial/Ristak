@@ -516,6 +516,14 @@ Messenger/Instagram nativo el chat conserva texto solamente; si HighLevel esta
 conectado, los adjuntos se publican primero como URLs publicas y se envian por
 `attachments` de HighLevel.
 
+Cuando el usuario toca contenido enviado o recibido dentro del chat (`/chat`,
+`/movil` o `mobile/`), Ristak debe abrirlo primero en su propio modal de enfoque,
+no redirigir de inmediato a la URL del archivo. Imagenes y videos se ven dentro de
+la app; documentos, archivos y enlaces muestran una ficha/preview interna con
+accion explicita para abrir fuera cuando haga falta. Ubicaciones y links de pago
+pueden mantener su salida externa porque su accion principal ocurre en Maps o en
+checkout.
+
 En el chat movil, si el usuario abre la camara desde la bandeja sin estar dentro
 de una conversacion, la captura de foto o video abre un selector de destinatarios.
 Ese selector debe permitir elegir uno o varios contactos, escribir un caption,

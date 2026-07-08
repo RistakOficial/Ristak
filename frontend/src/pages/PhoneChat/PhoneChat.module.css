@@ -3453,6 +3453,9 @@
   color: var(--phone-chat-muted);
   background: var(--phone-chat-surface-soft);
   text-decoration: none;
+  border: 0;
+  padding: 0;
+  cursor: zoom-in;
 }
 
 .contactInfoMediaTile img,
@@ -3494,6 +3497,11 @@
   padding: 10px 0;
   color: var(--phone-chat-text);
   text-decoration: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .contactInfoArchiveRow + .contactInfoArchiveRow {
@@ -5104,6 +5112,24 @@
   -webkit-touch-callout: none;
 }
 
+.messageMediaButton {
+  display: inline-flex;
+  align-self: flex-start;
+  max-width: min(252px, 62vw);
+  margin: 0 0 5px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  cursor: zoom-in;
+  font: inherit;
+  line-height: 0;
+}
+
+.messageMediaButton .messageImage {
+  margin: 0;
+}
+
 .messageVideo {
   display: block;
   width: min(252px, 62vw);
@@ -5115,6 +5141,36 @@
   object-fit: contain;
   background: color-mix(in srgb, var(--phone-chat-text) 86%, var(--phone-chat-bg) 14%);
   contain: paint;
+}
+
+.messageVideoFocusWrap {
+  position: relative;
+  display: inline-flex;
+  max-width: min(252px, 62vw);
+  margin: 0 0 5px;
+}
+
+.messageVideoFocusWrap .messageVideo {
+  margin: 0;
+}
+
+.messageMediaFocusButton {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--phone-chat-surface) 88%, transparent);
+  color: var(--phone-chat-text);
+  font-size: 10px;
+  font-weight: 820;
+  cursor: zoom-in;
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--phone-chat-text) 14%, transparent);
 }
 
 .messageFileBubble {
@@ -5133,6 +5189,10 @@
   color: var(--phone-chat-text);
   background: rgba(255, 255, 255, 0.52);
   text-decoration: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 
 .messageRow_inbound .messageFile {
@@ -11798,6 +11858,10 @@
   background: var(--phone-chat-surface);
   color: var(--phone-chat-muted);
   text-decoration: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: zoom-in;
 }
 
 .commentPostChipStatic {

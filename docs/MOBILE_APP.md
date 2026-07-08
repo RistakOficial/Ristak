@@ -987,6 +987,12 @@ ubicaciones. El auto-scroll de la conversacion solo debe llevar al ultimo
 mensaje durante la carga inicial o cuando el usuario ya esta abajo; si el
 usuario esta arrastrando o navegando el historial, ningun recalculo de contenido
 debe devolverlo forzosamente al ultimo mensaje.
+Las fotos, videos, documentos, archivos y enlaces tocados desde el hilo o desde
+`Archivos del chat` no deben abrir Safari/Chrome en el primer tap: deben abrir el
+modal de enfoque propio de Ristak. Imagenes y videos se presentan dentro del
+modal; documentos/enlaces muestran una ficha interna y dejan `Abrir fuera` como
+accion secundaria. Ubicaciones y links de pago quedan fuera de esta regla porque
+su flujo natural requiere Maps o checkout externo.
 ubicacion. Los globos de texto deben interpretar el formato estilo WhatsApp
 (`*negrita*`, `_italica_`, `~tachado~` y monospace con backticks) sin romper URLs
 ni identificadores con guion bajo. Cualquier canal pendiente

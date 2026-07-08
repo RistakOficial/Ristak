@@ -1606,6 +1606,10 @@
   background: var(--surface);
   color: var(--color-text-secondary);
   text-decoration: none;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+  cursor: zoom-in;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
@@ -1986,6 +1990,7 @@
 }
 
 .mediaAttachment {
+  position: relative;
   display: block;
   width: min(360px, 54vw);
   max-width: 100%;
@@ -1998,6 +2003,28 @@
   color: inherit;
   text-decoration: none;
   contain: paint;
+  padding: 0;
+  cursor: zoom-in;
+  font: inherit;
+}
+
+.mediaAttachmentFocusButton {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--surface-solid) 88%, transparent);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: zoom-in;
+  box-shadow: var(--shadow-xs);
 }
 
 .messageMediaBubble .mediaAttachment,
@@ -2185,6 +2212,9 @@
   background: color-mix(in srgb, var(--color-background-primary) 88%, var(--chat-soft));
   color: inherit;
   text-decoration: none;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
 }
 
 .fileAttachmentPreview {
