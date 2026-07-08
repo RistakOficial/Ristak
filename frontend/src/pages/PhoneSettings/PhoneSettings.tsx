@@ -8,14 +8,12 @@ import {
   ChevronLeft,
   ChevronRight,
   CircleAlert,
-  Clock,
   FileText,
   ListChecks,
   Loader2,
   LogOut,
   MessageCircle,
   Mic,
-  Moon,
   RefreshCw,
   Save,
   Smartphone,
@@ -28,7 +26,7 @@ import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { useAuth } from '@/contexts/AuthContext'
 import { useNotification } from '@/contexts/NotificationContext'
-import { useAIAgentAvailability, useAppConfig, useUserConfig, usePhoneElasticScroll, usePhoneTheme, type PhoneThemePreference } from '@/hooks' // (MOB-006) useUserConfig
+import { useAIAgentAvailability, useAppConfig, useUserConfig, usePhoneElasticScroll, usePhoneTheme } from '@/hooks' // (MOB-006) useUserConfig
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { contactsService } from '@/services/contactsService'
 import { aiAgentService } from '@/services/aiAgentService'
@@ -46,18 +44,6 @@ type PhoneNotificationPermission = NotificationPermission | 'native_granted' | '
 type BusinessVoiceState = 'idle' | 'recording' | 'processing'
 
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
-
-const PHONE_CHAT_THEME_OPTIONS: Array<{
-  id: PhoneThemePreference
-  label: string
-  description: string
-  Icon: LucideIcon
-}> = [
-  { id: 'system', label: 'Sistema', description: 'Usa el modo que tiene tu celular.', Icon: Smartphone },
-  { id: 'light', label: 'Claro', description: 'Mantiene la app con fondo claro.', Icon: Sun },
-  { id: 'dark', label: 'Noche', description: 'Mantiene la app oscura todo el tiempo.', Icon: Moon },
-  { id: 'auto', label: 'Horario', description: 'Claro de día y noche después de las 7 PM.', Icon: Clock }
-]
 
 const TEMPLATE_BLOCKED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED'])
 const BUSINESS_VOICE_MIME_CANDIDATES = [
@@ -146,14 +132,7 @@ export const PhoneSettings: React.FC = () => {
   const [notificationSoundEnabled, setNotificationSoundEnabled] = useUserConfig<boolean>('push_notification_sound_enabled', true) // (MOB-006) preferencia por usuario
   const [notificationVibrationEnabled, setNotificationVibrationEnabled] = useUserConfig<boolean>('push_notification_vibration_enabled', true) // (MOB-006) preferencia por usuario
   const [pushCalendarIds, setPushCalendarIds] = useUserConfig<string[]>('calendar_push_notification_calendar_ids', []) // (MOB-006) preferencia por usuario
-  const {
-    safePreference,
-    setPreference: setChatThemePreference,
-    resolvedThemeLabel,
-    themeMeta,
-    systemThemeAvailable,
-    deviceLabel
-  } = usePhoneTheme({ active: false })
+  const { resolvedThemeLabel } = usePhoneTheme({ active: false })
 
   const [activeSection, setActiveSection] = useState<SettingsSection>(null)
   const [calendars, setCalendars] = useState<Calendar[]>([])
@@ -598,7 +577,7 @@ export const PhoneSettings: React.FC = () => {
       { id: 'agent', title: PERSONAL_ASSISTANT_AI_LABEL, mobileTitle: PERSONAL_ASSISTANT_AI_LABEL, description: 'Chat fijo y sugerencias.', meta: aiAvailability.configured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: 'Todos', Icon: ListChecks, tone: 'gold' },
-      { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: themeMeta, Icon: Sun, tone: 'blue' },
+      { id: 'appearance', title: 'Apariencia', description: 'El chat sigue el tema de tu app.', meta: resolvedThemeLabel, Icon: Sun, tone: 'blue' },
       { id: 'privacy', title: 'Privacidad', description: 'Controla vistos de WhatsApp, Messenger e Instagram.', meta: sendReadReceipts ? 'Vistos activos' : 'Vistos apagados', Icon: CheckCheck, tone: 'blue' },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: permissionLabel, Icon: Bell, tone: 'red' }
     ]
@@ -818,28 +797,14 @@ export const PhoneSettings: React.FC = () => {
         <Sun size={18} />
         <span>
           <strong>Color del chat</strong>
-          <small>Elige cómo quieres ver esta app en este celular.</small>
+          <small>El chat usa el mismo tema que tu app.</small>
         </span>
       </div>
-      <div className={styles.choiceList} role="radiogroup" aria-label="Apariencia del chat">
-        {PHONE_CHAT_THEME_OPTIONS.map(({ id, label, description, Icon }) => {
-          const selected = safePreference === id
-          const optionDescription = id === 'system'
-            ? systemThemeAvailable ? `Sigue el modo de ${deviceLabel}.` : 'Si no se puede leer el modo del equipo, usa el horario.'
-            : description
-          return (
-            <button key={id} type="button" className={`${styles.choiceButton} ${selected ? styles.choiceActive : ''}`} role="radio" aria-checked={selected} onClick={() => saveConfigPreference(setChatThemePreference, id)}>
-              <span><Icon size={18} /></span>
-              <span>
-                <strong>{label}</strong>
-                <small>{optionDescription}</small>
-              </span>
-              <i>{selected && <Check size={16} />}</i>
-            </button>
-          )
-        })}
-      </div>
-      <p className={styles.hint}>Ahorita el chat se ve en modo {resolvedThemeLabel.toLowerCase()}.</p>
+      <p className={styles.hint}>
+        Los colores y el modo claro/oscuro del chat siguen el tema que elijas en tu app
+        (familia y claro/noche). Cámbialo desde “Diseño de app” en el menú de tu cuenta y el
+        chat se actualiza solo. Ahorita se ve en modo {resolvedThemeLabel.toLowerCase()}.
+      </p>
     </section>
   )
 

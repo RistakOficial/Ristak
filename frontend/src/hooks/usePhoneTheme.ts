@@ -4,8 +4,6 @@ import { mobileAppService } from '@/services/mobileAppService'
 import { useAppConfig } from './useAppConfig'
 
 const SYSTEM_DARK_MODE_QUERY = '(prefers-color-scheme: dark)'
-const DAY_START_HOUR = 6
-const NIGHT_START_HOUR = 19
 const PHONE_THEME_CONFIG_KEY = 'mobile_chat_theme_preference'
 const PHONE_THEME_LIGHT_COLOR = '#fbfaf6'
 const PHONE_THEME_DARK_COLOR = '#0b0f14'
@@ -22,27 +20,6 @@ export function isPhoneThemePreference(value: unknown): value is PhoneThemePrefe
   return value === 'system' || value === 'light' || value === 'dark' || value === 'auto'
 }
 
-function getTimeBasedPhoneTheme(now: Date = new Date()): PhoneThemeTone {
-  const hour = now.getHours()
-  return hour >= NIGHT_START_HOUR || hour < DAY_START_HOUR ? 'dark' : 'light'
-}
-
-function msUntilNextPhoneThemeSwitch(now: Date = new Date()): number {
-  const currentHour = now.getHours()
-  const nextSwitch = new Date(now)
-
-  if (currentHour >= DAY_START_HOUR && currentHour < NIGHT_START_HOUR) {
-    nextSwitch.setHours(NIGHT_START_HOUR, 0, 0, 0)
-  } else if (currentHour >= NIGHT_START_HOUR) {
-    nextSwitch.setDate(now.getDate() + 1)
-    nextSwitch.setHours(DAY_START_HOUR, 0, 0, 0)
-  } else {
-    nextSwitch.setHours(DAY_START_HOUR, 0, 0, 0)
-  }
-
-  return Math.max(1000, nextSwitch.getTime() - now.getTime())
-}
-
 function getSystemDarkModeMedia() {
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return null
   return window.matchMedia(SYSTEM_DARK_MODE_QUERY)
@@ -50,17 +27,6 @@ function getSystemDarkModeMedia() {
 
 function canReadSystemTheme() {
   return Boolean(getSystemDarkModeMedia())
-}
-
-function getSystemPhoneTheme(): PhoneThemeTone {
-  const media = getSystemDarkModeMedia()
-  return media?.matches ? 'dark' : 'light'
-}
-
-function resolvePhoneTheme(preference: PhoneThemePreference): PhoneThemeTone {
-  if (preference === 'light' || preference === 'dark') return preference
-  if (preference === 'auto') return getTimeBasedPhoneTheme()
-  return canReadSystemTheme() ? getSystemPhoneTheme() : getTimeBasedPhoneTheme()
 }
 
 function getPhoneThemeDeviceLabel() {
@@ -79,50 +45,18 @@ export function usePhoneTheme({ active = true }: UsePhoneThemeOptions = {}) {
   const { theme: webTheme, designPreset: webDesignPreset } = useTheme()
   const [preference, setPreference] = useAppConfig<PhoneThemePreference>(PHONE_THEME_CONFIG_KEY, 'system')
   const safePreference = isPhoneThemePreference(preference) ? preference : 'system'
-  const [resolvedTheme, setResolvedTheme] = useState<PhoneThemeTone>(() => resolvePhoneTheme(safePreference))
-  const [systemThemeAvailable, setSystemThemeAvailable] = useState(canReadSystemTheme)
+  // El chat hereda el modo claro/oscuro del theme del usuario (webTheme) en vez
+  // de resolver su propio tono (sistema/horario/manual). Así /movil se ve igual
+  // que la app. Se conserva `preference`/`setPreference` para no romper la
+  // pantalla de ajustes, pero ya no gobierna el tono.
+  const resolvedTheme: PhoneThemeTone = webTheme === 'dark' ? 'dark' : 'light'
+  const [systemThemeAvailable] = useState(canReadSystemTheme)
   const deviceLabel = useMemo(getPhoneThemeDeviceLabel, [])
 
   useEffect(() => {
     if (preference === safePreference) return
     setPreference(safePreference).catch(() => undefined)
   }, [preference, safePreference, setPreference])
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-
-    const systemMedia = getSystemDarkModeMedia()
-    let timeoutId: number | null = null
-
-    const updateTheme = () => {
-      setSystemThemeAvailable(Boolean(systemMedia))
-      setResolvedTheme(resolvePhoneTheme(safePreference))
-    }
-
-    const runAutoThemeLoop = () => {
-      updateTheme()
-      timeoutId = window.setTimeout(runAutoThemeLoop, msUntilNextPhoneThemeSwitch())
-    }
-
-    if (safePreference === 'auto') {
-      runAutoThemeLoop()
-    } else {
-      updateTheme()
-    }
-
-    if (safePreference === 'system' && systemMedia) {
-      systemMedia.addEventListener('change', updateTheme)
-    }
-
-    return () => {
-      if (timeoutId !== null) {
-        window.clearTimeout(timeoutId)
-      }
-      if (systemMedia) {
-        systemMedia.removeEventListener('change', updateTheme)
-      }
-    }
-  }, [safePreference])
 
   useEffect(() => {
     if (!active) return
