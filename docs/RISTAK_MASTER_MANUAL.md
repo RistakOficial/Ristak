@@ -1570,7 +1570,10 @@ embudo de completición por pregunta calculado desde las respuestas guardadas de
 rango seleccionado: vistas, visitantes, envíos, porcentaje de finalización y
 cuántas personas respondieron o dejaron sin respuesta cada campo. Al elegir un
 sitio/landing específico, la misma vista muestra el resumen de conversión del
-sitio con vistas, visitantes, sesiones y conversiones.
+sitio con vistas, visitantes, sesiones y conversiones. En la categoría Sitios,
+el filtro separa Sitios web y Embudos antes de elegir una pieza específica, y el
+dashboard recalcula métricas, videos asociados y conversiones sólo para esa
+categoría.
 
 En el editor visual, los bloques de calendario embebido eligen el calendario y
 la accion posterior a la cita desde la barra superior del editor. El inspector

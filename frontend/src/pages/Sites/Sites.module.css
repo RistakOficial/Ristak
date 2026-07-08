@@ -7659,6 +7659,10 @@
   align-items: end;
 }
 
+.sitesAnalyticsFilterControlsSites {
+  grid-template-columns: minmax(180px, 0.42fr) minmax(260px, 1fr);
+}
+
 .sitesAnalyticsFilterControlsVideo {
   grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1.25fr);
 }
@@ -21152,6 +21156,7 @@
   .sitesAnalyticsHeader,
   .sitesAnalyticsFilters,
   .sitesAnalyticsFilterControls,
+  .sitesAnalyticsFilterControlsSites,
   .sitesAnalyticsConversionPath,
   .sitesAnalyticsGrid,
   .formFunnelSummary,

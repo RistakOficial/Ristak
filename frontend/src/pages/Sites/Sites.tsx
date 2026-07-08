@@ -256,6 +256,7 @@ import { getPaymentTestGuide } from '../../../../shared/sites/paymentTestGuides.
 type SitesSection = 'landings' | 'forms' | 'analytics' | 'domains'
 type DeviceMode = 'desktop' | 'mobile'
 type SitesAnalyticsSiteType = 'sites' | 'forms' | 'videos'
+type SitesAnalyticsLandingMode = 'all' | 'website' | 'funnel'
 type LibraryViewMode = 'gallery' | 'list' | 'table'
 type LibraryViewSection = 'landings' | 'forms'
 type LibraryFolderSource = 'site_embed' | 'html' | 'video_gate' | 'calendar' | 'manual'
@@ -267,6 +268,9 @@ type LibraryFolderDefinition = SiteLibraryFolder & {
 const sitesAnalyticsSiteTypes: SitesAnalyticsSiteType[] = ['sites', 'forms', 'videos']
 const isSitesAnalyticsSiteType = (value?: string | null): value is SitesAnalyticsSiteType =>
   sitesAnalyticsSiteTypes.includes(value as SitesAnalyticsSiteType)
+const sitesAnalyticsLandingModes: SitesAnalyticsLandingMode[] = ['all', 'website', 'funnel']
+const isSitesAnalyticsLandingMode = (value?: string | null): value is SitesAnalyticsLandingMode =>
+  sitesAnalyticsLandingModes.includes(value as SitesAnalyticsLandingMode)
 const libraryViewModes: LibraryViewMode[] = ['gallery', 'list', 'table']
 const isLibraryViewMode = (value?: string | null): value is LibraryViewMode =>
   libraryViewModes.includes(value as LibraryViewMode)
@@ -8355,6 +8359,14 @@ export const Sites: React.FC = () => {
     () => isSitesAnalyticsSiteType(searchParams.get('type')) ? searchParams.get('type') as SitesAnalyticsSiteType : 'sites',
     [searchParams]
   )
+  const routeAnalyticsLandingMode = useMemo<SitesAnalyticsLandingMode>(
+    () => {
+      if (routeAnalyticsSiteType !== 'sites') return 'all'
+      const category = searchParams.get('siteCategory')
+      return isSitesAnalyticsLandingMode(category) ? category : 'all'
+    },
+    [routeAnalyticsSiteType, searchParams]
+  )
   const routeAnalyticsSiteId = searchParams.get('siteId') || ''
   const routeAnalyticsVideoId = searchParams.get('videoId') || ''
   const routeHasBlockParam = useMemo(() => new URLSearchParams(location.search).has('block'), [location.search])
@@ -8422,6 +8434,7 @@ export const Sites: React.FC = () => {
   const [siteVideoAssets, setSiteVideoAssets] = useState<MediaAsset[]>([])
   const [loadingSiteVideos, setLoadingSiteVideos] = useState(false)
   const [sitesAnalyticsSiteType, setSitesAnalyticsSiteType] = useState<SitesAnalyticsSiteType>(routeAnalyticsSiteType)
+  const [sitesAnalyticsLandingMode, setSitesAnalyticsLandingMode] = useState<SitesAnalyticsLandingMode>(routeAnalyticsLandingMode)
   const [sitesAnalyticsSiteId, setSitesAnalyticsSiteId] = useState(routeAnalyticsSiteId)
   const [sitesAnalyticsVideoId, setSitesAnalyticsVideoId] = useState(routeAnalyticsVideoId)
   const [sitesAnalyticsSummary, setSitesAnalyticsSummary] = useState<SitesAnalyticsSummary | null>(null)
@@ -8500,11 +8513,13 @@ export const Sites: React.FC = () => {
 
   const updateSitesAnalyticsQuery = useCallback((patch: {
     type?: SitesAnalyticsSiteType
+    landingMode?: SitesAnalyticsLandingMode
     siteId?: string
     videoId?: string
   }) => {
     const nextParams = new URLSearchParams(searchParams)
     if (patch.type !== undefined) setSearchParam(nextParams, 'type', patch.type, 'sites')
+    if (patch.landingMode !== undefined) setSearchParam(nextParams, 'siteCategory', patch.landingMode, 'all')
     if (patch.siteId !== undefined) setSearchParam(nextParams, 'siteId', patch.siteId)
     if (patch.videoId !== undefined) setSearchParam(nextParams, 'videoId', patch.videoId)
     setSearchParams(nextParams, { replace: true })
@@ -8513,9 +8528,10 @@ export const Sites: React.FC = () => {
   useEffect(() => {
     if (section !== 'analytics') return
     setSitesAnalyticsSiteType(current => current === routeAnalyticsSiteType ? current : routeAnalyticsSiteType)
+    setSitesAnalyticsLandingMode(current => current === routeAnalyticsLandingMode ? current : routeAnalyticsLandingMode)
     setSitesAnalyticsSiteId(current => current === routeAnalyticsSiteId ? current : routeAnalyticsSiteId)
     setSitesAnalyticsVideoId(current => current === routeAnalyticsVideoId ? current : routeAnalyticsVideoId)
-  }, [routeAnalyticsSiteId, routeAnalyticsSiteType, routeAnalyticsVideoId, section])
+  }, [routeAnalyticsLandingMode, routeAnalyticsSiteId, routeAnalyticsSiteType, routeAnalyticsVideoId, section])
 
   useUrlDateRangeSync({
     dateRange,
@@ -8524,12 +8540,23 @@ export const Sites: React.FC = () => {
   })
 
   const handleSitesAnalyticsTypeChange = useCallback((value: SitesAnalyticsSiteType) => {
+    const nextLandingMode = value === 'sites' ? sitesAnalyticsLandingMode : 'all'
     setSitesAnalyticsSiteType(value)
+    setSitesAnalyticsLandingMode(nextLandingMode)
     setSitesAnalyticsSiteId('')
     setSitesAnalyticsVideoId('')
     setSitesVideoAnalytics(null)
     setSitesVideoAnalyticsError('')
-    updateSitesAnalyticsQuery({ type: value, siteId: '', videoId: '' })
+    updateSitesAnalyticsQuery({ type: value, landingMode: nextLandingMode, siteId: '', videoId: '' })
+  }, [sitesAnalyticsLandingMode, updateSitesAnalyticsQuery])
+
+  const handleSitesAnalyticsLandingModeChange = useCallback((value: SitesAnalyticsLandingMode) => {
+    setSitesAnalyticsLandingMode(value)
+    setSitesAnalyticsSiteId('')
+    setSitesAnalyticsVideoId('')
+    setSitesVideoAnalytics(null)
+    setSitesVideoAnalyticsError('')
+    updateSitesAnalyticsQuery({ landingMode: value, siteId: '', videoId: '' })
   }, [updateSitesAnalyticsQuery])
 
   const handleSitesAnalyticsSiteChange = useCallback((value: string) => {
@@ -8639,9 +8666,17 @@ export const Sites: React.FC = () => {
     () => sites.filter(site => site.status === 'published'),
     [sites]
   )
-  const analyticsSites = useMemo(
+  const baseAnalyticsSites = useMemo(
     () => liveAnalyticsSites.filter(site => getSiteTypeFilterMatch(site, sitesAnalyticsSiteType)),
     [liveAnalyticsSites, sitesAnalyticsSiteType]
+  )
+  const analyticsSites = useMemo(
+    () => baseAnalyticsSites.filter(site => (
+      sitesAnalyticsSiteType !== 'sites' ||
+      sitesAnalyticsLandingMode === 'all' ||
+      getSitePageMode(site) === sitesAnalyticsLandingMode
+    )),
+    [baseAnalyticsSites, sitesAnalyticsLandingMode, sitesAnalyticsSiteType]
   )
   const analyticsSiteIds = useMemo(
     () => new Set(analyticsSites.map(site => site.id)),
@@ -13811,11 +13846,11 @@ export const Sites: React.FC = () => {
               <SitesAnalyticsPanel
                 sites={scopedAnalyticsSites}
                 siteOptions={analyticsSites}
-                allSites={liveAnalyticsSites}
                 sitesById={sitesById}
                 videos={scopedAnalyticsVideos}
                 videoOptions={filteredAnalyticsVideos}
                 selectedSiteType={sitesAnalyticsSiteType}
+                selectedLandingMode={sitesAnalyticsLandingMode}
                 selectedSiteId={sitesAnalyticsSiteId}
                 selectedVideoId={sitesAnalyticsVideoId}
                 selectedVideo={selectedAnalyticsVideo}
@@ -13828,6 +13863,7 @@ export const Sites: React.FC = () => {
                 startDate={formatDateToISO(dateRange.start)}
                 endDate={formatDateToISO(dateRange.end)}
                 onSiteTypeChange={handleSitesAnalyticsTypeChange}
+                onLandingModeChange={handleSitesAnalyticsLandingModeChange}
                 onSiteChange={handleSitesAnalyticsSiteChange}
                 onVideoChange={handleSitesAnalyticsVideoChange}
                 onDateRangeChange={(start, end) => setDateRange({
@@ -41823,11 +41859,11 @@ const FormResponsesQuickPanel: React.FC<{
 interface SitesAnalyticsPanelProps {
   sites: PublicSite[]
   siteOptions: PublicSite[]
-  allSites: PublicSite[]
   sitesById: Map<string, PublicSite>
   videos: MediaAsset[]
   videoOptions: MediaAsset[]
   selectedSiteType: SitesAnalyticsSiteType
+  selectedLandingMode: SitesAnalyticsLandingMode
   selectedSiteId: string
   selectedVideoId: string
   selectedVideo: MediaAsset | null
@@ -41840,6 +41876,7 @@ interface SitesAnalyticsPanelProps {
   startDate: string
   endDate: string
   onSiteTypeChange: (value: SitesAnalyticsSiteType) => void
+  onLandingModeChange: (value: SitesAnalyticsLandingMode) => void
   onSiteChange: (value: string) => void
   onVideoChange: (value: string) => void
   onDateRangeChange: (start: string, end: string) => void
@@ -41848,11 +41885,11 @@ interface SitesAnalyticsPanelProps {
 const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   sites,
   siteOptions,
-  allSites,
   sitesById,
   videos,
   videoOptions,
   selectedSiteType,
+  selectedLandingMode,
   selectedSiteId,
   selectedVideoId,
   selectedVideo,
@@ -41865,6 +41902,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   startDate,
   endDate,
   onSiteTypeChange,
+  onLandingModeChange,
   onSiteChange,
   onVideoChange,
   onDateRangeChange
@@ -41992,13 +42030,29 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     setIsRetentionMuted(false)
   }, [selectedVideoId, stopRetentionScrubbing])
 
-  const isVideosView = selectedSiteType === 'videos'
   const isFormsView = selectedSiteType === 'forms'
-  const typeLabel = isVideosView ? 'Videos' : isFormsView ? 'Formularios' : 'Sitios'
-  const entityLabel = isFormsView ? 'formulario' : 'sitio'
-  const entityPluralLabel = isFormsView ? 'formularios' : 'sitios'
-  const siteFilterLabel = isVideosView ? 'Origen' : isFormsView ? 'Formulario' : 'Sitio'
-  const siteFilterEmptyLabel = isVideosView ? 'Todos los orígenes' : isFormsView ? 'Todos los formularios' : 'Todos los sitios'
+  const isVideosView = selectedSiteType === 'videos'
+  const isSitesView = selectedSiteType === 'sites'
+  const landingModeLabel = selectedLandingMode === 'website'
+    ? 'Sitios web'
+    : selectedLandingMode === 'funnel' ? 'Embudos' : 'Sitios'
+  const landingEntityLabel = selectedLandingMode === 'website'
+    ? 'sitio web'
+    : selectedLandingMode === 'funnel' ? 'embudo' : 'sitio'
+  const landingEntityPluralLabel = selectedLandingMode === 'website'
+    ? 'sitios web'
+    : selectedLandingMode === 'funnel' ? 'embudos' : 'sitios'
+  const typeLabel = isVideosView ? 'Videos' : isFormsView ? 'Formularios' : landingModeLabel
+  const entityLabel = isFormsView ? 'formulario' : landingEntityLabel
+  const entityPluralLabel = isFormsView ? 'formularios' : landingEntityPluralLabel
+  const entityPluralTitle = isFormsView ? 'Formularios' : landingModeLabel
+  const siteFilterLabel = isVideosView ? 'Origen' : isFormsView ? 'Formulario' : selectedLandingMode === 'website' ? 'Sitio web' : selectedLandingMode === 'funnel' ? 'Embudo' : 'Sitio'
+  const siteFilterEmptyLabel = isVideosView ? 'Todos los orígenes' : isFormsView ? 'Todos los formularios' : selectedLandingMode === 'website' ? 'Todos los sitios web' : selectedLandingMode === 'funnel' ? 'Todos los embudos' : 'Todos los sitios'
+  const landingModeOptions: Array<{ value: SitesAnalyticsLandingMode; label: string }> = [
+    { value: 'all', label: 'Todos' },
+    { value: 'website', label: 'Sitios web' },
+    { value: 'funnel', label: 'Embudos' }
+  ]
   const siteRows = sites.map(site => ({
     site,
     stats: analyticsSummary?.sites?.[site.id] || getSiteAnalyticsStats(site),
@@ -42101,9 +42155,11 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
   const scopeSiteLabel = selectedSiteId
     ? sitesById.get(selectedSiteId)?.name || 'Sitio seleccionado'
     : typeLabel
+  const availableEntityText = `${siteOptions.length} ${siteOptions.length === 1 ? entityLabel : entityPluralLabel} disponible${siteOptions.length === 1 ? '' : 's'}`
+  const dashboardEntityText = `${sites.length} ${sites.length === 1 ? entityLabel : entityPluralLabel} en el dashboard`
   const scopeDescription = isVideosView
     ? `${videos.length} video${videos.length === 1 ? '' : 's'} en filtro${selectedVideoMode ? ` · ${currentVideoLabel}` : ' · vista agregada'}`
-    : `${allSites.length} sitio${allSites.length === 1 ? '' : 's'} total · ${sites.length} ${entityPluralLabel} en filtro · ${videos.length} video${videos.length === 1 ? '' : 's'} dentro`
+    : `${availableEntityText} · ${dashboardEntityText} · ${videos.length} video${videos.length === 1 ? '' : 's'} dentro`
   const kpiCards = isVideosView
     ? selectedVideoMode
       ? [
@@ -42132,7 +42188,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
           { key: 'average', icon: <MousePointerClick size={16} />, label: 'Envíos/form', value: formatSitesDecimal(averageConversions) }
         ]
       : [
-          { key: 'sites', icon: <LayoutTemplate size={16} />, label: 'Sitios', value: formatSitesCompactNumber(sites.length) },
+          { key: 'sites', icon: <LayoutTemplate size={16} />, label: landingModeLabel, value: formatSitesCompactNumber(sites.length) },
           { key: 'views', icon: <Eye size={16} />, label: 'Vistas', value: formatSitesCompactNumber(totalSiteViews) },
           { key: 'visitors', icon: <Globe2 size={16} />, label: 'Visitantes', value: formatSitesCompactNumber(totalVisitors) },
           { key: 'sessions', icon: <MousePointerClick size={16} />, label: 'Sesiones', value: formatSitesCompactNumber(totalSessions) },
@@ -42168,7 +42224,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
     return (
       <div className={`${styles.sitesAnalyticsChartBlock} ${styles.sitesAnalyticsSelectedPanel}`}>
         <div className={styles.sitesAnalyticsChartTitle}>
-          <span>Conversión del sitio seleccionado</span>
+          <span>Conversión del {entityLabel} seleccionado</span>
           <strong>{formatSitesPercent(selectedRate)}</strong>
         </div>
         <div className={styles.sitesAnalyticsConversionPath}>
@@ -42291,7 +42347,7 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
         <div className={styles.sitesAnalyticsGrid}>
           <div className={styles.sitesAnalyticsChartBlock}>
             <div className={styles.sitesAnalyticsChartTitle}>
-              <span>{isFormsView ? 'Formularios con más envíos' : 'Sitios con más vistas'}</span>
+              <span>{isFormsView ? 'Formularios con más envíos' : `${entityPluralTitle} con más vistas`}</span>
               <strong>{formatSitesCompactNumber(isFormsView ? totalConversions : totalSiteViews)}</strong>
             </div>
             {renderDetailRows(
@@ -42815,7 +42871,23 @@ const SitesAnalyticsPanel: React.FC<SitesAnalyticsPanelProps> = ({
       </div>
 
       <div className={styles.sitesAnalyticsFilters}>
-        <div className={`${styles.sitesAnalyticsFilterControls} ${isVideosView ? styles.sitesAnalyticsFilterControlsVideo : ''}`}>
+        <div className={`${styles.sitesAnalyticsFilterControls} ${isSitesView ? styles.sitesAnalyticsFilterControlsSites : ''} ${isVideosView ? styles.sitesAnalyticsFilterControlsVideo : ''}`}>
+          {isSitesView && (
+            <label className={styles.field}>
+              <span>Categoría</span>
+              <CustomSelect
+                value={selectedLandingMode}
+                onChange={(event) => {
+                  if (isSitesAnalyticsLandingMode(event.target.value)) onLandingModeChange(event.target.value)
+                }}
+                portal
+              >
+                {landingModeOptions.map(option => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </CustomSelect>
+            </label>
+          )}
           <label className={styles.field}>
             <span>{siteFilterLabel}</span>
             <CustomSelect value={selectedSiteId} onChange={(event) => onSiteChange(event.target.value)} disabled={siteOptions.length === 0} portal>
