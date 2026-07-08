@@ -1587,6 +1587,14 @@ solo se aplica al crear o guardar el bloque; si el usuario cambia la accion a
 reglas propias, pagina especifica o redireccion, se respeta su configuracion
 guardada mientras sea valida.
 
+El editor tambien debe ocultar cualquier opcion literal de `Ir a la siguiente
+pagina` cuando la pagina activa ya es la ultima del orden del sitio. Esta regla
+aplica a formularios embebidos, calendarios embebidos, pagos, botones de bloques
+y botones editables de sitios/HTML importados. Si una configuracion vieja llega
+a la ultima pagina con `next_page` guardado, el editor debe bajarla a un fallback
+seguro: reglas del formulario/calendario, mensaje de exito del pago o URL vacia
+en botones, segun la superficie.
+
 En embudos multipagina, los bloques de pago top-level solo bloquean el submit de
 la pagina donde viven. Un formulario en una pagina anterior debe crear contacto y
 submission aunque exista un bloque de pago habilitado en una pagina posterior. La

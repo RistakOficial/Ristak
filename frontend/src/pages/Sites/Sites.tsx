@@ -2039,6 +2039,10 @@ type PopupTrigger = NonNullable<SiteTheme['popupTrigger']>
 type PopupCloseDisplay = NonNullable<SiteTheme['popupCloseDisplay']>
 type PopupCloseIcon = NonNullable<SiteTheme['popupCloseIcon']>
 
+const isFormNextPageCompletionAction = (action: FormCompletionAction) => (
+  action === 'next_page' || action === 'next_page_if_qualified'
+)
+
 const blockIcons: Partial<Record<SiteBlockType, React.ReactNode>> = {
   headline: <Type size={15} />,
   subheading: <Type size={15} />,
@@ -4178,6 +4182,10 @@ const getNextSitePageId = (pages: SitePage[] = [], activePageId = '') => {
   const index = pages.findIndex(page => page.id === activePageId)
   return index >= 0 ? pages[index + 1]?.id || '' : pages[1]?.id || ''
 }
+
+const hasNextSitePage = (pages: SitePage[] = [], activePageId = '') => (
+  Boolean(getNextSitePageId(pages, activePageId))
+)
 
 const paymentPostActionHasDestination = (post: PaymentPostAction, pages: SitePage[] = [], activePageId = '') => {
   if (post.action === 'success_message') return true
@@ -13127,6 +13135,8 @@ export const Sites: React.FC = () => {
                       <CalendarToolbarConfigSlot
                         block={calendarEditBlock}
                         calendars={calendars}
+                        pages={pages}
+                        activePageId={activePage?.id || DEFAULT_FUNNEL_PAGE_ID}
                         onPatchSettings={(patch) => patchBlockSettingsLocal(calendarEditBlock, patch)}
                         onSave={() => { void handleSaveBlock(calendarEditBlock.id) }}
                       />
@@ -16483,8 +16493,12 @@ const hasImportedSubmittableFormFields = (html = '') => {
 }
 
 // 'submit' and 'disqualify' only make sense on pages with a submittable form.
-const getImportedButtonActionOptionsForPage = (canSubmitForm: boolean) => (
-  importedButtonActionOptions.filter(option => !['submit', 'disqualify'].includes(option.value) || canSubmitForm)
+// 'next_page' only exists when the active page has a real next page in the site order.
+const getImportedButtonActionOptionsForPage = (canSubmitForm: boolean, hasForwardPage: boolean) => (
+  importedButtonActionOptions.filter(option => {
+    if (option.value === 'next_page') return hasForwardPage
+    return !['submit', 'disqualify'].includes(option.value) || canSubmitForm
+  })
 )
 
 const getImportedActionOptionSet = (actionOptions: ImportedButtonActionOption[]) => (
@@ -18936,9 +18950,12 @@ const ImportedHtmlEditorPanel: React.FC<{
   const currentPageCanSubmitForm = useMemo(() => (
     hasImportedSubmittableFormFields(editorPreviewHtml)
   ), [editorPreviewHtml])
+  const currentPageHasForwardPage = useMemo(() => (
+    hasNextSitePage(importedPages, activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID)
+  ), [activeImportedPage?.id, importedPages])
   const currentPageActionOptions = useMemo(() => (
-    getImportedButtonActionOptionsForPage(currentPageCanSubmitForm)
-  ), [currentPageCanSubmitForm])
+    getImportedButtonActionOptionsForPage(currentPageCanSubmitForm, currentPageHasForwardPage)
+  ), [currentPageCanSubmitForm, currentPageHasForwardPage])
 
   useEffect(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
@@ -34293,9 +34310,19 @@ const FormCompletionSettingsControls: React.FC<{
   onSave: () => void
   compact?: boolean
 }> = ({ settings = {}, pages = [], activePageId = '', onPatchSettings, onSave, compact = false }) => {
-  const completionAction = getFormCompletionAction(settings)
+  const storedCompletionAction = getFormCompletionAction(settings)
+  const hasForwardPage = hasNextSitePage(pages, activePageId)
+  const completionAction = !hasForwardPage && isFormNextPageCompletionAction(storedCompletionAction)
+    ? 'form_default'
+    : storedCompletionAction
   const completionTargetPageId = getCompletionTargetPageId(settings, pages, activePageId)
   const fieldClassName = compact ? `${styles.field} ${styles.formToolbarField}` : styles.field
+
+  useEffect(() => {
+    if (hasForwardPage || !isFormNextPageCompletionAction(storedCompletionAction)) return
+    onPatchSettings({ completionAction: 'form_default' })
+    window.setTimeout(onSave, 0)
+  }, [hasForwardPage, onPatchSettings, onSave, storedCompletionAction])
 
   const controls = (
     <>
@@ -34315,8 +34342,8 @@ const FormCompletionSettingsControls: React.FC<{
           onBlur={onSave}
         >
           <option value="form_default">Usar reglas del formulario</option>
-          <option value="next_page">Ir a la siguiente página</option>
-          <option value="next_page_if_qualified">Ir a la siguiente página (SÍ CALIFICA)</option>
+          {hasForwardPage && <option value="next_page">Ir a la siguiente página</option>}
+          {hasForwardPage && <option value="next_page_if_qualified">Ir a la siguiente página (SÍ CALIFICA)</option>}
           <option value="specific_page">Ir a una página específica</option>
           <option value="specific_page_if_qualified">Ir a una página específica (SÍ CALIFICA)</option>
           <option value="redirect">Redirigir a URL</option>
@@ -34442,17 +34469,29 @@ const FormEmbedToolbarControls: React.FC<{
 const CalendarEmbedToolbarControls: React.FC<{
   block: SiteBlock
   calendars: CalendarType[]
+  pages: SitePage[]
+  activePageId: string
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
-}> = ({ block, calendars, onPatchSettings, onSave }) => {
+}> = ({ block, calendars, pages, activePageId, onPatchSettings, onSave }) => {
   const settings = block.settings || {}
   const selectedCalendarId = getSettingString(settings, 'calendarId')
   const hasSelectedCalendarOption = calendars.some(calendar => calendar.id === selectedCalendarId)
-  const completionAction = getCalendarCompletionAction(settings)
+  const storedCompletionAction = getCalendarCompletionAction(settings)
+  const hasForwardPage = hasNextSitePage(pages, activePageId)
+  const completionAction = !hasForwardPage && storedCompletionAction === 'next_page'
+    ? 'calendar_default'
+    : storedCompletionAction
 
   const commitSoon = () => {
     window.setTimeout(onSave, 0)
   }
+
+  useEffect(() => {
+    if (hasForwardPage || storedCompletionAction !== 'next_page') return
+    onPatchSettings({ calendarCompletionAction: 'calendar_default' })
+    window.setTimeout(onSave, 0)
+  }, [hasForwardPage, onPatchSettings, onSave, storedCompletionAction])
 
   return (
     <div className={styles.formEmbedToolbarControls}>
@@ -34489,7 +34528,7 @@ const CalendarEmbedToolbarControls: React.FC<{
             onBlur={onSave}
           >
             <option value="calendar_default">Usar reglas del calendario</option>
-            <option value="next_page">Ir a la siguiente página</option>
+            {hasForwardPage && <option value="next_page">Ir a la siguiente página</option>}
             <option value="redirect">Redirigir a URL</option>
           </CustomSelect>
         </label>
@@ -34645,6 +34684,8 @@ const FormToolbarConfigSlot: React.FC<{
 const CalendarToolbarConfigSlot: React.FC<{
   block: SiteBlock
   calendars: CalendarType[]
+  pages: SitePage[]
+  activePageId: string
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }> = (props) => {
@@ -34668,15 +34709,37 @@ const PaymentCompletionSettingsControls: React.FC<{
   onSave: () => void
   compact?: boolean
 }> = ({ settings = {}, pages, activePageId = '', onPatchSettings, onSave, compact = false }) => {
-  const post = getPaymentPostActionFromSettings(settings)
+  const storedPost = getPaymentPostActionFromSettings(settings)
+  const hasForwardPage = hasNextSitePage(pages, activePageId)
+  const post = !hasForwardPage && storedPost.action === 'next_page'
+    ? normalizePaymentPostAction({
+      ...storedPost,
+      action: 'success_message',
+      message: storedPost.message || PAYMENT_POST_SUCCESS_MESSAGE_DEFAULT
+    })
+    : storedPost
   const selectedSpecificPageExists = post.pageId ? pages.some(page => page.id === post.pageId) : false
-  const hasNextPage = Boolean(getNextSitePageId(pages, activePageId))
   const hasValidDestination = paymentPostActionHasDestination(post, pages, activePageId)
+  const availablePaymentPostActionOptions = hasForwardPage
+    ? paymentPostActionOptions
+    : paymentPostActionOptions.filter(option => option.value !== 'next_page')
   const fieldClassName = compact ? `${styles.field} ${styles.formToolbarField}` : styles.field
   const patchPost = (patch: Partial<PaymentPostAction>) => {
     onPatchSettings({ postPayment: normalizePaymentPostAction({ ...post, ...patch }) })
   }
   const commitSoon = () => { window.setTimeout(onSave, 0) }
+
+  useEffect(() => {
+    if (hasForwardPage || storedPost.action !== 'next_page') return
+    onPatchSettings({
+      postPayment: normalizePaymentPostAction({
+        ...storedPost,
+        action: 'success_message',
+        message: storedPost.message || PAYMENT_POST_SUCCESS_MESSAGE_DEFAULT
+      })
+    })
+    window.setTimeout(onSave, 0)
+  }, [hasForwardPage, onPatchSettings, onSave, storedPost.action, storedPost.message, storedPost.pageId, storedPost.url])
 
   const controls = (
     <>
@@ -34694,7 +34757,7 @@ const PaymentCompletionSettingsControls: React.FC<{
           }}
           onBlur={onSave}
         >
-          {paymentPostActionOptions.map(option => (
+          {availablePaymentPostActionOptions.map(option => (
             <option key={option.value} value={option.value}>{option.label}</option>
           ))}
         </CustomSelect>
@@ -34710,12 +34773,6 @@ const PaymentCompletionSettingsControls: React.FC<{
             onBlur={onSave}
           />
         </label>
-      )}
-
-      {post.action === 'next_page' && !hasNextPage && (
-        <p className={styles.customFieldHint}>
-          Agrega una página después de esta o cambia el destino. Mientras no exista una siguiente página, se mostrará el mensaje de éxito.
-        </p>
       )}
 
       {post.action === 'specific_page' && (
@@ -38026,8 +38083,16 @@ const ButtonActionFields: React.FC<{
   onPatchSettings: (patch: Record<string, unknown>) => void
   onSave: () => void
 }> = ({ settings, pages, activePageId, onPatchSettings, onSave }) => {
-  const action = getButtonAction(settings)
+  const storedAction = getButtonAction(settings)
+  const hasForwardPage = hasNextSitePage(pages, activePageId)
+  const action = !hasForwardPage && storedAction === 'next_page' ? 'url' : storedAction
   const targetPages = pages.filter(page => page.id !== activePageId)
+
+  useEffect(() => {
+    if (hasForwardPage || storedAction !== 'next_page') return
+    onPatchSettings({ buttonAction: 'url' })
+    window.setTimeout(onSave, 0)
+  }, [hasForwardPage, onPatchSettings, onSave, storedAction])
 
   return (
     <>
@@ -38035,7 +38100,7 @@ const ButtonActionFields: React.FC<{
         <span>Acción del botón</span>
         <CustomSelect value={action} onChange={(event) => onPatchSettings({ buttonAction: event.target.value })} onBlur={onSave}>
           <option value="url">Enviar a una URL</option>
-          <option value="next_page">Ir a la siguiente página del embudo</option>
+          {hasForwardPage && <option value="next_page">Ir a la siguiente página del embudo</option>}
           <option value="specific_page">Ir a una página específica del embudo</option>
           <option value="open_popup">Abrir pop up</option>
           <option value="close_popup">Cerrar pop up</option>
