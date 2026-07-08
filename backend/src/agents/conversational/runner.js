@@ -19,6 +19,7 @@ import {
   getConversationalAgentConfig,
   getConversationState,
   listConversationStatesForContact,
+  buildConversationalAgentRuntimeConfig,
   ensureConversationalAgentRuntimeEnabledForPublishedAgents,
   recordConversationalAgentEvent,
   getConversationalAgent,
@@ -2108,28 +2109,34 @@ export async function recoverPendingConversationalAgentConversations({
   return { scanned: latestByContact.size, scheduled, followUps, reruns }
 }
 
+export async function resolveConversationalAgentPreviewRuntimeConfig({ configOverride = null, agentId = null } = {}) {
+  const globalConfig = await getConversationalAgentConfig()
+  const hasConfigOverride = configOverride && typeof configOverride === 'object' && Object.keys(configOverride).length > 0
+  let baseConfig = agentId ? await getConversationalAgent(agentId) : null
+
+  if (!baseConfig && !hasConfigOverride) {
+    baseConfig = (await listConversationalAgents())[0] || null
+  }
+
+  const fallbackBase = buildConversationalAgentRuntimeConfig({}, {
+    aiProvider: globalConfig.aiProvider,
+    model: globalConfig.model
+  })
+
+  const config = hasConfigOverride
+    ? buildConversationalAgentRuntimeConfig(configOverride, baseConfig || fallbackBase)
+    : (baseConfig || fallbackBase)
+
+  return { config, globalConfig }
+}
+
 /**
  * Conversación simulada para probar el agente antes de activarlo.
  * No envía mensajes reales, no toca estados ni crea citas: las acciones internas
  * se devuelven como lista para mostrarlas en la prueba.
  */
 export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }) {
-  const globalConfig = await getConversationalAgentConfig()
-  let baseConfig = agentId ? await getConversationalAgent(agentId) : null
-  if (!baseConfig) {
-    baseConfig = (await listConversationalAgents())[0] || null
-  }
-  if (!baseConfig) {
-    baseConfig = {
-      name: 'Agente', objective: 'citas', customObjective: '', successAction: 'ready_for_human',
-      successExtras: [], requiredData: '', handoffRules: '', extraInstructions: '',
-      allowEmojis: false, aiProvider: globalConfig.aiProvider, model: globalConfig.model, defaultCalendarId: null, closingStrategyMode: 'system', closingStrategyCustom: '',
-      responseDelay: { mode: 'none', fixedValue: 10, fixedUnit: 'seconds', minValue: 1, maxValue: 10, rangeUnit: 'minutes' },
-      replyDelivery: { mode: 'split', splitMessagesEnabled: true, targetChars: 280, minDelaySeconds: 2, maxDelaySeconds: 6 },
-      followUp: { enabled: false, first: { enabled: true, value: 30, unit: 'minutes' }, second: { enabled: false, value: 2, unit: 'hours' }, strategy: '' }
-    }
-  }
-  const config = configOverride ? { ...baseConfig, ...configOverride } : baseConfig
+  const { config, globalConfig } = await resolveConversationalAgentPreviewRuntimeConfig({ configOverride, agentId })
   const aiProvider = normalizeConversationalAIProvider(config.aiProvider || globalConfig.aiProvider)
   const runtime = await resolveConversationalAIRuntime(aiProvider)
   const runtimeConfig = { ...config, aiProvider }

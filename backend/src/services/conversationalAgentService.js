@@ -2524,6 +2524,13 @@ const DEFAULT_AGENT_BASE = {
   filters: { entry: [], exit: [] }
 }
 
+export function buildConversationalAgentRuntimeConfig(input = {}, base = {}) {
+  return agentInputToRowValues(input || {}, {
+    ...DEFAULT_AGENT_BASE,
+    ...(base || {})
+  })
+}
+
 const ENTRY_CONFLICT_CATEGORY_LABELS = {
   channel: 'canal',
   message: 'mensaje',

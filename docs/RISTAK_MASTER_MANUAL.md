@@ -2062,6 +2062,13 @@ Ristak tiene dos superficies principales:
   del sistema es `gpt-5.4-mini` (mostrado en UI como GPT-5.4 Mini); las
   conexiones nuevas de OpenAI y los agentes sin modelo explicito deben caer en
   ese default.
+  La prueba del asistente debe usar la misma configuracion efectiva que usara el
+  runtime real: en el wizard, un borrador nuevo parte de los defaults de creacion
+  y no puede heredar campos del primer agente existente; en el editor de un
+  agente guardado, antes de probar se guarda el borrador pendiente, se manda el
+  `agentId` y el backend resuelve el agente por ese ID aplicando el borrador
+  encima. La prueba no debe pasar por un agente distinto ni por un autosave
+  pendiente.
   Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
   el formulario manual avanzado. `extraInstructions` es la superficie editable de
   personalizacion del asistente: reglas del negocio, limites, datos que debe

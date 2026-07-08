@@ -1315,6 +1315,7 @@ interface AgentCardProps {
   onConnectProvider: (providerId: ConversationalAIProviderId) => void
   onBack: () => void
   onChange: (patch: ConversationalAgentDefInput) => void
+  onFlushSave: () => Promise<ConversationalAgentDef | null>
   onDelete: () => void
 }
 
@@ -1322,7 +1323,7 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
   return aiProviders.find((provider) => provider.id === providerId) || null
 }
 
-const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, triggerLinks, triggerLinksLoading, filterOptions, businessPromptStatus, onConnectProvider, onBack, onChange, onDelete }) => {
+const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, triggerLinks, triggerLinksLoading, filterOptions, businessPromptStatus, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
   const { showToast } = useNotification()
   const detectedLocaleDefaults = getDetectedAccountLocaleDefaults()
   const [accountCurrencyConfig] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
@@ -1926,9 +1927,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     setTesting(true)
 
     try {
+      const agentForTest = await onFlushSave()
+      const effectiveAgent = agentForTest || agent
       const result: ConversationalAgentTestResult = await conversationalAgentService.testAgent(
         nextMessages.map(toTestPayloadMessage),
-        { config: agentToInput(agent) }
+        { config: agentToInput(effectiveAgent), agentId: effectiveAgent.id }
       )
 
       const responseDelayMs = normalizeTestResponseDelay(result.responseDelayMs)
@@ -3554,34 +3557,60 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     navigate(buildConversationalAgentPath(null, routeBase), { replace: true })
   }, [agents, loading, navigate, routeAgentId, routeBase])
 
+  const saveAgentNow = useCallback(async (
+    agentId: string,
+    options: { notify?: boolean } = {}
+  ): Promise<ConversationalAgentDef | null> => {
+    const timers = saveTimersRef.current
+    const existing = timers.get(agentId)
+    if (existing) {
+      window.clearTimeout(existing)
+      timers.delete(agentId)
+    }
+
+    const agent = agentsRef.current.find((item) => item.id === agentId)
+    if (!agent) return null
+
+    const validationError = getAgentValidationError(agent)
+    if (validationError) {
+      if (options.notify !== false) {
+        showToast('warning', 'Revisa el agente', validationError)
+      }
+      throw new Error(validationError)
+    }
+
+    try {
+      const next = await conversationalAgentService.updateAgent(agentId, agentToInput(agent))
+      setAgents((current) => current.map((item) => (item.id === agentId ? next : item)))
+      return next
+    } catch (error: any) {
+      if (isConversationalAgentEntryConflictError(error)) {
+        setActivationConflict({
+          message: error.message,
+          conflicts: error.conflicts || []
+        })
+        await refreshAgentData().catch(() => undefined)
+        throw error
+      }
+      if (options.notify !== false) {
+        showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
+      }
+      throw error
+    }
+  }, [refreshAgentData, showToast])
+
   const scheduleAgentSave = useCallback((agentId: string) => {
     const timers = saveTimersRef.current
     const existing = timers.get(agentId)
     if (existing) window.clearTimeout(existing)
     timers.set(agentId, window.setTimeout(async () => {
-      timers.delete(agentId)
-      const agent = agentsRef.current.find((item) => item.id === agentId)
-      if (!agent) return
-      const validationError = getAgentValidationError(agent)
-      if (validationError) {
-        showToast('warning', 'Revisa el agente', validationError)
-        return
-      }
       try {
-        await conversationalAgentService.updateAgent(agentId, agentToInput(agent))
-      } catch (error: any) {
-        if (isConversationalAgentEntryConflictError(error)) {
-          setActivationConflict({
-            message: error.message,
-            conflicts: error.conflicts || []
-          })
-          await refreshAgentData().catch(() => undefined)
-          return
-        }
-        showToast('error', 'No se pudo guardar', error?.message || 'Revisa la configuración del agente')
+        await saveAgentNow(agentId)
+      } catch {
+        // saveAgentNow ya notificó o abrió el modal de conflicto.
       }
     }, AUTOSAVE_DELAY_MS))
-  }, [refreshAgentData, showToast])
+  }, [saveAgentNow])
 
   const businessPromptStatus = config?.businessPromptStatus || null
   const businessPromptReady = isBusinessPromptReady(businessPromptStatus)
@@ -4021,6 +4050,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
             navigate(buildConversationalAgentPath(null, routeBase))
           }}
           onChange={(patch) => handleAgentChange(selectedAgent.id, patch)}
+          onFlushSave={() => saveAgentNow(selectedAgent.id, { notify: false })}
           onDelete={() => handleDeleteAgent(selectedAgent)}
         />
         {renderProviderModal()}
