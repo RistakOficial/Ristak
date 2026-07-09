@@ -861,10 +861,10 @@
 }
 
 .avatarChannelBadge {
-  right: -4px;
-  bottom: -3px;
-  width: 24px;
-  height: 24px;
+  right: -2px;
+  bottom: -2px;
+  width: 18px;
+  height: 18px;
   overflow: visible;
   color: var(--color-text-secondary);
   background: transparent;
@@ -896,8 +896,8 @@
 }
 
 .avatarSm .avatarChannelBadge {
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
 }
 
 .avatarSm .avatarChannelBadge svg {

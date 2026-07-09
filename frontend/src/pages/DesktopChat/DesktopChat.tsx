@@ -7200,7 +7200,7 @@ export const DesktopChat: React.FC = () => {
       <PhoneMessageChannelIcon
         channel={kind}
         variant="asset"
-        size={size === 'sm' ? 20 : 22}
+        size={size === 'sm' ? 16 : 18}
         className={styles.avatarChannelBadgeAssetIcon}
       />
     )
