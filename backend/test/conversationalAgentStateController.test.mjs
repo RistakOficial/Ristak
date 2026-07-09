@@ -535,7 +535,7 @@ test('reiniciar omisiones opera por agente aunque el contacto tenga otro agente 
   }
 })
 
-test('un mensaje nuevo reabre una conversación completada por el agente', async () => {
+test('un mensaje nuevo reabre una conversación completada con acción concreta no-handoff', async () => {
   const contactId = `conversation_agent_reopen_completed_${randomUUID()}`
   const answeredMessageId = `waapi_msg_answered_${randomUUID()}`
   const newMessageId = `waapi_msg_new_${randomUUID()}`
@@ -554,9 +554,10 @@ test('un mensaje nuevo reabre una conversación completada por el agente', async
       activationSource: 'automatic',
       updatedBy: 'agent'
     })
-    await setConversationSignal(contactId, 'ready_for_human', {
-      reason: 'Ya respondió el objetivo inicial',
-      summary: 'El contacto ya recibió respuesta.',
+    await setConversationSignal(contactId, 'appointment_booked', {
+      reason: 'Cita agendada por el agente',
+      actionSummarySource: 'Cita test',
+      summary: 'El contacto ya tenía una cita creada.',
       status: 'completed',
       agentId
     })
@@ -601,6 +602,60 @@ test('un mensaje nuevo reabre una conversación completada por el agente', async
       event.detail?.messageId === newMessageId &&
       event.detail?.agentId === agentId
     )))
+  } finally {
+    await cleanup(contactId, agentId)
+  }
+})
+
+test('un handoff completado no se reabre solo con mensajes nuevos', async () => {
+  const contactId = `conversation_agent_no_reopen_handoff_${randomUUID()}`
+  const answeredMessageId = `waapi_msg_answered_${randomUUID()}`
+  const newMessageId = `waapi_msg_new_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    const agent = await createConversationalAgent({
+      name: 'Agente handoff terminal test',
+      enabled: true,
+      objective: 'citas',
+      successAction: 'ready_for_human'
+    })
+    agentId = agent.id
+
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent'
+    })
+    await setConversationSignal(contactId, 'ready_for_human', {
+      reason: 'El contacto aceptó pasar con el equipo',
+      summary: 'El humano debe confirmar el siguiente paso.',
+      status: 'completed',
+      agentId
+    })
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET last_inbound_message_id = ?, last_answered_inbound_message_id = ?, last_reply_at = CURRENT_TIMESTAMP
+      WHERE contact_id = ? AND agent_id = ?
+    `, [answeredMessageId, answeredMessageId, contactId, agentId])
+
+    const ruleContext = await buildRuleContext({ contactId, messageText: 'Quedo pendiente', channel: 'whatsapp' })
+    const resolved = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Quedo pendiente',
+      channel: 'whatsapp',
+      ruleContext,
+      latestMessageId: newMessageId
+    })
+
+    assert.equal(resolved.agentConfig, null)
+
+    const state = await getConversationState(contactId, { agentId })
+    assert.equal(state?.status, 'completed')
+    assert.equal(state?.signal, 'ready_for_human')
+
+    const events = await listConversationalAgentEvents({ contactId })
+    assert.equal(events.some((event) => event.eventType === 'agent_reopened'), false)
   } finally {
     await cleanup(contactId, agentId)
   }

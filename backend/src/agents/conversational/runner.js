@@ -28,11 +28,13 @@ import {
   matchAgentForMessage,
   assignAgentToConversation,
   releaseAgentFromConversation,
+  setConversationSignal,
   setConversationStatus,
   buildRuleContext,
   exitRulesMatch,
   contactIsOutOfScopeForAgent,
   isStaleInheritedConversationStateForAgent,
+  normalizeConversationalPersuasionLevel,
   normalizeConversationalAgentModel,
   getAgentResponseDelayMs,
   getAgentFollowUpSteps,
@@ -69,6 +71,7 @@ import {
   hydrateConversationalMessagesMedia,
   hydrateConversationalPreviewMessagesMedia
 } from './mediaContext.js'
+import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 
 const HISTORY_LIMIT = 20
 const MAX_TURNS = 10
@@ -167,6 +170,25 @@ const SOFT_INTERNAL_META_PHRASES = [
   /\bsu sequedad\b/i,
   /\bvalores (?:de golpe|concretos)\b/i,
   /\bpregunta espec[ií]fica\b/i
+]
+const HUMAN_HANDOFF_ACTION_TYPES = new Set(['mark_ready_to_advance', 'send_to_human'])
+const PRICE_DISCLOSURE_PATTERN = /(?:[$€£]\s*\d|\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?\s*(?:mxn|usd|d[oó]lares?|pesos?|euros?)\b|\b(?:cuesta|vale|valor|precio|costo|sale)\s+(?:es\s+)?(?:de\s+)?[$€£]?\s*\d)/i
+const PRICE_QUALIFICATION_PATTERN = /\b(?:cu[eé]ntame|dime|comp[aá]rteme|para\s+(?:ubicar|darte|no\s+darte|cotizar|pasarte)|antes\s+de\s+(?:darte|pasarte)|qu[eé]\s+(?:buscas|necesitas|te\s+pasa|situaci[oó]n|quieres\s+resolver)|desde\s+cu[aá]ndo|c[oó]mo\s+te\s+(?:afecta|molesta|urge))\b/i
+const HUMAN_HANDOFF_PROMISE_PATTERNS = [
+  /\bte\s+paso\s+(?:con|al|a\s+un|a\s+una|para\s+(?:que|la\s+valoraci[oó]n|la\s+cita|agendar|confirmar|seguir))/i,
+  /\b(?:pasarte|canalizarte|derivarte)\s+(?:con|al|a\s+un|a\s+una|para\s+(?:que|agendar|confirmar|seguir))/i,
+  /\bte\s+(?:ayudan|apoyan|atienden|contactan|llaman|confirman|revisan)\b/i,
+  /\b(?:el|nuestro|mi)\s+equipo\s+(?:te\s+)?(?:ayuda|apoya|atiende|contacta|llama|confirma|revisa|sigue|seguir[aá])\b/i,
+  /\b(?:un|una)\s+(?:asesor|humano|persona|especialista|ejecutivo)\b.{0,80}\b(?:te\s+)?(?:ayuda|contacta|atiende|llama|confirma|revisa|sigue|seguir[aá])\b/i,
+  /\b(?:queda|lo\s+dejo|lo\s+dejamos)\s+(?:pendiente\s+)?(?:con|para)\s+(?:el\s+)?(?:equipo|humano|asesor|persona)\b/i,
+  /\b(?:seguir|continuar)\s+el\s+(?:agendado|proceso|tr[aá]mite)\b/i
+]
+const SCHEDULING_OR_PROCESS_QUESTION_PATTERNS = [
+  /\b(?:queda|qued[oó]|est[aá])\s+(?:ya\s+)?(?:agendada|agendado|confirmada|confirmado)\b/i,
+  /\b(?:cita|agenda|agendar|horario|hora|disponibilidad|turno|valoraci[oó]n)\b[^.!?]{0,120}\?/i,
+  /\b(?:hoy|mañana|lunes|martes|mi[eé]rcoles|miercoles|jueves|viernes|s[aá]bado|sabado|domingo)\b[^.!?]{0,80}\b(?:\d{1,2}|am|pm|a\s+la|a\s+las|cita|hora)\b/i,
+  /\b(?:a\s+la|a\s+las)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/i,
+  /\b(?:c[oó]mo\s+(?:la\s+)?solicito|d[oó]nde\s+me\s+recomienda|no\s+entiendo|me\s+revisar[aá]n\s+primero|primero\s+la\s+revisi[oó]n)\b/i
 ]
 
 export function normalizeConversationalChannel(value = 'whatsapp') {
@@ -337,6 +359,207 @@ export function sanitizeAgentReply(text) {
     reply = `${reply.slice(0, MAX_REPLY_CHARS - 1).trim()}…`
   }
   return reply
+}
+
+function normalizeActionType(action = {}) {
+  return String(action?.type || action?.name || '').trim()
+}
+
+function hasActionType(actions = [], types = HUMAN_HANDOFF_ACTION_TYPES) {
+  return Array.isArray(actions) && actions.some((action) => types.has(normalizeActionType(action)))
+}
+
+export function replySuggestsHumanHandoff(reply = '') {
+  const text = String(reply || '').trim()
+  if (!text) return false
+  return HUMAN_HANDOFF_PROMISE_PATTERNS.some((pattern) => pattern.test(text))
+}
+
+function runtimePriceGuardApplies(config = {}) {
+  return normalizeConversationalPersuasionLevel(config?.persuasionLevel) !== 'low'
+}
+
+export function rewritePrematurePriceDisclosure(reply = '', config = {}) {
+  const text = String(reply || '').trim()
+  if (!text || !runtimePriceGuardApplies(config)) return text
+  if (!PRICE_DISCLOSURE_PATTERN.test(text) || !PRICE_QUALIFICATION_PATTERN.test(text)) return text
+  return 'Claro, para darte un valor que sí aplique, cuéntame tantito qué estás buscando resolver?'
+}
+
+export function shouldEscalateSilentSchedulingQuestion(latestText = '', actions = []) {
+  if (!hasActionType(actions, new Set(['stay_silent']))) return false
+  const text = String(latestText || '').trim()
+  if (!text) return false
+  return SCHEDULING_OR_PROCESS_QUESTION_PATTERNS.some((pattern) => pattern.test(text))
+}
+
+export function applyConversationalRuntimeReplyGuard({
+  reply = '',
+  latestText = '',
+  actions = [],
+  config = {},
+  suppressReply = false
+} = {}) {
+  let nextReply = String(reply || '').trim()
+  let nextSuppressReply = Boolean(suppressReply)
+  const events = []
+  let forceHumanHandoff = null
+
+  if (shouldEscalateSilentSchedulingQuestion(latestText, actions)) {
+    nextReply = 'Te paso con el equipo para que te confirmen eso.'
+    nextSuppressReply = false
+    forceHumanHandoff = {
+      reason: 'El contacto hizo una pregunta de agenda o proceso que requiere confirmacion humana.',
+      summary: String(latestText || '').trim().slice(0, 500),
+      source: 'silent_scheduling_question'
+    }
+    events.push({ type: 'runtime_silence_escalated_to_human' })
+  }
+
+  const priceGuardReply = rewritePrematurePriceDisclosure(nextReply, config)
+  if (priceGuardReply !== nextReply) {
+    nextReply = priceGuardReply
+    events.push({ type: 'runtime_price_guard_rewrite' })
+  }
+
+  if (replySuggestsHumanHandoff(nextReply) && !hasActionType(actions, HUMAN_HANDOFF_ACTION_TYPES)) {
+    forceHumanHandoff = forceHumanHandoff || {
+      reason: 'La respuesta prometio intervencion humana sin ejecutar una herramienta de traspaso.',
+      summary: nextReply.slice(0, 500),
+      source: 'human_handoff_promise_without_action'
+    }
+    events.push({ type: 'runtime_handoff_promise_forced' })
+  }
+
+  return {
+    reply: nextReply,
+    suppressReply: nextSuppressReply,
+    forceHumanHandoff,
+    events
+  }
+}
+
+async function recordRuntimeReplyGuardEvents({ contactId, latest, agentConfig, channel, events = [], forceHumanHandoff = null } = {}) {
+  if (!contactId || !events.length) return
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'runtime_reply_guard',
+    detail: {
+      messageId: latest?.id || null,
+      agentId: agentConfig?.id || null,
+      channel: normalizeConversationalChannel(channel || latest?.channel),
+      events: events.map((event) => event.type),
+      forcedHuman: Boolean(forceHumanHandoff),
+      source: forceHumanHandoff?.source || null
+    }
+  }).catch((error) => {
+    logger.warn(`[Agente conversacional] No se pudo registrar runtime_reply_guard: ${error.message}`)
+  })
+}
+
+async function forceRuntimeHumanHandoff({ contactId, agentConfig, latest, channel, ctx, handoff } = {}) {
+  if (!contactId || !handoff) return null
+  const reason = String(handoff.reason || 'El runtime detecto que el caso requiere humano.').trim()
+  const summary = String(handoff.summary || '').trim()
+  const signal = 'ready_for_human'
+  const action = {
+    type: 'runtime_send_to_human',
+    motivo: reason,
+    source: handoff.source || 'runtime_guard',
+    effect: {
+      liveEffect: 'Pasa el chat a humano por candado de runtime. NO marca el objetivo como cumplido.',
+      marksObjectiveCompleted: false
+    }
+  }
+  if (Array.isArray(ctx?.actions)) ctx.actions.push(action)
+
+  await setConversationSignal(contactId, signal, {
+    reason,
+    summary,
+    status: 'human',
+    agentId: agentConfig?.id || ''
+  })
+
+  try {
+    const result = await sendConversationalAgentPriorityNotification({ contactId, reason, summary, signal })
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'priority_push_notification',
+      detail: { signal, sent: result?.sent || 0, skipped: Boolean(result?.skipped), reason: result?.reason || null, source: 'runtime_guard' }
+    })
+  } catch (error) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'priority_push_notification_failed',
+      detail: { signal, error: error.message, source: 'runtime_guard' }
+    })
+  }
+
+  await recordConversationalAgentEvent({
+    contactId,
+    eventType: 'runtime_human_handoff_forced',
+    detail: {
+      messageId: latest?.id || null,
+      agentId: agentConfig?.id || null,
+      channel: normalizeConversationalChannel(channel || latest?.channel),
+      reason,
+      source: handoff.source || 'runtime_guard'
+    }
+  })
+  return action
+}
+
+export async function waitForConversationalResponseWindow({
+  contactId,
+  latest,
+  agentConfig,
+  channel = 'whatsapp',
+  delayMs = 0,
+  wait = sleep,
+  loadLatest = loadLatestInboundMessage,
+  recordEvent = recordConversationalAgentEvent,
+  onNewerInbound = null
+} = {}) {
+  const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
+  const ms = Math.max(0, Number(delayMs || 0))
+  if (!latest?.id || ms <= 0) {
+    return { latest: latest || null, delayed: false, absorbedNewerInbound: false }
+  }
+
+  await recordEvent({
+    contactId,
+    eventType: 'reply_wait_started',
+    detail: {
+      messageId: latest.id,
+      agentId: agentConfig?.id || null,
+      channel: normalizedChannel,
+      delayMs: ms,
+      phase: 'before_agent_run'
+    }
+  })
+  await wait(ms)
+
+  const nextLatest = await loadLatest(contactId, normalizedChannel)
+  if (!nextLatest) return { latest: null, delayed: true, absorbedNewerInbound: false }
+  if (nextLatest.id === latest.id) {
+    return { latest, delayed: true, absorbedNewerInbound: false }
+  }
+
+  if (typeof onNewerInbound === 'function') {
+    await onNewerInbound(nextLatest)
+  }
+  await recordEvent({
+    contactId,
+    eventType: 'reply_wait_collected_inbound',
+    detail: {
+      originalMessageId: latest.id,
+      messageId: nextLatest.id,
+      agentId: agentConfig?.id || null,
+      channel: normalizedChannel,
+      delayMs: ms
+    }
+  })
+  return { latest: nextLatest, delayed: true, absorbedNewerInbound: true }
 }
 
 function isInternalReasoningBlock(value) {
@@ -1554,8 +1777,15 @@ function getStateLastAnsweredInboundMessageId(state) {
   return state?.lastAnsweredInboundMessageId || state?.last_answered_inbound_message_id || null
 }
 
+const TERMINAL_HUMAN_HANDOFF_SIGNALS = new Set([
+  'ready_for_human',
+  'ready_to_schedule',
+  'ready_to_buy'
+])
+
 function shouldReopenCompletedConversationState(state, latestMessageId) {
   if (!state?.agentId || state.status !== 'completed') return false
+  if (TERMINAL_HUMAN_HANDOFF_SIGNALS.has(String(state.signal || '').trim())) return false
   const cleanLatestMessageId = String(latestMessageId || '').trim()
   if (!cleanLatestMessageId) return false
   return getStateLastAnsweredInboundMessageId(state) !== cleanLatestMessageId
@@ -1730,17 +1960,16 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
     runningContacts.add(runKey)
 
     try {
-      // Pequeña espera para agrupar ráfagas de mensajes: si después de la
-      // espera ya hay un mensaje más nuevo, esa ejecución posterior atiende.
+      // Pequeña espera técnica para agrupar ráfagas inmediatas de webhooks.
       await sleep(DEBOUNCE_MS)
 
-      const latest = await loadLatestInboundMessage(contactId, normalizedChannel)
+      let latest = await loadLatestInboundMessage(contactId, normalizedChannel)
       if (!latest) return
 
 	      // Resolver qué agente atiende esta conversación: el ya asignado o el
 	      // primero cuyas reglas de entrada coincidan con el mensaje/contacto.
-	      const latestMessageText = cleanMessageText(latest)
-      const ruleContext = await buildRuleContext({
+	      let latestMessageText = cleanMessageText(latest)
+      let ruleContext = await buildRuleContext({
         contactId,
         messageText: latestMessageText,
         post: postContext,
@@ -1768,6 +1997,55 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
 	      agentState = await getConversationState(contactId, { agentId: agentConfig.id })
 	      if (!agentState || agentState.status !== 'active' || agentState.signal) return
 	      if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
+
+      // La espera configurada simula tiempo humano ANTES de llamar a OpenAI.
+      // Si el contacto manda más mensajes durante esa ventana, esta misma corrida
+      // absorbe el último inbound y arma el contexto completo; no genera una
+      // respuesta vieja para luego cancelarla.
+      const responseDelayMs = getAgentResponseDelayMs(agentConfig)
+      const waitResult = await waitForConversationalResponseWindow({
+        contactId,
+        latest,
+        agentConfig,
+        channel: normalizedChannel,
+        delayMs: responseDelayMs,
+        onNewerInbound: async () => {
+          pendingContactReruns.delete(runKey)
+          await deletePendingRerun(runKey).catch(() => {})
+        }
+      })
+      if (!waitResult.latest) return
+      if (waitResult.latest.id !== latest.id) {
+        latest = waitResult.latest
+        latestMessageText = cleanMessageText(latest)
+        ruleContext = await buildRuleContext({
+          contactId,
+          messageText: latestMessageText,
+          post: postContext,
+          channel: normalizedChannel
+        })
+        if (exitRulesMatch(agentConfig, ruleContext)) {
+          await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+          await recordConversationalAgentEvent({
+            contactId,
+            eventType: 'agent_released',
+            detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'exit_rules_after_response_wait' }
+          })
+          return
+        }
+        if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
+          await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+          await recordConversationalAgentEvent({
+            contactId,
+            eventType: 'agent_released',
+            detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'contact_out_of_scope_after_response_wait' }
+          })
+          return
+        }
+        agentState = await getConversationState(contactId, { agentId: agentConfig.id })
+        if (!agentState || agentState.status !== 'active' || agentState.signal) return
+        if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
+      }
 
 	      // (AI-001/CRON-007) Claim atómico compare-and-set: reclama el mensaje
 	      // antes de correr para evitar respuestas/acciones duplicadas entre
@@ -1835,7 +2113,6 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         channel: normalizedChannel,
         traceMessage
       })
-
       // Guardián de cumplimiento: revisa las reglas de apertura de la biblia sobre la
       // respuesta visible y la reescribe si las rompe (precio/pitch antes de calificar).
       if (reply && !ctx.suppressReply) {
@@ -1846,43 +2123,42 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         }
       }
 
-      const responseDelayMs = getAgentResponseDelayMs(agentConfig)
-      if (responseDelayMs > 0) {
-        await recordConversationalAgentEvent({
+      let allowReplyAfterRuntimeHandoff = false
+      const runtimeGuard = applyConversationalRuntimeReplyGuard({
+        reply,
+        latestText: traceMessage,
+        actions: ctx.actions,
+        config: agentConfig,
+        suppressReply: ctx.suppressReply
+      })
+      reply = runtimeGuard.reply
+      ctx.suppressReply = runtimeGuard.suppressReply
+      await recordRuntimeReplyGuardEvents({
+        contactId,
+        latest,
+        agentConfig,
+        channel: normalizedChannel,
+        events: runtimeGuard.events,
+        forceHumanHandoff: runtimeGuard.forceHumanHandoff
+      })
+      if (runtimeGuard.forceHumanHandoff) {
+        await forceRuntimeHumanHandoff({
           contactId,
-          eventType: 'reply_wait_started',
-          detail: { messageId: latest.id, agentId: agentConfig.id || null, channel: normalizedChannel, delayMs: responseDelayMs }
+          agentConfig,
+          latest,
+          channel: normalizedChannel,
+          ctx,
+          handoff: runtimeGuard.forceHumanHandoff
         })
-        await sleep(responseDelayMs)
-
-        const latestAfterDelay = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
-        if (latestAfterDelay) {
-          await recordConversationalAgentEvent({
-            contactId,
-            eventType: 'reply_suppressed',
-            detail: {
-              messageId: latest.id,
-              agentId: agentConfig.id || null,
-              channel: normalizedChannel,
-              reason: 'newer_inbound_during_response_delay',
-              newerMessageId: latestAfterDelay.id
-            }
-          })
-          scheduleConversationalAgentRerun({
-            contactId,
-            phone,
-            latestMessage: latestAfterDelay,
-            channel: normalizedChannel,
-            reason: 'pausa de respuesta'
-          })
-          return
-        }
+        allowReplyAfterRuntimeHandoff = Boolean(reply)
       }
 
       // El estado pudo cambiar durante la ejecución o la espera (descartada, humano, etc.)
 	      const postState = await getConversationState(contactId, { agentId: agentConfig.id })
       const blockedStatuses = new Set(['discarded', 'paused', 'skipped', 'human'])
-      if (ctx.suppressReply || !reply || blockedStatuses.has(postState?.status)) {
+      const blockedByStatus = blockedStatuses.has(postState?.status)
+      const allowedRuntimeHumanReply = allowReplyAfterRuntimeHandoff && postState?.status === 'human'
+      if (ctx.suppressReply || !reply || (blockedByStatus && !allowedRuntimeHumanReply)) {
         await recordConversationalAgentEvent({
           contactId,
           eventType: 'reply_suppressed',

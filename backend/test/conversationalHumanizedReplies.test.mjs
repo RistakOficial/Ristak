@@ -51,8 +51,13 @@ import {
   buildPendingReplyContextMessage,
   normalizeConversationalChannel,
   RECOVERABLE_CONVERSATIONAL_CHANNELS,
+  applyConversationalRuntimeReplyGuard,
+  replySuggestsHumanHandoff,
   sanitizeAgentReply,
   sendReplyParts,
+  rewritePrematurePriceDisclosure,
+  shouldEscalateSilentSchedulingQuestion,
+  waitForConversationalResponseWindow,
   shouldSendConversationalReplyThroughHighLevel,
   shouldIncludeConversationalBinaryMedia,
   shouldRecoverPendingInbound,
@@ -1987,6 +1992,101 @@ test('conserva una respuesta visible etiquetada tras razonamiento interno', () =
   assert.equal(sanitizeAgentReply(raw), 'claro, depende de qué necesitas revisar primero')
 })
 
+test('candado runtime detecta promesas de pase a humano sin herramienta', () => {
+  const reply = 'perfecto, gracias entonces ya con eso te ayudan a seguir el agendado'
+  assert.equal(replySuggestsHumanHandoff(reply), true)
+
+  const result = applyConversationalRuntimeReplyGuard({
+    reply,
+    latestText: 'Ok',
+    actions: [],
+    config: { persuasionLevel: 'high' }
+  })
+
+  assert.equal(result.forceHumanHandoff?.source, 'human_handoff_promise_without_action')
+  assert.deepEqual(result.events.map((event) => event.type), ['runtime_handoff_promise_forced'])
+})
+
+test('candado runtime no duplica pase si la herramienta real ya se ejecuto', () => {
+  const result = applyConversationalRuntimeReplyGuard({
+    reply: 'va, te paso con el equipo para que te confirmen',
+    latestText: 'Ok',
+    actions: [{ type: 'mark_ready_to_advance' }],
+    config: { persuasionLevel: 'high' }
+  })
+
+  assert.equal(result.forceHumanHandoff, null)
+  assert.deepEqual(result.events, [])
+})
+
+test('candado runtime convierte silencio ante confirmacion de agenda en pase humano real', () => {
+  const latestText = 'Entonces si queda agendada para mañana viernes a la 1 pm???'
+  assert.equal(shouldEscalateSilentSchedulingQuestion(latestText, [{ type: 'stay_silent' }]), true)
+
+  const result = applyConversationalRuntimeReplyGuard({
+    reply: '',
+    latestText,
+    actions: [{ type: 'stay_silent', motivo: 'se requiere consultar agenda antes de responder' }],
+    config: { persuasionLevel: 'high' },
+    suppressReply: true
+  })
+
+  assert.equal(result.suppressReply, false)
+  assert.equal(result.reply, 'Te paso con el equipo para que te confirmen eso.')
+  assert.equal(result.forceHumanHandoff?.source, 'silent_scheduling_question')
+  assert.deepEqual(result.events.map((event) => event.type), [
+    'runtime_silence_escalated_to_human',
+    'runtime_handoff_promise_forced'
+  ])
+})
+
+test('candado runtime quita precio prematuro si el mismo mensaje aun pide calificar', () => {
+  const reply = 'Claro, la valoración tiene un valor de $800. Para darte bien el dato, cuéntame qué buscas resolver?'
+  const rewritten = rewritePrematurePriceDisclosure(reply, { persuasionLevel: 'high' })
+
+  assert.equal(rewritten.includes('$800'), false)
+  assert.equal(rewritten, 'Claro, para darte un valor que sí aplique, cuéntame tantito qué estás buscando resolver?')
+})
+
+test('candado runtime respeta anfitrion y precio ya contextualizado', () => {
+  const reply = 'La consulta vale $800. Te gustaría agendar?'
+
+  assert.equal(rewritePrematurePriceDisclosure(reply, { persuasionLevel: 'low' }), reply)
+  assert.equal(rewritePrematurePriceDisclosure(reply, { persuasionLevel: 'high' }), reply)
+})
+
+test('ventana de respuesta espera antes de OpenAI y absorbe mensajes nuevos', async () => {
+  const events = []
+  const originalLatest = { id: 'msg_costos', channel: 'whatsapp' }
+  const nextLatest = { id: 'msg_ubicacion', channel: 'whatsapp' }
+  let waitedMs = 0
+  let absorbed = null
+
+  const result = await waitForConversationalResponseWindow({
+    contactId: 'contacto_ventana_respuesta',
+    latest: originalLatest,
+    agentConfig: { id: 'agent_delay_test' },
+    channel: 'whatsapp',
+    delayMs: 60_000,
+    wait: async (ms) => { waitedMs = ms },
+    loadLatest: async () => nextLatest,
+    recordEvent: async (event) => { events.push(event) },
+    onNewerInbound: async (message) => { absorbed = message }
+  })
+
+  assert.equal(waitedMs, 60_000)
+  assert.equal(result.latest.id, 'msg_ubicacion')
+  assert.equal(result.absorbedNewerInbound, true)
+  assert.equal(absorbed.id, 'msg_ubicacion')
+  assert.deepEqual(events.map((event) => event.eventType), [
+    'reply_wait_started',
+    'reply_wait_collected_inbound'
+  ])
+  assert.equal(events[0].detail.phase, 'before_agent_run')
+  assert.equal(events[1].detail.originalMessageId, 'msg_costos')
+  assert.equal(events[1].detail.messageId, 'msg_ubicacion')
+})
+
 test('envio real espera antes de cada globo posterior', async () => {
   const sequence = []
   let splitterArgs = null
@@ -2041,6 +2141,65 @@ test('envio real espera antes de cada globo posterior', async () => {
     'wait:2000',
     'send:globo tres',
     'complete'
+  ])
+})
+
+test('si el contacto interrumpe entre globos se detienen los restantes y se devuelve el inbound', async () => {
+  const sequence = []
+  const newerInbound = { id: 'waapi_msg_interrumpe_globos', message_text: 'también dónde están ubicados?' }
+  const result = await sendReplyParts({
+    contactId: 'contacto-interrumpe-globos',
+    phone: '+526561111111',
+    latest: {
+      id: 'waapi_msg_costos',
+      phone: '+526561111111',
+      business_phone: '+526562222222',
+      business_phone_number_id: 'phone-row-test'
+    },
+    agentConfig: {
+      id: 'agente-interrupcion-globos',
+      replyDelivery: {
+        mode: 'split',
+        splitMessagesEnabled: true,
+        delayBetweenBubblesEnabled: true,
+        minDelaySeconds: 2,
+        maxDelaySeconds: 2
+      }
+    },
+    reply: 'globo uno\n\nglobo dos\n\nglobo tres',
+    apiKey: 'sk-test',
+    model: 'gpt-test',
+    dependencies: {
+      splitter: async () => ({
+        messages: ['globo uno', 'globo dos', 'globo tres'],
+        source: 'test',
+        reason: 'fixture'
+      }),
+      sendTextMessage: async ({ text }) => {
+        sequence.push(`send:${text}`)
+      },
+      wait: async (delayMs) => {
+        sequence.push(`wait:${delayMs}`)
+      },
+      loadNewerInbound: async () => newerInbound,
+      recordEvent: async (event) => {
+        sequence.push(`event:${event.eventType}`)
+      },
+      markReplyComplete: async () => {
+        sequence.push('complete')
+      }
+    }
+  })
+
+  assert.equal(result.interruptedBy, newerInbound)
+  assert.equal(result.sentParts, 1)
+  assert.deepEqual(result.parts, ['globo uno', 'globo dos', 'globo tres'])
+  assert.deepEqual(sequence, [
+    'event:reply_splitter_result',
+    'send:globo uno',
+    'event:reply_part_sent',
+    'event:reply_part_wait_started',
+    'wait:2000'
   ])
 })
 
@@ -3143,6 +3302,45 @@ test('bloquea revelar precio cuando las indicaciones condicionan el valor', () =
     extraInstructions: 'Menciona la promoción de fin de mes cuando la persona ya esté interesada.'
   })
   assert.doesNotMatch(promotionOnly, /Bloqueo de precio\/valor condicionado/)
+})
+
+test('instrucciones universales evitan repetir datos y simular handoff sin tool', () => {
+  const instructions = buildConversationalInstructions({
+    config: {
+      persuasionLevel: 'medium',
+      languageLevel: 'intermediate',
+      objective: 'citas',
+      successAction: 'ready_for_human',
+      requiredData: 'Nombre completo y motivo',
+      handoffRules: '',
+      extraInstructions: '',
+      allowEmojis: false,
+      closingStrategyMode: 'system',
+      closingStrategyCustom: '',
+      goalWorkflow: {
+        appointments: {
+          owner: 'human'
+        }
+      }
+    },
+    businessContext: 'Negocio de servicios con agenda.',
+    brandVoice: '',
+    businessName: 'Agenda Universal',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: 'Cliente Demo',
+    channel: 'whatsapp',
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  })
+
+  assert.match(instructions, /Antes de pedir cualquier dato, revisa el historial visible y get_contact_profile/)
+  assert.match(instructions, /Si el dato ya aparece en la conversación o en el perfil, NO lo vuelvas a pedir/)
+  assert.match(instructions, /guárdalo con save_contact_data si corresponde/)
+  assert.match(instructions, /Nunca escribas como si ya hubieras pasado el chat al equipo/)
+  assert.match(instructions, /si no ejecutaste mark_ready_to_advance o send_to_human/)
+  assert.match(instructions, /Este agente NO agenda por su cuenta; un humano cierra la cita/)
+  assert.match(instructions, /Después de esa tool, el bot se detiene/)
+  assert.match(instructions, /una persona que no entiende el proceso después de explicarlo breve/)
 })
 
 test('instrucciones del agente respetan el toggle de emojis', () => {

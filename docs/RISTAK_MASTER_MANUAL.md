@@ -2223,9 +2223,12 @@ asociados al mismo contacto.
 Un estado `completed` no debe dejar el contacto muerto para siempre: si el mismo
 agente ya cumplio su objetivo y despues entra un mensaje nuevo distinto al ultimo
 inbound contestado, el runtime debe limpiar la señal de cierre, reabrir la
-conversacion como `active` y registrar `agent_reopened`. El mensaje ya contestado
-no se reprocesa, y los estados `human`, `paused` o `skipped` siguen bloqueando
-hasta que el usuario los cambie explicitamente.
+conversacion como `active` y registrar `agent_reopened`. Excepcion: los cierres
+terminales de traspaso humano (`ready_for_human`, `ready_to_schedule` y
+`ready_to_buy`) no se reabren solos con mensajes nuevos, porque ya son una cola
+para que un humano tome la conversacion. El mensaje ya contestado no se
+reprocesa, y los estados `human`, `paused` o `skipped` siguen bloqueando hasta
+que el usuario los cambie explicitamente.
 El alcance de contactos tambien vive por agente: `all` permite tomar contactos
 viejos y nuevos, mientras `new_only` sella `contact_scope_cutoff_at` al configurar
 ese agente y solo permite contactos creados desde ese instante en adelante.
@@ -2242,7 +2245,16 @@ prueba no debe pasar por un agente distinto ni por un autosave pendiente. La
 prueba del editor ignora la espera inicial de respuesta configurada en "cuanto
 debe esperar antes de contestar" y devuelve `responseDelayMs: 0` para que el
 tester responda inmediato; el chat real publicado si conserva esa espera antes
-de contestar.
+de contestar. Esa espera ocurre antes de llamar al modelo: si el contacto manda
+mas mensajes durante la ventana, el runtime recarga el ultimo inbound y OpenAI
+interpreta el historial completo, en vez de generar una respuesta vieja y
+cancelarla despues.
+Cuando el agente divide una respuesta en globos, cada globo posterior vuelve a
+revisar si ya entro otro mensaje del contacto antes de enviarse. Si el contacto
+interrumpe, el runtime detiene los globos restantes, no marca el inbound anterior
+como completamente contestado y agenda una nueva corrida; esa nueva corrida
+vuelve a pasar por la ventana de espera previa al modelo y OpenAI recibe tanto
+lo que el agente ya alcanzo a decir como los mensajes nuevos del contacto.
 
 Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
 el formulario manual avanzado. `extraInstructions` es la superficie editable de
@@ -2263,6 +2275,20 @@ debe pedir el contexto faltante de uno en uno y despues usar precios reales. El
 guardian de cumplimiento que reescribe aperturas riesgosas tambien debe devolver
 una pregunta visible y clara; no basta con una frase condicional tipo "si me
 dices..." cuando el contacto pidio precio o informacion en frio.
+
+El runtime tambien aplica candados despues de que el modelo genera la respuesta,
+porque el prompt por si solo no es suficiente en produccion. Si una respuesta
+visible promete que un equipo, asesor o humano seguira el caso y el modelo no
+ejecuto `mark_ready_to_advance` ni `send_to_human`, el runtime fuerza
+`ready_for_human` con estado `human`, notifica prioridad y registra
+`runtime_human_handoff_forced`; asi la promesa no queda falsa ni el bot sigue
+platicando como si nada. Si el modelo intenta `stay_silent` ante una pregunta de
+agenda, horario, confirmacion o proceso que requiere criterio humano, el runtime
+cambia la salida por una frase breve de traspaso y hace el mismo pase real a
+humano. Para persuasiones media y alta, si la respuesta revela un precio o valor
+mientras en ese mismo mensaje todavia esta pidiendo contexto de calificacion, el
+runtime elimina el monto y deja una pregunta corta para calificar; Anfitrion
+(`low`) conserva su comportamiento directo de dar precio cuando aplique.
 
 Reglas:
 
