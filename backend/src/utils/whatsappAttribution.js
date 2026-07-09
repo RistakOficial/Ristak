@@ -191,14 +191,16 @@ function collectCandidateTexts(payload, extraTexts = []) {
 
 function buildSearchRoot(payload, extraTexts = []) {
   const parsedJsonPayloads = []
+  const candidateTexts = collectCandidateTexts(payload, extraTexts)
 
-  for (const text of collectCandidateTexts(payload, extraTexts)) {
+  for (const text of candidateTexts) {
     parsedJsonPayloads.push(...extractJsonPayloadsFromText(text))
     if (parsedJsonPayloads.length >= MAX_JSON_CANDIDATES) break
   }
 
   return {
     payload,
+    candidateTexts,
     parsedJsonPayloads: parsedJsonPayloads.slice(0, MAX_JSON_CANDIDATES)
   }
 }
@@ -226,13 +228,17 @@ function findFirstIdByKeyGroups(payload, keyGroups) {
 
 export function detectWhatsAppAttributionFields(payload, extraTexts = []) {
   const searchRoot = buildSearchRoot(payload, extraTexts)
-  const ristakAdId = findRistakAdIdInTexts(extraTexts)
-  const sourceId = findFirstIdByKeyGroups(searchRoot, [SOURCE_ID_KEYS, AD_ID_KEYS]) || ristakAdId
+  const ristakAdId = findRistakAdIdInTexts(searchRoot.candidateTexts)
+  const officialSourceId = findFirstIdByKeyGroups(searchRoot, [SOURCE_ID_KEYS, AD_ID_KEYS])
+  const sourceId = officialSourceId || ristakAdId
   const sourceType = findFirstStringByKeys(searchRoot, SOURCE_TYPE_KEYS) || (ristakAdId ? 'ad' : '')
 
   return {
     ctwaClid: findFirstStringByKeys(searchRoot, CTWA_KEYS),
     sourceId,
+    officialSourceId,
+    ristakAdId,
+    sourceIdSource: officialSourceId ? 'official_source_id' : (ristakAdId ? 'rstkad_id' : ''),
     sourceUrl: findFirstStringByKeys(searchRoot, SOURCE_URL_KEYS),
     sourceType,
     sourceApp: findFirstStringByKeys(searchRoot, SOURCE_APP_KEYS),

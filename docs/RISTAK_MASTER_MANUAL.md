@@ -353,6 +353,11 @@ Capacidades:
   mensajes posteriores ni marcadores `rstkad_id`; los anuncios posteriores se
   conservan como touches del historial (`whatsapp_api_attribution`, sesiones o
   mensajes sociales) para conversiones.
+- Si un mensaje de WhatsApp trae `source_id` oficial y tambien
+  `rstkad_id=<ad_id>!`, el backend compara ambos contra `meta_ads` en el dia
+  local del negocio: gana el unico ID que exista ese dia; si ambos existen, gana
+  el `source_id` oficial; si ninguno existe, queda el oficial como default y el
+  payload crudo se conserva para auditoria/backfill.
 - Reportes en vista `Identificados de anuncios` y Publicidad miden registros por
   `contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
   exista en `meta_ads` el mismo dia local de creacion del contacto. Por eso ese
@@ -362,7 +367,10 @@ Capacidades:
   corre una vez y queda marcado en
   `app_config.whatsapp_api_first_ad_attribution_backfill_version`. Si detecta
   que un contacto quedo atribuido a un retouch posterior, restaura el primer
-  anuncio real del historial sin borrar los touches posteriores.
+  anuncio real del historial sin borrar los touches posteriores. Tambien corrige
+  touches historicos cuando el `detected_source_id` guardado venia del candidato
+  incorrecto y el marcador `rstkad_id` si coincide con el anuncio vivo de ese
+  dia.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
   legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
   compras. Si un evento trae metadata de mensaje social o email, el tooltip debe

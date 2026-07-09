@@ -34,6 +34,13 @@ en `whatsapp_api_messages`/`whatsapp_api_attribution`, `whatsapp_attribution`,
 pueden ganar credito de una compra/cita si son el ultimo paid touch valido antes
 de la conversion, pero no deben pisar la adquisicion inicial del contacto.
 
+Cuando un mensaje de WhatsApp trae un `source_id` oficial y tambien un marcador
+`rstkad_id=<ad_id>!`, el backend resuelve el conflicto contra `meta_ads` usando
+el dia local del negocio: si solo uno de los dos IDs existe en `meta_ads` ese
+dia, gana ese ID; si ambos existen, gana el `source_id` oficial; si ninguno
+existe, se conserva el `source_id` oficial como default y el payload crudo queda
+disponible para auditoria/backfill.
+
 La vista de reportes **Identificados de anuncios** y la pagina de Publicidad usan
 `contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
 exista en `meta_ads` el mismo dia local en que se creo el contacto. Por eso
@@ -48,7 +55,9 @@ revisa el historial WhatsApp API en orden cronologico y, si el contacto quedo
 con un anuncio posterior que existe en el historial, restaura el primer anuncio
 real como `contacts.attribution_ad_id`/`attribution_ad_name`/`ctwa_clid`. Los
 retouches posteriores siguen vivos en `whatsapp_api_messages` y
-`whatsapp_api_attribution`.
+`whatsapp_api_attribution`. El mismo backfill tambien corrige touches historicos
+cuando el `detected_source_id` guardado venia del candidato incorrecto y el
+marcador `rstkad_id` si coincide con un anuncio vivo ese dia.
 
 ## Servicio canonico
 

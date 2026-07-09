@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { DateTime } from 'luxon'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { logger } from '../utils/logger.js'
@@ -53,8 +54,10 @@ const DEFAULT_REPORT_TABLE_CONFIG_VALUE = JSON.stringify(DEFAULT_REPORT_TABLE_CO
 const DEFAULT_REPORT_TABLE_CONFIG_KEYS = ['cashflow', 'attribution', 'campaigns']
   .flatMap(reportType => ['day', 'month', 'year'].map(viewType => `table_reports_metrics_${reportType}_${viewType}`))
 const DEFAULT_OPENAI_MODEL_COLUMN = `TEXT DEFAULT '${DEFAULT_OPENAI_MODEL}'`
+const DEFAULT_BUSINESS_TIMEZONE = 'America/Mexico_City'
+const ACCOUNT_TIMEZONE_CONFIG_KEY = 'account_timezone'
 const WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY = 'whatsapp_api_first_ad_attribution_backfill_version'
-const WHATSAPP_API_FIRST_AD_BACKFILL_VERSION = '2026-07-08-first-ad-attribution-v1'
+const WHATSAPP_API_FIRST_AD_BACKFILL_VERSION = '2026-07-08-first-ad-attribution-v2'
 
 const POSTGRES_CONNECT_RETRY_CODES = new Set([
   'ECONNREFUSED',
@@ -1050,6 +1053,79 @@ function cleanRepairText(value) {
   return String(value).trim()
 }
 
+function isValidRepairTimezone(timezone) {
+  if (!timezone || typeof timezone !== 'string') return false
+  try {
+    Intl.DateTimeFormat('en-US', { timeZone: timezone })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function resolveRepairTimezone(timezone, fallback = DEFAULT_BUSINESS_TIMEZONE) {
+  return isValidRepairTimezone(timezone)
+    ? timezone
+    : (isValidRepairTimezone(fallback) ? fallback : DEFAULT_BUSINESS_TIMEZONE)
+}
+
+async function getWhatsAppApiRepairTimezone() {
+  const override = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ?',
+    [ACCOUNT_TIMEZONE_CONFIG_KEY]
+  ).catch(() => null)
+
+  if (override?.config_value && isValidRepairTimezone(override.config_value)) {
+    return override.config_value
+  }
+
+  const config = await db.get('SELECT location_data FROM highlevel_config LIMIT 1').catch(() => null)
+  if (config?.location_data) {
+    try {
+      const locationData = JSON.parse(config.location_data)
+      if (locationData?.timezone && isValidRepairTimezone(locationData.timezone)) {
+        return locationData.timezone
+      }
+    } catch {
+      // Si la config historica viene rota, caemos al default seguro.
+    }
+  }
+
+  return DEFAULT_BUSINESS_TIMEZONE
+}
+
+function normalizeRepairDateOnlyInTimezone(value, timezone = DEFAULT_BUSINESS_TIMEZONE, fallbackDate = '') {
+  const zone = resolveRepairTimezone(timezone)
+  const fallback = fallbackDate
+    ? DateTime.fromISO(String(fallbackDate), { zone })
+    : DateTime.now().setZone(zone)
+
+  if (value === null || value === undefined || value === '') {
+    return (fallback.isValid ? fallback : DateTime.now().setZone(zone)).toISODate()
+  }
+
+  const text = String(value).trim()
+  const dateOnly = text.match(/^(\d{4}-\d{2}-\d{2})$/)
+  if (dateOnly) return dateOnly[1]
+
+  const hasExplicitZone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text)
+  let parsed = hasExplicitZone
+    ? DateTime.fromISO(text, { setZone: true }).setZone(zone)
+    : DateTime.fromISO(text, { zone })
+
+  if (!parsed.isValid) parsed = DateTime.fromSQL(text, { zone })
+  if (!parsed.isValid) {
+    const fallbackJs = new Date(text)
+    if (!Number.isNaN(fallbackJs.getTime())) {
+      parsed = DateTime.fromJSDate(fallbackJs).setZone(zone)
+    }
+  }
+
+  return parsed.isValid
+    ? parsed.toISODate()
+    : (fallback.isValid ? fallback : DateTime.now().setZone(zone)).toISODate()
+}
+
 function sourceTypeLooksLikeAd(value = '') {
   const normalized = cleanRepairText(value).toLowerCase().replace(/[\s-]+/g, '_')
   return ['ad', 'ads', 'advertisement', 'click_to_whatsapp', 'ctwa'].includes(normalized)
@@ -1064,7 +1140,13 @@ function normalizeWhatsAppApiAdAttributionCandidate(message = {}) {
     row: message
   }, [message.message_text || ''])
 
-  const sourceId = cleanRepairText(message.detected_source_id || detected.sourceId)
+  const persistedSourceId = cleanRepairText(message.detected_source_id)
+  const ristakAdId = cleanRepairText(detected.ristakAdId)
+  const officialSourceId = cleanRepairText(
+    detected.officialSourceId ||
+    (persistedSourceId && persistedSourceId !== ristakAdId ? persistedSourceId : '')
+  )
+  const sourceId = cleanRepairText(persistedSourceId || detected.sourceId || officialSourceId || ristakAdId)
   if (!sourceId) return null
 
   const ctwaClid = cleanRepairText(message.detected_ctwa_clid || detected.ctwaClid)
@@ -1075,7 +1157,12 @@ function normalizeWhatsAppApiAdAttributionCandidate(message = {}) {
   if (!ctwaClid && !sourceTypeLooksLikeAd(sourceType) && !sourceUrl && !headline) return null
 
   return {
+    messageId: cleanRepairText(message.message_id),
+    attributionId: cleanRepairText(message.attribution_id),
     sourceId,
+    persistedSourceId,
+    officialSourceId,
+    ristakAdId,
     ctwaClid,
     sourceUrl,
     sourceType,
@@ -1087,18 +1174,107 @@ function normalizeWhatsAppApiAdAttributionCandidate(message = {}) {
   }
 }
 
-function collectWhatsAppApiAdAttributions(messages = []) {
+async function isKnownMetaAdIdOnBusinessDay(adId = '', at = '', timezone = DEFAULT_BUSINESS_TIMEZONE) {
+  const cleanAdId = cleanRepairText(adId)
+  if (!cleanAdId) return false
+  if (!at) return isKnownMetaAdId(cleanAdId)
+
+  const businessDate = normalizeRepairDateOnlyInTimezone(at, timezone)
+  const row = await db.get(
+    'SELECT 1 AS found FROM meta_ads WHERE ad_id = ? AND date = ? LIMIT 1',
+    [cleanAdId, businessDate]
+  ).catch(() => null)
+  return Boolean(row?.found)
+}
+
+async function resolveWhatsAppApiAdAttributionCandidate(candidate = {}, timezone = DEFAULT_BUSINESS_TIMEZONE) {
+  const officialSourceId = cleanRepairText(candidate.officialSourceId)
+  const ristakAdId = cleanRepairText(candidate.ristakAdId)
+  const defaultSourceId = cleanRepairText(candidate.sourceId || officialSourceId || ristakAdId)
+  if (!defaultSourceId) return null
+
+  if (!officialSourceId || !ristakAdId || officialSourceId === ristakAdId) {
+    return {
+      ...candidate,
+      sourceId: defaultSourceId,
+      sourceType: defaultSourceId === ristakAdId && !candidate.sourceType ? 'ad' : candidate.sourceType
+    }
+  }
+
+  const [officialMatchedMetaAds, ristakMatchedMetaAds] = await Promise.all([
+    isKnownMetaAdIdOnBusinessDay(officialSourceId, candidate.at, timezone),
+    isKnownMetaAdIdOnBusinessDay(ristakAdId, candidate.at, timezone)
+  ])
+
+  if (!officialMatchedMetaAds && ristakMatchedMetaAds) {
+    return {
+      ...candidate,
+      sourceId: ristakAdId,
+      sourceType: candidate.sourceType || 'ad',
+      sourceIdResolution: 'rstkad_live_ad_wins'
+    }
+  }
+
+  return {
+    ...candidate,
+    sourceId: officialSourceId || defaultSourceId,
+    sourceIdResolution: officialMatchedMetaAds && ristakMatchedMetaAds
+      ? 'both_matched_official_wins'
+      : (officialMatchedMetaAds ? 'official_live_ad_wins' : 'official_default')
+  }
+}
+
+async function collectWhatsAppApiAdAttributions(messages = []) {
+  const timezone = await getWhatsAppApiRepairTimezone()
   const candidates = []
   for (const message of messages) {
     const candidate = normalizeWhatsAppApiAdAttributionCandidate(message)
-    if (candidate) candidates.push(candidate)
+    const resolvedCandidate = candidate
+      ? await resolveWhatsAppApiAdAttributionCandidate(candidate, timezone)
+      : null
+    if (resolvedCandidate) candidates.push(resolvedCandidate)
   }
 
   return candidates
 }
 
-function pickWhatsAppApiAdAttribution(messages = []) {
-  return collectWhatsAppApiAdAttributions(messages)[0] || null
+async function pickWhatsAppApiAdAttribution(messages = []) {
+  return (await collectWhatsAppApiAdAttributions(messages))[0] || null
+}
+
+async function repairWhatsAppApiResolvedAdTouches(candidates = []) {
+  let repaired = 0
+  const seen = new Set()
+
+  for (const candidate of candidates) {
+    const sourceId = cleanRepairText(candidate.sourceId)
+    const persistedSourceId = cleanRepairText(candidate.persistedSourceId)
+    if (!sourceId || persistedSourceId === sourceId) continue
+
+    const key = `${candidate.messageId || ''}|${candidate.attributionId || ''}|${sourceId}`
+    if (seen.has(key)) continue
+    seen.add(key)
+
+    let touched = false
+    if (candidate.messageId) {
+      await db.run(
+        'UPDATE whatsapp_api_messages SET detected_source_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
+        [sourceId, candidate.messageId]
+      ).catch(() => undefined)
+      touched = true
+    }
+    if (candidate.attributionId) {
+      await db.run(
+        'UPDATE whatsapp_api_attribution SET detected_source_id = ? WHERE id = ?',
+        [sourceId, candidate.attributionId]
+      ).catch(() => undefined)
+      touched = true
+    }
+
+    if (touched) repaired += 1
+  }
+
+  return repaired
 }
 
 async function isKnownMetaAdId(adId = '') {
@@ -1125,7 +1301,8 @@ async function shouldReplaceWhatsAppApiAdAttribution(row = {}, candidate = null,
   if (ycloudContactSourceId && currentAdId === ycloudContactSourceId) return true
 
   if (!isWhatsAppApiSource(row.source)) return false
-  return !(await isKnownMetaAdId(currentAdId))
+  const timezone = await getWhatsAppApiRepairTimezone()
+  return !(await isKnownMetaAdIdOnBusinessDay(currentAdId, row.created_at || candidate.at, timezone))
 }
 
 function comparableRepairName(value = '') {
@@ -1210,11 +1387,14 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
   let repairedContacts = 0
   let repairedApiContacts = 0
   let restoredFirstAdAttributions = 0
+  let repairedAdTouches = 0
 
   for (const row of rows) {
     const phone = normalizePhoneForStorage(row.phone) || String(row.phone || '').trim()
     const messages = await db.all(`
       SELECT
+        msg.id AS message_id,
+        attr.id AS attribution_id,
         msg.message_timestamp,
         msg.created_at,
         msg.message_text,
@@ -1240,6 +1420,8 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
     `, [row.id, row.id, phone || '', phone || '', phone || '', phone || '']).catch(() => [])
     const adMessages = await db.all(`
       SELECT
+        msg.id AS message_id,
+        attr.id AS attribution_id,
         msg.message_timestamp,
         msg.created_at,
         msg.message_text,
@@ -1294,8 +1476,15 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
 
     const contactUpdates = []
     const contactParams = []
-    const adAttributionCandidates = collectWhatsAppApiAdAttributions(adMessages.length ? adMessages : messages)
-    const adAttribution = adAttributionCandidates[0] || pickWhatsAppApiAdAttribution(messages)
+    const primaryAdAttributionCandidates = await collectWhatsAppApiAdAttributions(adMessages.length ? adMessages : messages)
+    const fallbackAdAttributionCandidates = primaryAdAttributionCandidates.length
+      ? []
+      : await collectWhatsAppApiAdAttributions(messages)
+    const adAttributionCandidates = primaryAdAttributionCandidates.length
+      ? primaryAdAttributionCandidates
+      : fallbackAdAttributionCandidates
+    const adAttribution = adAttributionCandidates[0] || await pickWhatsAppApiAdAttribution(messages)
+    repairedAdTouches += await repairWhatsAppApiResolvedAdTouches(adAttributionCandidates)
     const shouldReplaceAdAttribution = await shouldReplaceWhatsAppApiAdAttribution(row, adAttribution, adAttributionCandidates)
     const currentAdId = cleanRepairText(row.attribution_ad_id)
     const isReplacingDifferentAdId = shouldReplaceAdAttribution && currentAdId && currentAdId !== adAttribution?.sourceId
@@ -1378,14 +1567,17 @@ export async function repairWhatsAppApiContactIdentityFromMessages({ limit = 500
     }
   }
 
-  if (repairedContacts > 0 || repairedApiContacts > 0) {
+  if (repairedContacts > 0 || repairedApiContacts > 0 || repairedAdTouches > 0) {
     const firstAdText = restoredFirstAdAttributions
       ? `; ${restoredFirstAdAttributions} atribuciones de primer anuncio restauradas`
       : ''
-    logger.success(`✅ Reparación WhatsApp API: ${repairedContacts} contactos y ${repairedApiContacts} perfiles ajustados con historial real${firstAdText}`)
+    const touchText = repairedAdTouches
+      ? `; ${repairedAdTouches} touches de anuncio corregidos`
+      : ''
+    logger.success(`✅ Reparación WhatsApp API: ${repairedContacts} contactos y ${repairedApiContacts} perfiles ajustados con historial real${firstAdText}${touchText}`)
   }
 
-  return { contacts: repairedContacts, apiContacts: repairedApiContacts, restoredFirstAdAttributions }
+  return { contacts: repairedContacts, apiContacts: repairedApiContacts, restoredFirstAdAttributions, repairedAdTouches }
 }
 
 const SUBSCRIPTION_MERCADOPAGO_COLUMNS = [

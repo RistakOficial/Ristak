@@ -39,6 +39,34 @@ async function cleanup({ contactId, apiContactId, messageId, phone, eventId }) {
   await db.run('DELETE FROM contacts WHERE id = ? OR phone = ?', [contactId, phone]).catch(() => undefined)
 }
 
+async function cleanupMetaAds(adIds = []) {
+  for (const adId of adIds) {
+    await db.run('DELETE FROM meta_ads WHERE ad_id = ?', [adId]).catch(() => undefined)
+  }
+}
+
+async function insertMetaAdForDate({ adId, date, suffix, name = 'Anuncio WhatsApp' }) {
+  await db.run(
+    `INSERT INTO meta_ads (
+      date, ad_account_id, campaign_id, campaign_name, adset_id, adset_name,
+      ad_id, ad_name, spend, clicks, reach
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      date,
+      `act_wa_attr_${suffix}`,
+      `camp_wa_attr_${suffix}`,
+      `Campaña ${name}`,
+      `adset_wa_attr_${suffix}`,
+      `Conjunto ${name}`,
+      adId,
+      name,
+      10,
+      1,
+      100
+    ]
+  )
+}
+
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
   return {
     ok: status >= 200 && status < 300,
@@ -2244,6 +2272,125 @@ test('sync historico de YCloud conserva nombre real y source_id de anuncios', as
   }
 })
 
+for (const scenario of [
+  {
+    name: 'usa rstkad_id cuando el source_id oficial no estuvo vivo ese dia',
+    officialDate: '2024-07-14',
+    ristakDate: '2024-07-15',
+    expected: 'ristak'
+  },
+  {
+    name: 'mantiene source_id oficial cuando el oficial estuvo vivo y rstkad_id no',
+    officialDate: '2024-07-15',
+    ristakDate: '2024-07-14',
+    expected: 'official'
+  },
+  {
+    name: 'mantiene source_id oficial cuando ambos candidatos estuvieron vivos',
+    officialDate: '2024-07-15',
+    ristakDate: '2024-07-15',
+    expected: 'official'
+  }
+]) {
+  test(`resuelve conflicto source_id vs rstkad_id: ${scenario.name}`, async () => {
+    const id = randomUUID()
+    const suffix = id.replace(/-/g, '').slice(0, 12)
+    const numericSuffix = Date.now().toString().slice(-8)
+    const phone = `+52992${numericSuffix}`
+    const businessPhone = '+526561000000'
+    const messageId = `ycloud_conflict_${suffix}`
+    const officialAdId = `69910${numericSuffix}`
+    const ristakAdId = `69920${numericSuffix}`
+    const expectedAdId = scenario.expected === 'ristak' ? ristakAdId : officialAdId
+    const messageAt = '2024-07-15T18:00:00.000Z'
+    const previousTimezone = await db.get(
+      'SELECT config_value FROM app_config WHERE config_key = ?',
+      ['account_timezone']
+    ).catch(() => null)
+
+    await cleanup({ messageId, phone })
+    await cleanupMetaAds([officialAdId, ristakAdId])
+
+    try {
+      await setAppConfig('account_timezone', 'America/Mexico_City')
+      await insertMetaAdForDate({
+        adId: officialAdId,
+        date: scenario.officialDate,
+        suffix: `official_${suffix}`,
+        name: 'Anuncio oficial'
+      })
+      await insertMetaAdForDate({
+        adId: ristakAdId,
+        date: scenario.ristakDate,
+        suffix: `rstkad_${suffix}`,
+        name: 'Anuncio marcador Ristak'
+      })
+
+      const result = await syncYCloudMessageRecords([{
+        id: messageId,
+        wamid: `wamid.${id}`,
+        from: phone,
+        to: businessPhone,
+        sendTime: messageAt,
+        type: 'text',
+        text: { body: `Hola, me interesaria una consulta rstkad_id=${ristakAdId}!` },
+        customerProfile: { name: 'Cliente Conflicto' },
+        referral: {
+          source_url: 'https://fb.me/conflict-test',
+          source_type: 'ad',
+          source_id: officialAdId,
+          headline: 'Consulta con el Dr Marco',
+          body: 'Agenda por WhatsApp',
+          ctwa_clid: `ctwa_conflict_${suffix}`
+        }
+      }], {
+        businessPhoneHints: [businessPhone],
+        direction: 'inbound',
+        eventType: 'whatsapp.inbound_message.received',
+        source: 'ycloud_conflict_test'
+      })
+
+      assert.equal(result.messages, 1)
+      assert.equal(result.attributed, 1)
+
+      const message = await db.get(`
+        SELECT id, contact_id, detected_source_id, detected_source_type
+        FROM whatsapp_api_messages
+        WHERE ycloud_message_id = ?
+      `, [messageId])
+
+      assert.equal(message.detected_source_id, expectedAdId)
+      assert.equal(message.detected_source_type, 'ad')
+
+      const contact = await db.get(`
+        SELECT attribution_ad_id, attribution_ad_name, attribution_medium
+        FROM contacts
+        WHERE id = ?
+      `, [message.contact_id])
+
+      assert.equal(contact.attribution_ad_id, expectedAdId)
+      assert.equal(contact.attribution_ad_name, 'Consulta con el Dr Marco')
+      assert.equal(contact.attribution_medium, 'ad')
+
+      const touch = await db.get(`
+        SELECT detected_source_id
+        FROM whatsapp_api_attribution
+        WHERE whatsapp_api_message_id = ?
+      `, [message.id])
+
+      assert.equal(touch.detected_source_id, expectedAdId)
+    } finally {
+      await cleanup({ messageId, phone })
+      await cleanupMetaAds([officialAdId, ristakAdId])
+      if (previousTimezone?.config_value) {
+        await setAppConfig('account_timezone', previousTimezone.config_value)
+      } else {
+        await db.run('DELETE FROM app_config WHERE config_key = ?', ['account_timezone']).catch(() => undefined)
+      }
+    }
+  })
+}
+
 test('sync historico de YCloud no pisa el primer anuncio del contacto con retouches posteriores', async () => {
   const id = randomUUID()
   const phone = `+52996${Date.now().toString().slice(-7)}`
@@ -2653,6 +2800,189 @@ test('repara attribution_ad_id cuando YCloud importó un sourceId genérico ante
     assert.equal(contact.attribution_medium, 'ad')
   } finally {
     await cleanup({ contactId, apiContactId, messageId, phone })
+  }
+})
+
+test('backfill corrige source_id historico cuando rstkad_id es el anuncio vivo del dia', async () => {
+  const id = randomUUID()
+  const suffix = id.replace(/-/g, '').slice(0, 12)
+  const numericSuffix = Date.now().toString().slice(-8)
+  const phone = `+52991${numericSuffix}`
+  const contactId = `rstk_contact_test_${id}`
+  const apiContactId = `waapi_profile_test_${id}`
+  const messageId = `waapi_msg_conflict_${id}`
+  const attributionId = `waapi_attr_conflict_${id}`
+  const officialAdId = `69930${numericSuffix}`
+  const ristakAdId = `69940${numericSuffix}`
+  const messageAt = '2024-07-15T18:00:00.000Z'
+  const previousTimezone = await db.get(
+    'SELECT config_value FROM app_config WHERE config_key = ?',
+    ['account_timezone']
+  ).catch(() => null)
+
+  await cleanup({ contactId, apiContactId, messageId, phone })
+  await cleanupMetaAds([officialAdId, ristakAdId])
+
+  try {
+    await setAppConfig('account_timezone', 'America/Mexico_City')
+    await insertMetaAdForDate({
+      adId: officialAdId,
+      date: '2024-07-14',
+      suffix: `official_backfill_${suffix}`,
+      name: 'Anuncio oficial otro dia'
+    })
+    await insertMetaAdForDate({
+      adId: ristakAdId,
+      date: '2024-07-15',
+      suffix: `rstkad_backfill_${suffix}`,
+      name: 'Anuncio Ristak correcto'
+    })
+
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source,
+        attribution_ad_id, attribution_ad_name, attribution_ctwa_clid,
+        attribution_url, attribution_medium, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      contactId,
+      phone,
+      'Cliente Backfill Conflicto',
+      'Cliente',
+      'WhatsApp_API',
+      officialAdId,
+      'Consulta con el Dr Marco',
+      'ctwa_conflict_backfill',
+      'https://fb.me/conflict-backfill',
+      'ad',
+      messageAt,
+      messageAt
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_contacts (
+        id, contact_id, phone, profile_name, raw_profile_json,
+        first_seen_at, last_seen_at, message_count, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      apiContactId,
+      contactId,
+      phone,
+      'Cliente Backfill Conflicto',
+      JSON.stringify({ nickname: 'Cliente Backfill Conflicto' }),
+      messageAt,
+      messageAt,
+      1,
+      messageAt,
+      messageAt
+    ])
+
+    const rawPayload = {
+      id: 'ycloud_conflict_backfill',
+      customerProfile: { name: 'Cliente Backfill Conflicto' },
+      from: phone,
+      to: '+526561000000',
+      sendTime: messageAt,
+      type: 'text',
+      text: { body: `Hola, me interesaria una consulta rstkad_id=${ristakAdId}!` },
+      referral: {
+        source_url: 'https://fb.me/conflict-backfill',
+        source_type: 'ad',
+        source_id: officialAdId,
+        headline: 'Consulta con el Dr Marco',
+        body: 'Agenda por WhatsApp',
+        ctwa_clid: 'ctwa_conflict_backfill'
+      }
+    }
+    const referral = rawPayload.referral
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, origin, ycloud_message_id, whatsapp_api_contact_id,
+        contact_id, phone, from_phone, to_phone, direction, message_type,
+        message_text, status, message_timestamp, raw_payload_json, referral_json,
+        detected_ctwa_clid, detected_source_id, detected_source_url,
+        detected_source_type, detected_headline, detected_body,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      messageId,
+      'ycloud',
+      'whatsapp.inbound_message.received',
+      'ycloud_conflict_backfill',
+      apiContactId,
+      contactId,
+      phone,
+      phone,
+      '+526561000000',
+      'inbound',
+      'text',
+      rawPayload.text.body,
+      'received',
+      messageAt,
+      JSON.stringify(rawPayload),
+      JSON.stringify(referral),
+      'ctwa_conflict_backfill',
+      officialAdId,
+      'https://fb.me/conflict-backfill',
+      'ad',
+      'Consulta con el Dr Marco',
+      'Agenda por WhatsApp',
+      messageAt,
+      messageAt
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_attribution (
+        id, whatsapp_api_message_id, whatsapp_api_contact_id, contact_id, phone,
+        ycloud_message_id, detected_ctwa_clid, detected_source_id,
+        detected_source_url, detected_source_type, detected_headline,
+        detected_body, referral_json, raw_payload_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      attributionId,
+      messageId,
+      apiContactId,
+      contactId,
+      phone,
+      'ycloud_conflict_backfill',
+      'ctwa_conflict_backfill',
+      officialAdId,
+      'https://fb.me/conflict-backfill',
+      'ad',
+      'Consulta con el Dr Marco',
+      'Agenda por WhatsApp',
+      JSON.stringify(referral),
+      JSON.stringify(rawPayload),
+      messageAt
+    ])
+
+    const repaired = await repairWhatsAppApiContactIdentityFromMessages({ limit: 100 })
+    assert.ok(repaired.contacts >= 1)
+    assert.equal(repaired.repairedAdTouches, 1)
+
+    const contact = await db.get(`
+      SELECT attribution_ad_id, attribution_ad_name
+      FROM contacts
+      WHERE id = ?
+    `, [contactId])
+
+    assert.equal(contact.attribution_ad_id, ristakAdId)
+    assert.equal(contact.attribution_ad_name, 'Consulta con el Dr Marco')
+
+    const message = await db.get('SELECT detected_source_id FROM whatsapp_api_messages WHERE id = ?', [messageId])
+    assert.equal(message.detected_source_id, ristakAdId)
+
+    const touch = await db.get('SELECT detected_source_id FROM whatsapp_api_attribution WHERE id = ?', [attributionId])
+    assert.equal(touch.detected_source_id, ristakAdId)
+  } finally {
+    await cleanup({ contactId, apiContactId, messageId, phone })
+    await cleanupMetaAds([officialAdId, ristakAdId])
+    if (previousTimezone?.config_value) {
+      await setAppConfig('account_timezone', previousTimezone.config_value)
+    } else {
+      await db.run('DELETE FROM app_config WHERE config_key = ?', ['account_timezone']).catch(() => undefined)
+    }
   }
 })
 

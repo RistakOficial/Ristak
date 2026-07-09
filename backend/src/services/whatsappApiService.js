@@ -50,7 +50,8 @@ import {
 import {
   DEFAULT_TIMEZONE,
   businessTodayDateOnly,
-  getAccountTimezone
+  getAccountTimezone,
+  normalizeDateOnlyInTimezone
 } from '../utils/dateUtils.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -5012,10 +5013,14 @@ function findReferralObject(payload = {}, message = {}) {
 function extractAttribution(payload = {}, message = {}, messageText = '') {
   const referral = findReferralObject(payload, message)
   const detected = detectWhatsAppAttributionFields({ payload, message, referral }, [messageText])
+  const referralSourceId = cleanString(referral.source_id || referral.sourceId || referral.ad_id || referral.adId)
 
   const attribution = {
     ctwaClid: cleanString(referral.ctwa_clid || referral.ctwaClid || referral.ctwa || detected.ctwaClid),
-    sourceId: cleanString(referral.source_id || referral.sourceId || referral.ad_id || referral.adId || detected.sourceId),
+    sourceId: cleanString(referralSourceId || detected.sourceId),
+    officialSourceId: cleanString(referralSourceId || detected.officialSourceId),
+    ristakAdId: cleanString(detected.ristakAdId),
+    sourceIdSource: cleanString(referralSourceId || detected.officialSourceId) ? 'official_source_id' : cleanString(detected.sourceIdSource),
     sourceUrl: cleanString(referral.source_url || referral.sourceUrl || detected.sourceUrl),
     sourceType: cleanString(referral.source_type || referral.sourceType || detected.sourceType),
     sourceApp: cleanString(referral.source_app || referral.sourceApp || detected.sourceApp),
@@ -5032,7 +5037,21 @@ function extractAttribution(payload = {}, message = {}, messageText = '') {
 
   return {
     ...attribution,
-    hasAttribution: Object.entries(attribution).some(([key, value]) => key !== 'referral' && Boolean(value)) ||
+    hasAttribution: Boolean(
+      attribution.ctwaClid ||
+      attribution.sourceId ||
+      attribution.sourceUrl ||
+      attribution.sourceType ||
+      attribution.sourceApp ||
+      attribution.entryPoint ||
+      attribution.headline ||
+      attribution.body ||
+      attribution.imageUrl ||
+      attribution.videoUrl ||
+      attribution.thumbnailUrl ||
+      attribution.conversionData ||
+      attribution.ctwaPayload
+    ) ||
       Boolean(referral && Object.keys(referral).length)
   }
 }
@@ -5052,6 +5071,79 @@ function hasWhatsAppAdAttributionSignal(attribution = {}) {
       attribution.headline
     )
   )
+}
+
+async function getWhatsAppAttributionBusinessDate(messageTimestamp = '') {
+  const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
+  return normalizeDateOnlyInTimezone(
+    messageTimestamp || nowIso(),
+    timezone,
+    businessTodayDateOnly(timezone)
+  )
+}
+
+async function hasMetaAdOnBusinessDate(adId = '', businessDate = '') {
+  const cleanAdId = cleanString(adId)
+  const cleanDate = cleanString(businessDate)
+  if (!cleanAdId || !cleanDate) return false
+
+  const row = await db.get(
+    'SELECT 1 AS found FROM meta_ads WHERE ad_id = ? AND date = ? LIMIT 1',
+    [cleanAdId, cleanDate]
+  ).catch(() => null)
+  return Boolean(row?.found)
+}
+
+async function resolveWhatsAppAttributionSourceId(attribution = {}, messageTimestamp = '') {
+  const officialSourceId = cleanString(attribution.officialSourceId)
+  const ristakAdId = cleanString(attribution.ristakAdId)
+  const defaultSourceId = cleanString(attribution.sourceId || officialSourceId || ristakAdId)
+
+  if (!defaultSourceId) return attribution
+
+  if (!officialSourceId || !ristakAdId || officialSourceId === ristakAdId) {
+    return {
+      ...attribution,
+      sourceId: defaultSourceId,
+      sourceIdSource: defaultSourceId === ristakAdId && !officialSourceId ? 'rstkad_id' : (attribution.sourceIdSource || 'official_source_id'),
+      sourceType: defaultSourceId === ristakAdId && !attribution.sourceType ? 'ad' : attribution.sourceType
+    }
+  }
+
+  const businessDate = await getWhatsAppAttributionBusinessDate(messageTimestamp)
+  const [officialMatchedMetaAds, ristakMatchedMetaAds] = await Promise.all([
+    hasMetaAdOnBusinessDate(officialSourceId, businessDate),
+    hasMetaAdOnBusinessDate(ristakAdId, businessDate)
+  ])
+
+  let sourceId = officialSourceId
+  let sourceIdSource = 'official_source_id'
+  let sourceIdResolution = 'official_default'
+
+  if (officialMatchedMetaAds && ristakMatchedMetaAds) {
+    sourceIdResolution = 'both_matched_official_wins'
+  } else if (!officialMatchedMetaAds && ristakMatchedMetaAds) {
+    sourceId = ristakAdId
+    sourceIdSource = 'rstkad_id'
+    sourceIdResolution = 'rstkad_live_ad_wins'
+  } else if (officialMatchedMetaAds) {
+    sourceIdResolution = 'official_live_ad_wins'
+  }
+
+  return {
+    ...attribution,
+    sourceId,
+    sourceIdSource,
+    sourceIdResolution,
+    sourceIdCandidates: {
+      officialSourceId,
+      ristakAdId,
+      businessDate,
+      officialMatchedMetaAds,
+      ristakMatchedMetaAds
+    },
+    sourceType: sourceId === ristakAdId && !attribution.sourceType ? 'ad' : attribution.sourceType
+  }
 }
 
 function normalizeDirectionValue(value) {
@@ -6073,7 +6165,10 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const profileName = extractWhatsAppProfileName(normalizedMessage, identity.phone)
   const rawProfile = normalizedMessage.customerProfile || normalizedMessage.profile || null
   const profilePictureUrl = findProfilePictureUrlInValue(rawProfile)
-  const attribution = extractAttribution(payload, normalizedMessage, messageText)
+  const attribution = await resolveWhatsAppAttributionSourceId(
+    extractAttribution(payload, normalizedMessage, messageText),
+    messageTimestamp
+  )
   const localContact = await upsertLocalContact({
     contactId: contactIdHint,
     phone: identity.phone,
