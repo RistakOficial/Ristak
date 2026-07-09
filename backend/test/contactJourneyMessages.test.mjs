@@ -246,6 +246,153 @@ test('contact journey exposes every WhatsApp ad touch without decorating organic
   }
 })
 
+test('contact journey exposes Messenger and Instagram ad touches for chat previews', async () => {
+  const id = randomUUID()
+  const contactId = `journey_social_ads_${id}`
+  const phone = `+52989${Date.now().toString().slice(-7)}`
+  const seed = Date.now().toString().slice(-10)
+  const messengerAdId = `881${seed}01`
+  const instagramAdId = `882${seed}02`
+
+  await cleanup(contactId, phone)
+  await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [messengerAdId, instagramAdId]).catch(() => undefined)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Social Ads',
+      first_name: 'Cliente',
+      source: 'Messenger',
+      created_at: '2099-08-01T12:00:00.000Z',
+      updated_at: '2099-08-01T12:00:00.000Z'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-08-01',
+      ad_account_id: `act_social_${id}`,
+      campaign_id: `camp_msg_${id}`,
+      campaign_name: 'Campaña Messenger',
+      adset_id: `adset_msg_${id}`,
+      adset_name: 'Conjunto Messenger',
+      ad_id: messengerAdId,
+      ad_name: 'Anuncio Messenger',
+      creative_thumbnail_url: 'https://example.test/messenger-thumb.jpg',
+      creative_preview_url: 'https://example.test/messenger-preview'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-08-02',
+      ad_account_id: `act_social_${id}`,
+      campaign_id: `camp_ig_${id}`,
+      campaign_name: 'Campaña Instagram',
+      adset_id: `adset_ig_${id}`,
+      adset_name: 'Conjunto Instagram',
+      ad_id: instagramAdId,
+      ad_name: 'Anuncio Instagram',
+      creative_thumbnail_url: 'https://example.test/instagram-thumb.jpg',
+      creative_preview_url: 'https://example.test/instagram-preview'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_msg_ad_${id}`,
+      platform: 'messenger',
+      meta_message_id: `mid_msg_ad_${id}`,
+      contact_id: contactId,
+      sender_id: `psid_${id}`,
+      recipient_id: 'page_social_ads',
+      page_id: 'page_social_ads',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'Hola por Messenger',
+      message_timestamp: '2099-08-01T12:01:00.000Z',
+      created_at: '2099-08-01T12:01:00.000Z',
+      referral_json: JSON.stringify({
+        source: 'ADS',
+        type: 'OPEN_THREAD',
+        ad_id: messengerAdId,
+        ads_context_data: {
+          ad_title: 'Headline Messenger',
+          post_body: 'Body Messenger',
+          ad_url: 'https://example.test/messenger-ad'
+        }
+      }),
+      raw_payload_json: '{}'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_organic_${id}`,
+      platform: 'messenger',
+      meta_message_id: `mid_organic_${id}`,
+      contact_id: contactId,
+      sender_id: `psid_${id}`,
+      recipient_id: 'page_social_ads',
+      page_id: 'page_social_ads',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'Mensaje orgánico de Messenger',
+      message_timestamp: '2099-08-01T12:05:00.000Z',
+      created_at: '2099-08-01T12:05:00.000Z',
+      raw_payload_json: '{}'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_ig_ad_${id}`,
+      platform: 'instagram',
+      meta_message_id: `mid_ig_ad_${id}`,
+      contact_id: contactId,
+      sender_id: `igsid_${id}`,
+      recipient_id: 'ig_business_social_ads',
+      instagram_account_id: 'ig_business_social_ads',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'Hola por Instagram',
+      message_timestamp: '2099-08-02T12:01:00.000Z',
+      created_at: '2099-08-02T12:01:00.000Z',
+      referral_json: JSON.stringify({
+        source: 'ADS',
+        type: 'OPEN_THREAD',
+        ad_id: instagramAdId,
+        ads_context_data: {
+          ad_title: 'Headline Instagram',
+          post_body: 'Body Instagram',
+          ad_url: 'https://example.test/instagram-ad'
+        }
+      }),
+      raw_payload_json: '{}'
+    })
+
+    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const messages = journey.filter((event) => event.type === 'meta_message')
+    const messengerMessage = messages.find((event) => event.data?.meta_message_id === `mid_msg_ad_${id}`)
+    const organicMessage = messages.find((event) => event.data?.meta_message_id === `mid_organic_${id}`)
+    const instagramMessage = messages.find((event) => event.data?.meta_message_id === `mid_ig_ad_${id}`)
+
+    assert.ok(messengerMessage)
+    assert.ok(organicMessage)
+    assert.ok(instagramMessage)
+    assert.equal(messengerMessage.data.is_ad_attributed, true)
+    assert.equal(messengerMessage.data.ad_platform, 'Messenger')
+    assert.equal(messengerMessage.data.referral_source_id, messengerAdId)
+    assert.equal(messengerMessage.data.referral_source_url, 'https://example.test/messenger-ad')
+    assert.equal(messengerMessage.data.referral_headline, 'Headline Messenger')
+    assert.equal(messengerMessage.data.referral_body, 'Body Messenger')
+    assert.equal(messengerMessage.data.attribution_ad_name, 'Anuncio Messenger')
+    assert.equal(messengerMessage.data.creative_preview_url, 'https://example.test/messenger-preview')
+    assert.equal(Boolean(organicMessage.data.is_ad_attributed), false)
+    assert.equal(organicMessage.data.referral_source_id || '', '')
+    assert.equal(instagramMessage.data.is_ad_attributed, true)
+    assert.equal(instagramMessage.data.ad_platform, 'Instagram')
+    assert.equal(instagramMessage.data.referral_source_id, instagramAdId)
+    assert.equal(instagramMessage.data.referral_source_url, 'https://example.test/instagram-ad')
+    assert.equal(instagramMessage.data.referral_headline, 'Headline Instagram')
+    assert.equal(instagramMessage.data.referral_body, 'Body Instagram')
+    assert.equal(instagramMessage.data.attribution_ad_name, 'Anuncio Instagram')
+    assert.equal(instagramMessage.data.creative_preview_url, 'https://example.test/instagram-preview')
+  } finally {
+    await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [messengerAdId, instagramAdId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+  }
+})
+
 test('chat contacts caps oversized pages for safer inbox prefetch', async () => {
   const id = randomUUID().replace(/-/g, '')
   const prefix = `chat_page_${id}`

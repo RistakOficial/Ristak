@@ -452,18 +452,21 @@ abrir Maps sin una franja secundaria de titulo/coordenadas dentro del mensaje.
 Si el texto recibido solo dice `location` o `Ubicacion`, se oculta para no
 duplicar el contenido debajo del mapa.
 
-En `/chat` desktop, los mensajes entrantes de WhatsApp que vienen de un anuncio
-deben mostrar una vista previa compacta del anuncio dentro del globo antes del
-texto del contacto. Esto aplica por mensaje: si el mismo contacto vuelve por
-otro anuncio semanas despues, ese nuevo globo tambien muestra su propia vista
-previa; un mensaje organico intermedio no debe heredarse la atribucion vieja del
-contacto. La tarjeta se arma con `is_ad_attributed`,
+En `/chat` desktop, los mensajes entrantes de WhatsApp, Messenger o Instagram
+que vienen de un anuncio deben mostrar una vista previa compacta del anuncio
+dentro del globo antes del texto del contacto. Esto aplica por mensaje: si el
+mismo contacto vuelve por otro anuncio semanas despues, ese nuevo globo tambien
+muestra su propia vista previa; un mensaje organico intermedio no debe heredarse
+la atribucion vieja del contacto. La tarjeta se arma con `is_ad_attributed`,
 `referral_source_id`, `referral_ctwa_clid`, `referral_source_url`,
-`referral_headline` y `referral_body`; cuando el backend ya enriquecio el evento
-con `meta_ads`, usa `creative_image_url`/`creative_thumbnail_url`,
-`creative_preview_url`, campana, conjunto y nombre del anuncio. Si no hay senal
-real de anuncio, el chat no debe inventar previews ni decorar mensajes directos.
-Como fallback operativo, si el texto recibido contiene el marcador
+`referral_headline` y `referral_body`. En WhatsApp esos datos salen del referral
+CTWA/API o del marcador Ristak; en Messenger/Instagram salen del `referral_json`
+de `meta_social_messages` (`ad_id`, `source='ADS'`, `ads_context_data`). Cuando
+el backend ya enriquecio el evento con `meta_ads`, usa
+`creative_image_url`/`creative_thumbnail_url`, `creative_preview_url`, campana,
+conjunto y nombre del anuncio. Si no hay senal real de anuncio, el chat no debe
+inventar previews ni decorar mensajes directos. Como fallback operativo para
+WhatsApp, si el texto recibido contiene el marcador
 `rstkad_id=<ad_id>!`, Ristak extrae solo los digitos entre `=` y `!`, lo trata
 como `referral_source_id` de anuncio y oculta ese marcador del texto visible del
 mensaje. El `!` es obligatorio para no atribuir por accidente otros numeros que

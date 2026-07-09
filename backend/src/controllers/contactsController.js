@@ -2041,6 +2041,59 @@ const buildResolvedMetaAdFields = (contact = {}, metaAttribution = null) => ({
   adset_name: metaAttribution?.adsetName || contact.adset_name || null
 })
 
+const getMetaSocialReferralObject = (row = {}, rawPayload = null) => {
+  const storedReferral = parseJsonObject(row.referral_json)
+  if (storedReferral) return storedReferral
+
+  return getNestedObject(rawPayload, ['message', 'referral']) ||
+    getNestedObject(rawPayload, ['postback', 'referral']) ||
+    getNestedObject(rawPayload, ['referral']) ||
+    null
+}
+
+const metaSocialReferralLooksLikeAd = (referral = null) => {
+  if (!referral || typeof referral !== 'object') return false
+  if (cleanString(referral.ad_id)) return true
+  if (cleanString(referral.source).toUpperCase() === 'ADS') return true
+  return Boolean(referral.ads_context_data && typeof referral.ads_context_data === 'object')
+}
+
+const buildMetaSocialAdAttributionData = (row = {}, rawPayload = null) => {
+  const referral = getMetaSocialReferralObject(row, rawPayload)
+  if (!metaSocialReferralLooksLikeAd(referral)) return {}
+
+  const adsContext = referral.ads_context_data && typeof referral.ads_context_data === 'object'
+    ? referral.ads_context_data
+    : {}
+  const platform = cleanString(row.platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const sourceId = cleanString(referral.ad_id || adsContext.ad_id)
+  const rawSourceType = cleanString(referral.source || referral.type)
+  const sourceType = rawSourceType.toUpperCase() === 'ADS' ? 'ad' : (rawSourceType || 'ad')
+  const headline = cleanString(adsContext.ad_title || adsContext.title || referral.ref)
+  const body = cleanString(adsContext.post_body || adsContext.body || adsContext.description)
+  const sourceUrl = cleanString(
+    adsContext.ad_url ||
+    adsContext.source_url ||
+    adsContext.url ||
+    referral.referral_url ||
+    referral.source_url ||
+    referral.url
+  )
+
+  return {
+    is_ad_attributed: true,
+    ad_platform: platform === 'instagram' ? 'Instagram' : 'Messenger',
+    referral_source_id: sourceId || null,
+    referral_source_type: sourceType,
+    referral_source_url: sourceUrl || null,
+    referral_headline: headline || null,
+    referral_body: body || null,
+    referral_source_app: platform,
+    referral_entry_point: cleanString(referral.type) || null,
+    ad_id_thru_message: sourceId || null
+  }
+}
+
 const loadMetaAdsByAdIds = async (adIds = []) => {
   const uniqueIds = [...new Set(adIds.map(cleanString).filter(Boolean))]
   const byAdId = new Map()
@@ -2075,7 +2128,7 @@ const loadMetaAdsByAdIds = async (adIds = []) => {
   return byAdId
 }
 
-const enrichWhatsAppJourneyEventsWithMetaAds = async (events = []) => {
+const enrichMessagingJourneyEventsWithMetaAds = async (events = []) => {
   const getAdId = (data = {}) => {
     const detected = detectWhatsAppAttributionFields({ data }, [
       data.message_text,
@@ -5320,7 +5373,7 @@ export const getContactJourney = async (req, res) => {
       })
     })
 
-    const enrichedWhatsAppJourneyEvents = await enrichWhatsAppJourneyEventsWithMetaAds(whatsappJourneyEvents)
+    const enrichedWhatsAppJourneyEvents = await enrichMessagingJourneyEventsWithMetaAds(whatsappJourneyEvents)
     addWhatsAppJourneyEvents(enrichedWhatsAppJourneyEvents)
 
     const metaSocialMessages = await db.all(
@@ -5380,12 +5433,15 @@ export const getContactJourney = async (req, res) => {
       )
     )
 
+    const metaSocialJourneyEvents = []
+
 	    metaSocialMessages.forEach(msg => {
       if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
 
       const platform = cleanString(msg.platform)
       const source = getMetaSourceLabelForChat(platform, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
+      const metaAdAttributionData = buildMetaSocialAdAttributionData(msg, rawPayload)
       const provider = cleanString(rawPayload?.provider)
       const replyContextId = getMetaReplyContextId(rawPayload)
       const reactionTargetId = cleanString(msg.message_type).toLowerCase() === 'reaction'
@@ -5393,7 +5449,7 @@ export const getContactJourney = async (req, res) => {
         : ''
       const postDeleted = isMetaPostDeletedForChat(msg)
 
-      journey.push({
+      metaSocialJourneyEvents.push({
         type: 'meta_message',
         date: msg.message_timestamp || msg.created_at,
         data: {
@@ -5412,6 +5468,7 @@ export const getContactJourney = async (req, res) => {
           postback_payload: msg.postback_payload,
           referral_json: msg.referral_json,
           attribution_source: 'meta_social',
+          ...metaAdAttributionData,
           provider: provider || 'meta',
           meta_social_message_id: msg.meta_social_message_id,
           meta_message_id: msg.meta_message_id,
@@ -5439,6 +5496,9 @@ export const getContactJourney = async (req, res) => {
         }
       })
 	    })
+
+    const enrichedMetaSocialJourneyEvents = await enrichMessagingJourneyEventsWithMetaAds(metaSocialJourneyEvents)
+    journey.push(...enrichedMetaSocialJourneyEvents)
 
 	    const emailMessages = await db.all(
 	      `SELECT *

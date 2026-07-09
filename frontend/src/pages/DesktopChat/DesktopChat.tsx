@@ -1516,6 +1516,8 @@ function getJourneyEventSignature(event: JourneyEvent) {
     data.media_mime_type,
     data.media_filename,
     data.media_duration_ms,
+    data.social_platform,
+    data.transport,
     data.is_ad_attributed,
     data.ad_platform,
     data.referral_source_url,
@@ -1983,6 +1985,23 @@ function sourceTypeLooksLikeMessageAd(value = '') {
   return ['ad', 'ads', 'advertisement', 'click_to_whatsapp', 'ctwa'].includes(normalized)
 }
 
+function getMessageAdPreviewPlatformLabel(data: Record<string, unknown>) {
+  const platform = pickReadableDataValue(data, ['ad_platform', 'source_platform', 'referral_source_app', 'detected_source_app', 'social_platform', 'transport'])
+  const normalized = platform.toLowerCase()
+  if (normalized.includes('instagram')) return 'Instagram'
+  if (normalized.includes('messenger') || normalized.includes('facebook')) return 'Messenger'
+  if (normalized.includes('whatsapp')) return 'WhatsApp'
+  return platform || 'Meta Ads'
+}
+
+function getMessageAdPreviewFallbackTitle(data: Record<string, unknown>) {
+  const platform = getMessageAdPreviewPlatformLabel(data).toLowerCase()
+  if (platform.includes('instagram')) return 'Anuncio de Instagram'
+  if (platform.includes('messenger') || platform.includes('facebook')) return 'Anuncio de Messenger'
+  if (platform.includes('whatsapp')) return 'Anuncio de WhatsApp'
+  return 'Anuncio de Meta'
+}
+
 function buildMessageAdPreview(data: Record<string, unknown>, direction: DesktopChatMessage['direction']): MessageAdPreview | undefined {
   if (direction !== 'inbound') return undefined
 
@@ -2017,9 +2036,9 @@ function buildMessageAdPreview(data: Record<string, unknown>, direction: Desktop
 
   const enrichedAdId = pickReadableDataValue(data, ['attribution_ad_id', 'ad_id', 'meta_ad_id'])
   const sourceId = messageSourceId || enrichedAdId
-  const platform = pickReadableDataValue(data, ['ad_platform', 'source_platform', 'referral_source_app', 'detected_source_app']) || 'Meta Ads'
+  const platform = getMessageAdPreviewPlatformLabel(data)
   const adName = pickReadableDataValue(data, ['attribution_ad_name', 'ad_name', 'meta_ad_name'])
-  const title = headline || adName || 'Anuncio de WhatsApp'
+  const title = headline || adName || getMessageAdPreviewFallbackTitle(data)
   const imageUrl = pickReadableDataValue(data, [
     'referral_image_url',
     'creative_image_url',
@@ -2439,7 +2458,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
   const provider = String(data.provider || data.message_provider || data.source_provider || '').trim()
   const transport = String(data.transport || data.channel || '').trim() || provider
-  const adPreview = event.type === 'whatsapp_message'
+  const adPreview = event.type === 'whatsapp_message' || event.type === 'meta_message'
     ? buildMessageAdPreview(data, direction)
     : undefined
   const email = event.type === 'email_message'
