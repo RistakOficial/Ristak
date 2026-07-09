@@ -19757,7 +19757,11 @@ const ImportedHtmlEditorPanel: React.FC<{
   const loadInlinePreview = useCallback(async () => {
     const requestId = previewRequestIdRef.current + 1
     previewRequestIdRef.current = requestId
-    const requestContextKey = `${site.id}:${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}:${site.updatedAt || ''}`
+    // Sin site.updatedAt en la clave: antes CADA autosave cambiaba updatedAt, el contexto
+    // "cambiaba" y se limpiaba previewHtml (iframe en blanco) en cada edición. El preview se
+    // re-renderiza desde el draft del cliente (draftSite), así que no necesita re-fetchear por
+    // updatedAt para reflejar cambios; solo limpiamos al cambiar de página/sitio de verdad.
+    const requestContextKey = `${site.id}:${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}`
     if (previewHtmlContextKeyRef.current && previewHtmlContextKeyRef.current !== requestContextKey) {
       setPreviewHtml('')
       setPreviewVersion(current => current + 1)
@@ -23557,21 +23561,21 @@ const ImportedHtmlEditorPanel: React.FC<{
     <div className={styles.importedEditorPanel}>
       <section className={styles.importedPreviewPane}>
         <div className={`${styles.importedPreviewStage} ${device === 'mobile' ? styles.importedPreviewStageMobile : ''}`}>
-          {previewLoading && (
-            <div className={styles.importedPreviewState} role="status" aria-live="polite" aria-label="Cargando vista previa">
-              <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
-            </div>
-          )}
-          {!previewLoading && previewError && (
+          {previewError && (
             <div className={styles.importedPreviewState}>
               <AlertTriangle size={18} />
               <span>{previewError}</span>
             </div>
           )}
-          {!previewLoading && !previewError && editorPreviewHtml && (
+          {/* El iframe del preview se mantiene MONTADO mientras exista contenido y con un key
+              ESTABLE (sin previewVersion): así no se remonta ni se oculta tras el spinner en
+              cada edición — el srcDoc se actualiza en su lugar. Antes remontaba + lo reemplazaba
+              el spinner en cada patch => doble parpadeo, pérdida de scroll y del resaltado.
+              El spinner solo aparece en la carga INICIAL (cuando aún no hay contenido). */}
+          {!previewError && editorPreviewHtml && (
             <iframe
               ref={iframeRef}
-              key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${previewVersion}-${device}-${activePageDraftPreviewHtml.length}`}
+              key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${device}`}
               className={styles.importedPreviewFrame}
               title={`Vista previa de ${activeImportedPage?.title || site.name}`}
               srcDoc={guardedEditorPreviewHtml}
@@ -23579,7 +23583,12 @@ const ImportedHtmlEditorPanel: React.FC<{
               referrerPolicy="no-referrer-when-downgrade"
             />
           )}
-          {!previewLoading && !previewError && !editorPreviewHtml && (
+          {!previewError && !editorPreviewHtml && previewLoading && (
+            <div className={styles.importedPreviewState} role="status" aria-live="polite" aria-label="Cargando vista previa">
+              <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
+            </div>
+          )}
+          {!previewError && !editorPreviewHtml && !previewLoading && (
             <div className={styles.importedPreviewState}>
               <FileText size={18} />
               <span>La vista previa todavía no tiene contenido.</span>
