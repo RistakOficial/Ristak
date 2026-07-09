@@ -58,11 +58,19 @@ struct RowGestureOverlay: UIViewRepresentable {
             parent.onLongPress()
         }
 
-        // Convive con el pan del scroll del List (y con el tap): así un swipe
-        // desplaza y solo un long-press quieto abre «Más acciones».
+        // SOLO el long-press convive con el pan del scroll del List: necesita
+        // dispararse durante la arbitración scroll/toque (por eso se migró de
+        // SwiftUI a UIKit). El TAP, en cambio, NO debe ser simultáneo con el
+        // scroll: así recupera el comportamiento nativo de CEDER al scroll —
+        // cuando la lista trae inercia o la estás desplazando, tocarla ya no abre
+        // un chat por error (antes este método devolvía `true` para todo, lo que
+        // dejaba al tap disparar en medio del scroll: la raíz de la
+        // hipersensibilidad).
         func gestureRecognizer(
             _ gestureRecognizer: UIGestureRecognizer,
             shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
-        ) -> Bool { true }
+        ) -> Bool {
+            gestureRecognizer is UILongPressGestureRecognizer
+        }
     }
 }
