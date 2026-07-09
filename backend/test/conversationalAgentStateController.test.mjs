@@ -153,11 +153,20 @@ async function cleanup(contactId, agentId) {
   }
 }
 
-async function seedContact(contactId) {
+async function cleanupAgent(agentId) {
+  if (!agentId) return
+  await db.run('DELETE FROM conversational_agent_events WHERE detail_json LIKE ?', [`%${agentId}%`]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_state WHERE agent_id = ?', [agentId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
+}
+
+async function seedContact(contactId, { createdAt = null } = {}) {
+  const timestamp = createdAt || new Date().toISOString()
+  const phoneSuffix = String(contactId || randomUUID()).replace(/\D/g, '').slice(-10).padStart(10, '0')
   await db.run(`
     INSERT INTO contacts (id, full_name, first_name, phone, source, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-  `, [contactId, 'Contacto Test', 'Contacto', '+520000000000', 'test'])
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `, [contactId, 'Contacto Test', 'Contacto', `+52${phoneSuffix}`, 'test', timestamp, timestamp])
 }
 
 test('activar una conversación con agentId asigna ese agente al estado', async () => {
@@ -328,6 +337,87 @@ test('un bloqueo heredado más viejo que el agente se suelta antes del matching 
   }
 })
 
+test('un estado pausado de otro agente no bloquea a un agente nuevo', async () => {
+  const contactId = `conversation_agent_isolated_pause_${randomUUID()}`
+  const latestMessageId = `waapi_msg_isolated_${randomUUID()}`
+  let oldAgentId = ''
+  let newAgentId = ''
+
+  try {
+    await seedContact(contactId)
+    const oldAgent = await createConversationalAgent({
+      name: 'Agente viejo pausado',
+      enabled: false,
+      objective: 'citas'
+    })
+    oldAgentId = oldAgent.id
+
+    await assignAgentToConversation(contactId, oldAgentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent'
+    })
+    await setConversationStatus(contactId, 'paused', { updatedBy: 'user', agentId: oldAgentId })
+
+    const newAgent = await createConversationalAgent({
+      name: 'Agente nuevo independiente',
+      enabled: true,
+      objective: 'citas'
+    })
+    newAgentId = newAgent.id
+
+    const ruleContext = await buildRuleContext({ contactId, messageText: 'Costos', channel: 'whatsapp' })
+    const resolved = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Costos',
+      channel: 'whatsapp',
+      ruleContext,
+      latestMessageId
+    })
+
+    assert.equal(resolved.agentConfig?.id, newAgentId)
+    assert.equal(resolved.assigned, true)
+
+    const oldState = await getConversationState(contactId, { agentId: oldAgentId })
+    const newState = await getConversationState(contactId, { agentId: newAgentId })
+    assert.equal(oldState?.status, 'paused')
+    assert.equal(newState?.status, 'active')
+    assert.equal(newState?.activationSource, 'automatic')
+  } finally {
+    await cleanup(contactId, oldAgentId)
+    await cleanupAgent(newAgentId)
+  }
+})
+
+test('un agente solo para contactos nuevos respeta su corte al hacer matching real', async () => {
+  const oldContactId = `conversation_agent_scope_old_${randomUUID()}`
+  const newContactId = `conversation_agent_scope_new_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    const agent = await createConversationalAgent({
+      name: 'Agente solo nuevos',
+      enabled: true,
+      objective: 'citas',
+      contactScope: 'new_only'
+    })
+    agentId = agent.id
+    const cutoffMs = Date.parse(agent.contactScopeCutoffAt)
+    assert.equal(Number.isFinite(cutoffMs), true)
+
+    await seedContact(oldContactId, { createdAt: new Date(cutoffMs - 1000).toISOString() })
+    await seedContact(newContactId, { createdAt: new Date(cutoffMs + 1000).toISOString() })
+
+    const oldMatch = await matchAgentForMessage({ contactId: oldContactId, messageText: 'Costos', channel: 'whatsapp' })
+    const newMatch = await matchAgentForMessage({ contactId: newContactId, messageText: 'Costos', channel: 'whatsapp' })
+
+    assert.equal(oldMatch, null)
+    assert.equal(newMatch?.id, agentId)
+  } finally {
+    await cleanup(oldContactId, agentId)
+    await cleanup(newContactId)
+  }
+})
+
 test('pausar una conversación desde el controller guarda la ventana enviada por la UI', async () => {
   const contactId = `conversation_agent_pause_state_${randomUUID()}`
   const pausedUntilAt = new Date(Date.now() + (24 * 60 * 60 * 1000)).toISOString()
@@ -404,6 +494,44 @@ test('reinicia las omisiones de contactos de un agente sin tocar otros estados',
     await cleanup(skippedContactB)
     await cleanup(pausedContact)
     await cleanup(otherAgentContact, otherAgentId)
+  }
+})
+
+test('reiniciar omisiones opera por agente aunque el contacto tenga otro agente activo', async () => {
+  const contactId = `conversation_agent_reset_same_contact_${randomUUID()}`
+  let skippedAgentId = ''
+  let activeAgentId = ''
+
+  try {
+    await seedContact(contactId)
+    const skippedAgent = await createConversationalAgent({
+      name: 'Agente omitido del mismo contacto',
+      enabled: false,
+      objective: 'citas'
+    })
+    const activeAgent = await createConversationalAgent({
+      name: 'Agente activo del mismo contacto',
+      enabled: false,
+      objective: 'ventas'
+    })
+    skippedAgentId = skippedAgent.id
+    activeAgentId = activeAgent.id
+
+    await assignAgentToConversation(contactId, skippedAgentId, { activationSource: 'automatic', updatedBy: 'agent' })
+    await assignAgentToConversation(contactId, activeAgentId, { activationSource: 'automatic', updatedBy: 'agent' })
+    await setConversationStatus(contactId, 'skipped', { updatedBy: 'user', agentId: skippedAgentId })
+
+    const result = await resetConversationalAgentSkippedContacts(skippedAgentId, { updatedBy: 'user' })
+    assert.deepEqual(result, { agentId: skippedAgentId, resetCount: 1 })
+
+    const skippedAgentState = await getConversationState(contactId, { agentId: skippedAgentId })
+    const activeAgentState = await getConversationState(contactId, { agentId: activeAgentId })
+    assert.equal(skippedAgentState?.status, 'active')
+    assert.equal(activeAgentState?.status, 'active')
+    assert.equal(activeAgentState?.agentId, activeAgentId)
+  } finally {
+    await cleanup(contactId, skippedAgentId)
+    await cleanupAgent(activeAgentId)
   }
 })
 
