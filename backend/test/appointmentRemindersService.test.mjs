@@ -353,6 +353,35 @@ test('overview marca recordatorios bloqueados si no hay remitente de WhatsApp', 
   })
 })
 
+test('avisos de cita después de agendar usan plantilla de cita programada sin activar confirmación', async () => {
+  const existingReminders = await db.all('SELECT id, enabled FROM appointment_reminders')
+  let reminderId = ''
+
+  await db.run('UPDATE appointment_reminders SET enabled = 0')
+
+  try {
+    const reminder = await createAppointmentReminder({
+      name: `Aviso ${randomUUID()}`,
+      messageType: 'reminder',
+      timingAnchor: 'after_booking',
+      offsetValue: 0,
+      offsetUnit: 'minutes',
+      smartEnabled: false
+    })
+    reminderId = reminder.id
+
+    assert.equal(reminder.messageType, 'reminder')
+    assert.equal(reminder.timingAnchor, 'after_booking')
+    assert.equal(reminder.offsetValue, 0)
+    assert.equal(reminder.templateName, 'cita_programada')
+  } finally {
+    if (reminderId) await db.run('DELETE FROM appointment_reminders WHERE id = ?', [reminderId])
+    for (const row of existingReminders) {
+      await db.run('UPDATE appointment_reminders SET enabled = ? WHERE id = ?', [row.enabled, row.id])
+    }
+  }
+})
+
 test('confirmaciones "después de agendar" salen para reservas de Ristak pero no para citas sincronizadas de Google', async () => {
   await withYCloudMessageCapture(async (captures) => {
     const suffix = randomUUID()

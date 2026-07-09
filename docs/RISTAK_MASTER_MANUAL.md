@@ -1221,9 +1221,17 @@ avisos de cobro fallido desde `payments_settings.automations`.
 
 Los mensajes automaticos de citas (`appointment_reminders`) se calculan en la
 zona horaria de la cuenta. Los recordatorios `before_appointment` se anclan al
-inicio de la cita y las confirmaciones `after_booking` se anclan a la fecha de
-reserva local en Ristak; citas sincronizadas desde Google/GHL no reciben
-confirmaciones de reserva como si el cliente hubiera agendado por Ristak.
+inicio de la cita. Los avisos `after_booking` se anclan a la fecha de reserva
+local en Ristak; citas sincronizadas desde Google/GHL no reciben avisos de
+reserva como si el cliente hubiera agendado por Ristak.
+
+La confirmacion de asistencia no es un tipo principal de mensaje. En la UI de
+Citas, cualquier recordatorio o aviso puede activar "Usar como confirmacion de
+cita". Internamente eso guarda `message_type='confirmation'`, habilita las
+opciones de IA/acciones de confirmacion y hace que las respuestas del contacto
+abran una ventana en `appointment_confirmation_windows`. Si el switch esta
+apagado, el mensaje queda como `message_type='reminder'` aunque su ancla sea
+`after_booking`.
 
 Cada par `reminder_id + appointment_id` se reclama en
 `appointment_reminder_sends` antes de enviar para evitar duplicados. Estados

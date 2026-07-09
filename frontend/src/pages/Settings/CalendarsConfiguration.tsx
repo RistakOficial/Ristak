@@ -47,6 +47,7 @@ import {
   Link2,
   Bell,
   BellOff,
+  CalendarCheck,
   Smartphone,
   Sparkles
 } from 'lucide-react'
@@ -301,7 +302,7 @@ const CALENDAR_WIZARD_STEPS: Array<{
   { id: 'rules', label: 'Reglas', description: 'Límites de reserva.' },
   { id: 'form', label: 'Formulario', description: 'Preguntas y cierre.' },
   { id: 'payment', label: 'Cobro', description: 'Pasarela y monto.' },
-  { id: 'reminders', label: 'Recordatorios y confirmaciones', description: 'Mensajes automáticos.' },
+  { id: 'reminders', label: 'Mensajes automáticos', description: 'Recordatorios y avisos.' },
   { id: 'advanced', label: 'Avanzado', description: 'Notas e integraciones.' },
   { id: 'events', label: 'Eventos', description: 'Meta Pixel y WhatsApp.' },
   { id: 'design', label: 'Estilos y diseños', description: 'Vista, colores y tipografía.' }
@@ -3312,8 +3313,8 @@ export const CalendarsConfiguration: React.FC = () => {
               {currentStep.id === 'reminders' && (
                 <section className={pageStyles.editorSection}>
                   <div className={pageStyles.editorSectionHeader}>
-                    <strong>Recordatorios y confirmaciones</strong>
-                    <span>Configura los mismos mensajes automáticos de la página de Citas desde este wizard.</span>
+                    <strong>Mensajes automáticos</strong>
+                    <span>Configura recordatorios, avisos y confirmaciones de la página de Citas desde este wizard.</span>
                   </div>
                   <div className={pageStyles.editorFields}>
                     <div className={`${pageStyles.editorField} ${pageStyles.editorFieldWide}`}>
@@ -3345,7 +3346,13 @@ export const CalendarsConfiguration: React.FC = () => {
                       ) : appointmentReminders.length ? (
                         <div className={pageStyles.remindersList}>
                           {appointmentReminders.map((reminder) => {
-                            const ReminderIcon = reminder.messageType === 'confirmation' ? Sparkles : Bell
+                            const isAppointmentNotice = reminder.timingAnchor === 'after_booking'
+                            const isConfirmationMessage = reminder.messageType === 'confirmation'
+                            const ReminderIcon = isConfirmationMessage ? Sparkles : isAppointmentNotice ? CalendarCheck : Bell
+                            const messageKindLabel = isAppointmentNotice ? 'Aviso de cita' : 'Recordatorio de cita'
+                            const confirmationLabel = isConfirmationMessage
+                              ? ` · Confirmación${reminder.aiEnabled ? ' con IA' : ''}`
+                              : ''
                             return (
                               <div key={reminder.id} className={pageStyles.reminderItem}>
                                 <span className={pageStyles.reminderIcon}>
@@ -3354,9 +3361,7 @@ export const CalendarsConfiguration: React.FC = () => {
                                 <div className={pageStyles.reminderCopy}>
                                   <strong>{formatReminderOffsetLabel(reminder.offsetValue, reminder.offsetUnit, reminder.timingAnchor)}</strong>
                                   <span>
-                                    {reminder.messageType === 'confirmation'
-                                      ? `Confirmación de cita${reminder.aiEnabled ? ' · IA' : ''}`
-                                      : 'Recordatorio de cita'}
+                                    {messageKindLabel}{confirmationLabel}
                                   </span>
                                   <button
                                     type="button"

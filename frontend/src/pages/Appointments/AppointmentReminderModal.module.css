@@ -66,6 +66,30 @@
   margin-top: 2px;
 }
 
+.confirmationToggleBox {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  padding: 0.85rem;
+  background: var(--surface-2);
+}
+
+.confirmationToggleCopy {
+  min-width: 0;
+}
+
+.confirmationToggleTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 .aiBox {
   border: 1px solid var(--border);
   border-radius: var(--radius-ctl);
@@ -381,6 +405,10 @@
   }
 
   .qrFallbackBox {
+    align-items: flex-start;
+  }
+
+  .confirmationToggleBox {
     align-items: flex-start;
   }
 }

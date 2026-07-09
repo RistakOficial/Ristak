@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Bell, ShieldAlert, Sparkles, Trash2 } from 'lucide-react'
+import { Bell, CalendarCheck, ShieldAlert, Sparkles, Trash2 } from 'lucide-react'
 import { Modal, Button, CustomSelect, NumberInput, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -49,11 +49,6 @@ const AFTER_OFFSET_UNIT_OPTIONS = [
   { value: 'hours', label: 'Horas' }
 ]
 
-const TIMING_ANCHOR_OPTIONS: { value: ReminderTimingAnchor; label: string }[] = [
-  { value: 'before_appointment', label: 'Antes de la cita' },
-  { value: 'after_booking', label: 'Después de haber agendado' }
-]
-
 const MAX_AFTER_BOOKING_MS = 24 * 60 * 60 * 1000
 const AFTER_OFFSET_UNIT_MS: Record<string, number> = {
   seconds: 1000,
@@ -70,10 +65,21 @@ const clampAfterOffsetValue = (value: number, unit: ReminderOffsetUnit): number 
   Math.max(1, Math.min(maxAfterOffsetValue(unit), Math.round(value)))
 )
 
-const DEFAULT_TEMPLATE_NAME_BY_TYPE = {
+const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
   reminder: 'recordatorio_cita_un_dia_antes',
+  notice: 'cita_programada',
   confirmation: 'confirmacion_cita_dia_anterior'
 } as const
+
+const getDefaultTemplateName = (
+  messageType: AppointmentReminderInput['messageType'],
+  timingAnchor: ReminderTimingAnchor
+) => {
+  if (messageType === 'confirmation') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
+  return timingAnchor === 'after_booking'
+    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.notice
+    : DEFAULT_TEMPLATE_NAME_BY_PURPOSE.reminder
+}
 
 const CONFIRMATION_SUCCESS_ACTION_OPTIONS: { value: ReminderConfirmationSuccessAction; label: string; description: string }[] = [
   {
@@ -210,7 +216,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
     showConfirm(
       WHATSAPP_QR_FALLBACK_TITLE,
-      buildWhatsAppQrFallbackMessage('este recordatorio de calendario'),
+      buildWhatsAppQrFallbackMessage('este mensaje automático de cita'),
       () => set('qrFallbackEnabled', true),
       'Activar respaldo QR',
       'Cancelar',
@@ -221,6 +227,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const channel = channels[0]
   const isConfirmation = draft.messageType === 'confirmation'
+  const timingAnchor: ReminderTimingAnchor = draft.timingAnchor || 'before_appointment'
+  const isAfterBooking = timingAnchor === 'after_booking'
   const whatsappAvailability = getWhatsAppSenderConnectionAvailability(senders)
   const hasQrConnected = whatsappAvailability.hasQrConnected
   const hasApiConnected = whatsappAvailability.hasApiConnected
@@ -241,9 +249,12 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   ), [draft.templateId, visibleTemplates])
 
   const defaultTemplateForType = useMemo(() => {
-    const name = DEFAULT_TEMPLATE_NAME_BY_TYPE[(draft.messageType as AppointmentReminder['messageType']) || 'reminder']
+    const name = getDefaultTemplateName(
+      (draft.messageType as AppointmentReminder['messageType']) || 'reminder',
+      timingAnchor
+    )
     return visibleTemplates.find(template => template.name === name) || visibleTemplates[0] || null
-  }, [draft.messageType, visibleTemplates])
+  }, [draft.messageType, timingAnchor, visibleTemplates])
 
   useEffect(() => {
     if (!isOpen || !reminder || draft.templateId || !defaultTemplateForType) return
@@ -274,8 +285,6 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     label: sender.name ? `${sender.phone} · ${sender.name}` : sender.phone
   })), [senders])
 
-  const timingAnchor: ReminderTimingAnchor = draft.timingAnchor || 'before_appointment'
-  const isAfterBooking = timingAnchor === 'after_booking'
   const isImmediate = isAfterBooking && (Number(draft.offsetValue) || 0) <= 0
   const offsetLabel = formatReminderOffsetLabel(
     Number(draft.offsetValue) || (isAfterBooking ? 0 : 1),
@@ -285,40 +294,29 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   if (!reminder) return null
 
-  // Cambiar el ancla resetea a un default sensato: después de agendar arranca en
-  // 5 minutos (confirmación) y antes de la cita vuelve al clásico 1 día.
+  // El tipo visible (Recordatorio/Aviso) define el ancla de envío. La confirmación
+  // es una capacidad aparte y no debe cambiarse automáticamente al mover el ancla.
   const changeTimingAnchor = (nextAnchor: ReminderTimingAnchor) => {
     if (nextAnchor === timingAnchor) return
-    if (nextAnchor === 'after_booking') {
-      // "Después de agendar" es una confirmación: además de fijar el tipo, hay que
-      // reapuntar la plantilla a la de confirmación (como hace changeMessageType), si
-      // todavía estaba en la de recordatorio o no había ninguna elegida.
-      const nextName = DEFAULT_TEMPLATE_NAME_BY_TYPE.confirmation
-      const previousName = DEFAULT_TEMPLATE_NAME_BY_TYPE[(draft.messageType as AppointmentReminder['messageType']) || 'reminder']
-      const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
-      const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
-      setDraft(prev => ({
-        ...prev,
-        timingAnchor: 'after_booking',
-        messageType: 'confirmation',
-        offsetValue: 5,
-        offsetUnit: 'minutes',
-        ...(shouldSwitchTemplate && nextTemplate
-          ? {
-              templateId: nextTemplate.id,
-              templateName: nextTemplate.name,
-              templateLanguage: nextTemplate.language
-            }
-          : {})
-      }))
-    } else {
-      setDraft(prev => ({
-        ...prev,
-        timingAnchor: 'before_appointment',
-        offsetValue: 1,
-        offsetUnit: 'days'
-      }))
-    }
+    const messageType = (draft.messageType as AppointmentReminder['messageType']) || 'reminder'
+    const previousName = getDefaultTemplateName(messageType, timingAnchor)
+    const nextName = getDefaultTemplateName(messageType, nextAnchor)
+    const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
+    const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
+
+    setDraft(prev => ({
+      ...prev,
+      timingAnchor: nextAnchor,
+      offsetValue: nextAnchor === 'after_booking' ? 0 : 1,
+      offsetUnit: nextAnchor === 'after_booking' ? 'minutes' : 'days',
+      ...(shouldSwitchTemplate && nextTemplate
+        ? {
+            templateId: nextTemplate.id,
+            templateName: nextTemplate.name,
+            templateLanguage: nextTemplate.language
+          }
+        : {})
+    }))
   }
 
   // "Inmediatamente" = offset 0; "Pasado un tiempo" = arranca en 5 minutos.
@@ -354,15 +352,21 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     }))
   }
 
-  const changeMessageType = (messageType: AppointmentReminderInput['messageType']) => {
-    const nextName = DEFAULT_TEMPLATE_NAME_BY_TYPE[messageType || 'reminder']
-    const previousName = DEFAULT_TEMPLATE_NAME_BY_TYPE[(draft.messageType as AppointmentReminder['messageType']) || 'reminder']
+  const changeConfirmationMode = (enabled: boolean) => {
+    const messageType: AppointmentReminderInput['messageType'] = enabled ? 'confirmation' : 'reminder'
+    const previousName = getDefaultTemplateName(
+      (draft.messageType as AppointmentReminder['messageType']) || 'reminder',
+      timingAnchor
+    )
+    const nextName = getDefaultTemplateName(messageType, timingAnchor)
     const shouldSwitchTemplate = !draft.templateId || selectedTemplate?.name === previousName
     const nextTemplate = visibleTemplates.find(template => template.name === nextName) || null
 
     setDraft(prev => ({
       ...prev,
       messageType,
+      aiEnabled: enabled ? true : false,
+      bypassAutomations: enabled ? prev.bypassAutomations : false,
       ...(shouldSwitchTemplate && nextTemplate
         ? {
             templateId: nextTemplate.id,
@@ -410,26 +414,44 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
             <div className={styles.typeGrid}>
               <button
                 type="button"
-                className={`${styles.typeCard} ${!isConfirmation ? styles.typeCardActive : ''}`}
-                onClick={() => changeMessageType('reminder')}
+                className={`${styles.typeCard} ${!isAfterBooking ? styles.typeCardActive : ''}`}
+                onClick={() => changeTimingAnchor('before_appointment')}
               >
                 <Bell size={18} aria-hidden="true" />
                 <div>
                   <div className={styles.typeCardTitle}>Recordatorio de cita</div>
-                  <div className={styles.typeCardDetail}>Le recuerda al contacto su próxima cita.</div>
+                  <div className={styles.typeCardDetail}>Se envía antes de que empiece la cita.</div>
                 </div>
               </button>
               <button
                 type="button"
-                className={`${styles.typeCard} ${isConfirmation ? styles.typeCardActive : ''}`}
-                onClick={() => changeMessageType('confirmation')}
+                className={`${styles.typeCard} ${isAfterBooking ? styles.typeCardActive : ''}`}
+                onClick={() => changeTimingAnchor('after_booking')}
               >
-                <Sparkles size={18} aria-hidden="true" />
+                <CalendarCheck size={18} aria-hidden="true" />
                 <div>
-                  <div className={styles.typeCardTitle}>Confirmación de cita</div>
-                  <div className={styles.typeCardDetail}>Pide al contacto confirmar su asistencia.</div>
+                  <div className={styles.typeCardTitle}>Aviso de cita</div>
+                  <div className={styles.typeCardDetail}>Se envía después de que la persona agenda.</div>
                 </div>
               </button>
+            </div>
+
+            <div className={styles.confirmationToggleBox}>
+              <div className={styles.confirmationToggleCopy}>
+                <span className={styles.confirmationToggleTitle}>
+                  <Sparkles size={16} aria-hidden="true" />
+                  Usar como confirmación de cita
+                </span>
+                <span className={styles.helpText}>
+                  El mensaje pedirá que la persona confirme asistencia. Si activas la IA,
+                  Ristak interpretará la respuesta y ejecutará la acción que configures.
+                </span>
+              </div>
+              <Switch
+                checked={isConfirmation}
+                onChange={changeConfirmationMode}
+                aria-label="Usar como confirmación de cita"
+              />
             </div>
 
             {isConfirmation && (
@@ -566,22 +588,11 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
           {/* Tiempo de envío */}
           <section className={styles.section}>
             <h4 className={styles.sectionTitle}>¿Cuándo se envía?</h4>
-
-            <div className={styles.field}>
-              <label className={styles.fieldLabel}>Punto de partida</label>
-              <CustomSelect
-                value={timingAnchor}
-                options={TIMING_ANCHOR_OPTIONS}
-                onValueChange={(value) => changeTimingAnchor(value as ReminderTimingAnchor)}
-                aria-label="Momento base del envío"
-                portal
-              />
-              <span className={styles.helpText}>
-                {isAfterBooking
-                  ? 'El tiempo se cuenta desde que la persona agenda. Ideal para confirmar citas hechas por la URL pública.'
-                  : 'El tiempo se cuenta hacia atrás desde la hora de la cita.'}
-              </span>
-            </div>
+            <span className={styles.helpText}>
+              {isAfterBooking
+                ? 'El tiempo se cuenta desde que la persona agenda. Útil para avisos o confirmaciones de citas hechas por la URL pública.'
+                : 'El tiempo se cuenta hacia atrás desde la hora de la cita.'}
+            </span>
 
             {isAfterBooking ? (
               <>
@@ -654,7 +665,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                 onChange={(e) => set('smartEnabled', e.target.checked)}
               />
               <span>
-                <span className={styles.switchLabel}>{isAfterBooking ? 'Confirmación inteligente' : 'Recordatorio inteligente'}</span>
+                <span className={styles.switchLabel}>Envío inteligente</span>
                 <span className={styles.helpText}>
                   {isAfterBooking
                     ? 'Si el envío cae en un horario incómodo (por ejemplo, agendaron a las 3 de la madrugada), el mensaje se mueve automáticamente a una hora adecuada para no escribirle al contacto en horas indebidas.'
@@ -734,8 +745,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               />
               <span className={styles.helpText}>
                 {whatsappAvailability.canShowQrFallbackSwitch
-                  ? 'Los recordatorios por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido salvo que actives el respaldo por QR.'
-                  : 'Los recordatorios por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido hasta que Meta la apruebe y WhatsApp API esté disponible.'}
+                  ? 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido salvo que actives el respaldo por QR.'
+                  : 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido hasta que Meta la apruebe y WhatsApp API esté disponible.'}
               </span>
             </div>
 

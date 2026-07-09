@@ -49,9 +49,9 @@ export function offsetToMs(reminder) {
 }
 
 /**
- * Confirmaciones ancladas al momento de agendar (date_added), no al inicio de la
+ * Avisos anclados al momento de agendar (date_added), no al inicio de la
  * cita: sirven sobre todo para reservas hechas por la URL pública. El envío es
- * "agendó + offset" (offset 0 = inmediato). La "confirmación inteligente" usa la
+ * "agendó + offset" (offset 0 = inmediato). El envío inteligente usa la
  * misma ventana horaria: si cae antes de abrir, se manda al abrir ese día; si cae
  * después de cerrar, 'before' lo recorta al cierre de hoy y 'next_day' lo abre
  * mañana. Nunca antes de agendar ni —si se puede evitar— después de la cita.
@@ -84,7 +84,7 @@ function computeAfterBookingSendAt(startTimeIso, bookingTimeIso, reminder, timez
     if (sendAt < booking) sendAt = booking
   }
 
-  // Si el ajuste empuja la confirmación más allá del inicio de la cita, pierde
+  // Si el ajuste empuja el aviso más allá del inicio de la cita, pierde
   // sentido: se respeta el tiempo simple (agendó + offset) para que llegue antes.
   const start = DateTime.fromISO(cleanString(startTimeIso).replace(' ', 'T'), { zone: 'utc' })
   if (start.isValid && sendAt >= start) sendAt = raw

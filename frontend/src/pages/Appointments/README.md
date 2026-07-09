@@ -4,6 +4,8 @@ Documentación real de:
 
 - `frontend/src/pages/Appointments/Appointments.tsx`
 - `frontend/src/pages/Appointments/Appointments.module.css`
+- `frontend/src/pages/Appointments/AppointmentReminderModal.tsx`
+- `frontend/src/services/appointmentRemindersService.ts`
 - `frontend/src/services/calendarsService.ts`
 - `frontend/src/components/common/AppointmentModal/AppointmentModal.tsx`
 - `frontend/src/components/common/BlockedSlotModal/BlockedSlotModal.tsx`
@@ -31,6 +33,8 @@ El item de menú vive en `frontend/src/components/layout/Sidebar/Sidebar.tsx` co
 - Calcula KPIs mensuales.
 - Permite crear, editar y eliminar citas.
 - Permite crear, editar y eliminar horarios bloqueados.
+- Permite configurar mensajes automáticos de cita: recordatorios antes de la cita
+  y avisos después de agendar.
 - Permite abrir configuración de calendarios desde el botón de Settings.
 
 ## Estado Global Usado
@@ -97,6 +101,23 @@ calendarsService.deleteBlockedSlot(blockedSlotId, accessToken)
 ```
 
 `BlockedSlotModal` soporta bloqueo de calendario completo o bloqueo por usuario, siguiendo la lógica XOR requerida por HighLevel.
+
+## Mensajes Automáticos De Citas
+
+`AppointmentReminderModal` edita filas de `appointment_reminders`.
+
+- **Recordatorio de cita** usa `timingAnchor: 'before_appointment'` y se calcula
+  hacia atrás desde la hora de la cita.
+- **Aviso de cita** usa `timingAnchor: 'after_booking'` y se calcula desde
+  `date_added`, sólo para citas agendadas localmente en Ristak.
+- El switch **Usar como confirmación de cita** no cambia el ancla del envío.
+  Sólo cambia `messageType` a `confirmation` para activar IA, acciones de
+  confirmación y ventanas de seguimiento.
+- Si el switch está apagado, el mensaje se guarda como `messageType: 'reminder'`
+  aunque sea un aviso posterior al agendado.
+- Las plantillas default son `recordatorio_cita_un_dia_antes` para recordatorios,
+  `cita_programada` para avisos y `confirmacion_cita_dia_anterior` cuando el
+  switch de confirmación está activo.
 
 ## Servicio API Frontend
 

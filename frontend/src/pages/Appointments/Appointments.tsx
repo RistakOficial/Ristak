@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { KpiCard, Card, Button, PageContainer, PageHeader, AppointmentModal, BlockedSlotModal, TabList, Loading, SearchField, CustomSelect } from '@/components/common';
-import { ChevronLeft, ChevronRight, Plus, ChevronDown, Settings, Bell, Sparkles, Copy, Lock } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Plus, ChevronDown, Settings, Bell, CalendarCheck, Sparkles, Copy, Lock } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNotification } from '@/contexts/NotificationContext';
 import { useTheme } from '@/contexts/ThemeContext';
@@ -2416,7 +2416,13 @@ export const Appointments: React.FC = () => {
               <p className={styles.emptyText}>Agrega un mensaje automático con el botón +</p>
             ) : (
               reminders.map((reminder) => {
-                const ReminderIcon = reminder.messageType === 'confirmation' ? Sparkles : Bell;
+                const isAppointmentNotice = reminder.timingAnchor === 'after_booking';
+                const isConfirmationMessage = reminder.messageType === 'confirmation';
+                const ReminderIcon = isConfirmationMessage ? Sparkles : isAppointmentNotice ? CalendarCheck : Bell;
+                const messageKindLabel = isAppointmentNotice ? 'Aviso de cita' : 'Recordatorio de cita';
+                const confirmationLabel = isConfirmationMessage
+                  ? ` · Confirmación${reminder.aiEnabled ? ' con IA' : ''}`
+                  : '';
                 const healthBadge = getReminderHealthBadge(reminder);
                 const healthMessage = getReminderHealthMessage(reminder);
                 const healthTextClassName = [
@@ -2434,9 +2440,7 @@ export const Appointments: React.FC = () => {
                         <Badge variant={healthBadge.variant}>{healthBadge.label}</Badge>
                       </div>
                       <div className={styles.automationDetail}>
-                        {reminder.messageType === 'confirmation'
-                          ? `Confirmación de cita${reminder.aiEnabled ? ' · IA' : ''}`
-                          : 'Recordatorio de cita'}
+                        {messageKindLabel}{confirmationLabel}
                       </div>
                       {healthMessage && (
                         <div className={healthTextClassName}>

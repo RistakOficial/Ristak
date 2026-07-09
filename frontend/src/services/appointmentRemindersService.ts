@@ -1,9 +1,10 @@
 import apiClient from './apiClient'
 
 // ---------------------------------------------------------------------------
-// Mensajes automáticos de citas (recordatorios y confirmaciones)
+// Mensajes automáticos de citas (recordatorios, avisos y modo confirmación)
 // ---------------------------------------------------------------------------
 
+// Internamente 'confirmation' significa "usar este mensaje como confirmación de cita".
 export type ReminderMessageType = 'reminder' | 'confirmation'
 // 'before_appointment' = X antes del inicio de la cita; 'after_booking' = X después de agendar.
 export type ReminderTimingAnchor = 'before_appointment' | 'after_booking'

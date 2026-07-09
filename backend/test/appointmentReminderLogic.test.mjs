@@ -102,7 +102,7 @@ test('formatOffsetLabel después de agendar', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Confirmaciones ancladas al momento de agendar (timingAnchor: 'after_booking').
+// Avisos anclados al momento de agendar (timingAnchor: 'after_booking').
 // ---------------------------------------------------------------------------
 
 const afterBase = {
@@ -127,7 +127,7 @@ test('después de agendar: 5 minutos suma el offset al momento de la reserva', (
   assert.equal(sendAt.toISO(), '2026-06-15T18:05:00.000Z')
 })
 
-test('confirmación inteligente: reserva de madrugada se mueve a la apertura de la ventana', () => {
+test('envío inteligente después de agendar: reserva de madrugada se mueve a la apertura de la ventana', () => {
   // Agendó 08:30 UTC = 02:30 local; con +5min sigue antes de las 09:00 → se mueve a las 09:00 local.
   const reminder = { ...afterBase, smartEnabled: true }
   const sendAt = computeReminderSendAt('2026-06-25T20:00:00.000Z', reminder, TZ, '2026-06-15T08:30:00.000Z')
@@ -135,7 +135,7 @@ test('confirmación inteligente: reserva de madrugada se mueve a la apertura de 
   assert.equal(local.toFormat('yyyy-MM-dd HH:mm'), '2026-06-15 09:00')
 })
 
-test('confirmación inteligente: reserva nocturna con next_day abre al día siguiente', () => {
+test('envío inteligente después de agendar: reserva nocturna con next_day abre al día siguiente', () => {
   // Agendó 04:30 UTC = 22:30 local (después de cerrar 21:00) → next_day = 09:00 del día siguiente.
   const reminder = { ...afterBase, smartEnabled: true, smartOverflow: 'next_day' }
   const sendAt = computeReminderSendAt('2026-06-25T20:00:00.000Z', reminder, TZ, '2026-06-16T04:30:00.000Z')

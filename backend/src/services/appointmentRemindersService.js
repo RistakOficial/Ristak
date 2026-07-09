@@ -33,7 +33,7 @@ const ERROR_RETRY_MS = 15 * 60 * 1000
 
 const MESSAGE_TYPES = new Set(['reminder', 'confirmation'])
 // Ancla de envío: 'before_appointment' = X antes del inicio de la cita (clásico);
-// 'after_booking' = X después de agendar (confirmaciones de reservas por URL pública).
+// 'after_booking' = X después de agendar (avisos o confirmaciones de reservas por URL pública).
 const TIMING_ANCHORS = new Set(['before_appointment', 'after_booking'])
 const BEFORE_OFFSET_UNITS = new Set(['minutes', 'hours', 'days'])
 // Después de agendar el tope es 24h, por eso se permiten segundos pero no días.
@@ -43,8 +43,9 @@ const SENDER_MODES = new Set(['contact', 'default', 'specific'])
 const SMART_OVERFLOWS = new Set(['before', 'next_day'])
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
 const CONFIRMATION_SUCCESS_ACTIONS = new Set(['mark_confirmed', 'chat_card', 'notify_push', 'chat_badge'])
-const DEFAULT_TEMPLATE_NAME_BY_MESSAGE_TYPE = {
+const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
   reminder: 'recordatorio_cita_un_dia_antes',
+  notice: 'cita_programada',
   confirmation: 'confirmacion_cita_dia_anterior'
 }
 const APPROVED_TEMPLATE_STATUSES = new Set(['APPROVED'])
@@ -211,8 +212,20 @@ async function getReminderTemplateByName(name, language = 'es_MX') {
   return row ? mapReminderTemplateRow(row) : null
 }
 
-async function getDefaultReminderTemplate(messageType) {
-  const name = DEFAULT_TEMPLATE_NAME_BY_MESSAGE_TYPE[messageType] || DEFAULT_TEMPLATE_NAME_BY_MESSAGE_TYPE.reminder
+function getDefaultTemplateNameForReminder(data = {}) {
+  const messageType = MESSAGE_TYPES.has(cleanString(data.messageType)) ? cleanString(data.messageType) : 'reminder'
+  if (messageType === 'confirmation') return DEFAULT_TEMPLATE_NAME_BY_PURPOSE.confirmation
+
+  const timingAnchor = TIMING_ANCHORS.has(cleanString(data.timingAnchor))
+    ? cleanString(data.timingAnchor)
+    : 'before_appointment'
+  return timingAnchor === 'after_booking'
+    ? DEFAULT_TEMPLATE_NAME_BY_PURPOSE.notice
+    : DEFAULT_TEMPLATE_NAME_BY_PURPOSE.reminder
+}
+
+async function getDefaultReminderTemplate(data = {}) {
+  const name = getDefaultTemplateNameForReminder(data)
   return getReminderTemplateByName(name, 'es_MX')
 }
 
@@ -222,7 +235,7 @@ async function resolveReminderTemplateSelection(data = {}) {
     template = await getReminderTemplateByName(data.templateName, data.templateLanguage)
   }
   if (!template && !data.templateId) {
-    template = await getDefaultReminderTemplate(data.messageType)
+    template = await getDefaultReminderTemplate(data)
   }
 
   return {
@@ -236,14 +249,15 @@ async function resolveReminderTemplateSelection(data = {}) {
 async function backfillMissingReminderTemplates() {
   await ensureDefaultAppointmentMessageTemplates({ submitToYCloud: false })
   const rows = await db.all(`
-    SELECT id, message_type
+    SELECT id, message_type, timing_anchor
     FROM appointment_reminders
     WHERE COALESCE(template_id, '') = ''
   `)
 
   for (const row of rows) {
     const messageType = MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder'
-    const template = await getDefaultReminderTemplate(messageType)
+    const timingAnchor = TIMING_ANCHORS.has(cleanString(row.timing_anchor)) ? cleanString(row.timing_anchor) : 'before_appointment'
+    const template = await getDefaultReminderTemplate({ messageType, timingAnchor })
     if (!template) continue
     await db.run(`
       UPDATE appointment_reminders
@@ -754,10 +768,10 @@ function shouldFallbackToQrAfterTemplateError(error) {
 // sin esto un recordatorio ya 'sent' nunca se recalcularía para la hora nueva.
 //
 // PERO solo aplica a los recordatorios anclados al inicio de la cita (before_appointment):
-// reprogramar cambia start_time. Las confirmaciones "después de agendar" se anclan a
+// reprogramar cambia start_time. Los avisos "después de agendar" se anclan a
 // date_added (que NO cambia al reprogramar), así que sus envíos 'sent' se conservan; si los
-// borráramos, el cron volvería a reclamar el par (reminder|cita) y reenviaría la MISMA
-// confirmación al cliente.
+// borráramos, el cron volvería a reclamar el par (reminder|cita) y reenviaría el MISMO
+// mensaje al cliente.
 export async function clearAppointmentReminderSends(appointmentId) {
   const id = cleanString(appointmentId)
   if (!id) return 0
@@ -881,12 +895,12 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
 
   let afterSince = null
   if (afterReminders.length) {
-    // Offset máx 24h + gracia de envío + 1 día de holgura por la confirmación inteligente.
+    // Offset máx 24h + gracia de envío + 1 día de holgura por el envío inteligente.
     const afterWindowMs = Math.max(...afterReminders.map(offsetToMs)) + SEND_GRACE_MS + 24 * 60 * 60 * 1000
     afterSince = now.minus({ milliseconds: afterWindowMs })
     // Solo reservas hechas EN Ristak (URL pública/admin). Las citas sincronizadas desde
     // Google/GHL traen date_added = fecha de creación externa y la persona nunca agendó
-    // con nosotros: no debe llegarles una confirmación.
+    // con nosotros: no debe llegarles un aviso anclado a la reserva.
     clauses.push("(a.date_added IS NOT NULL AND a.date_added >= ? AND a.start_time > ? AND LOWER(COALESCE(a.source, 'ristak')) NOT IN ('google', 'ghl'))")
     params.push(afterSince.toISO(), now.toISO())
   }
@@ -940,7 +954,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
       const status = cleanString(appointment.appointment_status || appointment.status).toLowerCase()
       if (reminder.messageType === 'confirmation' && status === 'confirmed') continue
 
-      // Las confirmaciones "después de agendar" solo aplican a reservas hechas EN Ristak.
+      // Los avisos "después de agendar" solo aplican a reservas hechas EN Ristak.
       // (La cita pudo entrar a la ventana por OTRO recordatorio anclado al inicio, así que
       // este guard es la verdad última, no solo el SQL.) Además, reservas viejas no las
       // disparan: evita marcar 'skipped' en masa para citas agendadas hace mucho.
