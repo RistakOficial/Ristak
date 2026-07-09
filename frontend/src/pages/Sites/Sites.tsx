@@ -19319,7 +19319,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         key: `${pageId}:${slot.key}`
       }))
   }, [activeImportedPage?.id, activePageId, importedNativeElementDetectionHtml])
-  const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || importedNativeElementSlots[0] || null
+  const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || null
   const guardedEditorPreviewHtml = useMemo(
     () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
     [editorPreviewHtml]
@@ -19345,8 +19345,9 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (selectedImportedNativeElementKey) setSelectedImportedNativeElementKey('')
       return
     }
-    if (selectedImportedNativeElementKey && importedNativeElementSlots.some(slot => slot.key === selectedImportedNativeElementKey)) return
-    setSelectedImportedNativeElementKey(importedNativeElementSlots[0].key)
+    if (selectedImportedNativeElementKey && !importedNativeElementSlots.some(slot => slot.key === selectedImportedNativeElementKey)) {
+      setSelectedImportedNativeElementKey('')
+    }
   }, [importedNativeElementSlots, selectedImportedNativeElementKey])
 
   const getImportedNativeElementDefaultSettingsForSlot = useCallback((slot: ImportedNativeElementSlot) => {
@@ -19645,7 +19646,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!container) return
     event.preventDefault()
 
-    const hasInspector = importedNativeElementSlots.length > 0
+    const hasInspector = Boolean(selectedImportedNativeElementSlot)
     let frame = 0
     let latestWidth = codeEditorWidthRef.current
     const rect = container.getBoundingClientRect()
@@ -19686,7 +19687,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     document.body.classList.add('rstk-code-resizing')
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp, { once: true })
-  }, [importedNativeElementSlots.length])
+  }, [selectedImportedNativeElementSlot])
 
   useEffect(() => {
     codeEditorWidthRef.current = codeEditorWidth
@@ -20076,6 +20077,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setElementPopoverPosition(null)
     setChoiceEditor(null)
     setFieldEditor(null)
+    setSelectedImportedNativeElementKey('')
   }, [clearImportedVideoActionHover])
 
   const selectImportedNativeElementFromPreviewTarget = useCallback((
@@ -22938,7 +22940,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeCodeFile, activeCodePreviewHtml, activeCodeValue, codeEditorOpen, guardedCodePreviewHtml, onCodeDraftChange, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement, selectImportedNativeElementFromPreviewTarget, showToast])
 
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
-  const importedNativeElementsPanel = importedNativeElementSlots.length > 0 ? (() => {
+  const importedNativeElementsPanel = selectedImportedNativeElementSlot ? (() => {
     const selectedSlot = selectedImportedNativeElementSlot
     const nativeElementSite = importedNativeElementSiteRef.current || site
     const nativeElementBlocks = nativeElementSite.blocks || []

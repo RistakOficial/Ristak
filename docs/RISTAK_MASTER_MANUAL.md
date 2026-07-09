@@ -1778,7 +1778,10 @@ En el editor HTML importado, estos elementos se configuran desde un inspector
 derecho independiente del panel de codigo. El panel de codigo se conserva para
 editar HTML/IA externa, mientras el inspector de elementos Ristak administra
 formularios, calendarios, pagos y videos con la misma configuracion del editor
-visual. Ese inspector debe scrollear con rueda, trackpad y tactil como el panel
+visual. Ese inspector no debe abrirse automaticamente solo porque el HTML tenga
+un video, calendario, pago o formulario nativo detectado; aparece unicamente
+cuando el usuario selecciona esa zona desde la previsualizacion o desde el modo
+codigo. Ese inspector debe scrollear con rueda, trackpad y tactil como el panel
 derecho del editor visual; los controles internos no deben bloquear el scroll
 del panel principal. Al seleccionar una zona nativa en la previsualizacion, el
 editor abre la configuracion en ese inspector derecho y no muestra popovers de
@@ -1799,11 +1802,16 @@ mostrando validaciones cuando falta una configuracion obligatoria. Para pagos,
 ese preview usa un snapshot temporal de la
 configuracion del inspector derecho y dibuja una maqueta de checkout con pasarela,
 monto, campos, boton, modo test y ayuda del proveedor; no monta SDKs reales ni
-intenta iniciar cobros hasta que el sitio publicado confirme el pago. Los
-calendarios nativos dentro del preview usan la ruta interna
-`/api/sites/public/calendar-preview/:slug`, no `/calendar/:slug`, para que el
-editor pueda mostrarlos sin depender de que el dominio publico ya este
-configurado; el sitio publicado conserva la ruta publica normal.
+intenta iniciar cobros hasta que el sitio publicado confirme el pago. En el sitio
+publicado, los pagos importados usan el checkout publico real de Ristak y nunca
+la maqueta deshabilitada del editor. Los calendarios nativos dentro del preview
+usan la ruta interna `/api/sites/public/calendar-preview/:slug`, no
+`/calendar/:slug`, para que el editor pueda mostrarlos sin depender de que el
+dominio publico ya este configurado; el sitio publicado conserva la ruta publica
+normal y no debe llevar `editor_preview=1` ni `preview=1`. Los calendarios
+custom publicados conservan su UI importada, pero las funciones
+`window.ristakCalendarGetSlots` y `window.ristakCalendarBook` deben apuntar a los
+endpoints publicos vivos de disponibilidad y agendado.
 
 Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
 pero las reglas copiables nuevas deben preferir `data-rstk-*`.
