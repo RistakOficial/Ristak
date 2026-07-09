@@ -211,6 +211,7 @@ class DashboardService {
     start: Date;
     end: Date;
     groupBy?: 'day' | 'month';
+    periods?: { start: string; end: string }[];
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -218,6 +219,9 @@ class DashboardService {
         endDate: formatEndDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
+      if (params.periods && params.periods.length > 0) {
+        queryParams.set('periods', JSON.stringify(params.periods));
+      }
 
       const response = await fetch(apiUrl(`/api/dashboard/visitors?${queryParams}`));
 
@@ -286,6 +290,7 @@ class DashboardService {
     start: Date;
     end: Date;
     groupBy?: 'day' | 'month';
+    periods?: { start: string; end: string }[];
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -293,6 +298,9 @@ class DashboardService {
         endDate: formatEndDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
+      if (params.periods && params.periods.length > 0) {
+        queryParams.set('periods', JSON.stringify(params.periods));
+      }
 
       const response = await fetch(apiUrl(`/api/dashboard/appointments?${queryParams}`));
 
@@ -311,6 +319,7 @@ class DashboardService {
     start: Date;
     end: Date;
     groupBy?: 'day' | 'month';
+    periods?: { start: string; end: string }[];
   }): Promise<{ label: string; value: number }[]> {
     try {
       const queryParams = new URLSearchParams({
@@ -318,6 +327,9 @@ class DashboardService {
         endDate: formatEndDateToISO(params.end),
         groupBy: params.groupBy || 'day'
       });
+      if (params.periods && params.periods.length > 0) {
+        queryParams.set('periods', JSON.stringify(params.periods));
+      }
 
       const response = await fetch(apiUrl(`/api/dashboard/attendances?${queryParams}`));
 
