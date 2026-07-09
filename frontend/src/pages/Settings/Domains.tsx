@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, ArrowRight, CheckCircle2, FormInput, Globe2, LayoutTemplate, Monitor, Pencil, Plus, RefreshCw, Star, Trash2 } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, Loading, Modal } from '@/components/common'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { sitesService, type PublicSite, type PublicSiteDomain, type SitesDomainConfig, type SiteStatus } from '@/services/sitesService'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import styles from './Domains.module.css'
 
 type DomainPanelId = 'public' | 'app'
@@ -69,6 +71,8 @@ const decodeDomainRouteValue = (value: string) => {
 
 export const Domains: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
+  const { labels } = useLabels()
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const [domainConfig, setDomainConfig] = useState<SitesDomainConfig>(emptyDomainConfig)
   const [sites, setSites] = useState<PublicSite[]>([])
   const [domainDraft, setDomainDraft] = useState('')
@@ -514,7 +518,7 @@ export const Domains: React.FC = () => {
         </div>
         <div>
           <h2>Dominios</h2>
-          <p>Separa los dominios que ven tus clientes del dominio privado para entrar al dashboard.</p>
+          <p>Separa los dominios que ven tus {customersLowerLabel} del dominio privado para entrar al dashboard.</p>
         </div>
         <Button variant="secondary" onClick={loadDomain}>
           <RefreshCw size={16} />
@@ -538,7 +542,7 @@ export const Domains: React.FC = () => {
               <strong>Dominios públicos</strong>
               <Badge variant={publicStatus.variant}>{publicStatus.label}</Badge>
             </div>
-            <p>Sitios web, formularios, campañas y links que comparten tus clientes.</p>
+            <p>Sitios web, formularios, campañas y links que comparten tus {customersLowerLabel}.</p>
             <span>
               <LayoutTemplate size={14} />
               {publicDomains.length > 0 ? `${publicDomains.length} dominio${publicDomains.length === 1 ? '' : 's'} configurado${publicDomains.length === 1 ? '' : 's'}` : 'www.tunegocio.com'}

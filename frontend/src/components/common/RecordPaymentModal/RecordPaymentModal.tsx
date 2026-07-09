@@ -29,6 +29,7 @@ import {
   Copy
 } from 'lucide-react'
 import styles from './RecordPaymentModal.module.css'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAccountCurrency } from '@/hooks'
@@ -37,6 +38,7 @@ import { getIntegrationsStatus } from '@/services/integrationsService'
 import { formatCurrency as formatMxCurrency } from '@/utils/format'
 import { buildPaymentTimestamp } from '@/utils/paymentDate'
 import { todayDateOnlyInTimezone } from '@/utils/timezone'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { highLevelService } from '@/services/highLevelService'
 import { transactionsService } from '@/services/transactionsService'
 import { conektaPaymentsService, type ConektaSavedPaymentSource } from '@/services/conektaPaymentsService'
@@ -705,6 +707,9 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   layout = 'phone'
 }) => {
   const { timezone } = useTimezone()
+  const { labels } = useLabels()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
+  const customerLowerLabel = formatCrmLabelLower(customerLabel, DEFAULT_CRM_LABELS.customer)
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<RecordPaymentStep>('form')
 
@@ -2313,7 +2318,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       showPaymentLinkReady({
         kind: 'card_setup',
         title: 'Enlace de domiciliación listo',
-        description: 'Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.',
+        description: `Comparte este enlace para que el ${customerLowerLabel} domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.`,
         provider: 'stripe',
         paymentUrl: data.cardSetupPaymentLink,
         amount: cardSetupAmount,
@@ -2330,7 +2335,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       showPaymentLinkReady({
         kind: 'first_payment',
         title: 'Primer pago listo',
-        description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.',
+        description: `Comparte este enlace para que el ${customerLowerLabel} pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.`,
         provider: 'stripe',
         paymentUrl: data.firstPaymentLink,
         amount: firstPaymentAmount,
@@ -2473,7 +2478,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         `${selectedContact.firstName || ''} ${selectedContact.lastName || ''}`.trim() ||
         selectedContact.email ||
         selectedContact.phone ||
-        'Cliente'
+        customerLabel
 
       let items: any[] = []
       let finalCurrency = accountCurrency
@@ -2797,7 +2802,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           showPaymentLinkReady({
             kind: 'card_setup',
             title: 'Enlace de domiciliación listo',
-            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.`,
+            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el ${customerLowerLabel} domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.`,
             provider: 'stripe',
             paymentUrl: result.cardSetupLink,
             amount: setupAmount,
@@ -2816,7 +2821,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           showPaymentLinkReady({
             kind: 'first_payment',
             title: 'Primer pago listo',
-            description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.',
+            description: `Comparte este enlace para que el ${customerLowerLabel} pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.`,
             provider: 'stripe',
             paymentUrl: result.firstPaymentLink,
             amount: firstPaymentAmount,
@@ -2869,7 +2874,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           showPaymentLinkReady({
             kind: 'card_setup',
             title: 'Enlace de domiciliación listo',
-            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.`,
+            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el ${customerLowerLabel} domicilie su tarjeta. El plan se activa cuando pague y guarde la tarjeta.`,
             paymentUrl: result.cardSetupLink,
             amount: setupAmount,
             currency: invoiceSummary.currency,
@@ -2887,7 +2892,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           showPaymentLinkReady({
             kind: 'first_payment',
             title: 'Primer pago listo',
-            description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.',
+            description: `Comparte este enlace para que el ${customerLowerLabel} pague el primer cobro. Al pagarlo se guarda la tarjeta y se activan los siguientes cobros programados.`,
             paymentUrl: result.firstPaymentLink,
             amount: firstPaymentAmount,
             currency: invoiceSummary.currency,
@@ -2939,7 +2944,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           showPaymentLinkReady({
             kind: 'card_setup',
             title: 'Enlace de domiciliación Rebill listo',
-            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el cliente domicilie su tarjeta. El plan se activa cuando pague y Rebill guarde la tarjeta.`,
+            description: `${manualFirstPaymentRegistered ? 'El primer pago manual ya quedó registrado. ' : ''}Comparte este enlace para que el ${customerLowerLabel} domicilie su tarjeta. El plan se activa cuando pague y Rebill guarde la tarjeta.`,
             provider: 'rebill',
             paymentUrl: result.cardSetupLink,
             amount: setupAmount,
@@ -2960,7 +2965,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           showPaymentLinkReady({
             kind: 'first_payment',
             title: 'Primer pago Rebill listo',
-            description: 'Comparte este enlace para que el cliente pague el primer cobro. Al pagarlo se guarda la tarjeta y Ristak cobra las siguientes parcialidades cuando toque.',
+            description: `Comparte este enlace para que el ${customerLowerLabel} pague el primer cobro. Al pagarlo se guarda la tarjeta y Ristak cobra las siguientes parcialidades cuando toque.`,
             provider: 'rebill',
             paymentUrl: result.firstPaymentLink,
             amount: firstPaymentAmount,
@@ -3026,8 +3031,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace de pago listo',
           description: stripeMsiEnabled
-            ? `Comparte este enlace para que el cliente pague con Stripe. Ristak mostrará sólo los plazos disponibles hasta ${stripeInstallmentLimit} meses.`
-            : 'Comparte este enlace para que el cliente pague con tarjeta desde la página pública segura.',
+            ? `Comparte este enlace para que el ${customerLowerLabel} pague con Stripe. Ristak mostrará sólo los plazos disponibles hasta ${stripeInstallmentLimit} meses.`
+            : `Comparte este enlace para que el ${customerLowerLabel} pague con tarjeta desde la página pública segura.`,
           provider: 'stripe',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -3086,8 +3091,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace Conekta listo',
           description: conektaMsiEnabled
-            ? `Comparte este enlace para que el cliente pague con Conekta. Podrá elegir hasta ${conektaInstallmentLimit} meses sin intereses si su tarjeta aplica.`
-            : 'Comparte este enlace para que el cliente pague con tarjeta en el tokenizador seguro de Conekta.',
+            ? `Comparte este enlace para que el ${customerLowerLabel} pague con Conekta. Podrá elegir hasta ${conektaInstallmentLimit} meses sin intereses si su tarjeta aplica.`
+            : `Comparte este enlace para que el ${customerLowerLabel} pague con tarjeta en el tokenizador seguro de Conekta.`,
           provider: 'conekta',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -3144,8 +3149,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace Mercado Pago listo',
           description: mercadoPagoMsiEnabled
-            ? `Comparte este enlace para que el cliente pague con Mercado Pago. Se mostrarán hasta ${mercadoPagoInstallmentLimit} meses si su tarjeta lo permite.`
-            : 'Comparte este enlace para que el cliente pague de contado con Mercado Pago. Ristak actualizará el estado por webhook.',
+            ? `Comparte este enlace para que el ${customerLowerLabel} pague con Mercado Pago. Se mostrarán hasta ${mercadoPagoInstallmentLimit} meses si su tarjeta lo permite.`
+            : `Comparte este enlace para que el ${customerLowerLabel} pague de contado con Mercado Pago. Ristak actualizará el estado por webhook.`,
           provider: 'mercadopago',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -3180,7 +3185,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       const contactEmail = selectedContact.email || invoiceSummary.contactEmail || ''
       const contactPhone = selectedContact.phone || ''
       if (!contactEmail || !contactPhone) {
-        showToast('error', 'Faltan datos del cliente', 'CLIP requiere email y teléfono para crear el link de pago.')
+        showToast('error', `Faltan datos del ${customerLowerLabel}`, 'CLIP requiere email y teléfono para crear el link de pago.')
         setStep('options')
         setLoading(false)
         return
@@ -3218,8 +3223,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace CLIP listo',
           description: clipMsiEnabled
-            ? 'Comparte este enlace para que el cliente pague con CLIP. Si su tarjeta aplica, CLIP mostrará meses sin intereses dentro del formulario seguro.'
-            : 'Comparte este enlace para que el cliente pague con tarjeta en el checkout transparente de CLIP.',
+            ? `Comparte este enlace para que el ${customerLowerLabel} pague con CLIP. Si su tarjeta aplica, CLIP mostrará meses sin intereses dentro del formulario seguro.`
+            : `Comparte este enlace para que el ${customerLowerLabel} pague con tarjeta en el checkout transparente de CLIP.`,
           provider: 'clip',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -3278,8 +3283,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           kind: 'single',
           title: 'Enlace Rebill listo',
           description: rebillMsiEnabled
-            ? `Comparte este enlace para que el cliente pague con Rebill. Si su país, cuenta y tarjeta aplican, Rebill mostrará meses sin intereses hasta ${rebillInstallmentLimit} meses.`
-            : 'Comparte este enlace para que el cliente pague de contado en el checkout seguro de Rebill.',
+            ? `Comparte este enlace para que el ${customerLowerLabel} pague con Rebill. Si su país, cuenta y tarjeta aplican, Rebill mostrará meses sin intereses hasta ${rebillInstallmentLimit} meses.`
+            : `Comparte este enlace para que el ${customerLowerLabel} pague de contado en el checkout seguro de Rebill.`,
           provider: 'rebill',
           paymentUrl: result.paymentUrl,
           amount: invoiceSummary.amount,
@@ -3609,7 +3614,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           >
             <header className={styles.embeddedSheetHeader}>
               <div>
-                <span>Cliente</span>
+                <span>{customerLabel}</span>
                 <strong>Seleccionar contacto</strong>
               </div>
               <button type="button" onClick={closeContactPicker} aria-label="Cerrar búsqueda">
@@ -3674,7 +3679,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         {!contactLocked && (
           isEmbedded ? (
             <div className={`${styles.field} ${styles.contactPickerField}`}>
-              <label className={styles.label}>Cliente</label>
+              <label className={styles.label}>{customerLabel}</label>
               <>
                 <div className={styles.contactPickerControl}>
                   <button
@@ -3708,7 +3713,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           ) : (
             <div className={styles.field}>
               <ContactSearchInput
-                label="Cliente"
+                label={customerLabel}
                 value={selectedContact}
                 onChange={(contact) => {
                   if (contact) {
@@ -3717,7 +3722,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   }
                   handleClearContact()
                 }}
-                placeholder="Buscar cliente por nombre, email o teléfono"
+                placeholder={`Buscar ${customerLowerLabel} por nombre, email o teléfono`}
                 required
               />
             </div>
@@ -3960,7 +3965,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                       className={styles.input}
                     />
                   </div>
-                  <p className={styles.hint}>Puedes modificar el precio según tu negociación con el cliente</p>
+                  <p className={styles.hint}>Puedes modificar el precio según tu negociación con el {customerLowerLabel}</p>
                 </div>
                 {renderPaymentModeField()}
               </>
@@ -4359,7 +4364,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? `Después eliges una tarjeta guardada en ${savedCardGatewayLabels.join(' o ')}.`
         : savedCardGatewayLabels.length === 1
           ? `Después eliges la tarjeta guardada de ${savedCardGatewayLabels[0]}.`
-          : 'Este cliente todavía no tiene tarjetas guardadas.'
+          : `Este ${customerLowerLabel} todavía no tiene tarjetas guardadas.`
       const authorizationLabel = singlePaymentOptionsStage === 'method'
         ? stripePlanCardSource === 'saved_card'
           ? paymentPlanSavedCardActionDescription
@@ -4379,7 +4384,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           <div className={styles.summaryCard}>
             <div className={styles.summaryHeader}>
               <div>
-                <span>Cliente</span>
+                <span>{customerLabel}</span>
                 <h3 className={styles.summaryClient}>{invoiceSummary.contactName}</h3>
                 {invoiceSummary.contactEmail && (
                   <p className={styles.summaryDetail}>{invoiceSummary.contactEmail}</p>
@@ -4671,7 +4676,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         ? 'Stripe sólo ofrece meses sin intereses en MXN.'
         : !stripeInstallmentsAmountAvailable
           ? `Disponible desde ${formatCurrency(STRIPE_INSTALLMENT_MIN_AMOUNT, 'MXN')}.`
-          : 'Configura hasta cuántos meses podrá elegir el cliente en el link.'
+          : `Configura hasta cuántos meses podrá elegir el ${customerLowerLabel} en el link.`
       : paymentOption === 'clip'
         ? !clipCurrencyAvailable
           ? 'CLIP sólo ofrece meses sin intereses en MXN.'
@@ -4681,7 +4686,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       : paymentOption === 'rebill'
         ? 'Guarda el máximo deseado; Rebill mostrará MSI solo si la cuenta y la tarjeta califican.'
       : paymentOption === 'mercadopago'
-        ? 'Configura cuántos meses podrá elegir el cliente en el link.'
+        ? `Configura cuántos meses podrá elegir el ${customerLowerLabel} en el link.`
         : 'Consulta mínimos y selecciona un plazo disponible.'
     const handleOpenInstallmentConfiguration = () => {
       if (paymentOption === 'stripe') {
@@ -4710,7 +4715,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       ? `Elige la tarjeta guardada en ${savedCardGatewayLabels.join(' o ')}.`
       : savedCardGatewayLabels.length === 1
         ? `Elige la tarjeta guardada de ${savedCardGatewayLabels[0]}.`
-        : 'Este cliente todavía no tiene tarjetas guardadas.'
+        : `Este ${customerLowerLabel} todavía no tiene tarjetas guardadas.`
     const paymentLinkActionDescription = hasMultiplePaymentLinkGateways
       ? `Después eliges pasarela: ${paymentLinkGatewayLabels.join(', ')}.`
       : defaultPaymentLinkOption === 'stripe'
@@ -4724,7 +4729,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               : defaultPaymentLinkOption === 'rebill'
                 ? 'Elige contado o meses sin intereses antes de crear el enlace.'
               : defaultPaymentLinkOption === 'send'
-                ? 'Usa la integración conectada para enviar el enlace al cliente.'
+                ? `Usa la integración conectada para enviar el enlace al ${customerLowerLabel}.`
                 : 'Conecta una pasarela para enviar enlaces de pago.'
     const renderManualTransferInfo = () => (
       <div className={styles.manualTransferInfo}>
@@ -4734,7 +4739,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
           </div>
           <div className={styles.manualTransferText}>
             <p>Enlace para transferencias</p>
-            <span>Comparte este enlace con el cliente para completar el depósito.</span>
+            <span>Comparte este enlace con el {customerLowerLabel} para completar el depósito.</span>
           </div>
         </div>
         {transferInfoUrl ? (
@@ -4803,7 +4808,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         <div className={styles.summaryCard}>
           <div className={styles.summaryHeader}>
             <div>
-              <span>Cliente</span>
+              <span>{customerLabel}</span>
               <h3 className={styles.summaryClient}>{invoiceSummary.contactName}</h3>
               {invoiceSummary.contactEmail && (
                 <p className={styles.summaryDetail}>{invoiceSummary.contactEmail}</p>
@@ -4968,7 +4973,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                           {(!selectedContact?.email && !selectedContact?.phone) ? (
                             <span style={{ color: 'var(--color-status-error)' }}>Sin email ni teléfono</span>
                           ) : (
-                            'Envía automáticamente al cliente.'
+                            `Envía automáticamente al ${customerLowerLabel}.`
                           )}
                         </span>
                       </div>
@@ -5143,7 +5148,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <div className={styles.mercadoPagoInstallmentTotals}>
               <div>
-                <span>Cliente paga</span>
+                <span>{customerLabel} paga</span>
                 <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
               </div>
               <div>
@@ -5163,7 +5168,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             <p className={styles.mercadoPagoInstallmentsNote}>
               {clipMsiEnabled
                 ? 'CLIP mostrará meses sin intereses dentro del formulario seguro si la cuenta, el monto y la tarjeta califican. Los plazos disponibles se configuran en el Dashboard de CLIP.'
-                : 'CLIP procesa el pago con tarjeta en campos seguros y Ristak actualiza el cobro cuando CLIP lo confirma. Esta pasarela solo está disponible para cobros en MXN y requiere email y teléfono del cliente.'}
+                : `CLIP procesa el pago con tarjeta en campos seguros y Ristak actualiza el cobro cuando CLIP lo confirma. Esta pasarela solo está disponible para cobros en MXN y requiere email y teléfono del ${customerLowerLabel}.`}
             </p>
           </div>
         )}
@@ -5191,7 +5196,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <div className={styles.mercadoPagoInstallmentTotals}>
               <div>
-                <span>Cliente paga</span>
+                <span>{customerLabel} paga</span>
                 <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
               </div>
               <div>
@@ -5241,7 +5246,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <div className={styles.mercadoPagoInstallmentTotals}>
               <div>
-                <span>Cliente paga</span>
+                <span>{customerLabel} paga</span>
                 <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
               </div>
               <div>
@@ -5255,7 +5260,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </div>
 
             <p className={styles.mercadoPagoInstallmentsNote}>
-              Ristak mostrará sólo los plazos que Stripe confirme para la tarjeta del cliente y nunca más de {stripeInstallmentLimit} meses. La cuenta, el cobro en MXN y el banco emisor todavía deben ser compatibles.
+              Ristak mostrará sólo los plazos que Stripe confirme para la tarjeta del {customerLowerLabel} y nunca más de {stripeInstallmentLimit} meses. La cuenta, el cobro en MXN y el banco emisor todavía deben ser compatibles.
             </p>
           </div>
         )}
@@ -5311,7 +5316,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <div className={styles.mercadoPagoInstallmentTotals}>
               <div>
-                <span>Cliente paga</span>
+                <span>{customerLabel} paga</span>
                 <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
               </div>
               <div>
@@ -5358,7 +5363,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
             <div className={styles.mercadoPagoInstallmentTotals}>
               <div>
-                <span>Cliente paga</span>
+                <span>{customerLabel} paga</span>
                 <strong>{formatCurrency(invoiceSummary.amount, invoiceSummary.currency)}</strong>
               </div>
               <div>
@@ -5376,7 +5381,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             </div>
 
             <p className={styles.mercadoPagoInstallmentsNote}>
-              Mercado Pago solo mostrará meses disponibles para la tarjeta del cliente. Ristak registra el total completo cuando el pago se confirma por webhook.
+              Mercado Pago solo mostrará meses disponibles para la tarjeta del {customerLowerLabel}. Ristak registra el total completo cuando el pago se confirma por webhook.
             </p>
           </div>
         )}
@@ -5628,7 +5633,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   : lacksPaymentPlanGateway
                     ? 'Conecta una pasarela para enviar el link de autorización'
                   : lacksPaymentPlanSavedCards
-                    ? 'Este cliente no tiene tarjetas guardadas'
+                    ? `Este ${customerLowerLabel} no tiene tarjetas guardadas`
                   : lacksSavedCard
                     ? 'Selecciona una tarjeta guardada'
                   : lacksStripePlanSavedCard
@@ -5644,7 +5649,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                   : lacksRebillPlanAuthorization
                     ? 'Usa una tarjeta guardada o marca el primer pago como tarjeta/link'
                   : lacksClipContact
-                    ? 'CLIP requiere email y teléfono del cliente'
+                    ? `CLIP requiere email y teléfono del ${customerLowerLabel}`
                   : lacksClipCurrency
                     ? 'CLIP solo acepta cobros en MXN'
                   : needsStripeInstallmentAvailability
@@ -5687,7 +5692,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
             {lacksPaymentPlanSavedCards && (
               <div className={styles.tooltipInfo}>
                 <AlertCircle size={14} />
-                <span>Este cliente no tiene tarjetas guardadas</span>
+                <span>Este {customerLowerLabel} no tiene tarjetas guardadas</span>
               </div>
             )}
             {lacksStripePlanSavedCard && (

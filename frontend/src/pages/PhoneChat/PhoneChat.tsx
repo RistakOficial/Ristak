@@ -595,7 +595,7 @@ const STAGE_FILTER_OPTIONS: Array<{ value: AdvancedStageFilter; label: string }>
   { value: 'all', label: 'Todas las etapas' },
   { value: 'lead', label: 'Interesados' },
   { value: 'appointment', label: 'Con cita' },
-  { value: 'customer', label: 'Clientes' }
+  { value: 'customer', label: 'Contactos compradores' }
 ]
 const ACTIVITY_FILTER_OPTIONS: Array<{ value: AdvancedActivityFilter; label: string }> = [
   { value: 'all', label: 'Toda la actividad' },
@@ -5255,6 +5255,8 @@ export const PhoneChat: React.FC = () => {
   const customersLabel = labels.customers?.trim() || 'Clientes'
   const leadsLabel = labels.leads?.trim() || 'Interesados'
   const customerSentenceLabel = formatSentenceLabel(customerLabel)
+  const customersSentenceLabel = formatSentenceLabel(customersLabel)
+  const leadsSentenceLabel = formatSentenceLabel(leadsLabel)
   const { showToast, showConfirm } = useNotification()
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
@@ -6445,7 +6447,7 @@ export const PhoneChat: React.FC = () => {
         ]
       }
     ]
-  }, [businessPhones, chatCustomFieldDefinitions, customerLabel, customersLabel, leadLabel, leadsLabel])
+  }, [businessPhones, chatCustomFieldDefinitions, customerLabel, customersLabel, customersSentenceLabel, leadLabel, leadsLabel, leadsSentenceLabel])
   const phoneChatConditionFields = useMemo(
     () => phoneChatConditionFieldGroups.flatMap((group) => group.fields),
     [phoneChatConditionFieldGroups]
@@ -6491,7 +6493,7 @@ export const PhoneChat: React.FC = () => {
       {
         id: 'customers',
         label: customersLabel,
-        description: 'Contactos marcados como clientes o con compras.',
+        description: `Contactos marcados como ${customersSentenceLabel} o con compras.`,
         section: 'Rápidos',
         kind: 'quick',
         quickFilter: 'customers'
@@ -6499,7 +6501,7 @@ export const PhoneChat: React.FC = () => {
       {
         id: 'leads',
         label: leadsLabel,
-        description: 'Contactos interesados que todavía no son clientes ni citados.',
+        description: `Contactos ${leadsSentenceLabel} que todavía no son ${customersSentenceLabel} ni citados.`,
         section: 'Rápidos',
         kind: 'quick',
         quickFilter: 'leads'
@@ -6540,7 +6542,15 @@ export const PhoneChat: React.FC = () => {
       { id: 'channel', section: 'Canal', options: CHANNEL_FILTER_OPTIONS },
       { id: 'origin', section: 'Origen', options: ORIGIN_FILTER_OPTIONS },
       { id: 'social', section: 'Red social', options: SOCIAL_FILTER_OPTIONS },
-      { id: 'stage', section: 'Etapa', options: STAGE_FILTER_OPTIONS },
+      {
+        id: 'stage',
+        section: 'Etapa',
+        options: STAGE_FILTER_OPTIONS.map((option) => {
+          if (option.value === 'lead') return { ...option, label: leadsLabel }
+          if (option.value === 'customer') return { ...option, label: customersLabel }
+          return option
+        })
+      },
       { id: 'activity', section: 'Actividad', options: ACTIVITY_FILTER_OPTIONS }
     ]
     const advancedPresets = advancedGroups.flatMap((group) => (
@@ -13926,7 +13936,7 @@ export const PhoneChat: React.FC = () => {
     }
 
     const recentConversation = messages.slice(-10).map((message) => {
-      const sender = message.direction === 'outbound' ? 'Negocio' : message.direction === 'inbound' ? 'Cliente' : 'Sistema'
+      const sender = message.direction === 'outbound' ? 'Negocio' : message.direction === 'inbound' ? customerLabel : 'Sistema'
       const text = message.text || getMessageTypeLabel(message.attachment?.type || '')
       return `${sender}: ${text}`
     }).join('\n')
@@ -18849,7 +18859,7 @@ export const PhoneChat: React.FC = () => {
           label="Nombre"
           value={customFilterDraft.label}
           onChange={(label) => setCustomFilterDraft((current) => ({ ...current, label }))}
-          placeholder="Ej. Clientes de mi WhatsApp"
+          placeholder={`Ej. ${customersLabel} de mi WhatsApp`}
           maxLength={40}
           autoFocus
         />

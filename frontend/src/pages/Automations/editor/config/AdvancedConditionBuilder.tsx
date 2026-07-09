@@ -476,7 +476,7 @@ export const AdvancedConditionBuilder: React.FC<AdvancedConditionBuilderProps> =
               <Field label={`Rama ${branchIndex + 1}`}>
                 <TextInput
                   value={branch.name}
-                  placeholder="Nombre de la rama (ej. Clientes VIP)"
+                  placeholder="Nombre de la rama (ej. Contactos VIP)"
                   onChange={(event) => updateBranch(branchIndex, { name: event.target.value })}
                 />
               </Field>

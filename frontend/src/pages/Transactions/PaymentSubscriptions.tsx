@@ -44,10 +44,12 @@ import {
 } from '@/components/common'
 import type { BadgeVariant, Column, PaymentLinkReadyData, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAccountCurrency } from '@/hooks'
 import type { Contact } from '@/types'
 import { formatCurrency } from '@/utils/format'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { toDateTimeLocalInputValue, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { getIntegrationsStatus } from '@/services/integrationsService'
 import { subscribeToPaymentLiveEvents, type PaymentLiveEvent } from '@/services/paymentLiveEventsService'
@@ -144,7 +146,7 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     label: 'Stripe - link de suscripción',
     provider: 'stripe',
     modeLabel: 'Link de suscripción',
-    description: 'Genera un Checkout de Stripe para que el cliente autorice la suscripción.',
+    description: 'Genera un Checkout de Stripe para autorizar la suscripción.',
     requirement: 'Requiere un contacto con email.',
     result: 'Al autorizarse, Stripe activa la suscripción.'
   },
@@ -162,7 +164,7 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     label: 'Conekta - link de suscripción',
     provider: 'conekta',
     modeLabel: 'Link de suscripción',
-    description: 'Genera un link hospedado de Conekta para que el cliente autorice la suscripción.',
+    description: 'Genera un link hospedado de Conekta para autorizar la suscripción.',
     requirement: 'Requiere un contacto con email.',
     result: 'Al autorizarse, Conekta activa la suscripción.'
   },
@@ -172,8 +174,8 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     provider: 'mercadopago',
     modeLabel: 'Link de suscripción',
     description: 'Crea un plan de suscripción en Mercado Pago y entrega su link de autorización.',
-    requirement: 'El cliente captura o confirma sus datos al autorizar el link en Mercado Pago.',
-    result: 'Mercado Pago activa la suscripción cuando el cliente autoriza el link.'
+    requirement: 'La persona captura o confirma sus datos al autorizar el link en Mercado Pago.',
+    result: 'Mercado Pago activa la suscripción cuando la persona autoriza el link.'
   },
   {
     value: 'rebill_subscription',
@@ -182,7 +184,7 @@ const PAYMENT_METHOD_OPTIONS: Array<{
     modeLabel: 'Link de suscripción',
     description: 'Crea un plan en Rebill y entrega su checkout hospedado para autorizar la suscripción.',
     requirement: 'Requiere un contacto con email. Rebill sólo acepta frecuencia mensual o anual.',
-    result: 'Rebill activa la suscripción cuando el cliente autoriza el checkout.'
+    result: 'Rebill activa la suscripción cuando la persona autoriza el checkout.'
   }
 ]
 
@@ -459,7 +461,7 @@ function getSubscriptionContactDisplayName(contact?: PaymentLinkReadyData['conta
     `${contact?.firstName || ''} ${contact?.lastName || ''}`.trim() ||
     contact?.email ||
     contact?.phone ||
-    'cliente'
+    'contacto'
 }
 
 interface SubscriptionPaymentLinkPanelFallback {
@@ -469,7 +471,8 @@ interface SubscriptionPaymentLinkPanelFallback {
 
 function buildSubscriptionPaymentLinkPanel(
   subscription: PaymentSubscription,
-  fallback: SubscriptionPaymentLinkPanelFallback = {}
+  fallback: SubscriptionPaymentLinkPanelFallback = {},
+  customerLowerLabel = 'contacto'
 ): PaymentLinkReadyData | null {
   const paymentMethod = subscription.paymentMethod || fallback.payload?.paymentMethod || ''
   if (!isLinkPaymentMethod(paymentMethod)) return null
@@ -496,10 +499,10 @@ function buildSubscriptionPaymentLinkPanel(
     kind: 'subscription_start',
     title: 'Link de suscripción listo',
     description: isMercadoPagoSubscription
-      ? 'Comparte este enlace de Mercado Pago para que el cliente autorice la suscripción.'
+      ? `Comparte este enlace de Mercado Pago para que el ${customerLowerLabel} autorice la suscripción.`
       : isRebillSubscription
-        ? 'Comparte este enlace de Rebill para que el cliente autorice la suscripción.'
-      : 'Comparte este enlace de la pasarela para que el cliente autorice la suscripción.',
+        ? `Comparte este enlace de Rebill para que el ${customerLowerLabel} autorice la suscripción.`
+      : `Comparte este enlace de la pasarela para que el ${customerLowerLabel} autorice la suscripción.`,
     linkLabel: isMercadoPagoSubscription
       ? 'Enlace de suscripción Mercado Pago'
       : isRebillSubscription
@@ -568,8 +571,11 @@ export const PaymentSubscriptions: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { showConfirm, showToast } = useNotification()
+  const { labels } = useLabels()
   const { formatLocalDateShort, timezone } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
+  const customerLowerLabel = formatCrmLabelLower(customerLabel, DEFAULT_CRM_LABELS.customer)
   const [subscriptions, setSubscriptions] = useState<PaymentSubscription[]>([])
   const [summary, setSummary] = useState<SubscriptionSummary>(EMPTY_SUMMARY)
   const [statusFilter, setStatusFilter] = useState('all')
@@ -765,8 +771,28 @@ export const PaymentSubscriptions: React.FC = () => {
     }
   }, [conektaConnected, formMode, selectedContact?.id, stripeConnected])
 
+  const paymentMethodOptions = useMemo(() => PAYMENT_METHOD_OPTIONS.map((option) => {
+    if (option.value === 'stripe_link') {
+      return { ...option, description: `Genera un Checkout de Stripe para que el ${customerLowerLabel} autorice la suscripción.` }
+    }
+    if (option.value === 'conekta_link') {
+      return { ...option, description: `Genera un link hospedado de Conekta para que el ${customerLowerLabel} autorice la suscripción.` }
+    }
+    if (option.value === 'mercadopago_subscription') {
+      return {
+        ...option,
+        requirement: `El ${customerLowerLabel} captura o confirma sus datos al autorizar el link en Mercado Pago.`,
+        result: `Mercado Pago activa la suscripción cuando el ${customerLowerLabel} autoriza el link.`
+      }
+    }
+    if (option.value === 'rebill_subscription') {
+      return { ...option, result: `Rebill activa la suscripción cuando el ${customerLowerLabel} autoriza el checkout.` }
+    }
+    return option
+  }), [customerLowerLabel])
+
   const availablePaymentMethodOptions = useMemo(() => (
-    PAYMENT_METHOD_OPTIONS.filter((option) => (
+    paymentMethodOptions.filter((option) => (
       option.provider === 'stripe'
         ? stripeConnected
         : option.provider === 'conekta'
@@ -775,7 +801,7 @@ export const PaymentSubscriptions: React.FC = () => {
             ? rebillConnected
             : mercadoPagoConnected
     ))
-  ), [conektaConnected, mercadoPagoConnected, rebillConnected, stripeConnected])
+  ), [conektaConnected, mercadoPagoConnected, paymentMethodOptions, rebillConnected, stripeConnected])
   const availableLinkPaymentMethodOptions = useMemo(() => (
     availablePaymentMethodOptions.filter((option) => isLinkPaymentMethod(option.value))
   ), [availablePaymentMethodOptions])
@@ -1285,7 +1311,7 @@ export const PaymentSubscriptions: React.FC = () => {
         const readyLink = buildSubscriptionPaymentLinkPanel(created, {
           payload,
           contact: selectedContact
-        })
+        }, customerLowerLabel)
         if (readyLink) {
           setCreatedSubscriptionLink(readyLink)
           showToast('success', 'Link de suscripción listo', `El link de ${payload.name} ya está listo para copiar o enviar.`)
@@ -1470,7 +1496,7 @@ export const PaymentSubscriptions: React.FC = () => {
   }
 
   const openSubscriptionStartLinkPanel = (subscription: PaymentSubscription) => {
-    const readyLink = buildSubscriptionPaymentLinkPanel(subscription)
+    const readyLink = buildSubscriptionPaymentLinkPanel(subscription, {}, customerLowerLabel)
     if (!readyLink) {
       showToast('warning', 'Link no disponible', 'Todavía no hay un link de suscripción para esta suscripción.')
       return
@@ -1490,7 +1516,7 @@ export const PaymentSubscriptions: React.FC = () => {
     }
 
     await navigator.clipboard.writeText(link)
-    showToast('success', 'Link copiado', 'Ya puedes enviarlo al cliente para autorizar la suscripción.')
+    showToast('success', 'Link copiado', `Ya puedes enviarlo al ${customerLowerLabel} para autorizar la suscripción.`)
   }
 
   const openSubscriptionStartLink = (subscription: PaymentSubscription) => {
@@ -1976,10 +2002,10 @@ export const PaymentSubscriptions: React.FC = () => {
             <div className={styles.formGrid}>
               <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                 <ContactSearchInput
-                  label="Cliente"
+                  label={customerLabel}
                   value={selectedContact}
                   onChange={(contact) => setSelectedContact(contact as Contact | null)}
-                  placeholder="Buscar cliente por nombre, email o teléfono"
+                  placeholder={`Buscar ${customerLowerLabel} por nombre, email o teléfono`}
                   required
                 />
               </div>
@@ -2140,7 +2166,7 @@ export const PaymentSubscriptions: React.FC = () => {
                       : isClipSelected
                         ? 'CLIP ya no está disponible para suscripciones. Este registro se conserva solo como historial; usa Stripe, Conekta, Mercado Pago o Rebill para nuevos cobros recurrentes.'
                       : form.paymentMethod === 'stripe_link'
-                        ? 'Stripe abrirá Checkout para que el cliente autorice y active la suscripción.'
+                        ? `Stripe abrirá Checkout para que el ${customerLowerLabel} autorice y active la suscripción.`
                         : 'Para cobros automáticos con Stripe, el contacto debe tener una tarjeta guardada. Ristak usará la tarjeta predeterminada del contacto.'}
                 </p>
               </div>

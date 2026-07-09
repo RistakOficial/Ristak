@@ -3,9 +3,11 @@ import { AlertTriangle, Bell, BellRing, MessageCircle } from 'lucide-react'
 import { useLocation } from 'react-router-dom'
 import { Button, Modal } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { mobileAppService } from '@/services/mobileAppService'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { getPortableDeviceMode, isPhoneAppPath } from '@/utils/phoneAccess'
 import styles from './MobileNotificationOnboarding.module.css'
 
@@ -94,7 +96,7 @@ function getPromptTargetCopy(surface: NotificationPromptSurface) {
   }
 }
 
-function getStepCopy(step: PromptStep, surface: NotificationPromptSurface, denialReason = '') {
+function getStepCopy(step: PromptStep, surface: NotificationPromptSurface, customerLowerLabel: string, denialReason = '') {
   const target = getPromptTargetCopy(surface)
 
   if (step === 'first_decline') {
@@ -114,7 +116,7 @@ function getStepCopy(step: PromptStep, surface: NotificationPromptSurface, denia
       icon: Bell,
       eyebrow: 'Última confirmación',
       title: '¿Seguro que no quieres notificaciones?',
-      message: `Esta es la última pregunta. Si dejas las notificaciones apagadas en ${target.device}, no vas a saber al momento cuando un cliente te mande mensaje.`,
+      message: `Esta es la última pregunta. Si dejas las notificaciones apagadas en ${target.device}, no vas a saber al momento cuando un ${customerLowerLabel} te mande mensaje.`,
       primary: 'Activar notificaciones',
       secondary: 'Sí, no quiero notificaciones',
       warning: true
@@ -138,7 +140,7 @@ function getStepCopy(step: PromptStep, surface: NotificationPromptSurface, denia
     icon: MessageCircle,
     eyebrow: surface === 'desktop_browser' ? 'Notificaciones del navegador' : 'Mensajes de WhatsApp',
     title: 'Activa las notificaciones',
-    message: `Para saber al momento cuando un cliente te escribe, Ristak necesita activar ${target.channel} en ${target.device}.`,
+    message: `Para saber al momento cuando un ${customerLowerLabel} te escribe, Ristak necesita activar ${target.channel} en ${target.device}.`,
     primary: 'Activar',
     secondary: 'Ahora no',
     warning: false
@@ -148,7 +150,9 @@ function getStepCopy(step: PromptStep, surface: NotificationPromptSurface, denia
 export function MobileNotificationOnboarding() {
   const location = useLocation()
   const { isAuthenticated, isLoading, user } = useAuth()
+  const { labels } = useLabels()
   const { showToast } = useNotification()
+  const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
   const [visible, setVisible] = useState(false)
   const [step, setStep] = useState<PromptStep>('intro')
   const [busy, setBusy] = useState(false)
@@ -305,7 +309,7 @@ export function MobileNotificationOnboarding() {
   }
 
   const surface = getNotificationPromptSurface()
-  const copy = getStepCopy(step, surface, denialReason)
+  const copy = getStepCopy(step, surface, customerLowerLabel, denialReason)
   const Icon = copy.icon
   const permission = getBrowserNotificationPermission()
   const target = getPromptTargetCopy(surface)

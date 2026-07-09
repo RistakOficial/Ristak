@@ -5,6 +5,7 @@ import {
   UserCheck, CalendarCheck, CreditCard, Link2, Wallet, ShieldCheck, Users, Rocket, Bell, MessageSquareText, Bot, type LucideIcon
 } from 'lucide-react'
 import { Modal, Button, CustomSelect, NumberInput } from '@/components/common'
+import { useLabels } from '@/contexts/LabelsContext'
 import {
   conversationalAIProviderOptions,
   getConversationalAIProviderOption,
@@ -18,6 +19,7 @@ import { useAccountCurrency } from '@/hooks'
 import { calendarsService, type Calendar as CalendarRecord } from '@/services/calendarsService'
 import { userAccessService, type TeamUser } from '@/services/userAccessService'
 import { formatCurrency } from '@/utils/format'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import {
   type AgentCompletionMode,
   type AgentIdentityMode,
@@ -72,7 +74,7 @@ const persuasionChoices: Array<Choice<ConversationalPersuasionLevel>> = [
 ]
 
 const languageChoices: Array<Choice<ConversationalLanguageLevel>> = [
-  { value: 'professional', label: 'Ejecutivo', example: 'Pulido y formal, pero humano. Para marcas premium. Como hablarle a un cliente importante.', Icon: Briefcase },
+  { value: 'professional', label: 'Ejecutivo', example: 'Pulido y formal, pero humano. Para marcas premium y tratos importantes.', Icon: Briefcase },
   { value: 'intermediate', label: 'Cómplice', example: 'Natural y cercano, ni tieso ni vulgar. El punto dulce que le queda a casi todos.', Icon: Smile },
   { value: 'colloquial', label: 'Callejero', example: 'Bien suelto y de la región, como mensaje entre cuates. Lo más relajado.', Icon: MessageCircle }
 ]
@@ -92,7 +94,7 @@ const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<Con
     { value: 'ready_for_human', label: 'Un humano', example: 'Junta los datos y avisa a tu gente para que continúe.', Icon: UserCheck }
   ],
   filtrar: [
-    { value: 'ready_for_human', label: 'Un humano', example: 'Filtra la plática y avisa cuando el prospecto ya vale la pena atender.', Icon: UserCheck }
+    { value: 'ready_for_human', label: 'Un humano', example: 'Filtra la plática y avisa cuando la persona ya vale la pena atender.', Icon: UserCheck }
   ],
   custom: [
     { value: 'ready_for_human', label: 'Un humano', example: 'Cuando la meta está lista, detiene el bot y avisa a tu gente.', Icon: UserCheck },
@@ -141,6 +143,25 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   const [teamUsersLoading, setTeamUsersLoading] = useState(false)
   const [testResetKey, setTestResetKey] = useState(0)
   const [accountCurrency] = useAccountCurrency()
+  const { labels } = useLabels()
+  const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
+  const leadLowerLabel = formatCrmLabelLower(labels.lead, DEFAULT_CRM_LABELS.lead)
+  const localizedLanguageChoices = useMemo<Array<Choice<ConversationalLanguageLevel>>>(() => (
+    languageChoices.map((choice) => (
+      choice.value === 'professional'
+        ? { ...choice, example: `Pulido y formal, pero humano. Para marcas premium. Como hablarle a un ${customerLowerLabel} importante.` }
+        : choice
+    ))
+  ), [customerLowerLabel])
+  const localizedActionChoicesByObjective = useMemo<Record<ConversationalObjective, Array<Choice<ConversationalSuccessAction>>>>(() => ({
+    ...actionChoicesByObjective,
+    filtrar: actionChoicesByObjective.filtrar.map((choice) => (
+      choice.value === 'ready_for_human'
+        ? { ...choice, example: `Filtra la plática y avisa cuando el ${leadLowerLabel} ya vale la pena atender.` }
+        : choice
+    ))
+  }), [leadLowerLabel])
 
   // Reinicia el wizard cada vez que se abre y carga los calendarios reales.
   useEffect(() => {
@@ -198,7 +219,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   // pasos reales nuevos, así que "Pregunta X de N" sube N de forma honesta.
   const totalQuestions = activeSteps.length - 3 // sin bienvenida, resumen ni prueba
   const questionNumber = isQuestion ? safeIndex : null
-  const actionChoices = actionChoicesByObjective[draft.objective] || actionChoicesByObjective.citas
+  const actionChoices = localizedActionChoicesByObjective[draft.objective] || localizedActionChoicesByObjective.citas
   const selectedProviderId = getKnownConversationalAIProvider(draft.aiProvider)
   const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
   const selectedProviderStatus = aiProviders.find((provider) => provider.id === selectedProviderId) || null
@@ -232,7 +253,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   const patchReplyDelivery = (next: Partial<AgentWizardDraft['replyDelivery']>) => patch({ replyDelivery: { ...draft.replyDelivery, ...next } })
 
   const chooseObjective = (objective: ConversationalObjective) => {
-    const firstAction = (actionChoicesByObjective[objective] || actionChoicesByObjective.citas)[0]?.value || 'ready_for_human'
+    const firstAction = (localizedActionChoicesByObjective[objective] || localizedActionChoicesByObjective.citas)[0]?.value || 'ready_for_human'
     patch({ objective, successAction: firstAction, ...(objective === 'custom' ? {} : { customObjective: '' }) })
   }
 
@@ -292,7 +313,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     if (draft.objective === 'citas') return '¿Quién debería agendar la cita?'
     if (draft.objective === 'ventas') return '¿Quién debería cerrar el pago?'
     if (draft.objective === 'datos') return '¿Quién debería recibir los datos?'
-    if (draft.objective === 'filtrar') return '¿Quién debería atender al prospecto filtrado?'
+    if (draft.objective === 'filtrar') return `¿Quién debería atender al ${leadLowerLabel} filtrado?`
     return '¿Quién debería completar el objetivo?'
   })()
   const responseDelaySummary = (() => {
@@ -487,7 +508,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
               <h2 className={styles.title}>¿Cómo quieres que suene?</h2>
               <p className={styles.help}>El tono con el que escribe. Como elegir si saluda de "buenas tardes" o de "qué onda".</p>
               <div className={styles.options}>
-                {languageChoices.map(({ value, label, example, Icon }) => (
+                {localizedLanguageChoices.map(({ value, label, example, Icon }) => (
                   <OptionCard key={value} active={draft.languageLevel === value} Icon={Icon} label={label} example={example} onClick={() => patch({ languageLevel: value })} />
                 ))}
               </div>
@@ -792,7 +813,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'scope' && (
             <>
               <h2 className={styles.title}>¿Y con los contactos que ya tienes?</h2>
-              <p className={styles.help}>Esto es por seguridad: muchos de tus contactos ya son clientes. Decide si este asistente también puede escribirles, o si solo atiende a los nuevos para no mezclarse.</p>
+              <p className={styles.help}>Esto es por seguridad: muchos de tus contactos ya son {customersLowerLabel}. Decide si este asistente también puede escribirles, o si solo atiende a los nuevos para no mezclarse.</p>
               <div className={styles.options}>
                 <OptionCard
                   active={draft.contactScope === 'new_only'}
@@ -844,7 +865,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 <RecapRow label="Su misión" value={draft.objective === 'custom' ? (draft.customObjective.trim() || 'Meta propia') : labelOf(objectiveChoices, draft.objective)} />
                 <RecapRow label="Habla como" value={draft.identityMode === 'user' ? (draft.identityUserName || 'Persona del equipo') : draft.identityMode === 'custom' ? (draft.identityCustomName.trim() || 'Nombre propio') : labelOf(identityChoices, draft.identityMode)} />
                 <RecapRow label="Estilo de venta" value={labelOf(persuasionChoices, draft.persuasionLevel)} />
-                <RecapRow label="Forma de hablar" value={labelOf(languageChoices, draft.languageLevel)} />
+                <RecapRow label="Forma de hablar" value={labelOf(localizedLanguageChoices, draft.languageLevel)} />
                 <RecapRow label="Espera" value={responseDelaySummary} />
                 <RecapRow label="Mensajes" value={humanMessagesEnabled ? 'En globitos' : 'Todo junto'} />
                 <RecapRow label="Notificaciones" value={draft.hideAttendedNotifications ? 'Silenciadas mientras atiende' : 'Activas mientras atiende'} />
@@ -866,7 +887,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'test' && (
             <>
               <h2 className={styles.title}>Pruébalo antes de soltarlo 🎙️</h2>
-              <p className={styles.help}>Aquí está tu asistente, vivito. Escríbele como si fueras un cliente: mándale un mensaje, déjale una <strong>nota de voz</strong>, súbele una <strong>foto</strong> o un comprobante. Pruébalo a lo bestia para ver cómo responde ANTES de activarlo.</p>
+              <p className={styles.help}>Aquí está tu asistente, vivito. Escríbele como si fueras un {customerLowerLabel}: mándale un mensaje, déjale una <strong>nota de voz</strong>, súbele una <strong>foto</strong> o un comprobante. Pruébalo a lo bestia para ver cómo responde ANTES de activarlo.</p>
               <div className={styles.testChat}>
                 <WizardTestChat
                   key={testResetKey}

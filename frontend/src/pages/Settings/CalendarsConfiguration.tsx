@@ -286,7 +286,7 @@ const CALENDAR_CUSTOM_EVENT_CHANNEL_TABS = [
   {
     value: 'smart',
     label: 'Inteligente',
-    description: 'Ristak decide entre Sitios y WhatsApp según el primer punto de contacto del cliente.'
+    description: 'Ristak decide entre Sitios y WhatsApp según el primer punto de contacto de la persona.'
   }
 ]
 const CALENDAR_WIZARD_STEPS: Array<{
@@ -1975,7 +1975,7 @@ export const CalendarsConfiguration: React.FC = () => {
           label: 'Notas',
           value: newCalendar.notes || '',
           onChange: (nextValue) => setNewCalendar({ ...newCalendar, notes: nextValue }),
-          placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
+          placeholder: 'Ej. Contacto: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
           help: 'Estas notas se guardan como descripción de la cita cuando el calendario esté conectado.',
           multiline: true
         })}
@@ -3430,7 +3430,7 @@ export const CalendarsConfiguration: React.FC = () => {
                   label: 'Notas',
                   value: selectedCalendar.notes || '',
                   onChange: (nextValue) => updateSelectedCalendar({ notes: nextValue }),
-                  placeholder: 'Ej. Cliente: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
+                  placeholder: 'Ej. Contacto: {{contact.full_name}}\nTeléfono: {{contact.phone}}\nNotas: {{appointment.notes}}',
                   help: 'Estas notas se guardan como descripción de la cita cuando el calendario esté conectado.',
                   multiline: true
                 })}

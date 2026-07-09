@@ -2,9 +2,11 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ListFilter, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { Button, CustomSelect, SearchField } from '@/components/common'
+import { useLabels } from '@/contexts/LabelsContext'
 import type { ContactCustomFieldDefinition } from '@/types'
 import type { ContactTag } from '@/services/contactTagsService'
 import { globalSearchService, type GlobalSearchItem, type GlobalSearchItemType } from '@/services/globalSearchService'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import styles from './Contacts.module.css'
 import {
   CONTACT_ADVANCED_FIELD_GROUPS,
@@ -264,9 +266,42 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
   onClose,
   onApply
 }) => {
+  const { labels } = useLabels()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
+  const leadLabel = labels.lead?.trim() || DEFAULT_CRM_LABELS.lead
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
+  const leadsLowerLabel = formatCrmLabelLower(labels.leads, DEFAULT_CRM_LABELS.leads)
   const [draft, setDraft] = useState<ContactAdvancedFilterConfig>(() => normalizeContactAdvancedConfig(value))
   const [fieldSearchTerm, setFieldSearchTerm] = useState('')
   const [fieldPickerTarget, setFieldPickerTarget] = useState<FieldPickerTarget | null>(null)
+  const localizedStaticFieldGroups = useMemo(() => CONTACT_ADVANCED_FIELD_GROUPS.map(fieldGroup => ({
+    ...fieldGroup,
+    fields: fieldGroup.fields.map(field => {
+      if (field.key === 'status') {
+        return {
+          ...field,
+          options: field.options?.map(option => {
+            if (option.value === 'lead') return { ...option, label: leadLabel }
+            if (option.value === 'customer') return { ...option, label: customerLabel }
+            return option
+          })
+        }
+      }
+
+      if (field.key === 'priority') {
+        return {
+          ...field,
+          options: field.options?.map(option => {
+            if (option.value === 'high') return { ...option, label: `Alta: ${customersLowerLabel}` }
+            if (option.value === 'low') return { ...option, label: `Baja: ${leadsLowerLabel}` }
+            return option
+          })
+        }
+      }
+
+      return field
+    })
+  })), [customerLabel, customersLowerLabel, leadLabel, leadsLowerLabel])
 
   useEffect(() => {
     if (!isOpen) return
@@ -297,7 +332,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
     const activeCustomFields = customFieldDefinitions.filter(field => !field.archived)
     const includeGenericCustomField = activeCustomFields.length === 0
 
-    const staticChoices = CONTACT_ADVANCED_FIELD_GROUPS.flatMap(fieldGroup => fieldGroup.fields.flatMap(field => {
+    const staticChoices = localizedStaticFieldGroups.flatMap(fieldGroup => fieldGroup.fields.flatMap(field => {
       if (field.key === 'custom_field' && !includeGenericCustomField) return []
       return [{
         id: field.key,
@@ -343,7 +378,7 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
     })
 
     return [...staticChoices, ...customChoices]
-  }, [customFieldDefinitions])
+  }, [customFieldDefinitions, localizedStaticFieldGroups])
 
   const choiceById = useMemo(() => new Map(fieldChoices.map(choice => [choice.id, choice])), [fieldChoices])
   const customFieldDefinitionByKey = useMemo(() => {

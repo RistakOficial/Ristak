@@ -25,6 +25,7 @@ import {
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { useAuth } from '@/contexts/AuthContext'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability, useAppConfig, useUserConfig, usePhoneElasticScroll, usePhoneTheme } from '@/hooks' // (MOB-006) useUserConfig
 import { calendarsService, type Calendar } from '@/services/calendarsService'
@@ -35,6 +36,7 @@ import { clearRuntimeApiBaseUrl, isNativeAppRuntime } from '@/services/apiBaseUr
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { whatsappApiService, type WhatsAppApiTemplate } from '@/services/whatsappApiService'
 import type { ContactCustomFieldDefinition } from '@/types'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { PHONE_APP_LOGIN_PATH, PHONE_APP_TENANT_PATH } from '@/utils/phoneAccess'
 import styles from './PhoneSettings.module.css'
 
@@ -116,6 +118,9 @@ function getTemplatePreview(template: WhatsAppApiTemplate) {
 export const PhoneSettings: React.FC = () => {
   const { locationId, accessToken, logout } = useAuth()
   const { showToast, showConfirm } = useNotification()
+  const { labels } = useLabels()
+  const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const [defaultCalendarId] = useAppConfig<string>('default_calendar_id', '')
   const [aiAgentChatEnabled, setAiAgentChatEnabled] = useAppConfig<boolean>('mobile_chat_ai_agent_enabled', true)
   const [aiReplySuggestionsEnabled, setAiReplySuggestionsEnabled] = useAppConfig<boolean>('mobile_chat_ai_reply_suggestions_enabled', false)
@@ -682,7 +687,7 @@ export const PhoneSettings: React.FC = () => {
             <span><Sparkles size={18} /></span>
             <div>
               <strong>Descripción del negocio</strong>
-              <small>Dicta tu giro, servicios y clientes; la IA lo pule y lo guarda aquí.</small>
+              <small>Dicta tu giro, servicios y {customersLowerLabel}; la IA lo pule y lo guarda aquí.</small>
             </div>
           </div>
 
@@ -883,7 +888,7 @@ export const PhoneSettings: React.FC = () => {
           )}
         </section>
       )}
-      {renderToggle('Citas confirmadas', 'Avísame cuando un cliente confirme que sí asistirá.', appointmentConfirmationPushEnabled, (checked) => saveConfigPreference(setAppointmentConfirmationPushEnabled, checked))}
+      {renderToggle('Citas confirmadas', `Avísame cuando un ${customerLowerLabel} confirme que sí asistirá.`, appointmentConfirmationPushEnabled, (checked) => saveConfigPreference(setAppointmentConfirmationPushEnabled, checked))}
       {renderToggle('Pagos', 'Avísame cuando se registre un pago.', paymentPushEnabled, (checked) => saveConfigPreference(setPaymentPushEnabled, checked))}
       <section className={styles.settingsSection}>
         <div className={styles.sectionTitle}>
@@ -954,7 +959,7 @@ export const PhoneSettings: React.FC = () => {
               <span className={styles.headerSubtitle}>Elige qué datos quieres ver en la info de cada contacto.</span>
             )}
             {activeSection === 'privacy' && (
-              <span className={styles.headerSubtitle}>Ajustes que afectan lo que tus clientes pueden saber de tu lectura.</span>
+              <span className={styles.headerSubtitle}>Ajustes que afectan lo que tus {customersLowerLabel} pueden saber de tu lectura.</span>
             )}
           </header>
           <div className={styles.content} data-phone-scrollable="true">

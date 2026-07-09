@@ -3204,7 +3204,7 @@ const getLibraryTitle = (section: SitesSection) => {
 
 const getLibraryDescription = (section: SitesSection) => {
   if (section === 'landings') return 'Biblioteca de páginas públicas, sitios web y embudos listos para editar.'
-  if (section === 'forms') return 'Biblioteca de formularios públicos para capturar prospectos y respuestas.'
+  if (section === 'forms') return 'Biblioteca de formularios públicos para capturar contactos y respuestas.'
   return 'Biblioteca de sitios públicos.'
 }
 
@@ -14666,7 +14666,7 @@ const funnelStyleOptions: Array<{
   {
     id: 'lead_gen',
     title: 'Formulario visible',
-    subtitle: 'Para conseguir prospectos rápido y pedir datos de contacto.',
+    subtitle: 'Para conseguir contactos rápido y pedir datos de contacto.',
     badge: 'Lead gen',
     bestFor: 'Clínicas, servicios, consultorios, inmobiliarias o agencias.',
     prompt: [
@@ -14740,7 +14740,7 @@ const getSitesAICreationKindLabel = (siteKind: SitesAICreationKind) => {
 const getSitesAICreationPlaceholder = (siteKind: SitesAICreationKind, editMode: boolean) => {
   if (editMode) return 'Dime qué quieres cambiar: título, foto principal, orden de secciones, campos, estilo, colores...'
   if (siteKind === 'form') return 'Ejemplo: formulario para agendar valoración dental, pedir nombre, teléfono, correo, tratamiento y fecha preferida...'
-  if (siteKind === 'interactive_form') return 'Ejemplo: quiz de 4 pasos para calificar prospectos, con captura final de nombre y teléfono...'
+  if (siteKind === 'interactive_form') return 'Ejemplo: quiz de 4 pasos para calificar contactos, con captura final de nombre y teléfono...'
   return 'Ejemplo: embudo para clínica estética con foto principal, beneficios, testimonios y formulario para agendar...'
 }
 
@@ -25523,7 +25523,7 @@ const SitesLibraryPanel: React.FC<SitesLibraryPanelProps> = ({
     <section className={styles.libraryPanel}>
       <div className={styles.libraryHeader}>
         <div>
-          <span>{isLandingLibrary ? 'Sitios web y embudos' : 'Captura de prospectos'}</span>
+          <span>{isLandingLibrary ? 'Sitios web y embudos' : 'Captura de contactos'}</span>
           <h2>{getLibraryTitle(section)}</h2>
           <p>{getLibraryDescription(section)}</p>
         </div>
@@ -25880,7 +25880,7 @@ const INTERACTIVE_TEMPLATE_CATEGORIES: TemplateGalleryCategory[] = [
   {
     id: 'guided',
     title: 'Quiz y formularios guiados',
-    description: 'Una pregunta por pantalla para calificar prospectos con ritmo y claridad.',
+    description: 'Una pregunta por pantalla para calificar contactos con ritmo y claridad.',
     ids: ['interactive', 'callback', 'quote'],
     siteType: 'interactive_form'
   },
@@ -37209,7 +37209,7 @@ const PaymentCompletionSettingsControls: React.FC<{
           </label>
           {!hasValidDestination && (
             <p className={styles.customFieldHint}>
-              Elige una página destino para que el cliente salga del checkout al lugar correcto.
+              Elige una página destino para que la persona salga del checkout al lugar correcto.
             </p>
           )}
         </>
@@ -39798,7 +39798,7 @@ const PropertiesPanel: React.FC<PropertiesPanelProps> = ({
         <PaymentGateControls
           value={getPaymentGateFromSettings(settings, paymentCurrencyFallback)}
           title="Realizar pago obligatorio para continuar"
-          description="Tu cliente debe completar este pago para avanzar."
+          description="La persona debe completar este pago para avanzar."
           onChange={(paymentGate) => onPatchSettings({ paymentGate })}
           onCommit={onSave}
           currencyFallback={paymentCurrencyFallback}

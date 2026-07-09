@@ -35,6 +35,7 @@ import { formatCurrency, formatNumber, formatDate, formatDateToISO, normalizeDat
 import { dateOnlyToLocalDate, todayDateOnlyInTimezone } from '@/utils/timezone'
 import { useAppConfig, useChartHover, useMetaTimezone, useTableConfig, useUrlDateRangeSync } from '@/hooks'
 import { hasLicenseFeature } from '@/utils/accessControl'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { readNumberParam, setSearchParam } from '@/utils/urlState'
 import { DEFAULT_BAR_RADIUS, getTopRoundedBarPath } from '@/components/common/chartShapes'
 import { ChartTooltip } from '@/components/common/ChartTooltip/ChartTooltip'
@@ -183,7 +184,7 @@ const displayTabs = [
     value: 'table',
     label: 'Histórico',
     icon: <TableIcon size={16} />,
-    description: 'Vista de tabla para revisar cada periodo con sus ingresos, gastos, citas, clientes y demás métricas.'
+    description: 'Vista de tabla para revisar cada periodo con sus ingresos, gastos, citas, contactos y demás métricas.'
   },
   {
     value: 'metrics',
@@ -1797,7 +1798,13 @@ export const Reports: React.FC = () => {
   const { dateRange, setDateRange } = useDateRange()
   const { showToast } = useNotification()
   const { labels } = useLabels()
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const { timezone } = useTimezone()
+  const localizedDisplayTabs = useMemo(() => displayTabs.map(tab => (
+    tab.value === 'table'
+      ? { ...tab, description: `Vista de tabla para revisar cada periodo con sus ingresos, gastos, citas, ${customersLowerLabel} y demás métricas.` }
+      : tab
+  )), [customersLowerLabel])
   const businessToday = useMemo(() => getBusinessToday(timezone), [timezone])
   const defaultYearRange = useMemo(
     () => getDefaultYearRange(businessToday.getFullYear()),
@@ -3112,7 +3119,7 @@ export const Reports: React.FC = () => {
 	                  variant="compact"
 	                />
 	                <TabList
-	                  tabs={displayTabs}
+	                  tabs={localizedDisplayTabs}
 	                  activeTab={displayMode}
 	                  onTabChange={(value) => {
 	                    if (isReportDisplayMode(value)) navigateReportsView({ displayMode: value })

@@ -1005,9 +1005,9 @@ const SOCIAL_FILTER_OPTIONS: Array<{ value: AdvancedSocialFilter; label: string 
 ];
 const STAGE_FILTER_OPTIONS: Array<{ value: AdvancedStageFilter; label: string }> = [
   { value: 'all', label: 'Todas las etapas' },
-  { value: 'lead', label: 'Interesados' },
+  { value: 'lead', label: 'Leads' },
   { value: 'appointment', label: 'Con cita' },
-  { value: 'customer', label: 'Clientes' },
+  { value: 'customer', label: 'Contactos compradores' },
 ];
 const ACTIVITY_FILTER_OPTIONS: Array<{ value: AdvancedActivityFilter; label: string }> = [
   { value: 'all', label: 'Toda la actividad' },
@@ -1099,8 +1099,8 @@ const CHAT_FILTER_LIBRARY: ChatFilterPreset[] = [
   { id: 'all', label: 'Todos', description: 'Muestra todas las conversaciones activas.', section: 'Rápidos', kind: 'quick', quickFilter: 'all', locked: true },
   { id: 'unread', label: 'No leídos', description: 'Sólo conversaciones con mensajes pendientes.', section: 'Rápidos', kind: 'quick', quickFilter: 'unread' },
   { id: 'appointments', label: 'Agendados', description: 'Contactos con cita guardada.', section: 'Rápidos', kind: 'quick', quickFilter: 'appointments' },
-  { id: 'customers', label: 'Clientes', description: 'Contactos marcados como clientes o con compras.', section: 'Rápidos', kind: 'quick', quickFilter: 'customers' },
-  { id: 'leads', label: 'Leads', description: 'Contactos interesados que todavía no son clientes ni citados.', section: 'Rápidos', kind: 'quick', quickFilter: 'leads' },
+  { id: 'customers', label: 'Contactos compradores', description: 'Contactos marcados como compradores o con compras.', section: 'Rápidos', kind: 'quick', quickFilter: 'customers' },
+  { id: 'leads', label: 'Leads', description: 'Contactos interesados que todavía no compran ni están citados.', section: 'Rápidos', kind: 'quick', quickFilter: 'leads' },
   { id: 'comments', label: 'Comentarios', description: 'Abre la bandeja de comentarios de Facebook e Instagram.', section: 'Rápidos', kind: 'comments', separatorBefore: true },
   ...CHANNEL_FILTER_OPTIONS.filter((option) => option.value !== 'all').map((option) => ({
     id: `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}channel:${option.value}`,
@@ -1362,6 +1362,7 @@ function PhoneShell({
   const [pendingChatDraft, setPendingChatDraft] = useState<PendingChatDraft | null>(null);
   const [contactToolContext, setContactToolContext] = useState<{ section: PhoneSection; contact: ChatContact; key: string } | null>(null);
   const [mobileAppConfig, setMobileAppConfig] = useState<Record<string, ConfigValue>>({});
+  const [customLabels, setCustomLabels] = useState<CustomLabels>(DEFAULT_CUSTOM_LABELS);
   const [nativeThemeState, setNativeThemeState] = useState(() => ({
     tone: activeNativeThemeTone,
     background: getNativePhoneThemeBackground(activeNativeThemeTone),
@@ -1455,6 +1456,20 @@ function PhoneShell({
   }, [api]);
 
   useEffect(() => {
+    let cancelled = false;
+    api.getCustomLabels()
+      .then((labels) => {
+        if (!cancelled) setCustomLabels(cleanAnalyticsLabels(labels));
+      })
+      .catch(() => {
+        if (!cancelled) setCustomLabels(DEFAULT_CUSTOM_LABELS);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
     const applyTheme = (systemTone?: string | null) => {
       const result = applyNativePhoneThemePreference(mobileChatSettings.themePreference, systemTone);
       setNativeThemeState((current) => (
@@ -1535,6 +1550,7 @@ function PhoneShell({
 	          {section === 'chat' ? (
 	            <ChatScreen
               api={api}
+              customLabels={customLabels}
               settings={mobileChatSettings}
               notificationContactId={notificationContactId}
               pendingDraft={pendingChatDraft}
@@ -1561,6 +1577,7 @@ function PhoneShell({
             <AppFrame>
 	              <PaymentsSection
 	                api={api}
+                customLabels={customLabels}
                 initialContact={contactToolContext?.section === 'payments' ? contactToolContext.contact : null}
                 initialContactKey={contactToolContext?.section === 'payments' ? contactToolContext.key : ''}
 	                onOpenChatDraft={(draft) => {
@@ -1573,12 +1590,13 @@ function PhoneShell({
           ) : null}
           {section === 'analytics' ? (
             <AppFrame>
-              <AnalyticsSection api={api} />
+              <AnalyticsSection api={api} customLabels={customLabels} />
             </AppFrame>
           ) : null}
           {section === 'settings' ? (
             <SettingsScreen
               api={api}
+              customLabels={customLabels}
               user={user}
               baseUrl={baseUrl}
               nativeThemeTone={nativeThemeTone}
@@ -2241,6 +2259,7 @@ function LoginScreen({
 
 function ChatScreen({
   api,
+  customLabels = DEFAULT_CUSTOM_LABELS,
   footer,
   notificationContactId,
   pendingDraft,
@@ -2254,6 +2273,7 @@ function ChatScreen({
   onNavigateToContactTool,
 }: {
   api: RistakApiClient;
+  customLabels?: CustomLabels;
   footer?: React.ReactNode;
   notificationContactId?: string;
   pendingDraft?: PendingChatDraft | null;
@@ -2740,8 +2760,8 @@ function ChatScreen({
     [chatTags],
   );
   const phoneChatConditionFieldGroups = useMemo(
-    () => buildPhoneChatConditionFieldGroups(businessPhones, chatCustomFields),
-    [businessPhones, chatCustomFields],
+    () => buildPhoneChatConditionFieldGroups(businessPhones, chatCustomFields, customLabels),
+    [businessPhones, chatCustomFields, customLabels],
   );
   const phoneChatConditionFields = useMemo(
     () => phoneChatConditionFieldGroups.flatMap((group) => group.fields),
@@ -2762,8 +2782,8 @@ function ChatScreen({
     customFiltersById: customChatFilterMap,
   }), [businessPhones, chatTagMap, customChatFilterMap, phoneChatConditionFieldMap]);
   const availableChatFilterPresets = useMemo(
-    () => buildAvailableChatFilterPresets(businessPhones, normalizedCustomChatFilters),
-    [businessPhones, normalizedCustomChatFilters],
+    () => buildAvailableChatFilterPresets(businessPhones, normalizedCustomChatFilters, customLabels),
+    [businessPhones, customLabels, normalizedCustomChatFilters],
   );
   const filterPresetMap = useMemo(
     () => new Map(availableChatFilterPresets.map((preset) => [preset.id, preset])),
@@ -3817,6 +3837,7 @@ function ChatScreen({
             accountCurrency={accountCurrency}
             archived={archivedChatIds.includes(selected.id)}
             businessPhones={businessPhones}
+            customLabels={customLabels}
             integrationsStatus={integrationsStatus}
             muted={mutedChatIds.includes(selected.id)}
             timezone={businessTimezone}
@@ -3850,6 +3871,7 @@ function ChatScreen({
         availableFilters={availableChatFilterPresets}
         catalogLoading={filterCatalogLoading}
         customFiltersById={customChatFilterMap}
+        customLabels={customLabels}
         draft={customFilterDraft}
         editingCustomFilterId={editingCustomChatFilterId}
         fieldGroups={phoneChatConditionFieldGroups}
@@ -3971,12 +3993,14 @@ function ChatScreen({
 
 function PaymentsSection({
   api,
+  customLabels = DEFAULT_CUSTOM_LABELS,
   initialContact = null,
   initialContactKey = '',
   onOpenChatDraft,
   onInitialContactConsumed,
 }: {
   api: RistakApiClient;
+  customLabels?: CustomLabels;
   initialContact?: ChatContact | null;
   initialContactKey?: string;
   onOpenChatDraft: (draft: PendingChatDraft) => void;
@@ -4015,6 +4039,8 @@ function PaymentsSection({
   const [paymentAccess, setPaymentAccess] = useState<MobilePaymentAccess>(DEFAULT_MOBILE_PAYMENT_ACCESS);
   const [paymentAccessLoading, setPaymentAccessLoading] = useState(true);
   const handledInitialPaymentContactKeyRef = useRef('');
+  const customerLabel = customLabels.customer || DEFAULT_CUSTOM_LABELS.customer;
+  const customerLowerLabel = formatMobileCrmLabelLower(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
 
   const loadAccountContext = useCallback(async () => {
     try {
@@ -4358,6 +4384,7 @@ function PaymentsSection({
         currency={accountCurrency}
         initialContact={paymentContact}
         mode={view}
+        customLabels={customLabels}
         offlineOnly={paymentAccess.offlineOnly}
         connectedGateways={paymentAccess.connectedGateways}
         timezone={businessTimezone}
@@ -4524,7 +4551,7 @@ function PaymentsSection({
                         <Text numberOfLines={1} style={styles.recentPaymentAmount}>
                           {formatCurrency(getPaymentAmount(payment), payment.currency || accountCurrency)}
                         </Text>
-                        <Text numberOfLines={1} style={styles.recentPaymentContact}>{getPaymentContactLabel(payment)}</Text>
+                        <Text numberOfLines={1} style={styles.recentPaymentContact}>{getPaymentContactLabel(payment, `${customerLabel} sin nombre`)}</Text>
                       </View>
                       <View style={styles.recentPaymentMeta}>
                         <Text numberOfLines={1} style={styles.recentPaymentDate}>
@@ -5060,6 +5087,7 @@ function PaymentFormView({
   currency,
   initialContact,
   mode,
+  customLabels = DEFAULT_CUSTOM_LABELS,
   offlineOnly = false,
   connectedGateways = [],
   timezone,
@@ -5071,6 +5099,7 @@ function PaymentFormView({
   currency: string;
   initialContact: ChatContact;
   mode: Exclude<PaymentView, 'select' | 'products'>;
+  customLabels?: CustomLabels;
   offlineOnly?: boolean;
   connectedGateways?: PaymentGatewayProvider[];
   timezone: string;
@@ -5078,6 +5107,9 @@ function PaymentFormView({
   onPaymentLinkReady: (draft: PendingChatDraft) => void;
   onSaved: (draft?: PendingChatDraft) => void;
 }) {
+  const customerLabel = customLabels.customer || DEFAULT_CUSTOM_LABELS.customer;
+  const customerLowerLabel = formatMobileCrmLabelLower(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
+  const customerWithPlainArticle = formatMobileCrmLabelWithDefiniteArticle(customerLabel, DEFAULT_CUSTOM_LABELS.customer, 'none');
   const [selectedContact, setSelectedContact] = useState<ChatContact | null>(initialContact);
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<ChatContact[]>([]);
@@ -5473,7 +5505,7 @@ function PaymentFormView({
       return;
     }
     if (!resolvedContactName && !resolvedContactEmail && !resolvedContactPhone) {
-      Alert.alert('Falta el cliente', 'Selecciona un contacto para continuar.');
+      Alert.alert(`Falta el ${customerLowerLabel}`, 'Selecciona un contacto para continuar.');
       return;
     }
     if (mode === 'partial') {
@@ -5734,12 +5766,12 @@ function PaymentFormView({
       return;
     }
     if (!resolvedContactName && !resolvedContactEmail && !resolvedContactPhone) {
-      Alert.alert('Falta el cliente', 'Selecciona un contacto o escribe nombre, correo o teléfono.');
+      Alert.alert(`Falta el ${customerLowerLabel}`, 'Selecciona un contacto o escribe nombre, correo o teléfono.');
       return;
     }
     if (mode === 'subscription') {
       if ((activeSubscriptionProvider === 'mercadopago' || activeSubscriptionProvider === 'rebill') && !resolvedContactEmail) {
-        Alert.alert('Falta el email', `${activeSubscriptionProvider === 'mercadopago' ? 'Mercado Pago' : 'Rebill'} necesita email para que el cliente autorice la suscripción.`);
+        Alert.alert('Falta el email', `${activeSubscriptionProvider === 'mercadopago' ? 'Mercado Pago' : 'Rebill'} necesita email para que ${customerWithPlainArticle} autorice la suscripción.`);
         return;
       }
       if (activeSubscriptionProvider === 'conekta' && intervalType === 'daily') {
@@ -6094,7 +6126,7 @@ function PaymentFormView({
       </View>
 
       <View style={styles.paymentFormBlock}>
-        <Text style={styles.paymentFormBlockTitle}>Cliente</Text>
+        <Text style={styles.paymentFormBlockTitle}>{customerLabel}</Text>
         {selectedContact ? (
           <View style={styles.selectedContactCard}>
             <View style={styles.selectedContactIcon}>
@@ -6143,8 +6175,8 @@ function PaymentFormView({
                 ))}
               </View>
             ) : null}
-            <PaymentTextField label="Nombre manual" value={contactName} onChangeText={setContactName} placeholder="Cliente sin guardar" />
-            <PaymentTextField label="Correo" value={contactEmail} onChangeText={setContactEmail} placeholder="correo@cliente.com" keyboardType="email-address" />
+            <PaymentTextField label="Nombre manual" value={contactName} onChangeText={setContactName} placeholder={`${customerLabel} sin guardar`} />
+            <PaymentTextField label="Correo" value={contactEmail} onChangeText={setContactEmail} placeholder="correo@ejemplo.com" keyboardType="email-address" />
             <PaymentTextField label="Teléfono" value={contactPhone} onChangeText={setContactPhone} placeholder="+52..." keyboardType="phone-pad" />
           </>
         )}
@@ -6448,7 +6480,7 @@ function PaymentFormView({
                   <Text style={styles.paymentWarningText}>
                     {firstPaymentAmount > 0
                       ? 'Se registrará el primer pago y después se preparará el enlace para domiciliar los cobros restantes.'
-                      : 'Se preparará un enlace para que el cliente autorice la tarjeta de los cobros restantes.'}
+                      : `Se preparará un enlace para que ${customerWithPlainArticle} autorice la tarjeta de los cobros restantes.`}
                   </Text>
                 </>
               ) : (
@@ -10467,6 +10499,26 @@ function cleanAnalyticsLabels(labels?: Partial<CustomLabels> | null): CustomLabe
   };
 }
 
+function formatMobileCrmLabelLower(value: string | null | undefined, fallback: string) {
+  return (String(value || '').trim() || fallback).toLocaleLowerCase('es-MX');
+}
+
+function mobileLabelLooksFeminineSingular(label: string) {
+  const clean = label.trim().toLocaleLowerCase('es-MX');
+  if (!clean || /\s/.test(clean)) return false;
+  if (/(cion|ción|sion|sión|dad|tad|tud|umbre)$/.test(clean)) return true;
+  if (/(ista|ante|ente)$/.test(clean)) return false;
+  return clean.endsWith('a');
+}
+
+function formatMobileCrmLabelWithDefiniteArticle(value: string | null | undefined, fallback: string, preposition: 'de' | 'a' | 'none' = 'de') {
+  const label = formatMobileCrmLabelLower(value, fallback);
+  const feminine = mobileLabelLooksFeminineSingular(label);
+  if (preposition === 'none') return `${feminine ? 'la' : 'el'} ${label}`;
+  if (preposition === 'a') return `${feminine ? 'a la' : 'al'} ${label}`;
+  return `${feminine ? 'de la' : 'del'} ${label}`;
+}
+
 function normalizeAnalyticsPhone(value?: string | null) {
   return String(value || '').replace(/\D/g, '');
 }
@@ -10668,7 +10720,7 @@ function AnalyticsDualLineChart({
   );
 }
 
-function AnalyticsSection({ api }: { api: RistakApiClient }) {
+function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: RistakApiClient; customLabels?: CustomLabels }) {
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d');
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const [customRangeOpen, setCustomRangeOpen] = useState(false);
@@ -10686,7 +10738,7 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
   const [funnelData, setFunnelData] = useState<DashboardFunnelRow[]>([]);
   const [originData, setOriginData] = useState<OriginDistributionData>(EMPTY_ORIGIN_DATA);
   const [detectedPhones, setDetectedPhones] = useState<WhatsAppApiPhoneNumber[]>([]);
-  const [labels, setLabels] = useState<CustomLabels>(DEFAULT_CUSTOM_LABELS);
+  const [labels, setLabels] = useState<CustomLabels>(() => cleanAnalyticsLabels(customLabels));
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
   const [accountCurrency, setAccountCurrency] = useState(normalizeCurrencyCode());
   const [loading, setLoading] = useState(true);
@@ -10714,6 +10766,10 @@ function AnalyticsSection({ api }: { api: RistakApiClient }) {
     return getTodayRange(activePeriod.days ?? 30, businessTimezone);
   }, [activePeriod.days, businessTimezone, customEndDate, customStartDate, period]);
   const groupBy = useMemo(() => getAnalyticsGroupBy(period, range.startDate, range.endDate), [period, range.endDate, range.startDate]);
+
+  useEffect(() => {
+    setLabels(cleanAnalyticsLabels(customLabels));
+  }, [customLabels]);
 
   useEffect(() => {
     setCustomStartDate((current) => current || defaultCustomRange.startDate);
@@ -11524,6 +11580,7 @@ function getSettingsChoiceIconColor(selected: boolean) {
 
 function SettingsScreen({
   api,
+  customLabels = DEFAULT_CUSTOM_LABELS,
   user,
   baseUrl,
   footer,
@@ -11533,6 +11590,7 @@ function SettingsScreen({
   onChangeServer,
 }: {
   api: RistakApiClient;
+  customLabels?: CustomLabels;
   user: RistakUser | null;
   baseUrl: string;
   footer?: React.ReactNode;
@@ -11541,6 +11599,10 @@ function SettingsScreen({
   onLogout: () => Promise<void>;
   onChangeServer: () => Promise<void>;
 }) {
+  const customerLabel = customLabels.customer || DEFAULT_CUSTOM_LABELS.customer;
+  const customersLabel = customLabels.customers || DEFAULT_CUSTOM_LABELS.customers;
+  const customerLowerLabel = formatMobileCrmLabelLower(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
+  const customersLowerLabel = formatMobileCrmLabelLower(customersLabel, DEFAULT_CUSTOM_LABELS.customers);
   const [activePanel, setActivePanel] = useState<SettingsPanel>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -12127,6 +12189,7 @@ function SettingsScreen({
       onSaveBusinessContext={saveRefinedBusinessContext}
       onSaveAppPreference={(key, value) => void saveAppPreference(key, value)}
       onConnectToken={connectAIToken}
+      customersLowerLabel={customersLowerLabel}
     />
   );
 
@@ -12307,7 +12370,7 @@ function SettingsScreen({
           {!calendarsLoading && !calendars.length ? <Text style={styles.settingsHint}>No hay calendarios activos para elegir.</Text> : null}
         </View>
       ) : null}
-      <SettingsToggleRow title="Citas confirmadas" description="Avísame cuando un cliente confirme que sí asistirá." checked={appointmentConfirmationPushEnabled} disabled={savingKey === 'appointment_confirmation_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('appointment_confirmation_push_notifications_enabled', checked)} />
+      <SettingsToggleRow title="Citas confirmadas" description={`Avísame cuando un ${customerLowerLabel} confirme que sí asistirá.`} checked={appointmentConfirmationPushEnabled} disabled={savingKey === 'appointment_confirmation_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('appointment_confirmation_push_notifications_enabled', checked)} />
       <SettingsToggleRow title="Pagos" description="Avísame cuando se registre un pago." checked={paymentPushEnabled} disabled={savingKey === 'payment_push_notifications_enabled'} onChange={(checked) => void saveUserPreference('payment_push_notifications_enabled', checked)} />
       <View style={styles.settingsCard}>
         <View style={styles.settingsCardHeader}>
@@ -12349,7 +12412,7 @@ function SettingsScreen({
           <Text style={styles.settingsKicker}>Ristak</Text>
           <Text numberOfLines={2} style={styles.settingsTitle}>{getSettingsPanelTitle(activePanel)}</Text>
           {activePanel === 'custom-fields' ? <Text style={styles.settingsHeaderSubtitle}>Elige qué datos quieres ver en la info de cada contacto.</Text> : null}
-          {activePanel === 'privacy' ? <Text style={styles.settingsHeaderSubtitle}>Ajustes que afectan lo que tus clientes pueden saber de tu lectura.</Text> : null}
+          {activePanel === 'privacy' ? <Text style={styles.settingsHeaderSubtitle}>Ajustes que afectan lo que tus {customersLowerLabel} pueden saber de tu lectura.</Text> : null}
         </View>
         <SectionState loading={loading} error={error} onRetry={load} />
         {!loading && !error ? <View style={styles.settingsContent}>{renderPanel()}</View> : null}
@@ -12376,6 +12439,7 @@ function SettingsAgentPanel({
   onSaveBusinessContext,
   onSaveAppPreference,
   onConnectToken,
+  customersLowerLabel,
 }: {
   api: RistakApiClient;
   aiReady: boolean;
@@ -12393,6 +12457,7 @@ function SettingsAgentPanel({
   onSaveBusinessContext: (answer: string) => Promise<boolean>;
   onSaveAppPreference: (key: string, value: ConfigValue) => void;
   onConnectToken: (apiKey: string) => Promise<void>;
+  customersLowerLabel: string;
 }) {
   const [businessVoiceState, setBusinessVoiceState] = useState<BusinessVoiceState>('idle');
   const [tokenDraft, setTokenDraft] = useState('');
@@ -12569,7 +12634,7 @@ function SettingsAgentPanel({
           <View style={styles.businessDescriptionIcon}><Sparkles size={19} color={COLORS.white} strokeWidth={2.25} /></View>
           <View style={styles.businessDescriptionCopy}>
             <Text style={styles.businessDescriptionTitle}>Descripción del negocio</Text>
-            <Text style={styles.businessDescriptionSubtitle}>Dicta tu giro, servicios y clientes; la IA lo pule y lo guarda aquí.</Text>
+            <Text style={styles.businessDescriptionSubtitle}>Dicta tu giro, servicios y {customersLowerLabel}; la IA lo pule y lo guarda aquí.</Text>
           </View>
         </View>
         <View style={styles.businessDescriptionField}>
@@ -13055,8 +13120,8 @@ function getPaymentSortTime(transaction: TransactionItem) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function getPaymentContactLabel(transaction: TransactionItem) {
-  return transaction.contactName || transaction.email || transaction.phone || 'Cliente sin nombre';
+function getPaymentContactLabel(transaction: TransactionItem, fallback = 'Contacto sin nombre') {
+  return transaction.contactName || transaction.email || transaction.phone || fallback;
 }
 
 function getPaymentMethodLabel(method?: string | null) {
@@ -13319,6 +13384,7 @@ function FilterManagerSheet({
   availableFilters,
   catalogLoading,
   customFiltersById,
+  customLabels = DEFAULT_CUSTOM_LABELS,
   draft,
   editingCustomFilterId,
   fieldGroups,
@@ -13347,6 +13413,7 @@ function FilterManagerSheet({
   availableFilters: ChatFilterPreset[];
   catalogLoading: boolean;
   customFiltersById: Map<string, PhoneChatCustomFilterPreset>;
+  customLabels?: CustomLabels;
   draft: PhoneChatCustomFilterDraft;
   editingCustomFilterId: string;
   fieldGroups: PhoneChatConditionFieldGroup[];
@@ -13371,6 +13438,7 @@ function FilterManagerSheet({
   onSetMode: (mode: 'list' | 'editor') => void;
   onToggleVisible: (filterId: ChatFilterId) => void;
 }) {
+  const customersLabel = customLabels.customers || DEFAULT_CUSTOM_LABELS.customers;
   const sections = useMemo(() => {
     const grouped = new Map<string, ChatFilterPreset[]>();
     availableFilters.forEach((preset) => {
@@ -13485,7 +13553,7 @@ function FilterManagerSheet({
         <TextInput
           value={draft.label}
           onChangeText={(label) => onSetDraft((current) => ({ ...current, label }))}
-          placeholder="Ej. Clientes de mi WhatsApp"
+          placeholder={`Ej. ${customersLabel} de mi WhatsApp`}
           placeholderTextColor={COLORS.muted}
           maxLength={40}
           style={styles.filterEditorInput}
@@ -17457,7 +17525,12 @@ function mapCustomFieldDataTypeToAdvancedType(field: Partial<ContactCustomFieldD
 function buildPhoneChatConditionFieldGroups(
   businessPhones: WhatsAppApiPhoneNumber[],
   customFields: ContactCustomFieldDefinition[],
+  customLabels: CustomLabels = DEFAULT_CUSTOM_LABELS,
 ): PhoneChatConditionFieldGroup[] {
+  const customerLabel = customLabels.customer || DEFAULT_CUSTOM_LABELS.customer;
+  const customersLabel = customLabels.customers || DEFAULT_CUSTOM_LABELS.customers;
+  const leadLabel = customLabels.lead || DEFAULT_CUSTOM_LABELS.lead;
+  const leadsLabel = customLabels.leads || DEFAULT_CUSTOM_LABELS.leads;
   const phoneOptions: ContactAdvancedOption[] = businessPhones.map((phone, index) => ({
     value: phone.id,
     label: getBusinessPhoneLabel(phone) || `Numero ${index + 1}`,
@@ -17486,8 +17559,8 @@ function buildPhoneChatConditionFieldGroups(
           label: 'Segmento del chat',
           type: 'select',
           options: [
-            { value: 'customers', label: 'Clientes' },
-            { value: 'leads', label: 'Leads' },
+            { value: 'customers', label: customersLabel },
+            { value: 'leads', label: leadsLabel },
             { value: 'appointments', label: 'Agendados' },
             { value: 'unread', label: 'No leídos' },
             { value: 'comments', label: 'Comentarios' },
@@ -17512,9 +17585,9 @@ function buildPhoneChatConditionFieldGroups(
           label: 'Etapa comercial',
           type: 'select',
           options: [
-            { value: 'lead', label: 'Lead' },
+            { value: 'lead', label: leadLabel },
             { value: 'appointment', label: 'Con cita' },
-            { value: 'customer', label: 'Cliente' },
+            { value: 'customer', label: customerLabel },
           ],
           section: 'Contacto',
         },
@@ -17535,7 +17608,31 @@ function buildPhoneChatConditionFieldGroups(
 function buildAvailableChatFilterPresets(
   businessPhones: WhatsAppApiPhoneNumber[],
   customFilters: PhoneChatCustomFilterPreset[],
+  customLabels: CustomLabels = DEFAULT_CUSTOM_LABELS,
 ) {
+  const customersLabel = customLabels.customers || DEFAULT_CUSTOM_LABELS.customers;
+  const leadsLabel = customLabels.leads || DEFAULT_CUSTOM_LABELS.leads;
+  const customersLowerLabel = formatMobileCrmLabelLower(customersLabel, DEFAULT_CUSTOM_LABELS.customers);
+  const leadsLowerLabel = formatMobileCrmLabelLower(leadsLabel, DEFAULT_CUSTOM_LABELS.leads);
+  const localizedLibrary = CHAT_FILTER_LIBRARY.map((preset) => {
+    if (preset.id === 'customers') {
+      return {
+        ...preset,
+        label: customersLabel,
+        description: `Contactos marcados como ${customersLowerLabel} o con compras.`,
+      };
+    }
+    if (preset.id === 'leads') {
+      return {
+        ...preset,
+        label: leadsLabel,
+        description: `Contactos ${leadsLowerLabel} que todavía no son ${customersLowerLabel} ni citados.`,
+      };
+    }
+    if (preset.id === `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}stage:lead`) return { ...preset, label: `Etapa: ${leadsLabel}` };
+    if (preset.id === `${PHONE_CHAT_ADVANCED_FILTER_PREFIX}stage:customer`) return { ...preset, label: `Etapa: ${customersLabel}` };
+    return preset;
+  });
   const phonePresets: ChatFilterPreset[] = businessPhones.map((phone, index) => {
     const label = getBusinessPhoneLabel(phone) || `Numero ${index + 1}`;
     const value = getBusinessPhoneValue(phone);
@@ -17556,7 +17653,7 @@ function buildAvailableChatFilterPresets(
     kind: 'custom',
     customFilterId: filter.id,
   }));
-  return [...CHAT_FILTER_LIBRARY, ...phonePresets, ...customPresets];
+  return [...localizedLibrary, ...phonePresets, ...customPresets];
 }
 
 function getConditionRuleScalarValue(value: PhoneChatCustomFilterRule['value']) {
@@ -18293,6 +18390,7 @@ function NativeContactDetailScreen({
   accountCurrency,
   businessPhones = [],
   contact,
+  customLabels = DEFAULT_CUSTOM_LABELS,
   error,
   journeyEvents,
   journeyMessages,
@@ -18308,6 +18406,7 @@ function NativeContactDetailScreen({
   accountCurrency: string;
   businessPhones?: WhatsAppApiPhoneNumber[];
   contact: ChatContact;
+  customLabels?: CustomLabels;
   error?: string;
   journeyEvents: JourneyEvent[];
   journeyMessages: ChatMessage[];
@@ -18330,6 +18429,9 @@ function NativeContactDetailScreen({
   const [ourNumberOpen, setOurNumberOpen] = useState(false);
   const [changingOurNumberId, setChangingOurNumberId] = useState<string | null>(null);
   const [contentFocusItem, setContentFocusItem] = useState<NativeContentFocusItem | null>(null);
+  const customerLabel = customLabels.customer || DEFAULT_CUSTOM_LABELS.customer;
+  const leadLabel = customLabels.lead || DEFAULT_CUSTOM_LABELS.lead;
+  const customerJourneyLabel = formatMobileCrmLabelWithDefiniteArticle(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
 
   useEffect(() => {
     setNameDraft(getContactName(contact));
@@ -18361,7 +18463,12 @@ function NativeContactDetailScreen({
   const nextAppointment = activeAppointments.find((appointment) => parseSortableDateValue(appointment.startTime) >= Date.now()) || activeAppointments[0];
   const firstSuccessfulPayment = [...successfulPayments].sort((left, right) => parseSortableDateValue(left.date) - parseSortableDateValue(right.date))[0];
   const leadDate = journeyEvents.find((event) => event.type === 'contact_created')?.date || contact.createdAt;
-  const statusLabel = normalizeProbe(contact.status) === 'customer' || Number(contact.purchases || 0) > 0 || displayedRevenue > 0 ? 'Cliente' : formatPlainStatus(contact.status || 'lead');
+  const normalizedStatus = normalizeProbe(contact.status);
+  const statusLabel = normalizedStatus === 'customer' || Number(contact.purchases || 0) > 0 || displayedRevenue > 0
+    ? customerLabel
+    : normalizedStatus === 'lead'
+      ? leadLabel
+      : formatPlainStatus(contact.status || 'lead');
   const automaticPhone = businessPhones.find((phone) => phone.id === contact.lastBusinessPhoneNumberId) || businessPhones[0] || null;
   const preferredPhoneId = contact.preferredWhatsAppPhoneNumberId || contact.preferred_whatsapp_phone_number_id || '';
   const selectedBusinessPhone = businessPhones.find((phone) => phone.id === preferredPhoneId) || automaticPhone;
@@ -18625,7 +18732,7 @@ function NativeContactDetailScreen({
 
   if (panel === 'journey') {
     return (
-      <ContactInfoLightPage title="Viaje de cliente" onBack={goBackFromPanel}>
+      <ContactInfoLightPage title={`Viaje ${customerJourneyLabel}`} onBack={goBackFromPanel}>
         {journeyItems.length ? (
           <View style={styles.contactInfoJourneyPanel}>
             <View style={styles.contactInfoJourneyHeader}>
@@ -18809,7 +18916,7 @@ function NativeContactDetailScreen({
             : nextAppointment
               ? renderRow('converted-appointment', CalendarDays, 'Convirtió', `${nextAppointment.title} · ${getContactInfoDateTime(nextAppointment.startTime, timezone)}`, tracking.source || 'Cita')
               : renderRow('converted-empty', DollarSign, 'Convirtió', 'Aún sin conversión registrada')}
-          <ContactInfoSummaryRow Icon={MousePointerClick} title="Viaje de cliente" subtitle={`${journeyItems.length} eventos · De más nuevo a más viejo`} action="Ver" onPress={() => openPanel('journey')} />
+          <ContactInfoSummaryRow Icon={MousePointerClick} title={`Viaje ${customerJourneyLabel}`} subtitle={`${journeyItems.length} eventos · De más nuevo a más viejo`} action="Ver" onPress={() => openPanel('journey')} />
         </View>
 
         {(nextAppointment || payments.length) ? (
@@ -19098,6 +19205,7 @@ function NativeConversationScreen({
   archived,
   businessPhones = [],
   contact,
+  customLabels = DEFAULT_CUSTOM_LABELS,
   integrationsStatus,
   muted,
   timezone,
@@ -19116,6 +19224,7 @@ function NativeConversationScreen({
   archived: boolean;
   businessPhones?: WhatsAppApiPhoneNumber[];
   contact: ChatContact;
+  customLabels?: CustomLabels;
   integrationsStatus?: IntegrationsStatus | null;
   muted: boolean;
   timezone: string;
@@ -20799,6 +20908,7 @@ function NativeConversationScreen({
         contact={contactInfo || contact}
         accountCurrency={accountCurrency}
         businessPhones={businessPhones}
+        customLabels={customLabels}
         journeyEvents={contactInfoJourneyEvents ?? journeyEvents}
         journeyMessages={messages}
         loading={contactInfoLoading}

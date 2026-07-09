@@ -2745,7 +2745,7 @@ export function ContactDetailsModal({
                   </div>
                 )}
 
-                {/* Viaje del Cliente */}
+                {/* Viaje del contacto */}
                 <div className={styles.detailSection}>
                   <ContactJourney contactId={selectedContact.id} layout="snake" />
                 </div>

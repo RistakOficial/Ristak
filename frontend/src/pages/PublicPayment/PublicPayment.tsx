@@ -3355,8 +3355,8 @@ export const PublicPayment: React.FC = () => {
       : []),
     ...(showCustomerInfo
       ? [{
-          label: 'Cliente',
-          value: payment.contact?.name || 'Cliente'
+          label: 'Contacto',
+          value: payment.contact?.name || 'Contacto'
         }]
       : []),
     {
@@ -3456,8 +3456,8 @@ export const PublicPayment: React.FC = () => {
 
               <div className={styles.summaryRows}>
                 <div>
-                  <span>Cliente</span>
-                  <strong>{payment.contact?.name || 'Cliente'}</strong>
+                  <span>Contacto</span>
+                  <strong>{payment.contact?.name || 'Contacto'}</strong>
                 </div>
                 {payment.contact?.email && (
                   <div>
@@ -3799,8 +3799,8 @@ export const PublicPayment: React.FC = () => {
               )}
               {showCustomerInfo && (
                 <div>
-                  <span>Cliente</span>
-                  <strong>{payment.contact?.name || 'Cliente'}</strong>
+                  <span>Contacto</span>
+                  <strong>{payment.contact?.name || 'Contacto'}</strong>
                   {payment.contact?.email && <p>{payment.contact.email}</p>}
                   {payment.contact?.phone && <p>{payment.contact.phone}</p>}
                   <p>Referencia {payment.publicPaymentId}</p>

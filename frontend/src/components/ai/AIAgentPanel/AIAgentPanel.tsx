@@ -154,7 +154,7 @@ function getSitesAIIntro(siteKind: AIAgentSitesCreationKind, siteTitle = '') {
     '- Nicho o tipo de negocio.',
     '- Servicio, producto u oferta principal.',
     '- Objetivo de la página.',
-    '- Cliente o prospecto ideal.',
+    '- Perfil ideal.',
     '- Estilo visual deseado.',
     '- Si quieres formulario y que campos debe pedir.',
     '- CTA principal.',
@@ -212,7 +212,7 @@ const emptyForm: AIAgentConfigInput = {
 
 const legacyBusinessContextFields = [
   { label: 'Mercado o nicho', key: 'marketContext' },
-  { label: 'Cliente ideal', key: 'idealCustomer' },
+  { label: 'Perfil ideal', key: 'idealCustomer' },
   { label: 'Zona geográfica', key: 'locationContext' },
   { label: 'Competidores o referencias', key: 'competitorsContext' },
   { label: 'Tono, prioridades y reglas', key: 'brandVoice' }

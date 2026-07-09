@@ -78,7 +78,7 @@ const STEP_CONFIGS: StepConfig[] = [
     key: 'contacts',
     label: 'Contactos',
     icon: Users,
-    description: 'Actualizando perfiles y detalles de clientes'
+    description: 'Actualizando perfiles y detalles de contactos'
   },
   {
     key: 'appointments',

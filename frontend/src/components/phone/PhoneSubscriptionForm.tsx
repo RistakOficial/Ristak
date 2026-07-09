@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Check, ChevronRight, Copy, ExternalLink, Loader2, Repeat2, Search, User, X } from 'lucide-react'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import type { PaymentGatewayProvider } from '@/hooks'
 import { PaymentPlatformLogo } from '@/components/common/PaymentPlatformLogo'
@@ -10,6 +11,7 @@ import {
   type SubscriptionInterval
 } from '@/services/subscriptionsService'
 import type { Contact } from '@/types'
+import { DEFAULT_CRM_LABELS, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
 import { PhonePaymentFormShell } from './PhonePaymentFormShell'
 import {
   PhoneButton,
@@ -153,6 +155,10 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
   onSaved
 }) => {
   const { showToast } = useNotification()
+  const { labels } = useLabels()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
+  const customerWithArticle = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer, 'a')
+  const customerWithPlainArticle = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer, 'none')
   const subscriptionProviders = useMemo(() => providers.filter(isSubscriptionGatewayProvider), [providers])
   const providerOptions = useMemo<PhoneSelectOption[]>(() => (
     subscriptionProviders.map((provider) => ({
@@ -273,7 +279,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     if (!authorizationLink) return
     try {
       await navigator.clipboard.writeText(authorizationLink)
-      showToast('success', 'Link copiado', 'Ya puedes enviarlo al cliente para autorizar la suscripción.')
+      showToast('success', 'Link copiado', `Ya puedes enviarlo ${customerWithArticle} para autorizar la suscripción.`)
     } catch {
       showToast('error', 'No se pudo copiar', 'Copia el enlace manualmente.')
     }
@@ -302,11 +308,11 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
       return false
     }
     if (targetProvider === 'mercadopago' && !resolvedContactEmail) {
-      showToast('warning', 'Falta el email', 'Mercado Pago necesita email para que el cliente autorice la suscripción.')
+      showToast('warning', 'Falta el email', `Mercado Pago necesita email para que ${customerWithPlainArticle} autorice la suscripción.`)
       return false
     }
     if (targetProvider === 'rebill' && !resolvedContactEmail) {
-      showToast('warning', 'Falta el email', 'Rebill necesita email para que el cliente autorice la suscripción.')
+      showToast('warning', 'Falta el email', `Rebill necesita email para que ${customerWithPlainArticle} autorice la suscripción.`)
       return false
     }
     if (targetProvider === 'conekta' && draft.intervalType === 'daily') {
@@ -350,7 +356,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
       setProviderStepOpen(false)
 
       if (link) {
-        showToast('success', 'Link listo', 'Copia el enlace para que el cliente active la suscripción.')
+        showToast('success', 'Link listo', `Copia el enlace para que ${customerWithPlainArticle} active la suscripción.`)
         return
       }
 
@@ -388,7 +394,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     if (lockInitialContact) {
       return (
         <div className={styles.fieldGroup}>
-          <span className={styles.fieldLabel}>Cliente</span>
+          <span className={styles.fieldLabel}>{customerLabel}</span>
           <div className={`${styles.contactPickerTrigger} ${styles.lockedContact}`}>
             <span className={styles.contactPickerIcon}>
               <User size={22} aria-hidden="true" />
@@ -404,7 +410,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
 
     return (
       <div className={styles.fieldGroup}>
-        <span className={styles.fieldLabel}>Cliente</span>
+        <span className={styles.fieldLabel}>{customerLabel}</span>
         <div className={styles.contactPickerControl}>
           <button
             type="button"
@@ -457,7 +463,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
         >
           <header className={styles.sheetHeader}>
             <div>
-              <span>Cliente</span>
+              <span>{customerLabel}</span>
               <strong>Seleccionar contacto</strong>
             </div>
             <button
@@ -523,7 +529,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
     return (
       <PhonePaymentFormShell
         title="Suscripción lista"
-        subtitle="Envíale el link al cliente para que active la suscripción."
+        subtitle={`Envíale el link ${customerWithArticle} para que active la suscripción.`}
         icon={<Repeat2 size={22} aria-hidden="true" />}
         ariaLabel="Autorización de suscripción lista"
         onBack={finishSavedSubscription}
@@ -536,7 +542,7 @@ export const PhoneSubscriptionForm: React.FC<PhoneSubscriptionFormProps> = ({
       >
         <div className={styles.successCopy}>
           <strong>Autorización pendiente</strong>
-          <span>Cuando el cliente complete el enlace, la suscripción quedará activa.</span>
+          <span>Cuando {customerWithPlainArticle} complete el enlace, la suscripción quedará activa.</span>
         </div>
         <div className={styles.authorizationLink}>{authorizationLink}</div>
         <div className={styles.linkActions}>

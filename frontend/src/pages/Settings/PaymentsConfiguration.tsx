@@ -46,6 +46,7 @@ import {
   Modal,
   type MetaParameterVariable
 } from '@/components/common'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAccountCurrency, useAppConfig } from '@/hooks'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
@@ -101,6 +102,7 @@ import {
   loadAllVariables,
   type FlowVariable
 } from '@/pages/Automations/editor/variablesCatalog'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'meta' | 'automations' | 'gateways' | 'taxes'
@@ -719,6 +721,12 @@ export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { showToast, showConfirm } = useNotification()
+  const { labels } = useLabels()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
+  const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const customerWithArticle = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const customerWithPlainArticle = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer, 'none')
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
   const [accountCurrency] = useAccountCurrency()
   const [accountBusinessProfileRaw] = useAppConfig<AccountBusinessProfile>(
@@ -1909,7 +1917,7 @@ export const PaymentsConfiguration: React.FC = () => {
     try {
       const result = await clipPaymentsService.testConfig(buildClipModeConfigPayload(mode))
       setClipConnectionFailed(false)
-      showToast('success', 'Clave API lista para SDK', `Ristak puede montar Checkout Transparente de CLIP en modo ${result.mode === 'live' ? 'en vivo' : 'prueba'}. El cargo real se confirma cuando el cliente paga.`)
+      showToast('success', 'Clave API lista para SDK', `Ristak puede montar Checkout Transparente de CLIP en modo ${result.mode === 'live' ? 'en vivo' : 'prueba'}. El cargo real se confirma cuando ${customerWithPlainArticle} paga.`)
     } catch (error: any) {
       setClipConnectionFailed(true)
       showToast('error', 'No se pudo validar la Clave API', error.message || 'Pega la Clave API visible de CLIP, no la clave secreta.')
@@ -2471,7 +2479,7 @@ export const PaymentsConfiguration: React.FC = () => {
             <textarea
               value={checkout.description}
               onChange={(event) => setCheckoutValue('description', event.target.value)}
-              placeholder="Explica qué va a revisar el cliente antes de pagar."
+              placeholder={`Explica qué va a revisar ${customerWithPlainArticle} antes de pagar.`}
             />
           )}
           {renderField(
@@ -2845,7 +2853,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.sectionHeader}>
             <div>
               <h2>Comprobante de pago descargable</h2>
-              <p>Configura la hoja PDF que el cliente podrá descargar desde la confirmación de pago.</p>
+              <p>Configura la hoja PDF que {customerWithPlainArticle} podrá descargar desde la confirmación de pago.</p>
             </div>
             <Badge variant="success">
               <FileCheck2 size={14} />
@@ -3005,7 +3013,7 @@ export const PaymentsConfiguration: React.FC = () => {
 
           <div className={styles.switchStack}>
             {renderSwitchRow('Mostrar datos del negocio', 'Incluye nombre, contacto y dirección en la hoja.', receipt.showBusinessInfo, (next) => setReceiptValue('showBusinessInfo', next))}
-            {renderSwitchRow('Mostrar datos del cliente', 'Incluye nombre, correo y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
+            {renderSwitchRow(`Mostrar datos ${customerWithArticle}`, 'Incluye nombre, correo y referencia del pago.', receipt.showCustomerInfo, (next) => setReceiptValue('showCustomerInfo', next))}
             {renderSwitchRow('Mostrar términos', 'Agrega términos al final del comprobante descargable.', receipt.showTerms, (next) => setReceiptValue('showTerms', next))}
           </div>
 
@@ -3180,9 +3188,9 @@ export const PaymentsConfiguration: React.FC = () => {
                 )}
                 {receipt.showCustomerInfo && (
                   <div>
-                    <span>Cliente</span>
+                    <span>{customerLabel}</span>
                     <strong>María López</strong>
-                    <p>maria@cliente.com</p>
+                    <p>maria@ejemplo.com</p>
                     <p>Referencia PAY-1048</p>
                   </div>
                 )}
@@ -3472,7 +3480,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 <textarea
                   value={automations.afterPaymentMessage}
                   onChange={(event) => setAutomationValue('afterPaymentMessage', event.target.value)}
-                  placeholder="Mensaje que recibirá el cliente cuando el pago entre."
+                  placeholder={`Mensaje que recibirá ${customerWithPlainArticle} cuando el pago entre.`}
                 />
               )}
             </div>
@@ -4085,7 +4093,7 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.stripePanel}>
             <div className={styles.inlineWarning}>
               <Info size={16} />
-              <span>Usa la Clave API visible del panel de CLIP; la clave secreta no se necesita para el SDK. El cobro real se hace cuando el cliente paga y requiere correo/teléfono.</span>
+              <span>Usa la Clave API visible del panel de CLIP; la clave secreta no se necesita para el SDK. El cobro real se hace cuando {customerWithPlainArticle} paga y requiere correo/teléfono.</span>
             </div>
 
             <div className={styles.stripeModeGrid}>
@@ -4218,7 +4226,7 @@ export const PaymentsConfiguration: React.FC = () => {
                 <strong>Postback Webhook</strong>
               </div>
               <p className={styles.mercadoPagoTestGuideNote}>
-                Copia esta URL en el Postback Webhook del panel de CLIP para que Ristak reciba confirmaciones y actualice pagos aunque el cliente cierre la página.
+                Copia esta URL en el Postback Webhook del panel de CLIP para que Ristak reciba confirmaciones y actualice pagos aunque {customerWithPlainArticle} cierre la página.
               </p>
               {clipWebhookEndpoints.length > 0 ? (
                 <div className={styles.endpointList}>
@@ -4736,8 +4744,8 @@ export const PaymentsConfiguration: React.FC = () => {
           <div className={styles.gigstackPortalSection}>
             <div className={styles.gigstackPortalHeader}>
               <div>
-                <h4>Portal para que tus clientes facturen</h4>
-                <p>Gigstack maneja un portal que puedes compartir para que el cliente genere o consulte sus facturas. Su API también genera links seguros por cliente, pero esos links necesitan cliente específico y vencen.</p>
+                <h4>Portal para que tus {customersLowerLabel} facturen</h4>
+                <p>Gigstack maneja un portal que puedes compartir para que {customerWithPlainArticle} genere o consulte sus facturas. Su API también genera links seguros por {customerLowerLabel}, pero esos links necesitan contacto específico y vencen.</p>
               </div>
               <Badge variant="info">Copiable</Badge>
             </div>

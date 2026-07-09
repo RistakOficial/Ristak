@@ -1487,10 +1487,10 @@ export const Dashboard: React.FC = () => {
           ),
           buildInsightColumn(
             'sales',
-            'Clientes que pagaron',
+            `${labels.customers} que pagaron`,
             chartConfig.label2,
             metricValue2,
-            'Sin clientes con pago en este periodo.',
+            `Sin ${labels.customers.toLowerCase()} con pago en este periodo.`,
             mapContactsToInsightItems(payingContacts, 'payment')
           )
         ]
@@ -1784,7 +1784,7 @@ export const Dashboard: React.FC = () => {
                     <div key={transaction.id} className="flex items-center justify-between gap-4 py-3">
                       <div className="min-w-0">
                         <p className="m-0 truncate text-sm font-medium text-[var(--color-text-primary)]">
-                          {transaction.contactName || transaction.email || 'Cliente sin nombre'}
+                          {transaction.contactName || transaction.email || `${labels.customer} sin nombre`}
                         </p>
                         <p className="mt-1 text-xs text-[var(--color-text-tertiary)]">
                           {formatDate(getTransactionDate(transaction), { includeYear: true })}

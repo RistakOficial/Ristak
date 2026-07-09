@@ -119,6 +119,7 @@ import { formatChatDayLabel, formatChatListTimestamp, formatChatMessageTime, get
 import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
 import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
 import styles from './DesktopChat.module.css'
 
@@ -375,11 +376,10 @@ interface ContactInfoAppointment {
   assignedUserId?: string | null
 }
 
-const CHAT_FILTERS: Array<{ id: ChatFilter; label: string }> = [
+const BASE_CHAT_FILTERS: Array<{ id: Exclude<ChatFilter, 'customers'>; label: string }> = [
   { id: 'all', label: 'Todos' },
   { id: 'unread', label: 'No leídos' },
-  { id: 'appointments', label: 'Con cita' },
-  { id: 'customers', label: 'Clientes' }
+  { id: 'appointments', label: 'Con cita' }
 ]
 
 const DEFAULT_AGENT_INBOX_STATUS_FILTER: AgentInboxStatusFilter = 'active'
@@ -531,11 +531,9 @@ const SOCIAL_FILTER_OPTIONS = [
   { value: 'unknown', label: 'Sin red detectada' }
 ]
 
-const STAGE_FILTER_OPTIONS = [
+const BASE_STAGE_FILTER_OPTIONS = [
   { value: 'all', label: 'Todas las etapas' },
-  { value: 'lead', label: 'Interesados' },
-  { value: 'appointment', label: 'Con cita' },
-  { value: 'customer', label: 'Clientes' }
+  { value: 'appointment', label: 'Con cita' }
 ]
 
 const ACTIVITY_FILTER_OPTIONS = [
@@ -3000,6 +2998,20 @@ export const DesktopChat: React.FC = () => {
   const { labels } = useLabels()
   const { showToast } = useNotification()
   const { timezone, formatLocalDateTime } = useTimezone()
+  const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const customersLabel = labels.customers?.trim() || DEFAULT_CRM_LABELS.customers
+  const leadsLabel = labels.leads?.trim() || DEFAULT_CRM_LABELS.leads
+  const customerWithArticle = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const chatFilters = useMemo<Array<{ id: ChatFilter; label: string }>>(() => ([
+    ...BASE_CHAT_FILTERS,
+    { id: 'customers', label: customersLabel }
+  ]), [customersLabel])
+  const stageFilterOptions = useMemo(() => ([
+    BASE_STAGE_FILTER_OPTIONS[0],
+    { value: 'lead', label: leadsLabel },
+    BASE_STAGE_FILTER_OPTIONS[1],
+    { value: 'customer', label: customersLabel }
+  ]), [customersLabel, leadsLabel])
   const messagePaneRef = useRef<HTMLDivElement | null>(null)
   const chatsRequestRef = useRef<AbortController | null>(null)
   const chatListRef = useRef<HTMLDivElement | null>(null)
@@ -3908,7 +3920,7 @@ export const DesktopChat: React.FC = () => {
       id: 'stage',
       label: 'Etapa',
       value: advancedFilters.stage,
-      options: STAGE_FILTER_OPTIONS,
+      options: stageFilterOptions,
       onSelect: (value: string) => setAdvancedFilters((current) => ({ ...current, stage: value as AdvancedStageFilter }))
     },
     {
@@ -3918,7 +3930,7 @@ export const DesktopChat: React.FC = () => {
       options: ACTIVITY_FILTER_OPTIONS,
       onSelect: (value: string) => setAdvancedFilters((current) => ({ ...current, activity: value as AdvancedActivityFilter }))
     }
-  ]), [advancedFilters])
+  ]), [advancedFilters, stageFilterOptions])
 
   const loadChats = useCallback(async (options: { silent?: boolean; append?: boolean; search?: string } = {}) => {
     const silent = options.silent === true
@@ -5271,7 +5283,7 @@ export const DesktopChat: React.FC = () => {
     }
 
     if (!bodyText) {
-      showToast('warning', 'Falta el mensaje', 'Escribe el texto que quieres mandar al cliente.')
+      showToast('warning', 'Falta el mensaje', `Escribe el texto que quieres mandar al ${customerLowerLabel}.`)
       return
     }
 
@@ -7972,7 +7984,7 @@ export const DesktopChat: React.FC = () => {
                 ))
               ) : (
                 <>
-                  {CHAT_FILTERS.map((filter) => (
+                  {chatFilters.map((filter) => (
                     <button
                       key={filter.id}
                       type="button"
@@ -9046,7 +9058,7 @@ export const DesktopChat: React.FC = () => {
                         className={styles.summaryJourneyButton}
                         onClick={() => setInfoPanelView('journey')}
                       >
-                        Viaje del cliente
+                        Viaje {customerWithArticle}
                       </Button>
                     </div>
                     <div className={styles.metricsGrid}>
@@ -9185,7 +9197,7 @@ export const DesktopChat: React.FC = () => {
               </div>
               <div className={styles.emptyInfoPreview}>
                 <div><span>Teléfono</span><strong>Listo para contactar</strong></div>
-                <div><span>Etapa</span><strong>Interesado, cita o cliente</strong></div>
+                <div><span>Etapa</span><strong>{labels.lead}, cita o {customerLowerLabel}</strong></div>
                 <div><span>Resumen</span><strong>Compras, citas y mensajes</strong></div>
                 <div><span>Origen</span><strong>Canal, campaña y primer contacto</strong></div>
               </div>

@@ -3,10 +3,12 @@ import { BellRing, CalendarCheck2, CalendarClock, CheckCircle2, CreditCard, Mess
 import { Badge } from '@/components/common/Badge'
 import { Button, Card, CustomSelect, Switch } from '@/components/common'
 import { useAuth } from '@/contexts/AuthContext'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAppConfig } from '@/hooks'
 import { pushNotificationsService } from '@/services/pushNotificationsService'
 import { type TeamUser, userAccessService } from '@/services/userAccessService'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import styles from './Settings.module.css'
 
 const NOTIFICATION_PREFERENCES_CONFIG_KEY = 'notification_preferences_matrix'
@@ -62,7 +64,7 @@ const NOTIFICATION_EVENTS: Array<{
   {
     key: 'appointment_confirmed',
     label: 'Cita confirmada',
-    description: 'Clientes que confirman asistencia.',
+    description: 'Contactos que confirman asistencia.',
     icon: CalendarCheck2
   },
   {
@@ -217,6 +219,13 @@ const createCurrentUserRecipient = (user: ReturnType<typeof useAuth>['user']): N
 export const NotificationSettings: React.FC = () => {
   const { user } = useAuth()
   const { showToast } = useNotification()
+  const { labels } = useLabels()
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
+  const notificationEvents = useMemo(() => NOTIFICATION_EVENTS.map((event) => (
+    event.key === 'appointment_confirmed'
+      ? { ...event, description: `${customersLowerLabel} que confirman asistencia.` }
+      : event
+  )), [customersLowerLabel])
   const [storedPreferences, setStoredPreferences, syncingPreferences] = useAppConfig<NotificationPreferencesConfig>(
     NOTIFICATION_PREFERENCES_CONFIG_KEY,
     EMPTY_NOTIFICATION_PREFERENCES
@@ -547,7 +556,7 @@ export const NotificationSettings: React.FC = () => {
             <thead>
               <tr>
                 <th>Destinatario</th>
-                {NOTIFICATION_EVENTS.map((event) => {
+                {notificationEvents.map((event) => {
                   const Icon = event.icon
                   return (
                     <th key={event.key}>
@@ -582,7 +591,7 @@ export const NotificationSettings: React.FC = () => {
                         </Badge>
                       </span>
                     </td>
-                    {NOTIFICATION_EVENTS.map((event) => {
+                    {notificationEvents.map((event) => {
                       const value = getDraftChannel(recipient.id, event.key)
                       return (
                         <td key={`${recipient.id}-${event.key}`}>

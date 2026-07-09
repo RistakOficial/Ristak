@@ -6,6 +6,7 @@ import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
 import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { PhoneStartupLoader } from '@/components/phone/PhoneStartupLoader'
 import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext' // (MOB-007) zona del negocio para el bucket de caché diaria
 import { useAccountCurrency, usePaymentGatewayCapabilities, usePhoneElasticScroll } from '@/hooks'
@@ -14,6 +15,7 @@ import apiClient from '@/services/apiClient'
 import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from '@/services/phoneDailyCache'
 import { transactionsService, type Transaction } from '@/services/transactionsService'
 import { parseSortableDateValue } from '@/utils/dateSort'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import { DEFAULT_TIMEZONE, addDateOnlyDays, formatInTimezone, getDateOnlyFromCalendarLikeString, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhonePayments.module.css'
@@ -149,8 +151,8 @@ function getPaymentStatusLabel(status?: string | null) {
   return status || 'Sin estado'
 }
 
-function getContactLabel(transaction: Transaction) {
-  return transaction.contactName || transaction.email || transaction.phone || 'Cliente sin nombre'
+function getContactLabel(transaction: Transaction, fallback = 'Contacto sin nombre') {
+  return transaction.contactName || transaction.email || transaction.phone || fallback
 }
 
 function getProductId(product: ProductItem) {
@@ -182,6 +184,9 @@ export const PhonePayments: React.FC = () => {
   const [searchParams] = useSearchParams()
   const paymentCapabilities = usePaymentGatewayCapabilities()
   const { showConfirm, showToast } = useNotification()
+  const { labels } = useLabels()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
+  const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const { timezone } = useTimezone() // (MOB-007) zona del negocio
   const [accountCurrency] = useAccountCurrency()
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
@@ -736,7 +741,7 @@ export const PhonePayments: React.FC = () => {
             <p className={styles.eyebrow}>Ruta móvil</p>
             <h1 id="phone-payments-blocked-title">Solo celular o tablet</h1>
             <p>
-              Esta pantalla está hecha para cobrar desde celular o tablet. Ábrela desde un dispositivo portátil para cobrarle a tus clientes.
+              Esta pantalla está hecha para cobrar desde celular o tablet. Ábrela desde un dispositivo portátil para cobrarle a tus {customersLowerLabel}.
             </p>
           </div>
           <Link className={styles.dashboardLink} to="/transactions">
@@ -936,7 +941,7 @@ export const PhonePayments: React.FC = () => {
                             >
                               <span className={styles.recentPaymentMain}>
                                 <strong>{formatCurrency(payment.amount, payment.currency || accountCurrency)}</strong>
-                                <small>{getContactLabel(payment)}</small>
+                                <small>{getContactLabel(payment, `${customerLabel} sin nombre`)}</small>
                               </span>
                               <span className={styles.recentPaymentMeta}>
                                 <span>{formatPaymentDate(payment.date || payment.createdAt, timezone)}</span>

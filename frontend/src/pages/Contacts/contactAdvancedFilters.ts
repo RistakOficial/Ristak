@@ -146,11 +146,11 @@ const selectOperators: ContactAdvancedOption[] = [
 const statusOptions: ContactAdvancedOption[] = [
   { value: 'lead', label: 'Interesado / lead' },
   { value: 'appointment', label: 'Citado' },
-  { value: 'customer', label: 'Cliente' }
+  { value: 'customer', label: 'Contacto comprador' }
 ]
 
 const priorityOptions: ContactAdvancedOption[] = [
-  { value: 'high', label: 'Alta: clientes' },
+  { value: 'high', label: 'Alta: compradores' },
   { value: 'medium', label: 'Media: citados o asistencias' },
   { value: 'low', label: 'Baja: interesados' }
 ]
@@ -378,7 +378,7 @@ export const CONTACT_ADVANCED_FIELD_GROUPS: ContactAdvancedFieldGroup[] = [
       { key: 'updated_at', label: 'Actualizado', type: 'date' },
       { key: 'assigned_user_id', label: 'Propietario', type: 'text', catalog: 'users', placeholder: 'Buscar usuario' },
       { key: 'visitor_id', label: 'Visitor ID', type: 'text' },
-      { key: 'ghl_contact_id', label: 'ID de cliente potencial', type: 'text' },
+      { key: 'ghl_contact_id', label: 'ID de contacto potencial', type: 'text' },
       { key: 'stripe_customer_id', label: 'ID de Stripe', type: 'text' },
       { key: 'conekta_customer_id', label: 'ID de Conekta', type: 'text' },
       { key: 'preferred_whatsapp_phone_number_id', label: 'Número de WhatsApp asignado', type: 'text' }

@@ -2,8 +2,10 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LayoutTemplate, Plus, Sparkles } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useLabels } from '@/contexts/LabelsContext'
 import automationsService from '@/services/automationsService'
 import { createRistakId } from '@/utils/idGenerator'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { AutomationLibrary } from './AutomationLibrary'
 import styles from './editor/AutomationEditor.module.css'
 
@@ -75,6 +77,8 @@ function welcomeTemplateFlow() {
 export const AutomationsHome: React.FC = () => {
   const navigate = useNavigate()
   const { showToast } = useNotification()
+  const { labels } = useLabels()
+  const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
   const [creating, setCreating] = useState<'blank' | 'template' | null>(null)
 
   const createBlank = async () => {
@@ -140,7 +144,7 @@ export const AutomationsHome: React.FC = () => {
               </span>
               <span className={styles.homeCardTitle}>Desde plantilla</span>
               <span className={styles.homeCardDescription}>
-                Bienvenida automática: responde por WhatsApp cuando un cliente te escribe
+                Bienvenida automática: responde por WhatsApp cuando un {customerLowerLabel} te escribe
               </span>
             </button>
 

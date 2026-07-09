@@ -4,6 +4,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom'
 import { KpiCard, Card, Button, Table, TableSelectionToolbar, DateRangePicker, ContactSearchInput, PageContainer, PageHeader, TabList, TreeFilter, RecordPaymentModal, Badge, DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, Loading, NumberInput, CustomSelect, Modal, PaymentPlatformLogo } from '@/components/common'
 import type { Column, PaymentPlatformLogoId } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useLabels } from '@/contexts/LabelsContext'
 import { Contact } from '@/types'
 import {
   Plus,
@@ -37,6 +38,7 @@ import { useDateRange } from '@/contexts/DateRangeContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
 import { useAccountCurrency, useHighLevelConnected, useUrlDateRangeSync, useUrlFilterState } from '@/hooks'
 import { formatCurrency, formatDateToISO, formatEndDateToISO, formatNumber, parseLocalDateString, formatName } from '@/utils/format'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { buildPaymentTimestamp } from '@/utils/paymentDate'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import {
@@ -685,7 +687,10 @@ export const Transactions: React.FC = () => {
   const routeState = useMemo(() => parseTransactionsRoute(location.pathname), [location.pathname])
   const { formatLocalDateShort, timezone } = useTimezone()
   const { showConfirm, showToast } = useNotification()
+  const { labels } = useLabels()
   const [accountCurrency] = useAccountCurrency()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
+  const customerLowerLabel = formatCrmLabelLower(customerLabel, DEFAULT_CRM_LABELS.customer)
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [transactionsPage, setTransactionsPage] = useState(1)
   const [transactionsPagination, setTransactionsPagination] = useState<TransactionsPagination>(EMPTY_TRANSACTIONS_PAGINATION)
@@ -1686,7 +1691,7 @@ export const Transactions: React.FC = () => {
   const handleChangeStripePlanCard = (plan: PaymentPlan) => {
     showConfirm(
       'Cambiar tarjeta domiciliada',
-      'Se creará un nuevo enlace de domiciliación. Cuando el cliente lo pague o autorice, esa tarjeta quedará como predeterminada para los próximos cobros.',
+      `Se creará un nuevo enlace de domiciliación. Cuando el ${customerLowerLabel} lo pague o autorice, esa tarjeta quedará como predeterminada para los próximos cobros.`,
       () => runPaymentPlanAction(
         plan,
         'change_card',
@@ -1766,7 +1771,7 @@ export const Transactions: React.FC = () => {
       return
     }
 
-    const contactName = formatName(contact.name || contact.email || contact.phone || 'Cliente')
+    const contactName = formatName(contact.name || contact.email || contact.phone || customerLabel)
     const name = rawName || `${description || 'Plan de pago'} - ${contactName}`
     const schedule = buildPaymentPlanSchedule({
       scheduleMode,
@@ -2153,7 +2158,7 @@ export const Transactions: React.FC = () => {
   const handleRefundTransaction = async (transaction: Transaction) => {
     showConfirm(
       'Reembolsar pago',
-      `¿Confirmas el reembolso de ${formatCurrency(transaction.amount, transaction.currency || accountCurrency)}? El pago quedará como reembolsado y ya no contará al contacto como cliente.`,
+      `¿Confirmas el reembolso de ${formatCurrency(transaction.amount, transaction.currency || accountCurrency)}? El pago quedará como reembolsado y ya no contará al contacto como ${customerLowerLabel}.`,
       async () => {
         try {
           await transactionsService.refundTransaction(transaction.id)
@@ -2238,7 +2243,7 @@ export const Transactions: React.FC = () => {
 
       await highLevelService.sendInvoice(transaction.invoiceId, sendMethod)
 
-      let successMessage = 'Pago enviado al cliente correctamente'
+      let successMessage = `Pago enviado al ${customerLowerLabel} correctamente`
       if (sendMethod === 'email') {
         successMessage = 'Pago enviado por email correctamente'
       } else if (sendMethod === 'sms') {
@@ -2250,7 +2255,7 @@ export const Transactions: React.FC = () => {
       showToast('success', 'Éxito', successMessage)
       fetchData()
     } catch (error) {
-      showToast('error', 'Error al enviar pago', 'No se pudo enviar el pago al cliente')
+      showToast('error', 'Error al enviar pago', `No se pudo enviar el pago al ${customerLowerLabel}`)
     }
   }
 
@@ -3626,7 +3631,7 @@ export const Transactions: React.FC = () => {
             }}>
               {modal.type === 'edit' ? (
                 <div className={styles.formGroup}>
-                  <label>Cliente</label>
+                  <label>{customerLabel}</label>
                   <div className={styles.lockedContact}>
                     <span className={styles.lockedContactName}>{formatName(lockedContactName)}</span>
                     {lockedContactDetail && (
@@ -3637,10 +3642,10 @@ export const Transactions: React.FC = () => {
               ) : (
                 <div className={styles.formGroup}>
                   <ContactSearchInput
-                    label="Cliente"
+                    label={customerLabel}
                     value={modal.selectedContact || null}
                     onChange={(contact) => setModal({ ...modal, selectedContact: contact as Contact | null })}
-                    placeholder="Buscar cliente por nombre, email o teléfono"
+                    placeholder={`Buscar ${customerLowerLabel} por nombre, email o teléfono`}
                     required
                   />
                 </div>
@@ -3773,10 +3778,10 @@ export const Transactions: React.FC = () => {
               <div className={styles.paymentPlanFormGrid}>
                 <div className={`${styles.formGroup} ${styles.fullWidth}`}>
                   <ContactSearchInput
-                    label="Cliente"
+                    label={customerLabel}
                     value={paymentPlanCreateModal.selectedContact}
                     onChange={(contact) => setPaymentPlanCreateModal(prev => ({ ...prev, selectedContact: contact as Contact | null }))}
-                    placeholder="Buscar cliente por nombre, email o teléfono"
+                    placeholder={`Buscar ${customerLowerLabel} por nombre, email o teléfono`}
                     required
                   />
                 </div>

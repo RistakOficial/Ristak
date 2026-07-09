@@ -301,6 +301,14 @@ Capacidades:
   campos sin carpeta quedan bajo "Campos personalizados". La edicion se guarda
   como actualizacion manual del contacto y conserva el flujo normal de
   automatizaciones.
+- Los nombres configurables de la cuenta para contacto convertido y oportunidad
+  (`labels.customer`, `labels.customers`, `labels.lead`, `labels.leads`) son la
+  fuente visible para CRM, chat desktop, chat movil web, app nativa,
+  transacciones, suscripciones, reportes, filtros, Viaje del contacto,
+  notificaciones y configuracion de agentes. No hardcodear `Cliente`,
+  `Clientes`, `Prospecto` o `Prospectos` en copy visible nuevo; si una superficie
+  no puede leer labels todavia, usar `contacto/persona` como fallback visible y
+  conservar las llaves internas (`customer`, `lead`) solo para logica.
 - Telefonos normalizados.
 - Nombres de contactos normalizados como nombre propio al entrar al CRM. Si un
   contacto llega como `raul gomez`, `RAUL GOMEZ` o `rAuL GomEZ`, Ristak lo guarda
@@ -351,8 +359,10 @@ Capacidades:
   estado, paso actual, tipo de espera y fechas de entrada/actualizacion/reanudar.
   Las fechas de negocio se interpretan en la zona horaria de la cuenta y los
   pagos usan estados live/exitosos/fallidos normalizados. La clasificacion CRM
-  `Cliente` se activa con cualquier pago exitoso del contacto, incluyendo
-  `payment_mode = test`, para poder probar checkouts sandbox de punta a punta.
+  interna `customer` se activa con cualquier pago exitoso del contacto,
+  incluyendo `payment_mode = test`, para poder probar checkouts sandbox de punta
+  a punta. La UI debe mostrar esa clasificacion con el nombre configurado en la
+  cuenta.
   Las metricas financieras de la lista (`total_paid`, LTV, conteos live y
   reportes de ingresos) siguen excluyendo pagos test.
 - La pantalla `/contacts` usa paginacion real del lado servidor. La tabla pide
@@ -395,8 +405,9 @@ Capacidades:
   touches posteriores. Tambien corrige touches historicos cuando el
   `detected_source_id` guardado venia del candidato incorrecto y el marcador
   `rstkad_id` si coincide con el anuncio vivo de ese dia.
-- El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
-  legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
+- El Viaje del contacto en la ficha debe titularse con el nombre configurable de
+  la cuenta (por ejemplo, `Viaje del paciente`) y mostrar cada actividad con una
+  etiqueta legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
   compras. Si un evento trae metadata de mensaje social o email, el tooltip debe
   explicar canal, contenido, perfil/usuario, estado e identificadores utiles; no
   debe quedarse como "Evento" sin detalle. Los mensajes de WhatsApp se resumen

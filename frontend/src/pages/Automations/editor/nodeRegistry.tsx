@@ -930,7 +930,7 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-customer-replied',
     kind: 'trigger',
-    label: 'Cliente respondió',
+    label: 'Contacto respondió',
     category: 'trigger-events',
     description: 'Se activa cuando el contacto responde un mensaje',
     icon: MessageCircleReply,
@@ -1179,7 +1179,7 @@ const TRIGGERS: NodeDefinition[] = [
   {
     type: 'trigger-appointment-booked',
     kind: 'trigger',
-    label: 'Cliente agendó una cita',
+    label: 'Contacto agendó una cita',
     category: 'trigger-appointments',
     description: 'Se activa cuando el contacto agenda una cita',
     icon: CalendarCheck,
@@ -1201,7 +1201,7 @@ const TRIGGERS: NodeDefinition[] = [
     summary: (config) => {
       const calendar = str(config.calendarName) || str(config.calendar)
       return {
-        text: `Cuando el cliente agende una cita${calendar ? ` en "${calendar}"` : ''}${triggerFiltersSentence(config.filters)}`
+        text: `Cuando el contacto agende una cita${calendar ? ` en "${calendar}"` : ''}${triggerFiltersSentence(config.filters)}`
       }
     }
   },

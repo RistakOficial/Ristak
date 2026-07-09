@@ -9,6 +9,8 @@ import { parseSortableDateValue } from '@/utils/dateSort'
 import { getFloatingLayerZIndex } from '@/utils/layering'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { useLabels } from '@/contexts/LabelsContext'
+import { DEFAULT_CRM_LABELS, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
 import styles from './ContactJourney.module.css'
 
 interface ContactJourneyProps {
@@ -1222,6 +1224,7 @@ const chunkJourneyRows = (events: JourneyEvent[], rowSize = SNAKE_ROW_SIZE): Jou
 
 export const ContactJourney = ({ contactId, layout = 'default' }: ContactJourneyProps) => {
   const { timezone, formatLocalDateShort, formatLocalDateTime } = useTimezone()
+  const { labels } = useLabels()
   const journeyRef = useRef<HTMLDivElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [journey, setJourney] = useState<JourneyEvent[]>([])
@@ -1283,10 +1286,11 @@ export const ContactJourney = ({ contactId, layout = 'default' }: ContactJourney
   const displayJourney = useMemo(() => buildDisplayJourney(journey, timezone), [journey, timezone])
   const displayRows = useMemo(() => chunkJourneyRows(displayJourney), [displayJourney])
   const visibleTooltipIndex = activeEventIndex ?? hoveredEventIndex
+  const customerJourneyLabel = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer)
 
   if (loading) {
     return (
-      <div className={styles.loading} role="status" aria-live="polite" aria-label="Cargando viaje">
+      <div className={styles.loading} role="status" aria-live="polite" aria-label={`Cargando viaje ${customerJourneyLabel}`}>
         <div className={styles.spinner} aria-hidden="true" />
       </div>
     )
@@ -1500,7 +1504,7 @@ export const ContactJourney = ({ contactId, layout = 'default' }: ContactJourney
 
   return (
     <div className={styles.journey} data-layout={layout} ref={journeyRef}>
-      <h4 className={styles.title}>Viaje del Cliente</h4>
+      <h4 className={styles.title}>Viaje {customerJourneyLabel}</h4>
       {timelineContent}
     </div>
   )

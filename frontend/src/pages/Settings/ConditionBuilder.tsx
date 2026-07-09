@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
 import type {
   AgentCondition,
@@ -11,7 +11,9 @@ import type {
 import type { Calendar } from '@/services/calendarsService'
 import { NumberInput, TagPicker, useContactTags } from '@/components/common'
 import { MetaPostSelector } from '@/components/MetaPostSelector/MetaPostSelector'
+import { useLabels } from '@/contexts/LabelsContext'
 import { contactTagsService } from '@/services/contactTagsService'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import styles from './AIAgentSettings.module.css'
 
 /**
@@ -331,10 +333,10 @@ export const CONDITION_CATEGORIES: CategoryDef[] = [
       },
       {
         field: 'customer',
-        menuLabel: 'Es cliente',
+        menuLabel: 'Es comprador',
         operators: [
-          { id: 'is_customer', label: 'ya es cliente (hizo una compra)', valueKind: 'none', phrase: () => 'es cliente' },
-          { id: 'not_customer', label: 'todavía no es cliente', valueKind: 'none', phrase: () => 'no es cliente aún' }
+          { id: 'is_customer', label: 'ya compró', valueKind: 'none', phrase: () => 'ya compró' },
+          { id: 'not_customer', label: 'todavía no compra', valueKind: 'none', phrase: () => 'no compra aún' }
         ]
       },
       {
@@ -531,17 +533,37 @@ function money(value?: number) {
   return `$${Number(value || 0).toLocaleString('es-MX')}`
 }
 
-function getCategory(categoryId: string): CategoryDef {
-  return CONDITION_CATEGORIES.find((category) => category.id === categoryId) || CONDITION_CATEGORIES[0]
+function buildLocalizedConditionCategories(customerLowerLabel: string): CategoryDef[] {
+  return CONDITION_CATEGORIES.map((category) => {
+    if (category.id !== 'contact') return category
+    return {
+      ...category,
+      params: category.params.map((param) => {
+        if (param.field !== 'customer') return param
+        return {
+          ...param,
+          menuLabel: `Es ${customerLowerLabel}`,
+          operators: [
+            { id: 'is_customer', label: `ya es ${customerLowerLabel} (hizo una compra)`, valueKind: 'none', phrase: () => `es ${customerLowerLabel}` },
+            { id: 'not_customer', label: `todavía no es ${customerLowerLabel}`, valueKind: 'none', phrase: () => `no es ${customerLowerLabel} aún` }
+          ]
+        }
+      })
+    }
+  })
 }
 
-function getParamDef(categoryId: string, field: string): ParamDef {
-  const category = getCategory(categoryId)
+function getCategory(categoryId: string, categories: CategoryDef[] = CONDITION_CATEGORIES): CategoryDef {
+  return categories.find((category) => category.id === categoryId) || categories[0] || CONDITION_CATEGORIES[0]
+}
+
+function getParamDef(categoryId: string, field: string, categories: CategoryDef[] = CONDITION_CATEGORIES): ParamDef {
+  const category = getCategory(categoryId, categories)
   return category.params.find((param) => param.field === field) || category.params[0]
 }
 
-function getOperatorDef(categoryId: string, field: string, operatorId: string): OperatorDef {
-  const paramDef = getParamDef(categoryId, field)
+function getOperatorDef(categoryId: string, field: string, operatorId: string, categories: CategoryDef[] = CONDITION_CATEGORIES): OperatorDef {
+  const paramDef = getParamDef(categoryId, field, categories)
   return paramDef.operators.find((operator) => operator.id === operatorId) || paramDef.operators[0]
 }
 
@@ -552,8 +574,8 @@ function getConditionFieldOptions(category: CategoryDef) {
   }))
 }
 
-function defaultParamFor(categoryId: ConditionCategory, field: string, operatorId?: string): AgentConditionParam {
-  const operator = operatorId ? getOperatorDef(categoryId, field, operatorId) : getParamDef(categoryId, field).operators[0]
+function defaultParamFor(categoryId: ConditionCategory, field: string, operatorId?: string, categories: CategoryDef[] = CONDITION_CATEGORIES): AgentConditionParam {
+  const operator = operatorId ? getOperatorDef(categoryId, field, operatorId, categories) : getParamDef(categoryId, field, categories).operators[0]
   const param: AgentConditionParam = { field, operator: operator.id }
   if (operator.valueKind === 'channel') param.value = 'chat'
   if (operator.valueKind === 'list' || operator.valueKind === 'tagList' || operator.valueKind === 'weekdays') param.values = []
@@ -569,21 +591,21 @@ function defaultParamFor(categoryId: ConditionCategory, field: string, operatorI
   return param
 }
 
-function defaultCondition(categoryId: ConditionCategory): AgentCondition {
-  const category = getCategory(categoryId)
+function defaultCondition(categoryId: ConditionCategory, categories: CategoryDef[] = CONDITION_CATEGORIES): AgentCondition {
+  const category = getCategory(categoryId, categories)
   return {
     category: categoryId,
     params: category.defaultParams
       ? category.defaultParams.map((param) => ({ ...param }))
       : category.params[0]
-        ? [defaultParamFor(categoryId, category.params[0].field)]
+        ? [defaultParamFor(categoryId, category.params[0].field, undefined, categories)]
         : []
   }
 }
 
 /** Frase legible de una condición: base + parámetros unidos con " · ". */
-export function conditionSummary(condition: AgentCondition, calendars: Calendar[], options?: AgentFilterOptions): string {
-  const category = getCategory(condition.category)
+export function conditionSummary(condition: AgentCondition, calendars: Calendar[], options?: AgentFilterOptions, categories: CategoryDef[] = CONDITION_CATEGORIES): string {
+  const category = getCategory(condition.category, categories)
   const helpers: SummaryHelpers = {
     calendarName: (id) => calendars.find((item) => item.id === id)?.name || '…',
     adName: (id) => options?.ads.find((item) => item.id === id)?.name || id || '…',
@@ -601,13 +623,13 @@ export function conditionSummary(condition: AgentCondition, calendars: Calendar[
   const presence = params.find((param) => param.field === 'presence')
   let base = category.baseLabel
   if (presence) {
-    base = getOperatorDef(condition.category, 'presence', presence.operator).phrase?.(presence, helpers) || base
+    base = getOperatorDef(condition.category, 'presence', presence.operator, categories).phrase?.(presence, helpers) || base
   }
 
   const otherPhrases = params
     .filter((param) => param.field !== 'presence')
     .map((param) => {
-      const operator = getOperatorDef(condition.category, param.field, param.operator)
+      const operator = getOperatorDef(condition.category, param.field, param.operator, categories)
       return operator.phrase ? operator.phrase(param, helpers) : operator.label
     })
 
@@ -731,6 +753,12 @@ interface ConditionBuilderProps {
 export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, calendars, options, emptyText, onChange }) => {
   // Carga el catálogo de etiquetas para mostrar nombres y no IDs
   useContactTags()
+  const { labels } = useLabels()
+  const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const conditionCategories = useMemo(
+    () => buildLocalizedConditionCategories(customerLowerLabel),
+    [customerLowerLabel]
+  )
   // Filas en edición, identificadas por "grupo:índice"
   const [editingKeys, setEditingKeys] = useState<Set<string>>(new Set())
   const editingKeysRef = useRef<Set<string>>(new Set())
@@ -814,7 +842,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
   }
 
   const addCondition = (groupIndex: number, category: ConditionCategory) => {
-    const condition = defaultCondition(category)
+    const condition = defaultCondition(category, conditionCategories)
     const next = groups.map((group, gi) => (
       gi !== groupIndex ? group : { conditions: [...group.conditions, condition] }
     ))
@@ -823,12 +851,12 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
   }
 
   const addGroup = (category: ConditionCategory) => {
-    onChange([...groups, { conditions: [defaultCondition(category)] }])
+    onChange([...groups, { conditions: [defaultCondition(category, conditionCategories)] }])
     setEditing(`${groups.length}:0`, true)
   }
 
   const renderParamValue = (condition: AgentCondition, param: AgentConditionParam, groupIndex: number, conditionIndex: number, paramIndex: number) => {
-    const operator = getOperatorDef(condition.category, param.field, param.operator)
+    const operator = getOperatorDef(condition.category, param.field, param.operator, conditionCategories)
     switch (operator.valueKind) {
       case 'channel':
         return (
@@ -1100,7 +1128,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
   }
 
   const renderEditingCondition = (condition: AgentCondition, groupIndex: number, conditionIndex: number) => {
-    const category = getCategory(condition.category)
+    const category = getCategory(condition.category, conditionCategories)
     const usedPresence = condition.params.some((param) => param.field === 'presence')
     const fieldOptions = getConditionFieldOptions(category)
     const showFieldSelect = category.params.length > 1
@@ -1115,9 +1143,9 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
         className={`${styles.ruleSelect} ${styles.conditionTypeSelect}`}
         aria-label="Tipo de condición"
         value={condition.category}
-        onChange={(event) => updateCondition(groupIndex, conditionIndex, defaultCondition(event.target.value as ConditionCategory))}
+        onChange={(event) => updateCondition(groupIndex, conditionIndex, defaultCondition(event.target.value as ConditionCategory, conditionCategories))}
       >
-        {CONDITION_CATEGORIES.map((item) => (
+        {conditionCategories.map((item) => (
           <option key={item.id} value={item.id}>{item.label}</option>
         ))}
       </select>
@@ -1133,8 +1161,8 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
         )}
 
         {condition.params.map((param, paramIndex) => {
-          const currentOperator = getOperatorDef(condition.category, param.field, param.operator)
-          const paramDef = getParamDef(condition.category, param.field)
+          const currentOperator = getOperatorDef(condition.category, param.field, param.operator, conditionCategories)
+          const paramDef = getParamDef(condition.category, param.field, conditionCategories)
           const availableFieldOptions = fieldOptions.filter((item) => (
             item.id !== 'presence' || param.field === 'presence' || !usedPresence
           ))
@@ -1157,7 +1185,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
                   aria-label="Campo"
                   value={param.field}
                   onChange={(event) => {
-                    replaceParam(groupIndex, conditionIndex, paramIndex, defaultParamFor(condition.category, event.target.value))
+                    replaceParam(groupIndex, conditionIndex, paramIndex, defaultParamFor(condition.category, event.target.value, undefined, conditionCategories))
                   }}
                 >
                   {availableFieldOptions.map((item) => (
@@ -1171,11 +1199,11 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
                 aria-label="Operador"
                 value={currentOperator.id}
                 onChange={(event) => {
-                  const nextOperator = getOperatorDef(condition.category, param.field, event.target.value)
+                  const nextOperator = getOperatorDef(condition.category, param.field, event.target.value, conditionCategories)
                   if (nextOperator.valueKind === currentOperator.valueKind || param.field === 'custom_field') {
                     replaceParam(groupIndex, conditionIndex, paramIndex, { ...param, operator: nextOperator.id })
                   } else {
-                    const fresh = defaultParamFor(condition.category, param.field, nextOperator.id)
+                    const fresh = defaultParamFor(condition.category, param.field, nextOperator.id, conditionCategories)
                     replaceParam(groupIndex, conditionIndex, paramIndex, {
                       ...fresh,
                       fieldKey: param.fieldKey,
@@ -1214,7 +1242,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
             onSelect={(id) => {
               updateCondition(groupIndex, conditionIndex, {
                 ...condition,
-                params: [...condition.params, defaultParamFor(condition.category, id)]
+                params: [...condition.params, defaultParamFor(condition.category, id, undefined, conditionCategories)]
               })
             }}
           />
@@ -1223,7 +1251,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
     )
   }
 
-  const categoryMenuItems = CONDITION_CATEGORIES.map((category) => ({ id: category.id, label: category.label }))
+  const categoryMenuItems = conditionCategories.map((category) => ({ id: category.id, label: category.label }))
 
   return (
     <div ref={conditionBuilderRef} className={styles.conditionBuilder}>
@@ -1289,7 +1317,7 @@ export const ConditionBuilder: React.FC<ConditionBuilderProps> = ({ groups, cale
                         }}
                       >
                         <span className={styles.conditionPrefix}>{conditionIndex === 0 ? 'Si ' : 'Y '}</span>
-                        {conditionSummary(condition, calendars, options)}
+                        {conditionSummary(condition, calendars, options, conditionCategories)}
                       </span>
                       <div className={styles.conditionActions}>
                         <button type="button" className={styles.ruleDelete} onClick={() => removeCondition(groupIndex, conditionIndex)} aria-label="Eliminar condición">

@@ -1,12 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { apiUrl } from '@/services/apiBaseUrl'
+import { DEFAULT_CRM_LABELS, normalizeCrmLabels, type CrmLabels } from '@/utils/crmLabels'
 
-interface Labels {
-  customer: string
-  customers: string
-  lead: string
-  leads: string
-}
+export type Labels = CrmLabels
 
 interface LabelsContextType {
   labels: Labels
@@ -15,12 +11,7 @@ interface LabelsContextType {
   loading: boolean
 }
 
-const defaultLabels: Labels = {
-  customer: 'Cliente',
-  customers: 'Clientes',
-  lead: 'Interesado',
-  leads: 'Interesados'
-}
+const defaultLabels: Labels = DEFAULT_CRM_LABELS
 
 const LabelsContext = createContext<LabelsContextType | undefined>(undefined)
 
@@ -34,7 +25,7 @@ export const LabelsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const json = await response.json()
 
       if (json.success && json.data) {
-        setLabels(json.data)
+        setLabels(normalizeCrmLabels(json.data))
       }
     } catch (error) {
       // Si falla, usar los valores por defecto
@@ -58,7 +49,7 @@ export const LabelsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       const json = await response.json()
 
       if (json.success && json.data) {
-        setLabels(json.data)
+        setLabels(normalizeCrmLabels(json.data))
       }
     } catch (error) {
       throw error

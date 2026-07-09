@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Copy, ExternalLink, Link as LinkIcon, Loader2, Mail, MessageCircle, Send } from 'lucide-react'
 import { Button } from '../Button'
 import { PaymentPlatformLogo, type PaymentPlatformLogoId } from '../PaymentPlatformLogo'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { contactsService, type PaymentLinkDeliveryChannelKey, type PaymentLinkDeliveryOptions } from '@/services/contactsService'
 import { emailService } from '@/services/emailService'
 import { whatsappApiService } from '@/services/whatsappApiService'
 import { formatCurrency as formatMxCurrency } from '@/utils/format'
+import { DEFAULT_CRM_LABELS } from '@/utils/crmLabels'
 import styles from './PaymentLinkReadyPanel.module.css'
 
 export type PaymentLinkReadyKind = 'single' | 'first_payment' | 'card_setup' | 'subscription_start'
@@ -103,6 +105,8 @@ export function PaymentLinkReadyPanel({
   getEmailSubject
 }: PaymentLinkReadyPanelProps) {
   const { showToast } = useNotification()
+  const { labels } = useLabels()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
   const [deliveryOptions, setDeliveryOptions] = useState<PaymentLinkDeliveryOptions | null>(null)
   const [loadingDeliveryOptions, setLoadingDeliveryOptions] = useState(false)
   const [sendingChannel, setSendingChannel] = useState<PaymentLinkDeliveryChannelKey | null>(null)
@@ -218,7 +222,7 @@ export function PaymentLinkReadyPanel({
 
       <div className={styles.meta}>
         <div>
-          <span>Cliente</span>
+          <span>{customerLabel}</span>
           <strong>{getContactDisplayName(link.contact)}</strong>
         </div>
         <div>

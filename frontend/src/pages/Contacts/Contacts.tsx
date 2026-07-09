@@ -1853,7 +1853,7 @@ const ContactsTable: React.FC = () => {
       <div className={styles.container}>
         <PageHeader
           title="Contactos"
-          subtitle="Visualiza tus contactos, clientes y su valor acumulado en el tiempo."
+          subtitle={`Visualiza tus contactos, ${labels.customers.toLowerCase()} y su valor acumulado en el tiempo.`}
         />
 
         <div className={styles.controlsRow}>

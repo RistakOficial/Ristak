@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { Button, CustomSelect, PageHeader, SearchField, Table, TableSelectionToolbar, type Column } from '@/components/common'
 import { Badge } from '@/components/common/Badge'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useUrlStringState } from '@/hooks'
 import {
@@ -19,6 +20,7 @@ import {
   type ContactTag,
   type ContactTagFolder
 } from '@/services/contactTagsService'
+import { DEFAULT_CRM_LABELS } from '@/utils/crmLabels'
 import styles from './CustomFields.module.css'
 
 /**
@@ -63,6 +65,8 @@ const getFolderTargetId = (folderId: FolderFilter) => (
 
 export const TagsSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
+  const { labels } = useLabels()
+  const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
   const [folders, setFolders] = useState<ContactTagFolder[]>([])
   const [tags, setTags] = useState<ContactTag[]>([])
   const [activeFolder, setActiveFolder] = useUrlStringState<FolderFilter>('folder', 'all', isFolderFilterParam)
@@ -664,7 +668,7 @@ export const TagsSettings: React.FC = () => {
                 <span>Nombre</span>
                 <input
                   value={draft.name}
-                  placeholder="Ej. Cliente VIP"
+                  placeholder={`Ej. ${customerLabel} VIP`}
                   onChange={(event) => patchDraft({ name: event.target.value })}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') void handleSaveTag()

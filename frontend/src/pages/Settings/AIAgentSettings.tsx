@@ -50,7 +50,7 @@ const emptyForm = {
 
 const legacyBusinessContextFields = [
   { label: 'Mercado o nicho', key: 'marketContext' },
-  { label: 'Cliente ideal', key: 'idealCustomer' },
+  { label: 'Perfil ideal', key: 'idealCustomer' },
   { label: 'Zona geográfica', key: 'locationContext' },
   { label: 'Competidores o referencias', key: 'competitorsContext' },
   { label: 'Tono, prioridades y reglas', key: 'brandVoice' }

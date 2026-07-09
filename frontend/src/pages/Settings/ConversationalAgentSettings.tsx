@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldCheck, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
 import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, TabList, TagPicker } from '@/components/common'
@@ -22,6 +22,7 @@ import {
   type ConversationalAIProviderId
 } from '@/constants/conversationalAIProviders'
 import { useAuth } from '@/contexts/AuthContext'
+import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability, useAppConfig } from '@/hooks'
 import {
@@ -64,6 +65,7 @@ import { userAccessService, type TeamUser } from '@/services/userAccessService'
 import { calendarsService, type Calendar } from '@/services/calendarsService'
 import { triggerLinksService, type TriggerLink } from '@/services/triggerLinksService'
 import apiClient from '@/services/apiClient'
+import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { formatCurrency } from '@/utils/format'
 import { ConditionBuilder } from './ConditionBuilder'
 import { AgentCreationWizard } from './AgentCreationWizard'
@@ -147,7 +149,7 @@ const goalExecutionOptionsByObjective: Record<ConversationalObjective, GoalExecu
     { value: 'ready_for_human', label: 'Un humano', description: 'La IA junta los datos y avisa para que el equipo continúe.' }
   ],
   filtrar: [
-    { value: 'ready_for_human', label: 'Un humano', description: 'La IA filtra la conversación y avisa cuando el prospecto ya vale atención.' }
+    { value: 'ready_for_human', label: 'Un humano', description: 'La IA filtra la conversación y avisa cuando la persona ya vale atención.' }
   ],
   custom: [
     { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta que el objetivo está listo y avisa al equipo.' },
@@ -405,7 +407,7 @@ function getSuccessActionInfo(
     }
     if (objective === 'filtrar') {
       return {
-        label: 'Que el equipo reciba al prospecto filtrado',
+        label: 'Que el equipo reciba al contacto filtrado',
         description: 'La IA califica la conversación y pasa al equipo sólo lo que ya vale atender.'
       }
     }
@@ -507,7 +509,7 @@ function getGoalExecutionQuestion(objective: ConversationalObjective) {
   if (objective === 'citas') return '¿Quién debería agendar la cita?'
   if (objective === 'ventas') return '¿Quién debería cerrar el pago?'
   if (objective === 'datos') return '¿Quién debería recibir los datos?'
-  if (objective === 'filtrar') return '¿Quién debería atender al prospecto filtrado?'
+  if (objective === 'filtrar') return '¿Quién debería atender al contacto filtrado?'
   return '¿Quién debería completar el objetivo?'
 }
 
@@ -1325,6 +1327,8 @@ function getProviderStatus(aiProviders: ConversationalAIProviderStatus[], provid
 
 const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, products, productsLoading, triggerLinks, triggerLinksLoading, filterOptions, businessPromptStatus, onConnectProvider, onBack, onChange, onFlushSave, onDelete }) => {
   const { showToast } = useNotification()
+  const { labels } = useLabels()
+  const leadLowerLabel = formatCrmLabelLower(labels.lead, DEFAULT_CRM_LABELS.lead)
   const detectedLocaleDefaults = getDetectedAccountLocaleDefaults()
   const [accountCurrencyConfig] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedLocaleDefaults.currency)
   const [testMessages, setTestMessages] = useState<TestMessage[]>([])
@@ -1405,6 +1409,35 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }, [])
 
   const selectedObjective = objectiveOptions.find((option) => option.value === agent.objective) || objectiveOptions[0]
+  const localizedGoalExecutionOptionsByObjective = useMemo<Record<ConversationalObjective, GoalExecutionOption[]>>(() => ({
+    ...goalExecutionOptionsByObjective,
+    filtrar: goalExecutionOptionsByObjective.filtrar.map((option) => (
+      option.value === 'ready_for_human'
+        ? {
+            ...option,
+            label: `Que el equipo reciba al ${leadLowerLabel} filtrado`,
+            description: `La IA califica la conversación y pasa al equipo sólo lo que ya vale atender.`
+          }
+        : option
+    ))
+  }), [leadLowerLabel])
+  const getLocalizedGoalExecutionOptions = useCallback((objective: ConversationalObjective) => (
+    localizedGoalExecutionOptionsByObjective[objective] || localizedGoalExecutionOptionsByObjective.custom
+  ), [localizedGoalExecutionOptionsByObjective])
+  const getLocalizedSelectedGoalExecutionInfo = useCallback((
+    action: ConversationalSuccessAction,
+    objective: ConversationalObjective,
+    workflow?: AgentGoalWorkflowConfig
+  ) => {
+    const options = getLocalizedGoalExecutionOptions(objective)
+    return options.find((option) => option.value === action) ||
+      options.find((option) => option.value === getObjectiveSuccessAction(objective, workflow || defaultGoalWorkflow)) ||
+      options[0]
+  }, [getLocalizedGoalExecutionOptions])
+  const getLocalizedGoalExecutionQuestion = useCallback((objective: ConversationalObjective) => {
+    if (objective === 'filtrar') return `¿Quién debería atender al ${leadLowerLabel} filtrado?`
+    return getGoalExecutionQuestion(objective)
+  }, [leadLowerLabel])
   const selectedProviderId = getKnownConversationalAIProvider(agent.aiProvider)
   const selectedProvider = getConversationalAIProviderOption(selectedProviderId)
   const selectedProviderStatus = getProviderStatus(aiProviders, selectedProviderId)
@@ -1443,8 +1476,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   const goalWorkflow = getAgentGoalWorkflow(agent)
   const deposit = goalWorkflow.deposit
   const completion = goalWorkflow.completion
-  const goalExecutionOptions = getGoalExecutionOptions(agent.objective)
-  const selectedGoalExecutionInfo = getSelectedGoalExecutionInfo(agent.successAction, agent.objective, goalWorkflow)
+  const goalExecutionOptions = getLocalizedGoalExecutionOptions(agent.objective)
+  const selectedGoalExecutionInfo = getLocalizedSelectedGoalExecutionInfo(agent.successAction, agent.objective, goalWorkflow)
   const selectedGoalExecutionAction = selectedGoalExecutionInfo.value
   const paymentRequirementConfigAvailable = objectiveCanConfigurePaymentRequirement(agent.objective)
   const showAiAppointmentSettings = agent.objective === 'citas' && selectedGoalExecutionAction === 'book_appointment'
@@ -1668,7 +1701,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
   }
 
   const handleObjectiveChange = (objective: ConversationalObjective) => {
-    const options = getGoalExecutionOptions(objective)
+    const options = getLocalizedGoalExecutionOptions(objective)
     const objectiveAction = getObjectiveSuccessAction(objective, goalWorkflow)
     const nextAction = options.some((option) => option.value === agent.successAction)
       ? agent.successAction
@@ -3005,7 +3038,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
               />
 
               <QuestionSelectRow
-                question={getGoalExecutionQuestion(agent.objective)}
+                question={getLocalizedGoalExecutionQuestion(agent.objective)}
                 helper={selectedGoalExecutionInfo.description}
                 value={selectedGoalExecutionInfo.value}
                 options={goalExecutionOptions.map((option) => ({ value: option.value, label: option.label }))}
@@ -3277,7 +3310,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
             subtitle="Prueba interna"
             avatarLabel="Mi negocio"
             messages={testPreviewMessages}
-            emptyText={testPracticeExpired ? TEST_MEDIA_EXPIRED_NOTICE : 'Escribe como prospecto y revisa si contesta como debe.'}
+            emptyText={testPracticeExpired ? TEST_MEDIA_EXPIRED_NOTICE : `Escribe como ${leadLowerLabel} y revisa si contesta como debe.`}
             typing={!testPracticeExpired && testing}
             headerActions={[
               {
@@ -3415,7 +3448,19 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   const { agentId: routeAgentIdParam } = useParams<{ agentId?: string }>()
   const routeAgentId = routeAgentIdParam ? decodeURIComponent(routeAgentIdParam) : ''
   const { user } = useAuth()
+  const { labels } = useLabels()
   const { showToast, showConfirm } = useNotification()
+  const leadLowerLabel = formatCrmLabelLower(labels.lead, DEFAULT_CRM_LABELS.lead)
+  const getDirectoryGoalExecutionInfo = useCallback((
+    action: ConversationalSuccessAction,
+    objective: ConversationalObjective,
+    workflow?: AgentGoalWorkflowConfig
+  ) => {
+    const info = getSelectedGoalExecutionInfo(action, objective, workflow)
+    return objective === 'filtrar'
+      ? { ...info, label: `Que el equipo reciba al ${leadLowerLabel} filtrado` }
+      : info
+  }, [leadLowerLabel])
   const openAIAvailability = useAIAgentAvailability()
   const [config, setConfig] = useState<ConversationalAgentConfig | null>(null)
   const [agents, setAgents] = useState<ConversationalAgentDef[]>([])
@@ -4216,7 +4261,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         <div className={styles.agentDirectoryGrid}>
           {agents.map((agent) => {
             const objectiveLabel = objectiveOptions.find((option) => option.value === agent.objective)?.label || 'Objetivo'
-            const actionLabel = getSelectedGoalExecutionInfo(agent.successAction, agent.objective, agent.goalWorkflow).label
+            const actionLabel = getDirectoryGoalExecutionInfo(agent.successAction, agent.objective, agent.goalWorkflow).label
             const provider = getConversationalAIProviderOption(agent.aiProvider)
             const modelLabel = getConversationalModelLabel(agent.aiProvider, agent.model)
             const entryRules = agent.filters.entry.groups.reduce((total, group) => total + group.conditions.length, 0)
