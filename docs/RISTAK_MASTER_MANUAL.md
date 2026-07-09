@@ -772,6 +772,11 @@ tecnica (`connected`, `reconnecting`, `restarting`, `connection_replaced` o
 `disconnected_*`); estados terminales como `logged_out`, `bad_session` o
 `number_mismatch` requieren escanear un QR nuevo y no se usan como respaldo
 automatico.
+Los ecos salientes capturados desde WhatsApp normal/QR deben persistir
+`business_phone_number_id` resolviendo tambien por `qr_connected_phone`; si se
+pierde ese enlace, las bandejas filtradas de `/movil` y apps nativas pueden
+ocultar las respuestas del negocio y dejar visible solo lo que escribe el
+contacto.
 
 Al agregar un WhatsApp solo por QR desde Configuracion > WhatsApp, el usuario no
 debe capturar el numero manualmente. Ristak crea una fila QR pendiente, muestra

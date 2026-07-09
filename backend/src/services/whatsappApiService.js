@@ -2603,15 +2603,11 @@ async function findBusinessPhoneNumberId(phone = '') {
   if (!normalized) return null
 
   const rows = await db.all(`
-    SELECT id, phone_number, display_phone_number
+    SELECT id, phone_number, display_phone_number, qr_connected_phone
     FROM whatsapp_api_phone_numbers
   `).catch(() => [])
 
-  const candidates = buildPhoneMatchCandidates(normalized)
-  const match = rows.find(row => {
-    const rowCandidates = buildPhoneMatchCandidates(row.phone_number || row.display_phone_number)
-    return rowCandidates.some(candidate => candidates.includes(candidate))
-  })
+  const match = rows.find(row => rowMatchesAnyPhone(row, [normalized]))
 
   return match?.id || null
 }
@@ -2640,12 +2636,8 @@ async function findBusinessPhoneRowForSender({ phoneNumberId, fromPhone } = {}) 
     FROM whatsapp_api_phone_numbers
     ORDER BY is_default_sender DESC, updated_at DESC
   `).catch(() => [])
-  const candidates = buildPhoneMatchCandidates(normalized)
 
-  return rows.find(row => {
-    const rowCandidates = buildPhoneMatchCandidates(row.phone_number || row.display_phone_number)
-    return rowCandidates.some(candidate => candidates.includes(candidate))
-  }) || null
+  return rows.find(row => rowMatchesAnyPhone(row, [normalized])) || null
 }
 
 function isQrFallbackReady(phoneRow = {}) {

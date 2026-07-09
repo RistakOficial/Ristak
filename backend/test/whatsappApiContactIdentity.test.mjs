@@ -28,6 +28,7 @@ import {
   resetWhatsAppQrServiceForTest,
   setBaileysRuntimeForTest
 } from '../src/services/whatsappQrService.js'
+import { getChatContacts } from '../src/controllers/contactsController.js'
 
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 
@@ -43,6 +44,32 @@ async function cleanupMetaAds(adIds = []) {
   for (const adId of adIds) {
     await db.run('DELETE FROM meta_ads WHERE ad_id = ?', [adId]).catch(() => undefined)
   }
+}
+
+function createMockResponse() {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code
+      return this
+    },
+    json(payload) {
+      this.body = payload
+      return this
+    }
+  }
+}
+
+async function readChatContacts(query = {}, user = {}) {
+  const res = createMockResponse()
+  await getChatContacts({ query, user }, res)
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.body?.success, true)
+  assert.ok(Array.isArray(res.body.data))
+
+  return res.body.data
 }
 
 async function insertMetaAdForDate({ adId, date, suffix, name = 'Anuncio WhatsApp' }) {
@@ -850,6 +877,82 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
     })
   } finally {
     await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [outboundWamid, inboundWamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId: outboundWamid, phone })
+  }
+})
+
+test('eco QR saliente de WhatsApp normal conserva phoneNumberId para la bandeja movil filtrada', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52994${suffix}`
+  const businessPhone = `+52656${suffix}`
+  const phoneNumberId = `phone_qr_connected_only_${id}`
+  const contactId = `rstk_contact_qr_connected_only_${id}`
+  const outboundWamid = `qr_connected_only_${id}`
+  const outboundBody = `Respuesta normal desde WhatsApp ${id}`
+  const messageAt = '2026-07-08T15:20:00.000Z'
+
+  await cleanup({ contactId, messageId: outboundWamid, phone })
+  await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ?', [outboundWamid]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status,
+        qr_connected_phone, status, updated_at
+      ) VALUES (?, 'qr', NULL, NULL, 'QR WhatsApp Normal', 1, 0, 1, 'connected', ?, 'QR_ONLY', ?)
+    `, [phoneNumberId, businessPhone, messageAt])
+
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, 'Cliente WhatsApp Normal', 'Cliente', 'WhatsApp_QR', ?, ?)
+    `, [contactId, phone, messageAt, messageAt])
+
+    const result = await captureQrChatMessage({
+      phoneNumberId,
+      businessPhone,
+      direction: 'outbound',
+      wamid: outboundWamid,
+      messageType: 'text',
+      text: outboundBody,
+      contactPhone: phone,
+      timestamp: messageAt
+    })
+
+    assert.equal(result.skipped, false)
+    assert.equal(result.businessPhoneNumberId, phoneNumberId)
+
+    const row = await db.get(`
+      SELECT contact_id, direction, transport, business_phone, business_phone_number_id, message_text
+      FROM whatsapp_api_messages
+      WHERE wamid = ?
+    `, [outboundWamid])
+
+    assert.ok(row)
+    assert.equal(row.contact_id, contactId)
+    assert.equal(row.direction, 'outbound')
+    assert.equal(row.transport, 'qr')
+    assert.equal(normalizeDigits(row.business_phone), normalizeDigits(businessPhone))
+    assert.equal(row.business_phone_number_id, phoneNumberId)
+    assert.equal(row.message_text, outboundBody)
+
+    const chats = await readChatContacts({
+      businessPhoneNumberId: phoneNumberId,
+      businessPhone,
+      limit: '100'
+    })
+    const chat = chats.find(item => item.id === contactId)
+
+    assert.ok(chat)
+    assert.equal(chat.lastMessageText, outboundBody)
+    assert.equal(chat.lastMessageDirection, 'outbound')
+    assert.equal(chat.lastBusinessPhoneNumberId, phoneNumberId)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ?', [outboundWamid]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
     await cleanup({ contactId, messageId: outboundWamid, phone })
   }
