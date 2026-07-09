@@ -2167,6 +2167,9 @@ momento en adelante puede tomar contactos nuevos, pero no toma contactos que ya
 existian antes de ese corte. Cuando el proveedor es OpenAI, el modelo default
 del sistema es `gpt-5.4-mini` (mostrado en UI como GPT-5.4 Mini); las conexiones
 nuevas de OpenAI y los agentes sin modelo explicito deben caer en ese default.
+El modal del wizard debe mantenerse responsivo en pantallas bajas: la ventana no
+debe ocupar casi todo el alto disponible y el contenido de cada paso debe
+scrollear internamente conservando el progreso y las acciones visibles.
 La prueba del asistente debe usar la misma configuracion efectiva que usara el
 runtime real: en el wizard, un borrador nuevo parte de los defaults de creacion
 y no puede heredar campos del primer agente existente; en el editor de un agente
