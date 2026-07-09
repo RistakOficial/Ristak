@@ -632,23 +632,26 @@ export function createConversationalTools(ctx) {
 
   const markReadyTool = tool({
     name: 'mark_ready_to_advance',
-    description: 'Pasa la conversación a un humano y marca el objetivo como CUMPLIDO. Es un paso terminal: después el bot deja de responder. Ejecútala SÓLO cuando la persona pidió explícitamente hablar con alguien / avanzar, o aceptó una propuesta concreta que ya le hiciste. Mostrar interés general ("me interesa", "cuánto cuesta") NO es suficiente: en ese caso sigue conversando. No le digas al cliente que la ejecutaste.',
+    description: 'Marca el objetivo del agente como CUMPLIDO y pasa la conversación a un humano. Es un paso terminal: después el bot deja de responder. Ejecútala SÓLO cuando el objetivo de ESTE agente realmente se cumplió: la persona pidió avanzar/hablar con alguien o aceptó una propuesta concreta que ya le hiciste; o ya recabaste todos los datos que faltaban; o el prospecto ya cumplió tus criterios de calificación; o se cumplió la meta personalizada configurada. Mostrar interés general ("me interesa", "cuánto cuesta") NO es suficiente: en ese caso sigue conversando. No le digas al cliente que la ejecutaste.',
     parameters: z.object({
-      intencionDetectada: z.string().describe('Qué quiere la persona (ej. "agendar valoración esta semana")'),
+      intencionDetectada: z.string().describe('Qué quiere la persona o qué condición del objetivo se cumplió (ej. "pidió que un asesor lo contacte", "ya dio nombre, correo y teléfono", "calificó: tiene presupuesto y decide")'),
       resumen: z.string().describe('Resumen breve de la conversación y su situación'),
       urgencia: z.enum(['baja', 'media', 'alta']).describe('Qué tan pronto quiere avanzar'),
       siguientePaso: z.string().nullable().describe('Siguiente paso recomendado para el humano'),
-      confirm: z.boolean().describe('true SÓLO si la persona pidió explícitamente hablar con alguien/avanzar o aceptó una propuesta concreta que ya le hiciste. Interés general ("me interesa", "cuánto cuesta") NO cuenta. Si dudas, es false y sigues conversando.'),
+      confirm: z.boolean().describe('true SÓLO cuando el objetivo del agente ya se cumplió de verdad (la persona pidió avanzar/hablar con alguien, aceptó una propuesta concreta, ya recabaste los datos pedidos, el prospecto calificó, o se cumplió la meta personalizada). Interés general ("me interesa", "cuánto cuesta") NO cuenta. Si dudas, es false y sigues conversando.'),
       comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
       anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
     execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso, confirm, comprobanteValidado, anticipoValidado }) => {
       // Candado funcional anti-falso-cierre: no marcar objetivo cumplido por interés
-      // blando. Esto NO vive sólo en el prompt; es una barrera de código.
+      // blando. Esto NO vive sólo en el prompt; es una barrera de código. Aplica a
+      // TODOS los objetivos que cierran por aquí (pasar a humano, juntar datos,
+      // filtrar/calificar, o meta personalizada): el disparo exige una condición real,
+      // no sólo que el prospecto parezca interesado.
       if (confirm !== true) {
         return {
           ok: false,
-          error: 'Aún no es momento de pasar a un humano. Sólo hazlo cuando la persona lo pida explícitamente o acepte una propuesta concreta que ya le hiciste. Si sólo mostró interés, sigue conversando: resuelve su duda real y ayúdale a definir el siguiente paso.'
+          error: 'Aún no. Ejecuta esto SÓLO cuando el objetivo del agente ya se cumplió de verdad: la persona pidió avanzar o aceptó una propuesta concreta, ya recabaste los datos que pedías, o el prospecto ya calificó. Si sólo mostró interés, sigue conversando: resuelve su duda real y ayúdale a definir el siguiente paso.'
         }
       }
       const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
