@@ -7,6 +7,7 @@ import { getMetaConfig } from './metaAdsService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
+import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 // (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
@@ -1221,6 +1222,10 @@ async function syncMetaSocialConversationMessages({
         socialMessage,
         config
       })
+
+      if (savedMessage.isNew && socialMessage.direction === 'inbound') {
+        await captureMetaSocialContactIdentity({ contactId: localContact.id, socialMessage })
+      }
 
       if (savedMessage.isNew) {
         stats.saved += 1
@@ -2761,6 +2766,18 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
   }
 }
 
+async function captureMetaSocialContactIdentity({ contactId, socialMessage }) {
+  if (!contactId || socialMessage?.direction !== 'inbound' || !cleanString(socialMessage?.messageText)) return
+
+  await captureContactIdentityFromMessage({
+    contactId,
+    text: socialMessage.messageText,
+    source: `meta_${socialMessage.platform || 'social'}_${socialMessage.messageType || 'message'}`,
+    allowEmail: true,
+    allowPhone: true
+  })
+}
+
 function timingSafeEqualHex(a = '', b = '') {
   const left = Buffer.from(String(a), 'hex')
   const right = Buffer.from(String(b), 'hex')
@@ -2922,6 +2939,10 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           config
         })
 
+        if (savedMessage.isNew && socialMessage.direction === 'inbound') {
+          await captureMetaSocialContactIdentity({ contactId: localContact.id, socialMessage })
+        }
+
         const result = {
           ...savedMessage,
           contactId: localContact.id,
@@ -3075,6 +3096,10 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           const localContact = await upsertLocalSocialContact({ socialMessage: comment, profile })
           const socialContactId = await upsertMetaSocialContact({ contactId: localContact.id, socialMessage: comment, profile })
           const savedComment = await upsertMetaSocialMessage({ socialContactId, contactId: localContact.id, socialMessage: comment, config })
+
+          if (savedComment.isNew && comment.direction === 'inbound') {
+            await captureMetaSocialContactIdentity({ contactId: localContact.id, socialMessage: comment })
+          }
 
           results.push({
             messageId: savedComment.messageId,

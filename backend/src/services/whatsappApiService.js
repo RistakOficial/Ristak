@@ -43,6 +43,7 @@ import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
+import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 import {
   clearWhatsAppApiIntegrationCredentials,
   clearWhatsAppMetaDirectIntegrationCredentials
@@ -6438,6 +6439,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     isNew: !existingMessage
   })
   if (!existingMessage && identity.direction === 'inbound') {
+    await captureContactIdentityFromMessage({
+      contactId: localContact.id,
+      text: messageText,
+      source: 'whatsapp_inbound_message',
+      allowEmail: true,
+      allowPhone: false
+    })
+
     recordInboundChatUnread({
       contactId: localContact.id,
       messageTimestamp

@@ -296,6 +296,17 @@ Capacidades:
   como actualizacion manual del contacto y conserva el flujo normal de
   automatizaciones.
 - Telefonos normalizados.
+- Autocompletado de identidad desde mensajes entrantes: cuando un contacto de
+  Messenger, Instagram DM o comentarios Facebook/Instagram todavia no tiene
+  telefono y/o correo, el backend puede detectar el primer telefono/correo claro
+  escrito por el usuario y guardarlo en el contacto. El telefono se normaliza con
+  la lada configurada en la cuenta (`account_default_dial_code`), por ejemplo un
+  numero nacional mexicano `656 742 6612` queda como `+526567426612`. En
+  WhatsApp solo se autoguarda correo detectado en el texto; el telefono no se
+  extrae del cuerpo porque el numero de WhatsApp ya es la identidad del canal. En
+  correo entrante no se extraen telefonos ni correos desde el cuerpo del email.
+  La captura no reemplaza datos existentes y no fusiona/roba identidad si el
+  telefono o correo detectado ya pertenece a otro contacto.
 - La lista de contactos usa una sola entrada visible de filtros: el boton
   "Todos" abre un panel lateral derecho de filtros avanzados. Primero se elige
   un campo desde un catalogo buscable y luego se arma la condicion del lado
