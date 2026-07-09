@@ -407,6 +407,77 @@ test('reinicia las omisiones de contactos de un agente sin tocar otros estados',
   }
 })
 
+test('un mensaje nuevo reabre una conversación completada por el agente', async () => {
+  const contactId = `conversation_agent_reopen_completed_${randomUUID()}`
+  const answeredMessageId = `waapi_msg_answered_${randomUUID()}`
+  const newMessageId = `waapi_msg_new_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    const agent = await createConversationalAgent({
+      name: 'Agente reapertura test',
+      enabled: true,
+      objective: 'citas'
+    })
+    agentId = agent.id
+
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent'
+    })
+    await setConversationSignal(contactId, 'ready_for_human', {
+      reason: 'Ya respondió el objetivo inicial',
+      summary: 'El contacto ya recibió respuesta.',
+      status: 'completed',
+      agentId
+    })
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET last_inbound_message_id = ?, last_answered_inbound_message_id = ?, last_reply_at = CURRENT_TIMESTAMP
+      WHERE contact_id = ? AND agent_id = ?
+    `, [answeredMessageId, answeredMessageId, contactId, agentId])
+
+    const answeredRuleContext = await buildRuleContext({ contactId, messageText: 'Costos', channel: 'whatsapp' })
+    const alreadyAnswered = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Costos',
+      channel: 'whatsapp',
+      ruleContext: answeredRuleContext,
+      latestMessageId: answeredMessageId
+    })
+    assert.equal(alreadyAnswered.agentConfig, null)
+
+    const newRuleContext = await buildRuleContext({ contactId, messageText: 'Costos otra vez', channel: 'whatsapp' })
+    const reopened = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Costos otra vez',
+      channel: 'whatsapp',
+      ruleContext: newRuleContext,
+      latestMessageId: newMessageId
+    })
+
+    assert.equal(reopened.agentConfig?.id, agentId)
+    assert.equal(reopened.assigned, false)
+    assert.equal(reopened.state?.status, 'active')
+    assert.equal(reopened.state?.signal, null)
+
+    const activeState = await getConversationState(contactId, { agentId })
+    assert.equal(activeState?.status, 'active')
+    assert.equal(activeState?.signal, null)
+
+    const events = await listConversationalAgentEvents({ contactId })
+    assert.ok(events.some((event) => (
+      event.eventType === 'agent_reopened' &&
+      event.detail?.reason === 'new_inbound_after_completion' &&
+      event.detail?.messageId === newMessageId &&
+      event.detail?.agentId === agentId
+    )))
+  } finally {
+    await cleanup(contactId, agentId)
+  }
+})
+
 test('los resúmenes de cierre solo salen cuando el agente asignado completa el objetivo', async () => {
   const assignedContactId = `conversation_agent_completed_${randomUUID()}`
   const unassignedContactId = `conversation_agent_unassigned_completion_${randomUUID()}`

@@ -2174,6 +2174,12 @@ agente. Si una cuenta ya tenia un estado heredado `skipped`, `human`, `paused`,
 herencia antes del matching automatico para que el agente nuevo pueda tomar el
 chat; los bloqueos manuales creados despues de asignar ese agente siguen
 respetandose.
+Un estado `completed` no debe dejar el contacto muerto para siempre: si el mismo
+agente ya cumplio su objetivo y despues entra un mensaje nuevo distinto al ultimo
+inbound contestado, el runtime debe limpiar la señal de cierre, reabrir la
+conversacion como `active` y registrar `agent_reopened`. El mensaje ya contestado
+no se reprocesa, y los estados `human`, `paused` o `skipped` siguen bloqueando
+hasta que el usuario los cambie explicitamente.
 
 El modal del wizard debe mantenerse responsivo en pantallas bajas: la ventana no
 debe ocupar casi todo el alto disponible y el contenido de cada paso debe

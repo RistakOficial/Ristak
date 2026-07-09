@@ -27,6 +27,7 @@ import {
   matchAgentForMessage,
   assignAgentToConversation,
   releaseAgentFromConversation,
+  setConversationStatus,
   buildRuleContext,
   exitRulesMatch,
   contactIsOutOfScopeForAgent,
@@ -1541,7 +1542,18 @@ function isRunnableConversationState(state) {
   return Boolean(state?.agentId && state.status === 'active' && !state.signal)
 }
 
-export async function resolveInboundAgentForContact({ contactId, messageText, channel, ruleContext }) {
+function getStateLastAnsweredInboundMessageId(state) {
+  return state?.lastAnsweredInboundMessageId || state?.last_answered_inbound_message_id || null
+}
+
+function shouldReopenCompletedConversationState(state, latestMessageId) {
+  if (!state?.agentId || state.status !== 'completed') return false
+  const cleanLatestMessageId = String(latestMessageId || '').trim()
+  if (!cleanLatestMessageId) return false
+  return getStateLastAnsweredInboundMessageId(state) !== cleanLatestMessageId
+}
+
+export async function resolveInboundAgentForContact({ contactId, messageText, channel, ruleContext, latestMessageId = '' }) {
   const states = await listConversationStatesForContact(contactId).catch(() => [])
   const blockedAgentIds = new Set()
   const releasedAgentIds = new Set()
@@ -1556,6 +1568,46 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
         detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'stale_inherited_state' }
       })
       continue
+    }
+    if (agentConfig && shouldReopenCompletedConversationState(state, latestMessageId)) {
+      if (exitRulesMatch(agentConfig, ruleContext)) {
+        releasedAgentIds.add(agentConfig.id)
+        await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'agent_released',
+          detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'exit_rules' }
+        })
+        continue
+      }
+      if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
+        releasedAgentIds.add(agentConfig.id)
+        await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'agent_released',
+          detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'contact_out_of_scope' }
+        })
+        continue
+      }
+
+      const reopenedState = await setConversationStatus(contactId, 'active', {
+        updatedBy: 'agent',
+        clearSignal: true,
+        activationSource: 'automatic',
+        agentId: agentConfig.id
+      })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'agent_reopened',
+        detail: {
+          agentId: agentConfig.id,
+          name: agentConfig.name,
+          reason: 'new_inbound_after_completion',
+          messageId: latestMessageId
+        }
+      })
+      return { agentConfig, state: reopenedState, assigned: false }
     }
     blockedAgentIds.add(state.agentId)
   }
@@ -1687,12 +1739,13 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
 	        channel: normalizedChannel
 	      })
 
-	      const resolved = await resolveInboundAgentForContact({
-	        contactId,
-	        messageText: latestMessageText,
-	        channel: normalizedChannel,
-	        ruleContext
-	      })
+      const resolved = await resolveInboundAgentForContact({
+        contactId,
+        messageText: latestMessageText,
+        channel: normalizedChannel,
+        ruleContext,
+        latestMessageId: latest.id
+      })
 	      let agentConfig = resolved.agentConfig
 	      let agentState = resolved.state
 	      if (!agentConfig) {
