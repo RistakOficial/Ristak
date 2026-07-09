@@ -1550,6 +1550,7 @@ function PhoneShell({
 	          {section === 'chat' ? (
 	            <ChatScreen
               api={api}
+              baseUrl={baseUrl}
               customLabels={customLabels}
               settings={mobileChatSettings}
               notificationContactId={notificationContactId}
@@ -2259,6 +2260,7 @@ function LoginScreen({
 
 function ChatScreen({
   api,
+  baseUrl = '',
   customLabels = DEFAULT_CUSTOM_LABELS,
   footer,
   notificationContactId,
@@ -2273,6 +2275,7 @@ function ChatScreen({
   onNavigateToContactTool,
 }: {
   api: RistakApiClient;
+  baseUrl?: string;
   customLabels?: CustomLabels;
   footer?: React.ReactNode;
   notificationContactId?: string;
@@ -3833,6 +3836,7 @@ function ChatScreen({
         >
           <NativeConversationScreen
             api={api}
+            appBaseUrl={baseUrl}
             contact={selected}
             accountCurrency={accountCurrency}
             archived={archivedChatIds.includes(selected.id)}
@@ -16528,6 +16532,8 @@ type ContactInfoTimelineItem = {
   date: string;
   Icon: LucideIcon;
   accent?: string;
+  actionLabel?: string;
+  actionUrl?: string;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -16542,6 +16548,14 @@ function getReadableContactValue(value: unknown): string {
     return String(record.name || record.label || record.title || record.value || '').trim();
   }
   return String(value).trim();
+}
+
+function firstReadableContactValue(values: unknown[]) {
+  for (const value of values) {
+    const readable = getReadableContactValue(value);
+    if (readable) return readable;
+  }
+  return '';
 }
 
 function parseSortableDateValue(value?: string | null) {
@@ -16731,8 +16745,69 @@ function getContactArchiveItems(messages: ChatMessage[], journey: JourneyEvent[]
   return items.sort((left, right) => parseSortableDateValue(right.date) - parseSortableDateValue(left.date));
 }
 
+function getExternalContactInfoAdUrl(value = '', appBaseUrl = '') {
+  const rawUrl = getReadableContactValue(value);
+  if (!rawUrl) return '';
+
+  try {
+    const url = new URL(rawUrl);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return '';
+    if (appBaseUrl) {
+      const appUrl = new URL(appBaseUrl);
+      if (url.origin === appUrl.origin) return '';
+    }
+    return url.toString();
+  } catch {
+    return '';
+  }
+}
+
+function buildMetaAdsManagerAdUrl(adId = '', adAccountId = '') {
+  const cleanAdId = getReadableContactValue(adId);
+  const cleanAccountId = getReadableContactValue(adAccountId).replace(/^act_/i, '');
+  if (!cleanAdId || !cleanAccountId) return '';
+
+  const params = new URLSearchParams({
+    act: cleanAccountId,
+    selected_ad_ids: cleanAdId,
+  });
+  return `https://adsmanager.facebook.com/adsmanager/manage/ads?${params.toString()}`;
+}
+
+function getContactInfoAdActionUrl({
+  adAccountId,
+  adId,
+  appBaseUrl,
+  previewUrl,
+  sourceUrl,
+}: {
+  adAccountId?: unknown;
+  adId?: unknown;
+  appBaseUrl?: string;
+  previewUrl?: unknown;
+  sourceUrl?: unknown;
+}) {
+  return getExternalContactInfoAdUrl(getReadableContactValue(previewUrl), appBaseUrl) ||
+    buildMetaAdsManagerAdUrl(getReadableContactValue(adId), getReadableContactValue(adAccountId)) ||
+    getExternalContactInfoAdUrl(getReadableContactValue(sourceUrl), appBaseUrl);
+}
+
+function getAdActionDataFromJourneyEvent(event?: JourneyEvent | null) {
+  const data = asRecord(event?.data);
+  return {
+    adAccountId: firstReadableContactValue([data.ad_account_id, data.adAccountId]),
+    adId: firstReadableContactValue([data.attribution_ad_id, data.referral_source_id, data.ad_id, data.meta_ad_id]),
+    previewUrl: firstReadableContactValue([data.creative_preview_url, data.preview_url]),
+    sourceUrl: firstReadableContactValue([data.referral_source_url, data.detected_source_url, data.source_url]),
+  };
+}
+
 function getTrackingData(contact?: ChatContact | null, journey: JourneyEvent[] = []) {
-  const firstSession = asRecord(getContactExtraValue((contact || {}) as ChatContact, 'firstSession'));
+  const contactRecord = (contact || {}) as ChatContact;
+  const firstSession = asRecord(getContactExtraValue(contactRecord, 'firstSession'));
+  const metaAttribution = asRecord(contactRecord.metaAttribution || getContactExtraValue(contactRecord, 'metaAttribution'));
+  const adEvent = journey.find(isAdAttributedJourneyEvent);
+  const adEventData = getAdActionDataFromJourneyEvent(adEvent);
   const firstPageVisit = journey.find((event) => event.type === 'page_visit');
   const pageData = asRecord(firstPageVisit?.data);
   const attributionSource = contact?.whatsappAttributionPlatform || contact?.attribution_session_source || contact?.source || '';
@@ -16740,8 +16815,12 @@ function getTrackingData(contact?: ChatContact | null, journey: JourneyEvent[] =
     startedAt: getReadableContactValue(firstSession.started_at || firstPageVisit?.date || contact?.createdAt),
     pageUrl: getReadableContactValue(firstSession.page_url || firstSession.landing_page || pageData.page_url || pageData.landing_page || getContactExtraValue((contact || {}) as ChatContact, 'attribution_url')),
     source: getReadableContactValue(firstSession.source_platform || firstSession.site_source_name || pageData.source_platform || pageData.site_source_name || attributionSource),
-    campaign: getReadableContactValue(firstSession.campaign_name || pageData.campaign_name || firstSession.utm_campaign || pageData.utm_campaign),
-    ad: getReadableContactValue(firstSession.ad_name || pageData.ad_name || getContactExtraValue((contact || {}) as ChatContact, 'ad_name')),
+    campaign: firstReadableContactValue([metaAttribution.campaignName, firstSession.campaign_name, pageData.campaign_name, firstSession.utm_campaign, pageData.utm_campaign]),
+    ad: firstReadableContactValue([metaAttribution.adName, firstSession.ad_name, pageData.ad_name, getContactExtraValue(contactRecord, 'ad_name')]),
+    adAccountId: firstReadableContactValue([metaAttribution.adAccountId, adEventData.adAccountId]),
+    adId: firstReadableContactValue([metaAttribution.adId, adEventData.adId, firstSession.ad_id, pageData.ad_id, getContactExtraValue(contactRecord, 'ad_id')]),
+    creativePreviewUrl: firstReadableContactValue([metaAttribution.creativePreviewUrl, adEventData.previewUrl]),
+    sourceUrl: firstReadableContactValue([adEventData.sourceUrl]),
     device: [firstSession.device_type, firstSession.browser].map(getReadableContactValue).filter(Boolean).join(' · '),
     location: [firstSession.geo_city, firstSession.geo_region, firstSession.geo_country, pageData.geo_city, pageData.geo_region, pageData.geo_country].map(getReadableContactValue).filter(Boolean).slice(0, 3).join(', '),
   };
@@ -17198,11 +17277,15 @@ function getContactInfoJourneyDescription(event: JourneyEvent, timezone: string)
   return getReadableContactValue(data.summary || data.description || data.title) || getContactInfoDateTime(event.date, timezone);
 }
 
-function getContactJourneyItems(journey: JourneyEvent[], timezone: string): ContactInfoTimelineItem[] {
+function getContactJourneyItems(journey: JourneyEvent[], timezone: string, appBaseUrl = ''): ContactInfoTimelineItem[] {
   return buildContactInfoDisplayJourney(journey, timezone)
     .map((event, index) => {
       const data = asRecord(event.data);
       const type = String(event.type || 'activity');
+      const adActionData = isAdAttributedJourneyEvent(event) ? getAdActionDataFromJourneyEvent(event) : null;
+      const adActionUrl = adActionData
+        ? getContactInfoAdActionUrl({ ...adActionData, appBaseUrl })
+        : '';
       if (type === 'whatsapp_message') {
         return {
           id: `${type}-${event.date}-${index}`,
@@ -17212,6 +17295,8 @@ function getContactJourneyItems(journey: JourneyEvent[], timezone: string): Cont
           date: event.date,
           Icon: Smartphone,
           accent: CONTACT_INFO_THEME.success,
+          actionLabel: adActionUrl ? 'Ver anuncio' : undefined,
+          actionUrl: adActionUrl,
         };
       }
       if (type === 'meta_message') {
@@ -17223,6 +17308,8 @@ function getContactJourneyItems(journey: JourneyEvent[], timezone: string): Cont
           date: event.date,
           Icon: Sparkles,
           accent: CONTACT_INFO_THEME.success,
+          actionLabel: adActionUrl ? 'Ver anuncio' : undefined,
+          actionUrl: adActionUrl,
         };
       }
       if (type === 'email_message') {
@@ -18342,16 +18429,19 @@ function FormattedChatPreview({ contact, unread }: { contact: ChatContact; unrea
 
 function ConversationScreen({
   api,
+  baseUrl = '',
   contact,
   onBack,
 }: {
   api: RistakApiClient;
+  baseUrl?: string;
   contact: ChatContact;
   onBack: () => void;
 }) {
   return (
     <NativeConversationScreen
       api={api}
+      appBaseUrl={baseUrl}
       archived={false}
       accountCurrency=""
       contact={contact}
@@ -18388,6 +18478,7 @@ function ContactInfoText(props: React.ComponentProps<typeof Text>) {
 
 function NativeContactDetailScreen({
   accountCurrency,
+  appBaseUrl = '',
   businessPhones = [],
   contact,
   customLabels = DEFAULT_CUSTOM_LABELS,
@@ -18404,6 +18495,7 @@ function NativeContactDetailScreen({
   onSave,
 }: {
   accountCurrency: string;
+  appBaseUrl?: string;
   businessPhones?: WhatsAppApiPhoneNumber[];
   contact: ChatContact;
   customLabels?: CustomLabels;
@@ -18447,9 +18539,16 @@ function NativeContactDetailScreen({
   const appointments = useMemo(() => getContactInfoAppointments(contact, journeyEvents), [contact, journeyEvents]);
   const activeAppointments = useMemo(() => appointments.filter(isActiveContactAppointment), [appointments]);
   const archiveItems = useMemo(() => getContactArchiveItems(journeyMessages, journeyEvents), [journeyEvents, journeyMessages]);
-  const journeyItems = useMemo(() => getContactJourneyItems(journeyEvents, timezone), [journeyEvents, timezone]);
+  const journeyItems = useMemo(() => getContactJourneyItems(journeyEvents, timezone, appBaseUrl), [appBaseUrl, journeyEvents, timezone]);
   const agentHistoryItems = useMemo(() => getAgentHistoryItems(journeyEvents, timezone), [journeyEvents, timezone]);
   const tracking = useMemo(() => getTrackingData(contact, journeyEvents), [contact, journeyEvents]);
+  const adActionUrl = useMemo(() => getContactInfoAdActionUrl({
+    previewUrl: tracking.creativePreviewUrl,
+    adAccountId: tracking.adAccountId,
+    adId: tracking.adId,
+    sourceUrl: tracking.sourceUrl,
+    appBaseUrl,
+  }), [appBaseUrl, tracking.adAccountId, tracking.adId, tracking.creativePreviewUrl, tracking.sourceUrl]);
   const archiveCounts = useMemo(() => ({
     media: archiveItems.filter((item) => item.tab === 'media').length,
     documents: archiveItems.filter((item) => item.tab === 'documents').length,
@@ -18908,7 +19007,14 @@ function NativeContactDetailScreen({
           {renderRow('first-visit', Target, 'Primera visita', getContactInfoDateTime(tracking.startedAt, timezone) || 'Sin visita guardada')}
           {renderRow('page', FileText, 'Página', getPageNameFromUrl(tracking.pageUrl) || tracking.pageUrl || 'Sin página')}
           {renderRow('campaign', Package, 'Campaña', tracking.campaign || 'Sin campaña')}
-          {renderRow('ad', Sparkles, 'Anuncio', tracking.ad || 'Sin anuncio')}
+          {renderRow(
+            'ad',
+            Sparkles,
+            'Anuncio',
+            tracking.ad || (adActionUrl ? 'Anuncio de Meta' : 'Sin anuncio'),
+            adActionUrl ? 'Ver anuncio' : null,
+            adActionUrl ? () => void openInAppBrowser(adActionUrl) : undefined,
+          )}
           {renderRow('device', Smartphone, 'Dispositivo', tracking.device || 'Sin dispositivo')}
           {renderRow('location', MapPin, 'Ubicación', tracking.location || 'Sin ubicación')}
           {firstSuccessfulPayment
@@ -19099,7 +19205,7 @@ function ContactInfoTimelineRow({
   timezone: string;
 }) {
   const Icon = item.Icon;
-  return (
+  const content = (
     <View style={styles.contactInfoTimelineRow}>
       <View style={styles.contactInfoTimelineRail}>
         {!isFirst ? <View style={styles.contactInfoTimelineConnectorTop} /> : null}
@@ -19112,9 +19218,25 @@ function ContactInfoTimelineRow({
         <ContactInfoText style={styles.contactInfoTimelineTitle}>{item.title}</ContactInfoText>
         {item.subtitle ? <ContactInfoText style={styles.contactInfoTimelineSubtitle}>{item.subtitle}</ContactInfoText> : null}
         <ContactInfoText style={styles.contactInfoTimelineDate}>{getContactInfoDateTime(item.date, timezone)}</ContactInfoText>
+        {item.actionUrl ? <ContactInfoText style={styles.contactInfoTimelineAction}>{item.actionLabel || 'Ver anuncio'}</ContactInfoText> : null}
       </View>
     </View>
   );
+
+  if (item.actionUrl) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${item.actionLabel || 'Ver anuncio'} ${item.title}`}
+        onPress={() => void openInAppBrowser(item.actionUrl || '')}
+        style={({ pressed }) => pressed && styles.pressed}
+      >
+        {content}
+      </Pressable>
+    );
+  }
+
+  return content;
 }
 
 function ContactInfoOurNumberSheet({
@@ -19202,6 +19324,7 @@ function ContactDetailRow({
 function NativeConversationScreen({
   accountCurrency,
   api,
+  appBaseUrl = '',
   archived,
   businessPhones = [],
   contact,
@@ -19221,6 +19344,7 @@ function NativeConversationScreen({
 }: {
   accountCurrency: string;
   api: RistakApiClient;
+  appBaseUrl?: string;
   archived: boolean;
   businessPhones?: WhatsAppApiPhoneNumber[];
   contact: ChatContact;
@@ -20907,6 +21031,7 @@ function NativeConversationScreen({
       <NativeContactDetailScreen
         contact={contactInfo || contact}
         accountCurrency={accountCurrency}
+        appBaseUrl={appBaseUrl}
         businessPhones={businessPhones}
         customLabels={customLabels}
         journeyEvents={contactInfoJourneyEvents ?? journeyEvents}
@@ -32931,6 +33056,13 @@ function createAppStyles() {
     fontSize: phoneCompact(18),
     lineHeight: phoneCompact(23),
     fontWeight: '900',
+  },
+  contactInfoTimelineAction: {
+    color: CONTACT_INFO_THEME.accent,
+    fontSize: phoneCompact(14),
+    lineHeight: phoneCompact(18),
+    fontWeight: '900',
+    marginTop: phoneCompact(7),
   },
   conversationCallActions: {
     width: 92,

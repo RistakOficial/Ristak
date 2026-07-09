@@ -59,6 +59,8 @@ import type {
 import * as FileSystem from 'expo-file-system/legacy';
 import { cleanBaseUrl } from './format';
 
+declare const process: { env?: Record<string, string | undefined> } | undefined;
+
 const DEFAULT_INSTALLER_API_BASE_URL = 'https://www.ristak.com';
 const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes';
 const CHAT_STREAM_ENDPOINT = '/chat-events/stream';
@@ -230,7 +232,10 @@ function withApiPrefix(path: string) {
 }
 
 function getInstallerApiBaseUrl() {
-  return cleanBaseUrl(process.env.EXPO_PUBLIC_INSTALLER_API_URL || DEFAULT_INSTALLER_API_BASE_URL);
+  const installerApiUrl = typeof process === 'undefined'
+    ? ''
+    : process.env?.EXPO_PUBLIC_INSTALLER_API_URL;
+  return cleanBaseUrl(installerApiUrl || DEFAULT_INSTALLER_API_BASE_URL);
 }
 
 function buildInstallerUrl(path: string) {

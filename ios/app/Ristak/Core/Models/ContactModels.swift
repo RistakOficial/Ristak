@@ -270,6 +270,7 @@ struct ContactMetaAttribution: Decodable, Sendable, Equatable {
     let adsetId: String?
     let adsetName: String?
     let adId: String?
+    let adAccountId: String?
     let adName: String?
     let creativeThumbnailUrl: String?
     let creativeImageUrl: String?
@@ -279,7 +280,7 @@ struct ContactMetaAttribution: Decodable, Sendable, Equatable {
 
     enum CodingKeys: String, CodingKey {
         case source, matchType, campaignId, campaignName, adsetId, adsetName
-        case adId, adName, creativeThumbnailUrl, creativeImageUrl
+        case adId, adAccountId, adName, creativeThumbnailUrl, creativeImageUrl
         case creativeVideoUrl, creativePreviewUrl, date
     }
 
@@ -292,6 +293,7 @@ struct ContactMetaAttribution: Decodable, Sendable, Equatable {
         adsetId = container.flexibleString(forKey: .adsetId)
         adsetName = container.flexibleString(forKey: .adsetName)
         adId = container.flexibleString(forKey: .adId)
+        adAccountId = container.flexibleString(forKey: .adAccountId)
         adName = container.flexibleString(forKey: .adName)
         creativeThumbnailUrl = container.flexibleString(forKey: .creativeThumbnailUrl)
         creativeImageUrl = container.flexibleString(forKey: .creativeImageUrl)

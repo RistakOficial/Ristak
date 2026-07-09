@@ -51,6 +51,30 @@ struct ContactJourneyItem: Identifiable, Equatable, Sendable {
     let date: String
     let icon: ContactJourneyIcon
     let accent: ContactJourneyAccent
+    let actionLabel: String?
+    let actionUrl: String?
+
+    init(
+        id: String,
+        type: String,
+        title: String,
+        subtitle: String,
+        date: String,
+        icon: ContactJourneyIcon,
+        accent: ContactJourneyAccent,
+        actionLabel: String? = nil,
+        actionUrl: String? = nil
+    ) {
+        self.id = id
+        self.type = type
+        self.title = title
+        self.subtitle = subtitle
+        self.date = date
+        self.icon = icon
+        self.accent = accent
+        self.actionLabel = actionLabel
+        self.actionUrl = actionUrl
+    }
 }
 
 // MARK: - Nodo interno del pipeline (evita depender de `JourneyEvent` de Core)
@@ -164,16 +188,22 @@ struct ContactJourneyBuilder: Sendable {
 
         switch type {
         case "whatsapp_message":
+            let actionUrl = CJL.isAdAttributed(event) ? CJL.adActionUrl(from: data) : nil
             return ContactJourneyItem(
                 id: id, type: type, title: "WhatsApp",
                 subtitle: description(for: event), date: event.date,
-                icon: .channel(.whatsapp), accent: .positive
+                icon: .channel(.whatsapp), accent: .positive,
+                actionLabel: actionUrl == nil ? nil : "Ver anuncio",
+                actionUrl: actionUrl
             )
         case "meta_message":
+            let actionUrl = CJL.isAdAttributed(event) ? CJL.adActionUrl(from: data) : nil
             return ContactJourneyItem(
                 id: id, type: type, title: CJL.metaTitle(event),
                 subtitle: description(for: event), date: event.date,
-                icon: .channel(CJL.metaChannel(event)), accent: .positive
+                icon: .channel(CJL.metaChannel(event)), accent: .positive,
+                actionLabel: actionUrl == nil ? nil : "Ver anuncio",
+                actionUrl: actionUrl
             )
         case "email_message":
             return ContactJourneyItem(
@@ -456,6 +486,50 @@ private enum CJL {
 
     static func matches(_ pattern: String, _ text: String) -> Bool {
         text.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    static func externalAdUrl(_ value: String, allowRistakHosts: Bool = true) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
+            return nil
+        }
+
+        let host = url.host?.lowercased() ?? ""
+        if !allowRistakHosts,
+           (host.contains("ristak") || host.hasSuffix("onrender.com")) {
+            return nil
+        }
+
+        return url.absoluteString
+    }
+
+    static func metaAdsManagerAdUrl(adId: String, adAccountId: String) -> String? {
+        let cleanAdId = adId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanAccountId = adAccountId
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "^act_", with: "", options: .regularExpression)
+        guard !cleanAdId.isEmpty, !cleanAccountId.isEmpty else { return nil }
+
+        var components = URLComponents(string: "https://adsmanager.facebook.com/adsmanager/manage/ads")
+        components?.queryItems = [
+            URLQueryItem(name: "act", value: cleanAccountId),
+            URLQueryItem(name: "selected_ad_ids", value: cleanAdId),
+        ]
+        return components?.url?.absoluteString
+    }
+
+    static func adActionUrl(from data: [String: RistakJSONValue]) -> String? {
+        let previewUrl = firstReadable([data["creative_preview_url"], data["preview_url"]])
+        let adId = firstReadable([data["attribution_ad_id"], data["referral_source_id"], data["ad_id"], data["meta_ad_id"]])
+        let adAccountId = firstReadable([data["ad_account_id"], data["adAccountId"]])
+        let sourceUrl = firstReadable([data["referral_source_url"], data["detected_source_url"], data["source_url"]])
+
+        return externalAdUrl(previewUrl)
+            ?? metaAdsManagerAdUrl(adId: adId, adAccountId: adAccountId)
+            ?? externalAdUrl(sourceUrl, allowRistakHosts: false)
     }
 
     // MARK: Direcciones / autoría
@@ -920,6 +994,8 @@ struct ContactJourneyPanel: View {
 // MARK: - Fila de la línea de tiempo
 
 struct ContactJourneyTimelineRow: View {
+    @Environment(\.openURL) private var openURL
+
     let item: ContactJourneyItem
     let timeZone: TimeZone
     let isFirst: Bool
@@ -928,6 +1004,21 @@ struct ContactJourneyTimelineRow: View {
     private let iconSize: CGFloat = 34
 
     var body: some View {
+        if let actionUrl = item.actionUrl,
+           let url = URL(string: actionUrl) {
+            Button {
+                openURL(url)
+            } label: {
+                rowContent
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(item.actionLabel ?? "Ver anuncio") \(item.title)")
+        } else {
+            rowContent
+        }
+    }
+
+    private var rowContent: some View {
         HStack(alignment: .top, spacing: RistakTheme.Spacing.sm) {
             rail
             VStack(alignment: .leading, spacing: 4) {
@@ -942,10 +1033,17 @@ struct ContactJourneyTimelineRow: View {
                 Text(ContactInfoDates.dateTime(fromISO: item.date, timeZone: timeZone))
                     .font(.caption.weight(.medium))
                     .foregroundStyle(RistakTheme.textMute)
+                if let actionLabel = item.actionLabel, item.actionUrl != nil {
+                    Text(actionLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(RistakTheme.accent)
+                        .padding(.top, 2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, RistakTheme.Spacing.lg)
         }
+        .contentShape(Rectangle())
     }
 
     /// Riel: línea conectora continua detrás + ícono arriba (con hueco superior

@@ -52,6 +52,7 @@ export interface ContactMetaAttribution {
   adsetId?: string | null
   adsetName?: string | null
   adId?: string | null
+  adAccountId?: string | null
   adName?: string | null
   creativeThumbnailUrl?: string | null
   creativeImageUrl?: string | null

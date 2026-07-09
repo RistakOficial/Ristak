@@ -4535,6 +4535,8 @@ function enrichJourneyDataWithMeta(
     adset_name: data.adset_name || metaAttribution.adsetName || null,
     attribution_ad_id: metaAttribution.adId || data.attribution_ad_id || data.referral_source_id || null,
     attribution_ad_name: metaAttribution.adName || data.attribution_ad_name || null,
+    ad_account_id: data.ad_account_id || metaAttribution.adAccountId || null,
+    creative_preview_url: data.creative_preview_url || metaAttribution.creativePreviewUrl || null,
     ad_platform: data.ad_platform || 'Meta Ads',
     is_ad_attributed: true
   }
@@ -4751,8 +4753,71 @@ function getResolvedMetaAttribution(contact?: Contact | null, journey: JourneyEv
     campaignName: data.campaign_name || null,
     adsetName: data.adset_name || null,
     adId: data.attribution_ad_id || null,
-    adName: data.attribution_ad_name || data.meta_ad_name || null
+    adAccountId: data.ad_account_id || null,
+    adName: data.attribution_ad_name || data.meta_ad_name || null,
+    creativePreviewUrl: data.creative_preview_url || null
   }
+}
+
+function isAbsoluteHttpUrl(value = '') {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function isCurrentOriginUrl(value = '') {
+  if (typeof window === 'undefined') return false
+
+  try {
+    const url = new URL(value, window.location.href)
+    return url.origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
+function getContactInfoAdStringValue(value: unknown) {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string' || typeof value === 'number') return getReadableValue(value)
+  return String(value).trim()
+}
+
+function getExternalContactInfoAdUrl(value?: unknown) {
+  const url = getContactInfoAdStringValue(value)
+  if (!url || !isAbsoluteHttpUrl(url)) return ''
+  if (isCurrentOriginUrl(url)) return ''
+  return url
+}
+
+function buildMetaAdsManagerAdUrl(adId?: unknown, adAccountId?: unknown) {
+  const cleanAdId = getContactInfoAdStringValue(adId)
+  const cleanAccountId = getContactInfoAdStringValue(adAccountId).replace(/^act_/i, '')
+  if (!cleanAdId || !cleanAccountId) return ''
+
+  const params = new URLSearchParams({
+    act: cleanAccountId,
+    selected_ad_ids: cleanAdId
+  })
+  return `https://adsmanager.facebook.com/adsmanager/manage/ads?${params.toString()}`
+}
+
+function getContactInfoAdActionUrl({
+  adAccountId,
+  adId,
+  previewUrl,
+  sourceUrl
+}: {
+  adAccountId?: unknown
+  adId?: unknown
+  previewUrl?: unknown
+  sourceUrl?: unknown
+}) {
+  return getExternalContactInfoAdUrl(previewUrl) ||
+    buildMetaAdsManagerAdUrl(adId, adAccountId) ||
+    getExternalContactInfoAdUrl(sourceUrl)
 }
 
 function getChatPreview(contact: ChatContact) {
@@ -16729,6 +16794,18 @@ export const PhoneChat: React.FC = () => {
       resolvedMetaAttribution ? 'Anuncio real de Meta' : '',
       getReadableValue(resolvedMetaAttribution?.adId || contactInfoTracking.ad_id)
     ].filter(Boolean).join(' · ')
+    const adJourneyData = (contactInfoJourneyEvents.find(isAdAttributedJourneyEvent)?.data || {}) as Record<string, unknown>
+    const adActionUrl = getContactInfoAdActionUrl({
+      previewUrl: resolvedMetaAttribution?.creativePreviewUrl || adJourneyData.creative_preview_url,
+      adAccountId: resolvedMetaAttribution?.adAccountId || adJourneyData.ad_account_id,
+      adId: resolvedMetaAttribution?.adId || adJourneyData.attribution_ad_id || adJourneyData.referral_source_id || contactInfoTracking.ad_id,
+      sourceUrl: adJourneyData.referral_source_url || adJourneyData.detected_source_url || adJourneyData.source_url
+    })
+    const adDisplayName = adName || (adActionUrl ? 'Anuncio de Meta' : '')
+    const adActionDetail = [
+      adDetail,
+      adActionUrl ? 'Ver anuncio' : ''
+    ].filter(Boolean).join(' · ')
     const pageName = getReadableValue(getPageName(contactInfoTracking.page_url))
     const deviceName = [getReadableValue(contactInfoTracking.device_type), getReadableValue(contactInfoTracking.browser)].filter(Boolean).join(' · ')
     const locationName = [contactInfoTracking.geo_city, contactInfoTracking.geo_region, contactInfoTracking.geo_country]
@@ -17023,19 +17100,47 @@ export const PhoneChat: React.FC = () => {
               <section className={styles.contactInfoDetailSection}>
                 {contactInfoJourneyEvents.length > 0 ? (
                   <div className={styles.contactInfoTimeline}>
-                    {contactInfoJourneyEvents.map((event, index) => (
-                      <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
-                        <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
-                          {getJourneyEventIcon(event)}
-                          {getJourneyEventNetworkBadge(event)}
-                        </span>
-                        <div>
-                          <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
-                          <small>{getJourneyEventDescription(event)}</small>
-                          <em>{formatLocalDateTime(event.date)}</em>
+                    {contactInfoJourneyEvents.map((event, index) => {
+                      const data = (event.data || {}) as Record<string, unknown>
+                      const actionUrl = isAdAttributedJourneyEvent(event)
+                        ? getContactInfoAdActionUrl({
+                            previewUrl: data.creative_preview_url,
+                            adAccountId: data.ad_account_id,
+                            adId: data.attribution_ad_id || data.referral_source_id || data.ad_id,
+                            sourceUrl: data.referral_source_url || data.detected_source_url || data.source_url
+                          })
+                        : ''
+                      const content = (
+                        <>
+                          <span className={`${styles.contactInfoTimelineIcon} ${getJourneyEventIconClass(event)}`}>
+                            {getJourneyEventIcon(event)}
+                            {getJourneyEventNetworkBadge(event)}
+                          </span>
+                          <div>
+                            <strong>{getJourneyEventLabel(event, leadLabel)}</strong>
+                            <small>{getJourneyEventDescription(event)}</small>
+                            <em>{formatLocalDateTime(event.date)}</em>
+                            {actionUrl ? <span className={styles.contactInfoTimelineActionLabel}>Ver anuncio</span> : null}
+                          </div>
+                        </>
+                      )
+
+                      return actionUrl ? (
+                        <button
+                          key={`${event.type}-${event.date}-${index}`}
+                          type="button"
+                          className={`${styles.contactInfoTimelineItem} ${styles.contactInfoTimelineActionItem}`}
+                          onClick={() => window.open(actionUrl, '_blank', 'noopener,noreferrer')}
+                          aria-label={`Ver anuncio ${getJourneyEventLabel(event, leadLabel)}`}
+                        >
+                          {content}
+                        </button>
+                      ) : (
+                        <div key={`${event.type}-${event.date}-${index}`} className={styles.contactInfoTimelineItem}>
+                          {content}
                         </div>
-                      </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 ) : (
                   <p className={styles.contactInfoDetailEmpty}>Aún no hay actividad guardada para este contacto.</p>
@@ -17278,7 +17383,17 @@ export const PhoneChat: React.FC = () => {
               {renderContactInfoRow('page', <FileText size={17} />, 'Página', pageName)}
               {renderContactInfoRow('campaign', <Megaphone size={17} />, 'Campaña', campaignName, campaignDetail)}
               {renderContactInfoRow('adset', <Layers size={17} />, 'Conjunto', adsetName, adsetDetail)}
-              {renderContactInfoRow('ad', <ReceiptText size={17} />, 'Anuncio', adName, adDetail)}
+              {adActionUrl
+                ? renderContactInfoActionRow(
+                    'ad',
+                    <ReceiptText size={17} />,
+                    'Anuncio',
+                    adDisplayName,
+                    adActionDetail,
+                    () => window.open(adActionUrl, '_blank', 'noopener,noreferrer'),
+                    `Ver anuncio ${adDisplayName}`.trim()
+                  )
+                : renderContactInfoRow('ad', <ReceiptText size={17} />, 'Anuncio', adDisplayName, adDetail)}
               {renderContactInfoRow('device', <Smartphone size={17} />, 'Dispositivo', deviceName)}
               {renderContactInfoRow('location', <MapPin size={17} />, 'Ubicación', locationName)}
               {firstSuccessfulPayment

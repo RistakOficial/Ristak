@@ -25,6 +25,10 @@ export type NativeNotificationIntent = {
 };
 
 type NotificationData = Record<string, unknown>;
+type PermissionStatusProbe = {
+  granted?: boolean;
+  status?: unknown;
+};
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -153,7 +157,7 @@ export async function getNativePushPermissionStatus(): Promise<NativePushPermiss
   if (!isNativeMobilePlatform()) return 'unsupported';
 
   try {
-    const permission = await Notifications.getPermissionsAsync();
+    const permission = await Notifications.getPermissionsAsync() as PermissionStatusProbe;
     return normalizePermissionStatus(permission.status, permission.granted);
   } catch {
     return 'unsupported';
@@ -220,9 +224,9 @@ export async function subscribeToNativePushNotifications(
     };
   }
 
-  let permission = await Notifications.getPermissionsAsync();
+  let permission = await Notifications.getPermissionsAsync() as PermissionStatusProbe;
   if (!permission.granted) {
-    permission = await Notifications.requestPermissionsAsync();
+    permission = await Notifications.requestPermissionsAsync() as PermissionStatusProbe;
   }
 
   if (!permission.granted) {

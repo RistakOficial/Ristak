@@ -52,6 +52,23 @@ export type RuntimeTenant = {
   appUrl: string;
 };
 
+export type ContactMetaAttribution = {
+  source?: string | null;
+  matchType?: string | null;
+  campaignId?: string | null;
+  campaignName?: string | null;
+  adsetId?: string | null;
+  adsetName?: string | null;
+  adId?: string | null;
+  adAccountId?: string | null;
+  adName?: string | null;
+  creativeThumbnailUrl?: string | null;
+  creativeImageUrl?: string | null;
+  creativeVideoUrl?: string | null;
+  creativePreviewUrl?: string | null;
+  date?: string | null;
+};
+
 export type ChatContact = {
   id: string;
   phone?: string;
@@ -66,6 +83,7 @@ export type ChatContact = {
   nextAppointmentDate?: string | null;
   hasCommentMessage?: boolean;
   hasPrivateDm?: boolean;
+  metaAttribution?: ContactMetaAttribution | null;
   name?: string;
   contactName?: string;
   displayName?: string;
