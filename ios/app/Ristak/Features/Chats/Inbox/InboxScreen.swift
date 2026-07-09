@@ -20,10 +20,6 @@ struct InboxScreen: View {
     /// Hub del agente conversacional (encender/pausar/editar), abierto desde el
     /// botón robot del header (paridad /movil).
     @State private var showsAgentHub = false
-    /// La bandeja se lleva al tope SOLO en su primera aparición. `onAppear`
-    /// vuelve a dispararse en cada pop-back desde una conversación; sin este gate
-    /// tiraba la posición de scroll conservada y aventaba la lista al tope.
-    @State private var hasScrolledToTopOnce = false
 
     enum InboxSheet: Identifiable {
         case more(ChatContact)
@@ -142,11 +138,7 @@ struct InboxScreen: View {
     // MARK: - Lista
 
     private var inboxList: some View {
-        ScrollViewReader { proxy in
         List {
-            // El ancla para «volver arriba» va en la PRIMERA fila real (chips o
-            // panel de selección), no en una fila extra: una fila vacía de List
-            // reserva altura mínima y dejaba un hueco grande bajo el buscador.
             if viewModel.isSelecting {
                 ChatSelectionPanel(
                     selectedCount: viewModel.selectedIDs.count,
@@ -162,12 +154,10 @@ struct InboxScreen: View {
                     onCancel: { viewModel.cancelSelection() }
                 )
                 .listRowSeparator(.hidden)
-                .id(Self.topAnchorID)
             } else if !viewModel.isSearchActive {
                 chipsRow
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                    .id(Self.topAnchorID)
             }
 
             if viewModel.showsAssistantRow {
@@ -220,6 +210,9 @@ struct InboxScreen: View {
                     .listRowSeparator(.hidden)
             }
         }
+        // Reset limpio: cambiar la identidad remonta la List en su posición nativa
+        // inicial. Evita `scrollTo` a una fila, que colapsa el header/search.
+        .id(shell.chatsScrollTopSignal)
         .listStyle(.plain)
         .refreshable {
             await viewModel.refreshNow()
@@ -227,23 +220,7 @@ struct InboxScreen: View {
         // Dock por dirección de scroll (#11): bajar oculta el tab bar, subir lo
         // muestra. Solo compacto; ver `ShellScrollTracking.swift`.
         .reportsShellScroll()
-        // Cada apertura/reactivación de la app: bandeja hasta arriba.
-        .onChange(of: shell.chatsScrollTopSignal) {
-            withAnimation(.easeOut(duration: 0.2)) {
-                proxy.scrollTo(Self.topAnchorID, anchor: .top)
-            }
-        }
-        .onAppear {
-            // Solo la PRIMERA vez: en pop-back desde el hilo, `onAppear` se repite
-            // y no debe descartar la posición de scroll del usuario.
-            guard !hasScrolledToTopOnce else { return }
-            hasScrolledToTopOnce = true
-            proxy.scrollTo(Self.topAnchorID, anchor: .top)
-        }
-        }
     }
-
-    private static let topAnchorID = "inbox-top-anchor"
 
     /// Fila de chat extraída a función para no reventar el type-checker del List
     /// (la fila + overlay + modificadores es demasiado para inferir inline).

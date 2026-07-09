@@ -32,6 +32,14 @@ animacion `slide`: se ve como un bloque sombreado subiendo. El cierre debe
 mantener el contenido vivo hasta terminar la animacion para poder reabrir el
 mismo sheet/contacto sin que se trabe.
 
+En la bandeja de chats de `ios/app`, cada arranque o regreso desde background
+real debe entrar por Chats con la lista en su posicion nativa inicial. No uses
+`ScrollViewReader.scrollTo` contra la primera fila de la `List`: con
+`navigationTitle` grande y `searchable`, esa fila vive debajo del header/search y
+forzarla como ancla hace que la pantalla abra visualmente mas abajo. Si hay que
+reiniciar la bandeja, remonta la `List` con una identidad nueva y deja que iOS
+coloque el tope real.
+
 Los bottom sheets nativos que contienen formularios, pickers o contenido con
 boton final deben reservar un margen inferior de seguridad dentro del contenido
 scrollable para que el ultimo control quede visible por encima del area inferior

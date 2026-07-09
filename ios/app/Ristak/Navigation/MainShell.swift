@@ -76,14 +76,14 @@ final class ShellState {
     /// de Chats; 0 = sin badge.
     var chatUnreadCount: Int = 0
 
-    /// Señal para llevar la bandeja de chats hasta arriba. Se incrementa cada
-    /// vez que la app pasa a primer plano (o arranca): el módulo Chats la observa
-    /// y hace scroll al tope. Siempre que se abra la app volvemos a Chats arriba.
+    /// Señal para reconstruir la bandeja de chats en su posición nativa inicial.
+    /// No se usa `scrollTo` contra una fila porque colapsa el header/search.
     var chatsScrollTopSignal: Int = 0
 
-    /// Vuelve a Chats y pide scroll al tope (al abrir/reactivar la app).
+    /// Vuelve a Chats y reinicia la bandeja desde su tope nativo.
     func resetToChatsTop() {
         selectedTab = .chats
+        tabBarHidden = false
         chatsScrollTopSignal &+= 1
     }
 
