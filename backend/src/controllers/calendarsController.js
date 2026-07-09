@@ -2351,6 +2351,8 @@ export async function deleteEvent(req, res) {
         logger.warn(`[Calendars Controller] Delete GHL falló, marcando pendiente: ${error.message}`);
         await localCalendarService.deleteLocalAppointment(existing.id, { markPendingDelete: true });
       }
+    } else if (existing?.ghlAppointmentId) {
+      await localCalendarService.deleteLocalAppointment(existing.id, { markPendingDelete: true });
     } else {
       await localCalendarService.deleteLocalAppointment(id);
     }

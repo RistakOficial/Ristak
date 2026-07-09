@@ -6,8 +6,14 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { DateTime } from 'luxon'
 import { db } from '../src/config/database.js'
-import { createPublicAppointment } from '../src/controllers/calendarsController.js'
-import { createLocalCalendar } from '../src/services/localCalendarService.js'
+import { createPublicAppointment, deleteEvent } from '../src/controllers/calendarsController.js'
+import {
+  createLocalCalendar,
+  getPublicCalendarBySlug,
+  updateLocalCalendar,
+  upsertLocalAppointment,
+  upsertLocalCalendar
+} from '../src/services/localCalendarService.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const backendRoot = join(__dirname, '..')
@@ -26,6 +32,26 @@ function createJsonResponse() {
     }
   }
   return response
+}
+
+async function snapshotRows(tableName) {
+  const rows = await db.all(`SELECT * FROM ${tableName}`).catch(() => [])
+  return {
+    async restore() {
+      await db.run(`DELETE FROM ${tableName}`).catch(() => undefined)
+
+      for (const row of rows) {
+        const columns = Object.keys(row)
+        if (!columns.length) continue
+        const quotedColumns = columns.map(column => `"${column}"`).join(', ')
+        const placeholders = columns.map(() => '?').join(', ')
+        await db.run(
+          `INSERT INTO ${tableName} (${quotedColumns}) VALUES (${placeholders})`,
+          columns.map(column => row[column])
+        )
+      }
+    }
+  }
 }
 
 test('public calendar booking routes stay behind the calendar feature gate', async () => {
@@ -87,6 +113,187 @@ test('public calendar widget highlights the nearest selectable date after slots 
     serviceSource,
     /selectedDateKey = getNearestAvailableDateKey\(\);\n\s+renderMonth\(\);\n\s+renderSlotsForDate\(''\);/,
     'widget should paint the selected day without jumping into the slot step'
+  )
+})
+
+test('public booking keeps a mirrored HighLevel calendar working from local DB while disconnected', async () => {
+  const suffix = randomUUID()
+  const calendarId = `ghl_public_local_${suffix}`
+  const remoteCalendarId = `ghl_remote_public_${suffix}`
+  const calendarSlug = `ghl-public-local-${suffix}`
+  const email = `ghl-public-local-${suffix}@example.test`
+  const phone = '6565559100'
+  const highLevelSnapshot = await snapshotRows('highlevel_config')
+  const baseDay = DateTime.utc().plus({ days: 35 }).startOf('day')
+  const nextWednesday = baseDay.plus({ days: (3 - baseDay.weekday + 7) % 7 })
+  const slotStart = nextWednesday.set({ hour: 10, minute: 0 })
+
+  try {
+    await db.run('DELETE FROM highlevel_config')
+    await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_disconnected_public',
+      name: 'Agenda HighLevel local',
+      slug: calendarSlug,
+      widgetSlug: calendarSlug,
+      source: 'ghl',
+      slotDuration: 60,
+      slotInterval: 60,
+      autoConfirm: true,
+      openHours: [
+        {
+          daysOfTheWeek: [3],
+          hours: [{ openHour: 10, openMinute: 0, closeHour: 12, closeMinute: 0 }]
+        }
+      ]
+    }, {
+      id: calendarId,
+      source: 'ghl',
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_disconnected_public',
+      syncStatus: 'synced'
+    })
+
+    const publicCalendar = await getPublicCalendarBySlug(calendarSlug)
+    assert.equal(publicCalendar?.id, calendarId)
+    assert.equal(publicCalendar?.source, 'ghl')
+
+    const req = {
+      params: { slug: calendarSlug },
+      query: {},
+      body: {
+        startTime: slotStart.toISO(),
+        timezone: 'UTC',
+        name: 'Agenda Local',
+        phone,
+        email,
+        sourceUrl: `http://localhost:3001/calendar/${calendarSlug}`
+      },
+      headers: {
+        host: 'localhost:3001',
+        'user-agent': 'node-test'
+      },
+      hostname: 'localhost',
+      ip: '127.0.0.1',
+      socket: { remoteAddress: '127.0.0.1' }
+    }
+    const res = createJsonResponse()
+
+    await createPublicAppointment(req, res)
+
+    assert.equal(res.statusCode, 201)
+    assert.equal(res.body?.success, true)
+    assert.equal(res.body?.data?.appointment?.calendarId, calendarId)
+    assert.equal(res.body?.data?.appointment?.syncStatus, 'pending')
+
+    const storedAppointment = await db.get(
+      'SELECT id, calendar_id, sync_status FROM appointments WHERE calendar_id = ? AND sync_status = ?',
+      [calendarId, 'pending']
+    )
+    assert.equal(storedAppointment?.calendar_id, calendarId)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM contact_phone_numbers WHERE phone = ?', ['+526565559100']).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE email = ?', [email]).catch(() => undefined)
+    await highLevelSnapshot.restore()
+  }
+})
+
+test('mirrored HighLevel calendar and appointment changes remain pending until reconnect', async () => {
+  const suffix = randomUUID()
+  const calendarId = `ghl_pending_local_${suffix}`
+  const remoteCalendarId = `ghl_remote_pending_${suffix}`
+  const appointmentId = `ghl_appt_local_${suffix}`
+  const remoteAppointmentId = `ghl_appt_remote_${suffix}`
+  const highLevelSnapshot = await snapshotRows('highlevel_config')
+  const start = DateTime.utc().plus({ days: 20 }).set({ hour: 16, minute: 0, second: 0, millisecond: 0 })
+  const end = start.plus({ minutes: 60 })
+
+  try {
+    await db.run('DELETE FROM highlevel_config')
+    await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_disconnected_pending',
+      name: 'Agenda pendiente GHL',
+      slug: `ghl-pending-${suffix}`,
+      widgetSlug: `ghl-pending-${suffix}`,
+      source: 'ghl',
+      openHours: [
+        {
+          daysOfTheWeek: [start.weekday],
+          hours: [{ openHour: 16, openMinute: 0, closeHour: 18, closeMinute: 0 }]
+        }
+      ]
+    }, {
+      id: calendarId,
+      source: 'ghl',
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_disconnected_pending',
+      syncStatus: 'synced'
+    })
+
+    const updatedCalendar = await updateLocalCalendar(calendarId, { name: 'Agenda editada sin GHL' }, { syncStatus: 'pending' })
+    assert.equal(updatedCalendar.syncStatus, 'pending')
+
+    await upsertLocalAppointment({
+      id: appointmentId,
+      ghlAppointmentId: remoteAppointmentId,
+      calendarId,
+      locationId: 'loc_disconnected_pending',
+      title: 'Cita importada',
+      source: 'ghl',
+      startTime: start.toISO(),
+      endTime: end.toISO(),
+      appointmentStatus: 'confirmed',
+      status: 'confirmed'
+    }, {
+      id: appointmentId,
+      source: 'ghl',
+      ghlAppointmentId: remoteAppointmentId,
+      calendarId,
+      locationId: 'loc_disconnected_pending',
+      syncStatus: 'synced'
+    })
+
+    const res = createJsonResponse()
+    await deleteEvent({
+      params: { id: appointmentId },
+      query: {},
+      body: {},
+      headers: {}
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+
+    const deletedAppointment = await db.get(
+      'SELECT sync_status, deleted_at FROM appointments WHERE id = ?',
+      [appointmentId]
+    )
+    assert.equal(deletedAppointment?.sync_status, 'pending_delete')
+    assert.ok(deletedAppointment?.deleted_at)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    await highLevelSnapshot.restore()
+  }
+})
+
+test('HighLevel reconnect sync includes local pending GHL mirrors', async () => {
+  const serviceSource = await readFile(join(backendRoot, 'src/services/localCalendarService.js'), 'utf8')
+
+  assert.match(
+    serviceSource,
+    /COALESCE\(source, ''\) = 'ghl'[\s\S]*COALESCE\(ghl_calendar_id, ''\) != ''[\s\S]*sync_status IN \('pending', 'error'\)/,
+    'calendar resync should push locally edited mirrored GHL calendars'
+  )
+  assert.match(
+    serviceSource,
+    /COALESCE\(source, ''\) = 'ghl'[\s\S]*COALESCE\(ghl_appointment_id, ''\) != ''[\s\S]*sync_status IN \('pending', 'error', 'pending_delete'\)/,
+    'appointment resync should push locally edited/deleted mirrored GHL appointments'
   )
 })
 

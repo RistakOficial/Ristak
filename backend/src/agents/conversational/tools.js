@@ -10,6 +10,7 @@ import { getLocalFreeSlots } from '../../services/localCalendarService.js'
 import { createSinglePaymentLink } from '../../services/paymentFlowService.js'
 import { getBusinessProfileSnapshot } from '../../services/aiAgentService.js'
 import { buildTriggerLinkPublicUrl, getTriggerLink } from '../../services/triggerLinksService.js'
+import { getAccountTimezone, normalizeDateOnlyInTimezone } from '../../utils/dateUtils.js'
 import {
   setConversationSignal,
   recordConversationalAgentEvent,
@@ -512,8 +513,9 @@ export function createConversationalTools(ctx) {
       // Aquí sólo atajamos horas inventadas, fuera de horario o en el pasado, sin
       // importar en qué turno se ofreció el slot (revalidación al momento de agendar).
       const startMs = start.getTime()
-      const slotWindowStart = new Date(startMs - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
-      const slotWindowEnd = new Date(startMs + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const businessTimezone = await getAccountTimezone()
+      const slotWindowStart = normalizeDateOnlyInTimezone(new Date(startMs - 24 * 60 * 60 * 1000).toISOString(), businessTimezone)
+      const slotWindowEnd = normalizeDateOnlyInTimezone(new Date(startMs + 24 * 60 * 60 * 1000).toISOString(), businessTimezone)
       // Fail-OPEN: distinguimos "no hay ese slot" de "no pude consultar". Si la consulta
       // de disponibilidad falla (hipo transitorio de BD), NO afirmamos que el horario es
       // inválido; dejamos que el chequeo de empalme de abajo y createAppointment sean la

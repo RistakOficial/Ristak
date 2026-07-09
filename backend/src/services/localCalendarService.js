@@ -871,6 +871,10 @@ function calendarHasAppointments(calendar = {}, appointmentCounts = new Map()) {
   return toInt(appointmentCounts.get(cleanString(calendar.id)), 0) > 0
 }
 
+function isLocallyUsableCalendar(calendar = {}) {
+  return Boolean(cleanString(calendar.id)) && calendar.isActive !== false
+}
+
 function isEmptySeedRistakCalendar(calendar = {}, appointmentCounts = new Map()) {
   return isLikelySeedRistakCalendar(calendar) && !calendarHasAppointments(calendar, appointmentCounts)
 }
@@ -938,8 +942,7 @@ export async function reconcileCalendarDefaults({ sourcePreference = null } = {}
 
   if (!hasExternalCalendars) {
     const shouldUseLocalFallback = !nextDefaultCalendarId
-      || configuredDefaultCalendar?.source === 'google'
-      || configuredDefaultCalendar?.source === 'ghl'
+      || !isLocallyUsableCalendar(configuredDefaultCalendar)
 
     if (shouldUseLocalFallback) {
       const localCandidate = calendars.find(calendar => isLikelySeedRistakCalendar(calendar))
@@ -1026,7 +1029,7 @@ function appendCalendarSlugSuffix(baseSlug, suffix) {
   return `${truncatedBase}-${normalizedSuffix}`.slice(0, CALENDAR_SLUG_MAX_LENGTH)
 }
 
-async function ristakPublicCalendarSlugExists(candidateSlug, calendarId) {
+async function publicCalendarSlugExists(candidateSlug, calendarId) {
   const slug = cleanString(candidateSlug)
   if (!slug) return false
 
@@ -1034,7 +1037,7 @@ async function ristakPublicCalendarSlugExists(candidateSlug, calendarId) {
     SELECT id
     FROM calendars
     WHERE id != ?
-      AND LOWER(COALESCE(source, 'ristak')) = 'ristak'
+      AND COALESCE(source, 'ristak') IN ('ristak', 'ghl')
       AND (
         LOWER(COALESCE(slug, '')) = LOWER(?)
         OR LOWER(COALESCE(widget_slug, '')) = LOWER(?)
@@ -1051,7 +1054,7 @@ async function ensureUniqueRistakPublicSlug(value, calendarId) {
   let candidate = baseSlug
   let attempt = 0
 
-  while (await ristakPublicCalendarSlugExists(candidate, calendarId)) {
+  while (await publicCalendarSlugExists(candidate, calendarId)) {
     attempt += 1
     const suffix = attempt === 1
       ? idSuffix || String(attempt + 1)
@@ -1450,10 +1453,11 @@ export async function getPublicCalendarBySlug(slugOrId) {
     SELECT *
     FROM calendars
     WHERE COALESCE(is_active, 1) != 0
-      AND LOWER(COALESCE(source, 'ristak')) = 'ristak'
+      AND COALESCE(source, 'ristak') IN ('ristak', 'ghl')
       AND (id = ? OR slug = ? OR widget_slug = ?)
     ORDER BY
       CASE WHEN id = ? THEN 0 ELSE 1 END,
+      CASE COALESCE(source, 'ristak') WHEN 'ristak' THEN 0 WHEN 'ghl' THEN 1 ELSE 2 END,
       LOWER(name) ASC
     LIMIT 1
   `, [value, value, value, value])
@@ -3976,7 +3980,7 @@ export async function updateLocalCalendar(calendarId, updateData = {}, { syncSta
     source: existing.source
   }, {
     source: existing.source,
-    syncStatus: existing.source === 'ghl' && syncStatus === 'pending' ? 'synced' : syncStatus
+    syncStatus
   })
 }
 
@@ -4517,6 +4521,18 @@ function isRistakOwnedRow(row = {}, prefix = '') {
   return source === 'ristak' || (prefix && id.startsWith(prefix))
 }
 
+function isPendingHighLevelLinkedRow(row = {}, remoteIdColumn = '') {
+  const status = cleanString(row.sync_status).toLowerCase()
+  const source = cleanString(row.source).toLowerCase()
+  const remoteId = cleanString(row[remoteIdColumn])
+
+  return Boolean(
+    remoteId
+    && source === 'ghl'
+    && ['pending', 'error', 'pending_delete'].includes(status)
+  )
+}
+
 function isHighLevelCalendar(calendar = {}) {
   return normalizeCalendarSource(calendar.source) === 'ghl' || Boolean(cleanString(calendar.ghlCalendarId || calendar.ghl_calendar_id))
 }
@@ -4799,13 +4815,18 @@ async function getFallbackTeamMembers(client, locationId) {
 export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
   const rows = await db.all(`
     SELECT * FROM calendars
-    WHERE (
+    WHERE ((
         COALESCE(source, 'ristak') = 'ristak'
         OR id LIKE 'rstk_cal_%'
       )
       AND (
         COALESCE(ghl_calendar_id, '') = ''
         OR sync_status IN ('pending', 'error')
+      ))
+      OR (
+        COALESCE(source, '') = 'ghl'
+        AND COALESCE(ghl_calendar_id, '') != ''
+        AND sync_status IN ('pending', 'error')
       )
     ORDER BY created_at ASC
   `)
@@ -4820,7 +4841,7 @@ export async function syncLocalCalendarsToHighLevel(locationId, apiToken) {
   for (const row of rows) {
     const calendar = calendarRowToApi(row)
     try {
-      if (!isRistakOwnedRow(row, LOCAL_CALENDAR_PREFIX)) {
+      if (!isRistakOwnedRow(row, LOCAL_CALENDAR_PREFIX) && !isPendingHighLevelLinkedRow(row, 'ghl_calendar_id')) {
         logger.warn(`Saltando calendario no local para evitar duplicado en HighLevel: ${calendar.id}`)
         continue
       }
@@ -4952,11 +4973,16 @@ export async function ensureHighLevelContactForAppointment(client, appointment =
 export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
   const rows = await db.all(`
     SELECT * FROM appointments
-    WHERE (
+    WHERE ((
         COALESCE(source, 'ristak') = 'ristak'
         OR id LIKE 'rstk_appt_%'
       )
-      AND sync_status IN ('pending', 'error', 'pending_delete')
+      AND sync_status IN ('pending', 'error', 'pending_delete'))
+      OR (
+        COALESCE(source, '') = 'ghl'
+        AND COALESCE(ghl_appointment_id, '') != ''
+        AND sync_status IN ('pending', 'error', 'pending_delete')
+      )
     ORDER BY date_added ASC
   `)
 
@@ -4970,7 +4996,7 @@ export async function syncLocalAppointmentsToHighLevel(locationId, apiToken) {
   for (const row of rows) {
     const appointment = appointmentRowToApi(row)
     try {
-      if (!isRistakOwnedRow(row, LOCAL_APPOINTMENT_PREFIX)) {
+      if (!isRistakOwnedRow(row, LOCAL_APPOINTMENT_PREFIX) && !isPendingHighLevelLinkedRow(row, 'ghl_appointment_id')) {
         logger.warn(`Saltando cita no local para evitar duplicado en HighLevel: ${appointment.id}`)
         continue
       }

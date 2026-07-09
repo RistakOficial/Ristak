@@ -921,6 +921,12 @@ Reglas base:
 - La base guarda instantes en UTC.
 - Fechas de calendario se interpretan en zona del negocio.
 - No dependas del timezone del navegador para datos CRM.
+- Los calendarios espejados desde HighLevel siguen siendo calendarios locales
+  utilizables aunque HighLevel se desconecte. Sus URLs publicas, disponibilidad
+  y bookings deben resolverse contra la DB de Ristak; las citas nuevas,
+  ediciones y eliminaciones quedan en `sync_status` pendiente/error/
+  `pending_delete` y se empujan a HighLevel cuando la integracion vuelva a
+  conectarse.
 - Los calendarios publicos/embebidos reutilizan contactos existentes: si el
   correo ya existe en `contacts`, la cita se agenda sobre ese contacto aunque el
   telefono del formulario coincida con otro registro. Esto evita errores por el
