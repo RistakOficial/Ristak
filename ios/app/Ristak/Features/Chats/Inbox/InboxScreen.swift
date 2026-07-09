@@ -164,28 +164,7 @@ struct InboxScreen: View {
             }
 
             ForEach(viewModel.displayRows) { contact in
-                ChatRowView(
-                    contact: contact,
-                    formatters: viewModel.formatters,
-                    showPreview: viewModel.showLastPreview,
-                    showUnreadIndicators: viewModel.showUnreadIndicators,
-                    isMuted: viewModel.localState.isMuted(contact.id),
-                    isSelecting: viewModel.isSelecting,
-                    isSelected: viewModel.selectedIDs.contains(contact.id),
-                    isActive: selectedContactID == contact.id,
-                    tagNames: viewModel.tagNames(for: contact)
-                )
-                .onTapGesture { handleTap(contact) }
-                // Long-press ágil y CONFIABLE: 0.35s con tolerancia de movimiento
-                // amplia (60pt) para que un micro-movimiento del dedo NO lo cancele
-                // ni lo reinicie (era lo que lo hacía sentir lentísimo). Al
-                // dispararse: haptic inmediato + «Más acciones» al instante.
-                .onLongPressGesture(minimumDuration: 0.35, maximumDistance: 60) {
-                    handleLongPress(contact)
-                }
-                // Separador uniforme en TODA la bandeja (mismo inset y tinte
-                // sutil) — el usuario reportó líneas incongruentes/opacas.
-                .ristakRowSeparator()
+                chatRow(contact)
             }
 
             // Centinela de paginación: una sola fila invisible al final dispara la
@@ -238,6 +217,32 @@ struct InboxScreen: View {
     }
 
     private static let topAnchorID = "inbox-top-anchor"
+
+    /// Fila de chat extraída a función para no reventar el type-checker del List
+    /// (la fila + overlay + modificadores es demasiado para inferir inline).
+    /// Tap + long-press vía UIKit (`RowGestureOverlay`): tap abre el chat;
+    /// long-press (0.3s, tolerante) dispara haptic + «Más acciones» AL INSTANTE
+    /// (el `.onLongPressGesture` de SwiftUI se sentía lentísimo en un List).
+    private func chatRow(_ contact: ChatContact) -> some View {
+        ChatRowView(
+            contact: contact,
+            formatters: viewModel.formatters,
+            showPreview: viewModel.showLastPreview,
+            showUnreadIndicators: viewModel.showUnreadIndicators,
+            isMuted: viewModel.localState.isMuted(contact.id),
+            isSelecting: viewModel.isSelecting,
+            isSelected: viewModel.selectedIDs.contains(contact.id),
+            isActive: selectedContactID == contact.id,
+            tagNames: viewModel.tagNames(for: contact)
+        )
+        .overlay {
+            RowGestureOverlay(
+                onTap: { handleTap(contact) },
+                onLongPress: { handleLongPress(contact) }
+            )
+        }
+        .ristakRowSeparator()
+    }
 
     private func handleTap(_ contact: ChatContact) {
         if viewModel.isSelecting {
