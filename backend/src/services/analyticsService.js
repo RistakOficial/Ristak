@@ -1400,7 +1400,7 @@ export async function fetchPaymentsForContacts(contactIds, range = {}) {
   }, new Map())
 }
 
-export async function fetchAppointmentsForContacts(contactIds, range = {}) {
+export async function fetchAppointmentsForContacts(contactIds, { respectAttributionCalendars = true } = {}) {
   if (!contactIds.length) {
     return new Map()
   }
@@ -1412,13 +1412,22 @@ export async function fetchAppointmentsForContacts(contactIds, range = {}) {
   // El modal debe mostrar TODAS las citas del cliente, independientemente del rango seleccionado
   // El filtro de fechas solo aplica para determinar QUÉ contactos mostrar, no sus citas completas
 
-  // Filtrar por calendarios de atribución configurados
-  const attributionCalendarIds = await getAttributionCalendarIds()
+  // Filtrar por calendarios de atribución configurados.
+  // - respectAttributionCalendars=true (default, Reports/buildContactsList): la selección de
+  //   contactos ya filtra por attributionCalendarIds, así que el detalle debe respetarlo para
+  //   mantener la paridad número↔modal.
+  // - respectAttributionCalendars=false (Analytics/getContactConversionsList): el conteo
+  //   (getContactConversionsByDate) NO filtra por calendar_id, así que el detalle tampoco debe
+  //   hacerlo; de lo contrario un contacto contado como "tiene cita/asistencia" aparecería con la
+  //   tarjeta de citas vacía en el modal.
   let calendarCondition = ''
-  if (attributionCalendarIds && attributionCalendarIds.length > 0) {
-    const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',')
-    calendarCondition = ` AND calendar_id IN (${calendarPlaceholders})`
-    params.push(...attributionCalendarIds)
+  if (respectAttributionCalendars) {
+    const attributionCalendarIds = await getAttributionCalendarIds()
+    if (attributionCalendarIds && attributionCalendarIds.length > 0) {
+      const calendarPlaceholders = attributionCalendarIds.map(() => '?').join(',')
+      calendarCondition = ` AND calendar_id IN (${calendarPlaceholders})`
+      params.push(...attributionCalendarIds)
+    }
   }
 
   const appointmentsQuery = `

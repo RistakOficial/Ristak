@@ -2411,7 +2411,10 @@ export async function getContactConversionsList(req, res) {
     const contactIds = rows.map(row => row.id).filter(Boolean)
     const [paymentsMap, appointmentsMap] = await Promise.all([
       fetchPaymentsForContacts(contactIds),
-      fetchAppointmentsForContacts(contactIds)
+      // El conteo de Analytics (getContactConversionsByDate) NO filtra por calendario de
+      // atribución, así que el detalle del modal tampoco debe hacerlo: mostramos TODAS las citas
+      // del contacto para mantener la paridad número↔modal.
+      fetchAppointmentsForContacts(contactIds, { respectAttributionCalendars: false })
     ])
 
     const contacts = rows.map(row => {
