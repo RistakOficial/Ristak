@@ -38,8 +38,13 @@ struct ContactInfoScreen: View {
 
     private let localFlags = ContactLocalFlagsStore.shared
 
-    init(contactID: String) {
+    /// Canal de mensajería del contacto (el mismo del header del hilo). Se muestra
+    /// bajo el nombre. `nil` si el hilo no detectó canal → no se pinta la fila.
+    private let channel: RistakChatChannel?
+
+    init(contactID: String, channel: RistakChatChannel? = nil) {
         _viewModel = State(initialValue: ContactInfoViewModel(contactID: contactID))
+        self.channel = channel
     }
 
     var body: some View {
@@ -330,6 +335,17 @@ struct ContactInfoScreen: View {
                 Text(heroDetailLine(contact))
                     .font(.subheadline)
                     .foregroundStyle(RistakTheme.textDim)
+            }
+
+            // Canal de mensajería del contacto (de dónde se le escribe): badge +
+            // nombre, justo bajo el nombre y encima de la etiqueta de estado.
+            if let channel {
+                HStack(spacing: RistakTheme.Spacing.xxs) {
+                    ChannelBadgeView(channel: channel, size: 16)
+                    Text(channel.title)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(RistakTheme.textDim)
+                }
             }
 
             ContactInfoStageBadge(stage: ContactInfoStage(status: contact.status))

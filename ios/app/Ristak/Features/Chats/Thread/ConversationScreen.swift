@@ -51,7 +51,7 @@ struct ConversationScreen: View {
                 }
             }
             .navigationDestination(isPresented: $showsContactInfo) {
-                ContactInfoScreen(contactID: viewModel.contactID)
+                ContactInfoScreen(contactID: viewModel.contactID, channel: viewModel.headerChannel)
             }
             .task {
                 viewModel.bind(appConfig: appConfig)
@@ -408,15 +408,28 @@ struct ConversationScreen: View {
     /// este contacto (User #2), sin sacar al usuario del chat.
     @ViewBuilder
     private var headerToolActions: some View {
-        // Robot del agente conversacional: prendido (acento) cuando algún agente
-        // atiende activamente este chat; apagado (tenue) si está pausado/tomado/
-        // omitido. Solo aparece si hay agente asignado a este contacto.
+        // Con agente asignado, su botcito ocupa el header y el nombre (que abre la
+        // info del contacto) queda apretado/difícil de tocar. Este botón de
+        // "persona" garantiza siempre poder abrir la info del contacto.
         if viewModel.hasAgentControls {
+            Button {
+                showsContactInfo = true
+            } label: {
+                Image(systemName: "person.crop.circle")
+            }
+            .accessibilityLabel("Info del contacto")
+
+            // Botcito del agente conversacional: prendido (acento) cuando algún
+            // agente atiende activamente este chat; apagado (tenue) si está
+            // pausado/tomado/omitido. Abre el modal de controles/protección del
+            // agente. Solo aparece si hay agente asignado a este contacto.
             Button {
                 viewModel.agentControlsPresented = true
             } label: {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(viewModel.agentControllerActive ? RistakTheme.accent : RistakTheme.textDim)
+                AgentBotGlyph(
+                    color: viewModel.agentControllerActive ? RistakTheme.accent : RistakTheme.textDim,
+                    size: 22
+                )
             }
             .accessibilityLabel("Controles del agente")
         }

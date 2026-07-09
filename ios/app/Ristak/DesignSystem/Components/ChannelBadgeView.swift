@@ -35,6 +35,17 @@ enum RistakChatChannel: String, CaseIterable, Sendable {
 
     /// Nombre del archivo WebP (sin extensión) dentro de `channel-badges/`.
     var assetFileName: String { rawValue }
+
+    /// Nombre legible del canal (para etiquetas: header, info de contacto).
+    var title: String {
+        switch self {
+        case .whatsapp: return "WhatsApp"
+        case .facebook: return "Facebook"
+        case .messenger: return "Messenger"
+        case .instagram: return "Instagram"
+        case .gmail: return "Correo"
+        }
+    }
 }
 
 /// Badge del canal (WhatsApp/Facebook/Messenger/Instagram/Gmail) como ícono

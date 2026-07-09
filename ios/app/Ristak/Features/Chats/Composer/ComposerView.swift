@@ -175,11 +175,12 @@ struct ComposerView: View {
 
     @ViewBuilder
     private var agentBanner: some View {
+        // Solo aparece con agente ASIGNADO: `agentBannerText` devuelve nil si
+        // `agentStates` está vacío, así que en chats sin agente el composer queda
+        // limpio (sin la barra del agente).
         if let text = viewModel.agentBannerText {
             HStack(spacing: RistakTheme.Spacing.xs) {
-                Image(systemName: "sparkles")
-                    .font(.caption)
-                    .foregroundStyle(RistakTheme.accent)
+                AgentBotGlyph(color: RistakTheme.accent, size: 16)
                 Text(text)
                     .font(.caption)
                     .foregroundStyle(RistakTheme.textDim)

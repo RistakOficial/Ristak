@@ -68,3 +68,47 @@ enum AgentStatusStyle {
         }
     }
 }
+
+// MARK: - Glifo de bot
+
+/// Glifo de "bot" del agente conversacional dibujado con formas — no existe un SF
+/// Symbol de robot. Cabeza redondeada con antena y dos ojos, en un SOLO color
+/// (se tiñe con `color`) y escalable. Se usa en el header del hilo y en el banner
+/// del composer para que el agente se lea como un botcito y no como "sparkles".
+struct AgentBotGlyph: View {
+    var color: Color = RistakTheme.accent
+    var size: CGFloat = 20
+
+    var body: some View {
+        let headW = size * 0.9
+        let headH = size * 0.72
+        let stroke = max(1.5, size * 0.1)
+        let eye = size * 0.14
+        ZStack {
+            // Antena (puntito + tallo) saliendo por arriba de la cabeza.
+            VStack(spacing: size * 0.02) {
+                Circle()
+                    .fill(color)
+                    .frame(width: size * 0.16, height: size * 0.16)
+                Capsule()
+                    .fill(color)
+                    .frame(width: stroke * 0.9, height: size * 0.12)
+            }
+            .offset(y: -headH / 2 - size * 0.05)
+
+            // Cabeza en contorno (estilo SF Symbol outline).
+            RoundedRectangle(cornerRadius: size * 0.26, style: .continuous)
+                .strokeBorder(color, lineWidth: stroke)
+                .frame(width: headW, height: headH)
+
+            // Ojos.
+            HStack(spacing: size * 0.2) {
+                Circle().fill(color).frame(width: eye, height: eye)
+                Circle().fill(color).frame(width: eye, height: eye)
+            }
+            .offset(y: -size * 0.02)
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
