@@ -1561,6 +1561,55 @@ function normalizeImportedCodeUpdatePath(value = '') {
   return assetPath
 }
 
+function normalizeImportedDraftHtmlFiles(files = []) {
+  const drafts = new Map()
+  if (!Array.isArray(files)) return drafts
+
+  for (const file of files) {
+    const rawPath = cleanString(file?.path ?? file?.assetPath ?? file?.asset_path ?? '')
+    const assetPath = normalizeImportedCodeUpdatePath(rawPath)
+    const isMainHtml = !rawPath || rawPath === '__main__' || rawPath === 'main'
+    if (rawPath && !assetPath && !isMainHtml) {
+      const error = new Error('Ruta de archivo inválida')
+      error.status = 400
+      throw error
+    }
+    if (assetPath === IMPORTED_POPUP_CODE_PATH) continue
+    if (assetPath) {
+      const contentType = getImportedAssetContentType(assetPath)
+      if (getImportedCodeLanguage(assetPath, contentType) !== 'html') continue
+    }
+
+    const content = String(file?.content ?? '')
+    if (Buffer.byteLength(content, 'utf8') > IMPORTED_CODE_FILE_MAX_BYTES) {
+      const error = new Error(`El archivo ${assetPath || 'principal'} supera el límite permitido.`)
+      error.status = 413
+      throw error
+    }
+    drafts.set(assetPath, content)
+  }
+
+  return drafts
+}
+
+function prepareImportedDraftHtmlForRender(html = '', {
+  siteId = '',
+  assetPath = '',
+  availablePaths = new Set(),
+  pageIdByAssetPath = new Map(),
+  usedFormIds = new Set()
+} = {}) {
+  const sanitized = sanitizeImportedHtml(html)
+  const pageForms = namespaceImportedPageForms(detectImportedForms(sanitized.html), assetPath, usedFormIds)
+  pageForms.forEach(form => {
+    const formId = cleanString(form?.id)
+    if (formId) usedFormIds.add(formId)
+  })
+  let output = assignImportedFormIds(sanitized.html, pageForms)
+  output = rewriteImportedHtmlReferences(output, assetPath, siteId, availablePaths, { pageIdByAssetPath })
+  return annotateImportedEditableHtml(output)
+}
+
 function getImportedAssetExtension(assetPath = '') {
   const basename = normalizeImportedAssetPath(assetPath).split('/').pop() || ''
   const extension = basename.includes('.') ? basename.split('.').pop()?.toLowerCase() : ''
@@ -14328,8 +14377,8 @@ function renderVideoFormGateMarkup(block, settings = {}, context = {}) {
   `
 }
 
-function buildVideoFormGateRuntimeScript(blocks = []) {
-  if (!hasVideoFormGates(blocks)) return ''
+function buildVideoFormGateRuntimeScript(blocks = [], options = {}) {
+  if (!options.force && !hasVideoFormGates(blocks)) return ''
 
   return `<script>
     (() => {
@@ -22803,14 +22852,40 @@ function annotateImportedVideoActionTargets(html = '', context = {}) {
 async function renderImportedNativeFormSlot(block = {}, context = {}) {
   const settings = block.settings || {}
   const sourceFormId = cleanString(settings.formSiteId || settings.form_site_id || settings.embeddedSiteId || settings.embedded_site_id)
-  if (!sourceFormId || sourceFormId === cleanString(context.site?.id)) return renderImportedNativeElementPlaceholder({ type: 'form' })
-  const sourceForm = await getSite(sourceFormId, { includeBlocks: true, includeSubmissions: false }).catch(() => null)
-  if (!sourceForm) return renderImportedNativeElementPlaceholder({ type: 'form' })
-  const formHtml = await renderPublicSiteHtml(sourceForm, {
+  const hasEmbeddedDraft = Array.isArray(settings.embeddedBlocks) || Array.isArray(settings.embeddedPages)
+  if ((!sourceFormId || sourceFormId === cleanString(context.site?.id)) && !hasEmbeddedDraft) {
+    return renderImportedNativeElementPlaceholder({ type: 'form' })
+  }
+
+  const pageId = cleanString(context.pageId || context.page_id || DEFAULT_FUNNEL_PAGE_ID)
+  const sourceTheme = isPlainObject(context.site?.theme) ? { ...context.site.theme } : {}
+  const framePages = normalizeSitePages(context.site)
+  const frameTheme = {
+    ...sourceTheme,
+    importedHtml: false,
+    template: cleanString(sourceTheme.template) === IMPORTED_SITE_TEMPLATE ? 'ristak' : sourceTheme.template,
+    pages: framePages.length ? framePages : [{ id: pageId, title: 'Formulario', sortOrder: 0 }]
+  }
+  const frameBlock = {
+    ...block,
+    settings: {
+      ...settings,
+      pageId
+    }
+  }
+  const frameSite = {
+    ...(context.site || {}),
+    siteType: 'landing_page',
+    theme: frameTheme,
+    blocks: [frameBlock]
+  }
+
+  const formHtml = await renderPublicSiteHtml(frameSite, {
+    pageId,
     trackingEnabled: !context.noTrack,
     preview: context.preview
   })
-  return `<iframe class="rstk-imported-native-form-frame" title="${escapeHtml(sourceForm.title || sourceForm.name || 'Formulario')}" srcdoc="${escapeHtml(formHtml)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
+  return `<iframe class="rstk-imported-native-form-frame" title="${escapeHtml(block.label || 'Formulario')}" srcdoc="${escapeHtml(formHtml)}" loading="lazy" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"></iframe>`
 }
 
 function getImportedCustomCalendarConfig(slot = {}, block = {}, context = {}) {
@@ -23178,7 +23253,14 @@ function buildImportedNativeElementRuntimeInjection(runtimeState = {}, site = nu
   ].filter(Boolean).join('')
 }
 
-async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], trackingEnabled = true, preview = false, importedNativePreviewMock = false } = {}) {
+async function renderImportedPublicSiteHtml(site, {
+  pageId = '',
+  pagePath = [],
+  trackingEnabled = true,
+  preview = false,
+  importedNativePreviewMock = false,
+  draftImportedCodeFiles = []
+} = {}) {
   const imported = await getImportedSiteBySiteId(site.id)
   if (!imported) {
     return renderDomainErrorHtml({
@@ -23190,13 +23272,35 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
   const activePage = getImportedRenderPage(site, pageId, pagePath)
   const importedAssetPath = normalizeImportedAssetPath(activePage?.importedAssetPath || activePage?.imported_asset_path)
   const availablePaths = await getImportedSiteAvailableAssetPaths(site.id)
+  const pageIdByAssetPath = buildImportedPageIdByAssetPath(normalizeSitePages(site))
+  const draftHtmlByPath = normalizeImportedDraftHtmlFiles(draftImportedCodeFiles)
+  const draftUsedFormIds = new Set()
+  const getDraftHtml = (assetPath = '') => {
+    const normalizedPath = normalizeImportedAssetPath(assetPath)
+    if (!draftHtmlByPath.has(normalizedPath)) return null
+    return prepareImportedDraftHtmlForRender(draftHtmlByPath.get(normalizedPath), {
+      siteId: site.id,
+      assetPath: normalizedPath,
+      availablePaths,
+      pageIdByAssetPath,
+      usedFormIds: draftUsedFormIds
+    })
+  }
   const linkStyle = preview ? 'query' : 'path'
-  let html = imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
+  const mainDraftHtml = getDraftHtml('')
+  let html = mainDraftHtml !== null
+    ? mainDraftHtml
+    : imported.htmlSanitized || imported.htmlOriginal || '<!doctype html><html><body></body></html>'
 
   if (importedAssetPath) {
-    const asset = await getImportedSiteAssetByPath(site.id, importedAssetPath)
-    if (asset && /^text\/html\b/i.test(asset.contentType)) {
-      html = asset.content.toString('utf8')
+    const draftHtml = getDraftHtml(importedAssetPath)
+    if (draftHtml !== null) {
+      html = draftHtml
+    } else {
+      const asset = await getImportedSiteAssetByPath(site.id, importedAssetPath)
+      if (asset && /^text\/html\b/i.test(asset.contentType)) {
+        html = asset.content.toString('utf8')
+      }
     }
   }
   html = rewriteImportedHtmlForRender(site, html, importedAssetPath, availablePaths, { linkStyle })
@@ -23245,6 +23349,9 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
     actionsEnabled: true,
     actionsPreviewSafe: preview
   })
+  const importedVideoFormGateRuntime = buildVideoFormGateRuntimeScript(importedVideoLookupBlocks, {
+    force: /data-rstk-video-form-gate\b/i.test(html)
+  })
 
   const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
     trackingEnabled: trackingEnabled && !preview,
@@ -23257,7 +23364,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
     annotateImportedEditableHtml(html),
     `${trackingEnabled ? buildHeaderTrackingCode(site, activePage) : ''}${injection.head}`
   )
-  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}`)
+  return injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`)
 }
 
 export async function getImportedSiteAssetResponse(siteId, assetPath, { trackingEnabled = true } = {}) {
@@ -23327,6 +23434,9 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
     html = importedNativeRender.html
     const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState, site)
     const importedVideoRuntime = buildImportedVideoRuntimeInjection(html)
+    const importedVideoFormGateRuntime = buildVideoFormGateRuntimeScript(importedVideoLookupBlocks, {
+      force: /data-rstk-video-form-gate\b/i.test(html)
+    })
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,
       pageId: page?.id || DEFAULT_FUNNEL_PAGE_ID,
@@ -23342,7 +23452,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       site,
       assetPath: asset.assetPath,
       contentType: 'text/html; charset=utf-8',
-      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}`), 'utf8'),
+      body: Buffer.from(injectImportedHtmlRuntime(htmlWithHeaderTracking, `${injection.body}${importedNativeRuntime}${importedVideoRuntime}${importedVideoFormGateRuntime}`), 'utf8'),
       cacheControl: trackingEnabled ? 'public, max-age=300' : 'no-store'
     }
   }
@@ -23435,9 +23545,16 @@ function renderSiteNav(site, { activePageId, linkStyle } = {}) {
     + `</div></nav>`
 }
 
-export async function renderPublicSiteHtml(site, { pageId, pagePath, trackingEnabled = true, preview = false, importedNativePreviewMock = false } = {}) {
+export async function renderPublicSiteHtml(site, {
+  pageId,
+  pagePath,
+  trackingEnabled = true,
+  preview = false,
+  importedNativePreviewMock = false,
+  draftImportedCodeFiles = []
+} = {}) {
   if (isImportedHtmlSite(site)) {
-    return renderImportedPublicSiteHtml(site, { pageId, pagePath, trackingEnabled, preview, importedNativePreviewMock })
+    return renderImportedPublicSiteHtml(site, { pageId, pagePath, trackingEnabled, preview, importedNativePreviewMock, draftImportedCodeFiles })
   }
 
   // Estado visual compartido (contrato editor/público): una sola función calcula
