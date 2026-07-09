@@ -1088,7 +1088,11 @@ avion de papel en uno y flecha en otro. Al detener la grabacion, el preview cons
 el mismo alto compacto con waveform, contador, papelera, reproducir/pausar y
 enviar; el audio se envia como payload compatible de WhatsApp (`audio/mp4`) y
 las burbujas de audio deben poder reproducirse con progreso suave tanto en
-claro como en oscuro. Cuando el teclado esta abierto, el composer debe sentirse
+claro como en oscuro. La respuesta del backend y el mensaje recargado del
+historial deben conservar `media_url`/`audio.link` reproducible para audios
+salientes, no solo `media_id` del proveedor ni un archivo generico; esto aplica a
+WhatsApp API/QR y a Messenger/Instagram cuando viajan por HighLevel. Cuando el
+teclado esta abierto, el composer debe sentirse
 pegado al teclado como una sola superficie inferior: mismo tono base del teclado,
 sin borde rectangular superior y con esquinas superiores redondeadas tipo sheet,
 no como una franja externa que empuja visualmente el chat.

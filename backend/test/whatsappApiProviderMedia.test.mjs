@@ -18,7 +18,7 @@ import {
 
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC'
 const PDF_DATA_URL = 'data:application/pdf;base64,JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlIC9QYWdlcyAvQ291bnQgMD4+CmVuZG9iago='
-const OGG_OPUS_DATA_URL = `data:audio/ogg;codecs=opus;base64,${Buffer.from('OggSprovider-media-test').toString('base64')}`
+const MP4_AUDIO_DATA_URL = `data:audio/mp4;base64,${Buffer.from('mp4-provider-audio-test').toString('base64')}`
 const WEBM_VIDEO_DATA_URL = `data:video/webm;base64,${Buffer.from('webm-provider-media-test').toString('base64')}`
 const MEDIA_STORAGE_ENV_KEYS = [
   'MEDIA_STORAGE_PROVIDER',
@@ -420,57 +420,73 @@ test('envío API de documento conserva metadata del archivo sin guardar URL prop
   })
 })
 
-test('envío API de audio sube nota de voz al proveedor sin usar URL propia', async () => {
-  await withYCloudProviderMediaCapture(async (captures) => {
-    const suffix = randomUUID()
-    const to = `+52158${Date.now().toString().slice(-8)}`
-    const externalId = `provider-audio-${suffix}`
+test('envío API de audio sube nota de voz al proveedor y conserva preview interno reproducible', async () => {
+  await withFakeFfmpeg(async () => {
+    await withYCloudProviderMediaCapture(async (captures) => {
+      const suffix = randomUUID()
+      const to = `+52158${Date.now().toString().slice(-8)}`
+      const externalId = `provider-audio-${suffix}`
+      let previewMediaAssetId = ''
 
-    try {
-      await captures.openReplyWindow(to)
+      try {
+        await captures.openReplyWindow(to)
 
-      const response = await sendWhatsAppApiAudioMessage({
-        to,
-        audioDataUrl: OGG_OPUS_DATA_URL,
-        externalId,
-        allowQrFallback: false,
-        durationMs: 1200
-      })
+        const response = await sendWhatsAppApiAudioMessage({
+          to,
+          audioDataUrl: MP4_AUDIO_DATA_URL,
+          externalId,
+          allowQrFallback: false,
+          durationMs: 1200
+        })
 
-      assert.equal(captures.uploads.length, 1)
-      assert.equal(captures.uploads[0].filename, 'whatsapp-audio.ogg')
-      assert.equal(captures.uploads[0].mimeType, 'audio/ogg')
-      assert.ok(captures.uploads[0].size > 0)
+        assert.equal(captures.uploads.length, 1)
+        assert.equal(captures.uploads[0].filename, 'whatsapp-audio.ogg')
+        assert.equal(captures.uploads[0].mimeType, 'audio/ogg')
+        assert.ok(captures.uploads[0].size > 0)
 
-      assert.equal(captures.messages.length, 1)
-      assert.equal(captures.messages[0].type, 'audio')
-      assert.equal(captures.messages[0].audio.id, 'provider_media_1')
-      assert.equal(captures.messages[0].audio.link, undefined)
-      assert.equal(captures.messages[0].audio.voice, true)
-      assert.equal(response.audio.providerMediaId, 'provider_media_1')
-      assert.equal(response.audio.durationMs, 1200)
+        assert.equal(captures.messages.length, 1)
+        assert.equal(captures.messages[0].type, 'audio')
+        assert.equal(captures.messages[0].audio.id, 'provider_media_1')
+        assert.equal(captures.messages[0].audio.link, undefined)
+        assert.equal(captures.messages[0].audio.voice, true)
+        assert.equal(response.audio.providerMediaId, 'provider_media_1')
+        assert.equal(response.audio.providerMimeType, 'audio/ogg')
+        assert.equal(response.audio.mimeType, 'audio/mp4')
+        assert.match(response.audio.link, /^\/media\/assets\/.+\/file$/)
+        assert.equal(response.audio.durationMs, 1200)
 
-      const row = await db.get(
-        `SELECT media_url, media_mime_type, media_filename, media_duration_ms, raw_payload_json
-         FROM whatsapp_api_messages
-         WHERE ycloud_message_id = ?`,
-        ['ycloud_provider_message_1']
-      )
-      assert.ok(row)
-      assert.equal(row.media_url, null)
-      assert.equal(row.media_mime_type, 'audio/ogg')
-      assert.equal(row.media_filename, 'whatsapp-audio.ogg')
-      assert.equal(row.media_duration_ms, 1200)
-      const raw = JSON.parse(row.raw_payload_json)
-      assert.equal(raw.audio.id, 'provider_media_1')
-      assert.equal(raw.audio.storage, 'provider')
-      assert.equal(raw.audio.storageProvider, 'ycloud')
-      assert.equal(raw.audio.metadata.originalUploadMimeType, 'audio/ogg; codecs=opus')
-    } finally {
-      await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
-      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
-      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
-    }
+        const row = await db.get(
+          `SELECT media_url, media_mime_type, media_filename, media_duration_ms, raw_payload_json
+           FROM whatsapp_api_messages
+           WHERE ycloud_message_id = ?`,
+          ['ycloud_provider_message_1']
+        )
+        assert.ok(row)
+        assert.match(row.media_url, /^\/media\/assets\/.+\/file$/)
+        assert.equal(row.media_mime_type, 'audio/mp4')
+        assert.match(row.media_filename, /\.m4a$/)
+        assert.equal(row.media_duration_ms, 1200)
+        const raw = JSON.parse(row.raw_payload_json)
+        assert.equal(raw.audio.id, 'provider_media_1')
+        assert.equal(raw.audio.providerMediaId, 'provider_media_1')
+        assert.equal(raw.audio.providerMimeType, 'audio/ogg')
+        assert.equal(raw.audio.storage, 'provider')
+        assert.equal(raw.audio.storageProvider, 'ycloud')
+        assert.equal(raw.audio.link, row.media_url)
+        assert.equal(raw.audio.publicUrl, row.media_url)
+        assert.match(raw.audio.previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
+        assert.equal(raw.audio.metadata.originalMimeType, 'audio/mp4')
+        assert.equal(raw.audio.metadata.originalUploadMimeType, 'audio/ogg; codecs=opus')
+        previewMediaAssetId = raw.audio.previewMediaAssetId
+      } finally {
+        await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
+        if (previewMediaAssetId) {
+          await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
+        }
+        await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+        await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+      }
+    })
   })
 })
 

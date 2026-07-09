@@ -704,7 +704,7 @@ export class RistakApiClient {
         text,
         externalId: `native-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
-        messageOrigin: 'native_mobile_chat',
+        messageOrigin: 'manual_chat',
         transport: transport || undefined,
         replyToMessageId: reply?.replyToMessageId || undefined,
         replyToProviderMessageId: reply?.replyToProviderMessageId || undefined,
@@ -727,7 +727,7 @@ export class RistakApiClient {
         caption,
         externalId: `native-image-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
-        messageOrigin: 'native_mobile_chat',
+        messageOrigin: 'manual_chat',
         transport: transport || undefined,
       }),
     });
@@ -746,7 +746,7 @@ export class RistakApiClient {
         caption,
         externalId: `native-document-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
-        messageOrigin: 'native_mobile_chat',
+        messageOrigin: 'manual_chat',
         transport: transport || undefined,
       }),
     });
@@ -763,7 +763,7 @@ export class RistakApiClient {
         caption,
         externalId: `native-video-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
-        messageOrigin: 'native_mobile_chat',
+        messageOrigin: 'manual_chat',
         transport: transport || undefined,
       }),
     });
@@ -781,7 +781,7 @@ export class RistakApiClient {
         voice: true,
         externalId: `native-audio-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
-        messageOrigin: 'native_mobile_chat',
+        messageOrigin: 'manual_chat',
         transport: transport || undefined,
       }),
     });
@@ -800,7 +800,7 @@ export class RistakApiClient {
         address,
         externalId: `native-location-${Date.now()}`,
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
-        messageOrigin: 'native_mobile_chat',
+        messageOrigin: 'manual_chat',
         transport: transport || undefined,
       }),
     });
@@ -841,7 +841,7 @@ export class RistakApiClient {
         externalId,
         transport: messageTransport.includes('qr') || messageTransport.includes('baileys') || messageTransport.includes('web') ? 'qr' : 'api',
         phoneNumberId: message.businessPhoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
-        messageOrigin: 'native_mobile_chat',
+        messageOrigin: 'manual_chat',
       }),
     });
   }

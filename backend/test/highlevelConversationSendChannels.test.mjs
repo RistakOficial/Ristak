@@ -213,14 +213,95 @@ test('HighLevel conversation sender keeps requested media attachments as files',
       assert.equal(result.localAttachments?.[0]?.filename, 'video-pesado.mp4')
 
       const rawPayloadRow = await db.get(
-        `SELECT raw_payload_json
+        `SELECT message_type, media_url, media_mime_type, raw_payload_json
          FROM meta_social_messages
          WHERE contact_id = ? AND direction = 'outbound'
          ORDER BY message_timestamp DESC
          LIMIT 1`,
         [contactId]
       )
+      assert.equal(rawPayloadRow.message_type, 'document')
+      assert.match(rawPayloadRow.media_url, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
+      assert.equal(rawPayloadRow.media_mime_type, 'video/mp4')
       const rawPayload = JSON.parse(rawPayloadRow.raw_payload_json)
+      assert.deepEqual(rawPayload.request.attachments, sentPayloads[0].attachments)
+    } finally {
+      mock.restoreAll()
+      if (mediaAssetId) {
+        await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+      }
+      await cleanupContact(contactId, marker)
+    }
+  })
+})
+
+test('HighLevel conversation sender persists voice attachments as playable audio in Meta mirrors', async () => {
+  const marker = randomUUID().replace(/-/g, '')
+  const contactId = `contact_send_audio_attachment_${marker}`
+  const sentPayloads = []
+
+  await cleanupContact(contactId, marker)
+
+  await snapshotHighLevelConfig(async () => {
+    await db.run(
+      `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, source, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [contactId, `ghl_send_audio_attachment_${marker}`, `+52656${marker.slice(0, 10).replace(/[a-f]/g, '9')}`, `audio-${marker}@example.com`, 'Cliente Audio']
+    )
+
+    mock.method(GHLClient.prototype, 'sendConversationMessage', async function sendConversationMessage(payload) {
+      sentPayloads.push(payload)
+      return {
+        messageId: `remote_send_${marker}_audio`,
+        status: 'pending'
+      }
+    })
+
+    let mediaAssetId = ''
+    try {
+      const result = await sendHighLevelConversationMessageCore({
+        contactId,
+        channel: 'messenger',
+        message: '',
+        audioDataUrl: `data:audio/mp4;base64,${Buffer.from('fake m4a voice payload').toString('base64')}`,
+        durationMs: 2400
+      }, {
+        markHumanTakeover: false,
+        req: {
+          protocol: 'https',
+          headers: { host: 'ristak.test' },
+          body: {},
+          get(name) {
+            return String(name || '').toLowerCase() === 'host' ? 'ristak.test' : ''
+          }
+        }
+      })
+
+      mediaAssetId = result.localMedia?.mediaAssetId || ''
+
+      assert.equal(sentPayloads.length, 1)
+      assert.equal(sentPayloads[0].type, 'FB')
+      assert.equal(sentPayloads[0].message, undefined)
+      assert.equal(sentPayloads[0].attachments.length, 1)
+      assert.match(sentPayloads[0].attachments[0], /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
+      assert.equal(result.audio?.mimeType, 'audio/mp4')
+      assert.equal(result.audio?.durationMs, 2400)
+      assert.equal(result.localMedia?.kind, 'audio')
+      assert.equal(result.localMedia?.mimeType, 'audio/mp4')
+
+      const audioRow = await db.get(
+        `SELECT message_type, message_text, media_url, media_mime_type, raw_payload_json
+         FROM meta_social_messages
+         WHERE contact_id = ? AND direction = 'outbound'
+         ORDER BY message_timestamp DESC
+         LIMIT 1`,
+        [contactId]
+      )
+      assert.equal(audioRow.message_type, 'audio')
+      assert.equal(audioRow.message_text, '')
+      assert.match(audioRow.media_url, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
+      assert.equal(audioRow.media_mime_type, 'audio/mp4')
+      const rawPayload = JSON.parse(audioRow.raw_payload_json)
       assert.deepEqual(rawPayload.request.attachments, sentPayloads[0].attachments)
     } finally {
       mock.restoreAll()

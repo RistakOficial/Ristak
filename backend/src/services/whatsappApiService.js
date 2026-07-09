@@ -92,6 +92,8 @@ const MAX_WHATSAPP_VIDEO_INPUT_BYTES = 25 * 1024 * 1024
 const MAX_WHATSAPP_VIDEO_OUTPUT_BYTES = 16 * 1024 * 1024
 const WHATSAPP_VIDEO_MIME_TYPE = 'video/mp4'
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
+const CHAT_AUDIO_PLAYBACK_MIME_TYPE = 'audio/mp4'
+const CHAT_AUDIO_PLAYBACK_EXTENSION = 'm4a'
 const WHATSAPP_CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000
 const WHATSAPP_REPLY_WINDOW_CLOSED_REASON = 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.'
 const WHATSAPP_REPLY_WINDOW_UNKNOWN_REASON = 'No hay una respuesta reciente del cliente registrada; WhatsApp API solo permite mensajes libres dentro de la ventana de 24 horas.'
@@ -801,6 +803,21 @@ function audioNeedsWhatsAppConversion({ mimeType, params }) {
   return !(mimeType === 'audio/ogg' && String(params || '').includes('opus'))
 }
 
+function audioNeedsChatPlaybackConversion({ mimeType } = {}) {
+  const cleanMimeType = cleanMimeTypeValue(mimeType)
+  return ![
+    'audio/aac',
+    'audio/mp4',
+    'audio/mpeg',
+    'audio/wav',
+    'audio/x-wav'
+  ].includes(cleanMimeType)
+}
+
+function cleanMimeTypeValue(value = '') {
+  return cleanString(value).toLowerCase().split(';')[0].trim()
+}
+
 function normalizeVoiceNoteMimeType({ mimeType, params } = {}) {
   const cleanMimeType = cleanString(mimeType).toLowerCase()
   if (cleanMimeType === 'audio/ogg' && String(params || '').toLowerCase().includes('opus')) {
@@ -958,6 +975,49 @@ async function convertAudioToOggOpus({ buffer, extension }) {
   }
 }
 
+async function convertAudioToChatPlaybackMp4({ buffer, extension }) {
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-chat-audio-preview-'))
+  const inputPath = join(folder, `input.${extension || 'audio'}`)
+  const outputPath = join(folder, `preview.${CHAT_AUDIO_PLAYBACK_EXTENSION}`)
+
+  try {
+    await fs.writeFile(inputPath, buffer)
+    await runFfmpeg([
+      '-y',
+      '-i',
+      inputPath,
+      '-vn',
+      '-ac',
+      '1',
+      '-ar',
+      '44100',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '96k',
+      '-movflags',
+      '+faststart',
+      outputPath
+    ], {
+      unavailableMessage: 'El audio salió en un formato que Ristak no pudo preparar para reproducirse. Intenta grabarlo otra vez.',
+      failureMessage: 'No se pudo preparar el audio para reproducirse en el chat. Intenta grabarlo otra vez.'
+    })
+
+    const converted = await fs.readFile(outputPath)
+    if (!converted.length) {
+      throw new Error('El audio de reproducción quedó vacío. Intenta grabarlo otra vez.')
+    }
+
+    if (converted.length > MAX_WHATSAPP_AUDIO_BYTES) {
+      throw new Error('El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp.')
+    }
+
+    return converted
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
 async function prepareWhatsAppVoiceAudio(parsed) {
   if (audioNeedsWhatsAppConversion(parsed)) {
     return {
@@ -973,6 +1033,25 @@ async function prepareWhatsAppVoiceAudio(parsed) {
     mimeType: normalizeVoiceNoteMimeType(parsed) || parsed.mimeType,
     extension: 'ogg',
     compression: 'original_ogg_opus'
+  }
+}
+
+async function prepareChatAudioPlaybackPreview(parsed) {
+  if (audioNeedsChatPlaybackConversion(parsed)) {
+    return {
+      buffer: await convertAudioToChatPlaybackMp4(parsed),
+      mimeType: CHAT_AUDIO_PLAYBACK_MIME_TYPE,
+      extension: CHAT_AUDIO_PLAYBACK_EXTENSION,
+      compression: 'chat_playback_m4a_aac'
+    }
+  }
+
+  const normalizedMimeType = cleanMimeTypeValue(parsed.mimeType)
+  return {
+    buffer: parsed.buffer,
+    mimeType: normalizedMimeType === 'audio/x-wav' ? 'audio/wav' : normalizedMimeType,
+    extension: AUDIO_EXTENSION_BY_MIME[normalizedMimeType] || CHAT_AUDIO_PLAYBACK_EXTENSION,
+    compression: 'original_chat_playback'
   }
 }
 
@@ -1080,6 +1159,77 @@ export async function saveWhatsAppAudioDataUrl(dataUrl = '') {
     filePath,
     publicPath: `${WHATSAPP_AUDIO_PUBLIC_PATH}/${dayKey}/${filename}`,
     filename
+  }
+}
+
+export async function saveWhatsAppAudioPlaybackPreviewDataUrl(dataUrl = '', durationMs = null) {
+  const parsed = parseAudioDataUrl(dataUrl)
+  const originalMimeType = parsed.mimeType
+  const media = await prepareChatAudioPlaybackPreview(parsed)
+  const cleanDurationMs = Number(durationMs || 0)
+  try {
+    const { uploadMediaAsset } = await import('./mediaStorageService.js')
+    const asset = await uploadMediaAsset({
+      buffer: media.buffer,
+      mimeType: media.mimeType,
+      filename: `whatsapp-audio-preview.${media.extension}`,
+      module: 'chat',
+      isPublic: true,
+      skipCompression: true,
+      metadata: {
+        whatsappChatPlaybackPreview: true,
+        whatsappAudioPlaybackCompression: media.compression,
+        originalMimeType,
+        originalExtension: parsed.extension,
+        ...(cleanDurationMs > 0 ? { durationMs: Math.round(cleanDurationMs) } : {})
+      }
+    })
+    const publicUrl = cleanString(asset.publicUrl || asset.url)
+    return {
+      mimeType: asset.mimeType || media.mimeType,
+      size: asset.sizeProcessed,
+      publicPath: publicUrl,
+      publicUrl,
+      mediaUrl: publicUrl,
+      url: publicUrl,
+      link: publicUrl,
+      filename: asset.storedFilename,
+      mediaAssetId: asset.id,
+      storage: cleanString(asset.storageProvider || 'media_storage'),
+      storageProvider: cleanString(asset.storageProvider || ''),
+      originalMimeType,
+      originalExtension: parsed.extension,
+      ...(cleanDurationMs > 0 ? { durationMs: Math.round(cleanDurationMs) } : {})
+    }
+  } catch (error) {
+    handleWhatsAppMediaStorageError('preview de audio de chat', error)
+  }
+
+  const dayKey = await getBusinessDayKey()
+  const folder = join(WHATSAPP_AUDIO_UPLOAD_ROOT, dayKey)
+  const filename = `${crypto.randomUUID()}.${media.extension}`
+  const filePath = join(folder, filename)
+  const publicPath = `${WHATSAPP_AUDIO_PUBLIC_PATH}/${dayKey}/${filename}`
+
+  await fs.mkdir(folder, { recursive: true })
+  await fs.writeFile(filePath, media.buffer)
+
+  return {
+    mimeType: media.mimeType,
+    size: media.buffer.length,
+    localFallback: true,
+    filePath,
+    publicPath,
+    publicUrl: publicPath,
+    mediaUrl: publicPath,
+    url: publicPath,
+    link: publicPath,
+    filename,
+    storage: 'local',
+    storageProvider: 'local',
+    originalMimeType,
+    originalExtension: parsed.extension,
+    ...(cleanDurationMs > 0 ? { durationMs: Math.round(cleanDurationMs) } : {})
   }
 }
 
@@ -9614,12 +9764,13 @@ async function sendAudioViaQrFallback({ fromPhone, toPhone, requestAudio, audioD
   try {
     const localMediaUrl = localMedia ? buildLocalMediaUrl(localMedia, publicBaseUrl) : ''
     const publicAudioUrl = cleanString(requestAudio?.link || requestAudio?.url || localMediaUrl)
-    const qrAudioUrl = cleanString(localMedia?.filePath || publicAudioUrl)
+    const inlineAudioDataUrl = cleanString(audioDataUrl)
+    const qrAudioUrl = cleanString(localMedia?.filePath || (inlineAudioDataUrl ? '' : publicAudioUrl))
     const response = await sendWhatsAppQrAudioMessage({
       phoneNumberId,
       from: fromPhone,
       to: toPhone,
-      audioDataUrl: qrAudioUrl ? undefined : audioDataUrl,
+      audioDataUrl: qrAudioUrl ? undefined : inlineAudioDataUrl,
       audioUrl: qrAudioUrl,
       audioPublicUrl: publicAudioUrl,
       externalId,
@@ -10978,16 +11129,55 @@ export async function sendWhatsAppApiAudioMessage({
 
   let link = cleanAudioUrl
   let providerAudio = null
+  let providerPreviewAudio = null
+  let preparedAudio = null
+
+  const getPreparedAudio = async () => {
+    if (!preparedAudio) preparedAudio = await prepareWhatsAppAudioForProviderUpload(audioDataUrl)
+    return preparedAudio
+  }
+
+  const getProviderPreviewAudio = async () => {
+    if (link || !cleanString(audioDataUrl)) return null
+    if (!providerPreviewAudio) {
+      providerPreviewAudio = await saveWhatsAppAudioPlaybackPreviewDataUrl(audioDataUrl, durationMs)
+    }
+    return providerPreviewAudio
+  }
+
+  const buildPreviewAudioFields = (previewAudio = null) => {
+    if (!previewAudio) return {}
+    const previewUrl = cleanString(previewAudio.mediaUrl || previewAudio.publicUrl || previewAudio.url || previewAudio.link || previewAudio.publicPath)
+    return {
+      ...(previewUrl ? {
+        mediaUrl: previewUrl,
+        publicUrl: previewUrl,
+        url: previewUrl,
+        link: previewUrl
+      } : {}),
+      ...(previewAudio.mimeType ? { mimeType: previewAudio.mimeType, mimetype: previewAudio.mimeType } : {}),
+      ...(previewAudio.filename ? { filename: previewAudio.filename } : {}),
+      ...(previewAudio.mediaAssetId ? { previewMediaAssetId: previewAudio.mediaAssetId } : {}),
+      ...(previewAudio.storage ? { previewStorage: previewAudio.storage } : {}),
+      ...(previewAudio.storageProvider ? { previewStorageProvider: previewAudio.storageProvider } : {}),
+      ...(previewAudio.durationMs ? { durationMs: previewAudio.durationMs } : {})
+    }
+  }
+
+  const buildQrRequestAudio = async () => {
+    const previewAudio = await getProviderPreviewAudio()
+    return {
+      ...(link ? { link } : buildPreviewAudioFields(previewAudio)),
+      ...(isVoiceNote ? { voice: true } : {})
+    }
+  }
 
   if (cleanTransport === 'qr') {
     return sendAudioViaQrFallback({
       phoneNumberId,
       fromPhone,
       toPhone,
-      requestAudio: {
-        ...(link ? { link } : {}),
-        ...(isVoiceNote ? { voice: true } : {})
-      },
+      requestAudio: await buildQrRequestAudio(),
       audioDataUrl,
       externalId,
       contactId,
@@ -11010,10 +11200,7 @@ export async function sendWhatsAppApiAudioMessage({
       phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
       fromPhone,
       toPhone,
-      requestAudio: {
-        ...(link ? { link } : {}),
-        ...(isVoiceNote ? { voice: true } : {})
-      },
+      requestAudio: await buildQrRequestAudio(),
       audioDataUrl,
       externalId,
       contactId,
@@ -11026,11 +11213,12 @@ export async function sendWhatsAppApiAudioMessage({
   throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   if (!link) {
-    const preparedAudio = await prepareWhatsAppAudioForProviderUpload(audioDataUrl)
+    const prepared = await getPreparedAudio()
+    providerPreviewAudio = await getProviderPreviewAudio()
     providerAudio = await uploadPreparedMediaToYCloud({
       config,
       fromPhone,
-      media: preparedAudio,
+      media: prepared,
       type: 'audio'
     })
   }
@@ -11049,6 +11237,8 @@ export async function sendWhatsAppApiAudioMessage({
       mediaId: providerAudio.id,
       providerMediaId: providerAudio.providerMediaId,
       providerMediaExpiresAt: providerAudio.providerMediaExpiresAt,
+      providerMimeType: providerAudio.mimeType,
+      providerFilename: providerAudio.filename,
       mimeType: providerAudio.mimeType,
       filename: providerAudio.filename,
       size: providerAudio.size,
@@ -11056,6 +11246,7 @@ export async function sendWhatsAppApiAudioMessage({
       storageProvider: providerAudio.storageProvider,
       metadata: providerAudio.metadata
     } : {}),
+    ...buildPreviewAudioFields(providerPreviewAudio),
     ...(durationMs ? { durationMs } : {})
   }
   const requestBody = {

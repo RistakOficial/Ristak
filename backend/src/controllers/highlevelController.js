@@ -24,7 +24,7 @@ import {
 } from '../services/contactIdentityService.js';
 import {
   buildLocalMediaUrl,
-  saveWhatsAppAudioDataUrl,
+  saveWhatsAppAudioPlaybackPreviewDataUrl,
   saveWhatsAppDocumentDataUrl,
   saveWhatsAppImageDataUrl,
   saveWhatsAppVideoDataUrl
@@ -312,28 +312,57 @@ function getHighLevelAttachmentPathname(url = '') {
   }
 }
 
-function getHighLevelAttachmentInfo(url = '') {
-  const mediaUrl = cleanString(url);
+function highLevelMessageTypeForAttachment({ kind = '', mimeType = '', filename = '', url = '' } = {}) {
+  const cleanKind = cleanString(kind).toLowerCase();
+  if (cleanKind === 'image' || cleanKind === 'video' || cleanKind === 'audio') return cleanKind;
+  if (cleanKind === 'document') return 'document';
+
+  const cleanMimeType = cleanString(mimeType).toLowerCase();
+  if (cleanMimeType.startsWith('image/')) return 'image';
+  if (cleanMimeType.startsWith('video/')) return 'video';
+  if (cleanMimeType.startsWith('audio/')) return 'audio';
+  if (cleanMimeType.startsWith('application/') || cleanMimeType.startsWith('text/')) return 'document';
+
+  const probe = cleanString(filename || url).toLowerCase().split('?')[0].split('#')[0];
+  const extension = cleanString(probe.split('.').pop()).toLowerCase();
+  const extensionMimeType = HIGHLEVEL_ATTACHMENT_MIME_BY_EXTENSION[extension] || '';
+  if (extensionMimeType) {
+    return highLevelMessageTypeForAttachment({ mimeType: extensionMimeType });
+  }
+
+  return 'file';
+}
+
+function getHighLevelAttachmentInfo(attachment = '') {
+  const isObject = attachment && typeof attachment === 'object';
+  const mediaUrl = cleanString(isObject
+    ? attachment.mediaUrl || attachment.media_url || attachment.publicUrl || attachment.public_url || attachment.url || attachment.link
+    : attachment
+  );
   const pathname = getHighLevelAttachmentPathname(mediaUrl);
   const rawFilename = pathname.split('/').filter(Boolean).pop() || '';
-  const mediaFilename = (() => {
+  const urlFilename = (() => {
     try {
       return decodeURIComponent(rawFilename);
     } catch {
       return rawFilename;
     }
   })();
+  const mediaFilename = cleanString(isObject
+    ? attachment.filename || attachment.fileName || attachment.file_name || attachment.originalFilename || attachment.original_filename || attachment.name
+    : ''
+  ) || urlFilename;
   const extension = cleanString(mediaFilename.split('.').pop()).toLowerCase();
-  const mediaMimeType = HIGHLEVEL_ATTACHMENT_MIME_BY_EXTENSION[extension] || '';
-  const messageType = mediaMimeType.startsWith('image/')
-    ? 'image'
-    : mediaMimeType.startsWith('video/')
-      ? 'video'
-      : mediaMimeType.startsWith('audio/')
-        ? 'audio'
-        : mediaMimeType.startsWith('application/') || mediaMimeType.startsWith('text/')
-          ? 'document'
-          : 'file';
+  const mediaMimeType = cleanString(isObject
+    ? attachment.mimeType || attachment.mime_type || attachment.mimetype || attachment.contentType || attachment.content_type
+    : ''
+  ) || HIGHLEVEL_ATTACHMENT_MIME_BY_EXTENSION[extension] || '';
+  const messageType = highLevelMessageTypeForAttachment({
+    kind: isObject ? attachment.kind || attachment.attachmentType || attachment.messageType || attachment.message_type : '',
+    mimeType: mediaMimeType,
+    filename: mediaFilename,
+    url: mediaUrl
+  });
 
   return {
     mediaUrl,
@@ -360,7 +389,7 @@ async function prepareHighLevelVoiceAttachment({ audioDataUrl, audioUrl, duratio
 
   if (!cleanString(audioDataUrl)) return null;
 
-  const savedAudio = await saveWhatsAppAudioDataUrl(audioDataUrl);
+  const savedAudio = await saveWhatsAppAudioPlaybackPreviewDataUrl(audioDataUrl, durationMs);
   const publicUrl = buildLocalMediaUrl(savedAudio, getPublicBaseUrl(req));
 
   if (!/^https?:\/\//i.test(publicUrl)) {
@@ -380,8 +409,10 @@ async function prepareHighLevelVoiceAttachment({ audioDataUrl, audioUrl, duratio
       publicUrl,
       publicPath: savedAudio.publicPath,
       mimeType: savedAudio.mimeType,
+      kind: 'audio',
       filename: savedAudio.filename,
       size: savedAudio.size,
+      mediaAssetId: savedAudio.mediaAssetId,
       originalMimeType: savedAudio.originalMimeType
     }
   };
@@ -417,7 +448,7 @@ async function prepareHighLevelFileAttachments({ attachmentDataUrls = [], req } 
       : kind === 'video'
         ? await saveWhatsAppVideoDataUrl(dataUrl)
         : kind === 'audio'
-          ? await saveWhatsAppAudioDataUrl(dataUrl)
+          ? await saveWhatsAppAudioPlaybackPreviewDataUrl(dataUrl)
           : await saveWhatsAppDocumentDataUrl(dataUrl, filename, mimeType);
     const publicUrl = buildLocalMediaUrl(saved, publicBaseUrl);
 
@@ -2686,6 +2717,24 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     ...preparedFileAttachments.urls,
     ...(voiceAttachment?.url ? [voiceAttachment.url] : [])
   ];
+  const mirrorAttachments = [
+    ...attachmentUrls,
+    ...preparedFileAttachments.localMedia.map((localMedia, index) => ({
+      ...localMedia,
+      url: preparedFileAttachments.urls[index] || localMedia.publicUrl || localMedia.publicPath,
+      publicUrl: localMedia.publicUrl || preparedFileAttachments.urls[index] || localMedia.publicPath
+    })),
+    ...(voiceAttachment
+      ? [{
+          ...(voiceAttachment.localMedia || {}),
+          url: voiceAttachment.url,
+          publicUrl: voiceAttachment.localMedia?.publicUrl || voiceAttachment.url,
+          mimeType: voiceAttachment.audio?.mimeType || voiceAttachment.localMedia?.mimeType || '',
+          kind: 'audio',
+          messageType: 'audio'
+        }]
+      : [])
+  ];
 
   if (!text && resolvedAttachmentUrls.length === 0) {
     throw createHighLevelChatError('Escribe un mensaje o graba una nota de voz antes de enviarlo.');
@@ -2773,7 +2822,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       contact,
       channel: effectiveChannel,
       text: renderedText,
-      attachments: resolvedAttachmentUrls,
+      attachments: mirrorAttachments,
       externalId,
       requestBody,
       response
@@ -2794,7 +2843,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       contact,
       channel: effectiveChannel,
       text: renderedText,
-      attachments: resolvedAttachmentUrls,
+      attachments: mirrorAttachments,
       fromNumber: cleanFromNumber,
       toNumber: cleanToNumber,
       externalId,

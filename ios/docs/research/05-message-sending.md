@@ -338,8 +338,11 @@ controller lo pasa; el /movil no lo manda — mandar `contactId` es seguro y
 recomendable). MIME de audio aceptados (líneas 114-127): aac, amr, m4a
 (`audio/mp4`), mp3, ogg, webm, wav (+`video/mp4` de Safari, que se transcodifica).
 Máx 16 MB. Si no es `audio/ogg;codecs=opus` se transcodifica server-side a
-OGG/Opus (formato de nota de voz de WhatsApp). Respuesta incluye
-`audio: { link/url público, mimeType, durationMs, voice }` para pintar el player.
+OGG/Opus para el proveedor cuando WhatsApp lo requiere. La respuesta y el
+mensaje persistido deben incluir `audio: { link/url público, mimeType,
+durationMs, voice }` apuntando a la copia reproducible de Ristak (`audio/mp4` /
+M4A cuando haga falta), no solo al `media_id` del proveedor, para pintar y
+reproducir el player despues de recargar.
 
 ### 2.8 `POST /messages/interactive` (botones)
 

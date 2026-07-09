@@ -577,7 +577,11 @@ mandarse como video/nota de voz o como archivo. Si excede el limite de media
 directa pero cabe como documento, se clasifica automaticamente como archivo. En
 WhatsApp API/QR los adjuntos usan las rutas nativas de imagen, video, audio o
 documento segun esa decision; las notas de voz de WhatsApp se preparan y envian
-como OGG/Opus (`audio/ogg; codecs=opus`) cuando el canal requiere nota de voz. En
+como OGG/Opus (`audio/ogg; codecs=opus`) cuando el canal requiere nota de voz.
+Independientemente del formato que exija el proveedor, Ristak debe persistir una
+copia publica reproducible en el historial (`media_url`, MIME y nombre de
+archivo), usando MP4/M4A cuando haga falta para que `/chat`, `/movil`, `mobile/`
+y la app iOS puedan volver a reproducir audios salientes despues de recargar. En
 `/chat` desktop, las burbujas de media deben mostrar solo el contenido principal:
 foto/video completo, audio con icono/control del lado izquierdo o mapa completo.
 La hora, etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de
@@ -741,11 +745,12 @@ que esa plantilla ya existe, el submit debe reintentarse como edicion y dejar la
 plantilla local en revision. Las plantillas archivadas o en revision no se editan
 desde Ristak; se debe esperar el resultado o crear una nueva con otro nombre.
 
-Cuando una foto se envia por WhatsApp API/YCloud usando media ID del proveedor,
-Ristak debe guardar una copia de preview en `mediaStorageService` y persistir su
-`media_url` en `whatsapp_api_messages`. WhatsApp no debe recibir ese link si el
-proveedor acepta media ID, pero el historial interno si lo necesita para pintar
-la imagen en la burbuja del chat en vez de mostrar solo el nombre del archivo.
+Cuando una foto, audio o video se envia por WhatsApp API/YCloud usando media ID
+del proveedor, Ristak debe guardar una copia de preview/reproduccion en
+`mediaStorageService` y persistir su `media_url` en `whatsapp_api_messages`.
+WhatsApp no debe recibir ese link si el proveedor acepta media ID, pero el
+historial interno si lo necesita para pintar la burbuja del chat en vez de
+mostrar solo el nombre del archivo o un audio roto.
 Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el eco saliente
 que WhatsApp Web emite para esa foto no debe crear una segunda burbuja `QR` con
 el texto generico `Foto`. El backend debe marcar los envios API originados por

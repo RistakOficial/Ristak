@@ -38,7 +38,8 @@ Hay **dos planos de media** distintos que la app nativa debe conocer:
    - lo recomprime al formato que WhatsApp exige (JPEG/MP4/OGG-Opus),
    - lo sube al proveedor (YCloud) para el envío API **y** guarda una copia
      pública en `media_assets` (módulo `chat`) para que el bubble del chat tenga
-     una URL de preview permanente,
+     una URL de preview permanente; en audios salientes esa copia debe ser
+     reproducible por la app (`audio/mp4`/M4A si el original no lo era),
    - persiste el mensaje con la metadata de media.
 
 **Cadena de autenticación de URLs de media en mensajes: NO HAY AUTH.** Las URLs
@@ -324,8 +325,11 @@ contenedor MP4 y las etiqueta `video/mp4`; el backend lo acepta y transcodifica
 `"WhatsApp no acepta este formato de audio. Graba otra vez o usa un audio compatible."`
 **Máx 16 MB** (`MAX_WHATSAPP_AUDIO_BYTES`) →
 `"El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp."`
-Procesado: si no es ya `audio/ogg;codecs=opus`, ffmpeg → Ogg Opus mono 48 kHz
-48k. MIME final `audio/ogg; codecs=opus`.
+Procesado para proveedor: si no es ya `audio/ogg;codecs=opus`, ffmpeg → Ogg Opus
+mono 48 kHz 48k. MIME final enviado al proveedor `audio/ogg; codecs=opus`.
+Procesado para historial: cuando el envío nace en Ristak, el backend guarda una
+copia publica en `media_assets` con URL en `media_url`; si el formato no es
+reproducible por iOS/RN/web, esa copia se convierte a M4A (`audio/mp4`).
 👉 **La app nativa debe grabar AAC/M4A y mandar el data URL como `audio/mp4`**
 (igual que RN, ver §7.3): el backend transcodifica.
 
@@ -433,7 +437,7 @@ Eventos `whatsapp_message` (`contactsController.js:5245-5298`) traen en `data`:
 | Campo | Tipo | Notas |
 |---|---|---|
 | `message_type` | string | `text, image, video, audio, voice, document, sticker, location, reaction, ...` |
-| `media_url` | string | URL pública (CDN/`/media/assets/.../file`/`/uploads/...`); puede faltar si el proveedor no la dio |
+| `media_url` | string | URL pública (CDN/`/media/assets/.../file`/`/uploads/...`); en media saliente nueva de Ristak debe existir aunque el proveedor use media ID; solo puede faltar en histórico legado o media expirada del proveedor |
 | `media_id` | string | id de media del proveedor (fallback cuando no hay URL) |
 | `media_mime_type` | string | |
 | `media_filename` | string | |
@@ -649,9 +653,10 @@ en vez de fallar, abre el sheet de plantillas. `transport` va `undefined`
    chunks; con `URLSession` se puede reportar progreso del body upload, pero el
    servidor tarda además en transcodificar (video con ffmpeg puede tomar >10 s;
    ajustar timeouts del cliente; `/movil` y RN usan requests sin timeout corto).
-4. **`media_url` puede faltar**: mensajes con solo `media_id` del proveedor
-   (histórico QR o media expirada) no tienen URL descargable; la RN muestra
-   cápsula "Nota de voz"/tarjeta deshabilitada. Replicar ese estado.
+4. **`media_url` puede faltar en legado**: mensajes antiguos con solo `media_id`
+   del proveedor (histórico QR o media expirada) no tienen URL descargable; la
+   RN muestra cápsula "Nota de voz"/tarjeta deshabilitada. En envíos nuevos desde
+   Ristak, audio/imagen/video deben persistir URL interna de preview.
 5. **URLs públicas sin auth**: cualquier persona con la URL del CDN puede ver
    el archivo (por diseño, WhatsApp lo necesita). No enviar estas URLs a logs
    de terceros.
@@ -659,8 +664,9 @@ en vez de fallar, abre el sheet de plantillas. `transport` va `undefined`
    **no reproducen OGG/Opus nativamente**. La RN depende del player de expo
    (que en iOS también tiene esta limitante — por eso su heurística
    `isNativePlayableAudioCandidate` prefiere mp4/m4a/aac/mp3/wav). Las notas de
-   voz salientes se guardan como preview en `media_assets` ya convertidas a
-   ogg/opus. OPEN QUESTION: verificar en dispositivo si las notas de voz
+   voz salientes se guardan como preview en `media_assets` con formato
+   reproducible (`audio/mp4`/M4A cuando hace falta), aunque WhatsApp reciba
+   OGG/Opus. OPEN QUESTION: verificar en dispositivo si las notas de voz
    entrantes (ogg) se reproducen; si no, la app iOS necesitará un decodificador
    (p. ej. libopus/ogg) o pedir al backend un transcode a m4a.
 7. **Tamaños dispares cliente/servidor**: el cliente valida imagen ≤16 MB (RN)
