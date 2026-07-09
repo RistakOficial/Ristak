@@ -13,6 +13,27 @@ Ristak tiene tres rutas moviles activas y no deben mezclarse:
 3. `ios/app`: app nativa Apple en SwiftUI para iPhone y iPad. Esta es la unica
    carpeta propietaria de la experiencia nativa Apple.
 
+## Identificadores `com.ristak.*`
+
+La auditoria del 2026-07-09 encontro siete valores unicos `com.ristak.*` en el
+repo (excluyendo dependencias y builds generados). El numero de menciones puede
+cambiar cuando se edita documentacion; la fuente de verdad es esta tabla de
+proposito:
+
+| Identificador | Uso correcto | Estado |
+| --- | --- | --- |
+| `com.ristak.app` | App legacy/de tienda basada en `frontend/` Capacitor y topic APNs default historico. | Activo legacy |
+| `com.ristak.app.NotificationService` | Extension legacy de notificaciones para la app Apple de tienda. | Activo legacy |
+| `com.ristak.ios` | App nativa Apple nueva en `ios/app` para iPhone/iPad. | Activo nativo Apple |
+| `com.ristak.ios.NotificationService` | Topic/extension esperada si la app SwiftUI conserva `com.ristak.ios` y agrega Notification Service Extension. | Reservado/documentado |
+| `com.ristak.android` | Paquete Android de `mobile/` React Native/Expo. | Activo Android |
+| `com.ristak.native` | Nombre viejo invalido para Android; no debe usarse porque `native` es palabra reservada de Java y rompe Gradle. | Prohibido |
+| `com.ristak.chats` | Identificador interno de UI/navegacion, no bundle id ni package id de app. | Interno |
+
+Regla practica: para builds nuevos usa `com.ristak.android` en Android,
+`com.ristak.ios` en la app SwiftUI y solo toca `com.ristak.app` cuando estes
+manteniendo la app Capacitor legacy o sus perfiles de tienda existentes.
+
 Regla obligatoria de mantenimiento: cualquier cambio de producto movil, chat,
 login, permisos, push, pagos, agenda, filtros, labels visibles o contrato de API
 debe revisarse en las superficies que apliquen: `/movil` para web, `mobile/`
