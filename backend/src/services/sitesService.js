@@ -22501,10 +22501,17 @@ function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true, 
   const source = String(html || '')
   const hasRistakVideo = /\brstk-video\b/.test(source)
   if (!hasRistakVideo) return ''
+  // Runtime del reproductor: se usa EXACTAMENTE el mismo del editor de sitios
+  // (buildVideoActionsRuntimeScript, ~21KB — controles, sonido, ocultar/mostrar barra,
+  // progreso, velocidad, autoplay y acciones por tiempo). Antes el importado usaba un runtime
+  // REDUCIDO propio (buildImportedVideoPlayerRuntimeScript, ~9.8KB) que no replicaba el
+  // comportamiento del editor de sitios (por eso el play/sonido/ocultar-controles se sentían
+  // rotos). Con el runtime completo, el reproductor importado se comporta idéntico al nativo.
+  const hasPlayer = /\brstk-video-player\b/.test(source)
+  const hasActions = actionsEnabled && /data-rstk-video-actions=/.test(source)
   return [
     IMPORTED_VIDEO_PLAYER_CSS,
-    /\brstk-video-player\b/.test(source) ? buildImportedVideoPlayerRuntimeScript() : '',
-    actionsEnabled && /data-rstk-video-actions=/.test(source) ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
+    (hasPlayer || hasActions) ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
   ].filter(Boolean).join('')
 }
 
