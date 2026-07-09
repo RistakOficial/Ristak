@@ -2909,6 +2909,8 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /Varía el justificante/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Manejo del precio/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /El precio NUNCA es lo primero/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 14 — Dar el precio de inmediato a un pedido específico/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /nunca des el precio de inmediato sin antes sacar plática y construir valor/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA el menú completo/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA suenes evasivo/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /JAMÁS sueltes una "biblia"/)

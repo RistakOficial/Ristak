@@ -2221,8 +2221,11 @@ personalizacion del asistente: reglas del negocio, limites, datos que debe
 pedir, casos especificos y comportamiento que siempre debe respetar, salvo los
 limites de seguridad e integridad. El prompt avanzado de fabrica vive interno:
 no se muestra, no se edita desde la UI y las APIs de configuracion ignoran
-intentos de guardar `closingStrategyCustom`. Los datos estrictamente necesarios
-para avanzar deben vivir en `requiredData`. Si `extraInstructions` condiciona
+intentos de guardar `closingStrategyCustom`. La fabrica vigente fuerza pull
+conversacional, curiosidad genuina, anti-molde, anti-asuncion y no soltar precio
+de inmediato sin sacar contexto y construir valor, incluso cuando el contacto
+pide un costo especifico. Los datos estrictamente necesarios para avanzar deben
+vivir en `requiredData`. Si `extraInstructions` condiciona
 precio/valor/costo/cotizacion (por ejemplo,
 "no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
 explicito: una pregunta directa por precio no desbloquea montos, rangos,
