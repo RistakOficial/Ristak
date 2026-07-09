@@ -1772,10 +1772,12 @@ no quede UI falsa atras o encima del embed. La excepcion es `calendar` con
 `data-rstk-native-render="custom"`, porque ahi el frontend importado si es el
 calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
 
-- `form`: selecciona un formulario existente de Ristak. La zona debe ser un
-  contenedor vacio; no debe incluir `<form>`, campos ni botones de envio dentro
-  o pegados a esa zona, porque Ristak renderiza el formulario completo con su
-  propio boton y sus acciones "Al enviar".
+- `form`: usa la misma configuracion del bloque `form_embed` del editor visual:
+  formulario existente o formulario interno, reglas "Al enviar", estilo del
+  bloque y snapshot del formulario fuente. La zona debe ser un contenedor vacio;
+  no debe incluir `<form>`, campos ni botones de envio dentro o pegados a esa
+  zona, porque Ristak renderiza el formulario completo dentro de un frame aislado
+  con su propio boton y sus acciones "Al enviar".
 - `calendar` con `data-rstk-native-render="ristak"`: renderiza el calendario
   embebido normal y respeta disponibilidad, campos, pagos, reglas de completado
   y evento Meta "al agendar".
@@ -1787,10 +1789,10 @@ calendario visual y solo se conecta a disponibilidad/agendado de Ristak.
 - `payment`: renderiza el checkout real de Ristak y usa la misma configuracion
   de pagos del editor. El `Purchase` sale solo del pago confirmado.
 - `video`: renderiza el bloque de video real de Ristak con la misma subida/URL,
-  controles, diseno, acciones por tiempo y eventos Meta/CAPI que el editor
-  normal. En HTML importado no se ofrece la accion "Abrir formulario de video";
-  las acciones esperadas son mostrar/ocultar elementos, ir a paginas del proyecto,
-  popup, redireccion y eventos Meta cuando correspondan.
+  controles, diseno, acciones por tiempo, formulario de video y eventos
+  Meta/CAPI que el editor normal. El formulario de video usa el mismo panel,
+  campos, reglas de completado, diseno y submit publico del bloque nativo; el
+  HTML externo solo reserva la zona donde se monta el reproductor.
 
 Las acciones de video en HTML importado solo deben apuntar a elementos
 identificables y publicables: botones, links, formularios, secciones, imagenes o
@@ -1806,7 +1808,9 @@ En el editor HTML importado, estos elementos se configuran desde un inspector
 derecho independiente del panel de codigo. El panel de codigo se conserva para
 editar HTML/IA externa, mientras el inspector de elementos Ristak administra
 formularios, calendarios, pagos y videos con la misma configuracion del editor
-visual. Ese inspector no debe abrirse automaticamente solo porque el HTML tenga
+visual. En formularios, el inspector reutiliza el control normal de `form_embed`
+y el render monta una mini pagina Ristak aislada para no mezclar CSS/JS del HTML
+externo con el runtime del CRM. Ese inspector no debe abrirse automaticamente solo porque el HTML tenga
 un video, calendario, pago o formulario nativo detectado; aparece unicamente
 cuando el usuario selecciona esa zona desde la previsualizacion o desde el modo
 codigo, y se cierra cuando el usuario selecciona texto, botones, campos,
@@ -1842,6 +1846,14 @@ normal y no debe llevar `editor_preview=1` ni `preview=1`. Los calendarios
 custom publicados conservan su UI importada, pero las funciones
 `window.ristakCalendarGetSlots` y `window.ristakCalendarBook` deben apuntar a los
 endpoints publicos vivos de disponibilidad y agendado.
+
+Cuando el usuario edita directamente el codigo HTML y todavia no ha guardado,
+la vista de pagina debe mandar ese archivo como borrador al endpoint de preview
+para que pase por el mismo renderer aislado de Ristak: sanitizacion, rutas
+internas, slots nativos, pago mock de editor, calendario preview y runtime de
+video. Ese borrador solo vive en memoria de la solicitud de preview; no actualiza
+`public_site_imports` ni `public_site_import_assets` hasta que el usuario guarde
+el sitio.
 
 Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
 pero las reglas copiables nuevas deben preferir `data-rstk-*`.

@@ -2086,7 +2086,7 @@ const IMPORTED_HTML_AI_GUIDE = `Reglas Ristak para HTML generado por IA externa:
 - Para usar el calendario visual de Ristak: <div data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></div>. En el editor eliges cualquier calendario disponible y se respeta su configuración completa.
 - Para usar tu propio frontend de calendario pero mapearlo a Ristak: <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom"></section>. Esta excepción sí puede tener UI propia porque no usa el calendario visual de Ristak. Tu JS debe usar window.ristakCalendarGetSlots("agenda-custom", { startDate:"2026-08-15", endDate:"2026-08-22", timezone:"America/Mexico_City" }) y window.ristakCalendarBook("agenda-custom", { startTime:"2026-08-15T17:00:00Z", timezone:"America/Mexico_City", name, email, phone }). startTime siempre es ISO UTC del slot confirmado; timezone es la zona del negocio/visitante que eligió la cita.
 - Para pagos nativos: <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>. El cobro real y el evento Purchase salen del bloque de pago configurado en Ristak; no dispares Purchase por click o por precio mostrado.
-- Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, acciones por tiempo y eventos Meta/CAPI configurados. En HTML importado no uses la acción "Abrir formulario de video"; usa mostrar/ocultar/ir a página/popup/Meta según aplique.
+- Para videos nativos: <div data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></div>. Ristak usa el mismo bloque de video del editor: subida/URL, controles del reproductor, diseño, acciones por tiempo, formulario de video y eventos Meta/CAPI configurados.
 - Targets para acciones de video: todo botón, contenedor, imagen, sección o formulario que quieras mostrar/ocultar desde un video debe tener id único o data-rstk-edit-id único. Ejemplo: <button id="cta-final" data-rstk-editable="true" data-rstk-edit-type="button" data-rstk-edit-id="cta-final">Continuar</button>. Los fondos/decoración deben marcarse como data-rstk-edit-type="background_image" o aria-hidden="true" para que no salgan como targets.
 - Conversiones Meta/CAPI en HTML importado: declara la conversión en el <form> final o en su botón submit con data-rstk-conversion-event="Lead|CompleteRegistration|Schedule|Purchase|Contact|ViewContent|FormSubmitted" y data-rstk-conversion-type="form_submit|appointment_scheduled|purchase|complete_registration|contact|view_content".
 - Para formulario completado usa Lead o CompleteRegistration y conserva campos identificables: email y/o phone con data-rstk-field="email|phone".
@@ -13955,6 +13955,7 @@ export const Sites: React.FC = () => {
                   aiAgentAvailable={aiAgentConfigured}
                   importData={selectedImportData}
                   customFields={customFields}
+                  customFieldFolders={customFieldFolders}
                   metaPixelConnected={metaPixelConnected}
                   codeEditorOpen={true}
                   codeDrafts={importedCodeDrafts}
@@ -19162,6 +19163,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   aiAgentAvailable: boolean
   importData: ImportedSiteImport | null
   customFields: CustomFieldDefinition[]
+  customFieldFolders: CustomFieldFolder[]
   metaPixelConnected: boolean
   codeEditorOpen: boolean
   codeDrafts: Record<string, string>
@@ -19190,6 +19192,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   aiAgentAvailable,
   importData,
   customFields,
+  customFieldFolders,
   metaPixelConnected,
   codeEditorOpen,
   codeDrafts,
@@ -19222,6 +19225,10 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [previewVersion, setPreviewVersion] = useState(0)
   const previewRequestIdRef = useRef(0)
   const previewHtmlContextKeyRef = useRef('')
+  const codeRuntimePreviewRequestIdRef = useRef(0)
+  const [codeRuntimePreviewHtml, setCodeRuntimePreviewHtml] = useState('')
+  const [codeRuntimePreviewLoading, setCodeRuntimePreviewLoading] = useState(false)
+  const [codeRuntimePreviewError, setCodeRuntimePreviewError] = useState('')
   const [inlineEditor, setInlineEditor] = useState<ImportedInlineEditorState | null>(null)
   const [buttonEditor, setButtonEditor] = useState<ImportedButtonEditorState | null>(null)
   const [videoEditor, setVideoEditor] = useState<ImportedVideoEditorState | null>(null)
@@ -19242,6 +19249,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [selectedFieldRouteDraft, setSelectedFieldRouteDraft] = useState<ImportedSelectedFieldRouteDraft | null>(null)
   const [selectedFieldRouteSaving, setSelectedFieldRouteSaving] = useState(false)
   const [importedEditorCustomFields, setImportedEditorCustomFields] = useState<CustomFieldDefinition[]>(customFields)
+  const [importedEditorCustomFieldFolders, setImportedEditorCustomFieldFolders] = useState<CustomFieldFolder[]>(customFieldFolders)
   const [codeEditorWidth, setCodeEditorWidth] = useState(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
   const codeEditorWidthRef = useRef(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
   const lastCodeEditorExpandedWidthRef = useRef(IMPORTED_CODE_PANEL_DEFAULT_WIDTH)
@@ -19255,6 +19263,8 @@ const ImportedHtmlEditorPanel: React.FC<{
   const [codeAssistantAttachments, setCodeAssistantAttachments] = useState<SitesAICreationAttachment[]>([])
   const [codeAssistantAttachmentError, setCodeAssistantAttachmentError] = useState('')
   const [selectedImportedNativeElementKey, setSelectedImportedNativeElementKey] = useState('')
+  const [importedVideoFormGateActiveBlockId, setImportedVideoFormGateActiveBlockId] = useState('')
+  const [importedVideoFormGateActiveElement, setImportedVideoFormGateActiveElement] = useState<EmbeddedFormActiveElement>('field')
   const [importedNativeElementDrafts, setImportedNativeElementDrafts] = useState<Record<string, Record<string, unknown>>>({})
   const [importedNativeElementSavingKey, setImportedNativeElementSavingKey] = useState('')
   const importedNativeElementDraftsRef = useRef<Record<string, Record<string, unknown>>>({})
@@ -19306,7 +19316,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const activeCodeValue = activeCodeFile ? codeDrafts[activeCodeKey] ?? activeCodeFile.content : ''
   const activeCodeDirty = Boolean(activeCodeKey && Object.prototype.hasOwnProperty.call(codeDrafts, activeCodeKey))
   const activePageDraftPreviewHtml = !popupCodeActive && activeCodeFile?.language === 'html' && activeCodeDirty ? activeCodeValue : ''
-  const editorPreviewHtml = activePageDraftPreviewHtml || previewHtml
+  const editorPreviewHtml = activePageDraftPreviewHtml ? codeRuntimePreviewHtml || activePageDraftPreviewHtml : previewHtml
   const importedNativeElementDetectionHtml = activeCodeFile?.language === 'html'
     ? activeCodeValue
     : editorPreviewHtml
@@ -19335,6 +19345,29 @@ const ImportedHtmlEditorPanel: React.FC<{
   useEffect(() => {
     setImportedEditorCustomFields(customFields)
   }, [customFields])
+
+  useEffect(() => {
+    setImportedEditorCustomFieldFolders(customFieldFolders)
+  }, [customFieldFolders])
+
+  const handleImportedCustomFieldCreated = useCallback((field: CustomFieldDefinition) => {
+    setImportedEditorCustomFields(current => {
+      const withoutDuplicate = current.filter(item => item.definitionId !== field.definitionId)
+      return [...withoutDuplicate, field].sort((a, b) => (
+        String(a.folderName || '').localeCompare(String(b.folderName || '')) ||
+        String(a.label || '').localeCompare(String(b.label || ''))
+      ))
+    })
+  }, [])
+
+  const handleImportedVideoFormGateActiveBlockChange = useCallback((blockId: string) => {
+    setImportedVideoFormGateActiveElement('field')
+    setImportedVideoFormGateActiveBlockId(blockId)
+  }, [])
+
+  const handleImportedVideoFormGateSubmitSelect = useCallback(() => {
+    setImportedVideoFormGateActiveElement('submit')
+  }, [])
 
   useEffect(() => {
     importedNativeElementSiteRef.current = site
@@ -19431,7 +19464,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [])
 
   const validateImportedNativeElementSlotSettings = useCallback((slot: ImportedNativeElementSlot, settings: Record<string, unknown>) => {
-    if (slot.type === 'form' && !getSettingString(settings, 'formSiteId')) {
+    if (slot.type === 'form' && !getEmbeddedFormSourceId({ settings } as SiteBlock) && !Array.isArray(settings.embeddedBlocks) && !Array.isArray(settings.embeddedPages)) {
       return 'Elige qué formulario de Ristak va en esta zona.'
     }
     if (slot.type === 'calendar' && !getSettingString(settings, 'calendarSlug') && !getSettingString(settings, 'calendarId')) {
@@ -19568,10 +19601,13 @@ const ImportedHtmlEditorPanel: React.FC<{
     customFieldsService.listCatalog()
       .then(catalog => {
         if (!mounted) return
+        setImportedEditorCustomFieldFolders(catalog.folders || [])
         setImportedEditorCustomFields((catalog.fields || []).filter(field => !isSystemCustomFieldDefinition(field)))
       })
       .catch(() => {
-        if (mounted) setImportedEditorCustomFields([])
+        if (!mounted) return
+        setImportedEditorCustomFieldFolders([])
+        setImportedEditorCustomFields([])
       })
     return () => {
       mounted = false
@@ -19790,6 +19826,63 @@ const ImportedHtmlEditorPanel: React.FC<{
   useEffect(() => {
     void loadInlinePreview()
   }, [loadInlinePreview])
+
+  useEffect(() => {
+    const shouldRenderDraftCodePreview = Boolean(
+      codeEditorOpen &&
+      !popupCodeActive &&
+      activeCodeFile?.language === 'html' &&
+      activeCodeDirty
+    )
+    const requestId = codeRuntimePreviewRequestIdRef.current + 1
+    codeRuntimePreviewRequestIdRef.current = requestId
+
+    if (!shouldRenderDraftCodePreview || !activeCodeFile) {
+      setCodeRuntimePreviewHtml('')
+      setCodeRuntimePreviewError('')
+      setCodeRuntimePreviewLoading(false)
+      return
+    }
+
+    setCodeRuntimePreviewLoading(true)
+    setCodeRuntimePreviewError('')
+    const timer = window.setTimeout(() => {
+      void sitesService.getPreviewHtml(site.id, activeImportedPage?.id, {
+        test: true,
+        draftSite: getImportedNativeElementPreviewSite(),
+        draftImportedCodeFiles: [{
+          path: activeCodeFile.path,
+          content: activeCodeValue
+        }]
+      })
+        .then(html => {
+          if (codeRuntimePreviewRequestIdRef.current !== requestId) return
+          setCodeRuntimePreviewHtml(html)
+          setCodeRuntimePreviewError('')
+        })
+        .catch(error => {
+          if (codeRuntimePreviewRequestIdRef.current !== requestId) return
+          setCodeRuntimePreviewHtml('')
+          setCodeRuntimePreviewError(error instanceof Error ? error.message : 'No se pudo renderizar este borrador con elementos Ristak')
+        })
+        .finally(() => {
+          if (codeRuntimePreviewRequestIdRef.current === requestId) setCodeRuntimePreviewLoading(false)
+        })
+    }, 260)
+
+    return () => {
+      window.clearTimeout(timer)
+    }
+  }, [
+    activeCodeDirty,
+    activeCodeFile,
+    activeCodeValue,
+    activeImportedPage?.id,
+    codeEditorOpen,
+    getImportedNativeElementPreviewSite,
+    popupCodeActive,
+    site.id
+  ])
 
   const currentPageCanSubmitForm = useMemo(() => (
     hasImportedSubmittableFormFields(editorPreviewHtml)
@@ -22501,9 +22594,18 @@ const ImportedHtmlEditorPanel: React.FC<{
     ? activeCodeValue
     : previewHtml
   const shouldUseRenderedCodePreview = Boolean(!popupCodeActive && !activeCodeDirty && previewHtml)
+  const shouldUseDraftRuntimeCodePreview = Boolean(!popupCodeActive && activeCodeDirty && codeRuntimePreviewHtml)
   const activeCodePreviewHtml = activeCodeFile?.language === 'html'
-    ? shouldUseRenderedCodePreview ? previewHtml : activeCodeValue
+    ? shouldUseDraftRuntimeCodePreview ? codeRuntimePreviewHtml : shouldUseRenderedCodePreview ? previewHtml : activeCodeValue
     : previewHtml
+  const codeRuntimePreviewNotice = activeCodeDirty && !popupCodeActive && activeCodeFile?.language === 'html'
+    ? codeRuntimePreviewError
+      ? `Vista sin runtime Ristak: ${codeRuntimePreviewError}`
+      : codeRuntimePreviewLoading
+        ? 'Actualizando vista con elementos Ristak...'
+        : ''
+    : ''
+  const codePreviewNotice = codeRuntimePreviewNotice || codeSelectionNotice
   const codePreviewSourceHtml = useMemo(
     () => buildImportedCodeRangePreviewHtml(activeCodePreviewHtml),
     [activeCodePreviewHtml]
@@ -22963,7 +23065,6 @@ const ImportedHtmlEditorPanel: React.FC<{
     const selectedBlock = selectedSlot ? findImportedNativeElementBlock(nativeElementBlocks, selectedSlot) : null
     const draftBlock = selectedSlot ? makeImportedNativeElementDraftBlock(selectedSlot) : null
     const draftSettings = draftBlock?.settings || {}
-    const selectedFormId = getSettingString(draftSettings, 'formSiteId')
     const selectedSlotSaving = Boolean(selectedSlot && importedNativeElementSavingKey === selectedSlot.key)
     const importedNativeVideoTargetBlocks = selectedSlot?.type === 'video'
       ? buildImportedVideoActionTargetBlocksFromHtml(
@@ -23060,34 +23161,28 @@ const ImportedHtmlEditorPanel: React.FC<{
             </div>
 
             {selectedSlot.type === 'form' && (
-              <label className={styles.importedActionField}>
-                <span>Formulario de Ristak</span>
-                <CustomSelect
-                  value={selectedFormId}
-                  portal
-                  onChange={(event) => {
-                    const nextFormId = event.target.value
-                    patchImportedNativeElementDraft(selectedSlot, {
-                      formSiteId: nextFormId,
-                      embeddedSiteId: undefined,
-                      embeddedSiteName: undefined,
-                      embeddedBlocks: undefined,
-                      embeddedPages: undefined,
-                      embeddedTheme: undefined,
-                      embeddedSiteType: undefined
-                    })
-                    window.setTimeout(autosaveSelectedNativeElement, 0)
-                  }}
-                >
-                  <option value="">Selecciona un formulario</option>
-                  {selectedFormId && !forms.some(form => form.id === selectedFormId) && (
-                    <option value={selectedFormId}>Formulario seleccionado</option>
-                  )}
-                  {forms.filter(form => form.id !== site.id).map(form => (
-                    <option key={form.id} value={form.id}>{form.name || 'Formulario'}</option>
-                  ))}
-                </CustomSelect>
-              </label>
+              <>
+                <FormEmbedToolbarControls
+                  site={nativeElementSite}
+                  block={draftBlock}
+                  forms={forms}
+                  pages={pages}
+                  activePageId={activeImportedPage?.id || activePageId}
+                  onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
+                  onSave={autosaveSelectedNativeElement}
+                />
+                <AccordionGroup>
+                  <InlineBlockStyleControls
+                    site={nativeElementSite}
+                    block={draftBlock}
+                    blocks={nativeElementBlocks}
+                    mode="all"
+                    device={device}
+                    onPatchSettings={(patch) => patchImportedNativeElementDraft(selectedSlot, patch)}
+                    onSave={autosaveSelectedNativeElement}
+                  />
+                </AccordionGroup>
+              </>
             )}
 
             {selectedSlot.type === 'calendar' && (
@@ -23231,9 +23326,16 @@ const ImportedHtmlEditorPanel: React.FC<{
                         onSaveSite={onSaveSite}
                         forms={forms}
                         customFields={activeImportedCustomFields}
+                        customFieldFolders={importedEditorCustomFieldFolders}
+                        onCustomFieldCreated={handleImportedCustomFieldCreated}
+                        enableVideoFormGateAction
                         onPatchSettings={patchSelectedVideoSettings}
                         onSave={autosaveSelectedNativeElement}
                         onTargetHover={(targetId) => hoverImportedVideoActionTarget(targetId, codePreviewIframeRef.current || iframeRef.current)}
+                        videoFormGateActiveBlockId={importedVideoFormGateActiveBlockId}
+                        videoFormGateActiveElement={importedVideoFormGateActiveElement}
+                        onVideoFormGateActiveBlockChange={handleImportedVideoFormGateActiveBlockChange}
+                        onVideoFormGateSubmitSelect={handleImportedVideoFormGateSubmitSelect}
                       />
                     )
                   }
@@ -23525,16 +23627,16 @@ const ImportedHtmlEditorPanel: React.FC<{
 
         <section className={[
           styles.importedCodePreviewPane,
-          codeSelectionNotice ? styles.importedCodePreviewPaneWithNotice : ''
+          codePreviewNotice ? styles.importedCodePreviewPaneWithNotice : ''
         ].filter(Boolean).join(' ')}>
           <div className={styles.importedCodePaneHeader}>
             <span>{popupCodeActive ? 'Vista de pop up' : 'Vista de página'}</span>
             <strong>{popupCodeActive ? 'Pop up' : activeImportedPage?.title || 'Página'}</strong>
           </div>
-          {codeSelectionNotice && (
+          {codePreviewNotice && (
             <div className={styles.importedCodeSelectionNotice}>
               <MousePointerClick size={13} />
-              <span>{codeSelectionNotice}</span>
+              <span>{codePreviewNotice}</span>
             </div>
           )}
           <div className={`${styles.importedCodePreviewStage} ${device === 'mobile' ? styles.importedCodePreviewStageMobile : ''}`}>
