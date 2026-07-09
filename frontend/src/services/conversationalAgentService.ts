@@ -358,7 +358,7 @@ export interface ConversationalAgentTestResult {
   replyPartDelaysMs?: number[]
   responseDelayMs?: number
   suppressed: boolean
-  actions: Array<{ type: string; [key: string]: unknown }>
+  actions: Array<{ type: string; effect?: { liveEffect?: string; marksObjectiveCompleted?: boolean }; [key: string]: unknown }>
   aiProvider: ConversationalAIProviderId
   model: string
 }
