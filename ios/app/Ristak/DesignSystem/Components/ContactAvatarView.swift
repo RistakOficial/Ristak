@@ -1,6 +1,8 @@
 import SwiftUI
+import UIKit
 
-/// Avatar de contacto: foto vía `AsyncImage` con fallback de iniciales sobre
+/// Avatar de contacto: foto vía `RistakImageLoader` (caché compartida) con
+/// fallback de iniciales sobre
 /// color determinístico. El avatar es circular; el badge de canal (esquina
 /// inferior derecha) se pinta como ícono libre vía `ChannelBadgeView` — SIN aro
 /// ni fondo alrededor (paridad mobile/: badge transparente que sobresale un
@@ -34,15 +36,7 @@ struct ContactAvatarView: View {
     @ViewBuilder
     private var avatarContent: some View {
         if let photoURL {
-            AsyncImage(url: photoURL) { phase in
-                if let image = phase.image {
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } else {
-                    initialsFallback
-                }
-            }
+            RemoteAvatarImage(url: photoURL) { initialsFallback }
         } else {
             initialsFallback
         }
@@ -102,5 +96,50 @@ struct ContactAvatarView: View {
             hash = hash &* 0x100000001b3
         }
         return hash
+    }
+}
+
+// MARK: - Foto de avatar con caché compartida
+
+/// Foto de avatar servida por `RistakImageLoader` (NSCache en memoria + URLCache
+/// en disco, con dedup de peticiones en vuelo). A diferencia de `AsyncImage` —que
+/// mantenía su propia caché aislada y re-descargaba/re-decodificaba en cada
+/// reciclaje de fila— aquí:
+/// - Se PINTA SÍNCRONO desde memoria en el primer frame si la foto ya se cargó
+///   antes (cero parpadeo a iniciales al hacer scroll o cambiar de pantalla).
+/// - El `.task` solo cubre el fallo de caché (descarga tolerante, sin error).
+/// Salida visual idéntica al `AsyncImage` anterior (misma imagen `scaledToFill`,
+/// mismo fallback de iniciales).
+private struct RemoteAvatarImage<Fallback: View>: View {
+    let url: URL
+    @ViewBuilder let fallback: () -> Fallback
+    @State private var image: UIImage?
+
+    init(url: URL, @ViewBuilder fallback: @escaping () -> Fallback) {
+        self.url = url
+        self.fallback = fallback
+        _image = State(initialValue: RistakImageLoader.shared.cachedImage(for: url))
+    }
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                fallback()
+            }
+        }
+        .task(id: url) {
+            // Reciclaje a otra URL: re-siembra de memoria (instantáneo si está
+            // cacheada); si no, descarga tolerante en segundo plano.
+            if let cached = RistakImageLoader.shared.cachedImage(for: url) {
+                if image !== cached { image = cached }
+                return
+            }
+            if image != nil { image = nil }
+            image = await RistakImageLoader.shared.imageIfAvailable(for: url)
+        }
     }
 }

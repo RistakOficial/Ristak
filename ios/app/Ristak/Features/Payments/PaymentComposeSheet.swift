@@ -63,7 +63,11 @@ struct PaymentComposeSheet: View {
                 content(home: home)
                     .environment(home)
             } else {
-                RistakLoadingView(message: "Cargando pagos…")
+                // Sin loader de pantalla completa: el modelo hidrata su caché al
+                // instante en `init`; un fondo neutro de un frame basta mientras
+                // se crea (cero spinner al abrir la hoja de cobro).
+                RistakTheme.bgGrouped
+                    .ignoresSafeArea()
                     .onAppear {
                         let config = appConfig
                         home = PaymentsHomeModel(timeZoneProvider: { config.businessTimeZone })

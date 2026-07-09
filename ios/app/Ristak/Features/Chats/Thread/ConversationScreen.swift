@@ -207,7 +207,11 @@ struct ConversationScreen: View {
                 await viewModel.refreshSilently()
             }
             .overlay(alignment: .bottomTrailing) {
-                scrollToBottomButton(proxy: proxy)
+                ScrollToBottomButton(
+                    viewModel: viewModel,
+                    proxy: proxy,
+                    anchorID: Self.bottomAnchorID
+                )
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if access.canWrite(module: .chat) {
@@ -247,10 +251,11 @@ struct ConversationScreen: View {
 
     // MARK: - Agrupación por día (cabeceras pegajosas)
 
-    /// Timeline plano reagrupado en días. Se deriva del `timeline` estable, así
-    /// que ids e items siguen siendo identity-preserving (sin scroll-jumps).
+    /// Timeline plano reagrupado en días. Ahora se computa UNA vez por cambio real
+    /// de timeline dentro del ViewModel (`rebuildTimeline`), no en cada render del
+    /// body — antes re-agrupaba O(n) todo el hilo en cada flip de scroll/tick/poll.
     private var dayGroups: [ConversationDayGroup] {
-        ConversationTimelineBuilder.groupByDay(viewModel.timeline)
+        viewModel.dayGroups
     }
 
     /// Orden de SOLO mensajes (sin días ni markers) para la cascada de audios:
@@ -293,6 +298,9 @@ struct ConversationScreen: View {
                 scheduledCountdown: scheduledCountdown(for: message),
                 actions: rowActions
             )
+            // Salta el re-render de burbujas sin cambios cuando el padre re-evalúa
+            // por poll/tick/scroll (ver `MessageRowView.==`).
+            .equatable()
         }
     }
 
@@ -360,27 +368,6 @@ struct ConversationScreen: View {
         }
     }
 
-    @ViewBuilder
-    private func scrollToBottomButton(proxy: ScrollViewProxy) -> some View {
-        if !viewModel.isNearBottom {
-            Button {
-                withAnimation(.snappy(duration: 0.25)) {
-                    proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
-                }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(RistakTheme.textPrimary)
-                    .padding(12)
-            }
-            .glassEffect(.regular.interactive(), in: Circle())
-            .padding(.trailing, RistakTheme.Spacing.md)
-            .padding(.bottom, RistakTheme.Spacing.md)
-            .accessibilityLabel("Bajar al final")
-            .transition(.scale.combined(with: .opacity))
-        }
-    }
-
     /// Acciones rápidas de la esquina superior derecha (paridad mobile/
     /// `conversationCallActions`): agendar cita (CalendarDays) y cobrar
     /// (CircleDollarSign). Son PROXIES: presentan el formulario EN SITIO para
@@ -429,5 +416,37 @@ struct ConversationScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Info del contacto: \(viewModel.displayName)")
+    }
+}
+
+// MARK: - Botón flotante «bajar al final»
+
+/// Vista aislada para que el cambio de `isNearBottom` (que ocurre en pleno scroll
+/// al cruzar el umbral de 140 pt) re-renderice SOLO este botón y no todo el hilo.
+/// Antes vivía como método del `body` del padre, así que cada flip re-evaluaba el
+/// árbol completo del hilo mientras te desplazabas.
+private struct ScrollToBottomButton: View {
+    let viewModel: ConversationViewModel
+    let proxy: ScrollViewProxy
+    let anchorID: String
+
+    var body: some View {
+        if !viewModel.isNearBottom {
+            Button {
+                withAnimation(.snappy(duration: 0.25)) {
+                    proxy.scrollTo(anchorID, anchor: .bottom)
+                }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(RistakTheme.textPrimary)
+                    .padding(12)
+            }
+            .glassEffect(.regular.interactive(), in: Circle())
+            .padding(.trailing, RistakTheme.Spacing.md)
+            .padding(.bottom, RistakTheme.Spacing.md)
+            .accessibilityLabel("Bajar al final")
+            .transition(.scale.combined(with: .opacity))
+        }
     }
 }

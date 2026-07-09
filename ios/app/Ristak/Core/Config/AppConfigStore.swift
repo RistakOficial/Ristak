@@ -36,29 +36,65 @@ final class AppConfigStore {
 
     // MARK: - Carga
 
+    /// Hidrata la config desde la caché SWR ANTES del load de red (arranque):
+    /// tabs/secciones/botones gateados por moneda o `mobile_chat_*` y el TEMA se
+    /// pintan con su último estado conocido al instante, sin esperar a la red.
+    /// Instantáneo (lee de memoria ya precargada). Idempotente; no pisa una
+    /// carga de red ya exitosa.
+    func hydrateFromCache() {
+        guard !appConfigLoadSucceeded else { return }
+        let cache = RistakSnapshotCache.shared
+
+        if let cachedApp = cache.value([String: String].self, for: RistakCacheKey.appConfig),
+           !cachedApp.isEmpty {
+            appConfig = cachedApp
+            // La moneda cacheada provino de una carga previa exitosa: habilitar
+            // formateo/creación de dinero con el último valor conocido (offline-first).
+            appConfigLoadSucceeded = true
+        }
+
+        if let cachedUser = cache.value([String: String].self, for: RistakCacheKey.userConfig),
+           !cachedUser.isEmpty {
+            userConfig = cachedUser
+        }
+
+        if let identifier = cache.value(String.self, for: RistakCacheKey.timezone),
+           let zone = TimeZone(identifier: identifier) {
+            businessTimeZone = zone
+        }
+    }
+
     /// Carga inicial (llamar al abrir sesión). Las tres llamadas van en paralelo;
     /// los fallos se degradan a defaults del cliente.
     func load() async {
+        // Pinta lo último conocido de inmediato antes de tocar la red.
+        hydrateFromCache()
+
         async let timezoneTask = fetchTimezone()
         async let appConfigTask = fetchKeyedConfig(path: "/api/config", keys: RistakAppConfigKey.batchKeys)
         async let userConfigTask = fetchKeyedConfig(path: "/api/user-config", keys: RistakUserConfigKey.batchKeys)
 
         let (timezoneResult, appConfigResult, userConfigResult) = await (timezoneTask, appConfigTask, userConfigTask)
 
+        let cache = RistakSnapshotCache.shared
+
         if let identifier = timezoneResult?.timezone?.trimmingCharacters(in: .whitespacesAndNewlines),
            !identifier.isEmpty,
            let zone = TimeZone(identifier: identifier) {
             businessTimeZone = zone
             timezoneSource = timezoneResult?.source
+            cache.store(zone.identifier, for: RistakCacheKey.timezone)
         }
 
         if let payload = appConfigResult {
             appConfigLoadSucceeded = true
             appConfig = Self.compactValues(payload.config)
+            cache.store(appConfig, for: RistakCacheKey.appConfig)
         }
 
         if let payload = userConfigResult {
             userConfig = Self.compactValues(payload.config)
+            cache.store(userConfig, for: RistakCacheKey.userConfig)
         }
 
         isLoaded = true

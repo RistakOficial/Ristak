@@ -26,6 +26,23 @@ final class ProductsModel {
     var validationMessage: String?
     var pendingDelete: ProductItem?
 
+    private let cache = RistakSnapshotCache.shared
+
+    // MARK: Caché instantánea (stale-while-revalidate, Round 6 #4)
+
+    /// Pinta al instante los productos guardados de la última sesión (cero
+    /// spinner cuando hay caché); `load()` revalida en su lugar.
+    init() {
+        if let cached = cache.value([ProductItem].self, for: PaymentsCache.productsKey) {
+            products = cached.filter { !$0.effectiveID.isEmpty }
+        }
+    }
+
+    private func storeProducts() {
+        let capped = products.prefix(PaymentsCache.productsCap).map(ProductItemSnapshot.init)
+        cache.store(Array(capped), for: PaymentsCache.productsKey)
+    }
+
     // MARK: Carga
 
     func load(refresh: Bool = false) async {
@@ -43,6 +60,8 @@ final class ProductsModel {
             let result = try await ProductsService.products(limit: 100)
             products = result.products.filter { !$0.effectiveID.isEmpty }
             accessDenied = false
+            // SWR: persiste la lista fresca para el próximo arranque en frío.
+            storeProducts()
         } catch let apiError as RistakAPIError {
             if apiError.isAccessDenied {
                 accessDenied = true
@@ -152,6 +171,7 @@ final class ProductsModel {
         do {
             _ = try await ProductsService.deleteProduct(id: product.effectiveID)
             products.removeAll { $0.effectiveID == product.effectiveID }
+            storeProducts()
         } catch let apiError as RistakAPIError {
             validationTitle = "No se pudo eliminar"
             validationMessage = apiError.message
@@ -182,16 +202,19 @@ struct ProductsFlowView: View {
         Group {
             if model.accessDenied {
                 PaymentsNoAccessView()
-            } else if model.isLoading && model.products.isEmpty {
-                RistakLoadingView(message: "Cargando productos…")
-            } else if let error = model.error, model.products.isEmpty {
+            } else if !model.products.isEmpty {
+                // SWR: la caché pinta los productos al instante; nunca se ocultan
+                // por spinner ni por un error de revalidación.
+                list
+            } else if let error = model.error {
+                // Error SOLO sin datos que mostrar (primera carga sin caché).
                 RistakErrorState(message: error.message) {
                     Task { await model.load() }
                 }
-            } else if model.products.isEmpty {
-                emptyState
             } else {
-                list
+                // Sin caché todavía: página vacía real (sin spinner). El `.task`
+                // rellena la lista en silencio en cuanto responde la red.
+                emptyState
             }
         }
         .navigationTitle("Precios Guardados")

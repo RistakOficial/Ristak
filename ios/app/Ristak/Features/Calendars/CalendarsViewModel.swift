@@ -111,6 +111,20 @@ final class CalendarsViewModel {
         !(eventsByDay[day.key]?.isEmpty ?? true)
     }
 
+    /// Hay citas pintadas (caché o red). Con SWR NUNCA mostramos un banner de
+    /// error de citas mientras esto sea `true`: la cita ya está a la vista, así
+    /// que un fallo de revalidación se traga en silencio (fix del error fantasma).
+    private var hasVisibleEvents: Bool {
+        !rawEvents.isEmpty || !eventsByDay.isEmpty
+    }
+
+    /// Hay CUALQUIER contenido en pantalla (calendarios o citas). Con SWR una
+    /// recarga fallida es silenciosa mientras esto sea `true`; solo caemos a un
+    /// estado duro/error cuando de verdad no hay nada que mostrar.
+    private var hasVisibleData: Bool {
+        !calendars.isEmpty || hasVisibleEvents
+    }
+
     /// Snap de minutos del timeline al `slotInterval` del calendario activo
     /// (normaliza unidad `hours`, clamp 5–60 — paridad RN `getCalendarSnapMinutes`).
     var slotStepMinutes: Int {
@@ -144,7 +158,11 @@ final class CalendarsViewModel {
         guard !bootstrapped else { return }
         bootstrapped = true
         applyTimeZone(appConfig.businessTimeZone)
-        phase = .loading
+        // SWR (#4): pinta al instante lo último que vio el usuario (calendarios +
+        // citas del mes visible) ANTES de tocar la red. Solo hay spinner de
+        // pantalla completa cuando NO hay nada cacheado.
+        hydrateFromCache(defaultCalendarID: appConfig.defaultCalendarID)
+        if phase != .ready { phase = .loading }
         await loadCalendars(defaultCalendarID: appConfig.defaultCalendarID, initial: true)
     }
 
@@ -159,15 +177,20 @@ final class CalendarsViewModel {
         applyTimeZone(appConfig.businessTimeZone)
         do {
             calendars = try await CalendarsService.calendars()
+            storeCalendarsToCache()
             resolveSelection(defaultCalendarID: appConfig.defaultCalendarID)
             if phase != .ready { phase = .ready }
         } catch {
-            if case .ready = phase {
-                eventsError = "No se pudo actualizar el calendario."
-            } else {
+            // SWR: si ya hay contenido en pantalla (calendarios/citas) o ya
+            // estábamos en estado listo (p. ej. la pantalla vacía «sin
+            // calendarios»), el refresco fallido es SILENCIOSO; conservamos lo
+            // guardado y solo revalidamos las citas. Solo caemos al estado duro en
+            // un primer arranque sin absolutamente nada que mostrar.
+            if phase != .ready && !hasVisibleData {
                 mapLoadFailure(error)
                 return
             }
+            if phase != .ready { phase = .ready }
         }
         await reloadEvents(force: true)
     }
@@ -194,13 +217,30 @@ final class CalendarsViewModel {
     private func loadCalendars(defaultCalendarID: String, initial: Bool) async {
         do {
             calendars = try await CalendarsService.calendars()
+            storeCalendarsToCache()
             resolveSelection(defaultCalendarID: defaultCalendarID)
             phase = .ready
             await reloadEvents(force: true)
         } catch {
-            if initial || calendars.isEmpty {
+            // Estados duros (acceso/plan) siempre mandan, con o sin caché.
+            if let api = error as? RistakAPIError, api.isAccessDenied {
+                phase = .accessDenied(api.message)
+                return
+            }
+            if let api = error as? RistakAPIError, api.kind == .featureUnavailable {
+                phase = .featureUnavailable
+                return
+            }
+            // SWR: si ya pintamos algo (caché o carga previa), NUNCA lo tiramos a
+            // una pantalla de error NI mostramos banner; dejamos lo guardado y
+            // revalidamos las citas en silencio.
+            if phase == .ready || !calendars.isEmpty {
+                if phase != .ready { phase = .ready }
+                await reloadEvents(force: true)
+            } else if initial {
                 mapLoadFailure(error)
             } else {
+                // Sin nada que mostrar (primer arranque sin caché): aquí sí informamos.
                 eventsError = "No se pudieron cargar los calendarios."
             }
         }
@@ -295,17 +335,25 @@ final class CalendarsViewModel {
             regroupEvents()
             loadedInterval = interval
             loadedCalendarKey = calendarKey
+            storeEventsToCache()
         } catch {
             guard requestID == eventsRequestID else { return }
             if let api = error as? RistakAPIError {
                 if api.isAccessDenied {
-                    phase = .accessDenied(api.message)
+                    // Estado duro de acceso: solo manda si NO hay nada pintado;
+                    // con citas/calendarios a la vista conservamos lo guardado (SWR).
+                    if !hasVisibleData {
+                        phase = .accessDenied(api.message)
+                    }
                 } else if api.kind == .featureUnavailable {
                     // Silencioso en cargas (regla de licencia).
-                } else {
+                } else if !hasVisibleEvents {
+                    // Fix error fantasma: SOLO informamos si no hay citas a la
+                    // vista. Si ya hay citas (caché o carga previa) tragamos el
+                    // error en silencio y seguimos mostrándolas.
                     eventsError = "No se pudieron cargar las citas."
                 }
-            } else {
+            } else if !hasVisibleEvents {
                 eventsError = "No se pudieron cargar las citas."
             }
         }
@@ -325,6 +373,61 @@ final class CalendarsViewModel {
             map[key]?.sort { ($0.startDate ?? .distantPast) < ($1.startDate ?? .distantPast) }
         }
         eventsByDay = map
+    }
+
+    // MARK: - Caché SWR (#4)
+
+    /// Clave de mes `YYYY-MM` del día dado (para `RistakCacheKey.calendarEvents`).
+    private func monthKey(_ day: CalendarBusinessDay) -> String {
+        String(format: "%04d-%02d", day.year, day.month)
+    }
+
+    /// Pinta al instante lo cacheado (sin spinner) antes de la red: calendarios
+    /// + citas del mes visible. Si hay calendarios cacheados, deja la pantalla
+    /// lista (`phase = .ready`) para que no aparezca el loader de pantalla completa.
+    private func hydrateFromCache(defaultCalendarID: String) {
+        let cache = RistakSnapshotCache.shared
+        if let cachedCalendars = cache.value([RistakCalendar].self, for: RistakCacheKey.calendarList),
+           !cachedCalendars.isEmpty {
+            calendars = cachedCalendars
+            resolveSelection(defaultCalendarID: defaultCalendarID)
+            phase = .ready
+        }
+        hydrateEventsFromCache()
+    }
+
+    /// Carga en memoria las citas cacheadas del mes visible (solo si aún no hay
+    /// nada cargado, para no pisar datos frescos).
+    private func hydrateEventsFromCache() {
+        guard rawEvents.isEmpty else { return }
+        let key = RistakCacheKey.calendarEvents(month: monthKey(visibleMonth))
+        if let cached = RistakSnapshotCache.shared.value([CalendarAppointment].self, for: key),
+           !cached.isEmpty {
+            rawEvents = cached
+            regroupEvents()
+        }
+    }
+
+    /// Guarda la lista de calendarios en la caché (round-trip vía JSON crudo,
+    /// porque `RistakCalendar` es solo Decodable).
+    private func storeCalendarsToCache() {
+        guard let data = CalendarSnapshotCodec.encode(calendars: calendars) else { return }
+        RistakSnapshotCache.shared.storeRaw(data, for: RistakCacheKey.calendarList)
+    }
+
+    /// Guarda las citas del MES VISIBLE bajo su propia clave `calendar:events:<yyyy-MM>`
+    /// (cada mes se cachea por separado, capado por el codec).
+    private func storeEventsToCache() {
+        let monthEvents = rawEvents.filter { event in
+            guard let start = event.startDate else { return false }
+            let day = CalendarDateMath.day(from: start, timeZone: timeZone)
+            return day.year == visibleMonth.year && day.month == visibleMonth.month
+        }
+        guard let data = CalendarSnapshotCodec.encode(appointments: monthEvents) else { return }
+        RistakSnapshotCache.shared.storeRaw(
+            data,
+            for: RistakCacheKey.calendarEvents(month: monthKey(visibleMonth))
+        )
     }
 
     // MARK: - Navegación de fecha

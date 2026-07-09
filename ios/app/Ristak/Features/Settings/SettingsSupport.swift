@@ -216,7 +216,13 @@ struct SettingsLoadStateView<Value: Sendable, Content: View>: View {
     var body: some View {
         switch state {
         case .idle, .loading:
-            RistakLoadingView(message: loadingMessage)
+            // Sin loader de pantalla completa al abrir (estilo WhatsApp): los
+            // paneles hidratan su caché al instante (estado `.loaded`), así que
+            // este caso solo se alcanza en la primerísima instalación sin caché.
+            // Mostramos la página vacía del panel (fondo agrupado, sin spinner);
+            // el contenido aparece solo al revalidar. El único indicador de carga
+            // permitido es el pull-to-refresh que adjunta cada panel.
+            SettingsPanelScroll { EmptyView() }
         case .accessDenied(let message):
             SettingsAccessDeniedView(message: message)
         case .featureBlocked(let message):

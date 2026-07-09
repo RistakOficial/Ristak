@@ -1,9 +1,15 @@
 import Foundation
 
 /// Cache-first de la bandeja (doc research/03 §4.9 MOB-007): guarda un
-/// snapshot en disco de las primeras filas para pintar al instante en el
-/// arranque en frío, mientras corre UNA recarga silenciosa (píldora
-/// «Mostrando lo guardado, actualizando chats»).
+/// snapshot de las primeras filas para pintar al instante en el arranque en
+/// frío, mientras corre UNA recarga silenciosa (píldora «Mostrando lo
+/// guardado, actualizando chats»).
+///
+/// Round 6 #4: migrado a `RistakSnapshotCache`. El snapshot vive bajo la llave
+/// `chat:inbox` del caché global, que se PRECARGA a memoria en el arranque
+/// (SessionStore) ANTES de pintar el shell — así la bandeja lee de memoria sin
+/// golpe a disco por pantalla (cero flash) y el namespaceado por cuenta lo
+/// gestiona el propio caché.
 ///
 /// Serializa un SUBSET de campos con los mismos nombres del contrato JSON y
 /// re-decodifica con el decoder tolerante de `ChatContact` (todos los campos
@@ -13,35 +19,30 @@ enum ChatInboxDiskCache {
 
     // MARK: - API
 
-    static func load(namespace: String) -> [ChatContact] {
-        let url = fileURL(namespace: namespace)
-        guard let data = try? Data(contentsOf: url) else { return [] }
+    /// Filas cacheadas (memoria del `RistakSnapshotCache`, instantáneo).
+    @MainActor
+    static func load() -> [ChatContact] {
+        guard let data = RistakSnapshotCache.shared.rawData(for: ChatSnapshotKey.inbox) else { return [] }
         return (try? JSONDecoder().decode([ChatContact].self, from: data)) ?? []
     }
 
-    static func save(_ rows: [ChatContact], namespace: String) {
+    /// Guarda el snapshot (memoria inmediata + disco debounced).
+    @MainActor
+    static func save(_ rows: [ChatContact]) {
         let snapshot = rows.prefix(maxRows).map(serialize)
         guard JSONSerialization.isValidJSONObject(snapshot),
               let data = try? JSONSerialization.data(withJSONObject: snapshot) else {
             return
         }
-        try? data.write(to: fileURL(namespace: namespace), options: .atomic)
+        RistakSnapshotCache.shared.storeRaw(data, for: ChatSnapshotKey.inbox)
     }
 
-    static func clear(namespace: String) {
-        try? FileManager.default.removeItem(at: fileURL(namespace: namespace))
+    @MainActor
+    static func clear() {
+        RistakSnapshotCache.shared.remove(ChatSnapshotKey.inbox)
     }
 
     // MARK: - Internos
-
-    private static func fileURL(namespace: String) -> URL {
-        let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        let safeName = namespace.unicodeScalars
-            .map { CharacterSet.alphanumerics.contains($0) ? String($0) : "-" }
-            .joined()
-        return directory.appendingPathComponent("ristak-chat-inbox-\(safeName).json")
-    }
 
     /// Subset de claves con los MISMOS nombres del payload del backend.
     private static func serialize(_ contact: ChatContact) -> [String: Any] {

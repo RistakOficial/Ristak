@@ -99,9 +99,6 @@ struct CalendarsRootView: View {
     @ViewBuilder
     private var content: some View {
         switch model.phase {
-        case .idle, .loading:
-            RistakLoadingView(message: "Cargando citas…")
-
         case .accessDenied(let message):
             RistakEmptyState(
                 icon: "lock.fill",
@@ -117,18 +114,34 @@ struct CalendarsRootView: View {
             )
 
         case .error(let message):
+            // Solo se llega aquí en el PRIMER arranque sin caché (sin nada que
+            // mostrar). Con datos en pantalla nunca caemos a esta pantalla (SWR).
             RistakErrorState(message: message) {
                 Task { await model.retry(appConfig: appConfig) }
             }
 
-        case .ready:
-            if model.calendars.isEmpty {
-                emptyCalendarsState
-            } else if horizontalSizeClass == .regular {
-                regularLayout
-            } else {
-                compactLayout
-            }
+        case .idle, .loading, .ready:
+            // Instantáneo estilo WhatsApp: la rejilla del calendario SIEMPRE está
+            // montada con su chrome (header + toolbar). Si hay caché se pinta al
+            // instante; si de verdad no hay nada, es una rejilla vacía SIN spinner.
+            // El único spinner permitido es el pull-to-refresh nativo.
+            calendarSurface
+        }
+    }
+
+    /// Superficie del calendario (rejilla mensual / timeline). Nunca muestra un
+    /// loader de pantalla completa: durante la carga inicial se ve la rejilla del
+    /// mes (vacía o con lo cacheado). El estado «No hay calendarios conectados»
+    /// solo aparece cuando YA confirmamos (phase `.ready`) que la cuenta no tiene
+    /// calendarios; mientras carga mostramos la rejilla, jamás un spinner.
+    @ViewBuilder
+    private var calendarSurface: some View {
+        if model.phase == .ready && model.calendars.isEmpty {
+            emptyCalendarsState
+        } else if horizontalSizeClass == .regular {
+            regularLayout
+        } else {
+            compactLayout
         }
     }
 
@@ -345,10 +358,8 @@ struct CalendarsRootView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
 
-            if model.isLoadingEvents {
-                ProgressView()
-                    .controlSize(.small)
-            }
+            // Sin spinner en el header: el refresco en segundo plano es SILENCIOSO
+            // (estilo WhatsApp). El único indicador de carga es el pull-to-refresh.
 
             Spacer(minLength: RistakTheme.Spacing.sm)
 

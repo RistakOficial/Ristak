@@ -6,6 +6,7 @@ import SwiftUI
 struct RootView: View {
     @Environment(SessionStore.self) private var session
     @Environment(AppConfigStore.self) private var appConfig
+    @Environment(ShellState.self) private var shell
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
@@ -32,10 +33,18 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             Task { await session.verifyOnForeground() }
+            // Cada vez que se abre/reactiva la app: volver a Chats hasta arriba.
+            if case .active = session.phase {
+                shell.resetToChatsTop()
+            }
         }
         .onChange(of: session.phase) { oldPhase, newPhase in
             switch newPhase {
             case .active:
+                // Pinta tema/moneda/config con el último estado conocido de la
+                // caché SWR (ya precargada en memoria durante el bootstrap)
+                // ANTES de disparar el load de red, evitando el flash inicial.
+                appConfig.hydrateFromCache()
                 Task {
                     await appConfig.load()
                     // Re-registro silencioso del token APNs si el permiso ya
@@ -83,30 +92,26 @@ struct RootView: View {
 
 // MARK: - Splash de arranque
 
-/// Splash mostrado mientras se lee el Keychain (fase `.booting`): wordmark +
-/// indicador de carga (paridad BootScreen RN).
+/// Splash de arranque (fase `.booting`, breve: lectura de Keychain + precarga
+/// de caché en memoria). Marca estática, SIN spinner: el usuario nunca ve un
+/// indicador de "cargando" al abrir la app — entra al shell con contenido
+/// cacheado de inmediato (arranque instantáneo estilo WhatsApp).
 private struct RistakBootSplashView: View {
     var body: some View {
-        VStack(spacing: RistakTheme.Spacing.xl) {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text("Ristak")
-                    .font(.system(size: 44, weight: .bold, design: .rounded))
-                    .foregroundStyle(RistakTheme.textPrimary)
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text("Ristak")
+                .font(.system(size: 44, weight: .bold, design: .rounded))
+                .foregroundStyle(RistakTheme.textPrimary)
 
-                Circle()
-                    .fill(RistakTheme.accent)
-                    .frame(width: 10, height: 10)
-                    .alignmentGuide(.firstTextBaseline) { dimensions in
-                        dimensions[.bottom]
-                    }
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Ristak")
-
-            ProgressView()
-                .controlSize(.regular)
-                .accessibilityLabel("Cargando")
+            Circle()
+                .fill(RistakTheme.accent)
+                .frame(width: 10, height: 10)
+                .alignmentGuide(.firstTextBaseline) { dimensions in
+                    dimensions[.bottom]
+                }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Ristak")
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RistakTheme.bg)
     }

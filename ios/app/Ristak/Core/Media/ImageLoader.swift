@@ -8,7 +8,14 @@ import UIKit
 actor RistakImageLoader {
     static let shared = RistakImageLoader()
 
-    private let memoryCache: NSCache<NSURL, UIImage>
+    /// `nonisolated`: NSCache es thread-safe, así que la lectura de memoria no
+    /// necesita cruzar al actor. Esto permite que una vista SwiftUI siembre su
+    /// `@State` de forma SÍNCRONA en el primer frame (cero parpadeo si ya está
+    /// cacheada). Las mutaciones (`setObject`) siguen ocurriendo solo desde
+    /// métodos aislados del actor, así que no hay carrera de escritura.
+    /// `nonisolated(unsafe)` porque `NSCache` está sincronizado internamente
+    /// (thread-safe) pero no está marcado `Sendable` en el SDK.
+    private nonisolated(unsafe) let memoryCache: NSCache<NSURL, UIImage>
     private let diskCache: URLCache
     private let session: URLSession
     private var inFlight: [URL: Task<UIImage, Error>] = [:]
@@ -47,8 +54,9 @@ actor RistakImageLoader {
         session = URLSession(configuration: configuration)
     }
 
-    /// Imagen ya cacheada en memoria (sin red), para pintado síncrono.
-    func cachedImage(for url: URL) -> UIImage? {
+    /// Imagen ya cacheada en memoria (sin red), para pintado síncrono. `nonisolated`
+    /// para poder leerse sin `await` desde el `init`/`body` de una vista SwiftUI.
+    nonisolated func cachedImage(for url: URL) -> UIImage? {
         memoryCache.object(forKey: url as NSURL)
     }
 

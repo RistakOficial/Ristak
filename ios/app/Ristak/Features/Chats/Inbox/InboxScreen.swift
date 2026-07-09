@@ -37,8 +37,11 @@ struct InboxScreen: View {
 
     var body: some View {
         content
+            // Título grande «Chats» de siempre (diseño original intacto). El
+            // indicador de carga es sutil: el subtítulo muestra «Actualizando…»
+            // mientras refresca en segundo plano; si no, el conteo de no leídos.
             .navigationTitle("Chats")
-            .navigationSubtitle(viewModel.unreadTotal > 0 ? "\(viewModel.unreadTotal) sin leer" : "")
+            .navigationSubtitle(inboxSubtitle)
             .searchable(text: $viewModel.searchText, prompt: "Buscar chats")
             .onChange(of: viewModel.searchText) {
                 viewModel.searchTextDidChange()
@@ -86,22 +89,28 @@ struct InboxScreen: View {
             }
     }
 
+    /// Subtítulo del header: «Actualizando…» mientras refresca en segundo plano
+    /// (mostrando lo guardado); si no, el conteo de no leídos.
+    private var inboxSubtitle: String {
+        if viewModel.isSilentRefreshing || viewModel.isInitialLoading {
+            return "Actualizando…"
+        }
+        return viewModel.unreadTotal > 0 ? "\(viewModel.unreadTotal) sin leer" : ""
+    }
+
     // MARK: - Estados raíz
 
     @ViewBuilder
     private var content: some View {
+        // La lista (con su `.searchable`) SIEMPRE está montada: nada de loader a
+        // pantalla completa que oculte el buscador. El único estado que sí
+        // reemplaza la pantalla es «Sin acceso» (permiso denegado, sin datos).
         if viewModel.isAccessDenied, viewModel.displayRows.isEmpty {
             RistakEmptyState(
                 icon: "lock",
                 title: "Sin acceso",
                 message: "No tienes acceso a esta sección."
             )
-        } else if viewModel.isInitialLoading, viewModel.displayRows.isEmpty {
-            RistakLoadingView(message: "Cargando chats…")
-        } else if let error = viewModel.loadErrorMessage, viewModel.displayRows.isEmpty, !viewModel.isSearchActive {
-            RistakErrorState(message: error) {
-                Task { await viewModel.refreshNow() }
-            }
         } else {
             inboxList
         }
@@ -110,12 +119,11 @@ struct InboxScreen: View {
     // MARK: - Lista
 
     private var inboxList: some View {
+        ScrollViewReader { proxy in
         List {
-            if viewModel.isShowingCachedData {
-                CacheRefreshPillRow()
-                    .listRowSeparator(.hidden)
-            }
-
+            // El ancla para «volver arriba» va en la PRIMERA fila real (chips o
+            // panel de selección), no en una fila extra: una fila vacía de List
+            // reserva altura mínima y dejaba un hueco grande bajo el buscador.
             if viewModel.isSelecting {
                 ChatSelectionPanel(
                     selectedCount: viewModel.selectedIDs.count,
@@ -131,10 +139,12 @@ struct InboxScreen: View {
                     onCancel: { viewModel.cancelSelection() }
                 )
                 .listRowSeparator(.hidden)
+                .id(Self.topAnchorID)
             } else if !viewModel.isSearchActive {
                 chipsRow
                     .listRowSeparator(.hidden)
                     .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                    .id(Self.topAnchorID)
             }
 
             if viewModel.showsAssistantRow {
@@ -166,17 +176,29 @@ struct InboxScreen: View {
                     tagNames: viewModel.tagNames(for: contact)
                 )
                 .onTapGesture { handleTap(contact) }
-                // Long-press más ágil (~0.3s, paridad con `delayLongPress={310}`
-                // de la app RN): abre «Más acciones» sin sentirse pesado, pero
-                // sigue siendo claramente distinto del tap.
-                .onLongPressGesture(minimumDuration: 0.3) { handleLongPress(contact) }
-                .onAppear { viewModel.loadMoreIfNeeded(currentRow: contact) }
+                // Long-press ágil y CONFIABLE: 0.35s con tolerancia de movimiento
+                // amplia (60pt) para que un micro-movimiento del dedo NO lo cancele
+                // ni lo reinicie (era lo que lo hacía sentir lentísimo). Al
+                // dispararse: haptic inmediato + «Más acciones» al instante.
+                .onLongPressGesture(minimumDuration: 0.35, maximumDistance: 60) {
+                    handleLongPress(contact)
+                }
                 // Separador uniforme en TODA la bandeja (mismo inset y tinte
                 // sutil) — el usuario reportó líneas incongruentes/opacas.
                 .ristakRowSeparator()
             }
 
-            if viewModel.isLoadingMore {
+            // Centinela de paginación: una sola fila invisible al final dispara la
+            // siguiente página al entrar en pantalla. Reemplaza el `.onAppear` por
+            // fila (que hacía un firstIndex O(n) sobre displayRows por aparición).
+            if viewModel.hasMore, !viewModel.isSearchActive {
+                Color.clear
+                    .frame(height: 1)
+                    .listRowSeparator(.hidden)
+                    .onAppear { viewModel.loadMoreIfNeeded() }
+            }
+
+            if viewModel.isLoadingMore, !viewModel.isSearchActive {
                 HStack(spacing: RistakTheme.Spacing.xs) {
                     ProgressView()
                         .controlSize(.small)
@@ -188,8 +210,11 @@ struct InboxScreen: View {
                 .listRowSeparator(.hidden)
             }
 
-            if viewModel.displayRows.isEmpty, !viewModel.isInitialLoading {
-                emptyContent
+            if viewModel.isSearchActive {
+                // Contactos del servidor no cacheados + estado de la búsqueda.
+                searchResults
+            } else if viewModel.displayRows.isEmpty {
+                defaultEmptyContent
                     .listRowSeparator(.hidden)
             }
         }
@@ -200,7 +225,19 @@ struct InboxScreen: View {
         // Dock por dirección de scroll (#11): bajar oculta el tab bar, subir lo
         // muestra. Solo compacto; ver `ShellScrollTracking.swift`.
         .reportsShellScroll()
+        // Cada apertura/reactivación de la app: bandeja hasta arriba.
+        .onChange(of: shell.chatsScrollTopSignal) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(Self.topAnchorID, anchor: .top)
+            }
+        }
+        .onAppear {
+            proxy.scrollTo(Self.topAnchorID, anchor: .top)
+        }
+        }
     }
+
+    private static let topAnchorID = "inbox-top-anchor"
 
     private func handleTap(_ contact: ChatContact) {
         if viewModel.isSelecting {
@@ -286,39 +323,64 @@ struct InboxScreen: View {
 
     // MARK: - Vacíos y sugerencias (doc 03 §4.9)
 
+    /// Resultados de búsqueda: contactos del servidor no cacheados + estado
+    /// (buscando / sin conexión / sin resultados). Las coincidencias locales ya
+    /// se pintaron arriba como filas normales (`displayRows`), al instante.
     @ViewBuilder
-    private var emptyContent: some View {
-        if viewModel.isSearchActive {
-            if viewModel.isSearchingContacts {
-                HStack(spacing: RistakTheme.Spacing.xs) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Buscando contactos...")
-                        .font(.subheadline)
-                        .foregroundStyle(RistakTheme.textDim)
+    private var searchResults: some View {
+        if !viewModel.suggestionRows.isEmpty {
+            Section {
+                ForEach(viewModel.suggestionRows) { contact in
+                    suggestionRow(contact)
+                        .ristakRowSeparator()
                 }
+            } header: {
+                Text("Contactos encontrados")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(RistakTheme.textDim)
+            }
+        }
+
+        if viewModel.displayRows.isEmpty, viewModel.suggestionRows.isEmpty {
+            searchStatusContent
+                .listRowSeparator(.hidden)
+        }
+    }
+
+    /// Estado cuando la búsqueda no tiene NADA que mostrar todavía. Sin spinner:
+    /// mientras el servidor responde solo hay un texto sutil; el aviso de red
+    /// aparece únicamente si la consulta falló y no hubo coincidencias locales.
+    @ViewBuilder
+    private var searchStatusContent: some View {
+        if viewModel.isSearchingContacts {
+            Text("Buscando contactos…")
+                .font(.subheadline)
+                .foregroundStyle(RistakTheme.textDim)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, RistakTheme.Spacing.xl)
-            } else if !viewModel.contactSuggestions.isEmpty {
-                Section {
-                    ForEach(viewModel.contactSuggestions) { contact in
-                        suggestionRow(contact)
-                            .ristakRowSeparator()
-                    }
-                } header: {
-                    Text("Contactos encontrados")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(RistakTheme.textDim)
-                }
-            } else {
-                RistakEmptyState(
-                    icon: "magnifyingglass",
-                    title: "Sin resultados",
-                    message: "No encontramos chats ni contactos con esa búsqueda."
-                )
-                .frame(minHeight: 280)
-            }
-        } else if viewModel.archivedViewActive {
+        } else if viewModel.searchServerUnavailable {
+            RistakEmptyState(
+                icon: "wifi.slash",
+                title: "Sin conexión con el servidor",
+                message: "Encontramos lo que tienes guardado. Revisa tu conexión para buscar más contactos."
+            )
+            .frame(minHeight: 280)
+        } else {
+            RistakEmptyState(
+                icon: "magnifyingglass",
+                title: "Sin resultados",
+                message: "No encontramos chats ni contactos con esa búsqueda."
+            )
+            .frame(minHeight: 280)
+        }
+    }
+
+    /// Vacío de la vista normal (sin búsqueda). En el PRIMER arranque sin caché
+    /// mantenemos el chrome montado y en silencio (nada de spinner) hasta que
+    /// llega la primera página; si la carga falla y no hay datos, error inline.
+    @ViewBuilder
+    private var defaultEmptyContent: some View {
+        if viewModel.archivedViewActive {
             RistakEmptyState(
                 icon: "archivebox",
                 title: "No hay nada archivado",
@@ -331,6 +393,14 @@ struct InboxScreen: View {
                 title: "No hay chats en este filtro",
                 message: "Cambia el filtro o busca un contacto para iniciar una conversación."
             )
+            .frame(minHeight: 280)
+        } else if viewModel.isInitialLoading {
+            // Primer arranque sin caché: chrome visible, en silencio (sin loader).
+            Color.clear.frame(height: 1)
+        } else if let error = viewModel.loadErrorMessage {
+            RistakErrorState(message: error) {
+                Task { await viewModel.refreshNow() }
+            }
             .frame(minHeight: 280)
         } else {
             VStack(spacing: RistakTheme.Spacing.md) {

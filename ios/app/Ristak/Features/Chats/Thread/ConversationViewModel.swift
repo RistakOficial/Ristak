@@ -99,12 +99,25 @@ final class ConversationViewModel {
     private(set) var commentContexts: [String: CommentPostContext] = [:]
 
     private(set) var timeline: [ConversationTimelineItem] = []
+    /// Timeline reagrupado por día para la lista con cabeceras pegajosas. Se
+    /// computa UNA vez aquí cada vez que `timeline` cambia (en `rebuildTimeline`),
+    /// para que la vista no re-agrupe O(n) en cada render.
+    private(set) var dayGroups: [ConversationDayGroup] = []
     private(set) var combinedMessages: [ChatMessage] = []
 
     private(set) var isLoadingInitial = false
     private(set) var hasLoadedOnce = false
     private(set) var loadErrorMessage: String?
     private(set) var accessDenied = false
+    /// La hidratación desde caché instantánea corre una sola vez por hilo.
+    private var threadCacheHydrated = false
+
+    /// Coalescing del refresh silencioso: el poll de 4 s, el de acuses (12 s), cada
+    /// evento SSE, el nudge de push y cada envío disparan `refreshSilently`. Sin
+    /// guard, un burst lanzaba N fetches completos solapados. Con estos flags se
+    /// colapsa a lo sumo uno en vuelo + uno encolado (paridad con la bandeja).
+    private var refreshInFlight = false
+    private var refreshQueued = false
 
     private(set) var hasOlderMessages = false
     private(set) var isLoadingOlder = false
@@ -179,6 +192,9 @@ final class ConversationViewModel {
     init(contactID: String, seedContact: ChatContact?) {
         self.contactID = contactID
         self.seedContact = seedContact
+        // Caché instantánea: hidrata ANTES del primer render para que el hilo
+        // se pinte con los últimos mensajes sin flash de vacío/spinner.
+        hydrateThreadFromCache()
     }
 
     func bind(appConfig: AppConfigStore) {
@@ -197,7 +213,11 @@ final class ConversationViewModel {
 
     func loadInitial() async {
         guard !hasLoadedOnce else { return }
-        isLoadingInitial = true
+        // Caché instantánea (Round 6 #4): pinta los últimos mensajes guardados
+        // al instante; el spinner solo aparece si NO hay nada cacheado. Luego se
+        // revalida contra la red (merge identity-preserving con ids estables).
+        hydrateThreadFromCache()
+        isLoadingInitial = timeline.isEmpty
         loadErrorMessage = nil
         accessDenied = false
         defer { isLoadingInitial = false }
@@ -233,9 +253,21 @@ final class ConversationViewModel {
     }
 
     /// Poll silencioso (4 s / foreground / SSE). Nunca alerta ni muestra spinner.
+    /// Coalescido: si ya hay uno en vuelo, encola UNO más y regresa; el que está
+    /// corriendo repite al terminar. Así un burst de eventos SSE + poll + envío no
+    /// dispara fetches completos solapados. (`@MainActor` → los flags no compiten.)
     func refreshSilently() async {
         guard hasLoadedOnce else { return }
-        try? await loadConversation(reset: false)
+        if refreshInFlight {
+            refreshQueued = true
+            return
+        }
+        refreshInFlight = true
+        defer { refreshInFlight = false }
+        repeat {
+            refreshQueued = false
+            try? await loadConversation(reset: false)
+        } while refreshQueued
     }
 
     /// Carga del hilo: página reciente + programados (+ journey completo
@@ -292,15 +324,45 @@ final class ConversationViewModel {
         }
     }
 
+    /// Hidrata el hilo desde la caché instantánea (los mensajes del servidor
+    /// que se vieron por última vez). No marca `hasLoadedOnce`: la revalidación
+    /// contra la red sigue corriendo normal.
+    private func hydrateThreadFromCache() {
+        guard !threadCacheHydrated else { return }
+        threadCacheHydrated = true
+        guard serverMessages.isEmpty else { return }
+        let cached = ChatThreadSnapshotCache.load(contactID: contactID)
+        guard !cached.isEmpty else { return }
+        serverMessages = cached
+        rebuildCombined()
+    }
+
+    /// Guarda los últimos mensajes del servidor (nunca optimistas) para reabrir
+    /// el hilo al instante la próxima vez.
+    private func persistThreadCache() {
+        ChatThreadSnapshotCache.save(serverMessages, contactID: contactID)
+    }
+
     /// Aplica mensajes del servidor con identidad preservada + reconciliación
     /// de optimistas (ventana ±4 min, RN `NATIVE_OPTIMISTIC_RECONCILE_WINDOW_MS`).
     private func applyServerMessages(_ messages: [ChatMessage], contexts: [String: CommentPostContext]) {
+        let messagesChanged = messages != serverMessages
+        let contextsChanged = contexts != commentContexts
+
+        // Poll idéntico y sin optimistas que reconciliar: no hay nada que hacer.
+        // Evita el merge+sort del hilo (reconcileOptimisticMessages/rebuildCombined)
+        // en el hilo principal cada 4 s cuando el servidor devuelve lo mismo. NO se
+        // puede saltar si hay optimistas: un eco maduro necesita esa pasada para
+        // borrar el globo optimista.
+        guard messagesChanged || contextsChanged || !optimisticMessages.isEmpty else { return }
+
         let previousLatest = combinedMessages.last?.id
 
-        if messages != serverMessages {
+        if messagesChanged {
             serverMessages = messages
+            persistThreadCache()
         }
-        if contexts != commentContexts {
+        if contextsChanged {
             commentContexts = contexts
         }
         reconcileOptimisticMessages()
@@ -374,6 +436,7 @@ final class ConversationViewModel {
         )
         if items != timeline {
             timeline = items
+            dayGroups = ConversationTimelineBuilder.groupByDay(items)
         }
     }
 
@@ -1005,6 +1068,13 @@ final class ConversationViewModel {
                     )
                 )
                 applySendResult(result, to: externalId)
+                // Guarda el m4a original indexado por la URL (opus) que asigna el
+                // servidor: iOS no reproduce opus, así que la burbuja saliente
+                // reproducirá ESTE m4a local en su lugar.
+                if let remote = result.audio?.bestUrl ?? result.localMedia?.bestUrl,
+                   let m4a = VoiceNoteLocalStore.decodeBase64DataURL(encoded.dataUrl) {
+                    VoiceNoteLocalStore.store(m4aData: m4a, forRemoteURL: remote)
+                }
             }
             await refreshSilently()
         } catch {
@@ -1333,7 +1403,9 @@ final class ConversationViewModel {
         draftText = ""
         attachments = []
         replyTarget = nil
-        scrollToBottomSignal &+= 1
+        // El scroll al final lo dispara `appendOptimistic` (después de insertar la
+        // burbuja) en todos los paths de envío; hacerlo aquí también provocaba un
+        // doble salto/jitter justo al enviar.
     }
 
     /// Muta un mensaje por id (optimistas o del servidor).

@@ -40,21 +40,55 @@ final class PaymentsHomeModel {
     /// lo observan para refrescarse).
     private(set) var subscriptionsRefreshTick = 0
 
+    /// Último HighLevel conectado conocido (se conserva de la caché para que el
+    /// gating dependiente de HL pinte al instante sin esperar a integraciones).
+    private var cachedHighLevelConnected: Bool?
+
     // MARK: Dependencias
 
     private let timeZoneProvider: () -> TimeZone
+    private let cache = RistakSnapshotCache.shared
 
     init(timeZoneProvider: @escaping () -> TimeZone) {
         self.timeZoneProvider = timeZoneProvider
+        hydrateFromCache()
+    }
+
+    // MARK: - Caché instantánea (stale-while-revalidate, Round 6 #4)
+
+    /// Pinta AL INSTANTE lo último que el usuario vio (capacidades + últimos
+    /// pagos del periodo actual) desde memoria, ANTES de golpear la red. Cero
+    /// spinner cuando hay caché; la revalidación reemplaza en su lugar.
+    private func hydrateFromCache() {
+        if capabilities == nil,
+           let snapshot = cache.value(PaymentCapabilitiesSnapshot.self, for: PaymentsCache.capabilitiesKey) {
+            capabilities = snapshot.capabilities
+            cachedHighLevelConnected = snapshot.isHighLevelConnected
+        }
+        if recentPayments.isEmpty, let cached = cachedRecentPayments(for: period) {
+            recentPayments = cached
+        }
+    }
+
+    /// Últimos pagos cacheados para un periodo (o `nil` si no hay).
+    private func cachedRecentPayments(for period: RecentPaymentsPeriod) -> [PaymentTransaction]? {
+        cache.value([PaymentTransaction].self, for: PaymentsCache.recentKey(for: period))
+    }
+
+    /// Persiste la lista actual (capada) como DTO Encodable; se lee de vuelta
+    /// como `[PaymentTransaction]`.
+    private func storeRecentPayments(for period: RecentPaymentsPeriod) {
+        let capped = recentPayments.prefix(PaymentsCache.recentCap).map(PaymentTransactionSnapshot.init)
+        cache.store(Array(capped), for: PaymentsCache.recentKey(for: period))
     }
 
     // MARK: - Carga inicial
 
     func loadIfNeeded() async {
-        if capabilities == nil {
-            await refreshCapabilities()
-        }
-        if recentPayments.isEmpty, recentError == nil, !isLoadingRecent {
+        // SWR: capacidades y recientes ya pintaron desde caché en `init`. Aquí
+        // solo revalidamos contra la red (sin spinner si hubo caché).
+        await refreshCapabilities()
+        if !isLoadingRecent {
             await loadRecentPayments(reset: true)
         }
     }
@@ -71,12 +105,28 @@ final class PaymentsHomeModel {
         async let integrationsTask = try? IntegrationsService.status()
         async let licenseTask = try? IntegrationsService.licenseStatus()
         let (integrationsResult, license) = await (integrationsTask, licenseTask)
-        integrations = integrationsResult
-        capabilities = PaymentCapabilities.resolve(integrations: integrationsResult, license: license)
+
+        // Las pasarelas SOLO vienen de integraciones. Si esa lectura falla, NO
+        // degradamos a "offline": conservamos lo último conocido (caché/memoria)
+        // para no ocultar una función que el usuario tenía la sesión anterior.
+        if let integrationsResult {
+            integrations = integrationsResult
+            let resolved = PaymentCapabilities.resolve(integrations: integrationsResult, license: license)
+            let hlConnected = integrationsResult.isHighLevelConnected
+            capabilities = resolved
+            cachedHighLevelConnected = hlConnected
+            cache.store(
+                PaymentCapabilitiesSnapshot(capabilities: resolved, isHighLevelConnected: hlConnected),
+                for: PaymentsCache.capabilitiesKey
+            )
+        } else if capabilities == nil {
+            // Nada cacheado y la red falló: fallback offline seguro.
+            capabilities = .offlineFallback
+        }
     }
 
     var isHighLevelConnected: Bool {
-        integrations?.isHighLevelConnected == true
+        integrations?.isHighLevelConnected ?? cachedHighLevelConnected ?? false
     }
 
     // MARK: - Últimos pagos (doc 08 §6.1: paid|partial, monto > 0, desc)
@@ -86,10 +136,21 @@ final class PaymentsHomeModel {
     func loadRecentPayments(reset: Bool) async {
         loadGeneration += 1
         let generation = loadGeneration
+        // Periodo fijado para ESTA carga (evita cachear/guardar bajo un chip que
+        // el usuario ya cambió a media petición).
+        let requestedPeriod = period
 
         if reset {
             currentPage = 0
-            isLoadingRecent = true
+            // SWR: pinta al instante lo cacheado de ESTE periodo (p. ej. al
+            // cambiar de chip). Spinner SOLO cuando el periodo no tiene caché.
+            if let cached = cachedRecentPayments(for: requestedPeriod) {
+                recentPayments = cached
+                isLoadingRecent = false
+            } else {
+                recentPayments = []
+                isLoadingRecent = true
+            }
             recentError = nil
         } else {
             guard hasMorePages, !isLoadingMore else { return }
@@ -102,7 +163,7 @@ final class PaymentsHomeModel {
             }
         }
 
-        let range = PaymentsDateMath.range(for: period, timeZone: timeZoneProvider())
+        let range = PaymentsDateMath.range(for: requestedPeriod, timeZone: timeZoneProvider())
 
         do {
             // El backend pagina TODAS las transacciones (50/pág) y luego filtramos
@@ -152,6 +213,10 @@ final class PaymentsHomeModel {
             hasMorePages = hasNext
             accessDenied = false
             recentError = nil
+
+            // SWR: persiste la lista fresca (capada) bajo el periodo de ESTA
+            // petición para el próximo arranque en frío.
+            storeRecentPayments(for: requestedPeriod)
         } catch let error as RistakAPIError {
             guard generation == loadGeneration else { return }
             if error.isAccessDenied {

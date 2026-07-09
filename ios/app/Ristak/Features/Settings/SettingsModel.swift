@@ -107,7 +107,40 @@ final class SettingsModel {
     private let contactsService = ContactsService()
     private let templatesService = TemplatesService()
 
-    init() {}
+    init() {
+        // Pinta al instante lo último que vio el usuario (SWR, Round 6 #4):
+        // cada subpanel abre con su snapshot cacheado ANTES de tocar la red, sin
+        // spinner. La caché ya está precargada en memoria durante el bootstrap.
+        hydrateFromCache()
+    }
+
+    // MARK: - Hidratación instantánea desde caché
+
+    /// Lee los snapshots cacheados (memoria) y los deja como estado inicial. Solo
+    /// pisa secciones aún `.idle`: nunca degrada datos ya frescos de red.
+    private func hydrateFromCache() {
+        let cache = RistakSnapshotCache.shared
+        if case .idle = whatsapp,
+           let cached = cache.value(WhatsAppAPIStatus.self, for: SettingsCacheKey.whatsappStatus) {
+            whatsapp = .loaded(cached)
+        }
+        if case .idle = templates,
+           let cached = cache.value(WhatsAppTemplatesSummary.self, for: SettingsCacheKey.templates) {
+            templates = .loaded(cached)
+        }
+        if case .idle = agent,
+           let cached = cache.value(AIAgentConfigStatus.self, for: SettingsCacheKey.aiAgent) {
+            agent = .loaded(cached)
+        }
+        if case .idle = calendars,
+           let cached = cache.value([RistakCalendar].self, for: SettingsCacheKey.calendars) {
+            calendars = .loaded(cached)
+        }
+        if case .idle = customFields,
+           let cached = cache.value([ContactCustomFieldDefinition].self, for: SettingsCacheKey.customFields) {
+            customFields = .loaded(cached)
+        }
+    }
 
     // MARK: - Carga
 
@@ -131,7 +164,7 @@ final class SettingsModel {
     func loadWhatsApp() async {
         if whatsapp.value == nil { whatsapp = .loading }
         do {
-            whatsapp = .loaded(try await WhatsAppNumbersService.status())
+            persistWhatsApp(try await WhatsAppNumbersService.status())
         } catch {
             whatsapp = Self.failureState(from: error, keeping: whatsapp)
         }
@@ -142,7 +175,7 @@ final class SettingsModel {
         do {
             // Sin `status` (todas) — paridad RN; el servicio ya trae el
             // fallback al snapshot de `/status` (doc 10 §4.10).
-            templates = .loaded(try await templatesService.fetchTemplates())
+            persistTemplates(try await templatesService.fetchTemplates())
         } catch {
             templates = Self.failureState(from: error, keeping: templates)
         }
@@ -151,7 +184,7 @@ final class SettingsModel {
     func loadAgent() async {
         if agent.value == nil { agent = .loading }
         do {
-            agent = .loaded(try await AIAgentService.config())
+            persistAgent(try await AIAgentService.config())
         } catch {
             agent = Self.failureState(from: error, keeping: agent)
         }
@@ -161,7 +194,7 @@ final class SettingsModel {
         if calendars.value == nil { calendars = .loading }
         do {
             let all = try await CalendarsService.calendars()
-            calendars = .loaded(all.filter { $0.isActive })
+            persistCalendars(all.filter { $0.isActive })
         } catch {
             calendars = Self.failureState(from: error, keeping: calendars)
         }
@@ -171,10 +204,51 @@ final class SettingsModel {
         if customFields.value == nil { customFields = .loading }
         do {
             let all = try await contactsService.fetchCustomFieldDefinitions(includeArchived: true)
-            customFields = .loaded(all.filter { !$0.archived })
+            persistCustomFields(all.filter { !$0.archived })
         } catch {
             customFields = Self.failureState(from: error, keeping: customFields)
         }
+    }
+
+    // MARK: - Persistencia SWR (estado + caché)
+
+    /// Deja el status en pantalla y actualiza el snapshot en caché, para que el
+    /// próximo arranque en frío pinte los mismos números al instante.
+    private func persistWhatsApp(_ status: WhatsAppAPIStatus) {
+        whatsapp = .loaded(status)
+        RistakSnapshotCache.shared.store(
+            SettingsWhatsAppStatusSnapshot(status), for: SettingsCacheKey.whatsappStatus
+        )
+    }
+
+    private func persistTemplates(_ summary: WhatsAppTemplatesSummary) {
+        templates = .loaded(summary)
+        RistakSnapshotCache.shared.store(
+            SettingsTemplatesSnapshot(summary), for: SettingsCacheKey.templates
+        )
+    }
+
+    private func persistAgent(_ status: AIAgentConfigStatus) {
+        agent = .loaded(status)
+        RistakSnapshotCache.shared.store(
+            SettingsAgentSnapshot(status), for: SettingsCacheKey.aiAgent
+        )
+    }
+
+    private func persistCalendars(_ list: [RistakCalendar]) {
+        calendars = .loaded(list)
+        RistakSnapshotCache.shared.store(
+            list.prefix(SettingsCacheKey.maxCalendars).map(SettingsCalendarSnapshot.init),
+            for: SettingsCacheKey.calendars
+        )
+    }
+
+    private func persistCustomFields(_ fields: [ContactCustomFieldDefinition]) {
+        customFields = .loaded(fields)
+        RistakSnapshotCache.shared.store(
+            fields.prefix(SettingsCacheKey.maxCustomFields).map(SettingsCustomFieldSnapshot.init),
+            for: SettingsCacheKey.customFields
+        )
     }
 
     // MARK: - Acciones WhatsApp
@@ -186,7 +260,7 @@ final class SettingsModel {
         isRefreshingWhatsApp = true
         defer { isRefreshingWhatsApp = false }
         do {
-            whatsapp = .loaded(try await WhatsAppNumbersService.refresh())
+            persistWhatsApp(try await WhatsAppNumbersService.refresh())
             return nil
         } catch let error as RistakAPIError {
             return error.message
@@ -201,7 +275,7 @@ final class SettingsModel {
         settingDefaultPhoneID = id
         defer { settingDefaultPhoneID = nil }
         do {
-            whatsapp = .loaded(try await WhatsAppNumbersService.setDefaultPhoneNumber(id: id))
+            persistWhatsApp(try await WhatsAppNumbersService.setDefaultPhoneNumber(id: id))
             return nil
         } catch let error as RistakAPIError {
             return error.message
@@ -212,9 +286,10 @@ final class SettingsModel {
 
     // MARK: - Agente AI
 
-    /// Reemplaza el estado del agente (tras conectar OpenAI o guardar contexto).
+    /// Reemplaza el estado del agente (tras conectar OpenAI o guardar contexto)
+    /// y refresca el snapshot en caché.
     func applyAgentStatus(_ status: AIAgentConfigStatus) {
-        agent = .loaded(status)
+        persistAgent(status)
     }
 
     // MARK: - Metas de la lista principal (doc 10 §5.1)

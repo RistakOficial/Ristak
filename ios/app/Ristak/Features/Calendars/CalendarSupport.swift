@@ -192,14 +192,24 @@ enum CalendarDateMath {
         return String(first).uppercased() + raw.dropFirst()
     }
 
-    /// Etiqueta de hora del timeline al estilo RN: `12 a.m. … 11 p.m.`.
+    /// Etiqueta de hora del timeline al estilo Apple Calendar (es):
+    /// `12 a.m. · 9 a.m. · Mediodía · 3 p.m. · 11 p.m.`.
     static func hourLabel(_ hour: Int) -> String {
         switch hour {
         case 0: return "12 a.m."
-        case 12: return "12 p.m."
+        case 12: return "Mediodía"
         case 1..<12: return "\(hour) a.m."
         default: return "\(hour - 12) p.m."
         }
+    }
+
+    /// Hora corta 12 h sin meridiano para la burbuja de "ahora" (`12:41`).
+    static func shortClock(minutesFromMidnight minutes: Int) -> String {
+        let clamped = min(max(minutes, 0), 24 * 60 - 1)
+        let hour24 = clamped / 60
+        let minute = clamped % 60
+        let hour12 = hour24 % 12 == 0 ? 12 : hour24 % 12
+        return "\(hour12):" + String(format: "%02d", minute)
     }
 
     private static func formatter(_ format: String, timeZone: TimeZone) -> DateFormatter {

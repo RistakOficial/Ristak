@@ -185,16 +185,14 @@ struct BusinessFormatters: Sendable {
 
     /// Días de diferencia (granularidad día de negocio) entre `date` y `now`.
     private func businessDaysBetween(_ date: Date, and now: Date) -> Int {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
+        let calendar = BusinessFormatterCache.shared.calendar(timeZone: timeZone)
         let start = calendar.startOfDay(for: date)
         let end = calendar.startOfDay(for: now)
         return calendar.dateComponents([.day], from: start, to: end).day ?? 0
     }
 
     private func businessDateComponents(_ date: Date) -> DateComponents {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = timeZone
+        let calendar = BusinessFormatterCache.shared.calendar(timeZone: timeZone)
         return calendar.dateComponents([.year, .month, .day], from: date)
     }
 
@@ -225,6 +223,21 @@ private final class BusinessFormatterCache: @unchecked Sendable {
     private let lock = NSLock()
     private var dateFormatters: [String: DateFormatter] = [:]
     private var numberFormatters: [String: NumberFormatter] = [:]
+    private var calendars: [String: Calendar] = [:]
+
+    /// `Calendar` gregoriano reutilizable por zona horaria. Construir + configurar
+    /// un `Calendar` es caro y se hacía por cada fila de la bandeja en cada render
+    /// (fecha relativa). Devuelve una copia (value type), así que reusarlo es seguro.
+    func calendar(timeZone: TimeZone) -> Calendar {
+        let key = timeZone.identifier
+        lock.lock()
+        defer { lock.unlock() }
+        if let cached = calendars[key] { return cached }
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        calendars[key] = calendar
+        return calendar
+    }
 
     func dateFormatter(format: String, timeZone: TimeZone, locale: Locale) -> DateFormatter {
         let key = "\(format)|\(timeZone.identifier)|\(locale.identifier)"
