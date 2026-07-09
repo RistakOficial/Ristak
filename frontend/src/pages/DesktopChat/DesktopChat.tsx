@@ -1986,11 +1986,11 @@ function sourceTypeLooksLikeMessageAd(value = '') {
 }
 
 function getMessageAdPreviewPlatformLabel(data: Record<string, unknown>) {
-  const platform = pickReadableDataValue(data, ['ad_platform', 'source_platform', 'referral_source_app', 'detected_source_app', 'social_platform', 'transport'])
+  const platform = pickReadableDataValue(data, ['ad_platform', 'source_platform', 'social_platform', 'source', 'referral_source_app', 'detected_source_app', 'transport'])
   const normalized = platform.toLowerCase()
   if (normalized.includes('instagram')) return 'Instagram'
   if (normalized.includes('messenger') || normalized.includes('facebook')) return 'Messenger'
-  if (normalized.includes('whatsapp')) return 'WhatsApp'
+  if (normalized.includes('whatsapp') || normalized === 'api' || normalized === 'ycloud' || normalized === 'whatsapp_api') return 'WhatsApp'
   return platform || 'Meta Ads'
 }
 
@@ -2018,18 +2018,21 @@ function buildMessageAdPreview(data: Record<string, unknown>, direction: Desktop
   const sourceType = pickReadableDataValue(data, ['referral_source_type', 'detected_source_type', 'source_type']) || (messageTextAdId ? 'ad' : '')
   const headline = pickReadableDataValue(data, ['referral_headline', 'detected_headline', 'headline', 'title'])
   const body = pickReadableDataValue(data, ['referral_body', 'detected_body', 'ad_body', 'description'])
-  const sourceApp = pickReadableDataValue(data, ['referral_source_app', 'detected_source_app', 'source_app'])
-  const entryPoint = pickReadableDataValue(data, ['referral_entry_point', 'detected_entry_point', 'entry_point'])
-  const hasMessageAdSignal = Boolean(
+  const sourceTypeIsAd = sourceTypeLooksLikeMessageAd(sourceType)
+  const backendConfirmedAd = isTruthyDataFlag(data.is_ad_attributed)
+  const hasAdPayloadDetails = Boolean(
     messageSourceId ||
     sourceUrl ||
-    ctwaClid ||
     headline ||
     body ||
-    sourceApp ||
-    entryPoint ||
-    sourceTypeLooksLikeMessageAd(sourceType) ||
-    isTruthyDataFlag(data.is_ad_attributed)
+    pickReadableDataValue(data, ['referral_image_url', 'creative_image_url', 'creative_thumbnail_url', 'referral_thumbnail_url']) ||
+    pickReadableDataValue(data, ['referral_video_url', 'creative_video_url'])
+  )
+  const hasMessageAdSignal = Boolean(
+    backendConfirmedAd ||
+    messageTextAdId ||
+    ctwaClid ||
+    (sourceTypeIsAd && hasAdPayloadDetails)
   )
 
   if (!hasMessageAdSignal) return undefined

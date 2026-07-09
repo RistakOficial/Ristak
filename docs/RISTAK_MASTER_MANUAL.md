@@ -459,9 +459,13 @@ mismo contacto vuelve por otro anuncio semanas despues, ese nuevo globo tambien
 muestra su propia vista previa; un mensaje organico intermedio no debe heredarse
 la atribucion vieja del contacto. La tarjeta se arma con `is_ad_attributed`,
 `referral_source_id`, `referral_ctwa_clid`, `referral_source_url`,
-`referral_headline` y `referral_body`. En WhatsApp esos datos salen del referral
-CTWA/API o del marcador Ristak; en Messenger/Instagram salen del `referral_json`
-de `meta_social_messages` (`ad_id`, `source='ADS'`, `ads_context_data`). Si Meta
+`referral_headline` y `referral_body`, pero `headline`/`body`/`source_app`/
+`entry_point` no son senal suficiente por si solos. En WhatsApp la preview solo
+se dispara con referral CTWA/YCloud real (`ctwa_clid`, `source_id`/`ad_id` con
+senal de anuncio), `is_ad_attributed=true` o el marcador Ristak; `transport='api'`
+o `source_app='api'` nunca deben pintar anuncio. En Messenger/Instagram salen del
+`referral_json` de `meta_social_messages` (`ad_id`, `source='ADS'`,
+`ads_context_data`). Si Meta
 incluye `ads_context_data.photo_url` o `ads_context_data.video_url`, el backend
 los expone como media/thumbnail del anuncio para que la tarjeta tenga material
 visual aunque todavia no exista una fila sincronizada en `meta_ads`. Cuando

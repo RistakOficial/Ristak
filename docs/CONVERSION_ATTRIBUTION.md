@@ -36,8 +36,10 @@ de la conversion, pero no deben pisar la adquisicion inicial del contacto.
 En el chat desktop, cada touch entrante de WhatsApp, Messenger o Instagram que
 traiga senal propia de anuncio puede mostrar su preview en ese globo; esa
 preview no cambia `contacts.attribution_ad_id` ni debe inventarse desde la
-atribucion historica del contacto si el mensaje fue organico. En Meta social la
-senal sale del `referral_json` del mensaje (`ad_id`, `source='ADS'` o
+atribucion historica del contacto si el mensaje fue organico. Tampoco se dispara
+por metadata generica del canal (`transport='api'`, `source_app='api'`,
+`headline` o `body` sin `ctwa_clid`/`source_id`/`is_ad_attributed`). En Meta
+social la senal sale del `referral_json` del mensaje (`ad_id`, `source='ADS'` o
 `ads_context_data`). Si el referral de Messenger/Instagram trae
 `ads_context_data.photo_url` o `ads_context_data.video_url`, esos URLs se usan
 como media/thumbnail de la tarjeta visual del globo sin cambiar la atribucion

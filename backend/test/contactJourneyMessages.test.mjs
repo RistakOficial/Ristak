@@ -133,6 +133,58 @@ test('contact journey enriches WhatsApp messages that only carry rstkad_id marke
   }
 })
 
+test('contact journey does not mark ordinary WhatsApp API metadata as ad attribution', async () => {
+  const id = randomUUID()
+  const contactId = `journey_organic_api_${id}`
+  const phone = `+52989${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente WhatsApp API Orgánico',
+      first_name: 'Cliente',
+      source: 'WhatsApp_API',
+      created_at: '2099-07-05T12:00:00.000Z',
+      updated_at: '2099-07-05T12:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_organic_metadata_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Hola',
+      detected_source_app: 'api',
+      detected_entry_point: 'api',
+      detected_headline: 'Hola',
+      detected_body: 'Hola',
+      message_timestamp: '2099-07-05T12:01:00.000Z',
+      created_at: '2099-07-05T12:01:00.000Z'
+    })
+
+    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const message = journey.find((event) => event.type === 'whatsapp_message')
+
+    assert.ok(message)
+    assert.equal(message.data.message_text, 'Hola')
+    assert.equal(message.data.referral_source_app, 'api')
+    assert.equal(message.data.referral_headline, 'Hola')
+    assert.equal(message.data.is_ad_attributed, false)
+    assert.equal(message.data.referral_source_id || '', '')
+    assert.equal(message.data.referral_ctwa_clid || '', '')
+    assert.equal(message.data.referral_source_type || '', '')
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
 test('contact journey exposes every WhatsApp ad touch without decorating organic retouches', async () => {
   const id = randomUUID()
   const contactId = `journey_multi_ad_${id}`
