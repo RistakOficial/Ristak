@@ -40,7 +40,9 @@ struct AgentHubSheet: View {
     private var content: some View {
         switch viewModel.phase {
         case .loading:
-            SettingsPanelScroll { EmptyView() }
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(RistakTheme.bg)
         case .needsOpenAI(let reconnect):
             RistakEmptyState(
                 icon: "key.horizontal",

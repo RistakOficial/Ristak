@@ -277,6 +277,21 @@ redirigen a `/movil/*`.
 
 En iOS el contenedor nativo está configurado como app de iPhone/iPad enfocada en `/movil`. Al abrir desde Xcode o desde el icono del celular, primero resuelve la empresa contra el portal central, guarda la URL pública de la instalación del cliente y después arranca el login/chat móvil contra ese Render.
 
+En la app Apple nativa de `ios/app`, la bandeja de chats no debe mostrar textos
+de refresco como `Actualizando...` debajo del titulo principal; los refrescos en
+segundo plano son silenciosos y el subtitulo se reserva para informacion util
+como no leidos. El sheet de `Agente conversacional` tampoco debe pintar
+placeholders, rails o barras durante la carga: si todavia no hay datos, el
+espacio queda limpio hasta que aparezca el contenido real. El editor nativo del
+agente debe mantener paridad con el formulario web de Configuracion > Agente
+conversacional, en este orden: Personalidad e instrucciones, Operacion tecnica
+del chat, Objetivo y cierre, Reglas de atencion, Entrada y salida. La app puede
+usar controles nativos, pero debe preservar y editar las mismas familias de
+opciones: proveedor/modelo de IA, identidad, tono, idioma, instrucciones,
+demoras, entrega de mensajes, notificaciones, follow-up, objetivo, acciones de
+cierre, flujos de cita/venta/datos/filtro/link/anticipo, acciones extra, datos
+obligatorios, reglas de handoff, alcance y filtros.
+
 El bundle iOS principal debe declarar español como region de desarrollo y
 localizacion soportada (`CFBundleDevelopmentRegion=es` y
 `CFBundleLocalizations=[es]`) para que controles nativos como la camara de

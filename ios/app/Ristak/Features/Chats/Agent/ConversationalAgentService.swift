@@ -25,6 +25,12 @@ enum ConversationalAgentService {
         try await APIClient.shared.get("\(base)/agents")
     }
 
+    /// `GET /filter-options` → opciones auxiliares para reglas de entrada/salida
+    /// (anuncios, teléfonos del negocio y campos personalizados).
+    static func filterOptions() async throws -> AgentFilterOptions {
+        try await APIClient.shared.get("\(base)/filter-options")
+    }
+
     /// `PUT /agents/:id` — actualiza un agente (body parcial). Puede 409 con
     /// `CONVERSATIONAL_AGENT_ENTRY_CONFLICT` / `CONVERSATIONAL_AGENT_LIMIT_REACHED`
     /// / `CONVERSATIONAL_BUSINESS_PROMPT_NOT_READY`.
