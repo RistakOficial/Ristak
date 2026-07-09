@@ -2079,6 +2079,18 @@ const buildMetaSocialAdAttributionData = (row = {}, rawPayload = null) => {
     referral.source_url ||
     referral.url
   )
+  const imageUrl = cleanString(
+    adsContext.photo_url ||
+    adsContext.image_url ||
+    adsContext.thumbnail_url ||
+    adsContext.picture
+  )
+  const videoUrl = cleanString(adsContext.video_url)
+  const thumbnailUrl = cleanString(
+    adsContext.thumbnail_url ||
+    adsContext.photo_url ||
+    adsContext.video_url
+  )
 
   return {
     is_ad_attributed: true,
@@ -2088,6 +2100,9 @@ const buildMetaSocialAdAttributionData = (row = {}, rawPayload = null) => {
     referral_source_url: sourceUrl || null,
     referral_headline: headline || null,
     referral_body: body || null,
+    referral_image_url: imageUrl || null,
+    referral_video_url: videoUrl || null,
+    referral_thumbnail_url: thumbnailUrl || null,
     referral_source_app: platform,
     referral_entry_point: cleanString(referral.type) || null,
     ad_id_thru_message: sourceId || null

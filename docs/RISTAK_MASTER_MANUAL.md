@@ -461,7 +461,10 @@ la atribucion vieja del contacto. La tarjeta se arma con `is_ad_attributed`,
 `referral_source_id`, `referral_ctwa_clid`, `referral_source_url`,
 `referral_headline` y `referral_body`. En WhatsApp esos datos salen del referral
 CTWA/API o del marcador Ristak; en Messenger/Instagram salen del `referral_json`
-de `meta_social_messages` (`ad_id`, `source='ADS'`, `ads_context_data`). Cuando
+de `meta_social_messages` (`ad_id`, `source='ADS'`, `ads_context_data`). Si Meta
+incluye `ads_context_data.photo_url` o `ads_context_data.video_url`, el backend
+los expone como media/thumbnail del anuncio para que la tarjeta tenga material
+visual aunque todavia no exista una fila sincronizada en `meta_ads`. Cuando
 el backend ya enriquecio el evento con `meta_ads`, usa
 `creative_image_url`/`creative_thumbnail_url`, `creative_preview_url`, campana,
 conjunto y nombre del anuncio. Si no hay senal real de anuncio, el chat no debe

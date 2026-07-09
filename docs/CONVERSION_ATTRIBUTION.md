@@ -38,7 +38,10 @@ traiga senal propia de anuncio puede mostrar su preview en ese globo; esa
 preview no cambia `contacts.attribution_ad_id` ni debe inventarse desde la
 atribucion historica del contacto si el mensaje fue organico. En Meta social la
 senal sale del `referral_json` del mensaje (`ad_id`, `source='ADS'` o
-`ads_context_data`).
+`ads_context_data`). Si el referral de Messenger/Instagram trae
+`ads_context_data.photo_url` o `ads_context_data.video_url`, esos URLs se usan
+como media/thumbnail de la tarjeta visual del globo sin cambiar la atribucion
+principal del contacto.
 
 Cuando un mensaje de WhatsApp trae un `source_id` oficial y tambien un marcador
 `rstkad_id=<ad_id>!`, el backend resuelve el conflicto contra `meta_ads` usando
@@ -91,7 +94,9 @@ marcador `rstkad_id` si coincide con un anuncio vivo ese dia.
     anuncio detectado.
   - **Messenger/Instagram** (`meta_social_messages`): DMs entrantes cuyo
     `referral_json` trae `ad_id`, `source='ADS'` o `ads_context_data`
-    (anuncios Click-to-Messenger / Click-to-Instagram).
+    (anuncios Click-to-Messenger / Click-to-Instagram); si existe
+    `photo_url`/`video_url` dentro de `ads_context_data`, se usa como evidencia
+    visual del touch en el chat.
   - **Fallback legacy**: `contacts.attribution_ctwa_clid`/`attribution_ad_id`
     (first-touch historico, sin timestamp) solo si no hay ningun touch con
     timestamp.

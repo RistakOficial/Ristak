@@ -312,7 +312,9 @@ test('contact journey exposes Messenger and Instagram ad touches for chat previe
         ads_context_data: {
           ad_title: 'Headline Messenger',
           post_body: 'Body Messenger',
-          ad_url: 'https://example.test/messenger-ad'
+          ad_url: 'https://example.test/messenger-ad',
+          photo_url: 'https://example.test/messenger-referral-photo.jpg',
+          video_url: 'https://example.test/messenger-referral-video-thumb.jpg'
         }
       }),
       raw_payload_json: '{}'
@@ -354,7 +356,8 @@ test('contact journey exposes Messenger and Instagram ad touches for chat previe
         ads_context_data: {
           ad_title: 'Headline Instagram',
           post_body: 'Body Instagram',
-          ad_url: 'https://example.test/instagram-ad'
+          ad_url: 'https://example.test/instagram-ad',
+          video_url: 'https://example.test/instagram-referral-video-thumb.jpg'
         }
       }),
       raw_payload_json: '{}'
@@ -375,6 +378,9 @@ test('contact journey exposes Messenger and Instagram ad touches for chat previe
     assert.equal(messengerMessage.data.referral_source_url, 'https://example.test/messenger-ad')
     assert.equal(messengerMessage.data.referral_headline, 'Headline Messenger')
     assert.equal(messengerMessage.data.referral_body, 'Body Messenger')
+    assert.equal(messengerMessage.data.referral_image_url, 'https://example.test/messenger-referral-photo.jpg')
+    assert.equal(messengerMessage.data.referral_video_url, 'https://example.test/messenger-referral-video-thumb.jpg')
+    assert.equal(messengerMessage.data.referral_thumbnail_url, 'https://example.test/messenger-referral-photo.jpg')
     assert.equal(messengerMessage.data.attribution_ad_name, 'Anuncio Messenger')
     assert.equal(messengerMessage.data.creative_preview_url, 'https://example.test/messenger-preview')
     assert.equal(Boolean(organicMessage.data.is_ad_attributed), false)
@@ -385,6 +391,8 @@ test('contact journey exposes Messenger and Instagram ad touches for chat previe
     assert.equal(instagramMessage.data.referral_source_url, 'https://example.test/instagram-ad')
     assert.equal(instagramMessage.data.referral_headline, 'Headline Instagram')
     assert.equal(instagramMessage.data.referral_body, 'Body Instagram')
+    assert.equal(instagramMessage.data.referral_video_url, 'https://example.test/instagram-referral-video-thumb.jpg')
+    assert.equal(instagramMessage.data.referral_thumbnail_url, 'https://example.test/instagram-referral-video-thumb.jpg')
     assert.equal(instagramMessage.data.attribution_ad_name, 'Anuncio Instagram')
     assert.equal(instagramMessage.data.creative_preview_url, 'https://example.test/instagram-preview')
   } finally {
