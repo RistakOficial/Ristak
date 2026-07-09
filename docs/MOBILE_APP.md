@@ -359,8 +359,11 @@ evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
 - App React Native en `mobile/`: el login no pide URL. Resuelve el tenant con
   `/api/mobile/resolve` usando `EXPO_PUBLIC_INSTALLER_API_URL` si existe; si no,
   usa `https://www.ristak.com`.
-- Android: `frontend/android/app/google-services.json` del proyecto Firebase.
-  Este archivo vive fuera de Git y debe pertenecer al paquete `com.ristak.app`.
+- Android legacy Capacitor: `frontend/android/app/google-services.json` del
+  proyecto Firebase vive fuera de Git y debe pertenecer al paquete
+  `com.ristak.app`.
+- Android nativo React Native/Expo: el target de Play Store vive en `mobile/`,
+  genera `mobile/android` en CI y usa el paquete `com.ristak.android`.
 - iOS nativo: usar `ios/app` y sus documentos. No agregues APNs ni Xcode config
   dentro de `mobile/`.
 
