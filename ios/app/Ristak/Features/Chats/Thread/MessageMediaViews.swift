@@ -73,14 +73,97 @@ struct ChatRemoteImage: View {
 
 // MARK: - Imagen
 
-/// Caché de tamaños ya resueltos (por URL) para reservar la altura EXACTA al
-/// volver a ver una imagen mientras se hace scroll — así la fila no salta cuando
-/// la foto vuelve a entrar en pantalla (jank #8). Acceso solo desde main (vistas
-/// SwiftUI); `nonisolated(unsafe)` silencia el chequeo de concurrencia.
+/// Caché del tamaño de PRESENTACIÓN (acotado) ya resuelto de cada imagen, por
+/// URL, para reservar su altura EXACTA ANTES de que el bitmap descargue — así la
+/// burbuja nace con su altura final y no salta del placeholder 4:3 al tamaño real
+/// (jank #8), ni al entrar en frío ni al subir por el historial.
+///
+/// Fronted en memoria y PERSISTIDA a disco: una foto medida una vez conserva su
+/// altura para siempre, incluido el arranque en frío (paridad con la caché de
+/// dimensiones medidas por URL de /movil). Acceso solo desde main (vistas
+/// SwiftUI); el encode/escritura a disco ocurre fuera del hilo principal.
+/// `nonisolated(unsafe)` silencia el chequeo de concurrencia sobre el estado
+/// estático, cuya mutación se mantiene exclusivamente en main.
 enum ChatImageSizeCache {
     nonisolated(unsafe) private static var sizes: [String: CGSize] = [:]
-    static func size(for key: String) -> CGSize? { sizes[key] }
-    static func store(_ size: CGSize, for key: String) { sizes[key] = size }
+    nonisolated(unsafe) private static var loaded = false
+    nonisolated(unsafe) private static var saveScheduled = false
+
+    private static let fileURL: URL? = FileManager.default
+        .urls(for: .cachesDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("ristak-chat-image-sizes.json")
+
+    /// Normaliza la URL a host+path (descarta query/fragment) para que una URL
+    /// firmada con token rotatorio siga acertando la misma foto.
+    private static func key(for raw: String) -> String {
+        guard let comps = URLComponents(string: raw) else { return raw }
+        let normalized = (comps.host ?? "") + comps.path
+        return normalized.isEmpty ? raw : normalized
+    }
+
+    private static func loadIfNeeded() {
+        guard !loaded else { return }
+        loaded = true
+        guard let fileURL, let data = try? Data(contentsOf: fileURL),
+              let decoded = try? JSONDecoder().decode([String: CGSize].self, from: data) else { return }
+        sizes = decoded
+    }
+
+    static func size(for raw: String) -> CGSize? {
+        loadIfNeeded()
+        return sizes[key(for: raw)]
+    }
+
+    static func store(_ size: CGSize, for raw: String) {
+        loadIfNeeded()
+        guard size.width > 0, size.height > 0 else { return }
+        let k = key(for: raw)
+        guard sizes[k] != size else { return }
+        sizes[k] = size
+        scheduleSave()
+    }
+
+    /// Limpieza en logout (paridad con `RistakImageLoader.removeAll`).
+    static func removeAll() {
+        sizes = [:]
+        loaded = true
+        if let fileURL { try? FileManager.default.removeItem(at: fileURL) }
+    }
+
+    /// Precarga el diccionario desde disco FUERA de main (en el arranque), para que
+    /// el `init` de la primera burbuja de foto no bloquee el hilo principal con la
+    /// lectura síncrona. Idempotente con `loadIfNeeded()`: si una vista ya cargó
+    /// síncronamente, no pisa lo cargado.
+    static func preloadIntoMemory() {
+        Task.detached(priority: .utility) {
+            guard let fileURL,
+                  let data = try? Data(contentsOf: fileURL),
+                  let decoded = try? JSONDecoder().decode([String: CGSize].self, from: data) else {
+                await MainActor.run { loaded = true }
+                return
+            }
+            await MainActor.run {
+                if !loaded { sizes = decoded }
+                loaded = true
+            }
+        }
+    }
+
+    /// Escritura a disco coalescida (500 ms) y fuera de main: un burst de fotos
+    /// que resuelven su tamaño al entrar genera UNA sola escritura.
+    private static func scheduleSave() {
+        guard !saveScheduled else { return }
+        saveScheduled = true
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let snapshot: [String: CGSize] = await MainActor.run {
+                saveScheduled = false
+                return sizes
+            }
+            guard let fileURL, let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: fileURL, options: .atomic)
+        }
+    }
 }
 
 struct ImageAttachmentView: View {
@@ -101,8 +184,20 @@ struct ImageAttachmentView: View {
 
     init(attachment: ChatAttachment) {
         self.attachment = attachment
-        let cached = attachment.url.flatMap { ChatImageSizeCache.size(for: $0) }
-        _displaySize = State(initialValue: cached ?? Self.defaultSize)
+        _displaySize = State(initialValue: Self.seedSize(for: attachment))
+    }
+
+    /// Semilla de altura para que la burbuja nazca con su tamaño final y no haya
+    /// reflow al resolver el bitmap: (1) el tamaño ya resuelto en caché
+    /// (memoria/disco); (2) si no, la imagen que el loader ya tiene en memoria
+    /// (pintado síncrono, sin salto); (3) si tampoco, el default 4:3.
+    private static func seedSize(for attachment: ChatAttachment) -> CGSize {
+        guard let raw = attachment.url else { return defaultSize }
+        if let cached = ChatImageSizeCache.size(for: raw) { return cached }
+        if let url = URL(string: raw), let image = RistakImageLoader.shared.cachedImage(for: url) {
+            return boundedSize(image.size)
+        }
+        return defaultSize
     }
 
     private var remoteURL: URL? {
@@ -119,11 +214,18 @@ struct ImageAttachmentView: View {
                 if remoteURL != nil || localImage != nil { showsViewer = true }
             }
             .task(id: attachment.dataUrl ?? "") {
-                if let dataUrl = attachment.dataUrl, localImage == nil,
-                   let decoded = Self.decodeDataURL(dataUrl) {
-                    localImage = decoded
-                    displaySize = Self.boundedSize(decoded.size)
-                }
+                guard let dataUrl = attachment.dataUrl, localImage == nil else { return }
+                // El decode base64 + descompresión de un dataURL multi-MB (envío
+                // optimista) bloqueaba el hilo principal al aparecer la burbuja.
+                // Se hace fuera de main y se asigna de vuelta si la fila no recicló.
+                let decoded = await Task.detached(priority: .userInitiated) { () -> (UIImage, CGSize)? in
+                    guard let img = Self.decodeDataURL(dataUrl) else { return nil }
+                    let prepared = img.preparingForDisplay() ?? img
+                    return (prepared, Self.boundedSize(prepared.size))
+                }.value
+                guard let (image, size) = decoded, !Task.isCancelled else { return }
+                localImage = image
+                displaySize = size
             }
             .fullScreenCover(isPresented: $showsViewer) {
                 FullScreenImageViewer(remoteURL: remoteURL, localImage: localImage)
@@ -160,8 +262,9 @@ struct ImageAttachmentView: View {
     }
 
     /// Escala las dimensiones naturales dentro de los topes conservando el aspecto
-    /// (paridad /movil `getBoundedMediaSize`, con piso de 96 pt).
-    static func boundedSize(_ natural: CGSize) -> CGSize {
+    /// (paridad /movil `getBoundedMediaSize`, con piso de 96 pt). `nonisolated`:
+    /// función pura, se invoca desde el `Task.detached` del decode base64.
+    nonisolated static func boundedSize(_ natural: CGSize) -> CGSize {
         let w = natural.width
         let h = natural.height
         guard w.isFinite, h.isFinite, w > 0, h > 0 else {
@@ -174,7 +277,7 @@ struct ImageAttachmentView: View {
         )
     }
 
-    static func decodeDataURL(_ dataUrl: String) -> UIImage? {
+    nonisolated static func decodeDataURL(_ dataUrl: String) -> UIImage? {
         guard let comma = dataUrl.firstIndex(of: ","),
               let data = Data(base64Encoded: String(dataUrl[dataUrl.index(after: comma)...])) else {
             return nil
@@ -250,7 +353,8 @@ struct FullScreenImageViewer: View {
             if let localImage {
                 image = localImage
             } else if let remoteURL {
-                image = await RistakImageLoader.shared.imageIfAvailable(for: remoteURL)
+                // Visor con zoom: resolución NATIVA (no la miniatura reducida).
+                image = await RistakImageLoader.shared.fullImageIfAvailable(for: remoteURL)
             }
         }
     }
@@ -636,7 +740,13 @@ final class AudioPlaybackController {
     private var rateIndex = 0
     private var player: AVPlayer?
     private var timeObserver: Any?
-    private var endObserver: NSObjectProtocol?
+    /// `nonisolated(unsafe)` para poder liberarlo desde el `deinit` (nonisolated).
+    /// Solo se muta en main (clase @MainActor) y el deinit tiene acceso exclusivo,
+    /// así que no hay carrera real. Es el ÚNICO recurso que puede acumularse
+    /// huérfano: el token del bloque lo retiene `NotificationCenter` hasta
+    /// `removeObserver` (a diferencia de `timeObserver`, que lo retiene el propio
+    /// `AVPlayer` y muere con el controller, y `statusTask`, que se auto-termina).
+    nonisolated(unsafe) private var endObserver: NSObjectProtocol?
     private var statusTask: Task<Void, Never>?
 
     var rateLabel: String {
@@ -647,6 +757,19 @@ final class AudioPlaybackController {
     /// La velocidad actual supera 1× (para mostrar la píldora sobre el avatar,
     /// como /movil que solo dibuja el badge cuando `playbackSpeed > 1`).
     var rateIsBoosted: Bool { rateIndex != 0 }
+
+    /// Red de seguridad: SwiftUI no garantiza `onDisappear` en listas perezosas.
+    /// Sin esto, el bloque de `didPlayToEndTimeNotification` quedaría registrado
+    /// huérfano en `NotificationCenter` al destruirse la vista sin cerrar el
+    /// reproductor. `stop()` ya deja `endObserver` en nil, así que si corrió
+    /// antes, el deinit es no-op. (El `timeObserver` lo libera el `AVPlayer` al
+    /// morir con el controller y `statusTask` se auto-cancela, por eso el deinit
+    /// solo necesita el observer de NotificationCenter.)
+    deinit {
+        if let endObserver {
+            NotificationCenter.default.removeObserver(endObserver)
+        }
+    }
 
     func togglePlayback(url: URL) {
         if isPlaying {

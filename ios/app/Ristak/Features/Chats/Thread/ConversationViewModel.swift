@@ -153,6 +153,11 @@ final class ConversationViewModel {
 
     private(set) var agentStates: [ConversationAgentState] = []
     private(set) var agentActionInFlight = false
+    private(set) var clearingAgentSignal = false
+    /// Última vez que el poll/SSE refrescó el estado del agente (throttle 10 s).
+    private var lastAgentStatesFetch: Date?
+    /// Controla la presentación del sheet de controles del agente (header robot).
+    var agentControlsPresented = false
     /// Envío detenido esperando la decisión de agente (doc 05 §6.3).
     var agentConfirmationPending = false
 
@@ -268,6 +273,10 @@ final class ConversationViewModel {
             refreshQueued = false
             try? await loadConversation(reset: false)
         } while refreshQueued
+        // El estado del agente puede cambiar por detrás (el bot responde, marca
+        // objetivo, otro dispositivo lo pausa): refréscalo junto al poll/SSE para
+        // que el header y el banner no se queden pegados. Throttled y sin bloquear.
+        Task { await refreshAgentStatesIfStale() }
     }
 
     /// Carga del hilo: página reciente + programados (+ journey completo
@@ -281,9 +290,15 @@ final class ConversationViewModel {
             limit: JourneyService.defaultMessageLimit
         )
         async let scheduledTask = fetchScheduledSafely()
+        // Los markers (pagos/citas del journey completo) viven en una SEGUNDA
+        // petición; lánzala EN PARALELO a la de eventos —no en serie después del
+        // primer pintado— para que su inserción quepa en el MISMO relayout y no
+        // reacomode el hilo una vez más al entrar.
+        async let markersTask = fetchMarkersIfNeeded(needsMarkers)
 
         let events = try await eventsTask
         let scheduled = await scheduledTask
+        let freshMarkers = await markersTask
 
         let fresh = ChatJourneyParser.buildMessages(contactId: contactID, events: events)
         var freshContexts = ConversationTimelineBuilder.buildCommentContexts(from: events)
@@ -300,13 +315,21 @@ final class ConversationViewModel {
             freshContexts.merge(commentContexts) { fresh, _ in fresh }
         }
 
+        // Aplica los markers (ya resueltos en paralelo) ANTES del pintado de
+        // mensajes: así `rebuildTimeline` los construye una sola vez con todo
+        // dentro. Un no-op (mismos markers que los cacheados) no reasigna nada.
+        if needsMarkers, let markers = freshMarkers {
+            lastFullJourneyFetch = Date()
+            if markers != activityMarkers {
+                activityMarkers = markers
+                persistThreadMarkers()
+            }
+        }
+
         applyServerMessages(merged, contexts: freshContexts)
         applyScheduled(scheduled)
         hasOlderMessages = !oldestPageExhausted && serverMessages.count >= JourneyService.defaultMessageLimit
 
-        if needsMarkers {
-            await refreshActivityMarkers()
-        }
         rebuildTimeline()
     }
 
@@ -314,14 +337,14 @@ final class ConversationViewModel {
         try? await scheduledService.fetchScheduledMessages(contactId: contactID)
     }
 
-    private func refreshActivityMarkers() async {
-        guard let events = try? await journeyService.fetchFullJourney(contactId: contactID) else { return }
-        lastFullJourneyFetch = Date()
-        let markers = ConversationTimelineBuilder.buildMarkers(from: events, formatters: formatters)
-        if markers != activityMarkers {
-            activityMarkers = markers
-            rebuildTimeline()
-        }
+    /// Fetch + build de markers SIN efectos secundarios (para lanzarlo en
+    /// paralelo con la petición de eventos). Devuelve nil si no toca refrescar
+    /// (deja intactos los markers cacheados) o si la red falla —en ese caso
+    /// `lastFullJourneyFetch` no se toca y se reintenta en el siguiente poll—.
+    private func fetchMarkersIfNeeded(_ needed: Bool) async -> [ConversationActivityMarker]? {
+        guard needed else { return nil }
+        guard let events = try? await journeyService.fetchFullJourney(contactId: contactID) else { return nil }
+        return ConversationTimelineBuilder.buildMarkers(from: events, formatters: formatters)
     }
 
     /// Hidrata el hilo desde la caché instantánea (los mensajes del servidor
@@ -334,7 +357,18 @@ final class ConversationViewModel {
         let cached = ChatThreadSnapshotCache.load(contactID: contactID)
         guard !cached.isEmpty else { return }
         serverMessages = cached
+        // Markers cacheados: el PRIMER pintado ya incluye pagos/citas en su sitio,
+        // así se elimina la segunda pasada de red tardía que reacomodaba el hilo
+        // al entrar. Se fija antes de `rebuildCombined` para que el timeline se
+        // construya una sola vez con todo dentro.
+        activityMarkers = ChatThreadSnapshotCache.loadMarkers(contactID: contactID)
         rebuildCombined()
+    }
+
+    /// Guarda los markers de actividad para que el próximo arranque del hilo los
+    /// pinte al instante (sin esperar el journey completo).
+    private func persistThreadMarkers() {
+        ChatThreadSnapshotCache.saveMarkers(activityMarkers, contactID: contactID)
     }
 
     /// Guarda los últimos mensajes del servidor (nunca optimistas) para reabrir
@@ -396,16 +430,21 @@ final class ConversationViewModel {
             guard let optimisticDate = optimistic.parsedDate else { return false }
             return outboundServer.contains { server in
                 guard let serverDate = server.parsedDate else { return false }
-                guard abs(serverDate.timeIntervalSince(optimisticDate)) <= window else { return false }
-                // 1) Coincidencia exacta por id de proveedor: siempre gana.
+                // 1) Identidad DEFINITIVA por id de proveedor: gana SIEMPRE, sin
+                //    ventana temporal. Dos mensajes distintos jamás comparten
+                //    providerMessageId, así que no hay falsos positivos; y así un
+                //    desfase de reloj dispositivo↔servidor >4 min no deja el globo
+                //    optimista duplicado para siempre pese a tener el mismo id.
                 if let provider = optimistic.providerMessageId, !provider.isEmpty,
                    server.providerMessageId == provider {
                     return true
                 }
-                // 2) Respaldo por texto/adjunto/ubicación SOLO contra un mensaje
-                //    del servidor NO anterior al envío optimista (con pequeña
-                //    tolerancia de reloj). Así un "ok" que ya existía antes de
-                //    mandar el nuestro no puede reclamar el globo optimista.
+                // 2) Respaldo por texto/adjunto/ubicación: AQUÍ sí se exige la
+                //    ventana de ±4 min y que el eco NO sea anterior al envío
+                //    optimista (con pequeña tolerancia de reloj). Así un "ok" que
+                //    ya existía antes de mandar el nuestro no puede reclamar el
+                //    globo optimista.
+                guard abs(serverDate.timeIntervalSince(optimisticDate)) <= window else { return false }
                 guard serverDate.timeIntervalSince(optimisticDate) >= -5 else { return false }
                 let sameText = !optimistic.text.isEmpty
                     && optimistic.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -535,6 +574,13 @@ final class ConversationViewModel {
                     await self.refreshSilently()
                 }
             }
+            // Fin NATURAL del stream (p. ej. 401/403 de módulo que el engine trata
+            // como cierre permanente): liberar la referencia para que el próximo
+            // `startRealtime()` pueda reconectar sin depender de un ciclo
+            // background→foreground. Si `stopRealtime()` lo canceló, no tocar nada
+            // (ya lo nilificó).
+            guard let self, !Task.isCancelled else { return }
+            self.realtimeTask = nil
         }
         realtimeTask = task
         realtimeControl = task
@@ -588,9 +634,21 @@ final class ConversationViewModel {
     func loadAgentStates() async {
         do {
             agentStates = try await agentService.fetchAllStates(contactId: contactID)
+            lastAgentStatesFetch = Date()
         } catch {
             agentStates = []
         }
+    }
+
+    /// Refresco silencioso del estado del agente desde el poll/SSE. Throttled
+    /// (≥10 s) para no martillar la red; nunca pisa una acción en vuelo ni borra
+    /// lo que ya se ve si la red falla (a diferencia de la carga inicial).
+    private func refreshAgentStatesIfStale() async {
+        if agentActionInFlight { return }
+        if let last = lastAgentStatesFetch, Date().timeIntervalSince(last) < 10 { return }
+        guard let fresh = try? await agentService.fetchAllStates(contactId: contactID) else { return }
+        agentStates = fresh
+        lastAgentStatesFetch = Date()
     }
 
     private func markRead() {
@@ -1224,6 +1282,11 @@ final class ConversationViewModel {
     }
 
     private func performSendLocation() async {
+        // Marca el envío en curso para que el `guard !isSending` de
+        // `sendCurrentLocation()` realmente bloquee un segundo tap mientras el GPS
+        // resuelve (antes esta ruta no lo marcaba y colisionaba con LocationSender).
+        isSending = true
+        defer { isSending = false }
         let coordinate: CLLocationCoordinate2DBox
         do {
             let raw = try await locationSender.currentCoordinate()
@@ -1851,14 +1914,74 @@ final class ConversationViewModel {
         }
     }
 
+    /// Estado primario para el header/banner: activo-con-agente > con-señal >
+    /// con-agente > cualquiera (paridad `selectPrimaryAgentState` del /movil).
+    var primaryAgentState: ConversationAgentState? {
+        if agentStates.isEmpty { return nil }
+        func rank(_ s: ConversationAgentState) -> Int {
+            let status = s.status.lowercased()
+            if status == "active" && (s.agentId?.isEmpty == false) && (s.signal?.isEmpty ?? true) { return 0 }
+            if !(s.signal?.isEmpty ?? true) { return 1 }
+            if s.agentId?.isEmpty == false { return 2 }
+            return 3
+        }
+        return agentStates.min { rank($0) < rank($1) }
+    }
+
+    /// ¿Hay algo del agente que controlar en este chat (mostrar botón robot)?
+    var hasAgentControls: Bool { !agentStates.isEmpty }
+
+    /// El robot del header se prende cuando algún agente atiende activamente.
+    var agentControllerActive: Bool {
+        agentStates.contains { $0.status.lowercased() == "active" }
+    }
+
+    /// Estado con señal de cierre pendiente (para el banner "objetivo cumplido").
+    var agentSignalState: ConversationAgentState? {
+        agentStates.first { $0.hasPendingSignal }
+    }
+
+    /// Reemplaza el estado devuelto por el backend en la lista (autoritativo, sin
+    /// refetch): más ágil y consistente con el header + el sheet.
+    private func applyUpdatedAgentState(_ updated: ConversationAgentState, previous: ConversationAgentState) {
+        let key = previous.agentId ?? updated.agentId
+        if let index = agentStates.firstIndex(where: { ($0.agentId ?? "") == (key ?? "") }) {
+            agentStates[index] = updated
+        } else if let index = agentStates.firstIndex(where: { $0.id == previous.id }) {
+            agentStates[index] = updated
+        } else {
+            agentStates.append(updated)
+        }
+        lastAgentStatesFetch = Date()
+    }
+
+    /// Descarta la señal de cierre (paridad `clear_signal`): quita el banner de
+    /// "objetivo cumplido" sin cambiar el estado del agente. Optimista.
+    func clearAgentSignal() {
+        guard !clearingAgentSignal, let state = agentSignalState else { return }
+        clearingAgentSignal = true
+        Task {
+            defer { clearingAgentSignal = false }
+            do {
+                let updated = try await agentService.updateState(contactId: contactID, action: .clearSignal, agentId: state.agentId)
+                applyUpdatedAgentState(updated, previous: state)
+            } catch {
+                alert = ConversationAlert(
+                    title: "Agente",
+                    message: (error as? RistakAPIError)?.message ?? "No se pudo descartar el aviso."
+                )
+            }
+        }
+    }
+
     func performAgentAction(_ action: ConversationAgentAction, state: ConversationAgentState) {
         guard !agentActionInFlight else { return }
         agentActionInFlight = true
         Task {
             defer { agentActionInFlight = false }
             do {
-                _ = try await agentService.updateState(contactId: contactID, action: action, agentId: state.agentId)
-                await loadAgentStates()
+                let updated = try await agentService.updateState(contactId: contactID, action: action, agentId: state.agentId)
+                applyUpdatedAgentState(updated, previous: state)
                 let name = state.agentName ?? "El agente"
                 switch action {
                 case .pause:

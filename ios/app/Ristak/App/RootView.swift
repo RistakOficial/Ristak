@@ -9,6 +9,12 @@ struct RootView: View {
     @Environment(ShellState.self) private var shell
     @Environment(\.scenePhase) private var scenePhase
 
+    /// True solo si la app estuvo en background REAL (no una interrupción
+    /// transitoria). Distingue "el usuario salió y volvió" de "bajó el Centro de
+    /// Control / la cortina de notificaciones / apareció un diálogo del sistema"
+    /// —esas solo llevan la escena a `.inactive`, nunca a `.background`—.
+    @State private var wasBackgrounded = false
+
     var body: some View {
         ZStack {
             switch session.phase {
@@ -31,12 +37,21 @@ struct RootView: View {
             await session.bootstrap()
         }
         .onChange(of: scenePhase) { _, newPhase in
+            // Marca el background real y no hagas nada más hasta volver a `.active`.
+            if newPhase == .background {
+                wasBackgrounded = true
+                return
+            }
             guard newPhase == .active else { return }
             Task { await session.verifyOnForeground() }
-            // Cada vez que se abre/reactiva la app: volver a Chats hasta arriba.
-            if case .active = session.phase {
+            // «Volver a Chats hasta arriba» SOLO tras un regreso desde background
+            // real. Antes se disparaba en cada `.inactive → .active` (Centro de
+            // Control, notificaciones, app-switcher, diálogos), lo que aventaba la
+            // bandeja al tope sola —el scroll fantasma reportado—.
+            if wasBackgrounded, case .active = session.phase {
                 shell.resetToChatsTop()
             }
+            wasBackgrounded = false
         }
         .onChange(of: session.phase) { oldPhase, newPhase in
             switch newPhase {

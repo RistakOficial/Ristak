@@ -38,11 +38,16 @@ extension KeyedDecodingContainer {
 
     func flexibleInt(forKey key: Key) -> Int? {
         if let value = try? decodeIfPresent(Int.self, forKey: key) { return value }
-        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite { return Int(value) }
+        // `Int(Double)` HACE TRAP si el Double, aunque finito, excede el rango de
+        // Int64 (~9.2e18). `Int(exactly: .towardZero)` trunca igual pero devuelve
+        // nil en overflow en vez de crashear la pantalla con un valor absurdo.
+        if let value = try? decodeIfPresent(Double.self, forKey: key), value.isFinite {
+            return Int(exactly: value.rounded(.towardZero))
+        }
         if let value = try? decodeIfPresent(String.self, forKey: key) {
             let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
             if let int = Int(trimmed) { return int }
-            if let double = Double(trimmed), double.isFinite { return Int(double) }
+            if let double = Double(trimmed), double.isFinite { return Int(exactly: double.rounded(.towardZero)) }
         }
         return nil
     }

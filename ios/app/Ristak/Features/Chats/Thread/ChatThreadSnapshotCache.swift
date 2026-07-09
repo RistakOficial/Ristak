@@ -37,6 +37,58 @@ enum ChatThreadSnapshotCache {
             await RistakSnapshotCache.shared.storeRaw(data, for: key)
         }
     }
+
+    // MARK: - Markers de actividad (pagos/citas)
+
+    @MainActor
+    static func loadMarkers(contactID: String) -> [ConversationActivityMarker] {
+        guard let data = RistakSnapshotCache.shared.rawData(for: ChatSnapshotKey.threadMarkers(contactID)),
+              let dtos = try? JSONDecoder().decode([ActivityMarkerDTO].self, from: data) else {
+            return []
+        }
+        return dtos.map(\.marker)
+    }
+
+    @MainActor
+    static func saveMarkers(_ markers: [ConversationActivityMarker], contactID: String) {
+        let dtos = markers.map(ActivityMarkerDTO.init)
+        let key = ChatSnapshotKey.threadMarkers(contactID)
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(dtos) else { return }
+            await RistakSnapshotCache.shared.storeRaw(data, for: key)
+        }
+    }
+}
+
+// MARK: - DTO Codable de marker de actividad
+
+private struct ActivityMarkerDTO: Codable, Sendable {
+    var id: String
+    var kind: String
+    var title: String
+    var subtitle: String
+    var amountLabel: String?
+    var date: String
+
+    init(_ marker: ConversationActivityMarker) {
+        id = marker.id
+        kind = marker.kind.rawValue
+        title = marker.title
+        subtitle = marker.subtitle
+        amountLabel = marker.amountLabel
+        date = marker.date
+    }
+
+    var marker: ConversationActivityMarker {
+        ConversationActivityMarker(
+            id: id,
+            kind: ConversationActivityMarker.Kind(rawValue: kind) ?? .payment,
+            title: title,
+            subtitle: subtitle,
+            amountLabel: amountLabel,
+            date: date
+        )
+    }
 }
 
 // MARK: - DTOs Codable (espejo fiel de ChatMessage)

@@ -35,6 +35,10 @@ final class LocationSender: NSObject, CLLocationManagerDelegate, @unchecked Send
             throw LocationError.denied
         }
         return try await withCheckedThrowingContinuation { continuation in
+            // Si ya había una petición en vuelo, RESUÉLVELA antes de reemplazarla:
+            // sobreescribir la continuation sin resumirla la FILTRABA para siempre
+            // ("SWIFT TASK CONTINUATION MISUSE") y dejaba su Task colgado.
+            finish(.failure(LocationError.unavailable))
             self.continuation = continuation
             if status == .notDetermined {
                 manager.requestWhenInUseAuthorization()
@@ -44,14 +48,21 @@ final class LocationSender: NSObject, CLLocationManagerDelegate, @unchecked Send
         }
     }
 
+    /// Resuelve la continuation pendiente (si la hay) y la limpia de forma atómica.
+    /// Un único punto de resume + nil evita fugas y dobles-resume en los callbacks.
+    private func finish(_ result: Result<CLLocationCoordinate2D, Error>) {
+        guard let pending = continuation else { return }
+        continuation = nil
+        pending.resume(with: result)
+    }
+
     func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
         guard continuation != nil else { return }
         switch manager.authorizationStatus {
         case .authorizedWhenInUse, .authorizedAlways:
             manager.requestLocation()
         case .denied, .restricted:
-            continuation?.resume(throwing: LocationError.denied)
-            continuation = nil
+            finish(.failure(LocationError.denied))
         case .notDetermined:
             break
         @unknown default:
@@ -61,20 +72,17 @@ final class LocationSender: NSObject, CLLocationManagerDelegate, @unchecked Send
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let coordinate = locations.first?.coordinate else {
-            continuation?.resume(throwing: LocationError.unavailable)
-            continuation = nil
+            finish(.failure(LocationError.unavailable))
             return
         }
-        continuation?.resume(returning: coordinate)
-        continuation = nil
+        finish(.success(coordinate))
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         if let clError = error as? CLError, clError.code == .denied {
-            continuation?.resume(throwing: LocationError.denied)
+            finish(.failure(LocationError.denied))
         } else {
-            continuation?.resume(throwing: LocationError.unavailable)
+            finish(.failure(LocationError.unavailable))
         }
-        continuation = nil
     }
 }

@@ -11,11 +11,19 @@ struct InboxScreen: View {
     let onOpenAssistant: () -> Void
 
     @Environment(ShellState.self) private var shell
+    @Environment(AccessStore.self) private var access
 
     @State private var activeSheet: InboxSheet?
     /// Cámara global (foto/video) del header — flujo separado de `activeSheet`.
     @State private var cameraPickerPresented = false
     @State private var cameraShareVM: CameraShareViewModel?
+    /// Hub del agente conversacional (encender/pausar/editar), abierto desde el
+    /// botón robot del header (paridad /movil).
+    @State private var showsAgentHub = false
+    /// La bandeja se lleva al tope SOLO en su primera aparición. `onAppear`
+    /// vuelve a dispararse en cada pop-back desde una conversación; sin este gate
+    /// tiraba la posición de scroll conservada y aventaba la lista al tope.
+    @State private var hasScrolledToTopOnce = false
 
     enum InboxSheet: Identifiable {
         case more(ChatContact)
@@ -47,6 +55,16 @@ struct InboxScreen: View {
                 viewModel.searchTextDidChange()
             }
             .toolbar {
+                if access.canRead(module: .aiAgent) {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            showsAgentHub = true
+                        } label: {
+                            Image(systemName: "sparkles")
+                        }
+                        .accessibilityLabel("Agente conversacional")
+                    }
+                }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     // Cámara global (a la IZQUIERDA del «+»): toma foto/video y
                     // lo manda a uno o varios contactos por WhatsApp.
@@ -64,6 +82,11 @@ struct InboxScreen: View {
                     }
                     .accessibilityLabel("Nuevo chat")
                 }
+            }
+            .sheet(isPresented: $showsAgentHub) {
+                AgentHubSheet()
+                    .presentationDetents([.large])
+                    .presentationDragIndicator(.visible)
             }
             .sheet(item: $activeSheet) { sheet in
                 sheetContent(sheet)
@@ -211,6 +234,10 @@ struct InboxScreen: View {
             }
         }
         .onAppear {
+            // Solo la PRIMERA vez: en pop-back desde el hilo, `onAppear` se repite
+            // y no debe descartar la posición de scroll del usuario.
+            guard !hasScrolledToTopOnce else { return }
+            hasScrolledToTopOnce = true
             proxy.scrollTo(Self.topAnchorID, anchor: .top)
         }
         }

@@ -289,7 +289,9 @@ final class AppConfigStore {
         switch desktopThemeColor {
         case .light: return .light
         case .dark: return .dark
-        case .none: return .system
+        // `default` cubre `.none` (nil) y cualquier caso futuro de `ColorScheme`
+        // (enum no-congelado): sin esto Swift 6 lo trataría como error.
+        default: return .system
         }
     }
 

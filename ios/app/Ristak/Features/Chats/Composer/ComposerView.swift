@@ -42,6 +42,7 @@ struct ComposerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            agentSignalBanner
             agentBanner
             aiSuggestBar
             replyBar
@@ -126,6 +127,48 @@ struct ComposerView: View {
     private var agentConfirmationMessage: String {
         let name = viewModel.activeAgentStates.first?.agentName ?? "El agente"
         return "Si envías este mensaje, \(name) dejará de responder este chat. Elige si quieres pausarlo 24 horas o quitar este contacto del agente hasta que lo reactives."
+    }
+
+    // MARK: - Banner de objetivo cumplido (señal de cierre → clear_signal)
+
+    @ViewBuilder
+    private var agentSignalBanner: some View {
+        if let state = viewModel.agentSignalState,
+           let meta = AgentStatusStyle.signalMeta(state.signal ?? "") {
+            HStack(spacing: RistakTheme.Spacing.xs) {
+                Image(systemName: meta.icon)
+                    .font(.caption)
+                    .foregroundStyle(RistakTheme.pos)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(meta.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(RistakTheme.textPrimary)
+                        .lineLimit(1)
+                    if let summary = state.signalSummary?.trimmingCharacters(in: .whitespacesAndNewlines), !summary.isEmpty {
+                        Text(summary)
+                            .font(.caption2)
+                            .foregroundStyle(RistakTheme.textDim)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                Button {
+                    viewModel.clearAgentSignal()
+                } label: {
+                    if viewModel.clearingAgentSignal {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Descartar")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(RistakTheme.accent)
+                    }
+                }
+                .disabled(viewModel.clearingAgentSignal)
+            }
+            .padding(.horizontal, RistakTheme.Spacing.md)
+            .padding(.vertical, 6)
+            .background(RistakTheme.posSoft)
+        }
     }
 
     // MARK: - Banner del agente (doc 05 §6.4)

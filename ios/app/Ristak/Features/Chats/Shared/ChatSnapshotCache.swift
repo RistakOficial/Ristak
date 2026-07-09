@@ -13,6 +13,11 @@ enum ChatSnapshotKey {
     /// Últimos mensajes del hilo de un contacto.
     static func thread(_ contactID: String) -> String { "chat:thread:\(contactID)" }
 
+    /// Markers de actividad (pagos/citas) del hilo de un contacto. Se cachean
+    /// aparte de los mensajes para que el primer pintado ya los incluya y no haya
+    /// una segunda pasada de red que reacomode el hilo al entrar.
+    static func threadMarkers(_ contactID: String) -> String { "chat:thread:markers:\(contactID)" }
+
     /// Ficha (detalle) de un contacto.
     static func contactDetail(_ contactID: String) -> String { "chat:contact:\(contactID)" }
 

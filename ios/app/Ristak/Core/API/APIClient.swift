@@ -298,6 +298,13 @@ actor APIClient {
             let response: URLResponse
             do {
                 (data, response) = try await session.data(for: request)
+            } catch is CancellationError {
+                // Salir de una pantalla cancela su `.task`: NO es un fallo de red.
+                // Propagar la cancelación para que `try?` la ignore y nadie pinte
+                // un falso estado de "sin conexión".
+                throw CancellationError()
+            } catch let urlError as URLError where urlError.code == .cancelled {
+                throw CancellationError()
             } catch {
                 throw RistakAPIError.network(error)
             }

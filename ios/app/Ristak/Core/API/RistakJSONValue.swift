@@ -62,7 +62,9 @@ enum RistakJSONValue: Codable, Equatable, Sendable {
 
     var intValue: Int? {
         guard let value = doubleValue, value.isFinite else { return nil }
-        return Int(value)
+        // `Int(Double)` trapea si el valor finito excede Int64 (~9.2e18);
+        // `Int(exactly: .towardZero)` trunca igual pero devuelve nil sin crashear.
+        return Int(exactly: value.rounded(.towardZero))
     }
 
     /// Booleano tolerante: bool nativo, números (≠0) o strings tipo "1/true/yes/on".

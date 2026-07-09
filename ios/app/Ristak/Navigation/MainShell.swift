@@ -151,6 +151,7 @@ private extension View {
 struct MainShell: View {
     @Environment(AccessStore.self) private var access
     @Environment(ShellState.self) private var shell
+    @Environment(NotificationRouter.self) private var router
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var visibleTabs: [RistakTab] {
@@ -212,6 +213,38 @@ struct MainShell: View {
             // primera permitida (paridad RN `App.tsx:1289-1297`).
             guard !newTabs.contains(shell.selectedTab), let first = newTabs.first else { return }
             shell.selectedTab = first
+        }
+        // Deep links de push que NO son de chat (cita/pago/analíticas/ajustes):
+        // el shell es el único componente montado siempre, así que enruta AQUÍ a
+        // la pestaña correcta. Los de chat los sigue consumiendo `ChatsRootView`
+        // (cada quien consume SOLO su tipo → sin carrera de consumo). En tap con
+        // la app viva usa el `onChange`; en cold start la `task` inicial.
+        .onChange(of: router.deepLinkVersion) {
+            routePendingNonChatDeepLink()
+        }
+        .task {
+            routePendingNonChatDeepLink()
+        }
+    }
+
+    /// Enruta a su pestaña los deep links de push que no son de chat, consumiendo
+    /// SOLO esos tipos (deja `.chat` intacto para `ChatsRootView`).
+    private func routePendingNonChatDeepLink() {
+        switch router.pendingDeepLink {
+        case .appointment:
+            _ = router.consumePendingDeepLink()
+            shell.navigate(to: .calendars)
+        case .payments:
+            _ = router.consumePendingDeepLink()
+            shell.navigate(to: .payments)
+        case .analytics:
+            _ = router.consumePendingDeepLink()
+            shell.navigate(to: .analytics)
+        case .settings:
+            _ = router.consumePendingDeepLink()
+            shell.navigate(to: .settings)
+        case .chat, .none:
+            break
         }
     }
 }

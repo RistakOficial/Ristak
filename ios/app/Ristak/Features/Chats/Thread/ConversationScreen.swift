@@ -1,4 +1,6 @@
+import Combine
 import SwiftUI
+import UIKit
 
 /// Pantalla de conversación (contrato cross-agente: el inbox navega aquí).
 ///
@@ -98,6 +100,11 @@ struct ConversationScreen: View {
             }
             .sheet(isPresented: bindableViewModel.isTagSheetPresented) {
                 TagPickerSheet(viewModel: viewModel)
+            }
+            .sheet(isPresented: bindableViewModel.agentControlsPresented) {
+                AgentControlsSheet(viewModel: viewModel)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
             }
             // Proxy «Agendar cita»: formulario de cita para ESTE contacto,
             // presentado en sitio (no salta a Calendarios).
@@ -235,6 +242,19 @@ struct ConversationScreen: View {
                 }
                 quoteScrollTargetID = nil
             }
+            // Bug del teclado: mostrar/ocultar el teclado anima el `safeAreaInset`
+            // inferior (composer) y con `.defaultScrollAnchor(.bottom)` sobre un
+            // `LazyVStack` el ScrollView puede aterrizar en una región NO
+            // materializada → las burbujas quedan EN BLANCO hasta que arrastras.
+            // Re-anclamos al centinela del fondo en cada cambio de teclado, lo que
+            // fuerza al LazyVStack a re-dibujar las filas visibles. Gateado por
+            // `isNearBottom` para no tironear a quien está leyendo el historial.
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
+                reanchorIfNearBottom(proxy)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+                reanchorIfNearBottom(proxy)
+            }
             // La cascada necesita el ORDEN de mensajes (solo mensajes, sin días ni
             // markers) para saber cuál audio encadenar al terminar el actual.
             .onChange(of: viewModel.timeline, initial: true) { _, timeline in
@@ -247,6 +267,20 @@ struct ConversationScreen: View {
             placement: .navigationBarDrawer(displayMode: .automatic),
             prompt: "Buscar en este chat"
         )
+    }
+
+    /// Re-ancla el hilo al centinela del fondo cuando el teclado cambia, para que
+    /// el `LazyVStack` vuelva a materializar sus filas y las burbujas no queden en
+    /// blanco. Solo si el usuario ya estaba abajo (no roba la posición a quien lee
+    /// mensajes viejos). El salto a `main` deja terminar la animación del
+    /// `safeAreaInset` antes de reposicionar.
+    private func reanchorIfNearBottom(_ proxy: ScrollViewProxy) {
+        guard viewModel.isNearBottom else { return }
+        DispatchQueue.main.async {
+            withAnimation(.snappy(duration: 0.2)) {
+                proxy.scrollTo(Self.bottomAnchorID, anchor: .bottom)
+            }
+        }
     }
 
     // MARK: - Agrupación por día (cabeceras pegajosas)
@@ -374,6 +408,19 @@ struct ConversationScreen: View {
     /// este contacto (User #2), sin sacar al usuario del chat.
     @ViewBuilder
     private var headerToolActions: some View {
+        // Robot del agente conversacional: prendido (acento) cuando algún agente
+        // atiende activamente este chat; apagado (tenue) si está pausado/tomado/
+        // omitido. Solo aparece si hay agente asignado a este contacto.
+        if viewModel.hasAgentControls {
+            Button {
+                viewModel.agentControlsPresented = true
+            } label: {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(viewModel.agentControllerActive ? RistakTheme.accent : RistakTheme.textDim)
+            }
+            .accessibilityLabel("Controles del agente")
+        }
+
         Button {
             showsScheduleForContact = true
         } label: {

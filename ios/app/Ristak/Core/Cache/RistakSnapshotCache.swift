@@ -176,8 +176,17 @@ final class RistakSnapshotCache {
         cancelPendingWrites()
         memory.removeAll()
         if let dir = namespaceDir {
+            let fm = FileManager.default
+            // Renombra el directorio a un path ÚNICO antes de retornar (rename de
+            // metadatos, barato y síncrono) y borra ESE en background. Así un
+            // re-login a la MISMA cuenta que recrea el path canónico no puede ser
+            // borrado por este `removeItem` tardío (carrera que perdía el snapshot
+            // recién escrito de la nueva sesión).
+            let graveyard = dir.deletingLastPathComponent()
+                .appendingPathComponent(".deleting-\(UUID().uuidString)", isDirectory: true)
+            let target = ((try? fm.moveItem(at: dir, to: graveyard)) != nil) ? graveyard : dir
             Task.detached(priority: .utility) {
-                try? FileManager.default.removeItem(at: dir)
+                try? fm.removeItem(at: target)
             }
         }
         currentNamespace = nil

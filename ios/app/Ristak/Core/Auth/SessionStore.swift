@@ -76,6 +76,9 @@ final class SessionStore {
             namespace: RistakSnapshotCache.namespace(baseURL: storedBaseURL, userID: user?.id)
         )
         await RistakSnapshotCache.shared.preloadIntoMemory()
+        // Precarga los tamaños de imagen aprendidos (JSON en disco) FUERA de main,
+        // para que el init de la primera burbuja de foto no bloquee el hilo.
+        ChatImageSizeCache.preloadIntoMemory()
 
         phase = .active
 
@@ -191,6 +194,14 @@ final class SessionStore {
         // Vaciar la caché SWR (memoria + disco del namespace) para que las
         // cuentas nunca se mezclen. Solo en logout explícito, no en un 401.
         RistakSnapshotCache.shared.reset()
+        // Aísla las cuentas también en las cachés de imagen: los bytes de fotos de
+        // media/perfil (URLCache en disco) y las dimensiones aprendidas por URL no
+        // deben sobrevivir a un cambio de cuenta.
+        await RistakImageLoader.shared.removeAll()
+        ChatImageSizeCache.removeAll()
+        // Notas de voz propias (m4a = audio real grabado = PII): también viven
+        // fuera del snapshot namespaceado y no deben cruzar de cuenta a cuenta.
+        VoiceNoteLocalStore.removeAll()
         clearLocalSession(keepBaseURL: !switchApp)
     }
 

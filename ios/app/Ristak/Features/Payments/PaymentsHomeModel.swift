@@ -254,11 +254,19 @@ final class PaymentsHomeModel {
 
     func startRealtime() {
         guard eventsTask == nil else { return }
+        // Capturar el CLIENTE (no self) y hacer `guard let self` DENTRO del loop,
+        // como los otros clientes SSE del proyecto (Chats/Bandeja): así `self` solo
+        // es fuerte durante el cuerpo de cada iteración y NO durante la suspensión
+        // del `for await`. Antes el `guard let self` estaba FUERA del loop → self
+        // quedaba retenido todo el Task (self→eventsTask→Task→self = retain cycle),
+        // y si `onDisappear`/`stopRealtime()` no llegaban (teardown abrupto), la
+        // conexión SSE seguía reconectando para siempre sobre un modelo fantasma.
+        let client = eventsClient
         eventsTask = Task { [weak self] in
-            guard let self else { return }
-            let stream = await self.eventsClient.start()
+            let stream = await client.start()
             for await event in stream {
                 guard !Task.isCancelled else { break }
+                guard let self else { return }
                 switch event {
                 case .connected:
                     break

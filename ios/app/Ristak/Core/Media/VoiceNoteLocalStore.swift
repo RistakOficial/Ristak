@@ -55,6 +55,15 @@ enum VoiceNoteLocalStore {
         return FileManager.default.fileExists(atPath: file.path) ? file : nil
     }
 
+    /// Borra todas las notas de voz locales (logout): son audio real grabado por
+    /// el usuario (PII) y no deben cruzar de una cuenta a otra en el mismo equipo.
+    static func removeAll() {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else {
+            return
+        }
+        try? FileManager.default.removeItem(at: caches.appendingPathComponent(folderName, isDirectory: true))
+    }
+
     /// Decodifica el payload base64 de una data URL (`data:...;base64,XXXX`).
     static func decodeBase64DataURL(_ dataURL: String) -> Data? {
         guard let range = dataURL.range(of: ";base64,") else { return nil }

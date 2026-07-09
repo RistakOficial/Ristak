@@ -328,10 +328,19 @@ final class InboxViewModel {
             guard fetchKey == currentFetchKey else { return }
             let isReplace = rows.isEmpty || isShowingCachedData || loadedFetchKey != fetchKey
             if isReplace {
-                if rows != page { rows = page }
-                // Reemplazo total: el offset y hasMore se rebobinan a 1 página.
-                serverOffset = page.count
-                hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
+                if page.isEmpty, !rows.isEmpty || isShowingCachedData {
+                    // Vacío TRANSITORIO durante bootstrap/replace (un 200 con []
+                    // mientras aún hay chats): NO tirar lo que ya se muestra (caché
+                    // o filas previas) ni envenenar el snapshot de disco con []. Se
+                    // conserva y se espera al siguiente refresh (poll/SSE), igual
+                    // que el camino vivo (mergeRefresh) que nunca vacía la bandeja.
+                    // No se tocan serverOffset/hasMore.
+                } else {
+                    if rows != page { rows = page }
+                    // Reemplazo total: el offset y hasMore se rebobinan a 1 página.
+                    serverOffset = page.count
+                    hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
+                }
             } else {
                 // Refresh vivo: conservar la profundidad de scroll ya cargada.
                 // Rehacer serverOffset/hasMore desde la primera página atascaría

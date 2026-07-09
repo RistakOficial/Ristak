@@ -29,6 +29,10 @@ enum ChatInboxDiskCache {
     /// Guarda el snapshot (memoria inmediata + disco debounced).
     @MainActor
     static func save(_ rows: [ChatContact]) {
+        // Nunca DEGRADAR un snapshot bueno a []: un `[]` transitorio no debe pisar
+        // la bandeja guardada que se usa para el arranque en frío. El vaciado real
+        // (logout) tiene su propio camino explícito: `clear()`.
+        guard !rows.isEmpty else { return }
         let snapshot = rows.prefix(maxRows).map(serialize)
         guard JSONSerialization.isValidJSONObject(snapshot),
               let data = try? JSONSerialization.data(withJSONObject: snapshot) else {
