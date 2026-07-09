@@ -656,7 +656,9 @@ en vez de fallar, abre el sheet de plantillas. `transport` va `undefined`
 4. **`media_url` puede faltar en legado**: mensajes antiguos con solo `media_id`
    del proveedor (histórico QR o media expirada) no tienen URL descargable; la
    RN muestra cápsula "Nota de voz"/tarjeta deshabilitada. En envíos nuevos desde
-   Ristak, audio/imagen/video deben persistir URL interna de preview.
+   Ristak, audio/imagen/video deben persistir URL interna de preview; esto
+   incluye audio de Messenger/Instagram nativo de Meta, que manda a Graph una
+   URL HTTPS de Ristak y conserva `media_url` local.
 5. **URLs públicas sin auth**: cualquier persona con la URL del CDN puede ver
    el archivo (por diseño, WhatsApp lo necesita). No enviar estas URLs a logs
    de terceros.
@@ -666,7 +668,8 @@ en vez de fallar, abre el sheet de plantillas. `transport` va `undefined`
    `isNativePlayableAudioCandidate` prefiere mp4/m4a/aac/mp3/wav). Las notas de
    voz salientes se guardan como preview en `media_assets` con formato
    reproducible (`audio/mp4`/M4A cuando hace falta), aunque WhatsApp reciba
-   OGG/Opus. OPEN QUESTION: verificar en dispositivo si las notas de voz
+   OGG/Opus o Meta Graph reciba una URL de attachment. OPEN QUESTION: verificar
+   en dispositivo si las notas de voz
    entrantes (ogg) se reproducen; si no, la app iOS necesitará un decodificador
    (p. ej. libopus/ogg) o pedir al backend un transcode a m4a.
 7. **Tamaños dispares cliente/servidor**: el cliente valida imagen ≤16 MB (RN)

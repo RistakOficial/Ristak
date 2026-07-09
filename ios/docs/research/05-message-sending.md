@@ -504,11 +504,35 @@ Errores exactos (`metaSocialMessagingService.js:1919-2007`):
 - 409 `"Falta seleccionar la cuenta de Instagram en Meta Ads."` / `"Falta seleccionar la página de Facebook en Meta Ads."`
 
 Respuesta: `{ success, data: { id, remoteMessageId?, localMessageId?, platform, provider:'meta', data:{...} } }`.
-Efecto: takeover del agente (§8.3). **Solo texto**: el composer /movil bloquea
-adjuntos/voz con toast «Solo texto por ahora / Messenger e Instagram desde Meta
-nativo mandan texto en este chat.»; ubicación se degrada a texto+link.
+Efecto: takeover del agente (§8.3). Texto y audio tienen rutas nativas de Meta;
+otros adjuntos siguen bloqueados en Meta nativo y deben viajar por HighLevel
+cuando esa integracion esta disponible. Ubicacion se degrada a texto+link.
 
-### 3.2 `POST /meta/social/messages/reaction`
+### 3.2 `POST /meta/social/messages/audio`
+
+```json
+{
+  "contactId": "rstk_...",
+  "platform": "messenger" | "instagram",
+  "audioDataUrl": "data:audio/mp4;base64,...",  // o audioUrl https
+  "audioUrl": "https://...",
+  "durationMs": 1800,
+  "externalId": "local-meta-audio-...",
+  "replyToMessageId": "...",
+  "replyToProviderMessageId": "..."
+}
+```
+
+Contrato: el backend guarda `audioDataUrl` en `media_assets` como copia publica
+reproducible de Ristak, arma una URL HTTPS via `/media/assets/:id/file` y manda a
+Meta Graph `message.attachment.type='audio'` con `payload.url`. Messenger usa Page
+token y `messaging_type:'RESPONSE'`; Instagram usa el Instagram API token directo.
+El mensaje local se persiste como `message_type='audio'`, `message_text=''`,
+`media_url`, `media_mime_type` y `context.audio` para que `/chat`, `/movil` y la
+app nativa puedan reproducirlo despues de recargar. Meta nativo no combina texto
+y audio en el mismo envio desde el composer.
+
+### 3.3 `POST /meta/social/messages/reaction`
 
 ```json
 {
@@ -558,8 +582,9 @@ Lista publicaciones para selectores. Respuesta:
 
 Canal de respaldo cuando: el contacto es de SMS, Meta no está nativa, o WhatsApp no
 está conectado y HighLevel sí (`sendingThroughHighLevel`, `PhoneChat.tsx:6594-6599`).
-También es la única vía actual para mandar **adjuntos** a Messenger/Instagram
-(`sendAttachmentsThroughHighLevel`).
+También sigue siendo la vía para mandar **adjuntos no-audio** a
+Messenger/Instagram (`sendAttachmentsThroughHighLevel`); las notas de voz ya
+tienen ruta Meta nativa (`/meta/social/messages/audio`).
 
 Body (`sendHighLevelConversationMessageCore`, `highlevelController.js:2645-2848`):
 
@@ -820,7 +845,7 @@ de micrófono. Reglas:
 - Envío: `POST /messages/audio` con `audioDataUrl`, `durationMs`, `voice: true`,
   `externalId: <optimisticId>-audio`, `transport` resuelto, `messageOrigin:'manual_chat'`.
 - En canal HighLevel la voz viaja como `audioDataUrl` del endpoint HighLevel; en
-  Meta social nativo NO hay voz (solo texto).
+  Messenger/Instagram nativo viaja por `/meta/social/messages/audio`.
 
 ### 7.4 Flujo de cámara
 
@@ -915,15 +940,16 @@ Ids optimistas usados como `externalId` (útiles para idempotencia/reconciliaci�
 | 12 | POST | `/api/whatsapp-api/messages/scheduled` | Crear/editar programado |
 | 13 | DELETE | `/api/whatsapp-api/messages/scheduled/:id` | Cancelar programado |
 | 14 | POST | `/api/whatsapp-api/meta/social/messages/text` | DM Messenger/IG |
-| 15 | POST | `/api/whatsapp-api/meta/social/messages/reaction` | Reacción ❤️ Messenger/IG |
-| 16 | POST | `/api/whatsapp-api/meta/social/comments/reply` | Responder comentario FB/IG |
-| 17 | GET | `/api/whatsapp-api/meta/social/posts` | Publicaciones FB/IG |
-| 18 | POST | `/api/highlevel/conversations/messages` | Envío por HighLevel (WA/SMS/FB/IG/Email/Webchat) |
-| 19 | POST | `/api/email/send` | Correo SMTP propio |
-| 20 | GET | `/api/conversational-agent/states/:contactId?includeAll=1` | Estados del agente |
-| 21 | POST | `/api/conversational-agent/states/:contactId` | pause/resume/take_over/skip/activate/clear_signal |
-| 22 | GET/PUT | `/api/whatsapp-api/qr/drip-settings` | Config anti-bloqueo QR |
-| 23 | POST | `/api/whatsapp-api/meta/messages/test` | Prueba Meta directo (`{to,text}`, solo settings) |
+| 15 | POST | `/api/whatsapp-api/meta/social/messages/audio` | Audio DM Messenger/IG |
+| 16 | POST | `/api/whatsapp-api/meta/social/messages/reaction` | Reacción ❤️ Messenger/IG |
+| 17 | POST | `/api/whatsapp-api/meta/social/comments/reply` | Responder comentario FB/IG |
+| 18 | GET | `/api/whatsapp-api/meta/social/posts` | Publicaciones FB/IG |
+| 19 | POST | `/api/highlevel/conversations/messages` | Envío por HighLevel (WA/SMS/FB/IG/Email/Webchat) |
+| 20 | POST | `/api/email/send` | Correo SMTP propio |
+| 21 | GET | `/api/conversational-agent/states/:contactId?includeAll=1` | Estados del agente |
+| 22 | POST | `/api/conversational-agent/states/:contactId` | pause/resume/take_over/skip/activate/clear_signal |
+| 23 | GET/PUT | `/api/whatsapp-api/qr/drip-settings` | Config anti-bloqueo QR |
+| 24 | POST | `/api/whatsapp-api/meta/messages/test` | Prueba Meta directo (`{to,text}`, solo settings) |
 
 ---
 

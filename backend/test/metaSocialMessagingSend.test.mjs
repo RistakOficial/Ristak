@@ -8,6 +8,7 @@ import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   processMetaSocialWebhook,
+  sendMetaSocialAudioMessage,
   sendMetaSocialReactionMessage,
   sendMetaSocialTextMessage,
   syncMetaSocialConversationHistory
@@ -236,6 +237,13 @@ async function startMetaSendServer(calls) {
       }
 
       if (req.method === 'POST' && req.url.startsWith('/ig-business-send-test/messages')) {
+        const parsedBody = JSON.parse(body || '{}')
+        if (parsedBody?.message?.attachment?.type === 'audio') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify({ recipient_id: 'igsid-send-test', message_id: 'mid-instagram-send-test' }))
+          return
+        }
+
         res.writeHead(400, { 'Content-Type': 'application/json' })
         res.end(JSON.stringify({
           error: {
@@ -1297,6 +1305,208 @@ test('sendMetaSocialTextMessage mantiene Messenger con Page token y messaging_ty
     if (metaServer) await new Promise(resolve => metaServer.close(resolve))
     if (previousMetaGraphDescriptor) {
       Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('sendMetaSocialAudioMessage manda audio Messenger con URL pública y lo persiste como audio', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const contactId = 'meta_send_audio_messenger_contact'
+  const metaContactId = 'meta_send_audio_messenger_profile'
+  let mediaAssetId = ''
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-send-audio-test',
+            encrypt('user-token-send-test'),
+            null,
+            'page-send-test',
+            'ig-business-send-test',
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_messenger_messaging_enabled', '1')
+          await seedMessengerContact({ contactId, metaContactId })
+
+          const result = await sendMetaSocialAudioMessage({
+            contactId,
+            platform: 'messenger',
+            audioDataUrl: `data:audio/mp4;base64,${Buffer.from('fake native meta audio').toString('base64')}`,
+            durationMs: 1800,
+            publicBaseUrl: 'https://ristak.test'
+          })
+          mediaAssetId = result.localMedia?.mediaAssetId || ''
+
+          assert.equal(result.remoteMessageId, 'mid-messenger-send-test')
+          assert.equal(result.audio?.mimeType, 'audio/mp4')
+          assert.equal(result.audio?.durationMs, 1800)
+          const tokenLookupCall = calls.find(call => call.method === 'GET')
+          if (tokenLookupCall) assert.match(tokenLookupCall.url, /^\/page-send-test\?/)
+          const sendCall = calls.find(call => call.method === 'POST')
+          assert.ok(sendCall)
+          assert.equal(sendCall.url, '/page-send-test/messages')
+          assert.deepEqual(JSON.parse(sendCall.body), {
+            messaging_type: 'RESPONSE',
+            recipient: { id: 'psid-send-test' },
+            message: {
+              attachment: {
+                type: 'audio',
+                payload: {
+                  url: result.audio.url,
+                  is_reusable: false
+                }
+              }
+            }
+          })
+
+          const row = await db.get(
+            `SELECT message_type, message_text, media_url, media_mime_type, raw_payload_json
+             FROM meta_social_messages
+             WHERE contact_id = ? AND direction = 'outbound'
+             ORDER BY message_timestamp DESC
+             LIMIT 1`,
+            [contactId]
+          )
+          assert.equal(row.message_type, 'audio')
+          assert.equal(row.message_text, '')
+          assert.match(row.media_url, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
+          assert.equal(row.media_mime_type, 'audio/mp4')
+          assert.equal(JSON.parse(row.raw_payload_json).context.audio.durationMs, 1800)
+        } finally {
+          if (mediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
+    }
+  }
+})
+
+test('sendMetaSocialAudioMessage manda audio Instagram con token directo y lo persiste como audio', async () => {
+  const previousInstagramGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'INSTAGRAM_GRAPH')
+  const calls = []
+  let metaServer
+  const contactId = 'meta_send_audio_instagram_contact'
+  const metaContactId = 'meta_send_audio_instagram_profile'
+  let mediaAssetId = ''
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_instagram_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, instagram_access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-send-audio-ig-test',
+            encrypt('user-token-send-test'),
+            encrypt('instagram-token-send-test'),
+            null,
+            'page-send-test',
+            'ig-business-send-test',
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_instagram_messaging_enabled', '1')
+          await seedInstagramContact({ contactId, metaContactId })
+
+          const result = await sendMetaSocialAudioMessage({
+            contactId,
+            platform: 'instagram',
+            audioDataUrl: `data:audio/mp4;base64,${Buffer.from('fake native instagram audio').toString('base64')}`,
+            durationMs: 2400,
+            publicBaseUrl: 'https://ristak.test'
+          })
+          mediaAssetId = result.localMedia?.mediaAssetId || ''
+
+          assert.equal(result.remoteMessageId, 'mid-instagram-send-test')
+          assert.equal(result.platform, 'instagram')
+          assert.equal(result.audio?.mimeType, 'audio/mp4')
+          assert.equal(result.audio?.durationMs, 2400)
+          assert.equal(calls.length, 1)
+          assert.equal(calls[0].method, 'POST')
+          assert.equal(calls[0].url, '/ig-business-send-test/messages')
+          assert.equal(calls[0].authorization, 'Bearer instagram-token-send-test')
+          assert.deepEqual(JSON.parse(calls[0].body), {
+            recipient: { id: 'igsid-send-test' },
+            message: {
+              attachment: {
+                type: 'audio',
+                payload: {
+                  url: result.audio.url,
+                  is_reusable: false
+                }
+              }
+            }
+          })
+
+          const row = await db.get(
+            `SELECT message_type, message_text, media_url, media_mime_type, raw_payload_json
+             FROM meta_social_messages
+             WHERE contact_id = ? AND platform = 'instagram' AND direction = 'outbound'
+             ORDER BY message_timestamp DESC
+             LIMIT 1`,
+            [contactId]
+          )
+          assert.equal(row.message_type, 'audio')
+          assert.equal(row.message_text, '')
+          assert.match(row.media_url, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
+          assert.equal(row.media_mime_type, 'audio/mp4')
+          assert.equal(JSON.parse(row.raw_payload_json).context.audio.durationMs, 2400)
+        } finally {
+          if (mediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousInstagramGraphDescriptor) {
+      Object.defineProperty(API_URLS, 'INSTAGRAM_GRAPH', previousInstagramGraphDescriptor)
     }
   }
 })

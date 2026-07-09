@@ -525,6 +525,17 @@ export interface MetaSocialTextSendPayload {
   replyToProviderMessageId?: string
 }
 
+export interface MetaSocialAudioSendPayload {
+  contactId: string
+  platform: 'messenger' | 'instagram'
+  audioDataUrl?: string
+  audioUrl?: string
+  durationMs?: number
+  externalId?: string
+  replyToMessageId?: string
+  replyToProviderMessageId?: string
+}
+
 export interface MetaSocialReactionSendPayload {
   contactId: string
   platform: 'messenger' | 'instagram'
@@ -609,6 +620,7 @@ export const whatsappApiService = {
   testMetaDirect: () => apiClient.post<WhatsAppMetaDirectTestResponse>('/whatsapp-api/meta/test'),
   sendMetaDirectTestMessage: (payload: { to: string; text?: string }) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/messages/test', payload),
   sendMetaSocialText: (payload: MetaSocialTextSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/text', payload),
+  sendMetaSocialAudio: (payload: MetaSocialAudioSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/audio', payload),
   sendMetaSocialReaction: (payload: MetaSocialReactionSendPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/messages/reaction', payload),
   sendMetaSocialCommentReply: (payload: MetaSocialCommentReplyPayload) => apiClient.post<WhatsAppApiSendResponse>('/whatsapp-api/meta/social/comments/reply', payload),
   listMetaSocialPosts: (params: MetaSocialPostsQuery) => {

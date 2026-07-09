@@ -1091,7 +1091,10 @@ las burbujas de audio deben poder reproducirse con progreso suave tanto en
 claro como en oscuro. La respuesta del backend y el mensaje recargado del
 historial deben conservar `media_url`/`audio.link` reproducible para audios
 salientes, no solo `media_id` del proveedor ni un archivo generico; esto aplica a
-WhatsApp API/QR y a Messenger/Instagram cuando viajan por HighLevel. Cuando el
+WhatsApp API/QR, a Messenger/Instagram nativo de Meta y a Messenger/Instagram
+cuando viajan por HighLevel. En Meta nativo el audio se envia sin texto como
+attachment `audio` con URL HTTPS publica de Ristak; otros archivos de
+Messenger/Instagram siguen requiriendo HighLevel. Cuando el
 teclado esta abierto, el composer debe sentirse
 pegado al teclado como una sola superficie inferior: mismo tono base del teclado,
 sin borde rectangular superior y con esquinas superiores redondeadas tipo sheet,

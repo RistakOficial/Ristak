@@ -19967,8 +19967,13 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
       return;
     }
-    if (attachmentsToSend.length > 0 && selectedRouteChannel !== 'whatsapp') {
-      Alert.alert('Adjuntos', 'Los adjuntos nativos se envían por WhatsApp API/QR. Cambia el canal a WhatsApp para mandar este archivo.');
+    const canSendNativeMetaAudio = (
+      attachmentsToSend.length === 1 &&
+      attachmentsToSend[0]?.kind === 'audio' &&
+      (selectedRouteChannel === 'messenger' || selectedRouteChannel === 'instagram')
+    );
+    if (attachmentsToSend.length > 0 && selectedRouteChannel !== 'whatsapp' && !canSendNativeMetaAudio) {
+      Alert.alert('Adjuntos', 'Este canal nativo acepta texto o audio. Cambia a WhatsApp para mandar otros archivos.');
       return;
     }
     if (replyingToMessage && attachmentsToSend.length > 0) {
@@ -20079,7 +20084,7 @@ function NativeConversationScreen({
     try {
       if (attachmentsToSend.length > 0) {
         const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          sendDraftAttachment(api, contact, attachment, index === 0 ? textToSend : '', selectedRoutePhoneNumberId, resolvedWhatsAppTransport)
+          sendDraftAttachment(api, contact, attachment, index === 0 ? textToSend : '', selectedRoutePhoneNumberId, resolvedWhatsAppTransport, selectedRouteChannel, replyPayload)
         )));
         setMessages((current) => current.map((message) => {
           if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
@@ -20087,6 +20092,9 @@ function NativeConversationScreen({
           const response = responses[index];
           const localMessageId = getSendResponseLocalMessageId(response);
           const providerMessageId = getSendResponseProviderMessageId(response);
+          const responseAudioUrl = response?.audio?.link || response?.audio?.url || response?.localMedia?.publicUrl || '';
+          const responseAudioMimeType = response?.audio?.mimeType || response?.audio?.mimetype || response?.localMedia?.mimeType || '';
+          const responseAudioDurationMs = Number(response?.audio?.durationMs || 0) || message.attachment?.durationMs;
           return {
             ...message,
             id: localMessageId || message.id,
@@ -20096,6 +20104,14 @@ function NativeConversationScreen({
             channel: response?.transport || message.channel,
             transport: response?.transport || message.transport,
             routingReason: response?.routingReason || response?.fallbackReason || message.routingReason,
+            attachment: message.attachment?.type === 'audio'
+              ? {
+                ...message.attachment,
+                ...(responseAudioUrl ? { url: responseAudioUrl } : {}),
+                ...(responseAudioMimeType ? { mimeType: responseAudioMimeType } : {}),
+                ...(responseAudioDurationMs ? { durationMs: responseAudioDurationMs } : {}),
+              }
+              : message.attachment,
           };
         }));
       } else {
@@ -23555,7 +23571,12 @@ function sendDraftAttachment(
   caption: string,
   phoneNumberId?: string,
   transport?: 'qr' | 'api',
+  channel: ComposerRouteChannel = 'whatsapp',
+  reply?: { replyToMessageId?: string; replyToProviderMessageId?: string },
 ) {
+  if (attachment.kind === 'audio' && (channel === 'messenger' || channel === 'instagram')) {
+    return api.sendMetaSocialAudio(contact, channel, attachment.dataUrl, attachment.durationMs, reply);
+  }
   if (attachment.kind === 'video') return api.sendVideo(contact, attachment.dataUrl, caption, phoneNumberId, transport);
   if (attachment.kind === 'audio') return api.sendAudio(contact, attachment.dataUrl, attachment.durationMs, phoneNumberId, transport);
   if (attachment.kind === 'document') return api.sendDocument(contact, attachment.dataUrl, attachment.name, attachment.mimeType, caption, phoneNumberId, transport);

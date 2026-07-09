@@ -45,7 +45,7 @@ import {
   buildDefaultMessageTemplateSendComponents,
   ensureDefaultWhatsAppApiMessageTemplates
 } from '../services/messageTemplatesService.js'
-import { sendMetaSocialTextMessage, sendMetaSocialReactionMessage, sendMetaSocialCommentReply, listMetaSocialPosts } from '../services/metaSocialMessagingService.js'
+import { sendMetaSocialTextMessage, sendMetaSocialAudioMessage, sendMetaSocialReactionMessage, sendMetaSocialCommentReply, listMetaSocialPosts } from '../services/metaSocialMessagingService.js'
 import {
   getWhatsAppQrDripSettings,
   saveWhatsAppQrDripSettings
@@ -468,6 +468,30 @@ export async function sendMetaSocialTextMessageView(req, res) {
     res.status(error.statusCode || 400).json({
       success: false,
       error: error.message || 'No se pudo enviar el mensaje por Meta'
+    })
+  }
+}
+
+export async function sendMetaSocialAudioMessageView(req, res) {
+  try {
+    const data = await sendMetaSocialAudioMessage({
+      contactId: req.body?.contactId,
+      platform: req.body?.platform,
+      audioDataUrl: req.body?.audioDataUrl,
+      audioUrl: req.body?.audioUrl,
+      durationMs: req.body?.durationMs,
+      externalId: req.body?.externalId,
+      replyToMessageId: req.body?.replyToMessageId,
+      replyToProviderMessageId: req.body?.replyToProviderMessageId,
+      publicBaseUrl: getPublicBaseUrl(req)
+    })
+    notifyHumanTakeover({ contactId: req.body?.contactId })
+    res.json({ success: true, data })
+  } catch (error) {
+    logger.error(`Error enviando audio Meta social: ${error.message}`)
+    res.status(error.statusCode || 400).json({
+      success: false,
+      error: error.message || 'No se pudo enviar el audio por Messenger/Instagram'
     })
   }
 }

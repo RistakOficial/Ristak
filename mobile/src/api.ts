@@ -787,6 +787,21 @@ export class RistakApiClient {
     });
   }
 
+  sendMetaSocialAudio(contact: ChatContact, platform: 'messenger' | 'instagram', audioDataUrl: string, durationMs?: number, reply?: MessageReplyPayload) {
+    return this.request<SendTextResponse>('/whatsapp-api/meta/social/messages/audio', {
+      method: 'POST',
+      body: JSON.stringify({
+        contactId: contact.id,
+        platform,
+        audioDataUrl,
+        durationMs,
+        externalId: `native-${platform}-audio-${Date.now()}`,
+        replyToMessageId: reply?.replyToMessageId || undefined,
+        replyToProviderMessageId: reply?.replyToProviderMessageId || undefined,
+      }),
+    });
+  }
+
   sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
     return this.request<SendTextResponse>('/whatsapp-api/messages/location', {
       method: 'POST',

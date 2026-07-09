@@ -587,9 +587,13 @@ foto/video completo, audio con icono/control del lado izquierdo o mapa completo.
 La hora, etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de
 la burbuja para no crear columnas internas. Los errores de envio no se escriben
 dentro del globo: se muestran como icono externo con detalle en tooltip. En
-Messenger/Instagram nativo el chat conserva texto solamente; si HighLevel esta
-conectado, los adjuntos se publican primero como URLs publicas y se envian por
-`attachments` de HighLevel.
+Messenger/Instagram nativo el chat puede conservar texto y notas de voz. El
+audio nativo de Meta se guarda primero como media reproducible de Ristak y luego
+se envia a Messenger/Instagram como `message.attachment.type='audio'` con URL
+publica HTTPS; la burbuja local queda como `message_type='audio'` con
+`media_url`/MIME para poder reproducirse al recargar. Otros adjuntos de
+Messenger/Instagram siguen dependiendo de HighLevel: si esta conectado, se
+publican primero como URLs publicas y se envian por `attachments` de HighLevel.
 
 Cuando el usuario toca contenido enviado o recibido dentro del chat (`/chat`,
 `/movil` o `mobile/`), Ristak debe abrirlo primero en su propio modal de enfoque,
