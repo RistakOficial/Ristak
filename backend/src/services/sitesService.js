@@ -23075,6 +23075,16 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
 const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-slot{box-sizing:border-box;width:100%}
 .rstk-imported-native-slot *{box-sizing:border-box}
+/* Cuando Ristak MONTA el elemento nativo real (data-rstk-native-mounted="true"), neutraliza
+   el "chrome de placeholder" que el autor del HTML suele poner en la zona reservada: la
+   etiqueta ::before/::after ("Video nativo Ristak"…), el borde punteado de drop-zone, la
+   caja de aspecto fijo y el centrado tipo placeholder. Sin esto se veía la CAJA DOBLE
+   (placeholder del autor + elemento real apilados). El elemento nativo aporta su propio
+   marco, así que aquí solo quitamos lo decorativo del placeholder; el fondo NO se toca para
+   no pisar el diseño de bloque. */
+.rstk-imported-native-slot[data-rstk-native-mounted="true"]::before,
+.rstk-imported-native-slot[data-rstk-native-mounted="true"]::after{content:none!important}
+.rstk-imported-native-slot[data-rstk-native-mounted="true"]{border:0!important;aspect-ratio:auto!important;place-items:stretch!important;color:inherit!important;font-weight:inherit!important}
 .rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}
 .rstk-imported-native-form-frame{display:block;width:100%;min-height:720px;border:0;background:transparent}
 .rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
