@@ -29,6 +29,7 @@ import {
   getMetaWebhookVerifyToken,
   processMetaSocialWebhook
 } from '../services/metaSocialMessagingService.js';
+import { normalizeContactNameFields } from '../utils/contactNameFormatter.js';
 import {
   buildInvoiceReferenceCandidates,
   normalizeInvoiceReference
@@ -881,11 +882,17 @@ export const handleContactWebhook = async (req, res) => {
 
     // Resolver/crear el contacto local con ID propio de Ristak; el ID de GHL
     // queda ligado en ghl_contact_id, nunca como primary key.
+    const contactNameFields = normalizeContactNameFields({
+      fullName: data.full_name,
+      name: data.contactName,
+      firstName: data.first_name || data.firstName,
+      lastName: data.last_name || data.lastName
+    });
     const { contactId: localContactId, created: contactCreatedNow } = await resolveOrCreateContactForGhl({
       ghlContactId: contactId,
       phone,
       email,
-      fullName: data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim(),
+      fullName: contactNameFields.fullName,
       source: data.source || 'gohighlevel',
       createdAt: data.date_created || data.dateCreated || data.createdAt || null
     });
@@ -935,9 +942,9 @@ export const handleContactWebhook = async (req, res) => {
       contactId,
       phoneUpsert.phone || null,
       data.email,
-      data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim() || 'Sin nombre',
-      data.first_name || data.firstName,
-      data.last_name || data.lastName,
+      contactNameFields.fullName || 'Sin nombre',
+      contactNameFields.firstName || null,
+      contactNameFields.lastName || null,
       data.source || attribution.sessionSource || attributionSource.sessionSource || 'gohighlevel',
       data.date_created || data.dateCreated || data.createdAt || new Date().toISOString(),
       attribution.pageUrl || attribution.url || attributionSource.url,
@@ -952,7 +959,7 @@ export const handleContactWebhook = async (req, res) => {
 
     // Si viene visitor_id, vincular histórico de sesiones
     if (visitorId && localContactId) {
-      const fullName = data.full_name || data.contactName || `${data.first_name || data.firstName || ''} ${data.last_name || data.lastName || ''}`.trim();
+      const fullName = contactNameFields.fullName;
 
       if (fullName && fullName !== 'Sin nombre') {
         const { linkVisitorToContact, unifyVisitorIds } = await import('../services/trackingService.js');

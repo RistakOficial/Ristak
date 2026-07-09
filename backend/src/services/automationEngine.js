@@ -13,6 +13,7 @@ import {
   prepareContactPhoneUpsert
 } from './contactIdentityService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { normalizeContactNameFields } from '../utils/contactNameFormatter.js'
 
 /**
  * Motor de ejecución de automatizaciones.
@@ -2889,12 +2890,20 @@ async function applyContactTags(contactId, tags) {
 }
 
 async function upsertContactFromConfig(config, ctx, overrides = {}) {
-  const firstName = renderedConfigValue(overrides.firstName ?? config.firstName, ctx)
-  const lastName = renderedConfigValue(overrides.lastName ?? config.lastName, ctx)
+  const rawFirstName = renderedConfigValue(overrides.firstName ?? config.firstName, ctx)
+  const rawLastName = renderedConfigValue(overrides.lastName ?? config.lastName, ctx)
+  const rawFullName = renderedConfigValue(overrides.fullName ?? config.fullName, ctx)
+  const nameFields = normalizeContactNameFields({
+    fullName: rawFullName,
+    firstName: rawFirstName,
+    lastName: rawLastName
+  })
+  const firstName = nameFields.firstName
+  const lastName = nameFields.lastName
   const phone = renderedConfigValue(overrides.phone ?? config.phone, ctx)
   const email = renderedConfigValue(overrides.email ?? config.email, ctx)
   const source = renderedConfigValue(overrides.source ?? config.source, ctx)
-  const fullName = compactName(firstName, lastName, overrides.fullName ?? config.fullName)
+  const fullName = nameFields.fullName || compactName(firstName, lastName, rawFullName)
   const customFields = {
     ...customFieldRowsToObject(config.customFields, ctx),
     ...objectFromCustomFields(overrides.customFields)

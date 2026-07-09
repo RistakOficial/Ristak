@@ -3,6 +3,7 @@ import fetch from 'node-fetch'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
+import { formatContactName } from '../utils/contactNameFormatter.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
@@ -57,12 +58,13 @@ function parseJsonObject(value) {
 }
 
 function compactName(...values) {
-  return values
+  const name = values
     .map(cleanString)
     .filter(Boolean)
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
+  return formatContactName(name)
 }
 
 function getPlatformLabel(platform) {

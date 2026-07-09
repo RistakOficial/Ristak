@@ -37,6 +37,7 @@ import { getAccountCurrency, normalizePhoneForAccount } from '../utils/accountLo
 import { createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { buildPaymentDisplay } from '../utils/paymentDisplay.js'
+import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 
 const SUCCESS_PAYMENT_STATUSES = new Set(['succeeded', 'paid', 'completed', 'complete', 'fulfilled', 'success'])
 const CLOSED_PAYMENT_STATUSES = new Set(['paid', 'succeeded', 'completed', 'complete', 'fulfilled', 'success', 'refunded', 'void', 'deleted', 'failed'])
@@ -263,11 +264,7 @@ const sendPaymentDeletionGuardError = (res, guard) => {
 }
 
 const splitName = (name = '') => {
-  const parts = cleanString(name).split(/\s+/).filter(Boolean)
-  return {
-    firstName: parts[0] || '',
-    lastName: parts.slice(1).join(' ')
-  }
+  return splitContactName(name)
 }
 
 const normalizePaymentMode = (mode) => mode === 'test' ? 'test' : 'live'
@@ -333,7 +330,7 @@ async function findExistingContactForPayment({ contactId, email, phone }) {
 }
 
 async function ensureLocalContactForPayment({ contactId, contactName, email, phone }) {
-  const fullName = cleanString(contactName)
+  const fullName = formatContactName(cleanString(contactName))
   const normalizedPhone = await normalizePhoneForAccount(phone) || cleanString(phone) || null
   const normalizedEmail = cleanString(email) || null
   const existingContactId = await findExistingContactForPayment({

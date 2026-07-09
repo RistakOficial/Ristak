@@ -37,6 +37,7 @@ import {
   paymentGateMatches
 } from '../services/publicPaymentGateService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
+import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -476,11 +477,7 @@ function normalizeEmail(value) {
 }
 
 function splitName(fullName = '') {
-  const parts = cleanString(fullName).split(/\s+/).filter(Boolean);
-  return {
-    firstName: parts[0] || '',
-    lastName: parts.slice(1).join(' ')
-  };
+  return splitContactName(fullName);
 }
 
 function dateKeyFromDate(date, timezone = 'UTC') {
@@ -891,7 +888,7 @@ async function resolveTrustedPublicCalendarContactId(body = {}) {
 }
 
 async function upsertPublicCalendarContact({ calendar, contact, host, sourceUrl, explicitContactId = '' }) {
-  const fullName = cleanString(contact.name || contact.fullName);
+  const fullName = formatContactName(cleanString(contact.name || contact.fullName));
   const email = normalizeEmail(contact.email);
   const rawPhone = cleanString(contact.phone);
   const phone = rawPhone ? await normalizePhoneForAccount(rawPhone) || rawPhone : '';

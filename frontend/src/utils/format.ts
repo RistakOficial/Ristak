@@ -33,7 +33,7 @@ const NAME_CONNECTORS = new Set([
 
 const capitalizeCompoundSegment = (segment: string): string => {
   if (!segment) return ''
-  return segment.charAt(0).toUpperCase() + segment.slice(1)
+  return segment.charAt(0).toLocaleUpperCase('es-MX') + segment.slice(1)
 }
 
 const formatCompoundWord = (word: string): string => {
@@ -96,22 +96,22 @@ export const formatUrlParameter = (value?: string | null): string => {
     .join(' ')
 }
 
+const looksLikeEmail = (value: string): boolean => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+
+const looksLikePhone = (value: string): boolean => {
+  if (!/^[+()\s\-.\d]+$/.test(value)) return false
+  return value.replace(/\D/g, '').length >= 7
+}
+
 export const formatName = (value?: string | null): string => {
   if (!value) return ''
-  const trimmed = value.trim()
+  const trimmed = value.replace(/\s+/g, ' ').trim()
   if (!trimmed) return ''
-
-  const lowercase = trimmed.toLowerCase()
-  const uppercase = trimmed.toUpperCase()
-  const shouldNormalize =
-    trimmed === lowercase ||
-    (trimmed === uppercase && /\s/.test(trimmed))
-
-  if (!shouldNormalize) {
+  if (trimmed.startsWith('@') || looksLikeEmail(trimmed) || looksLikePhone(trimmed)) {
     return trimmed
   }
 
-  const words = lowercase
+  const words = trimmed.toLocaleLowerCase('es-MX')
     .split(/\s+/)
     .filter(Boolean)
     .map((word, index) => {

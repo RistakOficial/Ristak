@@ -301,6 +301,12 @@ Capacidades:
   como actualizacion manual del contacto y conserva el flujo normal de
   automatizaciones.
 - Telefonos normalizados.
+- Nombres de contactos normalizados como nombre propio al entrar al CRM. Si un
+  contacto llega como `raul gomez`, `RAUL GOMEZ` o `rAuL GomEZ`, Ristak lo guarda
+  y muestra como `Raul Gomez`. La normalizacion aplica en alta/edicion manual,
+  formularios/Sites, HighLevel, WhatsApp, Meta, email, calendarios, pagos/API y
+  contactos de prueba de automatizaciones. Correos, telefonos y handles usados
+  como fallback no se capitalizan como nombres.
 - Autocompletado de identidad desde mensajes entrantes: cuando un contacto de
   Messenger, Instagram DM o comentarios Facebook/Instagram todavia no tiene
   telefono y/o correo, el backend puede detectar el primer telefono/correo claro

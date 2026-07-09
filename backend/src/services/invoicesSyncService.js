@@ -31,6 +31,7 @@ import {
   normalizeInvoiceNumber
 } from '../utils/invoiceIdentity.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
+import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 
 const PAID_INVOICE_STATUSES = new Set(['paid', 'succeeded', 'completed'])
 const PAID_STATUS_DOWNGRADE_PROTECTED_STATUSES = new Set(['draft', 'sent', 'pending', 'overdue', 'payment_processing'])
@@ -59,6 +60,10 @@ const LOCAL_EXPORT_METHOD_TO_GHL_MODE = {
 
 function cleanString(value) {
   return String(value || '').trim()
+}
+
+function cleanInvoiceContactName(value, ...phones) {
+  return formatContactName(sanitizeContactName(value, ...phones) || '')
 }
 
 function firstDefined(...values) {
@@ -426,17 +431,18 @@ async function upsertHighLevelContactLocallyForPayment({ localContact, highLevel
   const email = cleanString(highLevelContact.email || localContact.contact_email) || null
   const phone = cleanString(highLevelContact.phone || localContact.contact_phone) || null
   // Nunca guardar el teléfono (ni el email) como nombre del contacto
-  const fullName = sanitizeContactName(highLevelContact.contactName, phone) ||
-    sanitizeContactName(`${highLevelContact.firstName || ''} ${highLevelContact.lastName || ''}`.trim(), phone) ||
-    sanitizeContactName(highLevelContact.name, phone) ||
-    sanitizeContactName(localContact.contact_name, phone) ||
+  const fullName = cleanInvoiceContactName(highLevelContact.contactName, phone) ||
+    cleanInvoiceContactName(`${highLevelContact.firstName || ''} ${highLevelContact.lastName || ''}`.trim(), phone) ||
+    cleanInvoiceContactName(highLevelContact.name, phone) ||
+    cleanInvoiceContactName(localContact.contact_name, phone) ||
     ''
-  const firstName = sanitizeContactName(highLevelContact.firstName, phone) ||
-    sanitizeContactName(localContact.first_name, phone) ||
-    cleanString(fullName.split(' ')[0])
-  const lastName = sanitizeContactName(highLevelContact.lastName, phone) ||
-    sanitizeContactName(localContact.last_name, phone) ||
-    cleanString(fullName.split(' ').slice(1).join(' '))
+  const fullNameParts = splitContactName(fullName)
+  const firstName = cleanInvoiceContactName(highLevelContact.firstName, phone) ||
+    cleanInvoiceContactName(localContact.first_name, phone) ||
+    fullNameParts.firstName
+  const lastName = cleanInvoiceContactName(highLevelContact.lastName, phone) ||
+    cleanInvoiceContactName(localContact.last_name, phone) ||
+    fullNameParts.lastName
   const phoneUpsert = await prepareContactPhoneUpsert({ contactId: targetId, phone })
   const emailMergeFromContactId = await clearConflictingContactEmail({ targetId, email })
 

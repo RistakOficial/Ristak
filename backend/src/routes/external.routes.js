@@ -46,6 +46,7 @@ import {
   serializeContactCustomFieldsForDb
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 
 const router = express.Router()
@@ -237,23 +238,23 @@ function writablePayload(body = {}, writableColumns = []) {
 }
 
 function splitName(value = '') {
-  const parts = String(value || '').trim().split(/\s+/).filter(Boolean)
-  return {
-    firstName: parts[0] || '',
-    lastName: parts.slice(1).join(' ')
-  }
+  return splitContactName(value)
 }
 
 function normalizeContactPayload(body = {}) {
   const data = body?.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : body
-  const fullName = data.full_name || data.name || [data.first_name, data.last_name].filter(Boolean).join(' ')
-  const nameParts = splitName(fullName)
+  const nameParts = normalizeContactNameFields({
+    fullName: data.full_name,
+    name: data.name,
+    firstName: data.first_name,
+    lastName: data.last_name
+  })
 
   return {
     id: data.id,
-    full_name: fullName || '',
-    first_name: data.first_name || nameParts.firstName,
-    last_name: data.last_name || nameParts.lastName,
+    full_name: nameParts.fullName || '',
+    first_name: nameParts.firstName,
+    last_name: nameParts.lastName,
     email: data.email || '',
     phone: normalizePhoneForStorage(data.phone) || data.phone || '',
     source: data.source || 'external_api',
@@ -266,9 +267,15 @@ async function upsertLocalContact(contact = {}) {
   const externalId = contact.id || contact._id
   if (!externalId) throw new Error('No se pudo resolver el id del contacto')
 
-  const firstName = contact.firstName || contact.first_name || splitName(contact.name || contact.full_name).firstName
-  const lastName = contact.lastName || contact.last_name || splitName(contact.name || contact.full_name).lastName
-  const fullName = contact.full_name || contact.name || [firstName, lastName].filter(Boolean).join(' ')
+  const contactNameFields = normalizeContactNameFields({
+    fullName: contact.full_name,
+    name: contact.name,
+    firstName: contact.firstName || contact.first_name,
+    lastName: contact.lastName || contact.last_name
+  })
+  const firstName = contactNameFields.firstName
+  const lastName = contactNameFields.lastName
+  const fullName = contactNameFields.fullName
 
   // Resolver el ID local de Ristak: si el id provisto ya existe localmente se
   // usa tal cual; si es un ID externo (típicamente HighLevel) se liga en

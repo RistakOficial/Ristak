@@ -4,6 +4,7 @@ import { buildPhoneMatchCandidates, normalizePhoneForStorage } from '../utils/ph
 import { createRistakId } from '../utils/idGenerator.js'
 // (CNT-002) Para no perder custom_fields al fusionar.
 import { mergeContactCustomFields, serializeContactCustomFieldsForDb } from '../utils/contactCustomFields.js'
+import { formatContactName, normalizeContactNameFields } from '../utils/contactNameFormatter.js'
 
 // (CNT-002) Parser tolerante de tags almacenados como JSON array (o null/legacy).
 function parseStoredTags(raw) {
@@ -200,6 +201,7 @@ export async function resolveOrCreateContactForGhl({
 
   const contactId = generateContactId()
   const canonicalPhone = normalizePhoneForStorage(phone) || phone || null
+  const nameFields = normalizeContactNameFields({ fullName })
 
   await db.run(
     `INSERT INTO contacts (id, ghl_contact_id, phone, email, full_name, source, created_at, updated_at)
@@ -209,7 +211,7 @@ export async function resolveOrCreateContactForGhl({
       ghlId,
       canonicalPhone,
       cleanEmail || null,
-      String(fullName || '').trim() || null,
+      nameFields.fullName || null,
       source,
       createdAt || null
     ]
@@ -455,9 +457,9 @@ export async function mergeContactIds({ fromId, toId, canonicalPhone = null }) {
   `, [
     normalizedPhone || null,
     fromContact.email || null,
-    fromContact.full_name || null,
-    fromContact.first_name || null,
-    fromContact.last_name || null,
+    formatContactName(fromContact.full_name) || null,
+    formatContactName(fromContact.first_name) || null,
+    formatContactName(fromContact.last_name, { allowLeadingConnectorLowercase: true }) || null,
     fromContact.source || null,
     fromContact.visitor_id || null,
     fromContact.attribution_url || null,

@@ -71,6 +71,11 @@ import {
   normalizeWhatsAppProfileName,
   shouldReplaceWhatsAppApiContactName
 } from '../utils/whatsappContactProfile.js'
+import {
+  formatContactName,
+  normalizeContactNameFields,
+  splitContactName
+} from '../utils/contactNameFormatter.js'
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
 import { getEmailStatus } from '../services/emailService.js'
@@ -1657,13 +1662,7 @@ const getWhatsAppLocationFromPayload = (rawPayload, messageType = '') => {
   return {}
 }
 
-const splitName = (name = '') => {
-  const parts = cleanString(name).split(/\s+/).filter(Boolean)
-  return {
-    firstName: parts[0] || '',
-    lastName: parts.slice(1).join(' ')
-  }
-}
+const splitName = (name = '') => splitContactName(name)
 
 const createManualContactId = () => generateContactId()
 
@@ -1695,7 +1694,7 @@ const getContactDisplayName = (contact = {}) => {
     return socialName
   }
   if (storedName && !shouldReplaceWhatsAppApiContactName(storedName, phone)) {
-    return storedName
+    return formatContactName(storedName)
   }
 
   return normalizeWhatsAppProfileName(contact.whatsapp_profile_name, phone) ||
@@ -1845,6 +1844,9 @@ const mapContactRowForResponse = (contact = {}) => {
     id: contact.id,
     createdAt: contact.created_at,
     name: getContactDisplayName(contact),
+    full_name: formatContactName(contact.full_name),
+    first_name: formatContactName(contact.first_name),
+    last_name: formatContactName(contact.last_name, { allowLeadingConnectorLowercase: true }),
     email: contact.email || '',
     phone: contact.phone || '',
     ltv: parseFloat(contact.total_paid || 0),
@@ -3918,9 +3920,13 @@ export const createContact = async (req, res) => {
       createdAt
     } = req.body || {}
 
-    const firstNameInput = cleanString(first_name)
-    const lastNameInput = cleanString(last_name)
-    const fullName = cleanString(full_name || name || [firstNameInput, lastNameInput].filter(Boolean).join(' '))
+    const contactNameFields = normalizeContactNameFields({
+      fullName: full_name,
+      name,
+      firstName: first_name,
+      lastName: last_name
+    })
+    const fullName = contactNameFields.fullName
     const normalizedEmail = cleanString(email).toLowerCase() || null
     const normalizedPhone = phone ? await normalizePhoneForAccount(phone) : null
 
@@ -3956,10 +3962,7 @@ export const createContact = async (req, res) => {
     }
 
     const id = createManualContactId()
-    const nameParts = fullName ? splitName(fullName) : {
-      firstName: firstNameInput,
-      lastName: lastNameInput
-    }
+    const nameParts = fullName ? splitName(fullName) : contactNameFields
     const createdAtTimestamp = parseSortableTimestamp(createdAt)
     const createdAtValue = createdAt && createdAtTimestamp > 0
       ? new Date(createdAtTimestamp).toISOString()
@@ -4204,6 +4207,7 @@ export const updateContact = async (req, res) => {
       ? buildHighLevelCustomFieldsPayload(preparedCustomFields)
       : null
     const shouldSyncHighLevelCustomFields = Array.isArray(highLevelCustomFields) && highLevelCustomFields.length > 0
+    const normalizedFullName = full_name !== undefined ? formatContactName(full_name) : undefined
     const normalizedPhone = phone !== undefined
       ? (await normalizePhoneForAccount(phone) || phone || null)
       : undefined
@@ -4270,8 +4274,13 @@ export const updateContact = async (req, res) => {
     const params = []
 
     if (full_name !== undefined) {
+      const nameParts = splitName(normalizedFullName)
       updates.push('full_name = ?')
-      params.push(full_name)
+      params.push(normalizedFullName)
+      updates.push('first_name = ?')
+      params.push(nameParts.firstName || null)
+      updates.push('last_name = ?')
+      params.push(nameParts.lastName || null)
     }
     if (email !== undefined) {
       updates.push('email = ?')
@@ -4328,7 +4337,7 @@ export const updateContact = async (req, res) => {
       const ghlClient = ghlContactId ? await getGHLClient() : null
       const ghlUpdateData = {}
 
-      if (full_name) ghlUpdateData.name = full_name
+      if (normalizedFullName) ghlUpdateData.name = normalizedFullName
       if (email) ghlUpdateData.email = email
       if (phone) ghlUpdateData.phone = phoneUpsert?.phone || normalizedPhone
       if (source) ghlUpdateData.source = source

@@ -27,6 +27,7 @@ import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
 import { isPaymentGateEnabled, normalizePaymentGateConfig } from './publicPaymentGateService.js'
 import { hasConnectedMetaDatasetConfig } from './metaAdsService.js'
 import { createEntityId, generateShortId } from '../utils/idGenerator.js'
+import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 
 const LOCAL_CALENDAR_PREFIX = 'rstk_cal'
 const LOCAL_APPOINTMENT_PREFIX = 'rstk_appt'
@@ -4368,11 +4369,7 @@ function normalizeGoogleContactEmail(value) {
 }
 
 function splitGoogleContactName(fullName = '') {
-  const parts = cleanString(fullName).split(/\s+/).filter(Boolean)
-  return {
-    firstName: parts[0] || '',
-    lastName: parts.slice(1).join(' ')
-  }
+  return splitContactName(fullName)
 }
 
 /**
@@ -4382,7 +4379,7 @@ function splitGoogleContactName(fullName = '') {
  * contacto, como hoy).
  */
 export async function resolveOrCreateContactForGoogleAppointment({ email, name, phone } = {}) {
-  const fullName = cleanString(name)
+  const fullName = formatContactName(cleanString(name))
   const normalizedEmail = normalizeGoogleContactEmail(email)
   const rawPhone = cleanString(phone)
   // (GCAL-006) Normaliza el teléfono según la cuenta (mismo helper que el controller público).

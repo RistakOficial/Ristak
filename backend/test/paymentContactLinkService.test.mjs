@@ -121,7 +121,7 @@ test('extractPaymentContactIdentity lee identidad desde Stripe, Conekta, Mercado
       contactId: '',
       email: 'clip@example.test',
       phone: '+526567426615',
-      fullName: 'CLIP Cliente',
+      fullName: 'Clip Cliente',
       provider: 'clip'
     }
   )
