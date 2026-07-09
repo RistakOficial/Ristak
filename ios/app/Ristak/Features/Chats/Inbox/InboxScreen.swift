@@ -41,9 +41,8 @@ struct InboxScreen: View {
 
     var body: some View {
         content
-            // Título grande «Chats» de siempre (diseño original intacto). El
-            // indicador de carga es sutil: el subtítulo muestra «Actualizando…»
-            // mientras refresca en segundo plano; si no, el conteo de no leídos.
+            // Título grande «Chats» de siempre (diseño original intacto).
+            // Los refrescos de fondo son silenciosos para no ensuciar la vista.
             .navigationTitle("Chats")
             .navigationSubtitle(inboxSubtitle)
             .searchable(text: $viewModel.searchText, prompt: "Buscar chats")
@@ -108,12 +107,9 @@ struct InboxScreen: View {
             }
     }
 
-    /// Subtítulo del header: «Actualizando…» mientras refresca en segundo plano
-    /// (mostrando lo guardado); si no, el conteo de no leídos.
+    /// Subtítulo del header: sólo conteo útil. Los refrescos de fondo no se
+    /// anuncian visualmente para mantener limpia la bandeja.
     private var inboxSubtitle: String {
-        if viewModel.isSilentRefreshing || viewModel.isInitialLoading {
-            return "Actualizando…"
-        }
         return viewModel.unreadTotal > 0 ? "\(viewModel.unreadTotal) sin leer" : ""
     }
 
