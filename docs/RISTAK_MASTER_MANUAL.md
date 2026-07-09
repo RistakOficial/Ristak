@@ -248,6 +248,14 @@ El plan basico puede abrir solo `conversational_ai` y limitar la creacion a
 No basta con esconder botones en frontend. Cualquier endpoint que escriba o lea
 datos sensibles debe tener validacion de backend.
 
+Las subfeatures premium no deben colarse por herencia visual. `appointments`
+habilita citas y calendarios locales; `google_calendar` habilita solo la
+integracion/sincronizacion con Google. El cobro antes de agendar en calendarios
+se controla con `calendar_payments` (`calendar_payment` /
+`calendar_booking_payments` como aliases legacy) y, por compatibilidad temporal,
+con plan `pro`/`professional` cuando el portal aun no manda esa llave. Si el
+portal manda `calendar_payments=false`, ese false gana aunque el plan sea Pro.
+
 Modulos de acceso principales:
 
 - dashboard, appointments, payments, contacts, chat, reports, analytics,
@@ -934,6 +942,9 @@ Reglas base:
   ediciones y eliminaciones quedan en `sync_status` pendiente/error/
   `pending_delete` y se empujan a HighLevel cuando la integracion vuelva a
   conectarse.
+- Las rutas publicas/privadas de calendario base dependen de `appointments`, no
+  de `google_calendar`. Solo las rutas `/api/calendars/google-integration/*` y
+  `/:id/google-sync` deben exigir `google_calendar`.
 - Los calendarios publicos/embebidos reutilizan contactos existentes: si el
   correo ya existe en `contacts`, la cita se agenda sobre ese contacto aunque el
   telefono del formulario coincida con otro registro. Esto evita errores por el
@@ -957,6 +968,13 @@ Reglas base:
   `customEvents.enabled` por default para mandar `Schedule` al agendar. Ediciones
   posteriores y sincronizaciones de calendarios ya existentes respetan el apagado
   manual del usuario.
+- Cobro antes de agendar: el paso `Cobro` del wizard de calendarios solo aparece
+  cuando la licencia permite `calendar_payments` o el plan profesional
+  compatible. El backend tambien valida la misma regla al crear/editar
+  calendarios y al renderizar/agendar publicamente; si una cuenta baja de plan,
+  `bookingPayment.enabled` se ignora para el visitante y no se crean links de
+  pago nuevos. En calendario, ademas, la UI exige una pasarela conectada antes de
+  activar el cobro.
 - El canal `smart` de eventos de calendario se resuelve por la SUPERFICIE REAL
   de la conversion, no por la atribucion del contacto (ver
   `docs/CONVERSION_ATTRIBUTION.md`): un booking en la pagina/widget publico es

@@ -105,6 +105,7 @@ import {
   getDetectedAccountLocaleDefaults,
   normalizeCurrencyCode
 } from '@/utils/accountLocale'
+import { hasCalendarPaymentsAccess, hasLicenseFeature } from '@/utils/accessControl'
 import { DEFAULT_TIMEZONE } from '@/utils/timezone'
 import styles from './HighLevelIntegration.module.css'
 import pageStyles from './CalendarsConfiguration.module.css'
@@ -792,6 +793,12 @@ export const CalendarsConfiguration: React.FC = () => {
   const [googleMergePromptHandledIds, setGoogleMergePromptHandledIds] = useAppConfig<string[]>('google_calendar_merge_prompt_handled_ids', [])
   const [accountCurrencyConfig] = useAppConfig<string>(ACCOUNT_CURRENCY_CONFIG_KEY, detectedAccountLocaleDefaults.currency)
   const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig, detectedAccountLocaleDefaults.currency)
+  const hasGoogleCalendarAccess = hasLicenseFeature(user, ['google_calendar'])
+  const hasCalendarPaymentAccess = hasCalendarPaymentsAccess(user)
+  const visibleCalendarWizardSteps = useMemo(
+    () => CALENDAR_WIZARD_STEPS.filter(step => hasCalendarPaymentAccess || step.id !== 'payment'),
+    [hasCalendarPaymentAccess]
+  )
 
   // El origen de calendarios solo tiene sentido con integraciones externas.
   // Sin ellas, Ristak es la fuente operativa.
@@ -912,10 +919,19 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [showToast])
 
   useEffect(() => {
+    if (!hasGoogleCalendarAccess) {
+      setGoogleIntegration(null)
+      setGoogleCalendarId('')
+      setGoogleCalendarOptions([])
+      setLoadingGoogleIntegration(false)
+      return
+    }
+
     loadGoogleIntegration()
-  }, [])
+  }, [hasGoogleCalendarAccess])
 
   useEffect(() => {
+    if (!hasGoogleCalendarAccess) return
     const params = new URLSearchParams(location.search)
     const handoffToken = params.get('google_handoff_token') || ''
     const connected = params.get('connected') === '1'
@@ -943,15 +959,19 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     void finishGoogleReturn()
-  }, [location.hash, location.pathname, location.search, navigate, showToast])
+  }, [hasGoogleCalendarAccess, location.hash, location.pathname, location.search, navigate, showToast])
 
   useEffect(() => {
+    if (!hasGoogleCalendarAccess) {
+      setGoogleCalendarOptions([])
+      return
+    }
     if (googleIntegration?.connected) {
       loadGoogleCalendarOptions()
     } else {
       setGoogleCalendarOptions([])
     }
-  }, [googleIntegration?.connected])
+  }, [hasGoogleCalendarAccess, googleIntegration?.connected])
 
   useEffect(() => {
     setActiveView(current => current === routeState.view ? current : routeState.view)
@@ -980,6 +1000,19 @@ export const CalendarsConfiguration: React.FC = () => {
       setCalendarMetaParamsOpen(false)
     }
   }, [calendars, expandedCalendarId, routeState.calendarId, routeState.create, routeState.view])
+
+  useEffect(() => {
+    if (!hasGoogleCalendarAccess && routeState.view === 'google') {
+      setActiveView('calendars')
+      navigate(buildCalendarSettingsPath('calendars'), { replace: true })
+    }
+  }, [hasGoogleCalendarAccess, navigate, routeState.view])
+
+  useEffect(() => {
+    if (!hasCalendarPaymentAccess && calendarWizardStep === 'payment') {
+      setCalendarWizardStep('basics')
+    }
+  }, [calendarWizardStep, hasCalendarPaymentAccess])
 
   // Sin integración conectada el selector de origen queda oculto. Si había quedado
   // en una fuente externa desconectada, se vuelve a una fuente visible.
@@ -1054,6 +1087,14 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const loadGoogleIntegration = async () => {
+    if (!hasGoogleCalendarAccess) {
+      setGoogleIntegration(null)
+      setGoogleCalendarId('')
+      setGoogleCalendarOptions([])
+      setLoadingGoogleIntegration(false)
+      return null
+    }
+
     try {
       setLoadingGoogleIntegration(true)
       const data = await calendarsService.getGoogleIntegration()
@@ -1124,6 +1165,11 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const loadGoogleCalendarOptions = async (integrationStatus: GoogleCalendarIntegrationStatus | null = googleIntegration) => {
+    if (!hasGoogleCalendarAccess) {
+      setGoogleCalendarOptions([])
+      return []
+    }
+
     if (!integrationStatus?.connected) {
       setGoogleCalendarOptions([])
       return []
@@ -1262,6 +1308,8 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleConnectGoogleOAuth = async () => {
+    if (!hasGoogleCalendarAccess) return
+
     setSavingGoogleIntegration(true)
     try {
       const data = await calendarsService.getGoogleConnectUrl()
@@ -1277,6 +1325,8 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleTestGoogleIntegration = async () => {
+    if (!hasGoogleCalendarAccess) return
+
     setTestingGoogleIntegration(true)
     try {
       const data = await calendarsService.testGoogleIntegration()
@@ -1293,6 +1343,8 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleSyncGoogleIntegration = async () => {
+    if (!hasGoogleCalendarAccess) return
+
     const calendarSnapshot = calendars.length ? calendars : await loadCalendars()
     if (googleIntegration?.connected && getGoogleLinkedCalendars(calendarSnapshot).length === 0) {
       setActiveView('calendars')
@@ -1417,6 +1469,8 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleDisconnectGoogleIntegration = async () => {
+    if (!hasGoogleCalendarAccess) return
+
     showConfirm(
       'Desconectar Google Calendar',
       'Las citas locales se conservan, pero esta instalación dejará de sincronizar con Google Calendar.',
@@ -1583,7 +1637,9 @@ export const CalendarsConfiguration: React.FC = () => {
       // Construir payload con todos los campos editables
       const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
       const bookingCompletion = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
-      const bookingPayment = normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
+      const bookingPayment = hasCalendarPaymentAccess
+        ? normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
+        : createDefaultCalendarBookingPayment()
       const bookingDisplay = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
       const customEvents = getSavableCalendarCustomEvents(selectedCalendar.customEvents, accountCurrency)
       const selectedFormWithPayment = findSelectedFormWithPaymentGate(bookingForm, formSites)
@@ -1614,7 +1670,7 @@ export const CalendarsConfiguration: React.FC = () => {
           'Cobro duplicado',
           `El formulario "${getSiteDisplayName(selectedFormWithPayment)}" ya tiene cobro activo. Desactiva el cobro del calendario o elige un formulario sin cobro.`
         )
-        setCalendarWizardStep('payment')
+        if (hasCalendarPaymentAccess) setCalendarWizardStep('payment')
         return
       }
 
@@ -2191,25 +2247,27 @@ export const CalendarsConfiguration: React.FC = () => {
     const customFormSites = formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
     const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
     const bookingCompletionConfig = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
-    const bookingPaymentConfig = normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
+    const bookingPaymentConfig = hasCalendarPaymentAccess
+      ? normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
+      : createDefaultCalendarBookingPayment()
     const bookingDisplayConfig = normalizeCalendarBookingDisplay(selectedCalendar.bookingDisplay, selectedCalendar.eventColor)
     const customEventsConfig = normalizeCalendarCustomEvents(selectedCalendar.customEvents)
     const customEventsHasParameters = hasCalendarCustomEventParameters(customEventsConfig.parameters)
     const selectedCalendarAttributed = attributionCalendarIds.includes(selectedCalendar.id)
     const selectedCustomForm = customFormSites.find(site => site.id === bookingFormConfig.customFormId)
-    const selectedCustomFormHasPayment = siteHasPaymentGateEnabled(selectedCustomForm)
+    const selectedCustomFormHasPayment = hasCalendarPaymentAccess && siteHasPaymentGateEnabled(selectedCustomForm)
     const selectedCustomFormName = getSiteDisplayName(selectedCustomForm)
-    const calendarPaymentEnabled = Boolean(bookingPaymentConfig.enabled)
+    const calendarPaymentEnabled = hasCalendarPaymentAccess && Boolean(bookingPaymentConfig.enabled)
     const calendarFormOptions = customFormSites.map(site => ({
       value: site.id,
-      label: `${site.name || site.title || 'Formulario'}${site.siteType === 'interactive_form' ? ' · multistep' : ''}${siteHasPaymentGateEnabled(site) ? ' · cobra' : ''}`
+      label: `${site.name || site.title || 'Formulario'}${site.siteType === 'interactive_form' ? ' · multistep' : ''}${hasCalendarPaymentAccess && siteHasPaymentGateEnabled(site) ? ' · cobra' : ''}`
     }))
     const selectedPublicPath = getCalendarSharePath(selectedCalendar)
     const selectedPublicUrl = buildCalendarShareUrl(selectedCalendar)
     const selectedPublicOpenUrl = buildCalendarOpenUrl(selectedCalendar)
-    const currentStepIndex = CALENDAR_WIZARD_STEPS.findIndex(step => step.id === calendarWizardStep)
+    const currentStepIndex = visibleCalendarWizardSteps.findIndex(step => step.id === calendarWizardStep)
     const safeStepIndex = currentStepIndex >= 0 ? currentStepIndex : 0
-    const currentStep = CALENDAR_WIZARD_STEPS[safeStepIndex]
+    const currentStep = visibleCalendarWizardSteps[safeStepIndex]
     const paymentPositionOptions = bookingDisplayConfig.formPosition === 'before'
       ? [
           { value: 'after_form', label: 'Formulario → calendario → pago → agendar' },
@@ -2241,6 +2299,8 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     const updateBookingPaymentConfig = (nextConfig: PaymentGateConfig) => {
+      if (!hasCalendarPaymentAccess) return
+
       const normalizedPayment = normalizeCalendarBookingPayment({
         ...nextConfig,
         gateway: isCalendarPaymentGateway(nextConfig.gateway) ? nextConfig.gateway : 'stripe'
@@ -2320,8 +2380,8 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     const goToRelativeStep = (offset: number) => {
-      const nextIndex = Math.min(CALENDAR_WIZARD_STEPS.length - 1, Math.max(0, safeStepIndex + offset))
-      setCalendarWizardStep(CALENDAR_WIZARD_STEPS[nextIndex].id)
+      const nextIndex = Math.min(visibleCalendarWizardSteps.length - 1, Math.max(0, safeStepIndex + offset))
+      setCalendarWizardStep(visibleCalendarWizardSteps[nextIndex].id)
     }
 
     const handleCustomBookingFormToggle = (enabled: boolean) => {
@@ -2397,7 +2457,7 @@ export const CalendarsConfiguration: React.FC = () => {
       })
     }
 
-    const showGoogleSyncSettings = Boolean(googleIntegration?.connected && calendar.source !== 'google')
+    const showGoogleSyncSettings = Boolean(hasGoogleCalendarAccess && googleIntegration?.connected && calendar.source !== 'google')
     const currentGoogleCalendarId = selectedCalendar.googleCalendarId || ''
     const currentGoogleOption = googleCalendarOptions.find((option) => option.id === currentGoogleCalendarId)
     const googleAccountLabel = googleIntegration?.googleAccountEmail || googleIntegration?.googleAccountName || 'Cuenta Google conectada'
@@ -2671,7 +2731,7 @@ export const CalendarsConfiguration: React.FC = () => {
       >
         <div className={pageStyles.calendarWizardShell}>
           <aside className={pageStyles.calendarWizardSteps} aria-label="Pasos de configuración">
-            {CALENDAR_WIZARD_STEPS.map((step, index) => (
+            {visibleCalendarWizardSteps.map((step, index) => (
               <button
                 key={step.id}
                 type="button"
@@ -2689,7 +2749,7 @@ export const CalendarsConfiguration: React.FC = () => {
           <div className={pageStyles.calendarWizardMain}>
             <div className={pageStyles.calendarWizardTopbar}>
               <div>
-                <span>Paso {safeStepIndex + 1} de {CALENDAR_WIZARD_STEPS.length}</span>
+                <span>Paso {safeStepIndex + 1} de {visibleCalendarWizardSteps.length}</span>
                 <h3>{currentStep.label}</h3>
               </div>
               <Button
@@ -3226,6 +3286,7 @@ export const CalendarsConfiguration: React.FC = () => {
                         onCommit={() => {}}
                         availableGateways={CALENDAR_PAYMENT_GATEWAY_OPTIONS}
                         currencyFallback={accountCurrency}
+                        requireConnectedGateway
                       />
                     </div>
 
@@ -3797,7 +3858,7 @@ export const CalendarsConfiguration: React.FC = () => {
               <Button
                 variant="secondary"
                 onClick={() => goToRelativeStep(1)}
-                disabled={savingConfig || safeStepIndex === CALENDAR_WIZARD_STEPS.length - 1}
+                disabled={savingConfig || safeStepIndex === visibleCalendarWizardSteps.length - 1}
               >
                 Siguiente
               </Button>
@@ -4093,6 +4154,8 @@ export const CalendarsConfiguration: React.FC = () => {
   )
 
   const renderGoogleCalendarTab = () => {
+    if (!hasGoogleCalendarAccess) return null
+
     const isConnected = Boolean(googleIntegration?.connected)
     const testFailed = googleIntegration?.lastTestStatus === 'error'
     const syncFailed = googleIntegration?.lastSyncStatus === 'error'
@@ -4289,6 +4352,8 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const renderGoogleHeaderAction = () => {
+    if (!hasGoogleCalendarAccess) return null
+
     const isConnected = Boolean(googleIntegration?.connected)
 
     return (

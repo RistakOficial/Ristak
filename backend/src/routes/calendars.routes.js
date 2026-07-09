@@ -1,10 +1,12 @@
 import express from 'express';
 import * as calendarsController from '../controllers/calendarsController.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
+import { requireFeature } from '../middleware/licenseMiddleware.js';
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js';
 
 const router = express.Router();
 export const publicCalendarsRoutes = express.Router();
+const requireGoogleCalendarFeature = requireFeature('google_calendar');
 
 /**
  * Rutas para la gestión de calendarios de Ristak e integraciones opcionales.
@@ -26,15 +28,15 @@ router.get('/', calendarsController.getCalendars);
 router.post('/', calendarsController.createCalendar);
 
 // Integración Google Calendar: OAuth por handoff desde el portal Ristak.
-router.get('/google-integration', calendarsController.getGoogleCalendarIntegration);
-router.post('/google-integration/connect-url', calendarsController.getGoogleCalendarConnectUrl);
-router.post('/google-integration/connect/claim', calendarsController.claimGoogleCalendarOAuth);
-router.get('/google-integration/calendars', calendarsController.listGoogleCalendarOptions);
-router.post('/google-integration/test', calendarsController.testGoogleCalendarIntegration);
-router.post('/google-integration/sync', calendarsController.syncGoogleCalendarIntegration);
-router.get('/google-integration/merge-preview', calendarsController.getGoogleCalendarMergePreview);
-router.post('/google-integration/merge', calendarsController.mergeGoogleCalendarAppointments);
-router.delete('/google-integration', calendarsController.deleteGoogleCalendarIntegration);
+router.get('/google-integration', requireGoogleCalendarFeature, calendarsController.getGoogleCalendarIntegration);
+router.post('/google-integration/connect-url', requireGoogleCalendarFeature, calendarsController.getGoogleCalendarConnectUrl);
+router.post('/google-integration/connect/claim', requireGoogleCalendarFeature, calendarsController.claimGoogleCalendarOAuth);
+router.get('/google-integration/calendars', requireGoogleCalendarFeature, calendarsController.listGoogleCalendarOptions);
+router.post('/google-integration/test', requireGoogleCalendarFeature, calendarsController.testGoogleCalendarIntegration);
+router.post('/google-integration/sync', requireGoogleCalendarFeature, calendarsController.syncGoogleCalendarIntegration);
+router.get('/google-integration/merge-preview', requireGoogleCalendarFeature, calendarsController.getGoogleCalendarMergePreview);
+router.post('/google-integration/merge', requireGoogleCalendarFeature, calendarsController.mergeGoogleCalendarAppointments);
+router.delete('/google-integration', requireGoogleCalendarFeature, calendarsController.deleteGoogleCalendarIntegration);
 
 // Obtener eventos/citas
 router.get('/events', calendarsController.getEvents);
@@ -70,7 +72,7 @@ router.delete('/block-slots/:id', calendarsController.deleteBlockedSlot);
 router.get('/:id', calendarsController.getCalendar);
 
 // Actualizar configuración de un calendario
-router.put('/:id/google-sync', calendarsController.updateCalendarGoogleSync);
+router.put('/:id/google-sync', requireGoogleCalendarFeature, calendarsController.updateCalendarGoogleSync);
 router.put('/:id', calendarsController.updateCalendar);
 
 // Eliminar un calendario local de Ristak

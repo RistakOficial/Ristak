@@ -56,8 +56,8 @@ async function snapshotRows(tableName) {
 
 test('public calendar booking routes stay behind the calendar feature gate', async () => {
   const serverSource = await readFile(join(backendRoot, 'src/server.js'), 'utf8')
-  const publicMount = "app.use('/api/calendars', requireFeature('google_calendar'), publicCalendarsRoutes)"
-  const gatedMount = "app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)"
+  const publicMount = "app.use('/api/calendars', requireFeature('appointments'), publicCalendarsRoutes)"
+  const gatedMount = "app.use('/api/calendars', requireFeature('appointments'), calendarsRoutes)"
 
   assert.ok(serverSource.includes("import calendarsRoutes, { publicCalendarsRoutes }"), 'server imports public calendar routes')
   assert.ok(serverSource.includes(publicMount), 'server gates public calendar routes')
@@ -66,6 +66,15 @@ test('public calendar booking routes stay behind the calendar feature gate', asy
     serverSource.indexOf(publicMount) < serverSource.indexOf(gatedMount),
     'public calendar routes must run before the protected calendar router'
   )
+})
+
+test('google calendar integration routes keep the google feature gate', async () => {
+  const routesSource = await readFile(join(backendRoot, 'src/routes/calendars.routes.js'), 'utf8')
+
+  assert.match(routesSource, /const requireGoogleCalendarFeature = requireFeature\('google_calendar'\)/)
+  assert.match(routesSource, /router\.get\('\/google-integration', requireGoogleCalendarFeature,/)
+  assert.match(routesSource, /router\.post\('\/google-integration\/connect-url', requireGoogleCalendarFeature,/)
+  assert.match(routesSource, /router\.put\('\/:id\/google-sync', requireGoogleCalendarFeature,/)
 })
 
 test('public calendar endpoints stay out of the protected calendars router', async () => {

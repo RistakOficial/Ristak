@@ -75,6 +75,7 @@ interface PaymentGateControlsProps {
   title?: string
   description?: string
   currencyFallback?: string
+  requireConnectedGateway?: boolean
 }
 
 const gatewayOptions: Array<{ value: PaymentGateGateway; label: string; logo: PaymentPlatformLogoId }> = [
@@ -200,7 +201,8 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   availableGateways,
   title = 'Cobro requerido',
   description = 'La persona paga antes de avanzar.',
-  currencyFallback = 'MXN'
+  currencyFallback = 'MXN',
+  requireConnectedGateway = false
 }) => {
   const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(() => readCachedIntegrationsStatus())
   const allowedGatewayOptions = useMemo(() => {
@@ -215,10 +217,21 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
     () => new Set<PaymentGateGateway>(allowedGatewayOptions.map(option => option.value)),
     [allowedGatewayOptions]
   )
+  const gatewayConnectionIsKnown = integrationsStatus !== null
+  const gatewayIsSelectable = useCallback((gateway: PaymentGateGateway) => (
+    !requireConnectedGateway ||
+    !gatewayConnectionIsKnown ||
+    isGatewayConnected(integrationsStatus, gateway)
+  ), [gatewayConnectionIsKnown, integrationsStatus, requireConnectedGateway])
+  const hasSelectableGateway = useMemo(
+    () => allowedGatewayOptions.some(option => gatewayIsSelectable(option.value)),
+    [allowedGatewayOptions, gatewayIsSelectable]
+  )
   const normalizeAllowedGateway = useCallback((gateway: unknown): PaymentGateGateway => {
     const normalized = normalizeGateway(gateway)
-    return allowedGatewayValues.has(normalized) ? normalized : allowedGatewayOptions[0].value
-  }, [allowedGatewayOptions, allowedGatewayValues])
+    if (allowedGatewayValues.has(normalized) && gatewayIsSelectable(normalized)) return normalized
+    return (allowedGatewayOptions.find(option => gatewayIsSelectable(option.value)) || allowedGatewayOptions[0]).value
+  }, [allowedGatewayOptions, allowedGatewayValues, gatewayIsSelectable])
   const normalizeAllowedPaymentGateConfig = useCallback((source?: Partial<PaymentGateConfig> | null) => {
     const normalized = normalizePaymentGateConfig(source, currencyFallback)
     const gateway = normalizeAllowedGateway(normalized.gateway)
@@ -273,6 +286,8 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
   }
 
   const enablePaymentGate = (enabled: boolean) => {
+    if (enabled && !hasSelectableGateway) return
+
     patchConfig({
       enabled,
       amount: config.amount > 0 ? config.amount : 100,
@@ -353,9 +368,17 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
         <Switch
           checked={config.enabled}
           onChange={enablePaymentGate}
+          disabled={!config.enabled && requireConnectedGateway && gatewayConnectionIsKnown && !hasSelectableGateway}
           aria-label={config.enabled ? 'Desactivar cobro requerido' : 'Activar cobro requerido'}
         />
       </div>
+
+      {requireConnectedGateway && gatewayConnectionIsKnown && !hasSelectableGateway && (
+        <p className={styles.testNote}>
+          <Info size={15} />
+          Conecta una pasarela de pago antes de activar este cobro.
+        </p>
+      )}
 
       {config.enabled && (
         <div className={styles.body}>
@@ -399,6 +422,7 @@ export const PaymentGateControls: React.FC<PaymentGateControlsProps> = ({
                 options={allowedGatewayOptions.map(option => ({
                   value: option.value,
                   label: `${option.label} · ${isGatewayConnected(integrationsStatus, option.value) ? 'Conectado' : 'Sin conectar'}`,
+                  disabled: requireConnectedGateway && gatewayConnectionIsKnown && !isGatewayConnected(integrationsStatus, option.value),
                   icon: <PaymentPlatformLogo platform={option.logo} size="sm" decorative className={styles.gatewayLogo} />
                 }))}
               />

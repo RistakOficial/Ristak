@@ -332,8 +332,8 @@ app.use('/api/settings', settingsRoutes)
 // (LIC-002) Estos mounts NO anteponen requireAuth: publicCalendarsRoutes expone
 // rutas públicas de booking (/public/...) que romperían con auth. calendarsRoutes
 // ya aplica requireAuth internamente.
-app.use('/api/calendars', requireFeature('google_calendar'), publicCalendarsRoutes)
-app.use('/api/calendars', requireFeature('google_calendar'), calendarsRoutes)
+app.use('/api/calendars', requireFeature('appointments'), publicCalendarsRoutes)
+app.use('/api/calendars', requireFeature('appointments'), calendarsRoutes)
 app.use('/api/push', pushRoutes)
 app.use('/api/license', licenseRoutes)
 app.use('/api/mdp-program', requireAuth, requireFeature('mdp_program'), mdpProgramRoutes)

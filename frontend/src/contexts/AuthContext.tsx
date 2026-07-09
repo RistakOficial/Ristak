@@ -26,6 +26,7 @@ export interface User {
   accessConfig?: AccessConfig
   licenseEnforced?: boolean
   licensePlan?: string | null
+  licenseFeaturesSourceValid?: boolean
   licenseFeatures?: LicenseFeatures
   licenseLimits?: LicenseLimits
   licenseExternalModules?: Record<string, {
@@ -72,6 +73,7 @@ function mapUserFromApi(apiUser: any): User {
     accessConfig: apiUser.accessConfig || undefined,
     licenseEnforced: apiUser.licenseEnforced === true,
     licensePlan: apiUser.licensePlan || null,
+    licenseFeaturesSourceValid: apiUser.licenseFeaturesSourceValid !== false,
     licenseFeatures: apiUser.licenseFeatures && typeof apiUser.licenseFeatures === 'object'
       ? apiUser.licenseFeatures
       : {},

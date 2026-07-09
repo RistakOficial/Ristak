@@ -18,6 +18,7 @@ import {
 import { renderCalendarAppointmentTemplates } from '../services/calendarAppointmentTemplateService.js';
 import { normalizePhoneForAccount } from '../utils/accountLocale.js';
 import {
+  hasCalendarPaymentsFeature,
   isLicenseEnforced,
   createCentralGoogleCalendarConnectUrl,
   disconnectCentralGoogleCalendar
@@ -258,7 +259,14 @@ function buildCalendarPaymentRequiredResponse(bookingPayment, paymentStatus = {}
   };
 }
 
-function resolveCalendarBookingPayment(calendar = {}, bookingForm = {}) {
+function disabledCalendarBookingPayment() {
+  return normalizePaymentGateConfig({});
+}
+
+async function resolveCalendarBookingPayment(calendar = {}, bookingForm = {}) {
+  const canUseCalendarPayments = await hasCalendarPaymentsFeature();
+  if (!canUseCalendarPayments) return disabledCalendarBookingPayment();
+
   const calendarPayment = normalizePaymentGateConfig(calendar.bookingPayment || calendar.booking_payment || {});
   if (isPaymentGateEnabled(calendarPayment)) return calendarPayment;
 
@@ -266,6 +274,33 @@ function resolveCalendarBookingPayment(calendar = {}, bookingForm = {}) {
   if (isPaymentGateEnabled(formPayment)) return formPayment;
 
   return calendarPayment;
+}
+
+async function enforceCalendarPaymentConfigAccess(existingCalendar = {}, updateData = {}) {
+  const requestedPaymentConfig = updateData.bookingPayment ?? updateData.booking_payment;
+  const nextPayment = normalizePaymentGateConfig(
+    requestedPaymentConfig ?? existingCalendar.bookingPayment ?? existingCalendar.booking_payment ?? {}
+  );
+
+  if (!isPaymentGateEnabled(nextPayment)) {
+    return updateData;
+  }
+
+  if (await hasCalendarPaymentsFeature()) {
+    return updateData;
+  }
+
+  if (requestedPaymentConfig !== undefined && isPaymentGateEnabled(normalizePaymentGateConfig(requestedPaymentConfig))) {
+    const error = new Error('El cobro antes de agendar no está incluido en tu plan actual.');
+    error.status = 403;
+    error.code = 'feature_not_available';
+    throw error;
+  }
+
+  return {
+    ...updateData,
+    bookingPayment: disabledCalendarBookingPayment()
+  };
 }
 
 async function getCustomCalendarFormPaymentGate(bookingForm = {}) {
@@ -1034,9 +1069,11 @@ export async function createCalendar(req, res) {
       accessToken: tokenFromBody
     });
 
+    const safeCalendarData = await enforceCalendarPaymentConfigAccess({}, calendarData);
+
     let calendar = await localCalendarService.createLocalCalendar({
-      ...calendarData,
-      locationId: locationId || calendarData.locationId
+      ...safeCalendarData,
+      locationId: locationId || safeCalendarData.locationId
     });
 
     if (locationId && accessToken) {
@@ -1058,8 +1095,9 @@ export async function createCalendar(req, res) {
     });
   } catch (error) {
     logger.error(`[Calendars Controller] Error en createCalendar: ${error.message}`);
-    res.status(500).json({
+    res.status(error.status || 500).json({
       success: false,
+      code: error.code,
       error: error.message
     });
   }
@@ -1416,7 +1454,7 @@ export async function createPublicAppointment(req, res) {
       });
     }
 
-    const bookingPayment = resolveCalendarBookingPayment(calendar, bookingForm);
+    const bookingPayment = await resolveCalendarBookingPayment(calendar, bookingForm);
     let paymentGateStatus = null;
     if (isPaymentGateEnabled(bookingPayment)) {
       const paymentResult = await resolveCalendarPaymentGate({
@@ -2226,7 +2264,8 @@ export async function updateCalendar(req, res) {
       });
     }
 
-    const paymentSourceConflict = await findCalendarPaymentSourceConflict(existing, updateData);
+    const safeUpdateData = await enforceCalendarPaymentConfigAccess(existing, updateData);
+    const paymentSourceConflict = await findCalendarPaymentSourceConflict(existing, safeUpdateData);
     if (paymentSourceConflict) {
       return res.status(400).json({
         success: false,
@@ -2234,7 +2273,7 @@ export async function updateCalendar(req, res) {
       });
     }
 
-    let calendar = await localCalendarService.updateLocalCalendar(id, updateData, { syncStatus: 'pending' });
+    let calendar = await localCalendarService.updateLocalCalendar(id, safeUpdateData, { syncStatus: 'pending' });
 
     const remoteCalendarId = existing?.ghlCalendarId || id;
     if (context.accessToken && remoteCalendarId && existing?.ghlCalendarId) {
@@ -2247,7 +2286,7 @@ export async function updateCalendar(req, res) {
           antiTrackingEnabled,
           anti_tracking_enabled,
           ...remoteUpdateData
-        } = updateData;
+        } = safeUpdateData;
         const preservedBookingForm = bookingForm || calendar?.bookingForm || existing?.bookingForm;
         const preservedBookingCompletion = bookingCompletion || calendar?.bookingCompletion || existing?.bookingCompletion;
         const preservedBookingPayment = bookingPayment || calendar?.bookingPayment || existing?.bookingPayment;
@@ -2281,8 +2320,9 @@ export async function updateCalendar(req, res) {
     });
   } catch (error) {
     logger.error(`[Calendars Controller] Error en updateCalendar: ${error.message}`);
-    res.status(500).json({
+    res.status(error.status || 500).json({
       success: false,
+      code: error.code,
       error: error.message
     });
   }

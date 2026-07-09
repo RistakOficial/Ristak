@@ -6,7 +6,7 @@ import http from 'node:http'
 let server
 let baseUrl
 let requestCount = 0
-let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | block | down
+let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | allow_basic_calendar | allow_calendar_payment_false | allow_without_features | block | down
 let lastRequestBody = null
 
 let licenseService
@@ -46,21 +46,30 @@ function startMockServer() {
             serverMode === 'allow_without_whatsapp' ||
             serverMode === 'allow_split_ai' ||
             serverMode === 'allow_split_sites' ||
-            serverMode === 'allow_split_calendar'
+            serverMode === 'allow_split_calendar' ||
+            serverMode === 'allow_basic_calendar' ||
+            serverMode === 'allow_calendar_payment_false' ||
+            serverMode === 'allow_without_features'
           ) {
-            res.end(JSON.stringify({
+            const payload = {
               allowed: true,
               client_id: 'cli_1',
-              plan: 'pro',
-              features: serverMode === 'allow_split_ai'
+              plan: serverMode === 'allow_basic_calendar' ? 'basic' : 'pro',
+              ...(serverMode === 'allow_without_features' ? {} : {
+                features: serverMode === 'allow_split_ai'
                 ? { app_assistant_ai: true, conversational_ai: false }
                 : serverMode === 'allow_split_sites'
                   ? { sites: false, settings_media: true, settings_tracking: false, settings_domains: true }
                   : serverMode === 'allow_split_calendar'
                     ? { appointments: true, google_calendar: false }
+                    : serverMode === 'allow_basic_calendar'
+                      ? { appointments: true, google_calendar: false }
+                      : serverMode === 'allow_calendar_payment_false'
+                        ? { appointments: true, google_calendar: true, calendar_payments: false }
                     : serverMode === 'allow_without_whatsapp'
                       ? { meta_ads: true, ai: false }
-                      : { whatsapp: true, meta_ads: true, ai: false },
+                      : { whatsapp: true, meta_ads: true, ai: false }
+              }),
               ...(serverMode === 'allow'
                 ? {
                     external_modules: {
@@ -76,7 +85,8 @@ function startMockServer() {
                 : {}),
               license_token: 'tok_123',
               expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString()
-            }))
+            }
+            res.end(JSON.stringify(payload))
           } else {
             res.statusCode = 403
             res.end(JSON.stringify({
@@ -395,6 +405,47 @@ test('subfeatures explícitos apagados no reviven por el módulo padre', async (
   assert.equal(state.features.google_calendar, false)
   assert.equal(await licenseService.hasFeature('appointments'), true)
   assert.equal(await licenseService.hasFeature('google_calendar'), false)
+})
+
+test('cobro de calendario se permite por compatibilidad en Professional', async () => {
+  serverMode = 'allow_split_calendar'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.plan, 'pro')
+  assert.equal(state.features.calendar_payments, undefined)
+  assert.equal(await licenseService.hasCalendarPaymentsFeature(), true)
+})
+
+test('cobro de calendario no se abre en plan básico sin feature explícito', async () => {
+  serverMode = 'allow_basic_calendar'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.plan, 'basic')
+  assert.equal(state.features.appointments, true)
+  assert.equal(state.features.google_calendar, false)
+  assert.equal(await licenseService.hasCalendarPaymentsFeature(), false)
+})
+
+test('cobro de calendario respeta false explícito del portal', async () => {
+  serverMode = 'allow_calendar_payment_false'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.features.google_calendar, true)
+  assert.equal(state.features.calendar_payments, false)
+  assert.equal(await licenseService.hasCalendarPaymentsFeature(), false)
+})
+
+test('cobro de calendario sigue fail-closed si el portal responde sin features', async () => {
+  serverMode = 'allow_without_features'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.allowed, true)
+  assert.equal(state.featuresSourceValid, false)
+  assert.equal(await licenseService.hasCalendarPaymentsFeature(), false)
 })
 
 test('modo estricto: servidor caído sin token vigente bloquea el acceso', async () => {

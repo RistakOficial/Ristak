@@ -58,6 +58,7 @@ import {
   getPublicCalendarBySlug,
   renderPublicCalendarHtml
 } from '../services/localCalendarService.js'
+import { hasCalendarPaymentsFeature } from '../services/licenseService.js'
 import {
   getMediaAssetBunnyStreamAnalytics,
   listMediaAssets
@@ -72,6 +73,41 @@ import { requestHasNoTrack } from '../utils/noTracking.js'
 
 const SITE_PREVIEW_TTL_MS = 60 * 60 * 1000
 const sitePreviewSessions = new Map()
+
+function calendarForPublicRender(calendar, canUseCalendarPayments) {
+  if (canUseCalendarPayments) return calendar
+
+  return {
+    ...calendar,
+    bookingPayment: {
+      ...(calendar?.bookingPayment || calendar?.booking_payment || {}),
+      enabled: false
+    },
+    booking_payment: {
+      ...(calendar?.booking_payment || calendar?.bookingPayment || {}),
+      enabled: false
+    }
+  }
+}
+
+function bookingFormForPublicRender(bookingForm, canUseCalendarPayments) {
+  if (canUseCalendarPayments || !bookingForm) return bookingForm
+
+  return {
+    ...bookingForm,
+    paymentGate: {
+      ...(bookingForm.paymentGate || bookingForm.payment_gate || {}),
+      enabled: false
+    },
+    payment_gate: {
+      ...(bookingForm.payment_gate || bookingForm.paymentGate || {}),
+      enabled: false
+    },
+    fields: Array.isArray(bookingForm.fields)
+      ? bookingForm.fields.filter(field => field?.blockType !== 'payment' && field?.block_type !== 'payment')
+      : bookingForm.fields
+  }
+}
 
 function getPreviewUserId(req) {
   return String(req.user?.userId || req.user?.id || req.user?.email || 'user')
@@ -607,12 +643,13 @@ export async function previewCalendarHandler(req, res) {
       return res.status(404).type('html').send('Calendario no encontrado o inactivo')
     }
     const bookingForm = await getCalendarBookingFormDefinition(calendar)
+    const canUseCalendarPayments = await hasCalendarPaymentsFeature()
 
-    return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
+    return res.status(200).type('html').send(renderPublicCalendarHtml(calendarForPublicRender(calendar, canUseCalendarPayments), {
       host: getRequestHost(req) || '',
       embedded: req.query?.embed === '1' || req.query?.test === '1',
       style: req.query || {},
-      bookingForm,
+      bookingForm: bookingFormForPublicRender(bookingForm, canUseCalendarPayments),
       preview: req.query?.editor_preview === '1' || req.query?.preview === '1',
       metaPixelSnippet: ''
     }))
@@ -1038,6 +1075,7 @@ export async function publicSiteHostMiddleware(req, res, next) {
         return sendDomainError(req, res, 404, 'Ruta no disponible en este calendario público')
       }
       const bookingForm = await getCalendarBookingFormDefinition(calendar)
+      const canUseCalendarPayments = await hasCalendarPaymentsFeature()
       const isPreview = req.query?.editor_preview === '1' || req.query?.preview === '1'
       // Override del evento Meta propagado por el sitio contenedor (sitio = master del
       // calendario embebido). Solo se confia en el query param en contexto embebido.
@@ -1054,11 +1092,11 @@ export async function publicSiteHostMiddleware(req, res, next) {
       // No cachear el HTML público: cambios de pixel/tracking deben reflejarse
       // siempre tras un refresh (los assets sí se cachean por separado).
       res.set('Cache-Control', 'no-store')
-      return res.status(200).type('html').send(renderPublicCalendarHtml(calendar, {
+      return res.status(200).type('html').send(renderPublicCalendarHtml(calendarForPublicRender(calendar, canUseCalendarPayments), {
         host,
         embedded: req.query?.embed === '1' || req.query?.test === '1',
         style: req.query || {},
-        bookingForm,
+        bookingForm: bookingFormForPublicRender(bookingForm, canUseCalendarPayments),
         preview: isPreview,
         metaPixelSnippet
       }))

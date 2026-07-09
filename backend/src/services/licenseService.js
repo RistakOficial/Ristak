@@ -54,6 +54,18 @@ const DEFAULT_LIMITS = {
   }
 }
 
+const CALENDAR_PAYMENT_FEATURE_KEYS = [
+  'calendar_payments',
+  'calendar_payment',
+  'calendar_booking_payments'
+]
+
+const PROFESSIONAL_PLAN_KEYS = new Set([
+  'pro',
+  'professional',
+  'profesional'
+])
+
 // (LIC-003) Features de pago que el backend candaduea con requireFeature(...). Si el
 // portal responde enforced 'allowed' pero SIN un objeto features válido, NO se abren
 // éstas (fail-closed): la base del CRM sigue, el premium queda apagado hasta que el
@@ -61,7 +73,8 @@ const DEFAULT_LIMITS = {
 const PREMIUM_GATED_FEATURES = [
   'whatsapp', 'email', 'meta_ads', 'google_calendar', 'automations',
   'advanced_reports', 'app_assistant_ai', 'conversational_ai', 'ai',
-  'ai_agent', 'premium_modules'
+  'ai_agent', 'premium_modules', 'calendar_payments', 'calendar_payment',
+  'calendar_booking_payments', 'payment_plans', 'subscriptions', 'web_analytics'
 ]
 
 function closedRemoteFeatures() {
@@ -120,6 +133,30 @@ function readFeatureValue(features = {}, featureKey) {
   }
 
   return false
+}
+
+function readExplicitAnyFeatureValue(features = {}, featureKeys = []) {
+  let sawExplicitFeature = false
+
+  for (const featureKey of featureKeys) {
+    const key = String(featureKey || '').trim()
+    if (!key || !hasOwn.call(features, key)) continue
+    sawExplicitFeature = true
+    if (features[key] === true) return true
+  }
+
+  return sawExplicitFeature ? false : null
+}
+
+export function hasProfessionalPlan(plan = '') {
+  const normalized = String(plan || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+
+  if (!normalized) return false
+  if (PROFESSIONAL_PLAN_KEYS.has(normalized)) return true
+  return normalized.endsWith('_pro') || normalized.endsWith('_professional') || normalized.endsWith('_profesional')
 }
 
 // Estado cacheado de la última validación (token temporal de licencia)
@@ -349,6 +386,7 @@ function allowedWithoutEnforcement() {
     enforced: false,
     plan: null,
     features: { ...DEFAULT_FEATURES },
+    featuresSourceValid: true,
     limits: normalizeLicenseLimits(DEFAULT_LIMITS),
     externalModules: { ...DEFAULT_EXTERNAL_MODULES },
     expiresAt: null
@@ -498,7 +536,7 @@ export async function verifyLicenseWithServer(email) {
   if (data && data.allowed) {
     // (LIC-003) Fail-closed: solo confiamos en un objeto features no vacío. Una
     // respuesta 'allowed' sin features es un error del portal y NO debe abrir premium.
-    const hasValidFeatures = data.features && typeof data.features === 'object' && Object.keys(data.features).length > 0
+    const hasValidFeatures = Boolean(data.features && typeof data.features === 'object' && Object.keys(data.features).length > 0)
     if (!hasValidFeatures) {
       logger.warn('[Licencia] El servidor respondió allowed sin un objeto "features" válido: se aplican features mínimas (premium apagado).')
     }
@@ -507,6 +545,7 @@ export async function verifyLicenseWithServer(email) {
       enforced: true,
       plan: data.plan || null,
       features: hasValidFeatures ? normalizeLicenseFeatures(data.features) : closedRemoteFeatures(),
+      featuresSourceValid: hasValidFeatures,
       limits: normalizeLicenseLimits(data.limits),
       externalModules: normalizeExternalModules(data.external_modules),
       licenseToken: data.license_token || null,
@@ -608,6 +647,22 @@ export async function hasFeature(featureKey) {
   if (!state.allowed) return false
   if (!state.enforced) return true
   return readFeatureValue(state.features, featureKey)
+}
+
+export async function hasCalendarPaymentsFeature() {
+  const state = await getLicenseState()
+  if (!state.allowed) return false
+  if (!state.enforced) return true
+
+  const explicitCalendarPayment = readExplicitAnyFeatureValue(state.features, CALENDAR_PAYMENT_FEATURE_KEYS)
+  if (explicitCalendarPayment !== null) return explicitCalendarPayment
+
+  // Compatibilidad mientras el portal empieza a mandar calendar_payments:
+  // Professional/pro o el feature legacy de Google Calendar mantienen el acceso.
+  // Si el portal respondió allowed sin features válidos, LIC-003 sigue fail-closed.
+  if (state.featuresSourceValid === false) return false
+
+  return readFeatureValue(state.features, 'google_calendar') || hasProfessionalPlan(state.plan)
 }
 
 /**

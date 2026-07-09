@@ -65,7 +65,7 @@ router.post('/public/checkout/prepare-installments', sitePaymentCheckoutPrepareH
 router.post('/public/meta-event', metaPageEventPublicHandler)
 router.get('/public/fonts.css', sitesFontCssHandler)
 router.get('/public/font-file', sitesFontFileHandler)
-router.get('/public/calendar-preview/:slug', requireFeature('google_calendar'), previewCalendarHandler)
+router.get('/public/calendar-preview/:slug', requireFeature('appointments'), previewCalendarHandler)
 router.get('/public/imported-assets/:siteId/*', importedSiteAssetHandler)
 router.get('/:siteId/preview-session/:token', previewSiteSessionHandler)
 

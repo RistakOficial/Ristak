@@ -7,6 +7,12 @@ export type UserRole = typeof USER_ROLES[number]
 export type PermissionGroup = 'CRM' | 'Operación' | 'Configuración'
 export type LicenseFeatures = Record<string, boolean | undefined>
 
+export const CALENDAR_PAYMENT_FEATURE_KEYS = [
+  'calendar_payments',
+  'calendar_payment',
+  'calendar_booking_payments'
+] as const
+
 export const ACCESS_MODULES = [
   {
     key: 'dashboard',
@@ -192,6 +198,8 @@ export interface AccessControlledUser {
   role?: UserRole | 'manager' | 'viewer' | string
   accessConfig?: Partial<Record<PermissionKey, AccessLevel>>
   licenseEnforced?: boolean
+  licensePlan?: string | null
+  licenseFeaturesSourceValid?: boolean
   licenseFeatures?: LicenseFeatures | null
   licenseExternalModules?: Record<string, { sidebarPosition?: number | null }>
 }
@@ -256,6 +264,9 @@ const LICENSE_FEATURE_LABELS: Record<string, string> = {
   chat_inbox: 'bandeja de chat',
   message_templates: 'plantillas de mensajes',
   google_calendar: 'Google Calendar',
+  calendar_payments: 'cobros en calendarios',
+  calendar_payment: 'cobros en calendarios',
+  calendar_booking_payments: 'cobros en calendarios',
   appointment_reminders: 'recordatorios de citas',
   calendar_blocks: 'bloqueos de calendario',
   payment_checkout: 'checkout de pagos',
@@ -338,6 +349,25 @@ export function hasLicenseFeature(
   if (!user?.licenseEnforced) return true
   const features = user.licenseFeatures || {}
   return featureKeys.some((featureKey) => features[featureKey] === true)
+}
+
+export function hasCalendarPaymentsAccess(user: AccessControlledUser | null | undefined) {
+  if (!user?.licenseEnforced) return true
+  const features = user.licenseFeatures || {}
+  const hasExplicitCalendarPaymentFeature = CALENDAR_PAYMENT_FEATURE_KEYS.some((featureKey) => hasOwn.call(features, featureKey))
+  if (hasExplicitCalendarPaymentFeature) {
+    return CALENDAR_PAYMENT_FEATURE_KEYS.some((featureKey) => features[featureKey] === true)
+  }
+  if (user.licenseFeaturesSourceValid === false) return false
+
+  const plan = String((user as { licensePlan?: string | null })?.licensePlan || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_')
+  const isProfessionalPlan = plan === 'pro' || plan === 'professional' || plan === 'profesional' ||
+    plan.endsWith('_pro') || plan.endsWith('_professional') || plan.endsWith('_profesional')
+
+  return features.google_calendar === true || isProfessionalPlan
 }
 
 export function hasLicenseFeatureAccess(

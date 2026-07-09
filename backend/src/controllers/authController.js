@@ -62,6 +62,7 @@ function serializeAuthUser(user, licenseState = null) {
     accessConfig: getEffectiveAccessConfig(user),
     licenseEnforced: licenseState?.enforced === true,
     licensePlan: licenseState?.plan || null,
+    licenseFeaturesSourceValid: licenseState?.featuresSourceValid !== false,
     licenseFeatures: licenseState?.features && typeof licenseState.features === 'object'
       ? licenseState.features
       : {},
