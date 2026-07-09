@@ -5116,9 +5116,9 @@ export const getContactJourney = async (req, res) => {
 
     const detectWhatsAppAdPlatform = (data = {}) => normalizeWhatsAppAttributionPlatform(data)
 
-    // El journey default sólo representa acciones del contacto. Las pantallas de chat
-    // pueden pedir includeBusinessMessages=true para reconstruir conversación completa,
-    // pero los timelines de atribución no deben contar mensajes salientes del negocio.
+    // El journey default sólo representa acciones del contacto. La conversación usa
+    // getContactConversation para incluir mensajes del negocio sin contaminar los
+    // timelines de atribución con mensajes salientes.
     const isStoredChatMessageEvent = (event) => Boolean(
 	      event?.data?.whatsapp_api_message_id ||
 	      event?.data?.whatsapp_message_id ||
@@ -5779,4 +5779,18 @@ export const getContactJourney = async (req, res) => {
       error: 'Error obteniendo journey del contacto'
     })
   }
+}
+
+export const getContactConversation = async (req, res) => {
+  const conversationReq = {
+    ...req,
+    query: {
+      ...req.query,
+      includeBusinessMessages: 'true',
+      refreshExternalStatuses: req.query?.refreshExternalStatuses ?? 'false',
+      chatMessagesOnly: 'true'
+    }
+  }
+
+  return getContactJourney(conversationReq, res)
 }

@@ -981,13 +981,13 @@ tarjetas guardadas, impuestos, validaciones avanzadas de MSI o todos los caminos
 de `RecordPaymentModal`, esa brecha debe cerrarse tambien en `mobile/` y
 registrarse en `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`.
 
-La conversacion nativa en `mobile/src/App.tsx` debe cargar el mismo journey
-recortado que `/movil` (`/contacts/:id/journey` con `chatMessagesOnly` y
-`messageLimit`), agrupar mensajes por dia usando la zona horaria del negocio,
-mostrar avatar/badge de canal en el header y exponer acciones equivalentes por
-bottom sheet: adjuntos/camara, ubicacion, agendar cita, registrar pagos,
-programar mensaje, agregar etiqueta, silenciar, archivar/restaurar y controles
-de agente. Cuando el agente conversacional este activo en el chat, enviar un
+La conversacion nativa en `mobile/src/App.tsx` debe cargar el mismo historial
+recortado que `/movil` usando `/contacts/:id/conversation` con `messageLimit`,
+agrupar mensajes por dia usando la zona horaria del negocio, mostrar
+avatar/badge de canal en el header y exponer acciones equivalentes por bottom
+sheet: adjuntos/camara, ubicacion, agendar cita, registrar pagos, programar
+mensaje, agregar etiqueta, silenciar, archivar/restaurar y controles de agente.
+Cuando el agente conversacional este activo en el chat, enviar un
 mensaje manual desde `mobile/` debe abrir una confirmacion antes de mandar: el
 usuario elige pausar el agente por 24 horas y enviar, quitar el contacto del
 agente y enviar, o cancelar. El boton `+` de la conversacion debe priorizar los

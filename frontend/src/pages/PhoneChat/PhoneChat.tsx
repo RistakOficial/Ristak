@@ -5877,10 +5877,8 @@ export const PhoneChat: React.FC = () => {
     let restoreScheduled = false
 
     try {
-      const olderJourney = await contactsService.getContactJourney(contactId, {
-        includeBusinessMessages: true,
+      const olderJourney = await contactsService.getContactConversation(contactId, {
         refreshExternalStatuses: false,
-        chatMessagesOnly: true,
         messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
         beforeMessageDate
       })
@@ -7972,10 +7970,8 @@ export const PhoneChat: React.FC = () => {
 
     try {
       const [journey, scheduledMessages, agentCompletions] = await Promise.all([
-        contactsService.getContactJourney(contactId, {
-          includeBusinessMessages: true,
+        contactsService.getContactConversation(contactId, {
           refreshExternalStatuses: false,
-          chatMessagesOnly: true,
           messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
         }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => []),

@@ -4243,10 +4243,8 @@ export const DesktopChat: React.FC = () => {
     let messagesLoaded = false
     try {
       const [journey, scheduledMessages] = await Promise.all([
-        contactsService.getContactJourney(contactId, {
-          includeBusinessMessages: true,
+        contactsService.getContactConversation(contactId, {
           refreshExternalStatuses: false,
-          chatMessagesOnly: true,
           messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT
         }),
         whatsappApiService.getScheduledMessages(contactId).catch(() => [])
@@ -4346,10 +4344,8 @@ export const DesktopChat: React.FC = () => {
     let restoreScheduled = false
 
     try {
-      const olderJourney = await contactsService.getContactJourney(contactId, {
-        includeBusinessMessages: true,
+      const olderJourney = await contactsService.getContactConversation(contactId, {
         refreshExternalStatuses: false,
-        chatMessagesOnly: true,
         messageLimit: CHAT_CONVERSATION_MESSAGE_LIMIT,
         beforeMessageDate
       })

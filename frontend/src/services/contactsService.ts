@@ -26,10 +26,12 @@ export interface JourneyEvent {
 }
 
 interface ContactJourneyOptions {
-  includeBusinessMessages?: boolean
+  refreshExternalStatuses?: boolean
+}
+
+interface ContactConversationOptions {
   refreshExternalStatuses?: boolean
   messageLimit?: number
-  chatMessagesOnly?: boolean
   beforeMessageDate?: string
 }
 
@@ -44,6 +46,27 @@ interface ChatReadStateResult {
   unreadCount?: number
   lastReadAt?: string | null
   updated?: number
+}
+
+function normalizeJourneyEvents(data: unknown): JourneyEvent[] {
+  if (!Array.isArray(data)) {
+    return []
+  }
+
+  return data
+    .filter((event): event is JourneyEvent => {
+      return Boolean(
+        event &&
+        typeof event === 'object' &&
+        'type' in event &&
+        'date' in event
+      )
+    })
+    // Normalizar eventos incompletos para evitar errores en la UI
+    .map((event) => ({
+      ...event,
+      data: event && typeof event.data === 'object' && event.data !== null ? event.data : {}
+    }))
 }
 
 interface ContactChartData {
@@ -422,36 +445,33 @@ export const contactsService = {
   async getContactJourney(id: string, options: ContactJourneyOptions = {}): Promise<JourneyEvent[]> {
     try {
       const params: Record<string, string> = {}
-      if (options.includeBusinessMessages) params.includeBusinessMessages = 'true'
       if (options.refreshExternalStatuses === false) params.refreshExternalStatuses = 'false'
-      if (options.chatMessagesOnly) params.chatMessagesOnly = 'true'
-      if (options.messageLimit && Number.isFinite(options.messageLimit) && options.messageLimit > 0) {
-        params.messageLimit = String(Math.round(options.messageLimit))
-      }
-      if (options.beforeMessageDate) params.beforeMessageDate = options.beforeMessageDate
 
       const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/journey`, {
         params: Object.keys(params).length > 0 ? params : undefined
       })
 
-      if (!Array.isArray(data)) {
-        return []
-      }
+      return normalizeJourneyEvents(data)
+    } catch (error) {
+      // TODO: Implement proper logging service
+      return []
+    }
+  },
 
-      return data
-        .filter((event): event is JourneyEvent => {
-          return Boolean(
-            event &&
-            typeof event === 'object' &&
-            'type' in event &&
-            'date' in event
-          )
-        })
-        // Normalizar eventos incompletos para evitar errores en la UI
-        .map((event) => ({
-          ...event,
-          data: event && typeof event.data === 'object' && event.data !== null ? event.data : {}
-        }))
+  async getContactConversation(id: string, options: ContactConversationOptions = {}): Promise<JourneyEvent[]> {
+    try {
+      const params: Record<string, string> = {}
+      if (options.refreshExternalStatuses === false) params.refreshExternalStatuses = 'false'
+      if (options.messageLimit && Number.isFinite(options.messageLimit) && options.messageLimit > 0) {
+        params.messageLimit = String(Math.round(options.messageLimit))
+      }
+      if (options.beforeMessageDate) params.beforeMessageDate = options.beforeMessageDate
+
+      const data = await apiClient.get<JourneyEvent[]>(`/contacts/${id}/conversation`, {
+        params: Object.keys(params).length > 0 ? params : undefined
+      })
+
+      return normalizeJourneyEvents(data)
     } catch (error) {
       // TODO: Implement proper logging service
       return []

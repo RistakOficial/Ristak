@@ -72,6 +72,7 @@ Ristak exposes token-protected endpoints under `/api/external` for authorized ex
 - `GET /api/external/contacts`
 - `GET /api/external/contacts/search`
 - `GET /api/external/contacts/{id}`
+- `GET /api/external/contacts/{id}/conversation`
 - `GET /api/external/contacts/{id}/journey`
 - `GET /api/external/transactions`
 - `GET /api/external/transactions/stats`

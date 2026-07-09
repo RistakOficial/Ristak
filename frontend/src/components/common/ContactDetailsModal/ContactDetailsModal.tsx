@@ -855,7 +855,7 @@ export function ContactDetailsModal({
 
     try {
       const [journey, scheduledMessages, agentCompletions] = await Promise.all([
-        contactsService.getContactJourney(contactId, { includeBusinessMessages: true, chatMessagesOnly: true }),
+        contactsService.getContactConversation(contactId),
         whatsappApiService.getScheduledMessages(contactId).catch(() => [] as ScheduledChatMessage[]),
         conversationalAgentService.listCompletionEvents({ contactId, limit: 20 }).catch(() => [])
       ])

@@ -422,11 +422,11 @@ Capacidades:
   generico para todo.
 - El historial conversacional del modal de contacto no debe tratar el Viaje del
   Cliente como si fuera chat completo. Para pintar burbujas usa
-  `/contacts/:id/journey` con `includeBusinessMessages=true` y
-  `chatMessagesOnly=true`, de modo que reciba solo mensajes reales de WhatsApp,
-  Meta social, email y tarjetas conversacionales como confirmaciones de cita por
-  IA. El journey completo sigue siendo la linea de actividad/atribucion del CRM
-  y puede incluir visitas, contacto creado, citas, pagos y compras.
+  `/contacts/:id/conversation`, de modo que reciba solo mensajes reales de
+  WhatsApp, Meta social, email y tarjetas conversacionales como confirmaciones de
+  cita por IA. El journey completo vive en `/contacts/:id/journey`, sigue siendo
+  la linea de actividad/atribucion del CRM y puede incluir visitas, contacto
+  creado, citas, pagos y compras.
 
 Los contactos alimentan reportes, automations, chat, pagos, citas y conversiones.
 
@@ -651,19 +651,20 @@ selector, el composer inferior debe subir usando la altura nativa `--phone-kb`
 para que el caption y el boton de envio sigan visibles.
 
 La lista de chats se carga por lotes de 50 conversaciones. Al abrir una
-conversacion, el frontend pide solo los ultimos 50 mensajes combinados del hilo
-(`chatMessagesOnly` + `messageLimit`) y conserva el historial ya visible durante
-refresh silenciosos. Si el usuario sube al inicio de la conversacion, la UI pide
-otro bloque anterior usando `beforeMessageDate`; no debe precargar el historial
-completo de todas las conversaciones de la bandeja. Al insertar mensajes antiguos
-arriba del hilo, la UI debe conservar la posicion visible del usuario y nunca
-forzar scroll al ultimo mensaje.
+conversacion, el frontend usa `/contacts/:id/conversation` para pedir solo los
+ultimos 50 mensajes combinados del hilo (`messageLimit`) y conserva el historial
+ya visible durante refresh silenciosos. Si el usuario sube al inicio de la
+conversacion, la UI pide otro bloque anterior usando `beforeMessageDate`; no
+debe precargar el historial completo de todas las conversaciones de la bandeja.
+Al insertar mensajes antiguos arriba del hilo, la UI debe conservar la posicion
+visible del usuario y nunca forzar scroll al ultimo mensaje.
 
-El mismo contrato aplica al chat dentro del modal de contacto: aunque reutiliza
-el endpoint de journey por compatibilidad, siempre debe pedir `chatMessagesOnly`
-para no mezclar eventos de viaje, visitas, compras o contacto creado dentro del
-historial de WhatsApp/Meta/email. Las tarjetas `appointment_confirmation` con
-accion `chat_card` si pertenecen al hilo y se incluyen en ese modo.
+El mismo contrato aplica al chat dentro del modal de contacto: debe usar
+`/contacts/:id/conversation` para no mezclar eventos de viaje, visitas, compras
+o contacto creado dentro del historial de WhatsApp/Meta/email. Las tarjetas
+`appointment_confirmation` con accion `chat_card` si pertenecen al hilo y se
+incluyen en ese endpoint. `/contacts/:id/journey` queda reservado para el viaje
+del cliente y compatibilidad legacy.
 
 La recepcion rapida de mensajes de chat usa `/api/chat-events/stream` como
 camino principal en desktop (`/chat`), movil web (`/movil`), cliente nativo

@@ -567,11 +567,9 @@ export class RistakApiClient {
   }
 
   getConversation(contactId: string, limit = 50, beforeMessageDate?: string) {
-    return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/journey`, {
+    return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/conversation`, {
       params: {
-        includeBusinessMessages: true,
         refreshExternalStatuses: false,
-        chatMessagesOnly: true,
         messageLimit: limit,
         beforeMessageDate: beforeMessageDate || undefined,
       },
@@ -581,7 +579,6 @@ export class RistakApiClient {
   getContactJourney(contactId: string) {
     return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/journey`, {
       params: {
-        includeBusinessMessages: true,
         refreshExternalStatuses: false,
       },
     });

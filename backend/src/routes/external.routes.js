@@ -17,6 +17,7 @@ import {
 } from '../controllers/reportsController.js'
 import {
   getContactById,
+  getContactConversation,
   getContactJourney,
   getContacts,
   searchContacts
@@ -767,6 +768,18 @@ async function getOpenApiSpec(req, res) {
           responses: { 200: { description: 'Journey del contacto' } }
         }
       },
+      '/api/external/contacts/{id}/conversation': {
+        get: {
+          operationId: 'getRistakContactConversation',
+          summary: 'Obtiene la conversacion de chat de un contacto',
+          parameters: [
+            { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'messageLimit', in: 'query', schema: { type: 'integer', minimum: 1 } },
+            { name: 'beforeMessageDate', in: 'query', schema: { type: 'string' } }
+          ],
+          responses: { 200: { description: 'Conversacion del contacto' } }
+        }
+      },
       '/api/external/transactions': {
         get: {
           operationId: 'listRistakTransactions',
@@ -1352,6 +1365,7 @@ router.post('/contacts', createExternalContact)
 router.put('/contacts/:id', updateExternalContact)
 router.patch('/contacts/:id', updateExternalContact)
 router.delete('/contacts/:id', deleteExternalContact)
+router.get('/contacts/:id/conversation', getContactConversation)
 router.get('/contacts/:id/journey', getContactJourney)
 router.get('/contacts/:id', getContactById)
 router.get('/contacts', getContacts)

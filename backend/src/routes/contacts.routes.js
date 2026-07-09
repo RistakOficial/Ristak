@@ -29,6 +29,7 @@ import {
   getTrashedContacts,
   restoreContact,
   permanentDeleteContact,
+  getContactConversation,
   getContactJourney,
   getContactWhatsAppRoutingEvents,
   bulkUpdateContactCustomFields
@@ -79,6 +80,7 @@ router.post('/bulk-actions/:actionId/reschedule', rescheduleBulkContactAction)
 router.post('/bulk-actions/:actionId/cancel', cancelBulkContactAction)
 router.delete('/bulk-actions/:actionId', deleteBulkContactAction)
 router.get('/:id/payment-link-delivery-options', getContactPaymentLinkDeliveryOptions)
+router.get('/:id/conversation', requireModuleAccess('chat'), getContactConversation)
 router.get('/:id', getContactById)
 router.get('/:id/journey', getContactJourney)
 router.get('/:id/whatsapp-routing-events', getContactWhatsAppRoutingEvents)

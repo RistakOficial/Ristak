@@ -2,7 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { db } from '../src/config/database.js'
-import { getChatContacts, getContactJourney, updateContact } from '../src/controllers/contactsController.js'
+import {
+  getChatContacts,
+  getContactConversation,
+  getContactJourney,
+  updateContact
+} from '../src/controllers/contactsController.js'
 
 function createMockResponse() {
   return {
@@ -22,6 +27,17 @@ function createMockResponse() {
 async function readJourney(contactId, query = {}) {
   const res = createMockResponse()
   await getContactJourney({ params: { id: contactId }, query }, res)
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.body?.success, true)
+  assert.ok(Array.isArray(res.body.data))
+
+  return res.body.data
+}
+
+async function readConversation(contactId, query = {}) {
+  const res = createMockResponse()
+  await getContactConversation({ params: { id: contactId }, query }, res)
 
   assert.equal(res.statusCode, 200)
   assert.equal(res.body?.success, true)
@@ -133,7 +149,7 @@ test('contact journey enriches WhatsApp messages that only carry rstkad_id marke
   }
 })
 
-test('contact journey does not mark ordinary WhatsApp API metadata as ad attribution', async () => {
+test('contact conversation does not mark ordinary WhatsApp API metadata as ad attribution', async () => {
   const id = randomUUID()
   const contactId = `journey_organic_api_${id}`
   const phone = `+52989${Date.now().toString().slice(-7)}`
@@ -169,7 +185,7 @@ test('contact journey does not mark ordinary WhatsApp API metadata as ad attribu
       created_at: '2099-07-05T12:01:00.000Z'
     })
 
-    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const journey = await readConversation(contactId)
     const message = journey.find((event) => event.type === 'whatsapp_message')
 
     assert.ok(message)
@@ -185,7 +201,7 @@ test('contact journey does not mark ordinary WhatsApp API metadata as ad attribu
   }
 })
 
-test('contact journey exposes every WhatsApp ad touch without decorating organic retouches', async () => {
+test('contact conversation exposes every WhatsApp ad touch without decorating organic retouches', async () => {
   const id = randomUUID()
   const contactId = `journey_multi_ad_${id}`
   const phone = `+52990${Date.now().toString().slice(-7)}`
@@ -275,7 +291,7 @@ test('contact journey exposes every WhatsApp ad touch without decorating organic
       created_at: '2099-06-15T12:01:00.000Z'
     })
 
-    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const journey = await readConversation(contactId)
     const messages = journey.filter((event) => event.type === 'whatsapp_message')
     const mayMessage = messages.find((event) => String(event.data?.message_text || '').includes('mayo'))
     const organicMessage = messages.find((event) => String(event.data?.message_text || '').includes('duda normal'))
@@ -298,7 +314,7 @@ test('contact journey exposes every WhatsApp ad touch without decorating organic
   }
 })
 
-test('contact journey exposes Messenger and Instagram ad touches for chat previews', async () => {
+test('contact conversation exposes Messenger and Instagram ad touches for chat previews', async () => {
   const id = randomUUID()
   const contactId = `journey_social_ads_${id}`
   const phone = `+52989${Date.now().toString().slice(-7)}`
@@ -415,7 +431,7 @@ test('contact journey exposes Messenger and Instagram ad touches for chat previe
       raw_payload_json: '{}'
     })
 
-    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const journey = await readConversation(contactId)
     const messages = journey.filter((event) => event.type === 'meta_message')
     const messengerMessage = messages.find((event) => event.data?.meta_message_id === `mid_msg_ad_${id}`)
     const organicMessage = messages.find((event) => event.data?.meta_message_id === `mid_organic_${id}`)
@@ -723,8 +739,8 @@ test('meta comment messages keep readable deleted text when the source post is g
       created_at: '2099-07-03T12:05:00.000Z'
     })
 
-    const facebookJourney = await readJourney(facebookContactId, { includeBusinessMessages: 'true' })
-    const instagramJourney = await readJourney(instagramContactId, { includeBusinessMessages: 'true' })
+    const facebookJourney = await readJourney(facebookContactId)
+    const instagramJourney = await readJourney(instagramContactId)
     const facebookMessage = facebookJourney.find(event => event.type === 'meta_message')
     const instagramMessage = instagramJourney.find(event => event.type === 'meta_message')
 
@@ -935,7 +951,7 @@ test('contact journey defaults to contact-authored messages only', async () => {
       ]
     )
 
-    const fullConversationJourney = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const fullConversationJourney = await readConversation(contactId)
     const fullConversationMessages = fullConversationJourney
       .filter(event => event.type === 'whatsapp_message' || event.type === 'meta_message')
 
@@ -954,7 +970,7 @@ test('contact journey defaults to contact-authored messages only', async () => {
   }
 })
 
-test('contact journey messageLimit returns the most recent chat messages in chronological order', async () => {
+test('contact conversation messageLimit returns the most recent chat messages in chronological order', async () => {
   const id = randomUUID()
   const contactId = `journey_recent_${id}`
   const phone = `+52992${Date.now().toString().slice(-7)}`
@@ -990,12 +1006,11 @@ test('contact journey messageLimit returns the most recent chat messages in chro
       })
     }
 
-    const fullJourney = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const fullJourney = await readConversation(contactId)
     const fullMessages = fullJourney.filter(event => event.type === 'whatsapp_message')
     assert.equal(fullMessages.length, 10)
 
-    const limitedJourney = await readJourney(contactId, {
-      includeBusinessMessages: 'true',
+    const limitedJourney = await readConversation(contactId, {
       messageLimit: '3'
     })
     const limitedMessages = limitedJourney.filter(event => event.type === 'whatsapp_message')
@@ -1009,7 +1024,7 @@ test('contact journey messageLimit returns the most recent chat messages in chro
   }
 })
 
-test('chat-only journey applies messageLimit globally and pages older messages with beforeMessageDate', async () => {
+test('contact conversation applies messageLimit globally and pages older messages with beforeMessageDate', async () => {
   const id = randomUUID()
   const contactId = `journey_global_page_${id}`
   const phone = `+52993${Date.now().toString().slice(-7)}`
@@ -1062,9 +1077,7 @@ test('chat-only journey applies messageLimit globally and pages older messages w
       }
     }
 
-    const firstPage = await readJourney(contactId, {
-      includeBusinessMessages: 'true',
-      chatMessagesOnly: 'true',
+    const firstPage = await readConversation(contactId, {
       messageLimit: '5'
     })
     assert.deepEqual(
@@ -1072,9 +1085,7 @@ test('chat-only journey applies messageLimit globally and pages older messages w
       ['Global 7', 'Global 8', 'Global 9', 'Global 10', 'Global 11']
     )
 
-    const olderPage = await readJourney(contactId, {
-      includeBusinessMessages: 'true',
-      chatMessagesOnly: 'true',
+    const olderPage = await readConversation(contactId, {
       messageLimit: '5',
       beforeMessageDate: firstPage[0].date
     })
@@ -1087,7 +1098,7 @@ test('chat-only journey applies messageLimit globally and pages older messages w
   }
 })
 
-test('chat-only journey includes appointment confirmation cards without full contact journey events', async () => {
+test('contact conversation includes appointment confirmation cards without full contact journey events', async () => {
   const id = randomUUID()
   const contactId = `journey_chat_confirmation_${id}`
   const appointmentId = `appointment_chat_confirmation_${id}`
@@ -1148,18 +1159,13 @@ test('chat-only journey includes appointment confirmation cards without full con
       updated_at: '2026-06-19T10:02:00.000Z'
     })
 
-    const journey = await readJourney(contactId, {
-      includeBusinessMessages: 'true',
-      chatMessagesOnly: 'true'
-    })
+    const journey = await readConversation(contactId)
 
     assert.deepEqual(journey.map(event => event.type), ['whatsapp_message', 'appointment_confirmation'])
     assert.equal(journey[1].data.appointment_id, appointmentId)
     assert.equal(journey[1].data.result_detail, 'Confirmo asistencia')
 
-    const olderJourney = await readJourney(contactId, {
-      includeBusinessMessages: 'true',
-      chatMessagesOnly: 'true',
+    const olderJourney = await readConversation(contactId, {
       beforeMessageDate: '2026-06-19T10:02:00.000Z'
     })
 
@@ -1235,7 +1241,7 @@ test('chat and journey include WhatsApp messages from secondary contact phones',
       [primaryPhone, secondaryPhone]
     )
 
-    const journey = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const journey = await readJourney(contactId)
     assert.ok(
       journey.some(event => event.type === 'whatsapp_message' && event.data.phone === secondaryPhone),
       'journey should include WhatsApp messages matched by secondary phone'
@@ -2283,7 +2289,7 @@ test('chat history includes WhatsApp messages matched by phone when contact_id i
       '2026-06-16T11:01:00.000Z'
     ])
 
-    const journey = await readJourney(contactId, { includeBusinessMessages: 'true' })
+    const journey = await readJourney(contactId)
     const whatsappMessages = journey.filter(event => event.type === 'whatsapp_message')
 
     assert.deepEqual(
