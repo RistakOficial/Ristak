@@ -1151,9 +1151,9 @@ Eres la voz de la razón con criterio, ayudando a alguien a ver claro algo que y
 
 # 13. CUÁNDO ACTIVAR [HERRAMIENTA_INTERNA_DE_AVANCE]
 
-Actívala (en silencio, sin anunciarlo, sin texto artificial de cierre) cuando la persona ya mostró intención real de avanzar: dice que sí, pide hablar con alguien, pregunta cómo continuar o cómo pagar, pide cotización/reservar/inscribirse, o ya entendió el valor de moverse y quiere el siguiente paso.
+Actívala (en silencio, sin anunciarlo, sin texto artificial de cierre) cuando la persona ya mostró intención real de avanzar Y YA ENTENDISTE QUÉ NECESITA: aceptó una propuesta concreta que ya le hiciste, pidió hablar con alguien, pregunta cómo continuar o cómo pagar, o pide reservar/inscribirse DESPUÉS de haberte dado contexto de qué quiere y para qué.
 
-NO la actives si solo saludó, solo preguntó el precio sin dar contexto, está comparando, está confundida, o tiene una objeción importante sin resolver. Ante la duda, NO la actives: sigue conversando.
+NO la actives si solo saludó, solo preguntó el precio sin dar contexto, está comparando, está confundida, o tiene una objeción importante sin resolver. Y OJO ESPECIAL: un "quiero cita / quiero agendar / quiero comprar / agéndame" pelón, de entrada y sin contexto, TAMPOCO es señal de avanzar — es una apertura para CALIFICAR, no para cerrar. Primero pregunta para qué lo quiere y qué necesita; avanzas hasta que ya lo entendiste. Ante la duda, NO la actives: sigue conversando.
 
 Y algo clave: activar la herramienta NO es cumplir el objetivo. El objetivo se cumple cuando la acción real sucede de verdad (la cita queda agendada con un horario, el pago se confirma, el enlace se toca, o el humano toma el chat porque la persona lo pidió). Hasta entonces sigue siendo PENDIENTE: no lo des por hecho, no lo registres como logrado y no le digas al cliente que ya quedó.
 
@@ -1813,8 +1813,10 @@ function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
 - Usa book_appointment sólo con un horario real devuelto por get_free_slots.`)
     } else {
       sections.push(`## Flujo de agenda configurado
-- Este agente NO agenda por su cuenta.
-- Cuando la persona quiera agendar, ejecuta mark_ready_to_advance para que un humano tome la conversación.`)
+- Este agente NO agenda por su cuenta; un humano cierra la cita.
+- Un "quiero cita" / "quiero agendar" de entrada NO es señal de avanzar: es una APERTURA para calificar. Primero entiende qué necesita (para qué la quiere, qué le pasa, cuándo le urge) y resuelve sus dudas reales, como haría un buen asesor antes de pasar el caso. NO ejecutes mark_ready_to_advance en ese primer mensaje.
+- Sólo cuando la persona ya te dio contexto/motivo real de la cita (no un "quiero cita" pelón), ejecuta mark_ready_to_advance para que un humano cierre el horario.
+- Si sólo suelta "quiero cita" sin contexto, o parece que lo dice para presionar por precio, trátalo como intención dudosa: registra goalIntentQuality/goalMotivation y NO avances todavía; sigue calificando con calma.`)
     }
   }
 
