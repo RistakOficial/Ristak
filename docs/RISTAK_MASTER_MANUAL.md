@@ -1801,7 +1801,9 @@ formularios, calendarios, pagos y videos con la misma configuracion del editor
 visual. Ese inspector no debe abrirse automaticamente solo porque el HTML tenga
 un video, calendario, pago o formulario nativo detectado; aparece unicamente
 cuando el usuario selecciona esa zona desde la previsualizacion o desde el modo
-codigo. Ese inspector debe scrollear con rueda, trackpad y tactil como el panel
+codigo, y se cierra cuando el usuario selecciona texto, botones, campos,
+secciones, fondo u otro elemento editable que no sea esa zona nativa. Ese
+inspector debe scrollear con rueda, trackpad y tactil como el panel
 derecho del editor visual; los controles internos no deben bloquear el scroll
 del panel principal. Al seleccionar una zona nativa en la previsualizacion, el
 editor abre la configuracion en ese inspector derecho y no muestra popovers de

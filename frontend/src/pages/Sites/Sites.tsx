@@ -19887,6 +19887,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     })
   }, [])
 
+  const closeImportedNativeElementInspector = useCallback(() => {
+    setSelectedImportedNativeElementKey('')
+  }, [])
+
   const hoverImportedVideoActionTarget = useCallback((targetId: string, frame: HTMLIFrameElement | null = iframeRef.current) => {
     clearImportedVideoActionHover()
     if (!targetId) return
@@ -19902,6 +19906,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
   const openInlineEditorForElement = useCallback((element: HTMLElement, selection: ImportedEditableSelection, mode: 'text' | 'image' | 'video') => {
     const position = getInlineEditorPosition(element)
+    closeImportedNativeElementInspector()
     setElementPopoverPosition(null)
     setButtonEditor(null)
     setVideoEditor(null)
@@ -19916,7 +19921,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       ...position
     })
     setContentError('')
-  }, [getInlineEditorPosition])
+  }, [closeImportedNativeElementInspector, getInlineEditorPosition])
 
   const setImportedVideoEditorState = useCallback((
     updater: ImportedVideoEditorState | null | ((current: ImportedVideoEditorState | null) => ImportedVideoEditorState | null)
@@ -19946,6 +19951,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       settings: cleanImportedVideoSettings(selection.videoSettings || readImportedVideoSettings(element, value), value),
       targetBlocks: buildImportedVideoActionTargetBlocks(doc, selection.editId, site.id)
     }
+    closeImportedNativeElementInspector()
     setInlineEditor(null)
     setButtonEditor(null)
     setCodeElementEditor(null)
@@ -19954,9 +19960,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     setElementPopoverPosition(getElementPopoverPosition(element, frame))
     setImportedVideoEditorState(nextEditor)
     setContentError('')
-  }, [getElementPopoverPosition, setImportedVideoEditorState, site.id])
+  }, [closeImportedNativeElementInspector, getElementPopoverPosition, setImportedVideoEditorState, site.id])
 
   const openButtonEditorForSelection = useCallback((selection: ImportedEditableSelection, position?: ImportedElementPopoverPosition | null) => {
+    closeImportedNativeElementInspector()
     setInlineEditor(null)
     setVideoEditor(null)
     videoEditorRef.current = null
@@ -19985,7 +19992,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       )
     })
     setContentError('')
-  }, [currentPageActionOptions])
+  }, [closeImportedNativeElementInspector, currentPageActionOptions])
 
   const openCodeButtonEditorForElement = useCallback((
     element: HTMLElement,
@@ -20012,6 +20019,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         videoTargetBlocks: buildImportedVideoActionTargetBlocks(doc, editor.editId, site.id)
       }
       : editor
+    closeImportedNativeElementInspector()
     setInlineEditor(null)
     setButtonEditor(null)
     setVideoEditor(null)
@@ -20021,9 +20029,10 @@ const ImportedHtmlEditorPanel: React.FC<{
     setCodeElementEditor(nextEditor)
     setElementPopoverPosition(getElementPopoverPosition(element, codePreviewIframeRef.current))
     setContentError('')
-  }, [getElementPopoverPosition, site.id])
+  }, [closeImportedNativeElementInspector, getElementPopoverPosition, site.id])
 
   const openChoiceEditorForSelection = useCallback((selection: ImportedChoiceSelection, position?: ImportedElementPopoverPosition | null) => {
+    closeImportedNativeElementInspector()
     setInlineEditor(null)
     setButtonEditor(null)
     setVideoEditor(null)
@@ -20040,9 +20049,10 @@ const ImportedHtmlEditorPanel: React.FC<{
       actions: getUniqueImportedActionSteps(selection.actions, currentPageActionOptions)
     })
     setContentError('')
-  }, [currentPageActionOptions])
+  }, [closeImportedNativeElementInspector, currentPageActionOptions])
 
   const openFieldEditorForSelection = useCallback((selection: ImportedFormFieldSelection, position?: ImportedElementPopoverPosition | null) => {
+    closeImportedNativeElementInspector()
     setInlineEditor(null)
     setButtonEditor(null)
     setVideoEditor(null)
@@ -20061,7 +20071,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       options: selection.options.length ? selection.options : []
     })
     setContentError('')
-  }, [])
+  }, [closeImportedNativeElementInspector])
 
   const clearInlineSelection = useCallback(() => {
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
@@ -20358,6 +20368,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   ])
 
   const startAIRegionMode = useCallback(() => {
+    closeImportedNativeElementInspector()
     selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
     selectedIframeElementRef.current = null
     aiRegionVoiceDictation.cancelVoice()
@@ -20374,7 +20385,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setAiRegionError('')
     setAiRegionLastAttempt(null)
     setAiRegionMode(true)
-  }, [aiRegionVoiceDictation.cancelVoice])
+  }, [aiRegionVoiceDictation.cancelVoice, closeImportedNativeElementInspector])
 
   const cancelAIRegionMode = useCallback(() => {
     aiRegionVoiceDictation.cancelVoice()
@@ -20956,6 +20967,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       }
 
       const selectElement = (element: HTMLElement) => {
+        closeImportedNativeElementInspector()
         selectedIframeElementRef.current?.classList.remove('rstk-imported-selected')
         selectedIframeElementRef.current = element
         element.classList.add('rstk-imported-selected')
@@ -21417,7 +21429,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       iframe.removeEventListener('load', installEditorHooks)
       cleanupDocument()
     }
-  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, openVideoEditorForElement, previewLoading, previewVersion, saveEditableContent, selectImportedNativeElementFromPreviewTarget, site.id, site.name, site.title])
+  }, [activeImportedPage?.id, activeImportedPage?.title, aiRegionMode, aiRegionSelection, clearInlineSelection, closeImportedNativeElementInspector, editorPreviewHtml, getElementPopoverPosition, guardedEditorPreviewHtml, importedPages, onPreviewContextChange, openButtonEditorForSelection, openChoiceEditorForSelection, openFieldEditorForSelection, openInlineEditorForElement, openVideoEditorForElement, previewLoading, previewVersion, saveEditableContent, selectImportedNativeElementFromPreviewTarget, site.id, site.name, site.title])
 
   const saveInlineEditor = async () => {
     if (!inlineEditor || inlineEditor.selection.editType === 'section') return
@@ -22545,6 +22557,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   const selectImportedCodePreviewElement = useCallback((element: HTMLElement, descriptor?: ImportedFrameElementDescriptor) => {
     const selectionDescriptor = descriptor || getImportedFrameElementDescriptor(element, 'code')
     const range = findImportedSourceRangeForDescriptor(activeCodeSourceHtml, selectionDescriptor)
+    closeImportedNativeElementInspector()
     selectedCodePreviewElementRef.current?.classList.remove('rstk-imported-code-selected')
     selectedCodePreviewElementRef.current = element
     element.classList.add('rstk-imported-code-selected')
@@ -22557,7 +22570,7 @@ const ImportedHtmlEditorPanel: React.FC<{
 
     focusImportedCodeRange(range)
     return range
-  }, [activeCodeSourceHtml, focusImportedCodeRange])
+  }, [activeCodeSourceHtml, closeImportedNativeElementInspector, focusImportedCodeRange])
 
   useEffect(() => {
     if (!codeEditorOpen) {
@@ -22861,7 +22874,10 @@ const ImportedHtmlEditorPanel: React.FC<{
         const choiceInput = rawTarget ? getImportedChoiceInputFromTarget(rawTarget, doc) : null
         const formFieldTarget = choiceInput || getImportedCodeFormFieldElementFromTarget(rawTarget, doc)
         const target = actionTarget || formFieldTarget || getSelectableTarget(rawTarget)
-        if (!target) return
+        if (!target) {
+          clearInlineSelection()
+          return
+        }
         const descriptor = getImportedFrameElementDescriptor(target, 'code', event.type)
         const range = selectImportedCodePreviewElement(target, descriptor)
         if (actionTarget && range) {
@@ -22937,7 +22953,7 @@ const ImportedHtmlEditorPanel: React.FC<{
       window.removeEventListener('message', handleCodePreviewMessage)
       cleanupDocument()
     }
-  }, [activeCodeFile, activeCodePreviewHtml, activeCodeValue, codeEditorOpen, guardedCodePreviewHtml, onCodeDraftChange, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement, selectImportedNativeElementFromPreviewTarget, showToast])
+  }, [activeCodeFile, activeCodePreviewHtml, activeCodeValue, clearInlineSelection, codeEditorOpen, guardedCodePreviewHtml, onCodeDraftChange, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement, selectImportedNativeElementFromPreviewTarget, showToast])
 
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
   const importedNativeElementsPanel = selectedImportedNativeElementSlot ? (() => {
