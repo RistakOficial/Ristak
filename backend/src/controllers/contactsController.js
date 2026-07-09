@@ -1947,6 +1947,7 @@ const mapMetaAttributionRow = (row, matchType) => {
   return {
     source: 'meta_ads',
     matchType,
+    adAccountId: row.ad_account_id || null,
     campaignId: row.campaign_id || null,
     campaignName: row.campaign_name || null,
     adsetId: row.adset_id || null,
@@ -1979,6 +1980,7 @@ const getMetaAttributionForContact = async (contact = {}, firstSession = null, w
   const selectMetaFields = `
     SELECT
       date,
+      ad_account_id,
       campaign_id,
       campaign_name,
       adset_id,
@@ -2120,6 +2122,7 @@ const loadMetaAdsByAdIds = async (adIds = []) => {
   const rows = await db.all(
     `SELECT
        date,
+       ad_account_id,
        campaign_id,
        campaign_name,
        adset_id,
@@ -2177,6 +2180,7 @@ const enrichMessagingJourneyEventsWithMetaAds = async (events = []) => {
         ...data,
         campaign_id: metaAttribution.campaignId || data.campaign_id || null,
         campaign_name: metaAttribution.campaignName || data.campaign_name || null,
+        ad_account_id: metaAttribution.adAccountId || data.ad_account_id || null,
         adset_id: metaAttribution.adsetId || data.adset_id || null,
         adset_name: metaAttribution.adsetName || data.adset_name || null,
         referral_source_id: data.referral_source_id || adId || null,

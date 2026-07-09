@@ -101,6 +101,7 @@ const META_AD_CREATIVE_FIELDS = [
   'thumbnail_url',
   'thumbnail_id',
   'image_url',
+  'preview_url',
   'video_id',
   'object_story_id',
   'effective_object_story_id',

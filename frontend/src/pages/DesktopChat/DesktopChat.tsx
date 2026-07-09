@@ -165,6 +165,7 @@ interface MessageAdPreview {
   body?: string
   sourceUrl?: string
   previewUrl?: string
+  adAccountId?: string
   imageUrl?: string
   videoUrl?: string
   campaignName?: string
@@ -1311,6 +1312,7 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
     message.adPreview?.body,
     message.adPreview?.sourceUrl,
     message.adPreview?.previewUrl,
+    message.adPreview?.adAccountId,
     message.adPreview?.imageUrl,
     message.adPreview?.videoUrl,
     message.adPreview?.campaignName,
@@ -1544,6 +1546,7 @@ function getJourneyEventSignature(event: JourneyEvent) {
     data.detected_entry_point,
     data.ad_id_thru_message,
     data.message_ad_id,
+    data.ad_account_id,
     data.campaign_name,
     data.adset_name,
     data.attribution_ad_name,
@@ -2005,6 +2008,51 @@ function getMessageAdPreviewFallbackTitle(data: Record<string, unknown>) {
   return 'Anuncio de Meta'
 }
 
+function isAbsoluteHttpUrl(value = '') {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'http:' || url.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function isCurrentOriginUrl(value = '') {
+  if (typeof window === 'undefined') return false
+
+  try {
+    const url = new URL(value, window.location.href)
+    return url.origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
+function getExternalMessageAdUrl(value = '') {
+  const url = getReadableDataValue(value)
+  if (!url || !isAbsoluteHttpUrl(url)) return ''
+  if (isCurrentOriginUrl(url)) return ''
+  return url
+}
+
+function buildMetaAdsManagerAdUrl(adId = '', adAccountId = '') {
+  const cleanAdId = getReadableDataValue(adId)
+  const cleanAccountId = getReadableDataValue(adAccountId).replace(/^act_/i, '')
+  if (!cleanAdId || !cleanAccountId) return ''
+
+  const params = new URLSearchParams({
+    act: cleanAccountId,
+    selected_ad_ids: cleanAdId
+  })
+  return `https://adsmanager.facebook.com/adsmanager/manage/ads?${params.toString()}`
+}
+
+function getMessageAdPreviewActionUrl(preview: MessageAdPreview) {
+  return getExternalMessageAdUrl(preview.previewUrl) ||
+    buildMetaAdsManagerAdUrl(preview.sourceId, preview.adAccountId) ||
+    getExternalMessageAdUrl(preview.sourceUrl)
+}
+
 function buildMessageAdPreview(data: Record<string, unknown>, direction: DesktopChatMessage['direction']): MessageAdPreview | undefined {
   if (direction !== 'inbound') return undefined
 
@@ -2045,6 +2093,7 @@ function buildMessageAdPreview(data: Record<string, unknown>, direction: Desktop
   const platform = getMessageAdPreviewPlatformLabel(data)
   const adName = pickReadableDataValue(data, ['attribution_ad_name', 'ad_name', 'meta_ad_name'])
   const title = headline || adName || getMessageAdPreviewFallbackTitle(data)
+  const adAccountId = pickReadableDataValue(data, ['ad_account_id', 'adAccountId'])
   const imageUrl = pickReadableDataValue(data, [
     'referral_image_url',
     'creative_image_url',
@@ -2062,6 +2111,7 @@ function buildMessageAdPreview(data: Record<string, unknown>, direction: Desktop
     body,
     sourceUrl,
     previewUrl,
+    adAccountId,
     imageUrl,
     videoUrl,
     campaignName,
@@ -7618,7 +7668,7 @@ export const DesktopChat: React.FC = () => {
     const preview = message.adPreview
     if (!preview) return null
 
-    const href = preview.previewUrl || preview.sourceUrl || ''
+    const href = getMessageAdPreviewActionUrl(preview)
     const campaignLine = [
       preview.campaignName ? `Campaña ${formatUrlParameter(preview.campaignName)}` : '',
       preview.adName ? formatUrlParameter(preview.adName) : '',

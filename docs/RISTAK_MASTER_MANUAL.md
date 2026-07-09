@@ -508,10 +508,14 @@ incluye `ads_context_data.photo_url` o `ads_context_data.video_url`, el backend
 los expone como media/thumbnail del anuncio para que la tarjeta tenga material
 visual aunque todavia no exista una fila sincronizada en `meta_ads`. Cuando
 el backend ya enriquecio el evento con `meta_ads`, usa
-`creative_image_url`/`creative_thumbnail_url`, `creative_preview_url`, campana,
-conjunto y nombre del anuncio. Si no hay senal real de anuncio, el chat no debe
-inventar previews ni decorar mensajes directos. Como fallback operativo para
-WhatsApp, si el texto recibido contiene el marcador
+`creative_image_url`/`creative_thumbnail_url`, `creative_preview_url`,
+`ad_account_id`, campana, conjunto y nombre del anuncio. El CTA "Ver anuncio"
+debe abrir primero el preview real de Meta; si falta, debe abrir Ads Manager con
+`ad_account_id` + ID del anuncio; y solo como ultimo respaldo puede usar
+`referral_source_url` cuando sea una URL externa. Nunca debe usar una URL
+same-origin de Ristak como CTA del anuncio. Si no hay senal real de anuncio, el
+chat no debe inventar previews ni decorar mensajes directos. Como fallback
+operativo para WhatsApp, si el texto recibido contiene el marcador
 `rstkad_id=<ad_id>!`, Ristak extrae solo los digitos entre `=` y `!`, lo trata
 como `referral_source_id` de anuncio y oculta ese marcador del texto visible del
 mensaje. El `!` es obligatorio para no atribuir por accidente otros numeros que
