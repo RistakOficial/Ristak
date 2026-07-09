@@ -33,6 +33,10 @@ en `whatsapp_api_messages`/`whatsapp_api_attribution`, `whatsapp_attribution`,
 `sessions` o `meta_social_messages` segun el canal. Esos touches posteriores SI
 pueden ganar credito de una compra/cita si son el ultimo paid touch valido antes
 de la conversion, pero no deben pisar la adquisicion inicial del contacto.
+En el chat desktop, cada touch entrante de WhatsApp que traiga senal propia de
+anuncio puede mostrar su preview en ese globo; esa preview no cambia
+`contacts.attribution_ad_id` ni debe inventarse desde la atribucion historica del
+contacto si el mensaje fue organico.
 
 Cuando un mensaje de WhatsApp trae un `source_id` oficial y tambien un marcador
 `rstkad_id=<ad_id>!`, el backend resuelve el conflicto contra `meta_ads` usando

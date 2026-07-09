@@ -133,6 +133,119 @@ test('contact journey enriches WhatsApp messages that only carry rstkad_id marke
   }
 })
 
+test('contact journey exposes every WhatsApp ad touch without decorating organic retouches', async () => {
+  const id = randomUUID()
+  const contactId = `journey_multi_ad_${id}`
+  const phone = `+52990${Date.now().toString().slice(-7)}`
+  const seed = Date.now().toString().slice(-10)
+  const firstAdId = `781${seed}01`
+  const secondAdId = `782${seed}02`
+
+  await cleanup(contactId, phone)
+  await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [firstAdId, secondAdId]).catch(() => undefined)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Retouch Ads',
+      first_name: 'Cliente',
+      source: 'WhatsApp_API',
+      attribution_ad_id: firstAdId,
+      created_at: '2099-05-01T12:00:00.000Z',
+      updated_at: '2099-05-01T12:00:00.000Z'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-05-01',
+      ad_account_id: `act_multi_${id}`,
+      campaign_id: `camp_may_${id}`,
+      campaign_name: 'Campaña mayo',
+      adset_id: `adset_may_${id}`,
+      adset_name: 'Conjunto mayo',
+      ad_id: firstAdId,
+      ad_name: 'Anuncio mayo',
+      creative_thumbnail_url: 'https://example.test/may-thumb.jpg',
+      creative_preview_url: 'https://example.test/may-preview'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-06-15',
+      ad_account_id: `act_multi_${id}`,
+      campaign_id: `camp_june_${id}`,
+      campaign_name: 'Campaña junio',
+      adset_id: `adset_june_${id}`,
+      adset_name: 'Conjunto junio',
+      ad_id: secondAdId,
+      ad_name: 'Anuncio junio',
+      creative_thumbnail_url: 'https://example.test/june-thumb.jpg',
+      creative_preview_url: 'https://example.test/june-preview'
+    })
+
+    await insertRow('whatsapp_api_messages', {
+      id: `api_multi_may_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: `Hola, vengo del anuncio de mayo rstkad_id=${firstAdId}!`,
+      message_timestamp: '2099-05-01T12:01:00.000Z',
+      created_at: '2099-05-01T12:01:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_multi_organic_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Hola otra vez, tengo una duda normal',
+      message_timestamp: '2099-05-20T12:01:00.000Z',
+      created_at: '2099-05-20T12:01:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_multi_june_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: `Hola, ahora vengo del anuncio de junio rstkad_id=${secondAdId}!`,
+      message_timestamp: '2099-06-15T12:01:00.000Z',
+      created_at: '2099-06-15T12:01:00.000Z'
+    })
+
+    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const messages = journey.filter((event) => event.type === 'whatsapp_message')
+    const mayMessage = messages.find((event) => String(event.data?.message_text || '').includes('mayo'))
+    const organicMessage = messages.find((event) => String(event.data?.message_text || '').includes('duda normal'))
+    const juneMessage = messages.find((event) => String(event.data?.message_text || '').includes('junio'))
+
+    assert.ok(mayMessage)
+    assert.ok(organicMessage)
+    assert.ok(juneMessage)
+    assert.equal(mayMessage.data.referral_source_id, firstAdId)
+    assert.equal(mayMessage.data.attribution_ad_name, 'Anuncio mayo')
+    assert.equal(mayMessage.data.creative_preview_url, 'https://example.test/may-preview')
+    assert.equal(organicMessage.data.is_ad_attributed, false)
+    assert.equal(organicMessage.data.referral_source_id || '', '')
+    assert.equal(juneMessage.data.referral_source_id, secondAdId)
+    assert.equal(juneMessage.data.attribution_ad_name, 'Anuncio junio')
+    assert.equal(juneMessage.data.creative_preview_url, 'https://example.test/june-preview')
+  } finally {
+    await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [firstAdId, secondAdId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+  }
+})
+
 test('chat contacts caps oversized pages for safer inbox prefetch', async () => {
   const id = randomUUID().replace(/-/g, '')
   const prefix = `chat_page_${id}`

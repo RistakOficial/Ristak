@@ -454,7 +454,10 @@ duplicar el contenido debajo del mapa.
 
 En `/chat` desktop, los mensajes entrantes de WhatsApp que vienen de un anuncio
 deben mostrar una vista previa compacta del anuncio dentro del globo antes del
-texto del contacto. La tarjeta se arma con `is_ad_attributed`,
+texto del contacto. Esto aplica por mensaje: si el mismo contacto vuelve por
+otro anuncio semanas despues, ese nuevo globo tambien muestra su propia vista
+previa; un mensaje organico intermedio no debe heredarse la atribucion vieja del
+contacto. La tarjeta se arma con `is_ad_attributed`,
 `referral_source_id`, `referral_ctwa_clid`, `referral_source_url`,
 `referral_headline` y `referral_body`; cuando el backend ya enriquecio el evento
 con `meta_ads`, usa `creative_image_url`/`creative_thumbnail_url`,
