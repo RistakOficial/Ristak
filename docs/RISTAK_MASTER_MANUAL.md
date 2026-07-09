@@ -787,9 +787,12 @@ tecnica (`connected`, `reconnecting`, `restarting`, `connection_replaced` o
 automatico.
 Los ecos salientes capturados desde WhatsApp normal/QR deben persistir
 `business_phone_number_id` resolviendo tambien por `qr_connected_phone`; si se
-pierde ese enlace, las bandejas filtradas de `/movil` y apps nativas pueden
-ocultar las respuestas del negocio y dejar visible solo lo que escribe el
-contacto.
+pierde ese enlace, la app de chats (`/chat`), la ficha de contacto, el chat movil
+web y las apps nativas pueden ocultar las respuestas del negocio y dejar visible
+solo lo que escribe el contacto. Si WhatsApp Web entrega el chat como LID
+(`@lid`) en lugar de telefono, el listener QR debe resolverlo con el mapa de
+Baileys antes de descartar el mensaje; esos salientes de WhatsApp normal son
+fuente canonica del historial cuando el operador responde fuera de Ristak.
 
 Al agregar un WhatsApp solo por QR desde Configuracion > WhatsApp, el usuario no
 debe capturar el numero manualmente. Ristak crea una fila QR pendiente, muestra
