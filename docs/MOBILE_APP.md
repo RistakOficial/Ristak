@@ -1,25 +1,22 @@
 # Ristak Mobile App
 
-Ristak tiene dos superficies moviles que deben mantenerse coordinadas:
+Ristak tiene tres rutas moviles activas y no deben mezclarse:
 
-- Produccion actual: shell Capacitor bajo `/movil`, construido desde
-  `frontend/`, `frontend/ios/App` y `frontend/android`. Este sigue usando el
-  bundle/package de tienda `com.ristak.app`.
-- Cliente nativo nuevo: app React Native/Expo en `mobile/`. No carga el CRM
-  completo en un WebView; habla directo con el backend de Ristak por API. Su
-  identidad default de comparacion es `com.ristak.native` para que pueda vivir
-  instalada junto a la app Capacitor `com.ristak.app`. No regreses `mobile/` a
-  `com.ristak.app` salvo que la migracion nativa vaya a reemplazar
-  intencionalmente la app de tienda. Las pruebas APNs contra el topic de tienda
-  `com.ristak.app` deben tratarse como builds de migracion/release, no como el
-  default local.
+1. `/movil`: experiencia movil web dentro de `frontend/`. Es la ruta usada para
+   web/PWA y para el shell web movil.
+2. `mobile/`: cliente React Native/Expo para dispositivos Android y el camino
+   futuro de Google/Play. No debe contener configuracion, scripts, entitlements,
+   APNs, targets, extensiones ni codigo nativo Apple. Si alguien necesita correr
+   Apple, esa ruta no es `mobile/`.
+3. `ios/app`: app nativa Apple en SwiftUI para iPhone y iPad. Esta es la unica
+   carpeta propietaria de la experiencia nativa Apple.
 
 Regla obligatoria de mantenimiento: cualquier cambio de producto movil, chat,
 login, permisos, push, pagos, agenda, filtros, labels visibles o contrato de API
-debe revisarse tanto en `/movil` como en `mobile/`. Si el cambio aplica a las dos
-apps, se implementa en las dos. Si aplica solo a una, el resumen del cambio debe
-decir por que y esta guia debe actualizarse cuando cambie el comportamiento
-visible.
+debe revisarse en las superficies que apliquen: `/movil` para web, `mobile/`
+para Android/Google y `ios/app` para iPhone/iPad. Si aplica solo a una, el
+resumen del cambio debe decir por que y esta guia debe actualizarse cuando
+cambie el comportamiento visible.
 
 Contrato de paridad nativa: `mobile/` puede usar React Native, Expo y componentes
 nativos diferentes, pero el resultado para el usuario debe ser identico a
@@ -37,8 +34,8 @@ mismo sheet/contacto sin que se trabe.
 
 Los bottom sheets nativos que contienen formularios, pickers o contenido con
 boton final deben reservar un margen inferior de seguridad dentro del contenido
-scrollable para que el ultimo control quede visible por encima del indicador
-inferior de iOS/Android. Esta regla no aplica a sheets de lista pura
+scrollable para que el ultimo control quede visible por encima del area inferior
+del dispositivo Android. Esta regla no aplica a sheets de lista pura
 (`contactos`, `calendarios`, `Mas acciones`, listas de filas): esas filas deben
 mantenerse full-bleed, con separadores y estados seleccionados llegando al borde
 del sheet y sin safe-zone lateral falsa.
@@ -69,21 +66,13 @@ teclado: crea un corte visual entre panel y teclado. No crees formularios con
 `TextInput` fuera de esas primitivas salvo que implementen el mismo contrato de
 keyboard avoidance local y continuidad visual.
 
-En conversaciones nativas, el composer vive dentro del `AppFrame` con el
-keyboard avoidance global (`padding` en iOS) y toda la pantalla comparte una
-sola superficie: el `AppFrame` de la conversacion usa siempre el mismo fondo
-que el composer, sin cambiar de color al enfocar. No pintes un "fondo de
-teclado" (emular el color de la superficie del teclado iOS) ni agregues
-rellenos/extensiones extra detras del teclado: como el teclado de iOS es un
-panel translucido que deja ver la app, cualquier franja de color distinta entre
-composer y teclado se percibe como un contenedor separado. Lo que se ve detras
-y alrededor del teclado debe ser el mismo fondo del composer, igual que en las
-demas pantallas con avoidance (buscador de chats, paneles de analiticas).
-Cuando el teclado esta abierto, el composer solo apaga el safe-area inferior
-del home indicator (reduce su padding inferior); mantiene su fondo y su borde
-superior normales, y si el texto crece a varias lineas el dock crece hacia
-arriba con su borde inferior pegado al marco del teclado, que es lo que hace el
-avoidance global.
+En conversaciones nativas de `mobile/`, el composer vive dentro del `AppFrame` y
+toda la pantalla comparte una sola superficie: el `AppFrame` de la conversacion
+usa siempre el mismo fondo que el composer, sin cambiar de color al enfocar. No
+pintes fondos falsos detras del teclado ni agregues rellenos extra que corten la
+continuidad visual. Lo que se ve detras y alrededor del teclado debe ser el
+mismo fondo del composer, igual que en las demas pantallas con avoidance
+(buscador de chats, paneles de analiticas).
 
 Arquitectura del hilo de conversacion nativo: el FlatList del hilo es
 INVERTIDO (data[0] = mensaje mas reciente, `inverted` +
@@ -164,19 +153,15 @@ agente con `expo-audio` y `/api/ai-agent/transcribe`, activacion de push nativo
 con `expo-notifications`, y Ajustes reales de apariencia/chat. La preferencia
 `mobile_chat_theme_preference` soporta sistema, claro, noche y horario; el shell
 nativo debe aplicarla como paleta global, no solo como fondo de `StatusBar`.
-Para que `sistema` funcione en iOS, `mobile/app.json` debe mantenerse con
-`userInterfaceStyle: "automatic"` y `mobile/ios/RistakNative/Info.plist` no debe
-declarar `UIUserInterfaceStyle=Dark`; si se vuelve a forzar oscuro ahi, el iPhone
-reporta la app como nocturna aunque Ajustes pida el sistema. Los botones flotantes,
-dock inferior, burbujas de chat, composer e iconos de Ajustes deben tomar colores
-desde la paleta activa (`COLORS`) y no desde azules nocturnos hardcodeados.
-La pantalla de Ajustes debe forzar un render del shell cuando cambia
-`mobile_chat_theme_preference` o cuando iOS notifica un cambio de apariencia. En
-la lista principal de Ajustes, los iconos de filas son glyph-only: no llevan
-circulo, fondo ni color por categoria; todos usan el mismo tono neutral de la
-paleta activa y solo `Cerrar sesion` puede usar rojo destructivo. Los iconos de
-cards y opciones de apariencia siguen usando colores semanticos de la paleta
-activa con contraste real en claro y noche.
+Los botones flotantes, dock inferior, burbujas de chat, composer e iconos de
+Ajustes deben tomar colores desde la paleta activa (`COLORS`) y no desde azules
+nocturnos hardcodeados. La pantalla de Ajustes debe forzar un render del shell
+cuando cambia `mobile_chat_theme_preference`. En la lista principal de Ajustes,
+los iconos de filas son glyph-only: no llevan circulo, fondo ni color por
+categoria; todos usan el mismo tono neutral de la paleta activa y solo `Cerrar
+sesion` puede usar rojo destructivo. Los iconos de cards y opciones de
+apariencia siguen usando colores semanticos de la paleta activa con contraste
+real en claro y noche.
 Las preferencias de chat guardadas en `app_config` (`mobile_chat_ai_agent_enabled`,
 `mobile_chat_show_archived`, `mobile_chat_sort_mode`,
 `mobile_chat_show_last_preview`, `mobile_chat_show_unread_indicators` y
@@ -205,6 +190,12 @@ contacto compacto para no comerse el nombre, y acciones de calendario/cobro del
 header fusionadas dentro de una sola capsula compacta. El boton de canal puede
 colorear el glifo segun el canal, pero no debe volver a meterlo en un circulo
 solido.
+
+En listas y headers de chat, el avatar del contacto no lleva aro ni contorno por
+canal. El canal se identifica con un badge inferior derecho usando los assets
+WebP nativos de `mobile/assets/channel-badges/` y
+`ios/app/Ristak/Resources/channel-badges/`, sin disco, fondo, borde ni brillo
+extra alrededor.
 
 Los envios manuales desde la conversacion nativa deben tener un candado
 sincronico antes de cualquier validacion async del agente o del canal: un doble
@@ -243,11 +234,11 @@ El avance por fases de esa paridad vive en
 lee ese checklist para saber que ya quedo, que sigue pendiente y que fuentes del
 codigo original deben revisarse.
 
-## Shell Capacitor `/movil`
+## Shell web `/movil`
 
-Ristak ya puede compilarse como app nativa iOS/Android con Capacitor. La app usa
-las mismas pantallas moviles bajo `/movil`, pero dentro de un contenedor nativo
-con camara, fotos y notificaciones push del celular. Las rutas legacy `/phone/*`
+`/movil` es la experiencia movil web de Ristak. Usa las mismas pantallas moviles
+del frontend y es la referencia funcional que deben mirar `mobile/` e `ios/app`
+cuando una feature exista en varias superficies. Las rutas legacy `/phone/*`
 redirigen a `/movil/*`.
 
 En iOS el contenedor nativo está configurado como app de iPhone/iPad enfocada en `/movil`. Al abrir desde Xcode o desde el icono del celular, primero resuelve la empresa contra el portal central, guarda la URL pública de la instalación del cliente y después arranca el login/chat móvil contra ese Render.
@@ -336,7 +327,8 @@ evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
   usa `https://www.ristak.com`.
 - Android: `frontend/android/app/google-services.json` del proyecto Firebase.
   Este archivo vive fuera de Git y debe pertenecer al paquete `com.ristak.app`.
-- iOS: activar la capability Push Notifications en Xcode y configurar APNs.
+- iOS nativo: usar `ios/app` y sus documentos. No agregues APNs ni Xcode config
+  dentro de `mobile/`.
 
 ## Comandos
 
@@ -344,26 +336,25 @@ Desde la raiz del repo para el cliente React Native nuevo:
 
 ```bash
 npm run mobile:native:start
-npm run mobile:native:ios
 npm run mobile:native:android
 npm run mobile:native:prebuild
 npm run mobile:native:typecheck
 ```
 
-`mobile/ios` y `mobile/android` son generados por Expo Continuous Native
-Generation con `npm run mobile:native:prebuild`. Deben tratarse como
-descartables salvo que una personalizacion nativa se promueva deliberadamente a
-codigo versionado.
+`mobile/android` puede generarse por Expo Continuous Native Generation con
+`npm run mobile:native:prebuild`. Si Expo vuelve a generar `mobile/ios`, esa
+salida es basura local: se borra y no se promueve. La ruta Apple real es
+`ios/app`.
 
 Desde `frontend/`:
 
 ```bash
 npm run mobile:sync
 npm run mobile:open:android
-npm run mobile:open:ios
 ```
 
-Para preparar y subir a App Store Connect el shell iOS enfocado en `/movil`, usa la guía específica en `docs/APP_STORE_IOS.md`.
+Para preparar, probar o publicar la app Apple nativa, usa `ios/app` y
+`ios/README.md`.
 
 Si tu terminal sigue en Node 20, usa Node 22 temporal:
 
@@ -388,9 +379,9 @@ pantalla web movil:
 
 Los rangos visibles `30d`, `60d`, `180d`, `year` y `custom` deben calcularse con
 la zona horaria de negocio (`account_timezone`) y los importes deben formatearse
-con `account_currency`. No uses la zona del iPhone ni una moneda hardcodeada como
-fuente de verdad de negocio. El rango personalizado usa fechas `YYYY-MM-DD` y
-debe aplicar el mismo rango a metricas, grafica, embudo y origen.
+con `account_currency`. No uses la zona local del dispositivo ni una moneda
+hardcodeada como fuente de verdad de negocio. El rango personalizado usa fechas
+`YYYY-MM-DD` y debe aplicar el mismo rango a metricas, grafica, embudo y origen.
 
 La pantalla nativa debe conservar la estructura de `PhoneAnalytics`: encabezado
 `Analiticas`, selector de periodo, 8 KPIs, grafica principal con chips, scopes
@@ -425,10 +416,10 @@ inicio":
   muestran logo ni nombre visible.
 - Web/PWA móvil: `frontend/public/ristak-chat-icon-*`,
   `frontend/public/ristak-chat-home-icon-*` y los `apple-touch-icon` móviles.
-- App nativa Expo (`mobile/`): `mobile/assets/ristak-light-mode-icon.png`,
+- App nativa Android Expo (`mobile/`): `mobile/assets/ristak-light-mode-icon.png`,
   `mobile/assets/ristak-night-mode-icon.png` y
   `mobile/assets/ristak-monochrome-icon.png` alimentan `mobile/app.json` para
-  iOS/Android. La pantalla `BootScreen` y el login nativo usan los WebP
+  Android. La pantalla `BootScreen` y el login nativo usan los WebP
   transparentes `mobile/assets/ristak-*-mode-sin-fondo.webp`, generados desde
   los logos oficiales de modo claro/noche. En `mobile/` si debe verse marca al
   cargar; en `/movil` la carga web sigue sin logo ni nombre visible.
@@ -505,29 +496,21 @@ proyecto `mobile/android` no este generado/tracked, la paridad Android del
 renderer `RistakFirebaseMessagingService` sigue pendiente; no sustituye todavia
 al renderer Android de `frontend/android`.
 
-En iOS/APNs el payload incluye `mutable-content` cuando existe
-`contactAvatarUrl`/`senderAvatarUrl` o media real. La extension
-`RistakNotificationService` usa Communication Notifications con
-`INSendMessageIntent` para que el avatar sea la identidad del remitente, y solo
-adjunta `notificationImageUrl` / `notificationAttachmentUrl` como media del
-mensaje. La app principal debe tener el entitlement
-`com.apple.developer.usernotifications.communication` y los perfiles de firma
-deben incluir esa capability. La app nueva de `mobile/` usa el mismo Swift de
-`RistakNotificationService` bajo `mobile/ios/RistakNotificationService` con
-bundle `com.ristak.app.NotificationService` para pruebas reales de push. Si la
-descarga falla, hay varios contactos o la alerta es general, iOS muestra el
-AppIcon instalado.
+En iOS/APNs, cualquier payload, extension de notificaciones, capability o perfil
+de firma pertenece a la app Apple bajo `ios/app`, no a `mobile/`. Si hace falta
+mantener Communication Notifications, avatars o attachments en iPhone/iPad,
+documentalo y desarrollalo en la ruta Apple nativa.
 
 ## Tema visual móvil
 
-La app nativa en `mobile/` debe sentirse como una experiencia iOS/Apple neutral,
-no como una piel azul encima de React Native. La base visual usa superficies
-blancas/grises en claro y negros/grises de sistema en oscuro. El azul queda
-reservado para acentos funcionales puntuales: CTA principal, badges, links,
-checks, puntos de calendario o estados que realmente necesitan destacar. No uses
-azul/cian como relleno de navegación, tabs, chips, filtros, icon buttons,
-bottom sheets ni segmented controls. El verde ya no debe usarse como acento
-global de la app porque hace que la experiencia se sienta como WhatsApp.
+La app nativa en `mobile/` debe sentirse como una experiencia Android premium,
+neutral y limpia, no como una piel azul encima de React Native. La base visual
+usa superficies claras/grises en claro y negros/grises profundos en oscuro. El
+azul queda reservado para acentos funcionales puntuales: CTA principal, badges,
+links, checks, puntos de calendario o estados que realmente necesitan destacar.
+No uses azul/cian como relleno de navegacion, tabs, chips, filtros, icon
+buttons, bottom sheets ni segmented controls. El verde ya no debe usarse como
+acento global de la app porque hace que la experiencia se sienta como WhatsApp.
 
 Tokens principales:
 
@@ -542,28 +525,19 @@ El dock inferior nativo en `mobile/src/App.tsx` debe mantenerse en paridad con
 `frontend/src/components/phone/PhoneEcosystemNav.*`: mismos items, orden,
 sin texto visible bajo los iconos, gesto horizontal entre secciones, indicador
 animado que persigue la coordenada real del dedo, badge de Chats y espacio
-inferior reservado para que las listas no queden cortadas detras del panel. En
-iOS 26+ el dock, botones flotantes/iconograficos y las superficies flotantes
-reutilizables (bottom sheets, filtros, chips y pickers) pueden usar
-`expo-glass-effect`/`GlassView` para Liquid Glass, siempre con fallback
-translucido para plataformas sin soporte. El material no
-debe prenderse solo en un estado de scroll: permanece activo en tamano normal y
-compacto; al hacer scroll hacia abajo el dock se compacta suavemente y al volver
-hacia arriba regresa a su tamano normal sin perder el centrado de iconos ni del
-indicador. Evita contornos duros, rellenos opacos y elevaciones pesadas en
-superficies Liquid Glass: los controles flotantes e iconograficos deben comportarse como `clear`
-Liquid Glass de Apple, con fondo practicamente transparente, borde/material
-sutil y una sombra externa ligera para separarse del contenido. No pintes
-rellenos azules o cian para simular vidrio; los estados seleccionados de
-tablists, filtros y segmented controls se leen por material neutral, sombra,
-contraste y texto, no por pintura azul. Los botones de navegacion, cerrar,
-volver, filtros, chips y acciones iconograficas deben usar vidrio
-claro/transparente. Los iconos de navegacion y toolbar deben mantenerse finos
+inferior reservado para que las listas no queden cortadas detras del panel. El
+dock se compacta suavemente al hacer scroll hacia abajo y vuelve a su tamano
+normal al subir, sin perder el centrado de iconos ni del indicador. Evita
+contornos duros, rellenos opacos y elevaciones pesadas: los controles flotantes e
+iconograficos usan superficies neutrales, borde sutil y sombra ligera. No pintes
+rellenos azules o cian para simular material; los estados seleccionados de
+tablists, filtros y segmented controls se leen por superficie neutral, sombra,
+contraste y texto. Los iconos de navegacion y toolbar deben mantenerse finos
 (`strokeWidth` aproximado 1.75-2.0); reserva trazos mas gruesos solo para badges
 o estados muy pequenos donde la legibilidad lo exija. El indicador activo del
-dock es una unica capsula Liquid Glass que se mueve con `translateX` siguiendo
-el dedo; no debe convertirse en un circulo solido azul. En tema claro, los
-iconos del dock son negros; en tema oscuro, claros.
+dock es una unica capsula neutral que se mueve con `translateX` siguiendo el
+dedo; no debe convertirse en un circulo solido azul. En tema claro, los iconos
+del dock son negros; en tema oscuro, claros.
 
 Regla de criterio: el verde se reserva para marca WhatsApp
 (`--phone-channel-whatsapp`, `PhoneMessageChannelIcon`, iconos/canal WhatsApp) o
@@ -641,7 +615,8 @@ Esta pantalla usa una escala compacta comun para textos, iconos, filas, tabs,
 metricas y sheets. Si se ajusta el tamano visual, modifica la escala o los tokens
 compartidos de esta familia de componentes; no agrandes cada elemento por
 separado ni permitas que iOS Dynamic Type infle la pantalla hasta romper la
-paridad visual.
+paridad visual de la app Apple. En `mobile/`, la escala debe controlarse desde
+tokens/estilos React Native propios.
 
 Las filas de `Info del contacto` pueden usar separadores sutiles, pero solo si
 son parte real del componente de fila. La linea debe quedar al fondo de la fila y
@@ -827,14 +802,12 @@ y apellido (`Raul Gomez` -> `RG`); si solo
 hay una palabra o identificador, usa hasta dos caracteres utiles.
 Las iniciales deben elegir color por contraste contra el relleno del avatar: si
 el fondo es oscuro/azul, el texto va claro; si el fondo es claro, el texto va
-navy oscuro. Los botones de accion de la app nativa (camara, crear, volver,
-cerrar, agendar, cobrar y menus de mas acciones) deben usar la capa comun de
-Liquid Glass: `GlassView` real cuando iOS lo soporte y fallback transparente con
-borde hairline, brillo superior y sombra externa ligera. No uses relleno azul en
-estos botones salvo que sean CTA primario o estado seleccionado real. El tinte
-debe contrastar con el fondo visible (nada de vidrio blanco puro sobre fondo
-blanco) y el icono o texto siempre debe renderizar encima del material para no
-verse opaco.
+navy oscuro. Los botones de accion de la app nativa Android (camara, crear,
+volver, cerrar, agendar, cobrar y menus de mas acciones) deben usar la capa comun
+de superficie neutral: borde hairline, brillo superior y sombra externa ligera.
+No uses relleno azul en estos botones salvo que sean CTA primario o estado
+seleccionado real. El tinte debe contrastar con el fondo visible y el icono o
+texto siempre debe renderizar encima de la superficie para no verse opaco.
 
 La bandeja nativa en `mobile/src/App.tsx` debe seguir esta misma regla de paridad:
 header de chats con acciones superiores, buscador tipo pill, chips horizontales
@@ -843,10 +816,10 @@ planas con separador desde el bloque de texto. La tira de filtros no debe quedar
 encerrada en un panel de fondo ni vivir como banda flotante entre buscador y
 filas: debe renderizarse dentro del `ListHeaderComponent` de la lista, sin fondo,
 sombra, elevacion ni margen negativo; solo los chips individuales pueden tener
-Liquid Glass. En tema claro, la paleta nativa usa base neutral tipo Apple:
-fondo blanco, superficies gris muy claro, texto navy/negro de alta legibilidad,
-bordes grises suaves y tipografia del sistema tipo SF Pro, no familias custom
-como Avenir. La jerarquia de grosor debe ser corta:
+superficie propia. En tema claro, la paleta nativa usa base neutral: fondo
+blanco, superficies gris muy claro, texto navy/negro de alta legibilidad, bordes
+grises suaves y tipografia del sistema Android, no familias custom como Avenir.
+La jerarquia de grosor debe ser corta:
 solo los titulos principales de pantalla o seccion (`Chats`, `Ajustes`, meses
 de calendario, `Analiticas`, `Elige como quieres pagar`) usan peso pesado;
 subtitulos/labels van en semibold y texto normal va delgado. No uses negrita
@@ -1091,7 +1064,10 @@ las burbujas de audio deben poder reproducirse con progreso suave tanto en
 claro como en oscuro. La respuesta del backend y el mensaje recargado del
 historial deben conservar `media_url`/`audio.link` reproducible para audios
 salientes, no solo `media_id` del proveedor ni un archivo generico; esto aplica a
-WhatsApp API/QR y a Messenger/Instagram cuando viajan por HighLevel. Cuando el
+WhatsApp API/QR, a Messenger/Instagram nativo de Meta y a Messenger/Instagram
+cuando viajan por HighLevel. En Meta nativo el audio se envia sin texto como
+attachment `audio` con URL HTTPS publica de Ristak; otros archivos de
+Messenger/Instagram siguen requiriendo HighLevel. Cuando el
 teclado esta abierto, el composer debe sentirse
 pegado al teclado como una sola superficie inferior: mismo tono base del teclado,
 sin borde rectangular superior y con esquinas superiores redondeadas tipo sheet,
@@ -1174,7 +1150,7 @@ FCM_SERVICE_ACCOUNT_JSON=
 `frontend/android/app/google-services.json` antes de compilar el binario de
 tienda.
 
-iOS nativo:
+iOS nativo (`ios/app`):
 
 En produccion managed, la ruta recomendada es que Ristak Installer concentre las
 credenciales APNs cifradas en su base (`mobile_apns_key_id`,
@@ -1192,7 +1168,7 @@ APNs localmente:
 ```bash
 APNS_KEY_ID=
 APNS_TEAM_ID=
-APNS_BUNDLE_ID=com.ristak.app
+APNS_BUNDLE_ID=com.ristak.ios
 APNS_PRIVATE_KEY=
 APNS_ENV=production
 ```

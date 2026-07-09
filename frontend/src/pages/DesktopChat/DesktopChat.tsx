@@ -74,6 +74,7 @@ import {
 } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import { AgentRobot } from '@/components/ai'
+import { PhoneMessageChannelIcon } from '@/components/phone/PhoneMessageChannelIcon'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -3640,12 +3641,12 @@ export const DesktopChat: React.FC = () => {
     : agentInboxStatusFilter === 'completed'
     ? 'Cuando un contacto cumpla el objetivo configurado, quedará visible aquí.'
     : agentInboxStatusFilter === 'unassigned'
-    ? 'Los contactos que nunca han entrado al agente conversacional aparecerán aquí.'
+    ? 'Los contactos que nunca han entrado al chatbot aparecerán aquí.'
     : agentInboxStatusFilter === 'active'
     ? 'Cuando el bot esté atendiendo una conversación activa, aparecerá aquí.'
     : conversationAgentEnabled
     ? 'Cuando el bot atienda, pause, omita o cierre una conversación, aparecerá aquí.'
-    : 'Cuando enciendas el agente conversacional y tome chats, aparecerán aquí.'
+    : 'Cuando enciendas el chatbot y tome chats, aparecerán aquí.'
   const emptyChatTitle = archivedViewOpen
     ? 'No hay chats archivados'
     : agentAssignedViewOpen
@@ -3860,7 +3861,7 @@ export const DesktopChat: React.FC = () => {
     [agentDefs]
   )
 	  const conversationAgentStatusLabel = conversationAgentState
-	    ? CONVERSATION_AGENT_STATUS_LABELS[conversationAgentState.status] || 'Agente conversacional'
+	    ? CONVERSATION_AGENT_STATUS_LABELS[conversationAgentState.status] || 'Chatbot'
 	    : 'Sin agente asignado'
   const activeContactAgentStates = useMemo(
     () => {
@@ -3877,9 +3878,9 @@ export const DesktopChat: React.FC = () => {
   const manualAgentSendLabel = useMemo(() => {
     if (activeManualAgentStates.length === 1) {
       const state = activeManualAgentStates[0]
-      return state.agentName || agentDefs.find((agent) => agent.id === state.agentId)?.name || 'el agente conversacional'
+      return state.agentName || agentDefs.find((agent) => agent.id === state.agentId)?.name || 'el chatbot'
     }
-    return `${activeManualAgentStates.length} agentes conversacionales`
+    return `${activeManualAgentStates.length} chatbots`
   }, [activeManualAgentStates, agentDefs])
   const advancedFilterGroups = useMemo(() => ([
     {
@@ -5743,7 +5744,7 @@ export const DesktopChat: React.FC = () => {
   ) => {
     if (!activeContact?.id || conversationAgentBusy) return
     if (!conversationAgentEnabled) {
-      showToast('warning', 'Agente conversacional apagado', 'Actívalo en Ristak AI para usarlo en los chats.')
+      showToast('warning', 'Chatbot apagado', 'Actívalo en Chatbot para usarlo en los chats.')
       return
     }
 
@@ -5751,7 +5752,7 @@ export const DesktopChat: React.FC = () => {
     try {
       const nextState = await conversationalAgentService.updateState(activeContact.id, action, options)
       updateActiveConversationAgentState(nextState)
-      showToast('success', 'Agente conversacional', successMessage)
+      showToast('success', 'Chatbot', successMessage)
       closeComposerAgentMenu()
     } catch (error: any) {
       showToast('error', 'No se pudo cambiar el agente', error?.message || 'Intenta otra vez.')
@@ -5826,7 +5827,7 @@ export const DesktopChat: React.FC = () => {
 	      })
       .catch((error: any) => {
         setAgentStates((current) => ({ ...current, [contactId]: state }))
-        showToast('error', 'Agente conversacional', error?.message || 'No se pudo quitar la prioridad del chat')
+        showToast('error', 'Chatbot', error?.message || 'No se pudo quitar la prioridad del chat')
       })
   }, [activeContactId, agentStates, showToast])
 
@@ -6032,7 +6033,7 @@ export const DesktopChat: React.FC = () => {
   ) => {
     if (selectedChatContacts.length === 0 || bulkAgentActionBusy) return
     if (!conversationAgentEnabled) {
-      showToast('warning', 'Agente conversacional apagado', 'Actívalo en Ristak AI para usarlo en los chats.')
+      showToast('warning', 'Chatbot apagado', 'Actívalo en Chatbot para usarlo en los chats.')
       return
     }
 
@@ -7046,12 +7047,12 @@ export const DesktopChat: React.FC = () => {
 	    const getStateAgentName = (state: ConversationAgentState) => (
 	      state.agentName ||
 	      agentDefs.find((agent) => agent.id === state.agentId)?.name ||
-	      'Agente conversacional'
+	      'Chatbot'
 	    )
 
 	    if (showPicker) {
       return (
-        <div className={styles.agentComposerMenu} role="menu" aria-label="Seleccionar agente conversacional">
+        <div className={styles.agentComposerMenu} role="menu" aria-label="Seleccionar chatbot">
           <div className={styles.agentComposerMenuHeader}>
             <strong>Asignar agente</strong>
             <span>{disabledByGlobalConfig ? 'El agente está apagado en configuración.' : 'Elige quién atenderá este chat.'}</span>
@@ -7077,7 +7078,7 @@ export const DesktopChat: React.FC = () => {
               ))}
             </div>
           ) : (
-            <p className={styles.agentComposerHint}>No hay agentes publicados. Créalo en Ristak AI → Agente conversacional.</p>
+            <p className={styles.agentComposerHint}>No hay agentes publicados. Créalo en Chatbot.</p>
           )}
           {disabledByGlobalConfig ? (
             <p className={styles.agentComposerHint}>Activa la configuración general del agente antes de asignarlo a un chat.</p>
@@ -7087,14 +7088,14 @@ export const DesktopChat: React.FC = () => {
     }
 
 	    return (
-	      <div className={styles.agentComposerMenu} role="menu" aria-label="Acciones del agente conversacional">
+	      <div className={styles.agentComposerMenu} role="menu" aria-label="Acciones del chatbot">
 	        <div className={styles.agentComposerMenuHeader}>
-	          <strong>{contactAgentStates.length > 1 ? 'Agentes asignados' : (activeAgentDef?.name || contactAgentStates[0]?.agentName || 'Agente conversacional')}</strong>
+	          <strong>{contactAgentStates.length > 1 ? 'Agentes asignados' : (activeAgentDef?.name || contactAgentStates[0]?.agentName || 'Chatbot')}</strong>
 	          <span>{contactAgentStates.length > 1 ? `${contactAgentStates.length} agentes en este chat` : conversationAgentStatusLabel}</span>
 	        </div>
 	        {contactAgentStates.map((state) => {
 	          const agentName = getStateAgentName(state)
-	          const statusLabel = CONVERSATION_AGENT_STATUS_LABELS[state.status] || 'Agente conversacional'
+	          const statusLabel = CONVERSATION_AGENT_STATUS_LABELS[state.status] || 'Chatbot'
 	          const actionOptions = { agentId: state.agentId || undefined }
 	          if (state.status !== 'active') {
 	            return (
@@ -7184,9 +7185,9 @@ export const DesktopChat: React.FC = () => {
         data-enabled={conversationAgentEnabled ? 'true' : undefined}
         onClick={handleOpenComposerAgentMenu}
         disabled={!activeContact || conversationAgentBusy}
-        aria-label={conversationAgentActive ? 'Abrir acciones del agente conversacional' : 'Asignar agente conversacional'}
+        aria-label={conversationAgentActive ? 'Abrir acciones del chatbot' : 'Asignar chatbot'}
         aria-expanded={agentComposerMenuOpen}
-        title={conversationAgentActive ? 'Agente conversacional activo' : 'Asignar agente conversacional'}
+        title={conversationAgentActive ? 'Chatbot activo' : 'Asignar chatbot'}
       >
         {conversationAgentBusy ? <Loader2 size={17} className={styles.spin} /> : <AgentRobot size={30} active={conversationAgentActive} />}
       </button>
@@ -7195,16 +7196,14 @@ export const DesktopChat: React.FC = () => {
   )
 
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind, size: 'sm' | 'md') => {
-    const iconSize = size === 'sm' ? 13 : 14
-    if (kind === 'whatsapp') return <FaWhatsapp className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'messenger') return <FaFacebookMessenger className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'instagram') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'facebook_comment') return <FaFacebook className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'instagram_comment') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'email') return <Mail size={iconSize} />
-    if (kind === 'sms') return <Phone size={iconSize} />
-    if (kind === 'webchat') return <Icon name="globe" size={iconSize} />
-    return <Icon name="meta" size={iconSize} />
+    return (
+      <PhoneMessageChannelIcon
+        channel={kind}
+        variant="asset"
+        size={size === 'sm' ? 20 : 22}
+        className={styles.avatarChannelBadgeAssetIcon}
+      />
+    )
   }
 
   const renderAvatar = (
@@ -7840,7 +7839,7 @@ export const DesktopChat: React.FC = () => {
   const renderAgentCompletionCard = (completion: ConversationalAgentCompletionEvent) => (
     <article className={styles.agentCompletionCard} aria-label={`Resumen del agente: ${completion.title}`}>
       <span className={styles.agentCompletionIcon} aria-hidden="true">
-        <AgentRobot size={36} active label="Agente conversacional" className={styles.agentCompletionRobot} />
+        <AgentRobot size={36} active label="Chatbot" className={styles.agentCompletionRobot} />
       </span>
       <div className={styles.agentCompletionBody}>
         <span className={styles.agentCompletionHeader}>
@@ -7890,7 +7889,7 @@ export const DesktopChat: React.FC = () => {
               aria-pressed={agentAssignedViewOpen}
               title={agentAssignedViewOpen ? 'Cerrar chats del bot' : 'Conversaciones asignadas al bot'}
             >
-              <AgentRobot size={42} active={conversationAgentEnabled} label="Agente conversacional" />
+              <AgentRobot size={42} active={conversationAgentEnabled} label="Chatbot" />
             </Button>
           </div>
 
@@ -8169,8 +8168,8 @@ export const DesktopChat: React.FC = () => {
                               <DropdownMenuItem className={styles.chatSelectionMenuItem} disabled>
                                 <Bot size={15} />
                                 <span>
-                                  <span className={styles.chatSelectionMenuItemTitle}>Agente conversacional apagado</span>
-                                  <small>Actívalo en Ristak AI para usarlo aquí.</small>
+                                  <span className={styles.chatSelectionMenuItemTitle}>Chatbot apagado</span>
+                                  <small>Actívalo en Chatbot para usarlo aquí.</small>
                                 </span>
                               </DropdownMenuItem>
                             ) : availableAgentDefs.length > 0 ? (
@@ -8193,7 +8192,7 @@ export const DesktopChat: React.FC = () => {
                                 <Bot size={15} />
                                 <span>
                                   <span className={styles.chatSelectionMenuItemTitle}>Sin agentes activos</span>
-                                  <small>Crea o activa un agente en Ristak AI.</small>
+                                  <small>Crea o activa un agente en Chatbot.</small>
                                 </span>
                               </DropdownMenuItem>
                             )}
@@ -8208,7 +8207,7 @@ export const DesktopChat: React.FC = () => {
                               onSelect={() => {
                                 void handleRunBulkConversationAgentAction(
                                   'pause',
-                                  'Chatbots pausados por 24hrs',
+                                  'Chats pausados por 24hrs',
                                   (count) => `${count} chat${count === 1 ? '' : 's'} quedó${count === 1 ? '' : 'aron'} pausado${count === 1 ? '' : 's'} por 24hrs.`
                                 )
                               }}
@@ -8242,7 +8241,7 @@ export const DesktopChat: React.FC = () => {
                               onSelect={() => {
                                 void handleRunBulkConversationAgentAction(
                                   'skip',
-                                  'Chatbots omitidos',
+                                  'Chats omitidos',
                                   (count) => `El bot ya no volverá a tomar ${count} chat${count === 1 ? '' : 's'} seleccionado${count === 1 ? '' : 's'}.`
                                 )
                               }}

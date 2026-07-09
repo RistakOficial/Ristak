@@ -11,6 +11,10 @@ import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import {
+  formatContactName,
+  splitContactName as splitFormattedContactName
+} from '../utils/contactNameFormatter.js'
 
 // Configuración del remitente de correo de la cuenta.
 // El password SMTP se guarda cifrado en una llave separada de app_config.
@@ -1006,14 +1010,7 @@ function parseEmailDate(parsed, internalDate) {
 }
 
 function splitContactName(name) {
-  const clean = limitString(name, 180)
-  if (!clean) return { firstName: '', lastName: '' }
-  const parts = clean.split(/\s+/).filter(Boolean)
-  if (parts.length <= 1) return { firstName: clean, lastName: '' }
-  return {
-    firstName: parts.slice(0, -1).join(' '),
-    lastName: parts.slice(-1).join(' ')
-  }
+  return splitFormattedContactName(limitString(name, 180))
 }
 
 async function findContactByEmail(email) {
@@ -1042,7 +1039,7 @@ async function findOrCreateContactForInboundEmail({ email, name, createIfMissing
   }
 
   const id = createRistakId('contact')
-  const fullName = limitString(name, 180) || cleanEmail
+  const fullName = formatContactName(limitString(name, 180)) || cleanEmail
   const { firstName, lastName } = splitContactName(fullName === cleanEmail ? '' : fullName)
 
   try {

@@ -4924,6 +4924,11 @@ function getDraftAttachmentKind(attachment: MobileChatAttachment): ChatAttachmen
   return 'document'
 }
 
+function getNativeMetaAudioDurationMs(audio: MobileChatAttachment | VoiceDraftAttachment | null | undefined) {
+  if (!audio || !('durationMs' in audio)) return undefined
+  return Number(audio.durationMs || 0) || undefined
+}
+
 function getAIAgentAttachmentKind(attachment: MobileChatAttachment): AIAgentAttachmentKind {
   const mimeType = String(attachment.type || '').toLowerCase()
   const extension = getFileExtension(attachment.name)
@@ -12819,14 +12824,26 @@ export const PhoneChat: React.FC = () => {
 
     if (sendingThroughMetaSocial && activeMetaSocialChannel && !sendAttachmentsThroughHighLevel) {
       const outgoingText = locationToSend ? buildLocationFallbackText(locationToSend) : text
+      const nativeMetaAudioAttachment = attachmentsToSend.length === 1 && getDraftAttachmentKind(attachmentsToSend[0]) === 'audio'
+        ? attachmentsToSend[0]
+        : null
+      const nativeMetaAudio = voiceToSend || nativeMetaAudioAttachment
+      const nativeMetaAudioPayloadCount = (voiceToSend ? 1 : 0) + attachmentsToSend.filter((attachment) => getDraftAttachmentKind(attachment) === 'audio').length
+      const hasUnsupportedNativeMetaAttachment = attachmentsToSend.some((attachment) => getDraftAttachmentKind(attachment) !== 'audio') || nativeMetaAudioPayloadCount > 1
+      const nativeMetaAudioDurationMs = getNativeMetaAudioDurationMs(nativeMetaAudio)
 
-      if (!outgoingText) {
-        showToast('warning', 'Escribe algo', 'Manda un mensaje escrito desde este chat.')
+      if (hasUnsupportedNativeMetaAttachment) {
+        showToast('warning', 'Adjunto no disponible', 'Messenger e Instagram desde Meta nativo mandan texto o audio en este chat.')
         return
       }
 
-      if (voiceToSend || attachmentsToSend.length > 0) {
-        showToast('warning', 'Solo texto por ahora', 'Messenger e Instagram desde Meta nativo mandan texto en este chat.')
+      if (nativeMetaAudio && outgoingText) {
+        showToast('warning', 'Audio sin texto', 'Messenger e Instagram desde Meta nativo no combinan texto y audio en el mismo envío.')
+        return
+      }
+
+      if (!outgoingText && !nativeMetaAudio) {
+        showToast('warning', 'Escribe o graba algo', 'Manda texto o una nota de voz desde este chat.')
         return
       }
 
@@ -12848,14 +12865,25 @@ export const PhoneChat: React.FC = () => {
 
       const optimisticMessage: ChatMessage = {
         id: optimisticId,
-        text: locationToSend ? '' : text,
+        text: locationToSend || nativeMetaAudio ? '' : text,
         date: sentAt,
         direction: 'outbound',
         status: 'enviando',
         transport: activeMetaSocialChannel,
         replyToMessageId: hasMessageReplyTarget ? replyingToMessage?.id : undefined,
         replyToProviderMessageId: hasMessageReplyTarget ? replyReferencePayload.replyToProviderMessageId : undefined,
-        ...(locationToSend ? { location: locationToSend } : {})
+        ...(locationToSend ? { location: locationToSend } : {}),
+        ...(nativeMetaAudio
+          ? {
+              attachment: {
+                type: 'audio' as const,
+                dataUrl: nativeMetaAudio.dataUrl,
+                name: nativeMetaAudio.name,
+                mimeType: nativeMetaAudio.type,
+                durationMs: nativeMetaAudioDurationMs
+              }
+            }
+          : {})
       }
 
       setMessages((current) => [...current, optimisticMessage])
@@ -12863,7 +12891,7 @@ export const PhoneChat: React.FC = () => {
         contact.id === activeContact.id
           ? {
               ...contact,
-              lastMessageText: locationToSend ? 'Ubicación' : text,
+              lastMessageText: locationToSend ? 'Ubicación' : nativeMetaAudio ? 'Mensaje de voz' : text,
               lastMessageDate: sentAt,
               lastMessageDirection: 'outbound',
               lastMessageChannel: activeMetaSocialChannel,
@@ -12873,15 +12901,27 @@ export const PhoneChat: React.FC = () => {
       )))
 
       try {
-        const result = await whatsappApiService.sendMetaSocialText({
-          contactId: activeContact.id,
-          platform: activeMetaSocialChannel,
-          message: outgoingText,
-          externalId: optimisticId,
-          ...(hasMessageReplyTarget ? replyReferencePayload : {})
-        })
+        const result = nativeMetaAudio
+          ? await whatsappApiService.sendMetaSocialAudio({
+              contactId: activeContact.id,
+              platform: activeMetaSocialChannel,
+              audioDataUrl: nativeMetaAudio.dataUrl,
+              durationMs: nativeMetaAudioDurationMs,
+              externalId: optimisticId,
+              ...(hasMessageReplyTarget ? replyReferencePayload : {})
+            })
+          : await whatsappApiService.sendMetaSocialText({
+              contactId: activeContact.id,
+              platform: activeMetaSocialChannel,
+              message: outgoingText,
+              externalId: optimisticId,
+              ...(hasMessageReplyTarget ? replyReferencePayload : {})
+            })
         const resultData = result.data || result
         const resultStatus = String(resultData.status || '').trim() || 'sent'
+        const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
+        const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
+        const responseAudioDurationMs = Number(result.audio?.durationMs || 0) || nativeMetaAudioDurationMs
 
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
@@ -12889,7 +12929,15 @@ export const PhoneChat: React.FC = () => {
                 ...message,
                 id: resultData.localMessageId || message.id,
                 status: resultStatus,
-                transport: resultData.transport || activeMetaSocialChannel
+                transport: resultData.transport || activeMetaSocialChannel,
+                attachment: message.attachment?.type === 'audio'
+                  ? {
+                      ...message.attachment,
+                      ...(responseAudioUrl ? { url: responseAudioUrl } : {}),
+                      ...(responseAudioMimeType ? { mimeType: responseAudioMimeType } : {}),
+                      ...(responseAudioDurationMs ? { durationMs: responseAudioDurationMs } : {})
+                    }
+                  : message.attachment
               }
             : message
         )))
@@ -13880,7 +13928,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind) => {
-    return <PhoneMessageChannelIcon channel={kind} size={12} className={styles.channelIconGlyph} />
+    return <PhoneMessageChannelIcon channel={kind} variant="asset" size={22} className={styles.channelIconGlyph} />
   }
 
   const renderAvatar = (contact: Contact, options: { showChannelBadge?: boolean; showAgentBadge?: boolean } = {}) => {

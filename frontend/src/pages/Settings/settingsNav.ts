@@ -36,6 +36,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/meta-ads', label: 'Meta Ads', group: 'Plataformas conectadas', permissionKey: 'campaigns' },
   { to: '/settings/whatsapp', label: 'WhatsApp', group: 'Plataformas conectadas', permissionKey: 'settings_whatsapp' },
   { to: '/settings/email', label: 'Correos', group: 'Plataformas conectadas', permissionKey: 'settings_email' },
+  { to: '/settings/artificial-intelligence', label: 'Inteligencia Artificial', group: 'Plataformas conectadas', permissionKey: 'ai_agent' },
   { to: '/settings/tracking', label: 'Rastreo Web', group: 'Datos y rastreo', permissionKey: 'settings_tracking' },
   { to: '/settings/domains', label: 'Dominios', group: 'Datos y rastreo', permissionKey: 'settings_domains' },
   { to: '/settings/costs', label: 'Costos', group: 'Datos y rastreo', permissionKey: 'settings_costs' },

@@ -1,14 +1,15 @@
 # Mobile Native Parity Checklist
 
-Este documento es el autoprompt persistente para migrar `mobile/` a React
-Native sin perder paridad con `/movil`. Si el contexto del chat se compacta o se
-pierde, el siguiente agente debe leer este archivo antes de tocar codigo movil.
+Este documento es el autoprompt persistente para mantener `mobile/` como cliente
+React Native/Expo Android sin perder paridad con `/movil`. Si el contexto del
+chat se compacta o se pierde, el siguiente agente debe leer este archivo antes
+de tocar codigo movil.
 
 ## Autoprompt obligatorio
 
 Eres el agente encargado de recrear en `mobile/` la experiencia movil publicada
-de Ristak bajo `/movil`. No redisenes, no simplifiques y no inventes flujos. Tu
-tarea es copiar el resultado final de usuario usando React Native: misma
+de Ristak bajo `/movil` para Android/Google. No redisenes, no simplifiques y no
+inventes flujos. Tu tarea es copiar el resultado final de usuario usando React Native: misma
 jerarquia, textos visibles, iconografia, colores, estados, acciones, filtros,
 permisos, errores, vacios, loading, gestos y comportamiento.
 
@@ -18,7 +19,7 @@ Antes de implementar cualquier pantalla o subfuncion:
    `frontend/src/components/phone/`, servicios usados y CSS asociado.
 2. Enumera los elementos visibles, estados y acciones de esa superficie.
 3. Implementa el equivalente nativo en `mobile/src/`.
-4. Valida typecheck y, cuando aplique, instala en iPhone/Android real.
+4. Valida typecheck y, cuando aplique, instala en Android real.
 5. Actualiza este checklist con lo terminado, lo pendiente y cualquier brecha
    temporal documentada.
 
@@ -50,11 +51,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 ## Estado general
 
 - [x] Crear app React Native/Expo en `mobile/`.
-- [x] Separar bundle nativo para pruebas visuales lado a lado. La app nativa
-      default se instala como `com.ristak.native`; `com.ristak.app` y
-      `com.ristak.app.NotificationService` quedan reservados para la app
-      Capacitor de tienda hasta que la migracion nativa reemplace ese paquete de
-      forma explicita.
+- [x] Separar rutas moviles: `/movil` para web, `mobile/` para Android/Google y
+      `ios/app` para la app nativa Apple de iPhone/iPad.
 - [x] Login por correo + contrasena con resolucion automatica de tenant, igual que `/movil/login`.
 - [x] Shell inicial con Chat, Citas, Pagos, Analiticas y Ajustes.
 - [x] Primer pase de lista de chats con API real, filtros basicos y filas planas.
@@ -165,20 +163,13 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     personalizados, apariencia, notificaciones, dictado de contexto de negocio
     y registro de push nativo. Sigue pendiente la comparacion visual final contra
     `/movil/settings` y cualquier microinteraccion que Raul marque diferente.
-- [ ] Push/permisos/entitlements nativos listos para reemplazar `com.ristak.app`.
-  - Avance: `mobile/` ya registra token APNs/FCM nativo con
-    `expo-notifications` en `/api/push/mobile-devices`, crea canales Android,
-    atiende taps de push para abrir el chat por `contactId`/`url`, y el backend
-    genera avatar PNG de iniciales cuando el contacto no tiene foto publica. En
-    iOS local se porto `RistakNotificationService` a `mobile/ios/` para usar
-    Communication Notifications con `contactAvatarUrl`. Las credenciales APNs se
-    mantienen en Ristak Installer como broker central; el cliente no debe cargar
-    `.p8` salvo modo standalone real. Falta decidir si
-    `mobile/ios` se trackea en Git o se convierte en config plugin estable; hoy
-    `mobile/ios` esta ignorado por `mobile/.gitignore` y la extension vive en
-    el proyecto local instalado al iPhone. Falta generar/tracked `mobile/android`
-    y portar el renderer `RistakFirebaseMessagingService` para paridad Android
-    data-only completa.
+- [ ] Push/permisos Android listos para Play/Google.
+  - Avance: `mobile/` registra token FCM nativo con `expo-notifications` en
+    `/api/push/mobile-devices`, crea canales Android, atiende taps de push para
+    abrir el chat por `contactId`/`url`, y el backend genera avatar PNG de
+    iniciales cuando el contacto no tiene foto publica. Falta generar/tracked
+    `mobile/android` y portar el renderer `RistakFirebaseMessagingService` para
+    paridad Android data-only completa.
 
 ## Fase Chat
 
@@ -187,7 +178,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [x] Consumir `/api/contacts/chats`.
 - [x] Remover layout tipo card en filas.
 - [x] Agregar buscador y chips visibles.
-- [x] Agregar avatar con foto/inicial y badge de canal.
+- [x] Agregar avatar con foto/inicial sin aro de canal y badge inferior derecho
+  con asset nativo.
 - [x] Quitar elementos que no existen en `/movil`, como mostrar el correo de
   sesion debajo de `Chats`.
 - [x] Usar iconos equivalentes a `/movil` en acciones superiores, buscador,
@@ -254,8 +246,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 - [ ] Header de conversacion con avatar/canal/estado como `/movil`.
   - Avance: `mobile/` ya abre `NativeConversationScreen` desde la bandeja, usa
-    avatar/foto/inicial, aro/badge de canal, nombre del contacto, detalle
-    principal y acciones de agente, etiqueta y busqueda en el header. Falta
+    avatar/foto/inicial sin aro de canal, badge nativo, nombre del contacto,
+    detalle principal y acciones de agente, etiqueta y busqueda en el header. Falta
     replicar estado online/agente exacto y selector de numero/remitente de
     `/movil`.
 - [ ] Timeline con globos inbound/outbound, email desplegable, media, ubicacion,
@@ -296,7 +288,7 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     completa de info del mensaje y acciones especiales de programados.
 - [ ] Contact info/modal movil y campos personalizados.
 - [ ] Agenda desde chat.
-- [ ] Validar en iPhone real.
+- [ ] Validar en Android real.
 
 ### 3. Menus y sheets
 
@@ -359,7 +351,7 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Portar paridad completa de `PhoneSubscriptionForm`: selector de proveedor
   segun capacidades reales, autorizacion/copia de link, contactos bloqueados y
   validaciones especificas por proveedor.
-- [ ] Validar visualmente contra `/movil/payments` en iPhone real.
+- [ ] Validar visualmente contra `/movil/payments` en Android real.
 
 ## Fase Ajustes
 
@@ -386,9 +378,9 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     pulida con `/api/ai-agent/business-context-answer`.
 - [x] Replicar activacion real de permisos push del celular.
   - Avance: Ajustes consulta el permiso nativo, pide permiso con
-    `expo-notifications`, registra el token APNs/FCM en
+    `expo-notifications`, registra el token FCM en
     `/api/push/mobile-devices`, respeta calendarios seleccionados y muestra
-    estado accionable si falta configurar APNs/FCM en el servidor.
+    estado accionable si falta configurar FCM en el servidor.
 - [x] Replicar gestion basica de numeros de WhatsApp en Ajustes.
   - Avance: la subpantalla `Numeros de WhatsApp` lee `/api/whatsapp-api/status`,
     permite refrescar, elegir si la bandeja junta o separa numeros, seleccionar
@@ -399,7 +391,7 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   actualiza `StatusBar` y el fondo nativo con `expo-system-ui`; falta que todos
   los componentes centrales de Chat/Citas/Pagos/Analiticas consuman una paleta
   clara completa en vez de depender de la paleta oscura base.
-- [ ] Validar visualmente contra `/movil` en iPhone real y corregir diferencias
+- [ ] Validar visualmente contra `/movil` en Android real y corregir diferencias
   finas de espaciado/tipografia.
 
 ## Fase Analiticas
@@ -409,7 +401,7 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   embudo, distribucion de origen, estado de WhatsApp y labels personalizados.
 - [x] Calcular rangos `30d`, `60d`, `180d`, `year` y `custom` con fecha de
   negocio usando `account_timezone` en vez de depender del reloj local del
-  iPhone.
+  dispositivo.
 - [x] Formatear importes con `account_currency`, no con una moneda hardcodeada
   como default de negocio.
 - [x] Replicar estructura visible de `PhoneAnalytics`: encabezado `Analiticas`,
@@ -417,7 +409,7 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   financiero, leyenda, embudo con scopes, fuentes y origen por numero de
   WhatsApp.
 - [x] Agregar estados de loading, error, vacio y pull to refresh nativos.
-- [ ] Validar visualmente contra `/movil/analytics` en iPhone real y ajustar
+- [ ] Validar visualmente contra `/movil/analytics` en Android real y ajustar
   proporciones finas de tipografia, espaciado, iconos o animacion si Raúl detecta
   diferencias.
 - [ ] Extraer componentes nativos reutilizables de analiticas cuando la app deje
@@ -427,8 +419,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 - `npm run mobile:native:typecheck`.
 - `git diff --check`.
-- Instalar Release en iPhone fisico cuando cambie UI principal:
-  `npx expo run:ios --device "iPhone Pro de Raúl" --configuration Release`.
+- Instalar Release en Android fisico cuando cambie UI principal:
+  `npm run mobile:native:android`.
 - Lanzar la build instalada sin Metro para confirmar bundle embebido.
 - Comparar contra `/movil` abierto localmente o contra el codigo fuente original
   si no hay screenshot disponible.

@@ -23,6 +23,7 @@ import {
   resolveOrCreateContactForGhl
 } from './contactIdentityService.js'
 import { sanitizeContactName, normalizePhoneDigits } from '../utils/phoneUtils.js'
+import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js'
 import GHLClient from './ghlClient.js'
 import {
   getLocalCalendar,
@@ -242,6 +243,10 @@ function buildHighLevelUrl(pathOrUrl, params = {}) {
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+function cleanHighLevelContactName(value, ...phones) {
+  return formatContactName(sanitizeContactName(value, ...phones) || '')
 }
 
 function isMaskedSecret(value) {
@@ -807,7 +812,7 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
     // No guardar el teléfono como nombre (HighLevel a veces devuelve el
     // teléfono en contactName cuando el contacto no tiene nombre real)
     const contactPhoneForName = phoneUpsert.phone || contact.phone || ''
-    const safeFullName = sanitizeContactName(
+    const safeFullName = cleanHighLevelContactName(
       contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
       contactPhoneForName
     )
@@ -818,8 +823,8 @@ export async function ensureContactExists(contactId, apiToken, usePostgres, loca
       phoneUpsert.phone || null,
       contact.email,
       safeFullName,
-      sanitizeContactName(contact.firstName, contactPhoneForName),
-      sanitizeContactName(contact.lastName, contactPhoneForName),
+      cleanHighLevelContactName(contact.firstName, contactPhoneForName),
+      cleanHighLevelContactName(contact.lastName, contactPhoneForName),
       contact.source || 'gohighlevel',
       attribution.pageUrl || attribution.url || attributionSource.url,
       attribution.utmSessionSource || attributionSource.utmSessionSource,
@@ -1095,7 +1100,7 @@ async function syncHighLevelContacts(locationId, apiToken) {
       // No guardar el teléfono como nombre (HighLevel a veces devuelve el
       // teléfono en contactName cuando el contacto no tiene nombre real)
       const contactPhoneForName = phoneUpsert.phone || contact.phone || ''
-      const safeFullName = sanitizeContactName(
+      const safeFullName = cleanHighLevelContactName(
         contact.contactName || `${contact.firstName || ''} ${contact.lastName || ''}`.trim(),
         contactPhoneForName
       )
@@ -1106,8 +1111,8 @@ async function syncHighLevelContacts(locationId, apiToken) {
         phoneUpsert.phone || null,
         contact.email,
         safeFullName,
-        sanitizeContactName(contact.firstName, contactPhoneForName),
-        sanitizeContactName(contact.lastName, contactPhoneForName),
+        cleanHighLevelContactName(contact.firstName, contactPhoneForName),
+        cleanHighLevelContactName(contact.lastName, contactPhoneForName),
         contact.source || 'gohighlevel',
         attribution.pageUrl || attribution.url || attributionSource.url,
         attribution.utmSessionSource || attributionSource.utmSessionSource,
@@ -1250,15 +1255,18 @@ async function upsertHighLevelContactLocallyFromWhatsApp({ localContact, highLev
   // Nunca usar el teléfono como nombre: searchContacts rellena `name` con el
   // teléfono cuando el contacto de HighLevel no tiene nombre real.
   const contactPhoneForName = highLevelContact.phone || localContact.phone || ''
-  const fullName = sanitizeContactName(highLevelContact.contactName, contactPhoneForName) ||
-    sanitizeContactName(`${highLevelContact.firstName || ''} ${highLevelContact.lastName || ''}`.trim(), contactPhoneForName) ||
-    sanitizeContactName(highLevelContact.name, contactPhoneForName) ||
-    sanitizeContactName(localContact.full_name, contactPhoneForName)
-  const firstName = sanitizeContactName(highLevelContact.firstName, contactPhoneForName) ||
-    sanitizeContactName(localContact.first_name, contactPhoneForName) ||
-    (fullName ? fullName.split(' ')[0] : null)
-  const lastName = sanitizeContactName(highLevelContact.lastName, contactPhoneForName) ||
-    sanitizeContactName(localContact.last_name, contactPhoneForName) ||
+  const fullName = cleanHighLevelContactName(highLevelContact.contactName, contactPhoneForName) ||
+    cleanHighLevelContactName(`${highLevelContact.firstName || ''} ${highLevelContact.lastName || ''}`.trim(), contactPhoneForName) ||
+    cleanHighLevelContactName(highLevelContact.name, contactPhoneForName) ||
+    cleanHighLevelContactName(localContact.full_name, contactPhoneForName)
+  const fullNameParts = splitContactName(fullName)
+  const firstName = cleanHighLevelContactName(highLevelContact.firstName, contactPhoneForName) ||
+    cleanHighLevelContactName(localContact.first_name, contactPhoneForName) ||
+    fullNameParts.firstName ||
+    null
+  const lastName = cleanHighLevelContactName(highLevelContact.lastName, contactPhoneForName) ||
+    cleanHighLevelContactName(localContact.last_name, contactPhoneForName) ||
+    fullNameParts.lastName ||
     null
   const phoneUpsert = await prepareContactPhoneUpsert({
     contactId: targetId,
@@ -1327,7 +1335,7 @@ async function syncWhatsAppContactsToHighLevel(locationId, apiToken) {
       } else {
         // Si el contacto WhatsApp no tiene nombre real, se crea sin nombre en
         // HighLevel (nunca con el teléfono como nombre)
-        const fullName = sanitizeContactName(
+        const fullName = cleanHighLevelContactName(
           contact.full_name || `${contact.first_name || ''} ${contact.last_name || ''}`.trim(),
           contact.phone
         ) || ''

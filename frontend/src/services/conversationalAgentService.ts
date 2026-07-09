@@ -912,7 +912,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
   if (!response.ok) {
     throw new ConversationalAgentRequestError(
-      payload?.error || payload?.message || 'Error en el agente conversacional',
+      payload?.error || payload?.message || 'Error en el chatbot',
       payload
     )
   }

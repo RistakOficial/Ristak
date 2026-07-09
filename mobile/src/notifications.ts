@@ -36,7 +36,7 @@ Notifications.setNotificationHandler({
 });
 
 function isNativeMobilePlatform() {
-  return Platform.OS === 'ios' || Platform.OS === 'android';
+  return Platform.OS === 'android';
 }
 
 function asString(value: unknown) {
@@ -52,9 +52,6 @@ function normalizePermissionStatus(status: unknown, granted?: boolean): NativePu
 }
 
 function getNativePushConfigurationError(config: WebPushPublicConfig | null) {
-  if (Platform.OS === 'ios' && !config?.iosConfigured) {
-    return 'Las notificaciones de iPhone todavía no están preparadas para esta instalación.';
-  }
   if (Platform.OS === 'android' && !config?.androidConfigured) {
     return 'Las notificaciones de Android todavía no están preparadas para esta instalación.';
   }
@@ -225,13 +222,7 @@ export async function subscribeToNativePushNotifications(
 
   let permission = await Notifications.getPermissionsAsync();
   if (!permission.granted) {
-    permission = await Notifications.requestPermissionsAsync({
-      ios: {
-        allowAlert: true,
-        allowBadge: true,
-        allowSound: true,
-      },
-    });
+    permission = await Notifications.requestPermissionsAsync();
   }
 
   if (!permission.granted) {
@@ -249,7 +240,7 @@ export async function subscribeToNativePushNotifications(
 
     await api.saveMobilePushDevice({
       token,
-      platform: Platform.OS as 'ios' | 'android',
+      platform: 'android',
       calendarIds,
       appVersion: '',
       appBuild: '',

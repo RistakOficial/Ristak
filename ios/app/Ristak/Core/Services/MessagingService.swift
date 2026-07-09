@@ -66,9 +66,14 @@ struct MessagingService: Sendable {
 
     // MARK: Meta social nativo (`/api/whatsapp-api/meta/social/*`)
 
-    /// `POST /meta/social/messages/text` — DM Messenger/Instagram (solo texto).
+    /// `POST /meta/social/messages/text` — DM Messenger/Instagram.
     func sendMetaSocialText(_ request: MetaSocialTextSendRequest) async throws -> MessageSendResult {
         try await client.post("/whatsapp-api/meta/social/messages/text", body: request)
+    }
+
+    /// `POST /meta/social/messages/audio` — nota de voz/audio sin texto.
+    func sendMetaSocialAudio(_ request: MetaSocialAudioSendRequest) async throws -> MessageSendResult {
+        try await client.post("/whatsapp-api/meta/social/messages/audio", body: request, timeout: APIClient.mediaTimeout)
     }
 
     /// `POST /meta/social/messages/reaction` — SOLO ❤️.

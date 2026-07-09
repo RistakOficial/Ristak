@@ -33,6 +33,7 @@ import {
   sendWhatsAppApiTextMessageView,
   sendWhatsAppApiVideoMessageView,
   sendMetaDirectTestMessageView,
+  sendMetaSocialAudioMessageView,
   sendMetaSocialTextMessageView,
   sendMetaSocialReactionMessageView,
   sendMetaSocialCommentReplyView,
@@ -63,6 +64,7 @@ router.post('/meta/provider', setWhatsAppActiveProviderView)
 router.post('/meta/test', testMetaDirectConnectionView)
 router.post('/meta/messages/test', sendMetaDirectTestMessageView)
 router.post('/meta/social/messages/text', sendMetaSocialTextMessageView)
+router.post('/meta/social/messages/audio', sendMetaSocialAudioMessageView)
 router.post('/meta/social/messages/reaction', sendMetaSocialReactionMessageView)
 router.post('/meta/social/comments/reply', sendMetaSocialCommentReplyView)
 router.get('/meta/social/posts', listMetaSocialPostsView)

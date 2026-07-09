@@ -3,6 +3,7 @@ import { Link, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import {
   BellRing,
   BadgeDollarSign,
+  Bot,
   CalendarDays,
   CheckCheck,
   Code2,
@@ -38,6 +39,7 @@ import { CustomFields } from './CustomFields'
 import { VariableFields } from './VariableFields'
 import { TriggerLinks } from './TriggerLinks'
 import { TagsSettings } from './TagsSettings'
+import { AIAgentSettings } from './AIAgentSettings'
 import { HighLevelIcon, MetaIcon, WhatsAppIcon } from '@/components/common/Icon/CustomIcons'
 import { useAuth } from '@/contexts/AuthContext'
 import { getFirstAllowedAppPath, hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
@@ -75,6 +77,7 @@ const settingsIcons: Record<string, SettingsIcon> = {
   '/settings/meta-ads': MetaIcon,
   '/settings/whatsapp': WhatsAppIcon,
   '/settings/email': Mail,
+  '/settings/artificial-intelligence': Bot,
   '/settings/tracking': FileCode2,
   '/settings/domains': Globe2,
   '/settings/costs': BadgeDollarSign,
@@ -159,9 +162,10 @@ export const Settings: React.FC = () => {
               <Route path="variable-fields/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><VariableFields /></SettingsAccessGate>} />
               <Route path="trigger-links/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TriggerLinks /></SettingsAccessGate>} />
               <Route path="tags" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TagsSettings /></SettingsAccessGate>} />
-              <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
+              <Route path="artificial-intelligence" element={<SettingsAccessGate moduleKey="ai_agent"><AIAgentSettings /></SettingsAccessGate>} />
+              <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/settings/artificial-intelligence" replace /></SettingsAccessGate>} />
               <Route path="ai-agent/conversational" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
-              <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
+              <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/settings/artificial-intelligence" replace /></SettingsAccessGate>} />
               <Route path="developers" element={<SettingsAccessGate moduleKey="settings_api_access"><APIAccessSettings /></SettingsAccessGate>} />
               <Route path="api-access" element={<SettingsAccessGate moduleKey="settings_api_access"><Navigate to="../developers" replace /></SettingsAccessGate>} />
               <Route path="notifications" element={<SettingsAccessGate moduleKey="settings_account"><NotificationSettings /></SettingsAccessGate>} />

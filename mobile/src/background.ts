@@ -1,10 +1,6 @@
-// Background refresh (iOS Background App Refresh via BGTaskScheduler). When iOS
-// grants a background window, this refreshes the inbox into the same disk cache
-// the app hydrates from on launch — so opening the app shows fresher data even
-// before the foreground fetch completes. iOS controls the cadence (opportunistic,
-// typically minutes-to-hours apart, more often for frequently-used apps); this is
-// best-effort freshness, not a live stream. Real-time updates still come from the
-// existing push notifications and the foreground refresh.
+// Background refresh for the Android client. When the OS grants a background
+// window, this refreshes the inbox into the same disk cache the app hydrates
+// from on launch. This is best-effort freshness, not a live stream.
 import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 import { readApiBaseUrl, readAuthToken } from './storage';
@@ -18,7 +14,7 @@ const NATIVE_INBOX_CACHE_KEY = 'chats';
 const NATIVE_INBOX_CACHE_LIMIT = 200;
 const CHAT_LIST_PAGE_SIZE = 50;
 
-// Defined at module scope so iOS can invoke it headlessly on a cold background
+// Defined at module scope so the task can run headlessly on a cold background
 // launch (this file is imported from index.ts before the app renders).
 TaskManager.defineTask(INBOX_BACKGROUND_TASK, async () => {
   try {
@@ -45,7 +41,7 @@ export async function registerInboxBackgroundTask(): Promise<void> {
     if (status !== BackgroundTask.BackgroundTaskStatus.Available) return;
     const registered = await TaskManager.isTaskRegisteredAsync(INBOX_BACKGROUND_TASK);
     if (!registered) {
-      // minimumInterval is a floor; iOS decides the real cadence.
+      // minimumInterval is a floor; the OS decides the real cadence.
       await BackgroundTask.registerTaskAsync(INBOX_BACKGROUND_TASK, { minimumInterval: 15 });
     }
   } catch {

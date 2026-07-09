@@ -3520,7 +3520,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         setFilterOptions(nextOptions)
       } catch (error: any) {
         if (!cancelled) {
-          showToast('error', 'Error', error?.message || 'No se pudo cargar el agente conversacional')
+          showToast('error', 'Error', error?.message || 'No se pudo cargar Chatbot')
         }
       } finally {
         if (!cancelled) {
@@ -3629,7 +3629,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     : `${formatMetricInteger(agents.length)}/${formatMetricInteger(conversationalAgentMaxAgents)} agentes del plan`
   const conversationalAgentLimitMessage = conversationalAgentMaxAgents === null
     ? ''
-    : `Tu plan actual permite máximo ${conversationalAgentMaxAgents} agente conversacional${conversationalAgentMaxAgents === 1 ? '' : 'es'}. Elimina uno existente o actualiza tu plan para crear otro.`
+    : `Tu plan actual permite máximo ${conversationalAgentMaxAgents} chatbot${conversationalAgentMaxAgents === 1 ? '' : 's'}. Elimina uno existente o actualiza tu plan para crear otro.`
 
   const canStartAgentCreation = () => {
     if (!businessPromptReady) {
@@ -3704,7 +3704,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         `${provider.label} conectado`,
         providerModalId === 'openai'
           ? 'También quedó guardado en la configuración general de Ristak AI.'
-          : 'Ya puedes elegirlo en tus agentes conversacionales.'
+          : 'Ya puedes elegirlo en tus chatbots.'
       )
     } catch (error: any) {
       showToast('error', 'No se pudo conectar', error?.message || 'Revisa la API key.')
@@ -3903,8 +3903,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         <div className={styles.aiProviderModalBody}>
           <p className={styles.helper}>
             {providerModalOption.id === 'openai'
-              ? 'Pega la API key de OpenAI. Se guarda cifrada en la configuración general de Ristak AI y queda disponible para el agente conversacional.'
-              : `Pega la API key de ${providerModalOption.label}. Se guarda cifrada y sólo se usa para el agente conversacional.`}
+              ? 'Pega la API key de OpenAI. Se guarda cifrada en la configuración general de Ristak AI y queda disponible para Chatbot.'
+              : `Pega la API key de ${providerModalOption.label}. Se guarda cifrada y sólo se usa para Chatbot.`}
           </p>
           <div className={styles.field}>
             <label className={styles.label}>API key</label>
@@ -4019,7 +4019,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
               <div>
                 <h2 className={styles.title}>Conecta OpenAI primero</h2>
                 <p className={styles.description}>
-                  El agente conversacional, sus pruebas y sus respuestas quedan bloqueados hasta que guardes un token válido.
+                  Chatbot, sus pruebas y sus respuestas quedan bloqueados hasta que guardes un token válido.
                 </p>
               </div>
             </div>
@@ -4066,8 +4066,8 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   return (
     <div className={directoryClassName}>
       <PageHeader
-        title="Agente conversacional"
-        subtitle="Supervisa los agentes que atienden conversaciones, cumplen metas y escalan chats cuando necesitan ayuda humana."
+        title="Chatbot"
+        subtitle="Supervisa los chatbots que atienden conversaciones, cumplen metas y escalan chats cuando necesitan ayuda humana."
         actions={(
           <>
             <div className={styles.aiProviderDropdown}>

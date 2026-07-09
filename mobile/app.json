@@ -3,7 +3,7 @@
     "name": "Ristak Native",
     "slug": "ristak-native-mobile",
     "version": "1.0.0",
-    "description": "Native React Native mobile client for Ristak chat.",
+    "description": "Android React Native mobile client for Ristak.",
     "scheme": "ristak-native",
     "orientation": "portrait",
     "icon": "./assets/ristak-light-mode-icon.png",
@@ -11,33 +11,8 @@
     "backgroundColor": "#07111f",
     "primaryColor": "#3278ff",
     "platforms": [
-      "ios",
       "android"
     ],
-    "ios": {
-      "bundleIdentifier": "com.ristak.native",
-      "icon": {
-        "light": "./assets/ristak-light-mode-icon.png",
-        "dark": "./assets/ristak-night-mode-icon.png"
-      },
-      "supportsTablet": true,
-      "entitlements": {
-        "aps-environment": "$(APS_ENVIRONMENT)",
-        "com.apple.developer.usernotifications.communication": true
-      },
-      "infoPlist": {
-        "CFBundleDevelopmentRegion": "es",
-        "CFBundleLocalizations": [
-          "es",
-          "en"
-        ],
-        "ITSAppUsesNonExemptEncryption": false,
-        "NSCameraUsageDescription": "Ristak usa la cámara para tomar fotos y enviarlas desde el chat móvil.",
-        "NSLocationWhenInUseUsageDescription": "Ristak usa tu ubicación para compartirla en el chat cuando tú lo solicitas.",
-        "NSMicrophoneUsageDescription": "Ristak usa el micrófono para grabar notas de voz y videos desde el chat móvil.",
-        "NSPhotoLibraryUsageDescription": "Ristak puede acceder a fotos para compartir contenido desde el chat móvil."
-      }
-    },
     "android": {
       "package": "com.ristak.native",
       "icon": "./assets/ristak-light-mode-icon.png",

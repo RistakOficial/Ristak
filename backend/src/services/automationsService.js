@@ -14,6 +14,11 @@ import {
 import { CALENDAR_DEFAULT_FORM_SITE_ID } from './localCalendarService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { getAccountTimezone, normalizeToUtcIso } from '../utils/dateUtils.js'
+import {
+  formatContactName,
+  normalizeContactNameFields,
+  splitContactName as splitFormattedContactName
+} from '../utils/contactNameFormatter.js'
 
 const usePostgres = !!process.env.DATABASE_URL
 const flowPlaceholder = usePostgres ? '?::jsonb' : '?'
@@ -570,17 +575,11 @@ function parseLog(raw) {
 }
 
 function contactDisplayName(row) {
-  return String(row?.full_name || row?.first_name || row?.phone || row?.email || row?.id || 'Contacto')
+  return formatContactName(row?.full_name || row?.first_name) || String(row?.phone || row?.email || row?.id || 'Contacto')
 }
 
 function splitContactName(fullName) {
-  const parts = cleanString(fullName).split(/\s+/).filter(Boolean)
-  if (parts.length === 0) return { firstName: '', lastName: '' }
-  if (parts.length === 1) return { firstName: parts[0], lastName: '' }
-  return {
-    firstName: parts[0],
-    lastName: parts.slice(1).join(' ')
-  }
+  return splitFormattedContactName(fullName)
 }
 
 async function getContactForAutomation(contactId) {
@@ -595,10 +594,14 @@ async function getContactForAutomation(contactId) {
 }
 
 async function createAutomationTestContact(input = {}) {
-  const fullNameInput = cleanString(input.fullName || input.full_name || input.name)
-  const firstNameInput = cleanString(input.firstName || input.first_name)
-  const lastNameInput = cleanString(input.lastName || input.last_name)
-  const fullName = fullNameInput || [firstNameInput, lastNameInput].filter(Boolean).join(' ') || 'Contacto de prueba'
+  const contactNameFields = normalizeContactNameFields({
+    fullName: input.fullName || input.full_name,
+    name: input.name,
+    firstName: input.firstName || input.first_name,
+    lastName: input.lastName || input.last_name,
+    fallback: 'Contacto de prueba'
+  })
+  const fullName = contactNameFields.fullName
   const normalizedEmail = cleanString(input.email).toLowerCase() || null
   const normalizedPhone = input.phone ? await normalizePhoneForAccount(input.phone) : null
 

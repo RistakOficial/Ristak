@@ -6,7 +6,7 @@ import SwiftUI
 // MARK: - Canal de envío
 
 /// Canal activo del composer (doc 05 §7.1). WhatsApp lleva el número de
-/// negocio elegido; Messenger/Instagram son Meta nativo (solo texto);
+/// negocio elegido; Messenger/Instagram son Meta nativo (texto y audio);
 /// SMS sale por HighLevel (`sms_qr`).
 enum ComposerChannel: Hashable, Identifiable, Sendable {
     case whatsapp(phoneNumberId: String)

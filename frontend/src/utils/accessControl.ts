@@ -80,10 +80,10 @@ export const ACCESS_MODULES = [
   },
   {
     key: 'ai_agent',
-    label: 'Ristak AI',
-    description: 'Configuración y uso de agentes internos.',
+    label: 'Chatbot',
+    description: 'Configuración de Ristak AI y chatbots conversacionales.',
     group: 'Operación',
-    path: '/ai-agent/general'
+    path: '/ai-agent'
   },
   {
     key: 'settings_account',
@@ -201,16 +201,16 @@ const hasOwn = Object.prototype.hasOwnProperty
 
 export const AI_AGENT_NAV_ITEMS = [
   {
-    to: '/ai-agent/general',
-    label: 'General',
-    exact: true,
-    featureKeys: ['app_assistant_ai', 'ai']
-  },
-  {
     to: '/ai-agent/conversational',
-    label: 'Agente conversacional',
+    label: 'Chatbot',
     exact: false,
     featureKeys: ['conversational_ai', 'ai']
+  },
+  {
+    to: '/ai-agent/general',
+    label: 'Configuracion',
+    exact: true,
+    featureKeys: ['app_assistant_ai', 'ai']
   }
 ] as const
 export type AIAgentNavItem = typeof AI_AGENT_NAV_ITEMS[number]
@@ -281,7 +281,7 @@ const LICENSE_FEATURE_LABELS: Record<string, string> = {
   site_publishing: 'publicación de sitios',
   site_forms: 'formularios de sitios',
   app_assistant_ai: 'Ristak AI',
-  conversational_ai: 'agente conversacional',
+  conversational_ai: 'Chatbot',
   automation_builder: 'constructor de automatizaciones',
   automation_runs: 'ejecuciones de automatizaciones',
   whatsapp_api: 'WhatsApp API',

@@ -1,4 +1,5 @@
 import { normalizePhoneDigits } from './phoneUtils.js'
+import { formatContactName } from './contactNameFormatter.js'
 
 export const GENERIC_WHATSAPP_API_CONTACT_NAME = 'Contacto WhatsApp_API'
 
@@ -43,7 +44,7 @@ export function isGenericWhatsAppApiContactName(value, phone = '') {
 
 export function normalizeWhatsAppProfileName(value, phone = '') {
   const name = cleanWhatsAppContactName(value)
-  return name && !isGenericWhatsAppApiContactName(name, phone) ? name : ''
+  return name && !isGenericWhatsAppApiContactName(name, phone) ? formatContactName(name) : ''
 }
 
 export function shouldReplaceWhatsAppApiContactName(currentName, phone = '') {

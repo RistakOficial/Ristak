@@ -1,6 +1,7 @@
 import { db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
+import { formatContactName } from '../utils/contactNameFormatter.js'
 import {
   findContactByPhoneCandidates,
   generateContactId,
@@ -197,7 +198,7 @@ export function extractPaymentContactIdentity({ row = {}, providerPayload = {}, 
     'payload.payment_link.prefilledFields.customer.phoneNumber',
     'payload.payment_link.prefilled_fields.customer.phoneNumber'
   ])
-  const fullName = extractName(source)
+  const fullName = formatContactName(extractName(source))
 
   return {
     contactId,
@@ -237,7 +238,7 @@ async function enrichContact(contactId, identity = {}) {
   if (!existing) return null
 
   const email = cleanString(identity.email, 180).toLowerCase()
-  const fullName = cleanString(identity.fullName, 180)
+  const fullName = formatContactName(cleanString(identity.fullName, 180))
   const phone = cleanString(identity.phone, 80)
   const canonicalPhone = normalizePhoneForStorage(phone) || phone || ''
   const updates = []
@@ -307,7 +308,7 @@ async function resolveOrCreatePaymentContact(identity = {}) {
   const email = cleanString(identity.email, 180).toLowerCase()
   const phone = cleanString(identity.phone, 80)
   const canonicalPhone = normalizePhoneForStorage(phone) || phone || ''
-  const fullName = cleanString(identity.fullName, 180)
+  const fullName = formatContactName(cleanString(identity.fullName, 180))
   if (!email && !canonicalPhone) return { contactId: '', matchedBy: '', created: false }
 
   const contactId = generateContactId()

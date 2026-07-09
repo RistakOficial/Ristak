@@ -36,6 +36,7 @@ enum MessageExternalIdFactory {
     static func document() -> String { make("document") }
     static func template() -> String { make("template") }
     static func meta() -> String { make("meta") }
+    static func metaAudio() -> String { make("meta-audio") }
     static func comment() -> String { make("comment") }
     static func highLevel() -> String { make("ghl") }
     static func email() -> String { make("email") }
@@ -421,7 +422,7 @@ struct TemplateSendRequest: Encodable, Sendable {
 
 // MARK: - Meta social (`/api/whatsapp-api/meta/social/*`)
 
-/// `POST /meta/social/messages/text` (doc 05 §3.1). Solo texto.
+/// `POST /meta/social/messages/text` (doc 05 §3.1). Texto DM.
 struct MetaSocialTextSendRequest: Encodable, Sendable {
     var contactId: String
     var platform: MetaSocialPlatform
@@ -447,7 +448,39 @@ struct MetaSocialTextSendRequest: Encodable, Sendable {
     }
 }
 
-/// `POST /meta/social/messages/reaction` (doc 05 §3.2). SOLO `❤️`;
+/// `POST /meta/social/messages/audio` (doc 05 §3.2). Nota de voz/audio sin texto.
+struct MetaSocialAudioSendRequest: Encodable, Sendable {
+    var contactId: String
+    var platform: MetaSocialPlatform
+    var audioDataUrl: String?
+    var audioUrl: String?
+    var durationMs: Double?
+    var externalId: String?
+    var replyToMessageId: String?
+    var replyToProviderMessageId: String?
+
+    init(
+        contactId: String,
+        platform: MetaSocialPlatform,
+        audioDataUrl: String? = nil,
+        audioUrl: String? = nil,
+        durationMs: Double? = nil,
+        externalId: String? = MessageExternalIdFactory.metaAudio(),
+        replyToMessageId: String? = nil,
+        replyToProviderMessageId: String? = nil
+    ) {
+        self.contactId = contactId
+        self.platform = platform
+        self.audioDataUrl = audioDataUrl
+        self.audioUrl = audioUrl
+        self.durationMs = durationMs
+        self.externalId = externalId
+        self.replyToMessageId = replyToMessageId
+        self.replyToProviderMessageId = replyToProviderMessageId
+    }
+}
+
+/// `POST /meta/social/messages/reaction` (doc 05 §3.3). SOLO `❤️`;
 /// otro emoji → 400 "Meta solo permite reaccionar con corazón en este canal."
 struct MetaSocialReactionSendRequest: Encodable, Sendable {
     var contactId: String
@@ -474,7 +507,7 @@ struct MetaSocialReactionSendRequest: Encodable, Sendable {
     }
 }
 
-/// `POST /meta/social/comments/reply` (doc 05 §3.3).
+/// `POST /meta/social/comments/reply` (doc 05 §3.4).
 struct MetaCommentReplyRequest: Encodable, Sendable {
     var contactId: String
     var platform: MetaSocialPlatform

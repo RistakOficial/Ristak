@@ -4,6 +4,10 @@ App nativa SwiftUI para operar el CRM Ristak desde iPhone y iPad. Usa el
 backend existente (mismos endpoints, auth, permisos y reglas que el escritorio
 y `/movil`), con navegación nativa de iOS 26 y Liquid Glass.
 
+Esta es la unica ruta nativa Apple del repo. La carpeta `mobile/` queda
+reservada para React Native/Expo Android y no debe recibir scripts, APNs,
+entitlements, targets ni codigo nativo Apple.
+
 - Proyecto: `ios/app/Ristak.xcodeproj` (target único `Ristak`)
 - Bundle id: `com.ristak.ios` (los ids `com.ristak.app` y `com.ristak.native`
   están reservados para la app de tienda Capacitor y la app React Native)

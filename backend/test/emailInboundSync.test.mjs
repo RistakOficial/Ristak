@@ -175,7 +175,7 @@ test('syncInboundEmailOnce crea contacto desde correo desconocido solo cuando el
 
     const contact = await db.get('SELECT id, full_name, email, source FROM contacts WHERE email = ?', [fromEmail])
     assert.equal(contact?.email, fromEmail)
-    assert.equal(contact?.full_name, 'Cliente IMAP')
+    assert.equal(contact?.full_name, 'Cliente Imap')
     assert.equal(contact?.source, 'email_inbound')
 
     const message = await db.get('SELECT * FROM email_messages WHERE subject = ?', [subject])

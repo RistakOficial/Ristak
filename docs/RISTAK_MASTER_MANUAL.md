@@ -40,7 +40,7 @@ El producto combina:
 | Backend | Node.js ESM, Express |
 | Base de datos local | SQLite |
 | Base de datos produccion | PostgreSQL en Render cuando existe `DATABASE_URL` |
-| Movil nativo | Capacitor para `/movil` en produccion; React Native/Expo en `mobile/` como cliente nativo nuevo |
+| Movil | `/movil` web/PWA; React Native/Expo Android en `mobile/`; SwiftUI Apple en `ios/app` |
 | Deploy | Render Blueprint / web service |
 | Pagos | Stripe, Conekta, Mercado Pago, CLIP, Rebill, HighLevel invoices |
 | IA | OpenAI Agents / providers configurables |
@@ -49,7 +49,7 @@ Comandos principales:
 
 - Frontend: `cd frontend && npm run typecheck`, `npm run design:audit`, `npm run build`.
 - Backend: `cd backend && npm test`.
-- Mobile React Native: `npm run mobile:native:typecheck`, `npm run mobile:native:start`, `npm run mobile:native:ios`, `npm run mobile:native:android`.
+- Mobile Android React Native: `npm run mobile:native:typecheck`, `npm run mobile:native:start`, `npm run mobile:native:android`.
 - Raiz: `npm run build`, `npm start`.
 - Docs: `git diff --check` para validar whitespace basico.
 
@@ -59,9 +59,11 @@ Comandos principales:
   startup runtime, crons y servidor de frontend en produccion.
 - `backend/src/routes/`: rutas HTTP agrupadas por dominio.
 - `backend/src/controllers/`: controladores con validacion HTTP y respuesta.
-- `mobile/`: app React Native/Expo nueva para iOS/Android. Convive con el shell
-  Capacitor de `/movil` y debe mantenerse sincronizada con cualquier cambio de
-  producto movil que tambien afecte al shell publicado.
+- `mobile/`: app React Native/Expo para Android y dispositivos Google. Convive
+  con `/movil` y debe mantenerse sincronizada con cualquier cambio de producto
+  movil que tambien afecte al shell web publicado.
+- `ios/app/`: app nativa Apple en SwiftUI para iPhone y iPad. Es la unica ruta
+  propietaria de codigo nativo Apple.
 - `backend/src/services/`: logica de negocio, integraciones y persistencia.
 - `backend/src/jobs/`: crons, watchdogs y runtime de jobs.
 - `backend/src/config/database.js`: conexion SQLite/Postgres, tablas base,
@@ -162,9 +164,9 @@ Rutas publicas:
   y contexto de inicio de sesion. Los estados de carga inicial del CRM en
   escritorio y movil usan `AppStartupLoader`/`PhoneStartupLoader` sin logo ni
   nombre visible: solo un indicador minimo y accesible sobre el fondo del tema.
-  La app nativa en `mobile/` es la excepcion: `BootScreen` y el login nativo
-  muestran el logo oficial transparente de modo noche, y `mobile/app.json` usa
-  los iconos oficiales light/dark para el launcher iOS/Android.
+  La app nativa Android en `mobile/` es la excepcion: `BootScreen` y el login
+  nativo muestran el logo oficial transparente de modo noche, y
+  `mobile/app.json` usa los iconos oficiales light/dark para el launcher Android.
 - `/license-blocked`.
 - `/pay/success` y `/pay/:publicPaymentId`.
 - Las superficies publicas de cliente no aplican el selector global de vista
@@ -203,14 +205,16 @@ Shell desktop protegido:
 - `/analytics`
 - `/sites`
 - `/automations`
-- `/ai-agent`
+- `/ai-agent`: pestaña principal `Chatbot`, con secciones internas `Chatbot` y
+  `Configuracion`.
 - `/mdp-program`
 - `/settings`
 
 Configuracion se organiza en:
 
 - Cuenta: cuenta, usuarios, notificaciones, privacidad, aplicacion movil.
-- Integraciones: HighLevel, Meta, WhatsApp, correos, pagos, calendarios.
+- Integraciones: HighLevel, Meta, WhatsApp, correos, Inteligencia Artificial,
+  pagos, calendarios.
 - Datos y rastreo: rastreo web, dominios, costos, media.
 - Personalizacion: campos, variables, trigger links, etiquetas.
 - Avanzado: Developers.
@@ -234,8 +238,10 @@ Hay tres capas distintas:
 3. Permisos de usuario: `requireModuleAccess(moduleKey)` valida lectura/escritura
    por modulo.
 
-El modulo `ai_agent` puede dividirse por feature de licencia: `app_assistant_ai`
-habilita Ristak AI general y `conversational_ai` habilita el Agente conversacional.
+El modulo `ai_agent` aparece como la pestaña principal `Chatbot` en el menu
+lateral. Puede dividirse por feature de licencia: `conversational_ai` habilita
+la seccion Chatbot y `app_assistant_ai` habilita la configuracion general de
+Ristak AI.
 El plan basico puede abrir solo `conversational_ai` y limitar la creacion a
 `limits.conversational_agents.max_agents=1`.
 
@@ -296,6 +302,12 @@ Capacidades:
   como actualizacion manual del contacto y conserva el flujo normal de
   automatizaciones.
 - Telefonos normalizados.
+- Nombres de contactos normalizados como nombre propio al entrar al CRM. Si un
+  contacto llega como `raul gomez`, `RAUL GOMEZ` o `rAuL GomEZ`, Ristak lo guarda
+  y muestra como `Raul Gomez`. La normalizacion aplica en alta/edicion manual,
+  formularios/Sites, HighLevel, WhatsApp, Meta, email, calendarios, pagos/API y
+  contactos de prueba de automatizaciones. Correos, telefonos y handles usados
+  como fallback no se capitalizan como nombres.
 - Autocompletado de identidad desde mensajes entrantes: cuando un contacto de
   Messenger, Instagram DM o comentarios Facebook/Instagram todavia no tiene
   telefono y/o correo, el backend puede detectar el primer telefono/correo claro
@@ -423,7 +435,14 @@ sincronizacion de conversaciones, read states, presencia y eventos.
 La bandeja desktop de Chat (`/chat` y subrutas) es una superficie de trabajo
 propia y no debe montar el globo global del Asistente Personal AI, para no tapar
 el historial, composer ni acciones rapidas del chat. El asistente interno sigue
-disponible desde las rutas dedicadas de Ristak AI en el menu lateral.
+disponible desde la pestaña principal `Chatbot`, seccion `Configuracion`, y
+desde `Configuración > Inteligencia Artificial`.
+
+En `/chat` desktop y `/movil`, el avatar del contacto no debe llevar aro,
+contorno ni relleno coloreado por red social. La identidad del canal vive en el
+badge inferior derecho usando los mismos assets WebP de canal que `mobile/` e
+`ios/app` (`whatsapp`, `facebook`, `messenger`, `instagram`, `gmail`), pintados
+como iconos libres sin disco, borde, brillo ni contenedor circular extra.
 
 En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
 drag and drop de archivos. Mientras el usuario arrastra archivos sobre el area de
@@ -587,9 +606,13 @@ foto/video completo, audio con icono/control del lado izquierdo o mapa completo.
 La hora, etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de
 la burbuja para no crear columnas internas. Los errores de envio no se escriben
 dentro del globo: se muestran como icono externo con detalle en tooltip. En
-Messenger/Instagram nativo el chat conserva texto solamente; si HighLevel esta
-conectado, los adjuntos se publican primero como URLs publicas y se envian por
-`attachments` de HighLevel.
+Messenger/Instagram nativo el chat puede conservar texto y notas de voz. El
+audio nativo de Meta se guarda primero como media reproducible de Ristak y luego
+se envia a Messenger/Instagram como `message.attachment.type='audio'` con URL
+publica HTTPS; la burbuja local queda como `message_type='audio'` con
+`media_url`/MIME para poder reproducirse al recargar. Otros adjuntos de
+Messenger/Instagram siguen dependiendo de HighLevel: si esta conectado, se
+publican primero como URLs publicas y se envian por `attachments` de HighLevel.
 
 Cuando el usuario toca contenido enviado o recibido dentro del chat (`/chat`,
 `/movil` o `mobile/`), Ristak debe abrirlo primero en su propio modal de enfoque,
@@ -1786,7 +1809,9 @@ formularios, calendarios, pagos y videos con la misma configuracion del editor
 visual. Ese inspector no debe abrirse automaticamente solo porque el HTML tenga
 un video, calendario, pago o formulario nativo detectado; aparece unicamente
 cuando el usuario selecciona esa zona desde la previsualizacion o desde el modo
-codigo. Ese inspector debe scrollear con rueda, trackpad y tactil como el panel
+codigo, y se cierra cuando el usuario selecciona texto, botones, campos,
+secciones, fondo u otro elemento editable que no sea esa zona nativa. Ese
+inspector debe scrollear con rueda, trackpad y tactil como el panel
 derecho del editor visual; los controles internos no deben bloquear el scroll
 del panel principal. Al seleccionar una zona nativa en la previsualizacion, el
 editor abre la configuracion en ese inspector derecho y no muestra popovers de
@@ -2110,49 +2135,62 @@ Documento operativo: `docs/MEDIA_STORAGE_BUNNY.md`.
 
 ## IA
 
-Ristak tiene dos superficies principales:
+Ristak expone una superficie principal de IA en el menu lateral: `Chatbot`
+(`/ai-agent`). Dentro de esa pagina viven dos secciones segun licencia:
 
-- `ai-agent`: asistente interno de operacion, busqueda, analisis y acciones con
-  ledger de ejecucion.
-- `conversational-agent`: agentes que interactuan con contactos y objetivos.
-  El formulario manual agrupa la configuracion en cinco bloques: personalidad e
-  instrucciones, operacion tecnica del chat, objetivo y cierre, reglas de
-  atencion, y entrada/salida. El wizard de nuevo asistente cubre las decisiones
-  principales de esos bloques: proveedor/modelo de IA, identidad, persuasion,
-  lenguaje, personalizacion y capacitacion del asistente (`extraInstructions`),
-  tiempos de respuesta, mensajes en partes, notificaciones mientras el agente
-  atiende, objetivo, quien cumple la meta, cierre posterior cuando lo cumple la
-  IA o un enlace, datos requeridos, reglas de pase a equipo y alcance de
-  contactos. El alcance "solo contactos nuevos desde hoy" sella el instante
-  exacto en que se crea o cambia el asistente a ese alcance; desde ese momento
-  en adelante puede tomar contactos nuevos, pero no toma contactos que ya
-  existian antes de ese corte. Cuando el proveedor es OpenAI, el modelo default
-  del sistema es `gpt-5.4-mini` (mostrado en UI como GPT-5.4 Mini); las
-  conexiones nuevas de OpenAI y los agentes sin modelo explicito deben caer en
-  ese default.
-  La prueba del asistente debe usar la misma configuracion efectiva que usara el
-  runtime real: en el wizard, un borrador nuevo parte de los defaults de creacion
-  y no puede heredar campos del primer agente existente; en el editor de un
-  agente guardado, antes de probar se guarda el borrador pendiente, se manda el
-  `agentId` y el backend resuelve el agente por ese ID aplicando el borrador
-  encima. La prueba no debe pasar por un agente distinto ni por un autosave
-  pendiente. La prueba del editor ignora la espera inicial de respuesta
-  configurada en "cuanto debe esperar antes de contestar" y devuelve
-  `responseDelayMs: 0` para que el tester responda inmediato; el chat real
-  publicado si conserva esa espera antes de contestar.
-  Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
-  el formulario manual avanzado. `extraInstructions` es la superficie editable de
-  personalizacion del asistente: reglas del negocio, limites, datos que debe
-  pedir, casos especificos y comportamiento que siempre debe respetar, salvo los
-  limites de seguridad e integridad. El prompt avanzado de fabrica vive interno:
-  no se muestra, no se edita desde la UI y las APIs de configuracion ignoran
-  intentos de guardar `closingStrategyCustom`. Los datos estrictamente necesarios
-  para avanzar deben vivir en `requiredData`. Si `extraInstructions` condiciona
-  precio/valor/costo/cotizacion (por ejemplo,
-  "no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
-  explicito: una pregunta directa por precio no desbloquea montos, rangos,
-  descuentos, promociones ni links de pago hasta cumplir esa condicion; el agente
-  debe pedir el contexto faltante de uno en uno y despues usar precios reales.
+- `Chatbot` (`/ai-agent/conversational`): agentes que interactuan con contactos
+  y objetivos.
+- `Configuracion` (`/ai-agent/general`): configuracion del asistente interno de
+  operacion, busqueda, analisis y acciones con ledger de ejecucion.
+
+La misma pantalla de configuracion general tambien esta disponible como proxy en
+`Configuración > Inteligencia Artificial` (`/settings/artificial-intelligence`),
+para que el usuario pueda ajustar token, modelo y contexto desde Configuracion o
+desde Chatbot sin duplicar estado ni rutas de backend.
+
+La API conserva endpoints separados:
+
+- `/api/ai-agent`: asistente interno.
+- `/api/conversational-agent`: agentes conversacionales.
+
+En la seccion Chatbot, el formulario manual agrupa la configuracion en cinco
+bloques: personalidad e instrucciones, operacion tecnica del chat, objetivo y
+cierre, reglas de atencion, y entrada/salida. El wizard de nuevo asistente cubre
+las decisiones principales de esos bloques: proveedor/modelo de IA, identidad,
+persuasion, lenguaje, personalizacion y capacitacion del asistente
+(`extraInstructions`), tiempos de respuesta, mensajes en partes, notificaciones
+mientras el agente atiende, objetivo, quien cumple la meta, cierre posterior
+cuando lo cumple la IA o un enlace, datos requeridos, reglas de pase a equipo y
+alcance de contactos. El alcance "solo contactos nuevos desde hoy" sella el
+instante exacto en que se crea o cambia el asistente a ese alcance; desde ese
+momento en adelante puede tomar contactos nuevos, pero no toma contactos que ya
+existian antes de ese corte. Cuando el proveedor es OpenAI, el modelo default
+del sistema es `gpt-5.4-mini` (mostrado en UI como GPT-5.4 Mini); las conexiones
+nuevas de OpenAI y los agentes sin modelo explicito deben caer en ese default.
+La prueba del asistente debe usar la misma configuracion efectiva que usara el
+runtime real: en el wizard, un borrador nuevo parte de los defaults de creacion
+y no puede heredar campos del primer agente existente; en el editor de un agente
+guardado, antes de probar se guarda el borrador pendiente, se manda el `agentId`
+y el backend resuelve el agente por ese ID aplicando el borrador encima. La
+prueba no debe pasar por un agente distinto ni por un autosave pendiente. La
+prueba del editor ignora la espera inicial de respuesta configurada en "cuanto
+debe esperar antes de contestar" y devuelve `responseDelayMs: 0` para que el
+tester responda inmediato; el chat real publicado si conserva esa espera antes
+de contestar.
+
+Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
+el formulario manual avanzado. `extraInstructions` es la superficie editable de
+personalizacion del asistente: reglas del negocio, limites, datos que debe
+pedir, casos especificos y comportamiento que siempre debe respetar, salvo los
+limites de seguridad e integridad. El prompt avanzado de fabrica vive interno:
+no se muestra, no se edita desde la UI y las APIs de configuracion ignoran
+intentos de guardar `closingStrategyCustom`. Los datos estrictamente necesarios
+para avanzar deben vivir en `requiredData`. Si `extraInstructions` condiciona
+precio/valor/costo/cotizacion (por ejemplo,
+"no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
+explicito: una pregunta directa por precio no desbloquea montos, rangos,
+descuentos, promociones ni links de pago hasta cumplir esa condicion; el agente
+debe pedir el contexto faltante de uno en uno y despues usar precios reales.
 
 Reglas:
 
@@ -2180,22 +2218,19 @@ ubicacion y uso, nunca valores.
 
 ## App movil
 
-La app movil publicada usa Capacitor y el shell web movil bajo el prefijo
-`/movil`. Incluye chat, pagos, analytics, calendario y ajustes.
+Ristak tiene tres rutas moviles activas:
 
-El nuevo cliente nativo React Native/Expo vive en `mobile/`. Es una app separada
-del WebView, con almacenamiento seguro local y consumo directo de APIs del
-backend. Arranca como app paralela con bundle/package `com.ristak.native`; no
-debe reemplazar el bundle de tienda `com.ristak.app` hasta validar la migracion
-completa. La configuracion default de `mobile/app.json` debe mantenerse en
-`com.ristak.native` para poder comparar ambas apps instaladas en el mismo
-telefono; usar `com.ristak.app` desde `mobile/` es una decision de migracion o
-release, no una configuracion local normal.
-en dispositivos reales y actualizar el flujo de release.
+1. `/movil`: experiencia movil web/PWA dentro de `frontend/`. Es la ruta usada
+   para web.
+2. `mobile/`: cliente React Native/Expo para Android y dispositivos Google. No
+   debe contener configuracion, scripts, entitlements, APNs, targets,
+   extensiones ni codigo nativo Apple.
+3. `ios/app`: app nativa Apple en SwiftUI para iPhone y iPad. Es la unica ruta
+   propietaria de la experiencia nativa Apple.
 
 Regla obligatoria para futuros cambios: si una feature, label, permiso, push,
 agenda, pago, filtro, login o contrato de API cambia la experiencia movil, la IA
-debe revisar e implementar lo necesario tanto en `/movil` como en `mobile/`.
+debe revisar las superficies que apliquen: `/movil`, `mobile/` y `ios/app`.
 Cuando solo aplique a una superficie, el resumen del cambio debe explicar por
 que.
 
@@ -2206,13 +2241,13 @@ puede ser nativa distinta, pero el usuario no debe sentir que esta usando una ap
 diferente o recortada.
 
 La lista de chats nativa debe mantenerse alineada con `PhoneChat`: header de
-chats, buscador, chips de filtros, filas planas, avatares con aro/badge de canal,
-preview de ultimo mensaje, estados de no leido, fila/vista de archivados,
-swipe lateral `Mas` + `Archivar`/`Restaurar` y seleccion multiple por long
-press. Tambien debe usar sheets nativos para `Mas`, `+`/nuevo chat y selector de
-destinatarios despues de camara. Cuando cambien filtros, labels, canales,
-unread, archivados, seleccion, swipe, camara, sheets o preview en `/movil`, se
-debe revisar el equivalente en
+chats, buscador, chips de filtros, filas planas, avatares sin aro de canal y
+badge inferior derecho con asset nativo, preview de ultimo mensaje, estados de
+no leido, fila/vista de archivados, swipe lateral `Mas` + `Archivar`/`Restaurar`
+y seleccion multiple por long press. Tambien debe usar sheets nativos para
+`Mas`, `+`/nuevo chat y selector de destinatarios despues de camara. Cuando
+cambien filtros, labels, canales, unread, archivados, seleccion, swipe, camara,
+sheets o preview en `/movil`, se debe revisar el equivalente en
 `mobile/src/App.tsx` y documentar cualquier brecha temporal en
 `docs/MOBILE_APP.md`. En la conversacion nativa, si un agente conversacional
 esta activo, enviar un mensaje manual debe pedir primero que el usuario pause el

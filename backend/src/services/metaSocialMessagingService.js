@@ -3,11 +3,13 @@ import fetch from 'node-fetch'
 import { db, getAppConfig } from '../config/database.js'
 import { API_URLS } from '../config/constants.js'
 import { logger } from '../utils/logger.js'
+import { formatContactName } from '../utils/contactNameFormatter.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
+import { buildLocalMediaUrl, saveWhatsAppAudioPlaybackPreviewDataUrl } from './whatsappApiService.js'
 // (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
@@ -56,12 +58,13 @@ function parseJsonObject(value) {
 }
 
 function compactName(...values) {
-  return values
+  const name = values
     .map(cleanString)
     .filter(Boolean)
     .join(' ')
     .replace(/\s+/g, ' ')
     .trim()
+  return formatContactName(name)
 }
 
 function getPlatformLabel(platform) {
@@ -1733,6 +1736,65 @@ async function sendMetaInstagramTextRequest({ businessId, recipientId, body, con
   })
 }
 
+async function sendMetaMessengerAttachmentRequest({ businessId, recipientId, attachmentType, attachmentUrl, config, replyToProviderMessageId = '' }) {
+  const sendPayload = {
+    messaging_type: 'RESPONSE',
+    recipient: { id: recipientId },
+    message: {
+      attachment: {
+        type: attachmentType,
+        payload: {
+          url: attachmentUrl,
+          is_reusable: false
+        }
+      },
+      ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})
+    }
+  }
+
+  try {
+    return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config }),
+      body: sendPayload
+    })
+  } catch (error) {
+    const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
+    if (!looksLikeTokenIssue) throw error
+    return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+      method: 'POST',
+      token: await resolveMetaPageAccessToken({ config, forceRefresh: true }),
+      body: sendPayload
+    })
+  }
+}
+
+async function sendMetaInstagramAttachmentRequest({ businessId, recipientId, attachmentType, attachmentUrl, config, replyToProviderMessageId = '' }) {
+  const instagramUserToken = resolveInstagramAccessToken(config)
+  if (!instagramUserToken) {
+    throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
+  }
+
+  return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+    method: 'POST',
+    token: instagramUserToken,
+    baseUrl: API_URLS.INSTAGRAM_GRAPH,
+    body: {
+      recipient: { id: recipientId },
+      message: {
+        attachment: {
+          type: attachmentType,
+          payload: {
+            url: attachmentUrl,
+            is_reusable: false
+          }
+        },
+        ...(replyToProviderMessageId ? { reply_to: { mid: replyToProviderMessageId } } : {})
+      }
+    }
+  })
+}
+
 async function sendMetaMessengerReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId, config }) {
   const sendPayload = {
     recipient: { id: recipientId },
@@ -2007,6 +2069,144 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     id: sent.remoteMessageId || sent.localMessageId,
     platform: cleanPlatform,
     provider: 'meta',
+    data: sent
+  }
+}
+
+export async function sendMetaSocialAudioMessage({ contactId, platform, audioDataUrl = '', audioUrl = '', durationMs = null, externalId, replyToMessageId = '', replyToProviderMessageId = '', publicBaseUrl = '' } = {}) {
+  const cleanContactId = cleanString(contactId)
+  const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const cleanAudioUrl = cleanString(audioUrl)
+  const cleanAudioDataUrl = cleanString(audioDataUrl)
+  const parsedDurationMs = Number(durationMs)
+  const audioDurationMs = Number.isFinite(parsedDurationMs) && parsedDurationMs > 0
+    ? Math.round(parsedDurationMs)
+    : null
+
+  if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
+  if (!cleanAudioUrl && !cleanAudioDataUrl) throw createMetaSocialMessageError('Falta el audio para enviar', 400)
+
+  const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
+  if (!enabled) {
+    throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder por este canal.`, 409)
+  }
+
+  const config = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer Meta para enviar audio DM: ${error.message}`)
+    return null
+  })
+  const hasRequiredToken = cleanPlatform === 'instagram'
+    ? Boolean(resolveInstagramAccessToken(config || {}))
+    : Boolean(cleanString(config?.access_token))
+  if (!hasRequiredToken) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.'
+        : 'Conecta Meta Ads para responder por Messenger.',
+      409
+    )
+  }
+
+  const profile = await db.get(
+    `SELECT id, sender_id, recipient_id, page_id, instagram_account_id
+     FROM meta_social_contacts
+     WHERE contact_id = ? AND platform = ?
+     ORDER BY updated_at DESC, last_seen_at DESC
+     LIMIT 1`,
+    [cleanContactId, cleanPlatform]
+  ).catch(() => null)
+
+  const recipientId = cleanString(profile?.sender_id)
+  if (!profile || !recipientId) {
+    throw createMetaSocialMessageError(`Este contacto no tiene ${getPlatformLabel(cleanPlatform)} enlazado.`, 404)
+  }
+
+  const businessId = getMetaSocialBusinessId(cleanPlatform, config, profile)
+  if (!businessId) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Falta seleccionar la cuenta de Instagram en Meta Ads.'
+        : 'Falta seleccionar la página de Facebook en Meta Ads.',
+      409
+    )
+  }
+
+  const replyReference = await resolveMetaSocialMessageReference({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    messageId: replyToMessageId,
+    providerMessageId: replyToProviderMessageId
+  })
+  const replyProviderMessageId = cleanString(replyReference?.providerMessageId)
+
+  let localMedia = null
+  let attachmentUrl = cleanAudioUrl
+  let mediaMimeType = 'audio/mp4'
+  if (cleanAudioDataUrl) {
+    const savedAudio = await saveWhatsAppAudioPlaybackPreviewDataUrl(cleanAudioDataUrl, audioDurationMs)
+    attachmentUrl = buildLocalMediaUrl(savedAudio, publicBaseUrl)
+    mediaMimeType = cleanString(savedAudio.mimeType) || mediaMimeType
+    localMedia = {
+      publicUrl: attachmentUrl,
+      publicPath: savedAudio.publicPath,
+      mimeType: mediaMimeType,
+      filename: savedAudio.filename,
+      size: savedAudio.size,
+      mediaAssetId: savedAudio.mediaAssetId,
+      kind: 'audio',
+      originalMimeType: savedAudio.originalMimeType
+    }
+  }
+
+  if (!/^https:\/\//i.test(attachmentUrl)) {
+    throw createMetaSocialMessageError('Meta necesita una URL pública HTTPS para enviar el audio.', 400)
+  }
+
+  let response
+  try {
+    response = cleanPlatform === 'instagram'
+      ? await sendMetaInstagramAttachmentRequest({ businessId, recipientId, attachmentType: 'audio', attachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
+      : await sendMetaMessengerAttachmentRequest({ businessId, recipientId, attachmentType: 'audio', attachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
+  } catch (error) {
+    throw normalizeMetaSocialSendError(error, cleanPlatform)
+  }
+
+  const sent = await saveMetaSocialOutboundMessage({
+    platform: cleanPlatform,
+    contactId: cleanContactId,
+    profile,
+    messageId: response?.message_id || response?.id,
+    text: '',
+    response,
+    externalId,
+    messageType: 'audio',
+    mediaUrl: attachmentUrl,
+    mediaMimeType,
+    context: {
+      audio: {
+        link: attachmentUrl,
+        url: attachmentUrl,
+        mimeType: mediaMimeType,
+        voice: true,
+        ...(audioDurationMs ? { durationMs: audioDurationMs } : {})
+      },
+      ...(replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : {})
+    }
+  })
+
+  return {
+    ...sent,
+    id: sent.remoteMessageId || sent.localMessageId,
+    platform: cleanPlatform,
+    provider: 'meta',
+    audio: {
+      link: attachmentUrl,
+      url: attachmentUrl,
+      mimeType: mediaMimeType,
+      voice: true,
+      ...(audioDurationMs ? { durationMs: audioDurationMs } : {})
+    },
+    ...(localMedia ? { localMedia } : {}),
     data: sent
   }
 }

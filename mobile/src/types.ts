@@ -237,6 +237,20 @@ export type SendTextResponse = {
   message?: unknown;
   fallbackReason?: string;
   routingReason?: string;
+  audio?: {
+    link?: string;
+    url?: string;
+    mimeType?: string;
+    mimetype?: string;
+    durationMs?: number;
+    voice?: boolean;
+  };
+  localMedia?: {
+    publicUrl?: string;
+    publicPath?: string;
+    mimeType?: string;
+    filename?: string;
+  } | null;
 };
 
 export type NativeMessageChannel = 'whatsapp' | 'sms' | 'messenger' | 'instagram' | 'email';
@@ -965,12 +979,11 @@ export type WebPushPublicConfig = {
   publicKey: string;
   nativeConfigured?: boolean;
   androidConfigured?: boolean;
-  iosConfigured?: boolean;
 };
 
 export type SaveMobilePushDevicePayload = {
   token: string;
-  platform: 'ios' | 'android';
+  platform: 'android';
   calendarIds?: string[];
   appVersion?: string;
   appBuild?: string;

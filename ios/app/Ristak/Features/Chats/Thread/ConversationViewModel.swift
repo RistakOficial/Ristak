@@ -884,15 +884,26 @@ final class ConversationViewModel {
 
         switch selectedChannel {
         case .messenger, .instagram:
+            if pendingAttachments.count == 1, pendingAttachments[0].kind == .audio {
+                guard text.isEmpty else {
+                    alert = ConversationAlert(
+                        title: "Audio sin texto",
+                        message: "Messenger e Instagram desde Meta nativo no combinan texto y audio en el mismo envío."
+                    )
+                    return
+                }
+                await sendMetaAudioDraft(pendingAttachments[0])
+                return
+            }
             guard pendingAttachments.isEmpty else {
                 alert = ConversationAlert(
-                    title: "Solo texto por ahora",
-                    message: "Messenger e Instagram desde Meta nativo mandan texto en este chat."
+                    title: "Adjunto no disponible",
+                    message: "Messenger e Instagram desde Meta nativo mandan texto o audio en este chat."
                 )
                 return
             }
             guard !text.isEmpty else {
-                alert = ConversationAlert(title: "Escribe algo", message: "Manda un mensaje escrito desde este chat.")
+                alert = ConversationAlert(title: "Escribe o graba algo", message: "Manda texto o una nota de voz desde este chat.")
                 return
             }
             await sendMetaText(text)
@@ -1059,19 +1070,21 @@ final class ConversationViewModel {
     // MARK: Nota de voz
 
     private func sendVoiceNote() async {
-        guard let phone = contactPhone, !phone.isEmpty else {
+        guard selectedChannel.isWhatsApp || selectedChannel == .sms || selectedChannel.isMetaSocial else {
             alert = ConversationAlert(
-                title: "Falta el teléfono",
-                message: "Guarda el número del contacto antes de escribir por WhatsApp."
+                title: "Adjunto no disponible",
+                message: "Este canal acepta texto o audio en este chat."
             )
             return
         }
-        guard selectedChannel.isWhatsApp || selectedChannel == .sms else {
-            alert = ConversationAlert(
-                title: "Solo texto por ahora",
-                message: "Messenger e Instagram desde Meta nativo mandan texto en este chat."
-            )
-            return
+        if selectedChannel.isWhatsApp || selectedChannel == .sms {
+            guard let phone = contactPhone, !phone.isEmpty else {
+                alert = ConversationAlert(
+                    title: "Falta el teléfono",
+                    message: "Guarda el número del contacto antes de escribir por WhatsApp."
+                )
+                return
+            }
         }
         guard let preview = voiceRecorder.consumePreview() else { return }
 
@@ -1083,8 +1096,23 @@ final class ConversationViewModel {
             return
         }
 
+        let voiceDraft = ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil)
+        if selectedChannel.isMetaSocial {
+            await sendMetaAudio(media: encoded, localURL: preview.url, restoreDraft: voiceDraft)
+            return
+        }
+
+        guard let phone = contactPhone, !phone.isEmpty else {
+            alert = ConversationAlert(
+                title: "Falta el teléfono",
+                message: "Guarda el número del contacto antes de escribir por WhatsApp."
+            )
+            return
+        }
+
         let externalId = MessageExternalIdFactory.audio()
-        var optimistic = makeOptimisticMessage(id: externalId, text: "", transport: resolveWhatsAppTransport().rawValue)
+        let optimisticTransport = selectedChannel == .sms ? "ghl_sms" : resolveWhatsAppTransport().rawValue
+        var optimistic = makeOptimisticMessage(id: externalId, text: "", transport: optimisticTransport)
         optimistic.messageType = "audio"
         optimistic.attachment = ChatAttachment(
             type: .audio,
@@ -1096,7 +1124,6 @@ final class ConversationViewModel {
         // Guardamos el audio ya codificado como borrador recuperable: si el
         // envío falla, «Reintentar» rearma el composer con la nota de voz en
         // vez de perderla (doc 05 §7.6).
-        let voiceDraft = ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil)
         appendOptimistic(optimistic, restore: FailedSendPayload(text: "", attachment: voiceDraft))
 
         do {
@@ -1141,6 +1168,50 @@ final class ConversationViewModel {
     }
 
     // MARK: Meta social / HighLevel
+
+    private func sendMetaAudioDraft(_ draft: ComposerAttachmentDraft) async {
+        await sendMetaAudio(media: draft.media, localURL: nil, restoreDraft: draft)
+    }
+
+    private func sendMetaAudio(media: EncodedChatMedia, localURL: URL?, restoreDraft: ComposerAttachmentDraft) async {
+        guard let platform = selectedChannel.metaPlatform else { return }
+        let externalId = MessageExternalIdFactory.metaAudio()
+        let transport = platform == .instagram ? "instagram" : "messenger"
+        let reply = replyTarget
+
+        var optimistic = makeOptimisticMessage(id: externalId, text: "", transport: transport)
+        optimistic.messageType = "audio"
+        optimistic.replyToMessageId = reply?.id
+        optimistic.replyToProviderMessageId = reply?.providerMessageId
+        optimistic.attachment = ChatAttachment(
+            type: .audio,
+            url: localURL?.absoluteString,
+            name: media.filename,
+            mimeType: media.mimeType,
+            durationMs: media.durationMs,
+            size: Double(media.sizeBytes)
+        )
+        appendOptimistic(optimistic, restore: FailedSendPayload(text: "", attachment: restoreDraft))
+        clearComposerAfterSend()
+
+        do {
+            let result = try await messagingService.sendMetaSocialAudio(
+                MetaSocialAudioSendRequest(
+                    contactId: contactID,
+                    platform: platform,
+                    audioDataUrl: media.dataUrl,
+                    durationMs: media.durationMs,
+                    externalId: externalId,
+                    replyToMessageId: reply?.id,
+                    replyToProviderMessageId: reply?.providerMessageId
+                )
+            )
+            applySendResult(result, to: externalId)
+            await refreshSilently()
+        } catch {
+            handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
+        }
+    }
 
     private func sendMetaText(_ text: String, preserveComposer: Bool = false) async {
         guard let platform = selectedChannel.metaPlatform else { return }
@@ -1611,7 +1682,7 @@ final class ConversationViewModel {
 
     // MARK: - Adjuntos del composer
 
-    private func canAddAttachment() -> Bool {
+    private func canAddAttachment(allowMetaSocialAudio: Bool = false) -> Bool {
         if replyTarget != nil {
             alert = ConversationAlert(
                 title: "Respuesta solo con texto",
@@ -1626,7 +1697,7 @@ final class ConversationViewModel {
             )
             return false
         }
-        guard selectedChannel.isWhatsApp || selectedChannel == .sms else {
+        guard selectedChannel.isWhatsApp || selectedChannel == .sms || (allowMetaSocialAudio && selectedChannel.isMetaSocial) else {
             alert = ConversationAlert(
                 title: "Adjuntos por WhatsApp",
                 message: "Los adjuntos nativos se envían por WhatsApp API/QR. Cambia el canal a WhatsApp para mandar este archivo."
@@ -1680,12 +1751,24 @@ final class ConversationViewModel {
     }
 
     func addDocument(at url: URL) {
-        guard canAddAttachment() else { return }
+        guard canAddAttachment(allowMetaSocialAudio: true) else { return }
         do {
+            if selectedChannel.isMetaSocial {
+                let encoded = try MediaEncoder.encodeAudioFile(at: url, durationMs: nil)
+                attachments.append(ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil))
+                return
+            }
             let encoded = try MediaEncoder.encodeDocumentFile(at: url)
             attachments.append(ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil))
         } catch {
-            alert = ConversationAlert(title: "Documento", message: error.localizedDescription)
+            if selectedChannel.isMetaSocial {
+                alert = ConversationAlert(
+                    title: "Adjunto no disponible",
+                    message: "Messenger e Instagram desde Meta nativo mandan texto o audio en este chat."
+                )
+            } else {
+                alert = ConversationAlert(title: "Documento", message: error.localizedDescription)
+            }
         }
     }
 

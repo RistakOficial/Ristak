@@ -60,6 +60,7 @@ import { getVariableFieldValueMap } from './variableFieldsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
 import { resolveConversionAttribution, persistAppointmentConversionAttribution } from './conversionAttributionService.js'
 import { getPaymentTestGuide } from '../../../shared/sites/paymentTestGuides.js'
+import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
 // Contrato de render compartido con el editor (fuente única de templates,
 // variables --rstk-*, stylesheet público y helpers de tema/color).
 import {
@@ -25372,11 +25373,7 @@ function normalizeEmail(value) {
 }
 
 function splitName(fullName) {
-  const parts = cleanString(fullName).split(/\s+/).filter(Boolean)
-  return {
-    firstName: parts[0] || '',
-    lastName: parts.length > 1 ? parts.slice(1).join(' ') : ''
-  }
+  return splitContactName(fullName)
 }
 
 function mapPublicPrefillContact(row = {}) {
@@ -26028,19 +26025,21 @@ async function emitSiteSubmissionAutomationEvents({ contactResult, formEvent, co
 async function upsertContactFromSubmissionWithResult({ site, contact, meta }) {
   const email = normalizeEmail(contact.email)
   const phone = await normalizePhoneForAccount(contact.phone) || cleanString(contact.phone)
-  const explicitFirstName = cleanString(contact.firstName || contact.first_name)
-  const explicitLastName = cleanString(contact.lastName || contact.last_name)
-  const joinedName = [explicitFirstName, explicitLastName].filter(Boolean).join(' ')
-  const fullName = cleanString(contact.fullName) || joinedName || email || phone || 'Lead de site'
+  const contactNameFields = normalizeContactNameFields({
+    fullName: contact.fullName || contact.full_name,
+    firstName: contact.firstName || contact.first_name,
+    lastName: contact.lastName || contact.last_name
+  })
+  const fullName = contactNameFields.fullName || email || phone || 'Lead de site'
 
   if (!email && !phone && !fullName) return null
 
   const existing = await findExistingContact({ email, phone })
   const contactId = existing?.id || generateContactId()
   const phoneUpsert = await prepareContactPhoneUpsert({ contactId, phone })
-  const names = splitName(fullName)
-  const firstName = explicitFirstName || names.firstName
-  const lastName = explicitLastName || names.lastName
+  const names = contactNameFields.fullName ? splitContactName(contactNameFields.fullName) : { firstName: '', lastName: '' }
+  const firstName = contactNameFields.firstName || names.firstName
+  const lastName = contactNameFields.lastName || names.lastName
   const params = meta?.params || {}
   const visitorId = cleanString(meta?.visitorId || meta?.visitor_id)
 
@@ -27503,10 +27502,12 @@ async function createImportedSubmissionFromRequest({ req, body, site, host, prev
   })
   const standard = layers.mappedFields.standard || {}
   const derived = layers.derivedFields || {}
-  const fullName = cleanString(standard.full_name || derived.full_name || [
-    standard.first_name || derived.first_name,
-    standard.last_name || derived.last_name
-  ].map(cleanString).filter(Boolean).join(' '))
+  const contactNameFields = normalizeContactNameFields({
+    fullName: standard.full_name || derived.full_name,
+    firstName: standard.first_name || derived.first_name,
+    lastName: standard.last_name || derived.last_name
+  })
+  const fullName = contactNameFields.fullName
   const rawPhone = standard.phone || derived.phone
   const contact = {
     fullName,

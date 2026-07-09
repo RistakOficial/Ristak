@@ -142,10 +142,9 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /\.rstk-embedded-form-source-frame\{[^}]*width:100%;max-width:100%;min-width:0/)
   assert.match(html, /\.rstk-embedded-form-source-frame>.rstk-page\{[^}]*max-width:min\(100%,var\(--rstk-max\)\);min-width:0;[^}]*margin-left:var\(--rstk-form-page-margin-left,auto\);margin-right:var\(--rstk-form-page-margin-right,auto\)/)
   assert.match(html, /\.rstkSocialProfileBlock\.rstk-block-style\{width:fit-content;min-width:0;max-width:100%\}/)
-  // El bloque de red social se alinea a la izquierda como cualquier otro bloque;
-  // se removió el translateX negativo (nudge) que lo sacaba de la columna y lo
-  // recortaba en pantallas angostas.
-  assert.match(html, /\.rstk-kind-form:not\(\.rstk-embedded-form-source-frame\) \.rstkSocialProfileBlock\.rstk-block-style\{justify-self:start\}/)
+  // El bloque de red social comparte el carril de los campos y respeta la
+  // alineación configurada del formulario; el frame embebido elimina el nudge.
+  assert.match(html, /\.rstk-kind-form \.rstk-field,[^{}]+\.rstk-kind-form \.rstkSocialProfileBlock\.rstk-block-style,[^{}]+\.rstk-embedded-form \.rstkSocialProfileBlock\.rstk-block-style\{[^}]*width:min\(100%,var\(--rstk-form-field-width,560px\)\);justify-self:var\(--rstk-form-field-justify,center\)/)
   assert.match(html, /\.rstk-social-profile-block\{width:fit-content;min-width:0;max-width:100%;/)
   assert.match(html, /\.rstk-social-profile-block \.rstk-social-details\{flex:1 1 auto;min-width:0;max-width:100%\}/)
   assert.match(html, /\.rstk-social-profile-block \.rstk-social-name,\.rstk-social-profile-block \.rstk-social-followers\{overflow:hidden;text-overflow:ellipsis;white-space:nowrap\}/)
@@ -155,7 +154,7 @@ test('landing form embeds render multiple form pages as an inline stepform', asy
   assert.match(html, /\.rstk-kind-landing \.rstk-embedded-form-source-frame \.rstk-embedded-form,\.rstk-embedded-form-source-frame \.rstk-embedded-form\{width:100%;max-width:100%;min-width:0;justify-self:stretch/)
   assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-embedded-pages,\.rstk-embedded-form-source-frame \.rstk-embedded-pages \[data-embedded-page-content\]\{width:100%;max-width:100%;min-width:0;justify-self:stretch\}/)
   assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-block-style\{max-width:100%;min-width:0\}/)
-  assert.match(html, /\.rstk-embedded-form-source-frame \.rstkSocialProfileBlock\.rstk-block-style\{justify-self:start;transform:none\}/)
+  assert.match(html, /\.rstk-embedded-form-source-frame \.rstkSocialProfileBlock\.rstk-block-style\{width:min\(100%,var\(--rstk-form-field-width,560px\)\);justify-self:var\(--rstk-form-field-justify,center\);transform:none\}/)
   assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-social-profile-block\{padding:0\}/)
   assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-headline\{[^}]*max-width:100%;min-width:0;overflow-wrap:break-word/)
   assert.match(html, /\.rstk-embedded-form-source-frame \.rstk-subheading\{[^}]*max-width:min\(100%,var\(--rstk-content-max,60ch\)\);min-width:0;[^}]*overflow-wrap:break-word/)
