@@ -1812,6 +1812,10 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         channel: normalizedChannel,
         ruleContext
       })
+      // Contexto para el candado de fases de cierre (validador que lee la conversación).
+      ctx.conversationMessages = messagesForAgent
+      ctx.aiRuntime = runtime
+      ctx.model = model
 
       const reply = await executeAgent({
         agent,
@@ -2251,6 +2255,11 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     visualAnalysisApiKey: openAIFallbackApiKey,
     includeBinary: includeBinaryMedia
   })
+  // Contexto para el candado de fases de cierre (mismo validador que en vivo, para
+  // que el tester refleje 1:1 si el arco se cumplió o no).
+  ctx.conversationMessages = messagesForAgent
+  ctx.aiRuntime = runtime
+  ctx.model = model
 
   const reply = await executeAgent({
     agent,

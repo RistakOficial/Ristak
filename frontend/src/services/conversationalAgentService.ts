@@ -851,6 +851,12 @@ function writeConversationalAgentLiveCache(
   }
 }
 
+function pruneStatesToKnownAgents(states: ConversationAgentState[] = [], agents: ConversationalAgentDef[] = []) {
+  const knownAgentIds = new Set(agents.map((agent) => agent.id).filter(Boolean))
+  if (!knownAgentIds.size) return states.filter((state) => !state.agentId)
+  return states.filter((state) => !state.agentId || knownAgentIds.has(state.agentId))
+}
+
 function updateCachedAgentState(state: ConversationAgentState) {
   const current = readConversationalAgentLiveCache()
   const states = current?.states || []
@@ -896,6 +902,7 @@ function getAuthHeaders(): HeadersInit {
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(apiUrl(`/api/conversational-agent${endpoint}`), {
+    cache: options.cache ?? 'no-store',
     ...options,
     headers: {
       ...getAuthHeaders(),
@@ -955,7 +962,11 @@ export const conversationalAgentService = {
 
   async listAgents(): Promise<ConversationalAgentDef[]> {
     const agents = normalizeAgentDefs(await request<ConversationalAgentDef[]>('/agents'))
-    writeConversationalAgentLiveCache({ agents })
+    const current = readConversationalAgentLiveCache()
+    writeConversationalAgentLiveCache({
+      agents,
+      states: pruneStatesToKnownAgents(current?.states || [], agents)
+    })
     return agents
   },
 
@@ -991,7 +1002,8 @@ export const conversationalAgentService = {
     const current = readConversationalAgentLiveCache()
     if (current) {
       writeConversationalAgentLiveCache({
-        agents: current.agents.filter((agent) => agent.id !== agentId)
+        agents: current.agents.filter((agent) => agent.id !== agentId),
+        states: current.states.filter((state) => state.agentId !== agentId)
       }, { notify: true })
     }
   },

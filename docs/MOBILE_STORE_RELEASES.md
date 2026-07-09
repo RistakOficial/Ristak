@@ -35,7 +35,9 @@ or print their contents in logs.
 The workflow supports:
 
 - `ios`: builds the Capacitor iOS shell and uploads to App Store Connect.
-- `android`: builds the Android App Bundle and uploads to Google Play.
+- `android`: generates the React Native/Expo Android project from `mobile/`,
+  builds the Android App Bundle for `com.ristak.android`, and uploads it to
+  Google Play.
 - `both`: runs both store jobs from the same commit.
 
 ## Where credentials live
@@ -165,12 +167,14 @@ Android:
 
 - `MOBILE_RELEASE_ANDROID_VERSION_NAME`: visible Play Store version.
 - `MOBILE_RELEASE_ANDROID_TRACK`: `internal`, `closed`, or `production`.
-- `ANDROID_PACKAGE_NAME`: must stay `com.ristak.app` unless the native app
-  identity changes.
+- `ANDROID_PACKAGE_NAME`: for the React Native/Expo Android app this must be
+  `com.ristak.android`. The legacy Capacitor package `com.ristak.app` is not the
+  Play target for new Android builds.
 - `ANDROID_KEYSTORE_PROPERTIES_PATH`: ignored Gradle signing file, usually
-  `frontend/android/app/keystore.properties`.
+  `mobile/android/app/keystore.properties` when using the generated native
+  Android project.
 - `ANDROID_KEYSTORE_PATH`: private Play upload keystore, usually
-  `frontend/android/app/ristak-play-upload.jks`.
+  `mobile/android/app/ristak-play-upload.jks`.
 - `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_PATH`: private Google Play service account
   JSON, usually `.mobile-release/android/google-play-service-account.json`.
 

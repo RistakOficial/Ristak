@@ -13642,25 +13642,14 @@ function FilterManagerSheet({
   );
 
   return (
-    <Modal visible={open} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.sheetBackdrop}>
-        <Pressable style={styles.sheetScrim} onPress={onClose} />
-        <View style={styles.filterSheet}>
-          <View pointerEvents="none" style={styles.filterSheetSurface} />
-          <View style={styles.filterSheetHeader}>
-            <View>
-              <Text style={styles.filterSheetTitle}>Filtros</Text>
-              <Text style={styles.filterSheetSubtitle}>Rápidos, canales, números y condicionales</Text>
-            </View>
-            <Pressable accessibilityRole="button" onPress={onClose} style={styles.sheetCloseButton}>
-              <LiquidControlBackground />
-              <X size={18} color={COLORS.text} strokeWidth={2.5} />
-            </Pressable>
-          </View>
-          {mode === 'editor' ? renderEditor() : renderList()}
-        </View>
-      </View>
-    </Modal>
+    <BottomActionSheet
+      open={open}
+      title="Filtros"
+      subtitle="Rápidos, canales, números y condicionales"
+      onClose={onClose}
+    >
+      {mode === 'editor' ? renderEditor() : renderList()}
+    </BottomActionSheet>
   );
 }
 
@@ -13733,6 +13722,12 @@ function BottomActionSheet({
     outputRange: [1, 0.985],
   });
   const dragHandlePanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponderCapture: (_, gestureState) => {
+      if (!open || closing) return false;
+      const absDx = Math.abs(gestureState.dx);
+      const absDy = Math.abs(gestureState.dy);
+      return gestureState.dy > 5 && absDy > absDx * 1.15;
+    },
     onMoveShouldSetPanResponder: (_, gestureState) => {
       if (!open || closing) return false;
       const absDx = Math.abs(gestureState.dx);
@@ -19035,44 +19030,43 @@ function ContactInfoOurNumberSheet({
   preferredPhoneId: string;
 }) {
   return (
-    <Modal visible={open} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.contactInfoSheetRoot}>
-        <Pressable style={styles.contactInfoSheetScrim} onPress={onClose} />
-        <View style={styles.contactInfoNumberSheet}>
-          <View style={styles.contactInfoNumberSheetHandle} />
-          <ContactInfoText numberOfLines={1} style={styles.contactInfoNumberSheetSubtitle}>{contactName}</ContactInfoText>
-          <ContactInfoText style={styles.contactInfoNumberSheetTitle}>Contactar desde</ContactInfoText>
-          <Pressable
-            disabled={Boolean(changingId)}
-            onPress={() => onSelect(null)}
-            style={styles.contactInfoNumberOption}
-          >
-            <View style={styles.contactInfoNumberOptionCopy}>
-              <ContactInfoText style={[styles.contactInfoNumberOptionTitle, !preferredPhoneId && styles.contactInfoNumberOptionActiveText]}>Automático</ContactInfoText>
-              <ContactInfoText numberOfLines={1} style={styles.contactInfoNumberOptionSubtitle}>{automaticText}</ContactInfoText>
-            </View>
-            {changingId === '__automatic__' ? <ActivityIndicator color={CONTACT_INFO_THEME.accent} /> : !preferredPhoneId ? <Check size={phoneCompact(25)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.8} /> : null}
-          </Pressable>
-          {phones.map((phone) => {
-            const active = preferredPhoneId === phone.id;
-            return (
-              <Pressable
-                key={phone.id}
-                disabled={Boolean(changingId)}
-                onPress={() => onSelect(phone)}
-                style={styles.contactInfoNumberOption}
-              >
-                <View style={styles.contactInfoNumberOptionCopy}>
-                  <ContactInfoText style={[styles.contactInfoNumberOptionTitle, active && styles.contactInfoNumberOptionActiveText]}>{getBusinessPhoneDisplay(phone)}</ContactInfoText>
-                  <ContactInfoText numberOfLines={1} style={styles.contactInfoNumberOptionSubtitle}>{getBusinessPhoneStatusLabel(phone)}</ContactInfoText>
-                </View>
-                {changingId === phone.id ? <ActivityIndicator color={CONTACT_INFO_THEME.accent} /> : active ? <Check size={phoneCompact(25)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.8} /> : null}
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-    </Modal>
+    <BottomActionSheet
+      open={open}
+      title="Contactar desde"
+      subtitle={contactName}
+      onClose={onClose}
+    >
+      <ScrollView contentContainerStyle={styles.contactInfoNumberBody} showsVerticalScrollIndicator={false}>
+        <Pressable
+          disabled={Boolean(changingId)}
+          onPress={() => onSelect(null)}
+          style={styles.contactInfoNumberOption}
+        >
+          <View style={styles.contactInfoNumberOptionCopy}>
+            <ContactInfoText style={[styles.contactInfoNumberOptionTitle, !preferredPhoneId && styles.contactInfoNumberOptionActiveText]}>Automático</ContactInfoText>
+            <ContactInfoText numberOfLines={1} style={styles.contactInfoNumberOptionSubtitle}>{automaticText}</ContactInfoText>
+          </View>
+          {changingId === '__automatic__' ? <ActivityIndicator color={CONTACT_INFO_THEME.accent} /> : !preferredPhoneId ? <Check size={phoneCompact(25)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.8} /> : null}
+        </Pressable>
+        {phones.map((phone) => {
+          const active = preferredPhoneId === phone.id;
+          return (
+            <Pressable
+              key={phone.id}
+              disabled={Boolean(changingId)}
+              onPress={() => onSelect(phone)}
+              style={styles.contactInfoNumberOption}
+            >
+              <View style={styles.contactInfoNumberOptionCopy}>
+                <ContactInfoText style={[styles.contactInfoNumberOptionTitle, active && styles.contactInfoNumberOptionActiveText]}>{getBusinessPhoneDisplay(phone)}</ContactInfoText>
+                <ContactInfoText numberOfLines={1} style={styles.contactInfoNumberOptionSubtitle}>{getBusinessPhoneStatusLabel(phone)}</ContactInfoText>
+              </View>
+              {changingId === phone.id ? <ActivityIndicator color={CONTACT_INFO_THEME.accent} /> : active ? <Check size={phoneCompact(25)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.8} /> : null}
+            </Pressable>
+          );
+        })}
+      </ScrollView>
+    </BottomActionSheet>
   );
 }
 
@@ -24399,7 +24393,6 @@ function createAppStyles() {
   const voicePreviewTrackBackground = composerInputBackground;
   const voicePreviewControlBackground = 'transparent';
   const softSelectionBorder = isLight ? COLORS.border : 'rgba(235,235,245,0.32)';
-  const sheetBackdropBackground = isLight ? 'rgba(29,29,31,0.28)' : 'rgba(0,0,0,0.48)';
   const sheetDimmerBackground = isLight ? 'rgba(29,29,31,0.34)' : 'rgba(0,0,0,0.56)';
   const sheetHandleBackground = isLight ? 'rgba(60,60,67,0.18)' : 'rgba(235,235,245,0.34)';
   const sheetRowSurface = isLight ? COLORS.panel : 'rgba(28,28,30,0.72)';
@@ -27701,11 +27694,6 @@ function createAppStyles() {
     fontSize: 11,
     fontWeight: '600',
   },
-  sheetBackdrop: {
-    flex: 1,
-    justifyContent: 'flex-end',
-    backgroundColor: sheetBackdropBackground,
-  },
   sheetModalRoot: {
     flex: 1,
     justifyContent: 'flex-end',
@@ -27724,42 +27712,6 @@ function createAppStyles() {
     right: 0,
     bottom: 0,
     left: 0,
-  },
-  filterSheet: {
-    maxHeight: '82%',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderWidth: 0,
-    borderColor: 'transparent',
-    backgroundColor: 'transparent',
-    overflow: 'hidden',
-  },
-  filterSheetSurface: {
-    ...StyleSheet.absoluteFill,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    backgroundColor: COLORS.panel,
-  },
-  filterSheetHeader: {
-    minHeight: 72,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 14,
-    paddingHorizontal: 18,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: COLORS.border,
-  },
-  filterSheetTitle: {
-    color: COLORS.text,
-    fontSize: 20,
-    fontWeight: '900',
-  },
-  filterSheetSubtitle: {
-    color: COLORS.muted,
-    fontSize: 12,
-    fontWeight: '700',
-    marginTop: 2,
   },
   sheetCloseButton: {
     width: 36,
@@ -32568,6 +32520,11 @@ function createAppStyles() {
     justifyContent: 'center',
     gap: phoneCompact(10),
   },
+  contactInfoNumberBody: {
+    paddingHorizontal: phoneCompact(20),
+    paddingTop: phoneCompact(8),
+    paddingBottom: phoneCompact(30),
+  },
   contactInfoNumberOption: {
     minHeight: phoneCompact(78),
     flexDirection: 'row',
@@ -32594,37 +32551,6 @@ function createAppStyles() {
     fontSize: phoneCompact(21),
     lineHeight: phoneCompact(26),
     fontWeight: '900',
-  },
-  contactInfoNumberSheet: {
-    maxHeight: '72%',
-    borderTopLeftRadius: phoneCompact(32),
-    borderTopRightRadius: phoneCompact(32),
-    paddingHorizontal: phoneCompact(22),
-    paddingTop: phoneCompact(14),
-    paddingBottom: phoneCompact(34),
-    backgroundColor: CONTACT_INFO_THEME.surface,
-  },
-  contactInfoNumberSheetHandle: {
-    alignSelf: 'center',
-    width: phoneCompact(82),
-    height: phoneCompact(8),
-    borderRadius: phoneCompact(4),
-    marginBottom: phoneCompact(18),
-    backgroundColor: CONTACT_INFO_THEME.sheetHandle,
-  },
-  contactInfoNumberSheetSubtitle: {
-    color: CONTACT_INFO_THEME.muted,
-    fontSize: phoneCompact(17),
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-  contactInfoNumberSheetTitle: {
-    color: CONTACT_INFO_THEME.text,
-    fontSize: phoneCompact(28),
-    lineHeight: phoneCompact(34),
-    fontWeight: '900',
-    textAlign: 'center',
-    marginBottom: phoneCompact(18),
   },
   contactInfoOurNumberCopyLight: {
     flex: 1,
@@ -32688,15 +32614,6 @@ function createAppStyles() {
     letterSpacing: 1.25,
     fontWeight: '900',
     marginBottom: phoneCompact(16),
-  },
-  contactInfoSheetRoot: {
-    flex: 1,
-    justifyContent: 'flex-end',
-  },
-  contactInfoSheetScrim: {
-    ...StyleSheet.absoluteFill,
-    backgroundColor: CONTACT_INFO_THEME.scrim,
-    opacity: 0.62,
   },
   contactInfoSummaryAction: {
     maxWidth: phoneCompact(128),

@@ -50,6 +50,7 @@ on:
 env:
   APP_BUNDLE_ID: com.ristak.app
   NOTIFICATION_SERVICE_BUNDLE_ID: com.ristak.app.NotificationService
+  ANDROID_APP_PACKAGE_NAME: com.ristak.android
   APPLE_TEAM_ID: Y2L8669JNL
 
 jobs:
@@ -70,10 +71,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: mobile/package-lock.json
 
-      - name: Install frontend dependencies
-        run: npm ci --prefix frontend
+      - name: Install Android mobile dependencies
+        run: npm ci --prefix mobile
 
       - name: Fetch iOS store credentials
         env:
@@ -475,6 +476,9 @@ jobs:
             -d '{"platform":"android"}' \
             > "$RUNNER_TEMP/mobile-android-credentials.json"
 
+      - name: Generate Android native project
+        run: CI=1 npm --prefix mobile run prebuild -- --platform android
+
       - name: Install Android signing key
         run: |
           CREDS="$RUNNER_TEMP/mobile-android-credentials.json"
@@ -486,8 +490,8 @@ jobs:
           test -n "$ANDROID_STORE_PASSWORD"
           test -n "$ANDROID_KEY_ALIAS"
           test -n "$ANDROID_KEY_PASSWORD"
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > frontend/android/app/release.keystore
-          cat > frontend/android/app/keystore.properties <<PROPS
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > mobile/android/app/release.keystore
+          cat > mobile/android/app/keystore.properties <<PROPS
           storeFile=release.keystore
           storePassword=$ANDROID_STORE_PASSWORD
           keyAlias=$ANDROID_KEY_ALIAS
@@ -496,8 +500,8 @@ jobs:
 
       - name: Build Android App Bundle
         run: |
-          npm run mobile:sync:android --prefix frontend
-          cd frontend/android
+          node scripts/mobile-release/prepare-native-android-release.mjs
+          cd mobile/android
           ./gradlew bundleRelease \
             -PciVersionCode="${{ github.run_number }}" \
             -PciVersionName="${{ github.event.inputs.android_version_name }}"
@@ -517,8 +521,8 @@ jobs:
           fi
           fastlane supply \
             --json_key "$RUNNER_TEMP/google-play-service-account.json" \
-            --package_name "$APP_BUNDLE_ID" \
-            --aab frontend/android/app/build/outputs/bundle/release/app-release.aab \
+            --package_name "$ANDROID_APP_PACKAGE_NAME" \
+            --aab mobile/android/app/build/outputs/bundle/release/app-release.aab \
             --track "${{ github.event.inputs.android_track }}" \
             --release_status "$RELEASE_STATUS" \
             --skip_upload_metadata true \

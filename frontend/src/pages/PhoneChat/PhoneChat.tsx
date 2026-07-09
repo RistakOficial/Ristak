@@ -2241,6 +2241,11 @@ function upsertAgentStateList(current: ConversationAgentState[] = [], state: Con
   return [state, ...current.filter((item) => !sameState(item))]
 }
 
+function isStateForKnownConversationAgent(state: ConversationAgentState | null | undefined, knownAgentIds: ReadonlySet<string>) {
+  if (!state) return false
+  return !state.agentId || knownAgentIds.has(state.agentId)
+}
+
 function hasAIAgentHubHistory(state: ConversationAgentState | null | undefined) {
   if (!state) return false
   if (state.activatedAt || state.activationSource || state.agentId || state.signal) return true
@@ -6829,9 +6834,15 @@ export const PhoneChat: React.FC = () => {
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
   const agentEnabled = Boolean(openAIConfigured && agentConfig?.enabled)
+  const knownAgentIdSet = useMemo(
+    () => new Set(agentDefs.map((agent) => agent.id).filter(Boolean)),
+    [agentDefs]
+  )
   const allAgentStates = useMemo(
-    () => Object.values(agentStateLists).flat(),
-    [agentStateLists]
+    () => Object.values(agentStateLists)
+      .flat()
+      .filter((state) => isStateForKnownConversationAgent(state, knownAgentIdSet)),
+    [agentStateLists, knownAgentIdSet]
   )
   const agentPriorityStates = useMemo(
     () => agentEnabled
@@ -6891,8 +6902,11 @@ export const PhoneChat: React.FC = () => {
 
     aiAgentHubSourceChats.forEach((contact) => {
       if (archivedChatIdSet.has(contact.id)) return
-      const states = agentStateLists[contact.id] || []
-      const primaryState = agentStates[contact.id]
+      const states = (agentStateLists[contact.id] || [])
+        .filter((state) => isStateForKnownConversationAgent(state, knownAgentIdSet))
+      const primaryState = isStateForKnownConversationAgent(agentStates[contact.id], knownAgentIdSet)
+        ? agentStates[contact.id]
+        : null
       if (!states.length && isAIAgentHubStateVisible(primaryState, 'unassigned')) {
         counts.unassigned += 1
         return
@@ -6905,7 +6919,7 @@ export const PhoneChat: React.FC = () => {
     })
 
     return counts
-  }, [agentStateLists, agentStates, aiAgentHubSourceChats, archivedChatIdSet])
+  }, [agentStateLists, agentStates, aiAgentHubSourceChats, archivedChatIdSet, knownAgentIdSet])
   const agentSkippedContactCounts = useMemo(() => {
     const counts = new Map<string, number>()
     allAgentStates.forEach((state) => {
@@ -6919,8 +6933,11 @@ export const PhoneChat: React.FC = () => {
 
     return aiAgentHubSourceChats
       .filter((contact) => {
-        const states = agentStateLists[contact.id] || []
-        const state = agentStates[contact.id]
+        const states = (agentStateLists[contact.id] || [])
+          .filter((item) => isStateForKnownConversationAgent(item, knownAgentIdSet))
+        const state = isStateForKnownConversationAgent(agentStates[contact.id], knownAgentIdSet)
+          ? agentStates[contact.id]
+          : null
         if (archivedChatIdSet.has(contact.id)) return false
         const visibleStates = states.length ? states : [state].filter(Boolean) as ConversationAgentState[]
         if (!visibleStates.some((item) => isAIAgentHubStateVisible(item, aiAgentHubStatusFilter))) return false
@@ -6939,7 +6956,7 @@ export const PhoneChat: React.FC = () => {
         return parseSortableDateValue(rightState?.updatedAt || right.lastMessageDate || right.createdAt) -
           parseSortableDateValue(leftState?.updatedAt || left.lastMessageDate || left.createdAt)
       })
-  }, [activeAiAgentHubAgentFilter, agentStateLists, agentStates, aiAgentHubQuery, aiAgentHubSourceChats, aiAgentHubStatusFilter, archivedChatIdSet])
+  }, [activeAiAgentHubAgentFilter, agentStateLists, agentStates, aiAgentHubQuery, aiAgentHubSourceChats, aiAgentHubStatusFilter, archivedChatIdSet, knownAgentIdSet])
   const agentPriorityChatRows = useMemo(() => {
     if (archivedViewOpen || agentPriorityViewOpen || chatFilter !== 'all') return []
     return chats
@@ -6955,10 +6972,11 @@ export const PhoneChat: React.FC = () => {
     if (!agentEnabled) return new Set<string>()
     return new Set(
       Object.values(agentStates)
+        .filter((state) => isStateForKnownConversationAgent(state, knownAgentIdSet))
         .filter((state) => state.status === 'active' && state.signal !== 'discarded')
         .map((state) => state.contactId)
     )
-  }, [agentEnabled, agentStates])
+  }, [agentEnabled, agentStates, knownAgentIdSet])
   const agentStatusPhrases = useMemo(() => buildAgentStatusPhrases({
     customers: customersLabel,
     leads: leadsLabel
@@ -6980,9 +6998,13 @@ export const PhoneChat: React.FC = () => {
     () => {
       if (!activeContact?.id) return []
       const states = agentStateLists[activeContact.id] || []
-      return states.length ? states : (agentStates[activeContact.id] ? [agentStates[activeContact.id]] : [])
+      const knownStates = states.filter((state) => isStateForKnownConversationAgent(state, knownAgentIdSet))
+      const fallbackState = agentStates[activeContact.id]
+      return knownStates.length
+        ? knownStates
+        : (isStateForKnownConversationAgent(fallbackState, knownAgentIdSet) ? [fallbackState] : [])
     },
-    [activeContact?.id, agentStateLists, agentStates]
+    [activeContact?.id, agentStateLists, agentStates, knownAgentIdSet]
   )
   const activeManualAgentStates = useMemo(
     () => activeContactAgentStates.filter((state) => state.agentId && state.status === 'active'),
@@ -6996,7 +7018,11 @@ export const PhoneChat: React.FC = () => {
     return `${activeManualAgentStates.length} agentes conversacionales`
   }, [activeManualAgentStates, agentDefs])
   const activeConversationAgentState = activeContact?.id
-    ? selectPrimaryAgentState(activeContactAgentStates) || agentStates[activeContact.id] || null
+    ? selectPrimaryAgentState(activeContactAgentStates) || (
+      isStateForKnownConversationAgent(agentStates[activeContact.id], knownAgentIdSet)
+        ? agentStates[activeContact.id]
+        : null
+    )
     : null
   const activeConversationAgentStatus = activeConversationAgentState?.status || 'active'
   const activeConversationAgentActive = Boolean(agentEnabled && activeContact && activeConversationAgentStatus === 'active')
@@ -19132,8 +19158,12 @@ export const PhoneChat: React.FC = () => {
 
 	    const isMuted = mutedChatIdSet.has(chatActionContact.id)
 	    const showingAgentControls = chatMoreMode === 'agentControls'
-	    const contactAgentStates = (agentStateLists[chatActionContact.id] || []).filter((state) => state.agentId)
-	    const agentState = selectPrimaryAgentState(contactAgentStates) || agentStates[chatActionContact.id] || null
+	    const contactAgentStates = (agentStateLists[chatActionContact.id] || [])
+	      .filter((state) => state.agentId && knownAgentIdSet.has(state.agentId))
+	    const fallbackAgentState = isStateForKnownConversationAgent(agentStates[chatActionContact.id], knownAgentIdSet)
+	      ? agentStates[chatActionContact.id]
+	      : null
+	    const agentState = selectPrimaryAgentState(contactAgentStates) || fallbackAgentState
 	    const agentChatStatus = agentState?.status || 'active'
     const agentStatusLabels: Record<string, string> = {
       active: 'El agente atiende este chat.',

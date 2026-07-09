@@ -75,7 +75,10 @@ Todos los bottom sheets nativos que usen `BottomActionSheet` deben poder cerrars
 arrastrando hacia abajo desde la zona superior del sheet (la manija y el header).
 Ese gesto debe seguir el dedo, rebotar si el arrastre es corto y cerrar con la
 misma animacion del sheet si el usuario baja lo suficiente o hace un flick hacia
-abajo. No implementes este comportamiento por sheet individual.
+abajo. No implementes este comportamiento por sheet individual. La familia de
+menus inferiores en `mobile/` debe ser una sola: filtros, acciones, selectores
+simples y sheets de informacion deben colgar de `BottomActionSheet`; no agregues
+modales `slide`/`fade` caseros para paneles que nacen desde abajo.
 
 Regla movil de movimiento: la navegacion entre pantallas nativas no debe
 aparecer/desaparecer en seco. Las secciones principales de `mobile/` usan una
@@ -356,8 +359,11 @@ evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
 - App React Native en `mobile/`: el login no pide URL. Resuelve el tenant con
   `/api/mobile/resolve` usando `EXPO_PUBLIC_INSTALLER_API_URL` si existe; si no,
   usa `https://www.ristak.com`.
-- Android: `frontend/android/app/google-services.json` del proyecto Firebase.
-  Este archivo vive fuera de Git y debe pertenecer al paquete `com.ristak.app`.
+- Android legacy Capacitor: `frontend/android/app/google-services.json` del
+  proyecto Firebase vive fuera de Git y debe pertenecer al paquete
+  `com.ristak.app`.
+- Android nativo React Native/Expo: el target de Play Store vive en `mobile/`,
+  genera `mobile/android` en CI y usa el paquete `com.ristak.android`.
 - iOS nativo: usar `ios/app` y sus documentos. No agregues APNs ni Xcode config
   dentro de `mobile/`.
 
@@ -986,7 +992,11 @@ mensaje manual desde `mobile/` debe abrir una confirmacion antes de mandar: el
 usuario elige pausar el agente por 24 horas y enviar, quitar el contacto del
 agente y enviar, o cancelar. El boton `+` de la conversacion debe priorizar los
 controles del agente arriba del sheet cuando haya estado de agente asignado, con
-acciones rapidas para pausar, tomar/continuar u omitir segun el estado. El
+acciones rapidas para pausar, tomar/continuar u omitir segun el estado. En
+`/movil`/`ios/app`, los banners y acciones de agente deben contar solo estados
+cuyo `agent_id` pertenezca a un agente configurado actualmente; los estados
+historicos o cacheados de agentes eliminados no deben mostrarse como "agentes
+asignados" ni habilitar acciones. El
 composer nativo manda texto por `/whatsapp-api/messages/text`,
 fotos por `/whatsapp-api/messages/image`, videos por
 `/whatsapp-api/messages/video`, documentos por

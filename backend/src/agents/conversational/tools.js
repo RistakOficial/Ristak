@@ -22,6 +22,7 @@ import {
 } from '../../services/conversationalAgentService.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 import { logger } from '../../utils/logger.js'
+import { requireClosingPhasesIfNeeded } from './closingPhaseGate.js'
 
 /**
  * Tools del agente conversacional. Se crean por ejecución con una factory
@@ -464,6 +465,8 @@ export function createConversationalTools(ctx) {
       anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
     execute: async ({ calendarId, startTime, title, notes, comprobanteValidado, anticipoValidado }) => {
+      const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
+      if (phaseError) return phaseError
       const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
@@ -654,6 +657,11 @@ export function createConversationalTools(ctx) {
           error: 'Aún no. Ejecuta esto SÓLO cuando el objetivo del agente ya se cumplió de verdad: la persona pidió avanzar o aceptó una propuesta concreta, ya recabaste los datos que pedías, o el prospecto ya calificó. Si sólo mostró interés, sigue conversando: resuelve su duda real y ayúdale a definir el siguiente paso.'
         }
       }
+      // Candado de FASES de cierre (persuasión media/alta): no deja marcar el objetivo
+      // hasta que la conversación demuestre que se recorrió el arco DE VERDAD (problema
+      // real, reto, consecuencia, invitación, objeciones, decisión), no palabras vacías.
+      const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
+      if (phaseError) return phaseError
       const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
@@ -705,6 +713,8 @@ export function createConversationalTools(ctx) {
       if (!confirm) {
         return { ok: false, error: 'Falta confirmación explícita. Resume monto, concepto y canal, y pide aprobación antes de crear el link.' }
       }
+      const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
+      if (phaseError) return phaseError
       const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
@@ -784,6 +794,8 @@ export function createConversationalTools(ctx) {
       if (!confirm) {
         return { ok: false, error: 'Falta confirmación explícita. Primero confirma que la persona quiere avanzar por enlace.' }
       }
+      const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
+      if (phaseError) return phaseError
       const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
@@ -849,6 +861,8 @@ export function createConversationalTools(ctx) {
       if (!confirm) {
         return { ok: false, error: 'Falta confirmación explícita. Primero confirma que la persona quiere avanzar con ese enlace.' }
       }
+      const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
+      if (phaseError) return phaseError
       const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
