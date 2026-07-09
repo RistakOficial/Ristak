@@ -1066,7 +1066,8 @@ Los globos nativos deben conservar el estilo de la app original y responder al
 modo claro/oscuro: inbound/outbound, programados, fallidos, audio, ubicacion y
 adjuntos deben tener fondo, texto, meta y controles legibles para el tema
 activo, con sombra mínima, radios compactos, meta alineada con chip
-`API`/`QR`/`IG`/`FB`, hora y palomitas. Las notas de voz
+`API`/`QR`/`IG`/`FB`, icono de robot cuando el mensaje lo envio el agente
+conversacional, hora y palomitas. Las notas de voz
 deben verse dentro de burbujas compactas y legibles en claro y oscuro, con play
 plano gris relleno sin círculo, waveform gris sin contorno azul, punto de
 progreso con acento funcional, textos de duración/hora del mismo tamaño que la meta de
@@ -1075,7 +1076,8 @@ corresponda segun direccion y micrófono solido pequeño superpuesto, sin badge
 circular, usando el mismo SVG/path para el contorno y el relleno: primero stroke
 del color del globo y encima fill gris, como la web original; nunca recortes la
 foto del avatar. Si el audio trae origen `API`, `QR`, `IG` o `FB`,
-la etiqueta debe mostrarse junto a la hora, alineada al extremo derecho del
+la etiqueta debe mostrarse junto a la hora; si fue enviado por el agente
+conversacional, el icono de robot debe vivir en esa misma meta row. Todo queda alineado al extremo derecho del
 globo, mientras la duracion queda debajo del inicio de la waveform. Tocar el
 avatar de la nota de voz alterna velocidad `1x`/`2x`/`4x` y muestra el badge de
 velocidad sobre el avatar; en movil el motor nativo puede capar la velocidad
@@ -1119,6 +1121,9 @@ izquierdo como indicador visual de foco, comentario o chat no leído. Los estado
 de no leído/activo deben resolverse con fondo, tipografía y badge, no con una
 franja lateral. Las etiquetas de canal dentro de los globos (`messageTransport`)
 son micro-etiquetas sin contorno y con abreviaturas: `IG`, `FB`, `API` y `QR`.
+Cuando el backend entregue `sent_by_agent`/`agent_id`, `/movil`, `mobile/` y iOS
+deben pintar un icono de robot como micro-marcador de meta del globo, no como
+texto visible ni como badge grande.
 El globo de texto del agente IA (`agentStatusBubble`) conserva su forma, pero su
 color debe salir de `--phone-chat-primary`/`--phone-chat-accent`, no de verdes
 tipo estado o WhatsApp.

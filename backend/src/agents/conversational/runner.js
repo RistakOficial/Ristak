@@ -1183,6 +1183,7 @@ async function sendConversationalChannelTextMessage({
   phone,
   text,
   externalId,
+  agentId,
   commentReplyMode = 'private'
 } = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel || latest.channel)
@@ -1194,16 +1195,17 @@ async function sendConversationalChannelTextMessage({
     const { sendMetaSocialCommentReply } = await import('../../services/metaSocialMessagingService.js')
     const mode = normalizeCommentReplyMode(commentReplyMode)
     if (mode === 'public_then_private') {
-      await sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'public', externalId })
+      await sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'public', externalId, agentId })
         .catch((error) => { logger.warn(`[Agente] Respuesta pública a comentario falló: ${error.message}`) })
-      return sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'private', externalId })
+      return sendMetaSocialCommentReply({ contactId, platform, message: text, replyType: 'private', externalId, agentId })
     }
     return sendMetaSocialCommentReply({
       contactId,
       platform,
       message: text,
       replyType: mode === 'public' ? 'public' : 'private',
-      externalId
+      externalId,
+      agentId
     })
   }
 
@@ -1214,7 +1216,8 @@ async function sendConversationalChannelTextMessage({
       to: latest.from_email || latest.to_email || undefined,
       subject: getEmailSubjectForReply(latest),
       text,
-      externalId
+      externalId,
+      agentId
     })
   }
 
@@ -1225,7 +1228,8 @@ async function sendConversationalChannelTextMessage({
       channel: getHighLevelReplyChannel({ channel: normalizedChannel, latest }),
       message: text,
       toNumber: phone || latest.phone || undefined,
-      externalId
+      externalId,
+      agentId
     }, { markHumanTakeover: false })
   }
 
@@ -1235,7 +1239,8 @@ async function sendConversationalChannelTextMessage({
       contactId,
       platform: normalizedChannel,
       message: text,
-      externalId
+      externalId,
+      agentId
     })
   }
 
@@ -1245,7 +1250,8 @@ async function sendConversationalChannelTextMessage({
     from: latest.business_phone || undefined,
     phoneNumberId: latest.business_phone_number_id || undefined,
     text,
-    externalId
+    externalId,
+    agentId
   })
 }
 
@@ -1503,7 +1509,8 @@ export async function sendReplyParts({
       from: latest.business_phone || undefined,
       phoneNumberId: latest.business_phone_number_id || undefined,
       text: parts[index],
-      externalId: `${externalIdPrefix}_${latest.id}${parts.length > 1 ? `_${index + 1}` : ''}`.slice(0, 120)
+      externalId: `${externalIdPrefix}_${latest.id}${parts.length > 1 ? `_${index + 1}` : ''}`.slice(0, 120),
+      agentId: agentConfig.id || null
     })
 
     await recordEvent({

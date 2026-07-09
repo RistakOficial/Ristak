@@ -178,6 +178,8 @@ export type ChatMessage = {
   businessPhone?: string;
   businessPhoneNumberId?: string;
   routingReason?: string;
+  sentByAgent?: boolean;
+  agentId?: string;
   replyToMessageId?: string;
   replyToProviderMessageId?: string;
   reactionEmoji?: string;

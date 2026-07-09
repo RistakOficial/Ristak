@@ -113,6 +113,8 @@ private struct ThreadMessageDTO: Codable, Sendable {
     var businessPhone: String?
     var businessPhoneNumberId: String?
     var routingReason: String?
+    var sentByAgent: Bool?
+    var agentId: String?
     var replyToMessageId: String?
     var replyToProviderMessageId: String?
     var reactionEmoji: String?
@@ -147,6 +149,8 @@ private struct ThreadMessageDTO: Codable, Sendable {
         businessPhone = message.businessPhone
         businessPhoneNumberId = message.businessPhoneNumberId
         routingReason = message.routingReason
+        sentByAgent = message.sentByAgent
+        agentId = message.agentId
         replyToMessageId = message.replyToMessageId
         replyToProviderMessageId = message.replyToProviderMessageId
         reactionEmoji = message.reactionEmoji
@@ -185,6 +189,8 @@ private struct ThreadMessageDTO: Codable, Sendable {
             businessPhone: businessPhone,
             businessPhoneNumberId: businessPhoneNumberId,
             routingReason: routingReason,
+            sentByAgent: sentByAgent == true,
+            agentId: agentId,
             replyToMessageId: replyToMessageId,
             replyToProviderMessageId: replyToProviderMessageId,
             reactionEmoji: reactionEmoji,

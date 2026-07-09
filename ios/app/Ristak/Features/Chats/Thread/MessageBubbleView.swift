@@ -444,6 +444,12 @@ struct MessageRowView: View, Equatable {
                     .foregroundStyle(RistakTheme.bubbleMeta)
             }
 
+            if message.sentByAgent {
+                AgentBotGlyph(color: RistakTheme.bubbleMeta, size: 10)
+                    .frame(width: 11, height: 11)
+                    .accessibilityLabel("Respondido por agente conversacional")
+            }
+
             if message.isScheduled {
                 Image(systemName: "clock")
                     .font(.system(size: 10))

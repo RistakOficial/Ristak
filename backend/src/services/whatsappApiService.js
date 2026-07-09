@@ -54,6 +54,11 @@ import {
   getAccountTimezone,
   normalizeDateOnlyInTimezone
 } from '../utils/dateUtils.js'
+import {
+  buildConversationalAgentMessageMetadata,
+  extractConversationalAgentMessageMetadata,
+  formatConversationalAgentMessageMetadata
+} from '../utils/conversationalAgentMessageMetadata.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -3136,7 +3141,8 @@ async function retryFailedOfficialApiMessageViaQr({
   messageType,
   messageText,
   reason,
-  existingMessage
+  existingMessage,
+  agentMetadata = {}
 } = {}) {
   const previousTransport = cleanString(existingMessage?.transport).toLowerCase()
   const currentStatus = cleanString(normalizedMessage?.status).toLowerCase()
@@ -3251,7 +3257,9 @@ async function retryFailedOfficialApiMessageViaQr({
       messageId,
       fallbackResponse,
       reason,
-      messageType
+      messageType,
+      externalId: fallbackExternalId,
+      agentMetadata
     })
     return {
       ...fallbackResponse,
@@ -3270,7 +3278,7 @@ async function retryFailedOfficialApiMessageViaQr({
   return null
 }
 
-async function applyQrFallbackToExistingApiMessage({ messageId, fallbackResponse, reason, messageType } = {}) {
+async function applyQrFallbackToExistingApiMessage({ messageId, fallbackResponse, reason, messageType, externalId = '', agentMetadata = {} } = {}) {
   const cleanMessageId = cleanString(messageId)
   if (!cleanMessageId) return null
 
@@ -3302,6 +3310,8 @@ async function applyQrFallbackToExistingApiMessage({ messageId, fallbackResponse
       fallbackFrom: 'api',
       fallbackTransport: 'qr',
       fallbackReason: cleanString(reason),
+      ...(externalId ? { externalId: cleanString(externalId) } : {}),
+      ...agentMetadata,
       whatsappMessage: fallbackResponse
     }),
     cleanMessageId
@@ -6364,7 +6374,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
   const wamid = cleanString(normalizedMessage.wamid || normalizedMessage.context?.id)
   const computedMessageId = hashId('waapi_msg', ycloudMessageId || metaMessageId || wamid || `${payload.id}|${identity.direction}|${identity.phone}`)
   const existingMessage = await db.get(`
-    SELECT id, status, transport, routing_reason
+    SELECT id, status, transport, routing_reason, raw_payload_json
     FROM whatsapp_api_messages
     WHERE id = ?
       OR (? != '' AND ycloud_message_id = ?)
@@ -6374,6 +6384,11 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     LIMIT 1
   `, [computedMessageId, ycloudMessageId, ycloudMessageId, metaMessageId, metaMessageId, wamid, wamid]).catch(() => null)
   const messageId = existingMessage?.id || computedMessageId
+  const incomingAgentMarker = extractConversationalAgentMessageMetadata(normalizedMessage)
+  const existingAgentMarker = extractConversationalAgentMessageMetadata(existingMessage?.raw_payload_json)
+  const preservedAgentMetadata = formatConversationalAgentMessageMetadata(
+    incomingAgentMarker.sentByAgent ? incomingAgentMarker : existingAgentMarker
+  )
   const businessPhoneNumberId = await findBusinessPhoneNumberId(identity.businessPhone)
   const incomingStatus = normalizeMessageDeliveryStatus(normalizedMessage.status)
   const existingQrFallbackApplied = cleanString(existingMessage?.transport).toLowerCase() === 'qr' &&
@@ -6485,7 +6500,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     existingQrFallbackApplied ? null : (errorCode || null),
     existingQrFallbackApplied ? null : (errorMessage || null),
     messageTimestamp,
-    existingQrFallbackApplied ? null : safeJson(normalizedMessage),
+    existingQrFallbackApplied ? null : safeJson({ ...normalizedMessage, ...preservedAgentMetadata }),
     safeJson(normalizedMessage.context || normalizedMessage.contextInfo || null),
     safeJson(attribution.referral || null),
     attribution.ctwaClid || null,
@@ -6529,7 +6544,8 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       messageType,
       messageText,
       reason: restrictionReason || conversationWindowReason,
-      existingMessage
+      existingMessage,
+      agentMetadata: preservedAgentMetadata
     })
   }
 
@@ -9457,8 +9473,9 @@ function decorateQrFallbackResponse(response = {}, fallbackReason = '') {
   }
 }
 
-async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, replyToMessageId = '', replyToProviderMessageId = '', fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
+async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, phoneNumberId, contactId, replyToMessageId = '', replyToProviderMessageId = '', fallbackReason, originalError, persist = true, skipQrSendProtection = false, agentId } = {}) {
   try {
+    const agentMetadata = buildConversationalAgentMessageMetadata(agentId)
     const response = await sendWhatsAppQrTextMessage({
       phoneNumberId,
       from: fromPhone,
@@ -9478,11 +9495,14 @@ async function sendTextViaQrFallback({ fromPhone, toPhone, body, externalId, pho
           type: fallbackReason ? 'whatsapp.qr.message.fallback_sent' : 'whatsapp.qr.message.sent',
           transport: 'qr',
           fallbackReason: fallbackReason || null,
+          ...(externalId ? { externalId } : {}),
+          ...agentMetadata,
           createTime: response.createTime || nowIso(),
           whatsappMessage: response
         },
         message: {
           ...response,
+          ...agentMetadata,
           from: response.from || fromPhone,
           to: response.to || toPhone,
           type: response.type || 'text',
@@ -9881,7 +9901,8 @@ export async function sendWhatsAppApiTextMessage({
   phoneNumberId,
   replyToMessageId = '',
   replyToProviderMessageId = '',
-  skipQrSendProtection = false
+  skipQrSendProtection = false,
+  agentId
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
@@ -9895,6 +9916,7 @@ export async function sendWhatsAppApiTextMessage({
   })
   const body = cleanString(renderedText)
   const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  const agentMetadata = buildConversationalAgentMessageMetadata(agentId)
 
   if (!toPhone) throw new Error('Falta el número destino')
   if (!body) throw new Error('Falta el texto del mensaje')
@@ -9925,7 +9947,8 @@ export async function sendWhatsAppApiTextMessage({
       contactId,
       replyToMessageId,
       replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
-      skipQrSendProtection
+      skipQrSendProtection,
+      agentId
     })
   }
 
@@ -9948,7 +9971,8 @@ export async function sendWhatsAppApiTextMessage({
       replyToMessageId,
       replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
       fallbackReason: fallbackDecision.reason,
-      skipQrSendProtection
+      skipQrSendProtection,
+      agentId
     })
   }
   throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
@@ -9994,7 +10018,8 @@ export async function sendWhatsAppApiTextMessage({
         replyToProviderMessageId: replyContext?.message_id || replyToProviderMessageId,
         fallbackReason: retryDecision.reason,
         originalError: error,
-        skipQrSendProtection
+        skipQrSendProtection,
+        agentId
       })
     }
     // (WA-009) Sin fallback QR: registrar el saliente fallido antes de propagar.
@@ -10014,11 +10039,14 @@ export async function sendWhatsAppApiTextMessage({
     payload: {
       id: response.id || externalId || hashId('waapi_send_event', `${fromPhone}|${toPhone}|${body}`),
       type: 'whatsapp.message.updated',
+      ...(externalId ? { externalId } : {}),
+      ...agentMetadata,
       createTime: nowIso(),
       whatsappMessage: response
     },
     message: {
       ...response,
+      ...agentMetadata,
       from: response.from || fromPhone,
       to: response.to || toPhone,
       type: response.type || 'text',

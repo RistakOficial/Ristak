@@ -1957,6 +1957,19 @@
   opacity: 0.78;
 }
 
+.messageAgentMarker {
+  display: inline-flex;
+  align-items: center;
+  color: currentColor;
+  line-height: 1;
+  opacity: 0.74;
+}
+
+.messageAgentMarker svg {
+  width: 11px;
+  height: 11px;
+}
+
 .messageRoutingNote {
   display: block;
   align-self: flex-start;

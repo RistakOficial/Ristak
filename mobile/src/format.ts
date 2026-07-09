@@ -629,6 +629,14 @@ function readBoolean(value: unknown) {
   return ['1', 'true', 'yes', 'si', 'sí'].includes(normalized);
 }
 
+function getJourneyAgentMessageMetadata(data: Record<string, unknown>) {
+  const agentId = readString(data, ['agent_id', 'agentId']);
+  return {
+    sentByAgent: readBoolean(data.sent_by_agent || data.sentByAgent || data.answered_by_agent || data.answeredByAgent) || Boolean(agentId),
+    agentId: agentId || undefined,
+  };
+}
+
 function pickNestedRecord(data: Record<string, unknown>, keys: string[]) {
   for (const key of keys) {
     const value = data[key];
@@ -1016,6 +1024,7 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
         || (attributionRecordId ? `attr-${attributionRecordId}` : '')
         || `${event.type}-${event.date}-${direction}-${hashConversationEventContent(`${text}|${attachment?.url || attachment?.name || ''}|${messageType}`)}`;
       const normalizedMessageType = messageType.trim().toLowerCase();
+      const agentMetadata = getJourneyAgentMessageMetadata(data);
 
       return {
         id,
@@ -1034,6 +1043,7 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
         businessPhone: readString(data, ['business_phone', 'businessPhone']),
         businessPhoneNumberId: readString(data, ['business_phone_number_id', 'businessPhoneNumberId']),
         routingReason: cleanRedundantRoutingMessageText(readString(data, ['routing_reason', 'routingReason', 'fallbackReason'])),
+        ...agentMetadata,
         messageType,
         replyToProviderMessageId: readString(data, ['reply_to_provider_message_id', 'replyToProviderMessageId']),
         reactionEmoji: readString(data, ['reaction_emoji', 'reactionEmoji']),

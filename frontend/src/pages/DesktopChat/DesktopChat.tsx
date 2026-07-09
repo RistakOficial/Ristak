@@ -254,6 +254,8 @@ interface DesktopChatMessage {
   transport?: string
   provider?: string
   routingReason?: string
+  sentByAgent?: boolean
+  agentId?: string
   replyToMessageId?: string
   replyToProviderMessageId?: string
   reactionEmoji?: string
@@ -1302,6 +1304,8 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
     message.transport,
     message.provider,
     message.routingReason,
+    message.sentByAgent,
+    message.agentId,
     message.adPreview?.platform,
     message.adPreview?.title,
     message.adPreview?.body,
@@ -2381,6 +2385,14 @@ function isTruthyDataFlag(value: unknown): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'si' || normalized === 'sí'
 }
 
+function getJourneyAgentMessageMetadata(data: Record<string, unknown>) {
+  const agentId = String(data.agent_id || data.agentId || '').trim()
+  return {
+    sentByAgent: isTruthyDataFlag(data.sent_by_agent || data.sentByAgent || data.answered_by_agent || data.answeredByAgent) || Boolean(agentId),
+    agentId: agentId || undefined
+  }
+}
+
 function isCommentMessageType(messageType = '') {
   return ['comment', 'comment_reply_public', 'comment_reply_private'].includes(String(messageType || '').trim().toLowerCase())
 }
@@ -2460,6 +2472,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
   const errorReason = String(data.error_message || data.errorMessage || data.error_reason || data.errorReason || '').trim()
   const provider = String(data.provider || data.message_provider || data.source_provider || '').trim()
   const transport = String(data.transport || data.channel || '').trim() || provider
+  const agentMetadata = getJourneyAgentMessageMetadata(data)
   const adPreview = event.type === 'whatsapp_message' || event.type === 'meta_message'
     ? buildMessageAdPreview(data, direction)
     : undefined
@@ -2508,6 +2521,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): DesktopChatMessa
     transport,
     provider,
     routingReason: String(data.routing_reason || data.routingReason || data.fallbackReason || '').trim(),
+    ...agentMetadata,
     replyToMessageId: String(data.reply_to_message_id || data.replyToMessageId || '').trim() || undefined,
     replyToProviderMessageId: replyToProviderMessageId || undefined,
     reactionEmoji: reactionEmoji || undefined,
@@ -7824,6 +7838,11 @@ export const DesktopChat: React.FC = () => {
     return (
       <span className={styles.messageMeta}>
         {transportLabel ? <em className={styles.messageTransport}>{transportLabel}</em> : null}
+        {message.sentByAgent ? (
+          <span className={styles.messageAgentMarker} title="Respondido por agente conversacional" aria-label="Respondido por agente conversacional">
+            <Bot size={11} strokeWidth={2.35} aria-hidden="true" />
+          </span>
+        ) : null}
         {formatMessageTime(message.date)}
         {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} /> : null}
         {scheduled ? <Clock size={13} /> : null}

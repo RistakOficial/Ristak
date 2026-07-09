@@ -11,6 +11,7 @@ import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { createRistakId } from '../utils/idGenerator.js'
+import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 import {
   formatContactName,
   splitContactName as splitFormattedContactName
@@ -1682,6 +1683,7 @@ export async function sendEmailToContact({
   html,
   replyTo,
   externalId,
+  agentId,
   includeSignature = true
 } = {}) {
   const config = await readStoredConfig()
@@ -1708,7 +1710,9 @@ export async function sendEmailToContact({
     provider: 'smtp',
     connectedProvider: config.providerId || config.provider || 'smtp',
     senderName: config.fromName || '',
-    includeSignature: includeSignature !== false
+    includeSignature: includeSignature !== false,
+    ...(externalId ? { externalId: cleanString(externalId) } : {}),
+    ...buildConversationalAgentMessageMetadata(agentId)
   }
 
   await saveEmailMessageRow({

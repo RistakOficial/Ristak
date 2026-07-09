@@ -22063,7 +22063,9 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
             failed={Boolean(message.failed)}
             metaLabel={metaLabel}
             pending={Boolean(message.pending)}
+            sentByAgent={Boolean(message.sentByAgent)}
             status={status}
+            transportBadge={transportBadge}
             onOpenContent={onOpenContent}
           />
         ) : null}
@@ -22121,6 +22123,11 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
           <View style={styles.messageMetaRow}>
             {scheduled ? <Clock size={11} color={COLORS.meta} strokeWidth={2.5} /> : null}
             {transportBadge ? <Text style={styles.messageTransport}>{transportBadge}</Text> : null}
+            {message.sentByAgent ? (
+              <View accessible accessibilityLabel="Respondido por agente conversacional" style={styles.messageAgentMarker}>
+                <Bot size={11} color={COLORS.meta} strokeWidth={2.45} />
+              </View>
+            ) : null}
             <Text style={[styles.messageMeta, outbound && !message.failed && !scheduled && styles.messageMetaOnAccent]}>{metaLabel}</Text>
             {outbound && !scheduled ? <NativeMessageReceipt status={status} failed={Boolean(message.failed)} pending={Boolean(message.pending)} /> : null}
           </View>
@@ -22584,6 +22591,7 @@ function NativeMessageAttachment({
   metaLabel,
   onOpenContent,
   pending,
+  sentByAgent,
   status,
   transportBadge,
 }: {
@@ -22594,6 +22602,7 @@ function NativeMessageAttachment({
   metaLabel: string;
   onOpenContent?: (item: NativeContentFocusItem) => void;
   pending?: boolean;
+  sentByAgent?: boolean;
   status: 'sent' | 'delivered' | 'read' | 'pending' | 'failed';
   transportBadge?: string;
 }) {
@@ -22620,6 +22629,7 @@ function NativeMessageAttachment({
         metaLabel={metaLabel}
         pending={pending}
         receiptStatus={status}
+        sentByAgent={sentByAgent}
         transportBadge={transportBadge}
         uri={uri}
       />
@@ -22786,6 +22796,7 @@ function NativeAudioAttachment({
   metaLabel,
   pending,
   receiptStatus,
+  sentByAgent,
   transportBadge,
   uri,
 }: {
@@ -22796,6 +22807,7 @@ function NativeAudioAttachment({
   metaLabel: string;
   pending?: boolean;
   receiptStatus: 'sent' | 'delivered' | 'read' | 'pending' | 'failed';
+  sentByAgent?: boolean;
   transportBadge?: string;
   uri: string;
 }) {
@@ -22928,6 +22940,11 @@ function NativeAudioAttachment({
         <Text style={styles.messageAudioDuration}>{formatDurationMs(durationMs)}</Text>
         <View style={styles.messageAudioMetaRow}>
           {transportBadge ? <Text style={styles.messageTransport}>{transportBadge}</Text> : null}
+          {sentByAgent ? (
+            <View accessible accessibilityLabel="Respondido por agente conversacional" style={styles.messageAgentMarker}>
+              <Bot size={11} color={COLORS.meta} strokeWidth={2.45} />
+            </View>
+          ) : null}
           <Text numberOfLines={1} style={styles.messageAudioMeta}>{metaLabel}</Text>
           {direction === 'outbound' ? <NativeMessageReceipt status={receiptStatus} failed={failed} pending={pending} /> : null}
         </View>
@@ -30094,6 +30111,11 @@ function createAppStyles() {
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 0.4,
+  },
+  messageAgentMarker: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    opacity: 0.72,
   },
   messageMediaCard: {
     borderRadius: 8,

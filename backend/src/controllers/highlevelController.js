@@ -52,6 +52,7 @@ import { applyConektaPaymentPlanAction, refreshConektaPaymentPlanMirrors, update
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { coalescedTimestampSortExpression, parseSortableTimestamp } from '../utils/sqlTimestampSort.js';
+import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -2440,7 +2441,7 @@ export function getHighLevelResponseStatus(response = {}) {
   return 'sent';
 }
 
-async function saveHighLevelWhatsAppMirror({ contact, channel, text, attachments = [], fromNumber, toNumber, externalId, requestBody, response }) {
+async function saveHighLevelWhatsAppMirror({ contact, channel, text, attachments = [], fromNumber, toNumber, externalId, agentId, requestBody, response }) {
   const now = new Date().toISOString();
   const remoteMessageId = getHighLevelMessageId(response, externalId);
   const deliveryStatus = getHighLevelResponseStatus(response);
@@ -2451,6 +2452,8 @@ async function saveHighLevelWhatsAppMirror({ contact, channel, text, attachments
   const rawPayload = safeJsonStringify({
     provider: 'highlevel',
     channel: channel.key,
+    ...(externalId ? { externalId: cleanString(externalId) } : {}),
+    ...buildConversationalAgentMessageMetadata(agentId),
     request: requestBody,
     response
   });
@@ -2521,7 +2524,7 @@ async function saveHighLevelWhatsAppMirror({ contact, channel, text, attachments
   };
 }
 
-async function saveHighLevelMetaMirror({ contact, channel, text, attachments = [], externalId, requestBody, response }) {
+async function saveHighLevelMetaMirror({ contact, channel, text, attachments = [], externalId, agentId, requestBody, response }) {
   const now = new Date().toISOString();
   const platform = channel.platform;
   const remoteMessageId = getHighLevelMessageId(response, externalId);
@@ -2539,6 +2542,8 @@ async function saveHighLevelMetaMirror({ contact, channel, text, attachments = [
   const rawPayload = safeJsonStringify({
     provider: 'highlevel',
     channel: channel.key,
+    ...(externalId ? { externalId: cleanString(externalId) } : {}),
+    ...buildConversationalAgentMessageMetadata(agentId),
     request: requestBody,
     response
   });
@@ -2605,7 +2610,7 @@ async function saveHighLevelMetaMirror({ contact, channel, text, attachments = [
   };
 }
 
-async function saveHighLevelEmailMirror({ contact, channel, subject, text, html, externalId, requestBody, response }) {
+async function saveHighLevelEmailMirror({ contact, channel, subject, text, html, externalId, agentId, requestBody, response }) {
   const now = new Date().toISOString();
   const remoteMessageId = getHighLevelMessageId(response, externalId);
   const deliveryStatus = getHighLevelResponseStatus(response);
@@ -2613,6 +2618,8 @@ async function saveHighLevelEmailMirror({ contact, channel, subject, text, html,
   const rawPayload = safeJsonStringify({
     provider: 'highlevel',
     channel: channel.key,
+    ...(externalId ? { externalId: cleanString(externalId) } : {}),
+    ...buildConversationalAgentMessageMetadata(agentId),
     request: requestBody,
     response
   });
@@ -2687,6 +2694,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     toNumber,
     conversationProviderId,
     externalId,
+    agentId,
     subject,
     html
   } = payload || {};
@@ -2824,6 +2832,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       text: renderedText,
       attachments: mirrorAttachments,
       externalId,
+      agentId,
       requestBody,
       response
     });
@@ -2835,6 +2844,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       text: renderedText,
       html: renderedEmailHtml,
       externalId,
+      agentId,
       requestBody,
       response
     });
@@ -2847,6 +2857,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
       fromNumber: cleanFromNumber,
       toNumber: cleanToNumber,
       externalId,
+      agentId,
       requestBody,
       response
     });

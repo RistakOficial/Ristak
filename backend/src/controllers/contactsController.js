@@ -81,6 +81,7 @@ import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/cont
 import { getEmailStatus } from '../services/emailService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
+import { extractConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
@@ -5333,6 +5334,7 @@ export const getContactJourney = async (req, res) => {
       const payloadMedia = getWhatsAppMediaFromPayload(msg.raw_payload_json, msg.message_type)
       const payloadLocation = getWhatsAppLocationFromPayload(msg.raw_payload_json, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
+      const agentMetadata = extractConversationalAgentMessageMetadata(rawPayload)
       const context = parseJsonObject(msg.context_json)
       const detectedAttribution = detectWhatsAppAttributionFields({ row: msg, rawPayload, context }, [msg.message_text])
       const detectedSourceId = cleanString(msg.detected_source_id || detectedAttribution.sourceId)
@@ -5376,6 +5378,8 @@ export const getContactJourney = async (req, res) => {
         whatsapp_api_message_id: msg.whatsapp_api_message_id,
         whatsapp_message_id: msg.wamid || msg.ycloud_message_id,
         provider_message_id: msg.wamid || msg.ycloud_message_id,
+        sent_by_agent: agentMetadata.sentByAgent ? 1 : 0,
+        agent_id: agentMetadata.agentId || null,
         reply_to_provider_message_id: cleanString(msg.message_type).toLowerCase() === 'reaction' ? '' : replyContextId,
         reaction_emoji: reactionEmoji,
         reaction_target_provider_message_id: cleanString(msg.message_type).toLowerCase() === 'reaction' ? replyContextId : '',
@@ -5459,12 +5463,13 @@ export const getContactJourney = async (req, res) => {
 
     const metaSocialJourneyEvents = []
 
-	    metaSocialMessages.forEach(msg => {
+    metaSocialMessages.forEach(msg => {
       if (!includeBusinessMessages && isOutboundWhatsAppDirection(msg.direction)) return
 
       const platform = cleanString(msg.platform)
       const source = getMetaSourceLabelForChat(platform, msg.message_type)
       const rawPayload = parseJsonObject(msg.raw_payload_json)
+      const agentMetadata = extractConversationalAgentMessageMetadata(rawPayload)
       const metaAdAttributionData = buildMetaSocialAdAttributionData(msg, rawPayload)
       const provider = cleanString(rawPayload?.provider)
       const replyContextId = getMetaReplyContextId(rawPayload)
@@ -5497,6 +5502,8 @@ export const getContactJourney = async (req, res) => {
           meta_social_message_id: msg.meta_social_message_id,
           meta_message_id: msg.meta_message_id,
           provider_message_id: msg.meta_message_id,
+          sent_by_agent: agentMetadata.sentByAgent ? 1 : 0,
+          agent_id: agentMetadata.agentId || null,
           reply_to_provider_message_id: cleanString(msg.message_type).toLowerCase() === 'reaction' ? '' : replyContextId,
           reaction_emoji: cleanString(msg.message_type).toLowerCase() === 'reaction' ? cleanString(msg.message_text) : '',
           reaction_target_provider_message_id: reactionTargetId,
@@ -5564,30 +5571,33 @@ export const getContactJourney = async (req, res) => {
 	      )
 	    )
 
-	    emailMessages.forEach(msg => {
-	      const rawPayload = parseJsonObject(msg.raw_payload_json)
-	      const provider = cleanString(rawPayload?.provider).toLowerCase()
-	      journey.push({
-	        type: 'email_message',
-	        date: msg.message_timestamp || msg.created_at,
-	        data: {
-	          source: 'Correo',
-	          email_message_id: msg.email_message_id,
-	          smtp_message_id: msg.smtp_message_id || null,
-	          message_type: 'email',
-	          message_text: msg.message_text || '',
-	          html_body: msg.html_body || '',
-	          subject: msg.subject || '',
-	          to_email: msg.to_email || '',
-	          from_email: msg.from_email || '',
-	          reply_to: msg.reply_to || '',
-	          direction: msg.direction || 'outbound',
-	          status: msg.status || null,
-	          error_message: msg.error_message || null,
-	          transport: provider === 'highlevel' ? 'ghl_email' : 'email'
-	        }
-	      })
-	    })
+    emailMessages.forEach(msg => {
+      const rawPayload = parseJsonObject(msg.raw_payload_json)
+      const agentMetadata = extractConversationalAgentMessageMetadata(rawPayload)
+      const provider = cleanString(rawPayload?.provider).toLowerCase()
+      journey.push({
+        type: 'email_message',
+        date: msg.message_timestamp || msg.created_at,
+        data: {
+          source: 'Correo',
+          email_message_id: msg.email_message_id,
+          smtp_message_id: msg.smtp_message_id || null,
+          message_type: 'email',
+          message_text: msg.message_text || '',
+          html_body: msg.html_body || '',
+          subject: msg.subject || '',
+          to_email: msg.to_email || '',
+          from_email: msg.from_email || '',
+          reply_to: msg.reply_to || '',
+          direction: msg.direction || 'outbound',
+          status: msg.status || null,
+          error_message: msg.error_message || null,
+          sent_by_agent: agentMetadata.sentByAgent ? 1 : 0,
+          agent_id: agentMetadata.agentId || null,
+          transport: provider === 'highlevel' ? 'ghl_email' : 'email'
+        }
+      })
+    })
 
     const appointmentConfirmationTimestampExpression = 'COALESCE(w.processed_at, w.updated_at, w.created_at)'
     const appointmentConfirmationCards = await db.all(

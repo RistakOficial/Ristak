@@ -172,6 +172,8 @@ struct ChatMessage: Sendable, Equatable, Identifiable {
     var businessPhone: String?
     var businessPhoneNumberId: String?
     var routingReason: String?
+    var sentByAgent: Bool
+    var agentId: String?
     var replyToMessageId: String?
     var replyToProviderMessageId: String?
     var reactionEmoji: String?
@@ -210,6 +212,8 @@ struct ChatMessage: Sendable, Equatable, Identifiable {
         businessPhone: String? = nil,
         businessPhoneNumberId: String? = nil,
         routingReason: String? = nil,
+        sentByAgent: Bool = false,
+        agentId: String? = nil,
         replyToMessageId: String? = nil,
         replyToProviderMessageId: String? = nil,
         reactionEmoji: String? = nil,
@@ -245,6 +249,8 @@ struct ChatMessage: Sendable, Equatable, Identifiable {
         self.businessPhone = businessPhone
         self.businessPhoneNumberId = businessPhoneNumberId
         self.routingReason = routingReason
+        self.sentByAgent = sentByAgent
+        self.agentId = agentId
         self.replyToMessageId = replyToMessageId
         self.replyToProviderMessageId = replyToProviderMessageId
         self.reactionEmoji = reactionEmoji
@@ -390,6 +396,7 @@ enum ChatJourneyParser {
             messageType: messageType
         )
         let normalizedType = messageType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let agentMetadata = agentMessageMetadata(from: data)
 
         return ChatMessage(
             id: id,
@@ -414,6 +421,8 @@ enum ChatJourneyParser {
             businessPhone: nonEmpty(readString(data, ["business_phone", "businessPhone"])),
             businessPhoneNumberId: nonEmpty(readString(data, ["business_phone_number_id", "businessPhoneNumberId"])),
             routingReason: nonEmpty(cleanRedundantRoutingText(readString(data, ["routing_reason", "routingReason", "fallbackReason"]))),
+            sentByAgent: agentMetadata.sentByAgent,
+            agentId: agentMetadata.agentId,
             replyToMessageId: nonEmpty(readString(data, ["reply_to_message_id", "replyToMessageId"])),
             replyToProviderMessageId: nonEmpty(readString(data, ["reply_to_provider_message_id", "replyToProviderMessageId"])),
             reactionEmoji: nonEmpty(readString(data, ["reaction_emoji", "reactionEmoji"])),
@@ -618,6 +627,16 @@ enum ChatJourneyParser {
         default:
             return false
         }
+    }
+
+    static func agentMessageMetadata(from data: [String: RistakJSONValue]) -> (sentByAgent: Bool, agentId: String?) {
+        let agentId = nonEmpty(readString(data, ["agent_id", "agentId"]))
+        let sentByAgent = readBool(data["sent_by_agent"]) ||
+            readBool(data["sentByAgent"]) ||
+            readBool(data["answered_by_agent"]) ||
+            readBool(data["answeredByAgent"]) ||
+            agentId != nil
+        return (sentByAgent, agentId)
     }
 
     static func pickNestedRecord(_ data: [String: RistakJSONValue], _ keys: [String]) -> [String: RistakJSONValue]? {

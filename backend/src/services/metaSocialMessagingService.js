@@ -10,6 +10,7 @@ import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 import { buildLocalMediaUrl, saveWhatsAppAudioPlaybackPreviewDataUrl } from './whatsappApiService.js'
+import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
 // (NOTI-003) Confirmación de citas por respuesta también para DMs de Messenger/Instagram.
 import { maybeConfirmAppointmentFromReply, handleInboundForConfirmation } from './appointmentConfirmationService.js'
 
@@ -1898,7 +1899,7 @@ async function sendMetaInstagramMarkSeenRequest({ recipientId, config }) {
   })
 }
 
-async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, messageType = 'text', messageTimestamp = '', commentId = '', postId = '', parentCommentId = '', mediaUrl = '', mediaMimeType = '', context = null }) {
+async function saveMetaSocialOutboundMessage({ platform, contactId, profile, messageId, text, response, externalId, agentId, messageType = 'text', messageTimestamp = '', commentId = '', postId = '', parentCommentId = '', mediaUrl = '', mediaMimeType = '', context = null }) {
   const now = cleanString(messageTimestamp) || new Date().toISOString()
   const cleanPlatform = platform === 'instagram' ? 'instagram' : 'messenger'
   const cleanMessageType = cleanString(messageType) || 'text'
@@ -1918,6 +1919,8 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
   const rawPayload = safeJson({
     provider: 'meta',
     platform: cleanPlatform,
+    ...(externalId ? { externalId: cleanString(externalId) } : {}),
+    ...buildConversationalAgentMessageMetadata(agentId),
     response,
     ...(context ? { context } : {})
   })
@@ -1998,7 +2001,7 @@ async function saveMetaSocialOutboundMessage({ platform, contactId, profile, mes
   }
 }
 
-export async function sendMetaSocialTextMessage({ contactId, platform, message, externalId, replyToMessageId = '', replyToProviderMessageId = '' } = {}) {
+export async function sendMetaSocialTextMessage({ contactId, platform, message, externalId, agentId, replyToMessageId = '', replyToProviderMessageId = '' } = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const body = cleanString(message)
@@ -2076,6 +2079,7 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     text: body,
     response,
     externalId,
+    agentId,
     context: replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : null
   })
 
@@ -2422,7 +2426,7 @@ export async function markLatestMetaSocialMessageReadForContact({ contactId, pla
 //  - 'private' => abre/continúa un DM con quien comentó (/{businessId}/messages recipient:{comment_id})
 // Se apoya en el token de PÁGINA y en el comment_id del último comentario entrante
 // del contacto (si no se pasa explícito). NO usa el senderId sintético (no es un PSID).
-export async function sendMetaSocialCommentReply({ contactId, platform, message, replyType = 'private', commentId = '', postId = '', externalId, attachment = null } = {}) {
+export async function sendMetaSocialCommentReply({ contactId, platform, message, replyType = 'private', commentId = '', postId = '', externalId, agentId, attachment = null } = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
   const body = cleanString(message)
@@ -2565,6 +2569,7 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     text: body,
     response,
     externalId,
+    agentId,
     messageType: mode === 'public' ? 'comment_reply_public' : 'comment_reply_private',
     mediaUrl: att?.url || '',
     mediaMimeType: att?.type || '',

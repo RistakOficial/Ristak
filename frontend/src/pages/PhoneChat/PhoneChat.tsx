@@ -1391,6 +1391,8 @@ interface ChatMessage {
   businessPhoneNumberId?: string
   transport?: 'api' | 'qr' | string
   routingReason?: string
+  sentByAgent?: boolean
+  agentId?: string
   replyToMessageId?: string
   replyToProviderMessageId?: string
   reactionEmoji?: string
@@ -3327,6 +3329,14 @@ function isTruthyDataFlag(value: unknown): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'si' || normalized === 'sí'
 }
 
+function getJourneyAgentMessageMetadata(data: Record<string, unknown>) {
+  const agentId = String(data.agent_id || data.agentId || '').trim()
+  return {
+    sentByAgent: isTruthyDataFlag(data.sent_by_agent || data.sentByAgent || data.answered_by_agent || data.answeredByAgent) || Boolean(agentId),
+    agentId: agentId || undefined
+  }
+}
+
 function isCommentMessageType(messageType = '') {
   return ['comment', 'comment_reply_public', 'comment_reply_private'].includes(String(messageType || '').trim().toLowerCase())
 }
@@ -3630,6 +3640,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     const body = normalizeEmailBodyText(String(eventData.message_text || '')) || htmlToPlainEmailText(String(eventData.html_body || ''))
     const direction = normalizeWhatsAppBusinessDirection(eventData.direction)
     const transport = String(eventData.transport || '').trim()
+    const agentMetadata = getJourneyAgentMessageMetadata(eventData)
 
     return {
       id: String(eventData.email_message_id || eventData.smtp_message_id || `email-message-${event.date}-${hashConversationContent(`${subject}|${body}`)}`),
@@ -3642,6 +3653,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
       deliveredAt: pickMessageTimestamp(eventData, ['delivered_at', 'deliveredAt', 'message_timestamp', 'messageTimestamp']),
       readAt: pickMessageTimestamp(eventData, ['read_at', 'readAt', 'seen_at', 'seenAt']),
       transport: transport || 'email',
+      ...agentMetadata,
       messageType: 'email',
       emailDetails: {
         subject,
@@ -3657,6 +3669,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
 
   if (event.type !== 'whatsapp_message' && !isMetaMessage) return null
   const eventData = (event.data || {}) as Record<string, unknown>
+  const agentMetadata = getJourneyAgentMessageMetadata(eventData)
 
   const rawText = String(
     event.data?.message_text ||
@@ -3723,6 +3736,7 @@ function getJourneyMessage(event: JourneyEvent, index: number): ChatMessage | nu
     businessPhoneNumberId: String(event.data?.business_phone_number_id || ''),
     transport: String(event.data?.transport || (isMetaMessage ? event.data?.social_platform || 'meta' : 'api')),
     routingReason: String(event.data?.routing_reason || event.data?.routingReason || event.data?.fallbackReason || ''),
+    ...agentMetadata,
     messageType,
     replyToProviderMessageId: String(event.data?.reply_to_provider_message_id || '').trim() || undefined,
     reactionEmoji: String(event.data?.reaction_emoji || '').trim() || undefined,
@@ -14837,6 +14851,11 @@ export const PhoneChat: React.FC = () => {
     return (
       <span className={className}>
         {transportBadge && <em className={styles.messageTransport}>{transportBadge}</em>}
+        {message.sentByAgent ? (
+          <span className={styles.messageAgentMarker} title="Respondido por agente conversacional" aria-label="Respondido por agente conversacional">
+            <Bot size={10} strokeWidth={2.4} aria-hidden="true" />
+          </span>
+        ) : null}
         {scheduled
           ? `Programado para ${formatMessageTime(message.scheduledAt || message.date)}`
           : formatMessageTime(message.date)}

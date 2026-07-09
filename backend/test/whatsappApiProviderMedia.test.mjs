@@ -55,7 +55,8 @@ async function withFakeFfmpeg(callback) {
     '#!/usr/bin/env node',
     "import fs from 'node:fs';",
     'const outputPath = process.argv[process.argv.length - 1];',
-    "fs.writeFileSync(outputPath, Buffer.from('converted-video-for-whatsapp'));",
+    "const isOgg = outputPath.endsWith('.ogg');",
+    "fs.writeFileSync(outputPath, isOgg ? Buffer.from('OggS-fake-opus-audio') : Buffer.from('converted-video-for-whatsapp'));",
     ''
   ].join('\n'))
   await fs.chmod(scriptPath, 0o755)
