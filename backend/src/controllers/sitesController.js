@@ -520,7 +520,8 @@ export async function previewSiteHandler(req, res) {
       pageId: req.query?.page,
       trackingEnabled: false,
       preview: true,
-      importedNativePreviewMock: req.method === 'POST' && req.body?.importedNativePreviewMock === true
+      importedNativePreviewMock: req.method === 'POST' && req.body?.importedNativePreviewMock === true,
+      draftImportedCodeFiles: req.method === 'POST' ? req.body?.draftImportedCodeFiles : undefined
     }))
   } catch (error) {
     logger.error(`Error previsualizando site: ${error.message}`)

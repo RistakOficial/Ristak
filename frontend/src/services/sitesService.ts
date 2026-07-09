@@ -1178,20 +1178,26 @@ export const sitesService = {
     return apiClient.get<PublicSite>(`/sites/${siteId}`)
   },
 
-  async getPreviewHtml(siteId: string, pageId?: string, options: { test?: boolean; draftSite?: PublicSite } = {}) {
+  async getPreviewHtml(siteId: string, pageId?: string, options: {
+    test?: boolean
+    draftSite?: PublicSite
+    draftImportedCodeFiles?: Array<{ path: string; content: string }>
+  } = {}) {
     const searchParams = new URLSearchParams()
     if (pageId) searchParams.set('page', pageId)
     if (options.test) searchParams.set('test', '1')
     const params = searchParams.toString() ? `?${searchParams.toString()}` : ''
     const draftSite = options.draftSite
+    const draftImportedCodeFiles = options.draftImportedCodeFiles?.length ? options.draftImportedCodeFiles : undefined
     const response = await fetch(apiUrl(`/api/sites/${siteId}/preview${params}`), {
-      method: draftSite ? 'POST' : 'GET',
+      method: draftSite || draftImportedCodeFiles ? 'POST' : 'GET',
       headers: {
         ...getAuthHeaders(),
-        ...(draftSite ? { 'Content-Type': 'application/json' } : {})
+        ...(draftSite || draftImportedCodeFiles ? { 'Content-Type': 'application/json' } : {})
       },
-      body: draftSite ? JSON.stringify({
+      body: draftSite || draftImportedCodeFiles ? JSON.stringify({
         draftSite,
+        draftImportedCodeFiles,
         importedNativePreviewMock: true
       }) : undefined,
       cache: 'no-store'
