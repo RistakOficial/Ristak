@@ -989,7 +989,11 @@ mensaje manual desde `mobile/` debe abrir una confirmacion antes de mandar: el
 usuario elige pausar el agente por 24 horas y enviar, quitar el contacto del
 agente y enviar, o cancelar. El boton `+` de la conversacion debe priorizar los
 controles del agente arriba del sheet cuando haya estado de agente asignado, con
-acciones rapidas para pausar, tomar/continuar u omitir segun el estado. El
+acciones rapidas para pausar, tomar/continuar u omitir segun el estado. En
+`/movil`/`ios/app`, los banners y acciones de agente deben contar solo estados
+cuyo `agent_id` pertenezca a un agente configurado actualmente; los estados
+historicos o cacheados de agentes eliminados no deben mostrarse como "agentes
+asignados" ni habilitar acciones. El
 composer nativo manda texto por `/whatsapp-api/messages/text`,
 fotos por `/whatsapp-api/messages/image`, videos por
 `/whatsapp-api/messages/video`, documentos por
