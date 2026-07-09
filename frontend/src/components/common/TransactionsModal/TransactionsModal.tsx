@@ -28,6 +28,10 @@ interface TransactionsModalProps {
   title?: string
   subtitle?: string
   transactions: Transaction[]
+  /** Total real de transacciones del periodo (COUNT del backend). Empata con la celda. */
+  totalCount?: number
+  /** Monto total real del periodo (SUM del backend). Correcto aunque la lista venga topada. */
+  totalAmount?: number
   loading?: boolean
 }
 
@@ -37,6 +41,8 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
   title = 'Transacciones',
   subtitle,
   transactions,
+  totalCount,
+  totalAmount,
   loading = false
 }) => {
   const { formatLocalDateShort } = useTimezone()
@@ -44,7 +50,11 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
 
   if (!isOpen) return null
 
-  const totalAmount = transactions.reduce((sum, t) => sum + (t.amount || 0), 0)
+  // El número y el monto salen del total del periodo (backend); si no llegan, se derivan
+  // de las filas cargadas para mantener retrocompatibilidad.
+  const displayCount = totalCount ?? transactions.length
+  const displayAmount = totalAmount ?? transactions.reduce((sum, t) => sum + (t.amount || 0), 0)
+  const isTruncated = displayCount > transactions.length
 
   const getStatusColor = (status: string) => {
     const lowerStatus = status?.toLowerCase()
@@ -95,15 +105,21 @@ export const TransactionsModal: React.FC<TransactionsModalProps> = ({
             <div className={styles.summary}>
               <div className={styles.summaryItem}>
                 <span className={styles.summaryLabel}>Transacciones</span>
-                <span className={styles.summaryValue}>{transactions.length}</span>
+                <span className={styles.summaryValue}>{displayCount}</span>
               </div>
               <div className={styles.summaryItem}>
                 <span className={styles.summaryLabel}>Monto Total</span>
                 <span className={styles.summaryValue}>
-                  {formatCurrency(totalAmount, accountCurrency)}
+                  {formatCurrency(displayAmount, accountCurrency)}
                 </span>
               </div>
             </div>
+
+            {isTruncated && (
+              <div className={styles.truncatedNote}>
+                Mostrando las primeras {transactions.length} de {displayCount} transacciones.
+              </div>
+            )}
 
             <div className={styles.listContainer}>
               {transactions.map((transaction) => (

@@ -88,6 +88,43 @@ function isValidEmailAddress(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
 }
 
+async function findUserByLoginEmail(loginEmail) {
+  const user = await db.get(
+    'SELECT * FROM users WHERE LOWER(TRIM(email)) = LOWER(?)',
+    [loginEmail]
+  )
+
+  if (user) return user
+
+  const legacyUser = await db.get(
+    `SELECT *
+     FROM users
+     WHERE (email IS NULL OR TRIM(email) = '')
+       AND LOWER(TRIM(username)) = LOWER(?)
+     LIMIT 1`,
+    [loginEmail]
+  )
+
+  if (!legacyUser) return null
+
+  const conflict = await db.get(
+    'SELECT id FROM users WHERE id != ? AND LOWER(TRIM(email)) = LOWER(?) LIMIT 1',
+    [legacyUser.id, loginEmail]
+  )
+
+  if (conflict) return null
+
+  await db.run(
+    `UPDATE users
+     SET email = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND (email IS NULL OR TRIM(email) = '')`,
+    [loginEmail, legacyUser.id]
+  )
+
+  logger.info(`🔄 Email de acceso recuperado desde username legacy para usuario ${legacyUser.id}`)
+  return { ...legacyUser, email: loginEmail }
+}
+
 function buildDefaultInternalUsername(email) {
   const localPart = String(email || '').split('@')[0] || ''
   const normalized = localPart
@@ -171,12 +208,9 @@ export async function login(req, res) {
       })
     }
 
-    // El correo es la única credencial de login. El username queda como
-    // identificador interno para referencias y compatibilidad de datos.
-    const user = await db.get(
-      'SELECT * FROM users WHERE LOWER(email) = LOWER(?)',
-      [loginEmail]
-    )
+    // El correo es la única credencial de login. El username solo se usa como
+    // puente de migración cuando una instalación vieja guardó el correo ahí.
+    const user = await findUserByLoginEmail(loginEmail)
 
     if (!user) {
       logger.warn(`⚠️  Intento de login fallido: correo "${loginEmail}" no encontrado`)
@@ -951,10 +985,7 @@ export async function ssoLogin(req, res) {
       })
     }
 
-    const user = await db.get(
-      'SELECT * FROM users WHERE email = ? OR username = ?',
-      [peeked.email, peeked.email]
-    )
+    const user = await findUserByLoginEmail(cleanLoginEmail(peeked.email))
 
     if (!user) {
       return res.status(409).json({ success: false, code: 'needs_setup' })

@@ -51,6 +51,8 @@ async function cleanup(contactId, phone, extraPhones = []) {
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
     await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
   }
+  await db.run('DELETE FROM appointment_confirmation_windows WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -127,6 +129,326 @@ test('contact journey enriches WhatsApp messages that only carry rstkad_id marke
     assert.equal(message.data.creative_preview_url, 'https://example.test/preview')
   } finally {
     await db.run('DELETE FROM meta_ads WHERE ad_id = ?', [adId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact journey does not mark ordinary WhatsApp API metadata as ad attribution', async () => {
+  const id = randomUUID()
+  const contactId = `journey_organic_api_${id}`
+  const phone = `+52989${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente WhatsApp API Orgánico',
+      first_name: 'Cliente',
+      source: 'WhatsApp_API',
+      created_at: '2099-07-05T12:00:00.000Z',
+      updated_at: '2099-07-05T12:00:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_organic_metadata_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Hola',
+      detected_source_app: 'api',
+      detected_entry_point: 'api',
+      detected_headline: 'Hola',
+      detected_body: 'Hola',
+      message_timestamp: '2099-07-05T12:01:00.000Z',
+      created_at: '2099-07-05T12:01:00.000Z'
+    })
+
+    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const message = journey.find((event) => event.type === 'whatsapp_message')
+
+    assert.ok(message)
+    assert.equal(message.data.message_text, 'Hola')
+    assert.equal(message.data.referral_source_app, 'api')
+    assert.equal(message.data.referral_headline, 'Hola')
+    assert.equal(message.data.is_ad_attributed, false)
+    assert.equal(message.data.referral_source_id || '', '')
+    assert.equal(message.data.referral_ctwa_clid || '', '')
+    assert.equal(message.data.referral_source_type || '', '')
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact journey exposes every WhatsApp ad touch without decorating organic retouches', async () => {
+  const id = randomUUID()
+  const contactId = `journey_multi_ad_${id}`
+  const phone = `+52990${Date.now().toString().slice(-7)}`
+  const seed = Date.now().toString().slice(-10)
+  const firstAdId = `781${seed}01`
+  const secondAdId = `782${seed}02`
+
+  await cleanup(contactId, phone)
+  await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [firstAdId, secondAdId]).catch(() => undefined)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Retouch Ads',
+      first_name: 'Cliente',
+      source: 'WhatsApp_API',
+      attribution_ad_id: firstAdId,
+      created_at: '2099-05-01T12:00:00.000Z',
+      updated_at: '2099-05-01T12:00:00.000Z'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-05-01',
+      ad_account_id: `act_multi_${id}`,
+      campaign_id: `camp_may_${id}`,
+      campaign_name: 'Campaña mayo',
+      adset_id: `adset_may_${id}`,
+      adset_name: 'Conjunto mayo',
+      ad_id: firstAdId,
+      ad_name: 'Anuncio mayo',
+      creative_thumbnail_url: 'https://example.test/may-thumb.jpg',
+      creative_preview_url: 'https://example.test/may-preview'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-06-15',
+      ad_account_id: `act_multi_${id}`,
+      campaign_id: `camp_june_${id}`,
+      campaign_name: 'Campaña junio',
+      adset_id: `adset_june_${id}`,
+      adset_name: 'Conjunto junio',
+      ad_id: secondAdId,
+      ad_name: 'Anuncio junio',
+      creative_thumbnail_url: 'https://example.test/june-thumb.jpg',
+      creative_preview_url: 'https://example.test/june-preview'
+    })
+
+    await insertRow('whatsapp_api_messages', {
+      id: `api_multi_may_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: `Hola, vengo del anuncio de mayo rstkad_id=${firstAdId}!`,
+      message_timestamp: '2099-05-01T12:01:00.000Z',
+      created_at: '2099-05-01T12:01:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_multi_organic_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Hola otra vez, tengo una duda normal',
+      message_timestamp: '2099-05-20T12:01:00.000Z',
+      created_at: '2099-05-20T12:01:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_multi_june_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: `Hola, ahora vengo del anuncio de junio rstkad_id=${secondAdId}!`,
+      message_timestamp: '2099-06-15T12:01:00.000Z',
+      created_at: '2099-06-15T12:01:00.000Z'
+    })
+
+    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const messages = journey.filter((event) => event.type === 'whatsapp_message')
+    const mayMessage = messages.find((event) => String(event.data?.message_text || '').includes('mayo'))
+    const organicMessage = messages.find((event) => String(event.data?.message_text || '').includes('duda normal'))
+    const juneMessage = messages.find((event) => String(event.data?.message_text || '').includes('junio'))
+
+    assert.ok(mayMessage)
+    assert.ok(organicMessage)
+    assert.ok(juneMessage)
+    assert.equal(mayMessage.data.referral_source_id, firstAdId)
+    assert.equal(mayMessage.data.attribution_ad_name, 'Anuncio mayo')
+    assert.equal(mayMessage.data.creative_preview_url, 'https://example.test/may-preview')
+    assert.equal(organicMessage.data.is_ad_attributed, false)
+    assert.equal(organicMessage.data.referral_source_id || '', '')
+    assert.equal(juneMessage.data.referral_source_id, secondAdId)
+    assert.equal(juneMessage.data.attribution_ad_name, 'Anuncio junio')
+    assert.equal(juneMessage.data.creative_preview_url, 'https://example.test/june-preview')
+  } finally {
+    await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [firstAdId, secondAdId]).catch(() => undefined)
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact journey exposes Messenger and Instagram ad touches for chat previews', async () => {
+  const id = randomUUID()
+  const contactId = `journey_social_ads_${id}`
+  const phone = `+52989${Date.now().toString().slice(-7)}`
+  const seed = Date.now().toString().slice(-10)
+  const messengerAdId = `881${seed}01`
+  const instagramAdId = `882${seed}02`
+
+  await cleanup(contactId, phone)
+  await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [messengerAdId, instagramAdId]).catch(() => undefined)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente Social Ads',
+      first_name: 'Cliente',
+      source: 'Messenger',
+      created_at: '2099-08-01T12:00:00.000Z',
+      updated_at: '2099-08-01T12:00:00.000Z'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-08-01',
+      ad_account_id: `act_social_${id}`,
+      campaign_id: `camp_msg_${id}`,
+      campaign_name: 'Campaña Messenger',
+      adset_id: `adset_msg_${id}`,
+      adset_name: 'Conjunto Messenger',
+      ad_id: messengerAdId,
+      ad_name: 'Anuncio Messenger',
+      creative_thumbnail_url: 'https://example.test/messenger-thumb.jpg',
+      creative_preview_url: 'https://example.test/messenger-preview'
+    })
+    await insertRow('meta_ads', {
+      date: '2099-08-02',
+      ad_account_id: `act_social_${id}`,
+      campaign_id: `camp_ig_${id}`,
+      campaign_name: 'Campaña Instagram',
+      adset_id: `adset_ig_${id}`,
+      adset_name: 'Conjunto Instagram',
+      ad_id: instagramAdId,
+      ad_name: 'Anuncio Instagram',
+      creative_thumbnail_url: 'https://example.test/instagram-thumb.jpg',
+      creative_preview_url: 'https://example.test/instagram-preview'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_msg_ad_${id}`,
+      platform: 'messenger',
+      meta_message_id: `mid_msg_ad_${id}`,
+      contact_id: contactId,
+      sender_id: `psid_${id}`,
+      recipient_id: 'page_social_ads',
+      page_id: 'page_social_ads',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'Hola por Messenger',
+      message_timestamp: '2099-08-01T12:01:00.000Z',
+      created_at: '2099-08-01T12:01:00.000Z',
+      referral_json: JSON.stringify({
+        source: 'ADS',
+        type: 'OPEN_THREAD',
+        ad_id: messengerAdId,
+        ads_context_data: {
+          ad_title: 'Headline Messenger',
+          post_body: 'Body Messenger',
+          ad_url: 'https://example.test/messenger-ad',
+          photo_url: 'https://example.test/messenger-referral-photo.jpg',
+          video_url: 'https://example.test/messenger-referral-video-thumb.jpg'
+        }
+      }),
+      raw_payload_json: '{}'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_organic_${id}`,
+      platform: 'messenger',
+      meta_message_id: `mid_organic_${id}`,
+      contact_id: contactId,
+      sender_id: `psid_${id}`,
+      recipient_id: 'page_social_ads',
+      page_id: 'page_social_ads',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'Mensaje orgánico de Messenger',
+      message_timestamp: '2099-08-01T12:05:00.000Z',
+      created_at: '2099-08-01T12:05:00.000Z',
+      raw_payload_json: '{}'
+    })
+    await insertRow('meta_social_messages', {
+      id: `meta_ig_ad_${id}`,
+      platform: 'instagram',
+      meta_message_id: `mid_ig_ad_${id}`,
+      contact_id: contactId,
+      sender_id: `igsid_${id}`,
+      recipient_id: 'ig_business_social_ads',
+      instagram_account_id: 'ig_business_social_ads',
+      direction: 'inbound',
+      status: 'received',
+      message_type: 'text',
+      message_text: 'Hola por Instagram',
+      message_timestamp: '2099-08-02T12:01:00.000Z',
+      created_at: '2099-08-02T12:01:00.000Z',
+      referral_json: JSON.stringify({
+        source: 'ADS',
+        type: 'OPEN_THREAD',
+        ad_id: instagramAdId,
+        ads_context_data: {
+          ad_title: 'Headline Instagram',
+          post_body: 'Body Instagram',
+          ad_url: 'https://example.test/instagram-ad',
+          video_url: 'https://example.test/instagram-referral-video-thumb.jpg'
+        }
+      }),
+      raw_payload_json: '{}'
+    })
+
+    const journey = await readJourney(contactId, { chatMessagesOnly: 'true' })
+    const messages = journey.filter((event) => event.type === 'meta_message')
+    const messengerMessage = messages.find((event) => event.data?.meta_message_id === `mid_msg_ad_${id}`)
+    const organicMessage = messages.find((event) => event.data?.meta_message_id === `mid_organic_${id}`)
+    const instagramMessage = messages.find((event) => event.data?.meta_message_id === `mid_ig_ad_${id}`)
+
+    assert.ok(messengerMessage)
+    assert.ok(organicMessage)
+    assert.ok(instagramMessage)
+    assert.equal(messengerMessage.data.is_ad_attributed, true)
+    assert.equal(messengerMessage.data.ad_platform, 'Messenger')
+    assert.equal(messengerMessage.data.referral_source_id, messengerAdId)
+    assert.equal(messengerMessage.data.referral_source_url, 'https://example.test/messenger-ad')
+    assert.equal(messengerMessage.data.referral_headline, 'Headline Messenger')
+    assert.equal(messengerMessage.data.referral_body, 'Body Messenger')
+    assert.equal(messengerMessage.data.referral_image_url, 'https://example.test/messenger-referral-photo.jpg')
+    assert.equal(messengerMessage.data.referral_video_url, 'https://example.test/messenger-referral-video-thumb.jpg')
+    assert.equal(messengerMessage.data.referral_thumbnail_url, 'https://example.test/messenger-referral-photo.jpg')
+    assert.equal(messengerMessage.data.attribution_ad_name, 'Anuncio Messenger')
+    assert.equal(messengerMessage.data.creative_preview_url, 'https://example.test/messenger-preview')
+    assert.equal(Boolean(organicMessage.data.is_ad_attributed), false)
+    assert.equal(organicMessage.data.referral_source_id || '', '')
+    assert.equal(instagramMessage.data.is_ad_attributed, true)
+    assert.equal(instagramMessage.data.ad_platform, 'Instagram')
+    assert.equal(instagramMessage.data.referral_source_id, instagramAdId)
+    assert.equal(instagramMessage.data.referral_source_url, 'https://example.test/instagram-ad')
+    assert.equal(instagramMessage.data.referral_headline, 'Headline Instagram')
+    assert.equal(instagramMessage.data.referral_body, 'Body Instagram')
+    assert.equal(instagramMessage.data.referral_video_url, 'https://example.test/instagram-referral-video-thumb.jpg')
+    assert.equal(instagramMessage.data.referral_thumbnail_url, 'https://example.test/instagram-referral-video-thumb.jpg')
+    assert.equal(instagramMessage.data.attribution_ad_name, 'Anuncio Instagram')
+    assert.equal(instagramMessage.data.creative_preview_url, 'https://example.test/instagram-preview')
+  } finally {
+    await db.run('DELETE FROM meta_ads WHERE ad_id IN (?, ?)', [messengerAdId, instagramAdId]).catch(() => undefined)
     await cleanup(contactId, phone)
   }
 })
@@ -760,6 +1082,88 @@ test('chat-only journey applies messageLimit globally and pages older messages w
       olderPage.map(event => event.data.message_text),
       ['Global 2', 'Global 3', 'Global 4', 'Global 5', 'Global 6']
     )
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('chat-only journey includes appointment confirmation cards without full contact journey events', async () => {
+  const id = randomUUID()
+  const contactId = `journey_chat_confirmation_${id}`
+  const appointmentId = `appointment_chat_confirmation_${id}`
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente con confirmacion',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2026-06-19T09:00:00.000Z',
+      updated_at: '2026-06-19T09:00:00.000Z'
+    })
+    await insertRow('appointments', {
+      id: appointmentId,
+      calendar_id: `calendar_chat_confirmation_${id}`,
+      contact_id: contactId,
+      title: 'Consulta inicial',
+      status: 'confirmed',
+      appointment_status: 'confirmed',
+      start_time: '2026-06-20T16:00:00.000Z',
+      end_time: '2026-06-20T17:00:00.000Z',
+      date_added: '2026-06-19T09:30:00.000Z',
+      date_updated: '2026-06-19T09:30:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_chat_confirmation_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Si confirmo mi cita',
+      message_timestamp: '2026-06-19T10:00:00.000Z',
+      created_at: '2026-06-19T10:00:00.000Z'
+    })
+    await insertRow('appointment_confirmation_windows', {
+      id: `window_chat_confirmation_${id}`,
+      contact_id: contactId,
+      appointment_id: appointmentId,
+      reminder_send_id: `send_chat_confirmation_${id}`,
+      status: 'done',
+      accumulated_messages: JSON.stringify(['Si confirmo mi cita']),
+      bypass_automations: 0,
+      confirmation_success_action: 'chat_card',
+      last_message_at: '2026-06-19T10:00:00.000Z',
+      result: 'confirmed',
+      result_detail: 'Confirmo asistencia',
+      processed_at: '2026-06-19T10:02:00.000Z',
+      created_at: '2026-06-19T10:01:00.000Z',
+      updated_at: '2026-06-19T10:02:00.000Z'
+    })
+
+    const journey = await readJourney(contactId, {
+      includeBusinessMessages: 'true',
+      chatMessagesOnly: 'true'
+    })
+
+    assert.deepEqual(journey.map(event => event.type), ['whatsapp_message', 'appointment_confirmation'])
+    assert.equal(journey[1].data.appointment_id, appointmentId)
+    assert.equal(journey[1].data.result_detail, 'Confirmo asistencia')
+
+    const olderJourney = await readJourney(contactId, {
+      includeBusinessMessages: 'true',
+      chatMessagesOnly: 'true',
+      beforeMessageDate: '2026-06-19T10:02:00.000Z'
+    })
+
+    assert.deepEqual(olderJourney.map(event => event.type), ['whatsapp_message'])
   } finally {
     await cleanup(contactId, phone)
   }

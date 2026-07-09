@@ -250,12 +250,19 @@ async function processConfirmationWindow(win) {
     // EXCEPCIÓN de seguridad (NOTI-001): si el clasificador falló técnicamente, nunca
     // ejecutamos una acción destructiva; degradamos 'cancel_appointment' a 'notify_push'
     // para que un humano revise sin que se cancele la cita.
+    // Seguridad (NOTI-001, extendido): NUNCA cancelamos destructivamente ante
+    // INCERTIDUMBRE. 'cancel_appointment' sólo procede con una señal de que la persona
+    // no asistirá (reschedule/cancel explícitos). Si el clasificador falló técnicamente,
+    // o el resultado fue 'ambiguous' o 'human_needed' (p. ej. la persona sólo preguntó
+    // algo logístico como "¿dónde es?"), degradamos a 'notify_push' para que un humano
+    // revise SIN borrar la cita de alguien que sí piensa asistir.
     const configuredAction = String(reminderData?.no_confirm_action || 'no_action')
-    const noConfirmAction = classifierFailed && configuredAction === 'cancel_appointment'
+    const uncertainResult = classifierFailed || result === 'ambiguous' || result === 'human_needed'
+    const noConfirmAction = uncertainResult && configuredAction === 'cancel_appointment'
       ? 'notify_push'
       : configuredAction
-    if (classifierFailed && configuredAction === 'cancel_appointment') {
-      logger.warn(`[Confirmación IA] Clasificador no disponible para cita ${appointmentId}: se OMITE la cancelación automática y se avisa para revisión humana.`)
+    if (uncertainResult && configuredAction === 'cancel_appointment') {
+      logger.warn(`[Confirmación IA] Resultado incierto (${result}) para cita ${appointmentId}: se OMITE la cancelación automática y se avisa para revisión humana.`)
     }
     await executeNoConfirmAction({
       contactId,

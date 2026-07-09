@@ -1,4 +1,5 @@
 import express from 'express'
+import { backfillUserEmailsFromLegacyUsernames } from '../config/database.js'
 import {
   internalStorageDiagnosticsHandler,
   internalStorageUsageHandler
@@ -43,6 +44,14 @@ router.use(requireInternalInstallerToken)
 router.get('/storage/usage', internalStorageUsageHandler)
 router.get('/storage/diagnostics', internalStorageDiagnosticsHandler)
 router.get('/users', listUsers)
+router.post('/users/email-backfill', async (req, res, next) => {
+  try {
+    const stats = await backfillUserEmailsFromLegacyUsernames({ source: 'internal-installer' })
+    res.json({ success: true, stats })
+  } catch (error) {
+    next(error)
+  }
+})
 router.patch('/users/:userId', updateUser)
 router.delete('/users/:userId', deleteUser)
 

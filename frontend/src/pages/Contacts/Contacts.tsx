@@ -1069,6 +1069,10 @@ const ContactsTable: React.FC = () => {
         id: String(payment.id ?? `${contactData.id}-payment-${index}`),
         amount: Number(payment.amount ?? 0),
         status: payment.status ?? undefined,
+        // (MET-CONSIST) Propagar el modo de pago: sin él ContactDetailsModal no podía
+        // detectar pagos 'test' y los sumaba al total, descuadrando vs la celda de la tabla
+        // ('Pagos totales'/LTV) que sí excluye test en el backend.
+        payment_mode: (payment.payment_mode ?? payment.paymentMode) ?? 'live',
         date: payment.date ?? createdAt
       }))
       : undefined

@@ -91,6 +91,56 @@ const coerceZonedDateTime = (value, fallbackUtc, zone) => {
   return null;
 };
 
+// (MET-CONSIST) Las métricas de CONTEO ÚNICO (visitantes, citados, asistencias) NO
+// se pueden sumar por día para armar un bucket de semana/quincena/trimestre/año: un
+// mismo visitante/contacto activo en varios días del bucket se contaría de más frente
+// al modal, que hace DISTINCT sobre TODA la ventana. Para que el número del punto de la
+// gráfica empate 1:1 con su modal, el frontend manda las fronteras EXACTAS de cada
+// bucket (las mismas de buildChartBuckets y las mismas que abre el modal) y aquí
+// calculamos el DISTINCT una sola vez por ventana. Las series aditivas (leads, ventas,
+// ingresos, gasto) siguen pidiéndose por día y sumándose sin cambio.
+const parseChartPeriods = async (periodsParam) => {
+  if (!periodsParam) return null;
+
+  let parsed;
+  try {
+    parsed = typeof periodsParam === 'string' ? JSON.parse(periodsParam) : periodsParam;
+  } catch {
+    return null;
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+
+  const valid = parsed.filter(p => p && p.start && p.end);
+  if (valid.length === 0) return null;
+
+  // Cada bucket se resuelve con el MISMO timezone/rango que usa el modal
+  // (resolveDateRangeWithGHLTimezone), garantizando ventanas idénticas.
+  const resolved = await Promise.all(valid.map(async (p) => {
+    const r = await resolveDateRangeWithGHLTimezone({ startDate: p.start, endDate: p.end });
+    return {
+      label: p.start,
+      startUtc: r.startUtc,
+      endUtc: r.endUtc,
+      startMs: new Date(r.startUtc).getTime(),
+      endMs: new Date(r.endUtc).getTime()
+    };
+  }));
+
+  return resolved;
+};
+
+// Índice del bucket cuya ventana contiene la fecha dada (-1 si ninguno).
+const findPeriodIndex = (dateInput, periods) => {
+  if (!dateInput) return -1;
+  const t = (dateInput instanceof Date ? dateInput : new Date(dateInput)).getTime();
+  if (Number.isNaN(t)) return -1;
+  for (let i = 0; i < periods.length; i++) {
+    if (t >= periods[i].startMs && t <= periods[i].endMs) return i;
+  }
+  return -1;
+};
+
 const getLocalDateRange = (range) => {
   const zone = range.appliedTimezone || 'UTC';
   const start = coerceZonedDateTime(range.startZoned, range.startUtc, zone);
@@ -598,10 +648,41 @@ export const getNewCustomersData = async (req, res) => {
  */
 export const getVisitorsData = async (req, res) => {
   try {
-    const { startDate, endDate, groupBy = 'day' } = req.query;
+    const { startDate, endDate, groupBy = 'day', periods: periodsParam } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json([]);
+    }
+
+    const identityExpression = getVisitorIdentityExpression();
+
+    // Ruta por bucket exacto (semana/quincena/trimestre/año): un COUNT(DISTINCT) por
+    // ventana, calculado en una sola query con agregación condicional. Empata el modal.
+    const periods = await parseChartPeriods(periodsParam);
+    if (periods) {
+      const selects = periods.map((_, i) =>
+        `COUNT(DISTINCT CASE WHEN started_at >= ? AND started_at <= ? THEN ${identityExpression} END) as b${i}`
+      );
+      const overallStart = periods.reduce((min, p) => (p.startUtc < min ? p.startUtc : min), periods[0].startUtc);
+      const overallEnd = periods.reduce((max, p) => (p.endUtc > max ? p.endUtc : max), periods[0].endUtc);
+
+      const bucketParams = [];
+      periods.forEach(p => { bucketParams.push(p.startUtc, p.endUtc); });
+      bucketParams.push(overallStart, overallEnd);
+
+      const bucketQuery = `
+        SELECT ${selects.join(', ')}
+        FROM sessions
+        WHERE started_at >= ? AND started_at <= ?
+      `;
+
+      const row = await db.get(bucketQuery, bucketParams);
+      const visitorsData = periods.map((p, i) => ({
+        label: p.label,
+        value: parseInt(row?.[`b${i}`]) || 0
+      }));
+
+      return res.json(visitorsData);
     }
 
     // Obtener timezone dinámico de HighLevel
@@ -614,7 +695,7 @@ export const getVisitorsData = async (req, res) => {
     const query = `
       SELECT
         ${dateExpression} as periodo,
-        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as total
+        COUNT(DISTINCT ${identityExpression}) as total
       FROM sessions
       WHERE started_at >= ? AND started_at <= ?
       GROUP BY periodo
@@ -701,7 +782,7 @@ export const getLeadsData = async (req, res) => {
  */
 export const getAppointmentsData = async (req, res) => {
   try {
-    const { startDate, endDate, groupBy = 'day', scope = 'all' } = req.query;
+    const { startDate, endDate, groupBy = 'day', scope = 'all', periods: periodsParam } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json([]);
@@ -710,6 +791,10 @@ export const getAppointmentsData = async (req, res) => {
     // Obtener timezone dinámico de HighLevel
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
+
+    // Buckets exactos (semana/quincena/trimestre/año): el Set por bucket dedupe al
+    // mismo contacto citado en varios días de la ventana (empata el modal por periodo).
+    const periods = await parseChartPeriods(periodsParam);
 
     // (RPT-006) Alinear la definición de "Citas" con la del funnel para que el número
     // de la gráfica y el del embudo coincidan en la misma pantalla.
@@ -734,11 +819,11 @@ export const getAppointmentsData = async (req, res) => {
       const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js');
 
       const [dbAppointments, apiAppointments] = await Promise.all([
-        loadAppointmentsFromDB({
-          calendarIds: attributionCalendarIds,
-          startDate: range.startUtc,
-          endDate: range.endUtc
-        }),
+        // (MET-CONSIST) NO prefiltrar por date_added en SQL: la fecha canónica de la
+        // cita se define en mergeAppointments('oldest_date') y el prefiltro TEXT contra
+        // range.startUtc (ISO con 'T') tumbaba las citas del día de inicio. El filtro por
+        // rango se aplica en JS más abajo, idéntico al del modal (buildContactsList).
+        loadAppointmentsFromDB({ calendarIds: attributionCalendarIds }),
         config && config.api_token
           ? loadAppointmentsFromAPI(config.location_id, config.api_token, attributionCalendarIds)
           : []
@@ -748,6 +833,23 @@ export const getAppointmentsData = async (req, res) => {
 
       const start = new Date(range.startUtc);
       const end = new Date(range.endUtc);
+
+      if (periods) {
+        // Un Set de contactos por bucket; el mismo contacto citado en 2+ días del
+        // bucket cuenta una sola vez (DISTINCT sobre la ventana, igual que el modal).
+        const bucketSets = periods.map(() => new Set());
+        allAppointments.forEach(apt => {
+          if (!apt.dateAdded || !apt.contactId) return;
+          const dateAdded = new Date(apt.dateAdded);
+          const idx = findPeriodIndex(dateAdded, periods);
+          if (idx < 0) return;
+          bucketSets[idx].add(apt.contactId);
+        });
+
+        const appointmentsData = periods.map((p, i) => ({ label: p.label, value: bucketSets[i].size }));
+        return res.json(appointmentsData);
+      }
+
       const periodMap = {};
 
       allAppointments.forEach(apt => {
@@ -833,7 +935,7 @@ export const getAppointmentsData = async (req, res) => {
  */
 export const getAttendancesData = async (req, res) => {
   try {
-    const { startDate, endDate, groupBy = 'day' } = req.query;
+    const { startDate, endDate, groupBy = 'day', periods: periodsParam } = req.query;
 
     if (!startDate || !endDate) {
       return res.status(400).json([]);
@@ -842,6 +944,7 @@ export const getAttendancesData = async (req, res) => {
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate });
     const timezone = range.appliedTimezone;
     const dateExpression = getGroupExpression('c.created_at', groupBy, timezone);
+    const periods = await parseChartPeriods(periodsParam);
 
     const hiddenFilters = await getHiddenContactFilters();
     const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false);
@@ -871,12 +974,28 @@ export const getAttendancesData = async (req, res) => {
     const contactsQuery = `
       SELECT
         c.id as contact_id,
+        c.created_at as raw_created_at,
         ${dateExpression} as periodo
       FROM contacts c
       WHERE ${conditions.join(' AND ')}
     `;
 
     const contactsRaw = await db.all(contactsQuery, [range.startUtc, range.endUtc]);
+
+    if (periods) {
+      // DISTINCT de contactos con asistencia por ventana exacta de bucket (empata el modal).
+      const bucketSets = periods.map(() => new Set());
+      contactsRaw.forEach(contact => {
+        if (!contactsWithAttendances.has(contact.contact_id)) return;
+        const idx = findPeriodIndex(contact.raw_created_at, periods);
+        if (idx < 0) return;
+        bucketSets[idx].add(contact.contact_id);
+      });
+
+      const attendancesData = periods.map((p, i) => ({ label: p.label, value: bucketSets[i].size }));
+      return res.json(attendancesData);
+    }
+
     const periodMap = {};
 
     contactsRaw.forEach(contact => {
@@ -926,10 +1045,13 @@ export const getSalesData = async (req, res) => {
     const dateExpression = getGroupExpression('date', groupBy, timezone);
 
     const successfulPayments = successfulPaymentStatusCondition();
+    // (MET-CONSIST) Contar CLIENTES únicos (no filas de pago): el modal de este punto
+    // ("Clientes que pagaron", buildContactsList type='sales') lista contactos DISTINCT.
+    // Con COUNT(*) un contacto con 2 pagos en el mismo bucket inflaba el número vs el modal.
     const query = `
       SELECT
         ${dateExpression} as periodo,
-        COUNT(*) as total
+        COUNT(DISTINCT contact_id) as total
       FROM payments
       WHERE ${successfulPayments.sql}
       AND ${nonTestPaymentCondition()}
@@ -1503,11 +1625,9 @@ export const getFunnelData = async (req, res) => {
       const { loadAppointmentsFromDB, loadAppointmentsFromAPI, mergeAppointments } = await import('../services/appointmentsMerge.js')
 
       const [dbAppointments, apiAppointments] = await Promise.all([
-        loadAppointmentsFromDB({
-          calendarIds: attributionCalendarIds,
-          startDate: range.startUtc,
-          endDate: range.endUtc
-        }),
+        // (MET-CONSIST) NO prefiltrar por date_added en SQL (ver nota en getAppointmentsData):
+        // el rango se filtra en JS tras el merge, igual que el modal (buildContactsList).
+        loadAppointmentsFromDB({ calendarIds: attributionCalendarIds }),
         hlConfig && hlConfig.api_token
           ? loadAppointmentsFromAPI(hlConfig.location_id, hlConfig.api_token, attributionCalendarIds)
           : []

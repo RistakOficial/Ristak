@@ -1942,7 +1942,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
       for (const action of result.actions || []) {
         if (testPracticeExpiredRef.current) return
-        setTestMessages((current) => [...current, { role: 'assistant', content: `⚙︎ Acción interna: ${action.type}`, internal: true }])
+        const effectText = typeof action.effect?.liveEffect === 'string' ? action.effect.liveEffect : ''
+        const line = effectText
+          ? `⚙︎ Acción interna: ${action.type} — en vivo esto ${effectText}`
+          : `⚙︎ Acción interna: ${action.type}`
+        setTestMessages((current) => [...current, { role: 'assistant', content: line, internal: true }])
       }
 
       const visibleReplies = result.replyParts?.length ? result.replyParts : (result.reply ? [result.reply] : [])

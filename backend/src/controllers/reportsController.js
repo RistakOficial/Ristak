@@ -293,13 +293,16 @@ export const upsertManualBusinessExpense = async (req, res) => {
 
 export const getContactsList = async (req, res) => {
   try {
-    const { from, to, type = 'interesados', scope = 'all' } = req.query
+    const { from, to, type = 'interesados', scope = 'all', dedupe } = req.query
 
     const { range, contacts } = await buildContactsList({
       startDate: from,
       endDate: to,
       type,
-      scope
+      scope,
+      // (MET-CONSIST) dedupe=person -> el modal colapsa por email/teléfono para empatar el
+      // número de Reports (cuenta por persona). Dashboard no lo envía (cuenta por id).
+      dedupeByPerson: dedupe === 'person'
     })
 
     logger.info(`Lista de contactos (${type}) generada: ${contacts.length} registros`)
@@ -375,8 +378,12 @@ export const getTransactionsList = async (req, res) => {
     const pageNumber = Math.max(Number(page) || 1, 1)
     const offset = (pageNumber - 1) * limitNumber
 
-    const countResult = await db.get(`SELECT COUNT(*) as total FROM payments p LEFT JOIN contacts c ON c.id = p.contact_id ${whereClause}`, params)
+    // (MET-CONSIST) COUNT y SUM se calculan sobre TODO el periodo (mismo WHERE que la
+    // celda de la tabla), no sobre la página. Así el modal muestra el total real de
+    // transacciones y el monto total real aunque la lista venga paginada por RPT-008.
+    const countResult = await db.get(`SELECT COUNT(*) as total, COALESCE(SUM(p.amount), 0) as total_amount FROM payments p LEFT JOIN contacts c ON c.id = p.contact_id ${whereClause}`, params)
     const total = Number(countResult?.total || 0)
+    const totalAmount = Number(countResult?.total_amount || 0)
     const paymentDateSort = timestampSortExpression('p.date')
     const paymentCreatedSort = timestampSortExpression('p.created_at')
 
@@ -423,6 +430,11 @@ export const getTransactionsList = async (req, res) => {
       data: {
         transactions,
         range: buildRangePayload(range),
+        // (MET-CONSIST) Totales del periodo completo para que el modal empate con la celda.
+        summary: {
+          count: total,
+          totalAmount
+        },
         pagination: {
           page: pageNumber,
           limit: limitNumber,

@@ -112,3 +112,34 @@ test('login rejects internal username even when password is correct', async () =
     await db.run('DELETE FROM users WHERE username = ? OR email = ?', [username, email])
   }
 })
+
+test('login backfills legacy users that stored email in username', async () => {
+  const email = `legacy_email_${Date.now()}@example.com`
+  const password = 'LegacyPass123'
+
+  await db.run('DELETE FROM users WHERE username = ? OR email = ?', [email, email])
+  await db.run(
+    'INSERT INTO users (username, email, password_hash, full_name, role, is_active) VALUES (?, ?, ?, ?, ?, ?)',
+    [email, null, hashPassword(password), 'Legacy Email Test', 'admin', 1]
+  )
+
+  try {
+    const res = createMockResponse()
+
+    await login({
+      body: {
+        email,
+        password
+      }
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.payload.success, true)
+    assert.equal(res.payload.user.email, email)
+
+    const row = await db.get('SELECT email FROM users WHERE username = ?', [email])
+    assert.equal(row.email, email)
+  } finally {
+    await db.run('DELETE FROM users WHERE username = ? OR email = ?', [email, email])
+  }
+})

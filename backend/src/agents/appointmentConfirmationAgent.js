@@ -36,7 +36,6 @@ Señales que indican CONFIRMACIÓN (result: "confirmed"):
 - "correcto", "por supuesto", "ahí voy", "ahí estaré", "asistiré", "cuenta conmigo"
 - Emojis 👍 ✅ 👌 🙌
 - Mencionar la fecha u hora de la cita de forma afirmativa (ej: "ok mañana a las 10", "sí el viernes")
-- Preguntas logísticas que implican asistencia: "¿dónde es?", "¿me recuerdas la dirección?", "¿se puede facturar?", "¿hay estacionamiento?"
 
 Señales de REAGENDAMIENTO (result: "reschedule"):
 - Quiere ir pero no puede ese día/hora: "quiero reagendar", "¿puede ser otro día?", "¿tiene espacio más tarde?", "¿puede cambiarse?"
@@ -48,6 +47,7 @@ Señales de CANCELACIÓN (result: "cancel"):
 
 Señales AMBIGUAS (result: "ambiguous"):
 - "mejor luego le aviso", "déjeme revisar", "creo que no podré", "puede ser"
+- Preguntas logísticas SUELTAS, sin una afirmación clara de asistencia: "¿dónde es?", "¿me recuerdas la dirección?", "¿se puede facturar?", "¿hay estacionamiento?". Una pregunta logística por sí sola NO confirma la cita; sólo es "confirmed" si viene acompañada de una afirmación clara (ej. "sí, ahí estaré.. ¿dónde es?").
 - Respuestas que no confirman ni cancelan con claridad
 
 INTERVENCIÓN HUMANA (result: "human_needed"):

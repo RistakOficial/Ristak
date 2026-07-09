@@ -464,15 +464,20 @@ async function startRuntimeServices() {
     'No se pudo recuperar conversaciones pendientes del agente'
   )
 
-  // Iniciar cron jobs
-  import('./services/automationEngine.js')
-    .then((engine) => engine.startAutomationScheduler())
-    .catch((error) => logger.error(`No se pudo iniciar el motor de automatizaciones: ${error.message}`))
-  startScheduledChatMessagesCron() // Envía mensajes de chat cuando llegue su hora programada
-  startContactBulkActionsCron()    // Ejecuta lotes masivos de contactos programados o en goteo
-  startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
-  startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
-  await syncRegisteredIntegrationCrons({ reason: 'startup' }) // Integraciones: sólo si están conectadas
+  // Iniciar cron jobs (desactivables en entornos de dev/prueba con RISTAK_DISABLE_CRONS=true
+  // para no disparar mensajes/automatizaciones reales al levantar la app localmente).
+  if (process.env.RISTAK_DISABLE_CRONS === 'true') {
+    logger.warn('[dev] Cron jobs desactivados por RISTAK_DISABLE_CRONS=true')
+  } else {
+    import('./services/automationEngine.js')
+      .then((engine) => engine.startAutomationScheduler())
+      .catch((error) => logger.error(`No se pudo iniciar el motor de automatizaciones: ${error.message}`))
+    startScheduledChatMessagesCron() // Envía mensajes de chat cuando llegue su hora programada
+    startContactBulkActionsCron()    // Ejecuta lotes masivos de contactos programados o en goteo
+    startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
+    startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
+    await syncRegisteredIntegrationCrons({ reason: 'startup' }) // Integraciones: sólo si están conectadas
+  }
   startupState.ready = true
   logger.success('App lista para recibir tráfico')
 }

@@ -99,6 +99,7 @@ import {
   serializeCssVars,
   computeSitePageRenderState,
   buildStyleSheet,
+  rescopeSiteCssForCanvas,
   buildEmbeddedFormTheme,
   popupSurfaceDefaults,
   // Superficies embebidas (Paquete D): popup, calendario embebido y proxy del gate.
@@ -22500,10 +22501,17 @@ function buildImportedVideoRuntimeInjection(html = '', { actionsEnabled = true, 
   const source = String(html || '')
   const hasRistakVideo = /\brstk-video\b/.test(source)
   if (!hasRistakVideo) return ''
+  // Runtime del reproductor: se usa EXACTAMENTE el mismo del editor de sitios
+  // (buildVideoActionsRuntimeScript, ~21KB — controles, sonido, ocultar/mostrar barra,
+  // progreso, velocidad, autoplay y acciones por tiempo). Antes el importado usaba un runtime
+  // REDUCIDO propio (buildImportedVideoPlayerRuntimeScript, ~9.8KB) que no replicaba el
+  // comportamiento del editor de sitios (por eso el play/sonido/ocultar-controles se sentían
+  // rotos). Con el runtime completo, el reproductor importado se comporta idéntico al nativo.
+  const hasPlayer = /\brstk-video-player\b/.test(source)
+  const hasActions = actionsEnabled && /data-rstk-video-actions=/.test(source)
   return [
     IMPORTED_VIDEO_PLAYER_CSS,
-    /\brstk-video-player\b/.test(source) ? buildImportedVideoPlayerRuntimeScript() : '',
-    actionsEnabled && /data-rstk-video-actions=/.test(source) ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
+    (hasPlayer || hasActions) ? buildVideoActionsRuntimeScript([], { force: true, previewSafe: actionsPreviewSafe }) : ''
   ].filter(Boolean).join('')
 }
 
@@ -23074,6 +23082,16 @@ function buildImportedCustomCalendarRuntimeScript(configs = []) {
 const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 .rstk-imported-native-slot{box-sizing:border-box;width:100%}
 .rstk-imported-native-slot *{box-sizing:border-box}
+/* Cuando Ristak MONTA el elemento nativo real (data-rstk-native-mounted="true"), neutraliza
+   el "chrome de placeholder" que el autor del HTML suele poner en la zona reservada: la
+   etiqueta ::before/::after ("Video nativo Ristak"…), el borde punteado de drop-zone, la
+   caja de aspecto fijo y el centrado tipo placeholder. Sin esto se veía la CAJA DOBLE
+   (placeholder del autor + elemento real apilados). El elemento nativo aporta su propio
+   marco, así que aquí solo quitamos lo decorativo del placeholder; el fondo NO se toca para
+   no pisar el diseño de bloque. */
+.rstk-imported-native-slot[data-rstk-native-mounted="true"]::before,
+.rstk-imported-native-slot[data-rstk-native-mounted="true"]::after{content:none!important}
+.rstk-imported-native-slot[data-rstk-native-mounted="true"]{display:block!important;border:0!important;aspect-ratio:auto!important;color:inherit!important;font-weight:inherit!important}
 .rstk-imported-native-placeholder{display:grid;min-height:140px;place-items:center;border:1px dashed color-mix(in srgb, CanvasText 28%, transparent);border-radius:14px;background:color-mix(in srgb, Canvas 92%, CanvasText 8%);color:color-mix(in srgb, CanvasText 72%, transparent);font:500 14px/1.35 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;text-align:center;padding:22px}
 .rstk-imported-native-form-frame{display:block;width:100%;min-height:720px;border:0;background:transparent}
 .rstk-imported-native-calendar .rstk-calendar-embed{display:block;width:100%;min-height:720px;border:0;background:transparent}
@@ -23120,10 +23138,39 @@ const IMPORTED_NATIVE_ELEMENT_CSS = `<style data-rstk-imported-native-elements>
 @keyframes rstkCheckoutSpin{to{transform:rotate(360deg)}}
 </style>`
 
-function buildImportedNativeElementRuntimeInjection(runtimeState = {}) {
+// Tematiza los elementos nativos importados IGUAL que el editor de sitios: inyecta el
+// stylesheet base del sitio (RSTK_BASE_CSS + :root de tema) pero ESCOPADO a
+// .rstk-imported-native-slot con el mismo motor que usa el canvas del editor
+// (rescopeSiteCssForCanvas: :root/body/html -> scope, selectores genéricos -> descendientes
+// del scope, @media -> @container). Así video/pago/calendario/formulario usan los tokens del
+// tema del usuario en vez de caer a CanvasText/Canvas del sistema, y NO se filtra ni una regla
+// al CSS del HTML importado (todo cuelga del scope). El scope se declara como container para
+// que las @container generadas por el rescope resuelvan sus anchos.
+function buildImportedNativeThemeStyle(site) {
+  try {
+    const state = computeSitePageRenderState(site)
+    // El slot de VIDEO se EXCLUYE del tema base: ya tiene su CSS dedicado y completo
+    // (IMPORTED_VIDEO_PLAYER_CSS: aspecto, reproductor, barra, botón play). Inyectar las reglas
+    // base de .rstk-video encima (con más especificidad) lo rompía — borde/radio/fondo/aspecto
+    // distintos. Solo tematizamos pago/calendario/formulario, que no tenían CSS propio; el video
+    // usa sus propios tokens --rstk-video-* inline y no necesita el :root del tema.
+    const scope = '.rstk-imported-native-slot:not(.rstk-imported-native-video)'
+    const scoped = rescopeSiteCssForCanvas(buildStyleSheet(state), { scope })
+    if (!scoped || !scoped.trim()) return ''
+    return `<style data-rstk-imported-native-theme>\n${scope}{container-type:inline-size;container-name:rstk-canvas}\n${scoped}\n</style>`
+  } catch (error) {
+    logger.warn(`No se pudo tematizar elementos nativos importados: ${error.message}`)
+    return ''
+  }
+}
+
+function buildImportedNativeElementRuntimeInjection(runtimeState = {}, site = null) {
   if (!runtimeState.hasNativeElements && !(runtimeState.customCalendarConfigs || []).length) return ''
   return [
     IMPORTED_NATIVE_ELEMENT_CSS,
+    // El tema escopado va DESPUÉS del CSS base importado: ante conflictos de igual
+    // especificidad gana el tema del usuario (adiós a los fallbacks CanvasText).
+    site ? buildImportedNativeThemeStyle(site) : '',
     runtimeState.hasPayment ? buildPaymentCheckoutRuntimeScript() : '',
     runtimeState.hasCalendar ? buildImportedCalendarBridgeScript() : '',
     buildImportedCustomCalendarRuntimeScript(runtimeState.customCalendarConfigs || [])
@@ -23192,7 +23239,7 @@ async function renderImportedPublicSiteHtml(site, { pageId = '', pagePath = [], 
     importedNativeRenderContext
   )
   html = importedNativeRender.html
-  const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState)
+  const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState, site)
   const importedVideoRuntime = buildImportedVideoRuntimeInjection(html, {
     actionsEnabled: true,
     actionsPreviewSafe: preview
@@ -23277,7 +23324,7 @@ export async function getImportedSiteAssetResponse(siteId, assetPath, { tracking
       importedNativeRenderContext
     )
     html = importedNativeRender.html
-    const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState)
+    const importedNativeRuntime = buildImportedNativeElementRuntimeInjection(importedNativeRender.runtimeState, site)
     const importedVideoRuntime = buildImportedVideoRuntimeInjection(html)
     const injection = await buildImportedHtmlRuntimeInjection(site, imported, {
       trackingEnabled,

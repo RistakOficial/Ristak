@@ -24,6 +24,7 @@ import GHLClient from './ghlClient.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
 import { recordInboundChatUnread } from './chatReadStateService.js'
+import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 // (NOTI-003) La confirmación de citas por respuesta también debe abrirse cuando el
 // contacto responde por canales sincronizados vía HighLevel (SMS/Messenger/Instagram/
 // WhatsApp de GHL), no solo por WhatsApp API.
@@ -616,6 +617,31 @@ function getAutomationChannel(channel = {}) {
   return ''
 }
 
+async function captureHighLevelContactIdentity({ contact, channel, text, direction, isNew }) {
+  if (!contact?.id || direction !== 'inbound' || !isNew || !cleanString(text)) return
+
+  if (channel.table === 'meta') {
+    await captureContactIdentityFromMessage({
+      contactId: contact.id,
+      text,
+      source: `highlevel_${channel.platform || 'meta'}_message`,
+      allowEmail: true,
+      allowPhone: true
+    })
+    return
+  }
+
+  if (channel.table === 'whatsapp' && channel.transport === 'ghl_whatsapp') {
+    await captureContactIdentityFromMessage({
+      contactId: contact.id,
+      text,
+      source: 'highlevel_whatsapp_message',
+      allowEmail: true,
+      allowPhone: false
+    })
+  }
+}
+
 function getLocalChannelFromWhatsAppTransport(transport = '') {
   const normalized = cleanString(transport).toLowerCase().replace(/[\s-]+/g, '_')
   if (normalized === 'ghl_sms') return 'sms'
@@ -1009,6 +1035,14 @@ export async function upsertHighLevelConversationMessage({
     : channel.table === 'meta'
       ? await upsertMetaRow({ message, contact, platform: channel.platform, direction, notifyNewInbound })
       : await upsertWhatsAppRow({ message, contact, transport: channel.transport, direction, notifyNewInbound })
+
+  await captureHighLevelContactIdentity({
+    contact,
+    channel,
+    text: getMessageBody(message),
+    direction,
+    isNew: result.isNew
+  })
 
   if (direction === 'inbound') {
     await triggerAutomationsForInboundMessage({

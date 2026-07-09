@@ -515,43 +515,46 @@ export const Campaigns: React.FC = () => {
 
       const includeTrackingVisitors = analyticsEnabled && visitorSource === 'tracking'
 
-      const promises = [
+      // Visitantes por nivel (ad/adset/campaña) ya deduplicados en el backend. Se
+      // lanza en paralelo con el resto, pero se resuelve aparte para conservar el tipado.
+      const visitorsPromise = includeTrackingVisitors
+        ? fetch(`/api/tracking/visitors-by-ad?startDate=${startDate}&endDate=${endDate}`)
+            .then(res => res.json())
+            .then((data: any) => ({
+              byAd: data.data || {},
+              byAdset: data.byAdset || {},
+              byCampaign: data.byCampaign || {}
+            }))
+            .catch(() => ({ byAd: {}, byAdset: {}, byCampaign: {} }))
+        : Promise.resolve({ byAd: {}, byAdset: {}, byCampaign: {} })
+
+      const [campaignsData, spendData, summaryReport] = await Promise.all([
         campaignsService.getCampaigns(startDate, endDate),
         campaignsService.getSpendOverTime(startDate, endDate),
-        summaryPromise,
-        includeTrackingVisitors
-          ? fetch(`/api/tracking/visitors-by-ad?startDate=${startDate}&endDate=${endDate}`)
-              .then(res => res.json())
-              .then(data => data.data || {})
-              .catch(() => ({}))
-          : Promise.resolve({})
-      ]
-
-      const results = await Promise.all(promises)
-      const [campaignsData, spendData, summaryReport, visitorsByAdRaw] = results
-      const visitorsByAd = includeTrackingVisitors ? visitorsByAdRaw : {}
+        summaryPromise
+      ])
+      const visitorsRaw = await visitorsPromise
+      const visitorsByAd = includeTrackingVisitors ? (visitorsRaw.byAd || {}) : {}
+      const visitorsByAdset = includeTrackingVisitors ? (visitorsRaw.byAdset || {}) : {}
+      const visitorsByCampaign = includeTrackingVisitors ? (visitorsRaw.byCampaign || {}) : {}
 
       // Transform the data to match our interface
       const transformedData = campaignsData.map((campaign: CampaignData) => {
-        // Calcular visitantes para esta campaña y sus ads
-        let campaignVisitors = 0
-
-        if (includeTrackingVisitors && visitorsByAd) {
-          // Sumar visitantes de todos los ads de esta campaña
+        if (includeTrackingVisitors) {
+          // Nivel ANUNCIO: únicos por ad (coincide con el modal filtrado por ad_id).
           campaign.adsets?.forEach((adset: any) => {
             adset.ads?.forEach((ad: any) => {
               const adVisitorData = visitorsByAd[ad.id]
-              if (adVisitorData) {
-                ad.visitors = adVisitorData.uniqueVisitors
-                campaignVisitors += adVisitorData.uniqueVisitors
-              } else {
-                ad.visitors = 0
-              }
+              ad.visitors = adVisitorData ? adVisitorData.uniqueVisitors : 0
             })
-            // Calcular visitantes del adset sumando sus ads
-            adset.visitors = adset.ads?.reduce((sum: number, ad: any) => sum + (ad.visitors || 0), 0) || 0
+            // Nivel ADSET: DISTINCT real sobre todo el adset (no la suma de sus ads),
+            // igual que el modal. Evita contar 2 veces a quien tocó varios anuncios.
+            adset.visitors = visitorsByAdset[adset.id] || 0
           })
         }
+
+        // Nivel CAMPAÑA: DISTINCT real sobre toda la campaña, espejo del modal.
+        const campaignVisitors = includeTrackingVisitors ? (visitorsByCampaign[campaign.id] || 0) : 0
 
         const adsets = (campaign.adsets || []).map((adset: any) => ({
           ...adset,
@@ -569,7 +572,7 @@ export const Campaigns: React.FC = () => {
           platform: 'Meta', // All campaigns from Meta
           adSets: adsets, // Map adsets to adSets for compatibility
           adsets, // Keep both for compatibility
-          visitors: includeTrackingVisitors ? campaignVisitors : 0,
+          visitors: campaignVisitors,
           revenue: campaign.revenue || 0,
           sales: campaign.sales || 0,
           leads: campaign.leads || 0,

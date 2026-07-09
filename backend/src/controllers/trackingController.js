@@ -1712,9 +1712,42 @@ export async function getVisitorsByAd(req, res) {
       GROUP BY ad_id
     `
 
-    const visitors = await db.all(query, [range.startUtc, range.endUtc])
+    // (MET-CONSIST) Los badges de ADSET y CAMPAÑA NO pueden ser la suma de los
+    // únicos-por-ad: un visitante que tocó 2+ anuncios del mismo adset/campaña se
+    // contaría varias veces. El modal (getVisitorsList) hace COUNT(DISTINCT) sobre
+    // todo el grupo, así que aquí calculamos el mismo DISTINCT agrupado por adset_id
+    // y campaign_id (mismo WHERE started_at en rango). Además esto incluye sesiones
+    // con adset_id/campaign_id pero ad_id NULL, que el modal ya listaba y el badge
+    // basado en suma-por-ad nunca contaba.
+    const adsetQuery = `
+      SELECT
+        adset_id,
+        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as unique_visitors
+      FROM sessions
+      WHERE adset_id IS NOT NULL
+        AND started_at >= $1
+        AND started_at <= $2
+      GROUP BY adset_id
+    `
 
-    logger.info(`Visitantes por ad obtenidos: ${visitors.length} ads con visitas`)
+    const campaignQuery = `
+      SELECT
+        campaign_id,
+        COUNT(DISTINCT ${getVisitorIdentityExpression()}) as unique_visitors
+      FROM sessions
+      WHERE campaign_id IS NOT NULL
+        AND started_at >= $1
+        AND started_at <= $2
+      GROUP BY campaign_id
+    `
+
+    const [visitors, adsetRows, campaignRows] = await Promise.all([
+      db.all(query, [range.startUtc, range.endUtc]),
+      db.all(adsetQuery, [range.startUtc, range.endUtc]),
+      db.all(campaignQuery, [range.startUtc, range.endUtc])
+    ])
+
+    logger.info(`Visitantes por ad obtenidos: ${visitors.length} ads, ${adsetRows.length} adsets, ${campaignRows.length} campañas con visitas`)
 
     // Crear un mapa de ad_id -> visitantes
     const visitorsByAd = {}
@@ -1725,7 +1758,18 @@ export async function getVisitorsByAd(req, res) {
       }
     })
 
-    res.json({ success: true, data: visitorsByAd })
+    // Mapas de únicos deduplicados a nivel adset y campaña (para los badges).
+    const byAdset = {}
+    adsetRows.forEach(row => {
+      byAdset[row.adset_id] = parseInt(row.unique_visitors) || 0
+    })
+
+    const byCampaign = {}
+    campaignRows.forEach(row => {
+      byCampaign[row.campaign_id] = parseInt(row.unique_visitors) || 0
+    })
+
+    res.json({ success: true, data: visitorsByAd, byAdset, byCampaign })
   } catch (error) {
     logger.error('Error obteniendo visitantes por ad:', error)
     res.status(500).json({ error: 'Internal server error' })
@@ -2411,7 +2455,10 @@ export async function getContactConversionsList(req, res) {
     const contactIds = rows.map(row => row.id).filter(Boolean)
     const [paymentsMap, appointmentsMap] = await Promise.all([
       fetchPaymentsForContacts(contactIds),
-      fetchAppointmentsForContacts(contactIds)
+      // El conteo de Analytics (getContactConversionsByDate) NO filtra por calendario de
+      // atribución, así que el detalle del modal tampoco debe hacerlo: mostramos TODAS las citas
+      // del contacto para mantener la paridad número↔modal.
+      fetchAppointmentsForContacts(contactIds, { respectAttributionCalendars: false })
     ])
 
     const contacts = rows.map(row => {

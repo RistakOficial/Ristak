@@ -33,6 +33,24 @@ en `whatsapp_api_messages`/`whatsapp_api_attribution`, `whatsapp_attribution`,
 `sessions` o `meta_social_messages` segun el canal. Esos touches posteriores SI
 pueden ganar credito de una compra/cita si son el ultimo paid touch valido antes
 de la conversion, pero no deben pisar la adquisicion inicial del contacto.
+En el chat desktop, cada touch entrante de WhatsApp, Messenger o Instagram que
+traiga senal propia de anuncio puede mostrar su preview en ese globo; esa
+preview no cambia `contacts.attribution_ad_id` ni debe inventarse desde la
+atribucion historica del contacto si el mensaje fue organico. Tampoco se dispara
+por metadata generica del canal (`transport='api'`, `source_app='api'`,
+`headline` o `body` sin `ctwa_clid`/`source_id`/`is_ad_attributed`). En Meta
+social la senal sale del `referral_json` del mensaje (`ad_id`, `source='ADS'` o
+`ads_context_data`). Si el referral de Messenger/Instagram trae
+`ads_context_data.photo_url` o `ads_context_data.video_url`, esos URLs se usan
+como media/thumbnail de la tarjeta visual del globo sin cambiar la atribucion
+principal del contacto.
+
+Cuando un mensaje de WhatsApp trae un `source_id` oficial y tambien un marcador
+`rstkad_id=<ad_id>!`, el backend resuelve el conflicto contra `meta_ads` usando
+el dia local del negocio: si solo uno de los dos IDs existe en `meta_ads` ese
+dia, gana ese ID; si ambos existen, gana el `source_id` oficial; si ninguno
+existe, se conserva el `source_id` oficial como default y el payload crudo queda
+disponible para auditoria/backfill.
 
 La vista de reportes **Identificados de anuncios** y la pagina de Publicidad usan
 `contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
@@ -40,15 +58,19 @@ exista en `meta_ads` el mismo dia local en que se creo el contacto. Por eso
 `contacts.attribution_ad_id` debe permanecer estable: representa de que anuncio
 nacio el registro, no el ultimo anuncio que reabrio la conversacion.
 
-Para datos historicos afectados por imports o retouches anteriores, el arranque
-del backend ejecuta una vez el backfill
-`repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })`, marcado en
-`app_config.whatsapp_api_first_ad_attribution_backfill_version`. El backfill
-revisa el historial WhatsApp API en orden cronologico y, si el contacto quedo
-con un anuncio posterior que existe en el historial, restaura el primer anuncio
-real como `contacts.attribution_ad_id`/`attribution_ad_name`/`ctwa_clid`. Los
+Para datos historicos afectados por imports o retouches anteriores, el backend
+agenda una vez el backfill
+`repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })` en segundo plano,
+sin bloquear el arranque. Al terminar queda marcado en
+`app_config.whatsapp_api_first_ad_attribution_backfill_version`; si esa version
+ya existe, el arranque omite la barrida historica. El backfill revisa el
+historial WhatsApp API en orden cronologico y, si el contacto quedo con un
+anuncio posterior que existe en el historial, restaura el primer anuncio real
+como `contacts.attribution_ad_id`/`attribution_ad_name`/`ctwa_clid`. Los
 retouches posteriores siguen vivos en `whatsapp_api_messages` y
-`whatsapp_api_attribution`.
+`whatsapp_api_attribution`. El mismo backfill tambien corrige touches historicos
+cuando el `detected_source_id` guardado venia del candidato incorrecto y el
+marcador `rstkad_id` si coincide con un anuncio vivo ese dia.
 
 ## Servicio canonico
 
@@ -74,7 +96,9 @@ retouches posteriores siguen vivos en `whatsapp_api_messages` y
     anuncio detectado.
   - **Messenger/Instagram** (`meta_social_messages`): DMs entrantes cuyo
     `referral_json` trae `ad_id`, `source='ADS'` o `ads_context_data`
-    (anuncios Click-to-Messenger / Click-to-Instagram).
+    (anuncios Click-to-Messenger / Click-to-Instagram); si existe
+    `photo_url`/`video_url` dentro de `ads_context_data`, se usa como evidencia
+    visual del touch en el chat.
   - **Fallback legacy**: `contacts.attribution_ctwa_clid`/`attribution_ad_id`
     (first-touch historico, sin timestamp) solo si no hay ningun touch con
     timestamp.

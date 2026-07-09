@@ -1882,13 +1882,17 @@ export const Reports: React.FC = () => {
     title: string
     subtitle: string
     transactions: any[]
+    total: number
+    totalAmount: number
     range?: { from: string; to: string }
   }>({
     open: false,
     loading: false,
     title: 'Transacciones',
     subtitle: '',
-    transactions: []
+    transactions: [],
+    total: 0,
+    totalAmount: 0
   })
 
   useEffect(() => {
@@ -2350,7 +2354,9 @@ export const Reports: React.FC = () => {
         from,
         to,
         type: type === 'customers' ? 'customers' : type,
-        scope: currentScope
+        scope: currentScope,
+        // (MET-CONSIST) Reports cuenta por persona -> el modal debe colapsar duplicados igual.
+        dedupe: 'person'
       })
       setModalState(prev => ({
         ...prev,
@@ -2382,7 +2388,9 @@ export const Reports: React.FC = () => {
             from,
             to,
             type: currentModalType === 'customers' ? 'customers' : currentModalType,
-            scope: currentScope
+            scope: currentScope,
+            // (MET-CONSIST) Reports cuenta por persona -> el modal debe colapsar duplicados igual.
+            dedupe: 'person'
           })
           setModalState(prev => ({
             ...prev,
@@ -2409,31 +2417,59 @@ export const Reports: React.FC = () => {
       title: 'Transacciones',
       subtitle: `${formatPeriodLabel(from, 'day', { includeYear: true })} – ${formatPeriodLabel(to, 'day', { includeYear: true })}`,
       transactions: [],
+      total: 0,
+      totalAmount: 0,
       range
     })
 
-    try {
-      const response = await fetch(
-        `/api/reports/transactions?` + new URLSearchParams({
-          from,
-          to
-        })
-      )
+    // (MET-CONSIST) El backend topa cada página a 500 filas (RPT-008 anti-OOM). Para que
+    // el modal empate con la celda: el número/monto salen del summary del periodo completo,
+    // y la lista se rellena paginando hasta agotar o hasta un tope de render seguro (el
+    // modal no virtualiza, así que no cargamos decenas de miles de cards al DOM).
+    const PAGE_SIZE = 500
+    const MODAL_MAX_ROWS = 2000
 
-      if (response.ok) {
+    try {
+      const accumulated: any[] = []
+      let page = 1
+      let total = 0
+      let totalAmount = 0
+      let hasNext = true
+
+      while (hasNext && accumulated.length < MODAL_MAX_ROWS) {
+        const response = await fetch(
+          `/api/reports/transactions?` + new URLSearchParams({
+            from,
+            to,
+            page: String(page),
+            limit: String(PAGE_SIZE)
+          })
+        )
+
+        if (!response.ok) throw new Error(`transactions request failed (${response.status})`)
+
         const result = await response.json()
-        setTransactionsModalState(prev => ({
-          ...prev,
-          transactions: result.data?.transactions || [],
-          loading: false
-        }))
-      } else {
-        setTransactionsModalState(prev => ({ ...prev, transactions: [], loading: false }))
-        showToast('error', 'No se pudieron cargar las transacciones', 'Intenta nuevamente')
+        const pageTransactions: any[] = result.data?.transactions || []
+        accumulated.push(...pageTransactions)
+
+        // El total y el monto vienen agregados del periodo completo; no dependen de la página.
+        total = result.data?.summary?.count ?? result.data?.pagination?.total ?? accumulated.length
+        totalAmount = result.data?.summary?.totalAmount
+          ?? accumulated.reduce((sum, t) => sum + (Number(t.amount) || 0), 0)
+        hasNext = Boolean(result.data?.pagination?.hasNext) && pageTransactions.length > 0
+        page += 1
       }
+
+      setTransactionsModalState(prev => ({
+        ...prev,
+        transactions: accumulated,
+        total,
+        totalAmount,
+        loading: false
+      }))
     } catch (error) {
-      setTransactionsModalState(prev => ({ ...prev, transactions: [], loading: false }))
-      showToast('error', 'Error al cargar transacciones', 'Verifica tu conexión')
+      setTransactionsModalState(prev => ({ ...prev, transactions: [], total: 0, totalAmount: 0, loading: false }))
+      showToast('error', 'No se pudieron cargar las transacciones', 'Intenta nuevamente')
     }
   }, [apiRange.from, apiRange.to, showToast])
 
@@ -2704,11 +2740,22 @@ export const Reports: React.FC = () => {
         visible: false,
         render: (value: number, row) => {
           const hasValue = (value || 0) > 0
+          // (MET-CONSIST) En cashflow el número ES filas de pago (COUNT(*) por p.date) -> modal
+          // de transacciones. En atribución/campañas el número son CONTACTOS atribuidos por
+          // created_at (getMetrics) -> debe abrir el modal de contactos ('sales' scope-aware),
+          // no el de transacciones por p.date (que traía pagos no atribuidos o salía vacío).
+          const openTransactionsCell = () => {
+            if (reportType === 'cashflow') {
+              handleOpenTransactionsModal(resolvePeriodRange(row.date, viewType))
+            } else {
+              handleOpenModal('sales', resolvePeriodRange(row.date, viewType))
+            }
+          }
           return hasValue ? (
             <button
               type="button"
               className={styles.metricLink}
-              onClick={() => handleOpenTransactionsModal(resolvePeriodRange(row.date, viewType))}
+              onClick={openTransactionsCell}
             >
               {formatNumber(value)}
             </button>
@@ -3186,6 +3233,8 @@ export const Reports: React.FC = () => {
           title={transactionsModalState.title}
           subtitle={transactionsModalState.subtitle}
           transactions={transactionsModalState.transactions}
+          totalCount={transactionsModalState.total}
+          totalAmount={transactionsModalState.totalAmount}
           loading={transactionsModalState.loading}
         />
       </div>

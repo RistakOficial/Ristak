@@ -91,6 +91,7 @@ Flujo de arranque:
    - espera base de datos,
    - corre migraciones,
    - inicializa llave de cifrado,
+   - sanea usuarios legacy que guardaban el correo en `username`,
    - asegura usuario inicial/default,
    - sincroniza estado de licencia,
    - inicializa version Meta,
@@ -104,7 +105,7 @@ El proceso tiene soporte de shutdown graceful y estado de drain para deploys.
 
 Rutas protegidas por auth y/o feature flags:
 
-- `/api/auth`: setup, login, SSO, reset password, usuarios, perfil, API token.
+- `/api/auth`: setup, login por correo, SSO, reset password, usuarios, perfil, API token.
 - `/api/dashboard`: metricas principales.
 - `/api/contacts`: contactos, chats, tags, custom fields, bulk actions.
 - `/api/contact-tags`: etiquetas y carpetas.
@@ -295,6 +296,17 @@ Capacidades:
   como actualizacion manual del contacto y conserva el flujo normal de
   automatizaciones.
 - Telefonos normalizados.
+- Autocompletado de identidad desde mensajes entrantes: cuando un contacto de
+  Messenger, Instagram DM o comentarios Facebook/Instagram todavia no tiene
+  telefono y/o correo, el backend puede detectar el primer telefono/correo claro
+  escrito por el usuario y guardarlo en el contacto. El telefono se normaliza con
+  la lada configurada en la cuenta (`account_default_dial_code`), por ejemplo un
+  numero nacional mexicano `656 742 6612` queda como `+526567426612`. En
+  WhatsApp solo se autoguarda correo detectado en el texto; el telefono no se
+  extrae del cuerpo porque el numero de WhatsApp ya es la identidad del canal. En
+  correo entrante no se extraen telefonos ni correos desde el cuerpo del email.
+  La captura no reemplaza datos existentes y no fusiona/roba identidad si el
+  telefono o correo detectado ya pertenece a otro contacto.
 - La lista de contactos usa una sola entrada visible de filtros: el boton
   "Todos" abre un panel lateral derecho de filtros avanzados. Primero se elige
   un campo desde un catalogo buscable y luego se arma la condicion del lado
@@ -352,16 +364,25 @@ Capacidades:
   mensajes posteriores ni marcadores `rstkad_id`; los anuncios posteriores se
   conservan como touches del historial (`whatsapp_api_attribution`, sesiones o
   mensajes sociales) para conversiones.
+- Si un mensaje de WhatsApp trae `source_id` oficial y tambien
+  `rstkad_id=<ad_id>!`, el backend compara ambos contra `meta_ads` en el dia
+  local del negocio: gana el unico ID que exista ese dia; si ambos existen, gana
+  el `source_id` oficial; si ninguno existe, queda el oficial como default y el
+  payload crudo se conserva para auditoria/backfill.
 - Reportes en vista `Identificados de anuncios` y Publicidad miden registros por
   `contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
   exista en `meta_ads` el mismo dia local de creacion del contacto. Por eso ese
   `ad_id` debe quedarse congelado como origen de registro.
-- El backend ejecuta un backfill automatico versionado para datos historicos de
-  WhatsApp API: `repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })`
-  corre una vez y queda marcado en
-  `app_config.whatsapp_api_first_ad_attribution_backfill_version`. Si detecta
-  que un contacto quedo atribuido a un retouch posterior, restaura el primer
-  anuncio real del historial sin borrar los touches posteriores.
+- El backend agenda un backfill automatico versionado para datos historicos de
+  WhatsApp API sin bloquear el arranque: `repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })`
+  corre en segundo plano cuando falta
+  `app_config.whatsapp_api_first_ad_attribution_backfill_version` y marca esa
+  version al terminar. Si la version ya esta aplicada, el arranque omite la
+  barrida historica. Si detecta que un contacto quedo atribuido a un retouch
+  posterior, restaura el primer anuncio real del historial sin borrar los
+  touches posteriores. Tambien corrige touches historicos cuando el
+  `detected_source_id` guardado venia del candidato incorrecto y el marcador
+  `rstkad_id` si coincide con el anuncio vivo de ese dia.
 - El Viaje del Cliente en la ficha debe mostrar cada actividad con una etiqueta
   legible: visitas, contactos, WhatsApp, Messenger, Instagram, correo, citas y
   compras. Si un evento trae metadata de mensaje social o email, el tooltip debe
@@ -374,6 +395,13 @@ Capacidades:
   Los marcadores visuales de Messenger e Instagram deben diferenciar DM privado
   vs comentario con iconografia de plataforma y accion, no con el mismo glifo
   generico para todo.
+- El historial conversacional del modal de contacto no debe tratar el Viaje del
+  Cliente como si fuera chat completo. Para pintar burbujas usa
+  `/contacts/:id/journey` con `includeBusinessMessages=true` y
+  `chatMessagesOnly=true`, de modo que reciba solo mensajes reales de WhatsApp,
+  Meta social, email y tarjetas conversacionales como confirmaciones de cita por
+  IA. El journey completo sigue siendo la linea de actividad/atribucion del CRM
+  y puede incluir visitas, contacto creado, citas, pagos y compras.
 
 Los contactos alimentan reportes, automations, chat, pagos, citas y conversiones.
 
@@ -424,15 +452,28 @@ abrir Maps sin una franja secundaria de titulo/coordenadas dentro del mensaje.
 Si el texto recibido solo dice `location` o `Ubicacion`, se oculta para no
 duplicar el contenido debajo del mapa.
 
-En `/chat` desktop, los mensajes entrantes de WhatsApp que vienen de un anuncio
-deben mostrar una vista previa compacta del anuncio dentro del globo antes del
-texto del contacto. La tarjeta se arma con `is_ad_attributed`,
+En `/chat` desktop, los mensajes entrantes de WhatsApp, Messenger o Instagram
+que vienen de un anuncio deben mostrar una vista previa compacta del anuncio
+dentro del globo antes del texto del contacto. Esto aplica por mensaje: si el
+mismo contacto vuelve por otro anuncio semanas despues, ese nuevo globo tambien
+muestra su propia vista previa; un mensaje organico intermedio no debe heredarse
+la atribucion vieja del contacto. La tarjeta se arma con `is_ad_attributed`,
 `referral_source_id`, `referral_ctwa_clid`, `referral_source_url`,
-`referral_headline` y `referral_body`; cuando el backend ya enriquecio el evento
-con `meta_ads`, usa `creative_image_url`/`creative_thumbnail_url`,
-`creative_preview_url`, campana, conjunto y nombre del anuncio. Si no hay senal
-real de anuncio, el chat no debe inventar previews ni decorar mensajes directos.
-Como fallback operativo, si el texto recibido contiene el marcador
+`referral_headline` y `referral_body`, pero `headline`/`body`/`source_app`/
+`entry_point` no son senal suficiente por si solos. En WhatsApp la preview solo
+se dispara con referral CTWA/YCloud real (`ctwa_clid`, `source_id`/`ad_id` con
+senal de anuncio), `is_ad_attributed=true` o el marcador Ristak; `transport='api'`
+o `source_app='api'` nunca deben pintar anuncio. En Messenger/Instagram salen del
+`referral_json` de `meta_social_messages` (`ad_id`, `source='ADS'`,
+`ads_context_data`). Si Meta
+incluye `ads_context_data.photo_url` o `ads_context_data.video_url`, el backend
+los expone como media/thumbnail del anuncio para que la tarjeta tenga material
+visual aunque todavia no exista una fila sincronizada en `meta_ads`. Cuando
+el backend ya enriquecio el evento con `meta_ads`, usa
+`creative_image_url`/`creative_thumbnail_url`, `creative_preview_url`, campana,
+conjunto y nombre del anuncio. Si no hay senal real de anuncio, el chat no debe
+inventar previews ni decorar mensajes directos. Como fallback operativo para
+WhatsApp, si el texto recibido contiene el marcador
 `rstkad_id=<ad_id>!`, Ristak extrae solo los digitos entre `=` y `!`, lo trata
 como `referral_source_id` de anuncio y oculta ese marcador del texto visible del
 mensaje. El `!` es obligatorio para no atribuir por accidente otros numeros que
@@ -571,6 +612,12 @@ otro bloque anterior usando `beforeMessageDate`; no debe precargar el historial
 completo de todas las conversaciones de la bandeja. Al insertar mensajes antiguos
 arriba del hilo, la UI debe conservar la posicion visible del usuario y nunca
 forzar scroll al ultimo mensaje.
+
+El mismo contrato aplica al chat dentro del modal de contacto: aunque reutiliza
+el endpoint de journey por compatibilidad, siempre debe pedir `chatMessagesOnly`
+para no mezclar eventos de viaje, visitas, compras o contacto creado dentro del
+historial de WhatsApp/Meta/email. Las tarjetas `appointment_confirmation` con
+accion `chat_card` si pertenecen al hilo y se incluyen en ese modo.
 
 La recepcion rapida de mensajes de chat usa `/api/chat-events/stream` como
 camino principal en desktop (`/chat`), movil web (`/movil`), cliente nativo
@@ -763,6 +810,14 @@ tecnica (`connected`, `reconnecting`, `restarting`, `connection_replaced` o
 `disconnected_*`); estados terminales como `logged_out`, `bad_session` o
 `number_mismatch` requieren escanear un QR nuevo y no se usan como respaldo
 automatico.
+Los ecos salientes capturados desde WhatsApp normal/QR deben persistir
+`business_phone_number_id` resolviendo tambien por `qr_connected_phone`; si se
+pierde ese enlace, la app de chats (`/chat`), la ficha de contacto, el chat movil
+web y las apps nativas pueden ocultar las respuestas del negocio y dejar visible
+solo lo que escribe el contacto. Si WhatsApp Web entrega el chat como LID
+(`@lid`) en lugar de telefono, el listener QR debe resolverlo con el mapa de
+Baileys antes de descartar el mensaje; esos salientes de WhatsApp normal son
+fuente canonica del historial cuando el operador responde fuera de Ristak.
 
 Al agregar un WhatsApp solo por QR desde Configuracion > WhatsApp, el usuario no
 debe capturar el numero manualmente. Ristak crea una fila QR pendiente, muestra
@@ -1723,7 +1778,10 @@ En el editor HTML importado, estos elementos se configuran desde un inspector
 derecho independiente del panel de codigo. El panel de codigo se conserva para
 editar HTML/IA externa, mientras el inspector de elementos Ristak administra
 formularios, calendarios, pagos y videos con la misma configuracion del editor
-visual. Ese inspector debe scrollear con rueda, trackpad y tactil como el panel
+visual. Ese inspector no debe abrirse automaticamente solo porque el HTML tenga
+un video, calendario, pago o formulario nativo detectado; aparece unicamente
+cuando el usuario selecciona esa zona desde la previsualizacion o desde el modo
+codigo. Ese inspector debe scrollear con rueda, trackpad y tactil como el panel
 derecho del editor visual; los controles internos no deben bloquear el scroll
 del panel principal. Al seleccionar una zona nativa en la previsualizacion, el
 editor abre la configuracion en ese inspector derecho y no muestra popovers de
@@ -1744,11 +1802,16 @@ mostrando validaciones cuando falta una configuracion obligatoria. Para pagos,
 ese preview usa un snapshot temporal de la
 configuracion del inspector derecho y dibuja una maqueta de checkout con pasarela,
 monto, campos, boton, modo test y ayuda del proveedor; no monta SDKs reales ni
-intenta iniciar cobros hasta que el sitio publicado confirme el pago. Los
-calendarios nativos dentro del preview usan la ruta interna
-`/api/sites/public/calendar-preview/:slug`, no `/calendar/:slug`, para que el
-editor pueda mostrarlos sin depender de que el dominio publico ya este
-configurado; el sitio publicado conserva la ruta publica normal.
+intenta iniciar cobros hasta que el sitio publicado confirme el pago. En el sitio
+publicado, los pagos importados usan el checkout publico real de Ristak y nunca
+la maqueta deshabilitada del editor. Los calendarios nativos dentro del preview
+usan la ruta interna `/api/sites/public/calendar-preview/:slug`, no
+`/calendar/:slug`, para que el editor pueda mostrarlos sin depender de que el
+dominio publico ya este configurado; el sitio publicado conserva la ruta publica
+normal y no debe llevar `editor_preview=1` ni `preview=1`. Los calendarios
+custom publicados conservan su UI importada, pero las funciones
+`window.ristakCalendarGetSlots` y `window.ristakCalendarBook` deben apuntar a los
+endpoints publicos vivos de disponibilidad y agendado.
 
 Los aliases `data-ristak-*` y `data-ristack-*` se conservan para compatibilidad,
 pero las reglas copiables nuevas deben preferir `data-rstk-*`.
@@ -2068,7 +2131,10 @@ Ristak tiene dos superficies principales:
   agente guardado, antes de probar se guarda el borrador pendiente, se manda el
   `agentId` y el backend resuelve el agente por ese ID aplicando el borrador
   encima. La prueba no debe pasar por un agente distinto ni por un autosave
-  pendiente.
+  pendiente. La prueba del editor ignora la espera inicial de respuesta
+  configurada en "cuanto debe esperar antes de contestar" y devuelve
+  `responseDelayMs: 0` para que el tester responda inmediato; el chat real
+  publicado si conserva esa espera antes de contestar.
   Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
   el formulario manual avanzado. `extraInstructions` es la superficie editable de
   personalizacion del asistente: reglas del negocio, limites, datos que debe

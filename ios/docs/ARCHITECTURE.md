@@ -177,6 +177,12 @@ Componentes reutilizables en `DesignSystem/Components/` — toda vista de
 feature debe usarlos (avatars con iniciales+badge de canal, chips de filtro,
 KPI cards, estados vacíos, etc.).
 
+Los iconos oficiales del launcher viven en
+`Ristak/Assets.xcassets/AppIcon.appiconset`: `icon-light.png` para modo claro,
+`icon-dark.png` para modo oscuro e `icon-tinted.png` para el modo tinted de
+iOS. Deben mantenerse como PNG 1024x1024 RGB sin canal alfa; no subas iconos con
+transparencia porque pueden fallar la validacion de iOS/App Store.
+
 **Regla de selección (preferencia explícita de Raúl, hereda de la app RN):**
 chips, tabs y slots seleccionados usan **relleno sólido de acento + texto
 blanco** (superficie plana, sin glass, sin contorno, sin sombra). El estado no

@@ -10,6 +10,9 @@ y `/movil`), con navegación nativa de iOS 26 y Liquid Glass.
 - Mínimo: iOS 26.0 · Xcode 26+ · Swift 5 mode · **cero dependencias externas**
 - Universal: iPhone (tab bar compacta) + iPad (sidebar adaptable, split views,
   popovers), vertical y horizontal, claro/oscuro, Dynamic Type.
+- Icono del launcher: `ios/app/Ristak/Assets.xcassets/AppIcon.appiconset`
+  contiene las variantes oficiales `icon-light.png`, `icon-dark.png` e
+  `icon-tinted.png` en 1024x1024 RGB sin transparencia para validacion iOS.
 
 ## Cómo correr
 

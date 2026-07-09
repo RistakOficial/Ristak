@@ -19319,7 +19319,7 @@ const ImportedHtmlEditorPanel: React.FC<{
         key: `${pageId}:${slot.key}`
       }))
   }, [activeImportedPage?.id, activePageId, importedNativeElementDetectionHtml])
-  const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || importedNativeElementSlots[0] || null
+  const selectedImportedNativeElementSlot = importedNativeElementSlots.find(slot => slot.key === selectedImportedNativeElementKey) || null
   const guardedEditorPreviewHtml = useMemo(
     () => buildImportedEditorPreviewHtml(editorPreviewHtml, 'visual'),
     [editorPreviewHtml]
@@ -19345,8 +19345,9 @@ const ImportedHtmlEditorPanel: React.FC<{
       if (selectedImportedNativeElementKey) setSelectedImportedNativeElementKey('')
       return
     }
-    if (selectedImportedNativeElementKey && importedNativeElementSlots.some(slot => slot.key === selectedImportedNativeElementKey)) return
-    setSelectedImportedNativeElementKey(importedNativeElementSlots[0].key)
+    if (selectedImportedNativeElementKey && !importedNativeElementSlots.some(slot => slot.key === selectedImportedNativeElementKey)) {
+      setSelectedImportedNativeElementKey('')
+    }
   }, [importedNativeElementSlots, selectedImportedNativeElementKey])
 
   const getImportedNativeElementDefaultSettingsForSlot = useCallback((slot: ImportedNativeElementSlot) => {
@@ -19645,7 +19646,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     if (!container) return
     event.preventDefault()
 
-    const hasInspector = importedNativeElementSlots.length > 0
+    const hasInspector = Boolean(selectedImportedNativeElementSlot)
     let frame = 0
     let latestWidth = codeEditorWidthRef.current
     const rect = container.getBoundingClientRect()
@@ -19686,7 +19687,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     document.body.classList.add('rstk-code-resizing')
     window.addEventListener('pointermove', handlePointerMove)
     window.addEventListener('pointerup', handlePointerUp, { once: true })
-  }, [importedNativeElementSlots.length])
+  }, [selectedImportedNativeElementSlot])
 
   useEffect(() => {
     codeEditorWidthRef.current = codeEditorWidth
@@ -19757,7 +19758,11 @@ const ImportedHtmlEditorPanel: React.FC<{
   const loadInlinePreview = useCallback(async () => {
     const requestId = previewRequestIdRef.current + 1
     previewRequestIdRef.current = requestId
-    const requestContextKey = `${site.id}:${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}:${site.updatedAt || ''}`
+    // Sin site.updatedAt en la clave: antes CADA autosave cambiaba updatedAt, el contexto
+    // "cambiaba" y se limpiaba previewHtml (iframe en blanco) en cada edición. El preview se
+    // re-renderiza desde el draft del cliente (draftSite), así que no necesita re-fetchear por
+    // updatedAt para reflejar cambios; solo limpiamos al cambiar de página/sitio de verdad.
+    const requestContextKey = `${site.id}:${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}`
     if (previewHtmlContextKeyRef.current && previewHtmlContextKeyRef.current !== requestContextKey) {
       setPreviewHtml('')
       setPreviewVersion(current => current + 1)
@@ -20072,6 +20077,7 @@ const ImportedHtmlEditorPanel: React.FC<{
     setElementPopoverPosition(null)
     setChoiceEditor(null)
     setFieldEditor(null)
+    setSelectedImportedNativeElementKey('')
   }, [clearImportedVideoActionHover])
 
   const selectImportedNativeElementFromPreviewTarget = useCallback((
@@ -22934,7 +22940,7 @@ const ImportedHtmlEditorPanel: React.FC<{
   }, [activeCodeFile, activeCodePreviewHtml, activeCodeValue, codeEditorOpen, guardedCodePreviewHtml, onCodeDraftChange, openCodeButtonEditorForElement, openCodeElementEditorForElement, selectImportedCodePreviewElement, selectImportedNativeElementFromPreviewTarget, showToast])
 
   const codeAssistantActivityLabel = getImportedCodeAssistantActivityLabel(codeAssistantWorkSteps, codeAssistantSaving)
-  const importedNativeElementsPanel = importedNativeElementSlots.length > 0 ? (() => {
+  const importedNativeElementsPanel = selectedImportedNativeElementSlot ? (() => {
     const selectedSlot = selectedImportedNativeElementSlot
     const nativeElementSite = importedNativeElementSiteRef.current || site
     const nativeElementBlocks = nativeElementSite.blocks || []
@@ -23557,21 +23563,21 @@ const ImportedHtmlEditorPanel: React.FC<{
     <div className={styles.importedEditorPanel}>
       <section className={styles.importedPreviewPane}>
         <div className={`${styles.importedPreviewStage} ${device === 'mobile' ? styles.importedPreviewStageMobile : ''}`}>
-          {previewLoading && (
-            <div className={styles.importedPreviewState} role="status" aria-live="polite" aria-label="Cargando vista previa">
-              <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
-            </div>
-          )}
-          {!previewLoading && previewError && (
+          {previewError && (
             <div className={styles.importedPreviewState}>
               <AlertTriangle size={18} />
               <span>{previewError}</span>
             </div>
           )}
-          {!previewLoading && !previewError && editorPreviewHtml && (
+          {/* El iframe del preview se mantiene MONTADO mientras exista contenido y con un key
+              ESTABLE (sin previewVersion): así no se remonta ni se oculta tras el spinner en
+              cada edición — el srcDoc se actualiza en su lugar. Antes remontaba + lo reemplazaba
+              el spinner en cada patch => doble parpadeo, pérdida de scroll y del resaltado.
+              El spinner solo aparece en la carga INICIAL (cuando aún no hay contenido). */}
+          {!previewError && editorPreviewHtml && (
             <iframe
               ref={iframeRef}
-              key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${previewVersion}-${device}-${activePageDraftPreviewHtml.length}`}
+              key={`${site.id}-${activeImportedPage?.id || DEFAULT_FUNNEL_PAGE_ID}-${device}`}
               className={styles.importedPreviewFrame}
               title={`Vista previa de ${activeImportedPage?.title || site.name}`}
               srcDoc={guardedEditorPreviewHtml}
@@ -23579,7 +23585,12 @@ const ImportedHtmlEditorPanel: React.FC<{
               referrerPolicy="no-referrer-when-downgrade"
             />
           )}
-          {!previewLoading && !previewError && !editorPreviewHtml && (
+          {!previewError && !editorPreviewHtml && previewLoading && (
+            <div className={styles.importedPreviewState} role="status" aria-live="polite" aria-label="Cargando vista previa">
+              <RefreshCw size={18} className={styles.previewSpin} aria-hidden="true" />
+            </div>
+          )}
+          {!previewError && !editorPreviewHtml && !previewLoading && (
             <div className={styles.importedPreviewState}>
               <FileText size={18} />
               <span>La vista previa todavía no tiene contenido.</span>

@@ -917,15 +917,26 @@ export const Dashboard: React.FC = () => {
 
     setExtendedChartDataLoading(true)
     try {
+      // Las métricas de CONTEO ÚNICO (visitantes, citados, asistencias) no se pueden
+      // sumar por día para armar buckets que abarcan varios días: se contaría de más al
+      // mismo visitante/contacto activo en varios días del bucket. Cuando el bucket abarca
+      // más de un día (semana/quincena/trimestre/año) mandamos las fronteras EXACTAS de
+      // cada bucket para que el backend haga UN DISTINCT por ventana (mismo número que el
+      // modal). Las series aditivas (leads/ventas) se siguen pidiendo por día y sumando.
+      const usesMultiDayBuckets = ['week', 'fortnight', 'quarter', 'year'].includes(chartWindow.granularity)
+      const bucketPeriods = usesMultiDayBuckets
+        ? chartWindow.buckets.map(bucket => ({ start: bucket.periodStart, end: bucket.periodEnd }))
+        : undefined
+
       const visitorsPromise = analyticsEnabled
-        ? dashboardService.getVisitorsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy })
+        ? dashboardService.getVisitorsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods })
         : Promise.resolve<{ label: string; value: number }[]>([])
 
       const [visitorsData, leadsData, appointmentsData, attendancesData, salesData] = await Promise.all([
         visitorsPromise,
         dashboardService.getLeadsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy }),
-        dashboardService.getAppointmentsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy }),
-        dashboardService.getAttendancesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy }),
+        dashboardService.getAppointmentsData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods }),
+        dashboardService.getAttendancesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy, periods: bucketPeriods }),
         dashboardService.getSalesData({ start: chartWindow.start, end: chartWindow.end, groupBy: chartApiGroupBy })
       ])
 
@@ -983,7 +994,7 @@ export const Dashboard: React.FC = () => {
     } finally {
       setExtendedChartDataLoading(false)
     }
-  }, [analyticsEnabled, chartApiGroupBy, chartWindow.end, chartWindow.start, extendedChartDataLoaded, extendedChartDataLoading, user])
+  }, [analyticsEnabled, chartApiGroupBy, chartWindow.granularity, chartWindow.buckets, chartWindow.end, chartWindow.start, extendedChartDataLoaded, extendedChartDataLoading, user])
 
   React.useEffect(() => {
     setExtendedChartDataLoaded(false)
@@ -992,7 +1003,7 @@ export const Dashboard: React.FC = () => {
     setLeadsAppointmentsData([])
     setAppointmentsAttendancesData([])
     setAttendancesSalesData([])
-  }, [analyticsEnabled, chartApiGroupBy, chartWindow.end, chartWindow.start])
+  }, [analyticsEnabled, chartApiGroupBy, chartWindow.granularity, chartWindow.buckets, chartWindow.end, chartWindow.start])
 
   React.useEffect(() => {
     if (selectedChartView === 'revenue-spend') return

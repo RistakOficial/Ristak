@@ -12,6 +12,7 @@ import {
   shutdownWhatsAppQrService
 } from '../src/services/whatsappQrService.js'
 import { createWhatsAppQrPhoneNumber, deleteWhatsAppQrPhoneNumber } from '../src/services/whatsappApiService.js'
+import { getChatContacts } from '../src/controllers/contactsController.js'
 
 const BUSINESS_PHONE = '+526561234567'
 const CONNECTED_JID = '526561234567@s.whatsapp.net'
@@ -19,6 +20,32 @@ const DEFAULT_FAKE_WA_WEB_VERSION = [2, 3000, 1035194821]
 
 function sqlFuture(offsetMs = 60_000) {
   return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ')
+}
+
+function createMockResponse() {
+  return {
+    statusCode: 200,
+    body: null,
+    status(code) {
+      this.statusCode = code
+      return this
+    },
+    json(payload) {
+      this.body = payload
+      return this
+    }
+  }
+}
+
+async function readChatContacts(query = {}) {
+  const res = createMockResponse()
+  await getChatContacts({ query, user: {} }, res)
+
+  assert.equal(res.statusCode, 200)
+  assert.equal(res.body?.success, true)
+  assert.ok(Array.isArray(res.body.data))
+
+  return res.body.data
 }
 
 function createFakeBaileysRuntime(sockets = [], options = {}) {
@@ -288,6 +315,86 @@ test('la validación del número conectado no confunde LID con el teléfono espe
     assert.equal(session.connected_phone, BUSINESS_PHONE)
     assert.equal(session.last_error, null)
   })
+})
+
+test('WhatsApp QR captura salientes con remoteJid LID y los muestra en la app de chats', async () => {
+  const sockets = []
+  const contactId = `contact_qr_lid_outbound_${randomUUID()}`
+  const contactPhone = '+526561231234'
+  const nationalContactPhone = '6561231234'
+  const lid = '111222333444@lid'
+  const wamid = `qr_lid_outbound_${randomUUID()}`
+  const body = `Respuesta desde WhatsApp normal ${randomUUID()}`
+  const messageTimestamp = new Date().toISOString()
+
+  await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ? OR contact_id = ?', [wamid, contactId]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, contactPhone]).catch(() => undefined)
+  await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ? OR phone = ?', [contactId, contactPhone]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ? OR phone IN (?, ?)', [contactId, contactPhone, nationalContactPhone]).catch(() => undefined)
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, first_name, source, created_at, updated_at)
+       VALUES (?, ?, 'Cliente LID WhatsApp', 'Cliente', 'manual', ?, ?)`,
+      [contactId, nationalContactPhone, messageTimestamp, messageTimestamp]
+    )
+
+    await withQrFixture({ status: 'connected' }, async () => {
+      setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
+
+      const result = await resumeWhatsAppQrSessions({ source: 'test' })
+      assert.equal(result.resumed, 1)
+      assert.equal(sockets.length, 1)
+
+      sockets[0].signalRepository = {
+        lidMapping: {
+          getPNForLID: async (value) => value === lid ? `${contactPhone}@s.whatsapp.net` : ''
+        }
+      }
+
+      await sockets[0].emit('messages.upsert', {
+        type: 'notify',
+        messages: [{
+          key: {
+            id: wamid,
+            remoteJid: lid,
+            fromMe: true
+          },
+          message: {
+            conversation: body
+          },
+          messageTimestamp: Math.floor(new Date(messageTimestamp).getTime() / 1000)
+        }]
+      })
+    })
+
+    const row = await db.get(`
+      SELECT contact_id, phone, from_phone, to_phone, direction, transport, message_text, business_phone_number_id
+      FROM whatsapp_api_messages
+      WHERE wamid = ?
+    `, [wamid])
+
+    assert.ok(row)
+    assert.equal(row.contact_id, contactId)
+    assert.equal(row.direction, 'outbound')
+    assert.equal(row.transport, 'qr')
+    assert.equal(row.message_text, body)
+    assert.ok(row.business_phone_number_id)
+
+    const chats = await readChatContacts({ limit: '100' })
+    const chat = chats.find(item => item.id === contactId)
+
+    assert.ok(chat)
+    assert.equal(chat.lastMessageText, body)
+    assert.equal(chat.lastMessageDirection, 'outbound')
+    assert.equal(chat.lastBusinessPhoneNumberId, row.business_phone_number_id)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE wamid = ? OR contact_id = ?', [wamid, contactId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, contactPhone]).catch(() => undefined)
+    await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ? OR phone = ?', [contactId, contactPhone]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ? OR phone IN (?, ?)', [contactId, contactPhone, nationalContactPhone]).catch(() => undefined)
+    resetWhatsAppQrServiceForTest()
+  }
 })
 
 test('WhatsApp QR standalone detecta y guarda el número al escanear', async () => {

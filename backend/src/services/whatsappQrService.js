@@ -1048,22 +1048,29 @@ function describeBaileysMessageContent(content) {
   return null
 }
 
-function getQrChatContactPhone(message = {}) {
+async function getQrChatContactPhone(sock, message = {}) {
   const key = message.key || {}
   const remoteJid = cleanString(key.remoteJid)
   if (!remoteJid) return ''
   if (remoteJid === 'status@broadcast') return ''
   if (remoteJid.endsWith('@g.us') || remoteJid.endsWith('@broadcast') || remoteJid.endsWith('@newsletter')) return ''
 
-  const candidates = remoteJid.endsWith('@lid')
-    ? [cleanString(key.remoteJidAlt), cleanString(key.senderPn), cleanString(key.participantPn)]
+  const candidates = isLidJid(remoteJid)
+    ? [remoteJid, cleanString(key.remoteJidAlt), cleanString(key.senderPn), cleanString(key.participantPn)]
     : [remoteJid]
 
   for (const candidate of candidates) {
-    if (!candidate || candidate.endsWith('@lid')) continue
+    if (!candidate || isLidJid(candidate)) continue
     const phone = normalizePhoneFromJid(candidate)
     if (phone) return phone
   }
+
+  for (const candidate of candidates) {
+    if (!isLidJid(candidate)) continue
+    const phone = await resolvePhoneFromLid(sock, candidate)
+    if (phone) return phone
+  }
+
   return ''
 }
 
@@ -1200,7 +1207,7 @@ async function downloadAndStoreQrInboundMedia({ phone, message, content, message
   }
 }
 
-async function handleQrIncomingMessages(phone, upsert = {}) {
+async function handleQrIncomingMessages(phone, upsert = {}, sock = null) {
   const type = cleanString(upsert.type)
   if (type && type !== 'notify' && type !== 'append') return
 
@@ -1209,7 +1216,7 @@ async function handleQrIncomingMessages(phone, upsert = {}) {
     try {
       const key = message?.key || {}
       const wamid = cleanString(key.id)
-      const contactPhone = getQrChatContactPhone(message)
+      const contactPhone = await getQrChatContactPhone(sock, message)
       if (!wamid || !contactPhone) continue
 
       const content = describeBaileysMessageContent(message?.message)
@@ -2435,7 +2442,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     })
   })
   sock.ev.on('messages.upsert', (upsert) => {
-    handleQrIncomingMessages(phone, upsert).catch(error => {
+    return handleQrIncomingMessages(phone, upsert, sock).catch(error => {
       logger.warn(`[WhatsApp QR] No se pudieron capturar mensajes de WhatsApp Web ${phone.id}: ${error.message}`)
     })
   })

@@ -790,6 +790,8 @@ test('agenda conversacional respeta la politica de empalme de citas', async () =
     const blockedBook = blockedTools.find((item) => item.name === 'book_appointment')
     assert.ok(blockedFreeSlots)
     assert.ok(blockedBook)
+    // Un agente de citas cierra con book_appointment (cita real), no con mark_ready_to_advance.
+    assert.equal(blockedTools.find((item) => item.name === 'mark_ready_to_advance'), undefined)
 
     const unavailable = await blockedFreeSlots.invoke(null, JSON.stringify({ calendarId, startDate: dateKey, endDate: dateKey }))
     assert.equal(unavailable.overlapPolicy, 'blocked')
@@ -845,6 +847,55 @@ test('agenda conversacional respeta la politica de empalme de citas', async () =
   }
 })
 
+test('book_appointment rechaza un horario inventado o fuera de horario de atención', async () => {
+  const suffix = randomUUID()
+  const calendarId = `rstk_cal_conv_invalidslot_${suffix}`
+  const timezone = await getAccountTimezone()
+  const baseDay = DateTime.now().setZone(timezone).plus({ days: 30 }).startOf('day')
+  const nextMonday = baseDay.plus({ days: (1 - baseDay.weekday + 7) % 7 })
+  // Hora claramente fuera del horario de atención (05:00, cuando el calendario abre 15:00-17:00).
+  const outOfHours = nextMonday.set({ hour: 5, minute: 0, second: 0, millisecond: 0 }).toUTC().toISO()
+  try {
+    await upsertLocalCalendar({
+      id: calendarId,
+      locationId: 'loc_conv_invalidslot_test',
+      name: 'Calendario slot inválido',
+      source: 'ristak',
+      slotDuration: 60,
+      slotInterval: 60,
+      openHours: [
+        { daysOfTheWeek: [1], hours: [{ openHour: 15, openMinute: 0, closeHour: 17, closeMinute: 0 }] }
+      ]
+    }, { source: 'ristak', syncStatus: 'synced' })
+
+    const ctx = {
+      contactId: `rstk_contact_invalidslot_${suffix}`,
+      dryRun: true,
+      actions: [],
+      config: {
+        objective: 'citas',
+        successAction: 'book_appointment',
+        goalWorkflow: { appointments: { owner: 'ai', calendarId, allowOverlappingAppointments: false } }
+      }
+    }
+    const bookTool = createConversationalTools(ctx).find((item) => item.name === 'book_appointment')
+    assert.ok(bookTool)
+
+    const result = await bookTool.invoke(null, JSON.stringify({
+      calendarId,
+      startTime: outOfHours,
+      title: 'Cita inventada',
+      notes: 'Hora fuera de horario de atención'
+    }))
+    assert.equal(result.ok, false)
+    assert.equal(result.invalidSlot, true)
+    assert.equal(ctx.actions.length, 0)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+  }
+})
+
 test('tool de avance bloquea la meta si falta validar anticipo configurado', async () => {
   const ctx = {
     contactId: 'test_deposit_gate_contact',
@@ -871,6 +922,7 @@ test('tool de avance bloquea la meta si falta validar anticipo configurado', asy
     resumen: 'Pidió horarios para esta semana',
     urgencia: 'media',
     siguientePaso: 'Validar anticipo',
+    confirm: true,
     anticipoValidado: false
   }))
 
@@ -883,6 +935,7 @@ test('tool de avance bloquea la meta si falta validar anticipo configurado', asy
     resumen: 'Mandó comprobante del anticipo',
     urgencia: 'media',
     siguientePaso: 'Confirmar horario',
+    confirm: true,
     anticipoValidado: true
   }))
 
@@ -892,9 +945,69 @@ test('tool de avance bloquea la meta si falta validar anticipo configurado', asy
   assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
 })
 
-test('modo venta completa no bloquea avance por anticipo legacy', async () => {
+test('mark_ready_to_advance no cierra sin confirmación explícita (candado anti falso cierre)', async () => {
   const ctx = {
-    contactId: 'test_sales_full_payment_contact',
+    contactId: 'test_confirm_gate_contact',
+    dryRun: true,
+    actions: [],
+    config: {
+      objective: 'citas',
+      successAction: 'ready_for_human',
+      goalWorkflow: {}
+    }
+  }
+  const markReadyTool = createConversationalTools(ctx).find((item) => item.name === 'mark_ready_to_advance')
+  assert.ok(markReadyTool)
+
+  // Sin confirm: sólo interés blando -> NO debe marcar objetivo cumplido.
+  const soft = await markReadyTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Sólo mostró interés general',
+    resumen: 'Dijo "me interesa" pero no pidió avanzar',
+    urgencia: 'baja',
+    siguientePaso: 'Seguir conversando',
+    confirm: false
+  }))
+  assert.equal(soft.ok, false)
+  assert.match(soft.error, /Aún no\. Ejecuta esto SÓLO cuando el objetivo del agente ya se cumplió/)
+  assert.equal(ctx.actions.length, 0)
+
+  // Con confirm: la persona pidió explícitamente avanzar -> sí procede (simulado).
+  const ready = await markReadyTool.invoke(null, JSON.stringify({
+    intencionDetectada: 'Pidió que un asesor lo contacte',
+    resumen: 'Dijo "quiero que me llamen"',
+    urgencia: 'alta',
+    siguientePaso: 'Pasar a asesor',
+    confirm: true
+  }))
+  assert.equal(ready.ok, true)
+  assert.equal(ready.simulated, true)
+  assert.equal(ready.signal, 'ready_for_human')
+  assert.equal(ready.wouldMarkObjectiveCompleted, true)
+  assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
+  assert.equal(ctx.actions[0]?.effect?.marksObjectiveCompleted, true)
+})
+
+test('mark_ready_to_advance cubre datos/filtrar/personalizado (cierre por humano), no las acciones concretas', () => {
+  const toolNames = (config) => createConversationalTools({
+    contactId: 'test_obj_coverage', dryRun: true, actions: [], config
+  }).map((item) => item.name)
+
+  // datos y filtrar cierran juntando datos / calificando y avisando a un humano.
+  for (const objective of ['datos', 'filtrar', 'custom']) {
+    const names = toolNames({ objective, successAction: 'ready_for_human', goalWorkflow: {} })
+    assert.ok(names.includes('mark_ready_to_advance'), `${objective} debe exponer mark_ready_to_advance`)
+  }
+
+  // Las acciones de cierre concretas NO exponen mark_ready_to_advance: cierran con su acción real.
+  for (const successAction of ['book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link']) {
+    const names = toolNames({ objective: 'citas', successAction, goalWorkflow: {} })
+    assert.equal(names.includes('mark_ready_to_advance'), false, `${successAction} no debe exponer mark_ready_to_advance`)
+  }
+})
+
+test('agente de ventas cierra con create_payment_link, no con mark_ready_to_advance', () => {
+  const ctx = {
+    contactId: 'test_sales_scoping_contact',
     dryRun: true,
     actions: [],
     accountLocale: { currency: 'USD' },
@@ -913,19 +1026,13 @@ test('modo venta completa no bloquea avance por anticipo legacy', async () => {
       }
     }
   }
-  const markReadyTool = createConversationalTools(ctx).find((item) => item.name === 'mark_ready_to_advance')
-  assert.ok(markReadyTool)
-
-  const allowed = await markReadyTool.invoke(null, JSON.stringify({
-    intencionDetectada: 'Quiere comprar el curso completo',
-    resumen: 'Pidió pagar todo',
-    urgencia: 'media',
-    siguientePaso: 'Crear link de pago'
-  }))
-
-  assert.equal(allowed.ok, true)
-  assert.equal(allowed.signal, 'ready_to_buy')
-  assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
+  const tools = createConversationalTools(ctx)
+  // mark_ready_to_advance ya NO se expone para ventas: marcaría objetivo cumplido sin pago real.
+  assert.equal(tools.find((item) => item.name === 'mark_ready_to_advance'), undefined)
+  // El cierre de ventas es enviar el link (la venta queda PENDIENTE hasta el pago real).
+  assert.ok(tools.find((item) => item.name === 'create_payment_link'))
+  // Sigue pudiendo escalar a humano cuando se atora, sin marcar objetivo cumplido.
+  assert.ok(tools.find((item) => item.name === 'send_to_human'))
 })
 
 test('modo solicitar anticipo en venta bloquea hasta comprobante y usa moneda de cuenta', async () => {
@@ -957,7 +1064,8 @@ test('modo solicitar anticipo en venta bloquea hasta comprobante y usa moneda de
     intencionDetectada: 'Quiere apartar su lugar',
     resumen: 'Aceptó dejar pago inicial',
     urgencia: 'alta',
-    siguientePaso: 'Pasar al asesor'
+    siguientePaso: 'Pasar al asesor',
+    confirm: true
   }))
 
   assert.equal(blocked.ok, false)
@@ -969,6 +1077,7 @@ test('modo solicitar anticipo en venta bloquea hasta comprobante y usa moneda de
     resumen: 'Mandó comprobante válido',
     urgencia: 'alta',
     siguientePaso: 'Pasar al asesor',
+    confirm: true,
     comprobanteValidado: true
   }))
 

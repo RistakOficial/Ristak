@@ -397,3 +397,143 @@ test('imported HTML native slots and video action targets stay scoped to the act
     if (siteId) await deleteSite(siteId).catch(() => undefined)
   }
 })
+
+test('published imported HTML native calendar slots use the live booking iframe, not editor preview', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></section>
+        </body>
+      </html>
+    `, `HTML native calendar live ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Agenda',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'agenda-slot',
+        importedHtmlNativeType: 'calendar',
+        importedHtmlNativeRenderMode: 'ristak',
+        calendarId: 'cal_live',
+        calendarSlug: 'consulta-en-vivo',
+        calendarName: 'Consulta en vivo'
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: true, preview: false })
+
+    assert.match(html, /data-rstk-native-slot-id="agenda-slot"/)
+    assert.match(html, /iframe class="rstk-embed rstk-calendar-embed"/)
+    assert.match(html, /\/calendar\/consulta-en-vivo\?/)
+    assert.doesNotMatch(html, /\/api\/sites\/public\/calendar-preview\//)
+    assert.doesNotMatch(html, /editor_preview=1/)
+    assert.doesNotMatch(html, /preview=1/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('published imported HTML custom calendar slots expose live booking helpers', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <section class="agenda-custom" data-rstk-native-element="calendar" data-rstk-native-id="agenda-custom" data-rstk-native-render="custom">
+            <button type="button" data-hook="load-slots">Ver horarios</button>
+          </section>
+        </body>
+      </html>
+    `, `HTML custom calendar live ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Agenda custom',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'agenda-custom',
+        importedHtmlNativeType: 'calendar',
+        importedHtmlNativeRenderMode: 'custom',
+        calendarId: 'cal_custom_live',
+        calendarSlug: 'agenda-custom-live',
+        calendarName: 'Agenda personalizada live'
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: true, preview: false })
+
+    assert.match(html, /data-rstk-native-slot-id="agenda-custom"/)
+    assert.match(html, /data-hook="load-slots"/)
+    assert.match(html, /window\.ristakCalendarGetSlots/)
+    assert.match(html, /window\.ristakCalendarBook/)
+    assert.match(html, /\/api\/calendars\/public\/agenda-custom-live\/free-slots/)
+    assert.match(html, /\/api\/calendars\/public\/agenda-custom-live\/appointments/)
+    assert.doesNotMatch(html, /Vista previa sin agendar/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('published imported HTML native payment slots use live checkout runtime, not the disabled preview mock', async () => {
+  let siteId = ''
+
+  try {
+    const site = await createImportedNativeSite(`
+      <!doctype html>
+      <html>
+        <body>
+          <main>
+            <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>
+          </main>
+        </body>
+      </html>
+    `, `HTML native payment live ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago principal',
+      content: 'Pago requerido',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'checkout-principal',
+        importedHtmlNativeType: 'payment',
+        importedHtmlNativeRenderMode: 'ristak',
+        paymentGate: {
+          enabled: true,
+          gateway: 'stripe',
+          amount: 750,
+          currency: 'MXN',
+          productName: 'Reserva premium',
+          buttonText: 'Pagar reserva'
+        }
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const html = await renderPublicSiteHtml(currentSite, { pageId: 'page-1', trackingEnabled: true, preview: false })
+
+    assert.match(html, /data-rstk-native-slot-id="checkout-principal"/)
+    assert.match(html, /data-rstk-checkout/)
+    assert.match(html, /\/api\/sites\/public\/checkout\/init/)
+    assert.match(html, /var INIT_URL = '\/api\/sites\/public\/checkout\/init'/)
+    assert.doesNotMatch(html, /<section[^>]+data-rstk-payment-preview="true"/)
+    assert.doesNotMatch(html, /rstk-checkout-fields-mock/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
