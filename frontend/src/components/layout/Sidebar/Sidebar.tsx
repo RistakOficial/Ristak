@@ -5,6 +5,7 @@ import {
   FileBarChart,
   Megaphone,
   Banknote,
+  Bot,
   Users,
   Calendar,
   Settings,
@@ -30,7 +31,6 @@ import { useTheme } from '@/contexts/ThemeContext'
 import { useAuth } from '@/contexts/AuthContext'
 import { useInitialization } from '@/contexts/InitializationContext'
 import {
-  AI_AGENT_NAV_ITEMS,
   hasModuleAccess,
   hasLicenseFeature,
   type AccessControlledUser,
@@ -96,6 +96,7 @@ const PAYMENTS_NAV_ITEMS: SidebarNavChild[] = [
 const baseNavigation: NavItem[] = [
   { id: 'dashboard', name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { id: 'chat', name: 'Chat', href: '/chat', icon: MessageCircle },
+  { id: 'ai_agent', name: 'Chatbot', href: '/ai-agent', icon: Bot },
   { id: 'appointments', name: 'Citas', href: '/appointments', icon: Calendar },
   { id: 'transactions', name: 'Pagos', href: '/transactions', icon: Banknote },
   { id: 'contacts', name: 'Contactos', href: '/contacts', icon: Users },
@@ -119,6 +120,7 @@ const mdpProgramNavigationItem: NavItem = {
 const defaultNavigationPositionById: Record<string, number> = {
   dashboard: 10,
   chat: 20,
+  ai_agent: 25,
   appointments: 30,
   transactions: 40,
   contacts: 50,
@@ -136,6 +138,7 @@ const DEFAULT_MDP_NAVIGATION_POSITION = 25
 const navPermissionById: Partial<Record<string, PermissionKey>> = {
   dashboard: 'dashboard',
   chat: 'chat',
+  ai_agent: 'ai_agent',
   appointments: 'appointments',
   transactions: 'payments',
   contacts: 'contacts',
@@ -321,96 +324,6 @@ const SettingsNavLink: React.FC<SettingsNavLinkProps> = ({ pathname, collapsed =
       <Settings className="h-5 w-5 flex-shrink-0" />
       <span className={collapsed ? 'sr-only' : 'flex-1 text-left'}>Configuración</span>
     </Link>
-  )
-}
-
-interface ChatNavGroupProps {
-  pathname: string
-  open: boolean
-  items: ReadonlyArray<SidebarNavChild>
-  collapsed?: boolean
-  onOpen: () => void
-  onRequestExpand?: () => void
-  onNavigate?: () => void
-}
-
-const ChatNavGroup: React.FC<ChatNavGroupProps> = ({
-  pathname,
-  open,
-  items,
-  collapsed = false,
-  onOpen,
-  onRequestExpand,
-  onNavigate
-}) => {
-  const isChatRoute = pathname === '/chat' || pathname.startsWith('/chat/')
-  const isAIAgentRoute = pathname.startsWith('/ai-agent')
-  const isChatGroupRoute = isChatRoute || isAIAgentRoute
-
-  if (collapsed) {
-    return (
-      <button
-        type="button"
-        onClick={() => {
-          onOpen()
-          onRequestExpand?.()
-        }}
-        aria-label="Chat"
-        title="Chat"
-        data-ristak-sidebar-nav-item
-        data-active={isChatGroupRoute ? 'true' : undefined}
-        className={cn(getNavLinkClasses(isChatGroupRoute, 'w-full', true))}
-      >
-        <MessageCircle className="h-5 w-5 flex-shrink-0" />
-        <span className="sr-only">Chat</span>
-      </button>
-    )
-  }
-
-  return (
-    <div>
-      <Link
-        to="/chat"
-        onClick={() => {
-          onOpen()
-          onNavigate?.()
-        }}
-        aria-expanded={open}
-        data-ristak-sidebar-nav-item
-        data-active={(isChatRoute || (isAIAgentRoute && !open)) ? 'true' : undefined}
-        className={cn(getNavLinkClasses(isChatRoute || (isAIAgentRoute && !open), 'w-full'))}
-      >
-        <MessageCircle className="h-5 w-5 flex-shrink-0" />
-        <span className="flex-1 text-left">Chat</span>
-        <ChevronDown
-          className={cn(
-            'h-4 w-4 flex-shrink-0 text-[var(--text-mute)] transition-transform',
-            open && 'rotate-180'
-          )}
-        />
-      </Link>
-
-      {open && (
-        <div className="ml-[1.55rem] mt-1 space-y-0.5 border-l border-[var(--border)] pl-2.5">
-          {items.map((child) => {
-            const childActive = child.exact ? pathname === child.to : pathname.startsWith(child.to)
-            return (
-              <Link
-                key={child.to}
-                to={child.to}
-                onClick={onNavigate}
-                data-ristak-sidebar-nav-item
-                data-ristak-sidebar-subnav-item
-                data-active={childActive ? 'true' : undefined}
-                className={getNavChildLinkClasses(childActive)}
-              >
-                {child.label}
-              </Link>
-            )
-          })}
-        </div>
-      )}
-    </div>
   )
 }
 
@@ -724,19 +637,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [activeId, setActiveId] = useState<string | null>(null)
   const [isEditMode, setIsEditMode] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
-  const isChatRoute = location.pathname === '/chat' || location.pathname.startsWith('/chat/')
-  const isAIAgentRoute = location.pathname.startsWith('/ai-agent')
-  const isChatGroupRoute = isChatRoute || isAIAgentRoute
   const isPaymentsRoute = location.pathname.startsWith('/transactions')
-  const [chatOpen, setChatOpen] = useState(isChatGroupRoute)
   const [paymentsOpen, setPaymentsOpen] = useState(isPaymentsRoute)
   const mdpProgramMenuLabel = user?.licenseExternalModules?.mdp_program?.menuLabel || 'Magnetismo'
 
   // Sincronizar el estado de los grupos con la ruta actual
-  useEffect(() => {
-    setChatOpen(isChatGroupRoute)
-  }, [isChatGroupRoute])
-
   useEffect(() => {
     setPaymentsOpen(isPaymentsRoute)
   }, [isPaymentsRoute])
@@ -755,19 +660,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const accountMenuLabel = user?.businessName || user?.email || user?.name || user?.username || 'Usuario'
   const initials = getInitials(accountMenuLabel, user?.email)
-  const canUseAIAgent = hasModuleAccess(user, 'ai_agent', 'read')
-  const visibleAIAgentNavigation = useMemo(
-    () => AI_AGENT_NAV_ITEMS.filter((item) => hasLicenseFeature(user, item.featureKeys)),
-    [user]
-  )
-  const visibleChatAIAgentNavigation = useMemo<SidebarNavChild[]>(
-    () => visibleAIAgentNavigation.map((item) => ({
-      to: item.to,
-      label: item.to === '/ai-agent/general' ? 'Ristak AI' : item.label,
-      exact: item.exact
-    })),
-    [visibleAIAgentNavigation]
-  )
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -1136,18 +1028,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               const isActive = location.pathname.startsWith(item.href)
               const nextItem = navigation[index + 1]
               return (
-                item.id === 'chat' && canUseAIAgent && visibleChatAIAgentNavigation.length > 0 ? (
-                  <ChatNavGroup
-                    key={item.id}
-                    pathname={location.pathname}
-                    open={chatOpen}
-                    items={visibleChatAIAgentNavigation}
-                    collapsed={collapsed}
-                    onOpen={() => setChatOpen(true)}
-                    onRequestExpand={handleRequestExpand}
-                    onNavigate={handleNavigate}
-                  />
-                ) : item.id === 'transactions' ? (
+                item.id === 'transactions' ? (
                   <PaymentsNavGroup
                     key={item.id}
                     pathname={location.pathname}

@@ -159,9 +159,9 @@ export const Settings: React.FC = () => {
               <Route path="variable-fields/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><VariableFields /></SettingsAccessGate>} />
               <Route path="trigger-links/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TriggerLinks /></SettingsAccessGate>} />
               <Route path="tags" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TagsSettings /></SettingsAccessGate>} />
-              <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
+              <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent" replace /></SettingsAccessGate>} />
               <Route path="ai-agent/conversational" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/conversational" replace /></SettingsAccessGate>} />
-              <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent/general" replace /></SettingsAccessGate>} />
+              <Route path="ai-agent/*" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/ai-agent" replace /></SettingsAccessGate>} />
               <Route path="developers" element={<SettingsAccessGate moduleKey="settings_api_access"><APIAccessSettings /></SettingsAccessGate>} />
               <Route path="api-access" element={<SettingsAccessGate moduleKey="settings_api_access"><Navigate to="../developers" replace /></SettingsAccessGate>} />
               <Route path="notifications" element={<SettingsAccessGate moduleKey="settings_account"><NotificationSettings /></SettingsAccessGate>} />

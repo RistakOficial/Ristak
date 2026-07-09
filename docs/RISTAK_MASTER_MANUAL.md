@@ -205,7 +205,8 @@ Shell desktop protegido:
 - `/analytics`
 - `/sites`
 - `/automations`
-- `/ai-agent`
+- `/ai-agent`: pestaña principal `Chatbot`, con secciones internas para Chatbot
+  conversacional y configuracion general de Ristak AI.
 - `/mdp-program`
 - `/settings`
 
@@ -236,8 +237,10 @@ Hay tres capas distintas:
 3. Permisos de usuario: `requireModuleAccess(moduleKey)` valida lectura/escritura
    por modulo.
 
-El modulo `ai_agent` puede dividirse por feature de licencia: `app_assistant_ai`
-habilita Ristak AI general y `conversational_ai` habilita el Agente conversacional.
+El modulo `ai_agent` aparece como la pestaña principal `Chatbot` en el menu
+lateral. Puede dividirse por feature de licencia: `conversational_ai` habilita
+la seccion Chatbot y `app_assistant_ai` habilita la configuracion general de
+Ristak AI.
 El plan basico puede abrir solo `conversational_ai` y limitar la creacion a
 `limits.conversational_agents.max_agents=1`.
 
@@ -425,7 +428,7 @@ sincronizacion de conversaciones, read states, presencia y eventos.
 La bandeja desktop de Chat (`/chat` y subrutas) es una superficie de trabajo
 propia y no debe montar el globo global del Asistente Personal AI, para no tapar
 el historial, composer ni acciones rapidas del chat. El asistente interno sigue
-disponible desde las rutas dedicadas de Ristak AI en el menu lateral.
+disponible desde la pestaña principal `Chatbot`, seccion Ristak AI.
 
 En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
 drag and drop de archivos. Mientras el usuario arrastra archivos sobre el area de
@@ -2116,49 +2119,57 @@ Documento operativo: `docs/MEDIA_STORAGE_BUNNY.md`.
 
 ## IA
 
-Ristak tiene dos superficies principales:
+Ristak expone una superficie principal de IA en el menu lateral: `Chatbot`
+(`/ai-agent`). Dentro de esa pagina viven dos secciones segun licencia:
 
-- `ai-agent`: asistente interno de operacion, busqueda, analisis y acciones con
-  ledger de ejecucion.
-- `conversational-agent`: agentes que interactuan con contactos y objetivos.
-  El formulario manual agrupa la configuracion en cinco bloques: personalidad e
-  instrucciones, operacion tecnica del chat, objetivo y cierre, reglas de
-  atencion, y entrada/salida. El wizard de nuevo asistente cubre las decisiones
-  principales de esos bloques: proveedor/modelo de IA, identidad, persuasion,
-  lenguaje, personalizacion y capacitacion del asistente (`extraInstructions`),
-  tiempos de respuesta, mensajes en partes, notificaciones mientras el agente
-  atiende, objetivo, quien cumple la meta, cierre posterior cuando lo cumple la
-  IA o un enlace, datos requeridos, reglas de pase a equipo y alcance de
-  contactos. El alcance "solo contactos nuevos desde hoy" sella el instante
-  exacto en que se crea o cambia el asistente a ese alcance; desde ese momento
-  en adelante puede tomar contactos nuevos, pero no toma contactos que ya
-  existian antes de ese corte. Cuando el proveedor es OpenAI, el modelo default
-  del sistema es `gpt-5.4-mini` (mostrado en UI como GPT-5.4 Mini); las
-  conexiones nuevas de OpenAI y los agentes sin modelo explicito deben caer en
-  ese default.
-  La prueba del asistente debe usar la misma configuracion efectiva que usara el
-  runtime real: en el wizard, un borrador nuevo parte de los defaults de creacion
-  y no puede heredar campos del primer agente existente; en el editor de un
-  agente guardado, antes de probar se guarda el borrador pendiente, se manda el
-  `agentId` y el backend resuelve el agente por ese ID aplicando el borrador
-  encima. La prueba no debe pasar por un agente distinto ni por un autosave
-  pendiente. La prueba del editor ignora la espera inicial de respuesta
-  configurada en "cuanto debe esperar antes de contestar" y devuelve
-  `responseDelayMs: 0` para que el tester responda inmediato; el chat real
-  publicado si conserva esa espera antes de contestar.
-  Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
-  el formulario manual avanzado. `extraInstructions` es la superficie editable de
-  personalizacion del asistente: reglas del negocio, limites, datos que debe
-  pedir, casos especificos y comportamiento que siempre debe respetar, salvo los
-  limites de seguridad e integridad. El prompt avanzado de fabrica vive interno:
-  no se muestra, no se edita desde la UI y las APIs de configuracion ignoran
-  intentos de guardar `closingStrategyCustom`. Los datos estrictamente necesarios
-  para avanzar deben vivir en `requiredData`. Si `extraInstructions` condiciona
-  precio/valor/costo/cotizacion (por ejemplo,
-  "no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
-  explicito: una pregunta directa por precio no desbloquea montos, rangos,
-  descuentos, promociones ni links de pago hasta cumplir esa condicion; el agente
-  debe pedir el contexto faltante de uno en uno y despues usar precios reales.
+- `Chatbot` (`/ai-agent/conversational`): agentes que interactuan con contactos
+  y objetivos.
+- `Ristak AI` (`/ai-agent/general`): configuracion del asistente interno de
+  operacion, busqueda, analisis y acciones con ledger de ejecucion.
+
+La API conserva endpoints separados:
+
+- `/api/ai-agent`: asistente interno.
+- `/api/conversational-agent`: agentes conversacionales.
+
+En la seccion Chatbot, el formulario manual agrupa la configuracion en cinco
+bloques: personalidad e instrucciones, operacion tecnica del chat, objetivo y
+cierre, reglas de atencion, y entrada/salida. El wizard de nuevo asistente cubre
+las decisiones principales de esos bloques: proveedor/modelo de IA, identidad,
+persuasion, lenguaje, personalizacion y capacitacion del asistente
+(`extraInstructions`), tiempos de respuesta, mensajes en partes, notificaciones
+mientras el agente atiende, objetivo, quien cumple la meta, cierre posterior
+cuando lo cumple la IA o un enlace, datos requeridos, reglas de pase a equipo y
+alcance de contactos. El alcance "solo contactos nuevos desde hoy" sella el
+instante exacto en que se crea o cambia el asistente a ese alcance; desde ese
+momento en adelante puede tomar contactos nuevos, pero no toma contactos que ya
+existian antes de ese corte. Cuando el proveedor es OpenAI, el modelo default
+del sistema es `gpt-5.4-mini` (mostrado en UI como GPT-5.4 Mini); las conexiones
+nuevas de OpenAI y los agentes sin modelo explicito deben caer en ese default.
+La prueba del asistente debe usar la misma configuracion efectiva que usara el
+runtime real: en el wizard, un borrador nuevo parte de los defaults de creacion
+y no puede heredar campos del primer agente existente; en el editor de un agente
+guardado, antes de probar se guarda el borrador pendiente, se manda el `agentId`
+y el backend resuelve el agente por ese ID aplicando el borrador encima. La
+prueba no debe pasar por un agente distinto ni por un autosave pendiente. La
+prueba del editor ignora la espera inicial de respuesta configurada en "cuanto
+debe esperar antes de contestar" y devuelve `responseDelayMs: 0` para que el
+tester responda inmediato; el chat real publicado si conserva esa espera antes
+de contestar.
+
+Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
+el formulario manual avanzado. `extraInstructions` es la superficie editable de
+personalizacion del asistente: reglas del negocio, limites, datos que debe
+pedir, casos especificos y comportamiento que siempre debe respetar, salvo los
+limites de seguridad e integridad. El prompt avanzado de fabrica vive interno:
+no se muestra, no se edita desde la UI y las APIs de configuracion ignoran
+intentos de guardar `closingStrategyCustom`. Los datos estrictamente necesarios
+para avanzar deben vivir en `requiredData`. Si `extraInstructions` condiciona
+precio/valor/costo/cotizacion (por ejemplo,
+"no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
+explicito: una pregunta directa por precio no desbloquea montos, rangos,
+descuentos, promociones ni links de pago hasta cumplir esa condicion; el agente
+debe pedir el contexto faltante de uno en uno y despues usar precios reales.
 
 Reglas:
 

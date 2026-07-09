@@ -116,8 +116,9 @@ const routeLabels: Record<string, string> = {
   '/contacts': 'Contactos',
   '/appointments': 'Citas',
   '/analytics': 'Analíticas',
-  '/ai-agent/conversational': 'Agente conversacional',
-  '/ai-agent': 'Ristak AI',
+  '/ai-agent/conversational': 'Chatbot',
+  '/ai-agent/general': 'Ristak AI',
+  '/ai-agent': 'Chatbot',
   '/settings': 'Configuración',
   '/sites': 'Sitios'
 }

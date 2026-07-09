@@ -1757,7 +1757,7 @@ export function ContactDetailsModal({
   const renderAgentCompletionCard = (completion: ConversationalAgentCompletionEvent) => (
     <article className={styles.contactChatAgentSummary} aria-label={`Resumen del agente: ${completion.title}`}>
       <span className={styles.contactChatAgentSummaryIcon} aria-hidden="true">
-        <AgentRobot size={34} active label="Agente conversacional" className={styles.contactChatAgentSummaryRobot} />
+        <AgentRobot size={34} active label="Chatbot" className={styles.contactChatAgentSummaryRobot} />
       </span>
       <span className={styles.contactChatAgentSummaryBody}>
         <span className={styles.contactChatAgentSummaryHeader}>
