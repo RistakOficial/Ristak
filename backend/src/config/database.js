@@ -6122,10 +6122,17 @@ async function initTables() {
     try {
       const currentFirstAdBackfillVersion = await getAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY).catch(() => '')
       if (currentFirstAdBackfillVersion !== WHATSAPP_API_FIRST_AD_BACKFILL_VERSION) {
-        await repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })
-        await setAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY, WHATSAPP_API_FIRST_AD_BACKFILL_VERSION)
+        logger.info('Reparación WhatsApp API histórica programada en segundo plano; el arranque no esperará a que termine.')
+        repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })
+          .then(async () => {
+            await setAppConfig(WHATSAPP_API_FIRST_AD_BACKFILL_CONFIG_KEY, WHATSAPP_API_FIRST_AD_BACKFILL_VERSION)
+            logger.success('✅ Reparación WhatsApp API histórica finalizada y marcada como aplicada')
+          })
+          .catch((err) => {
+            logger.warn('Advertencia al reparar nombres/fechas/primer anuncio de WhatsApp API en segundo plano:', err.message)
+          })
       } else {
-        await repairWhatsAppApiContactIdentityFromMessages()
+        logger.info('Reparación WhatsApp API histórica omitida: versión vigente ya aplicada.')
       }
     } catch (err) {
       logger.warn('Advertencia al reparar nombres/fechas/primer anuncio de WhatsApp API:', err.message)
