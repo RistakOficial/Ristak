@@ -1156,6 +1156,7 @@
 }
 
 .messageBubble {
+  --desktop-chat-message-text-size: var(--font-size-base);
   min-width: 0;
   max-width: 100%;
   padding: 10px 12px 8px;
@@ -1170,14 +1171,14 @@
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  font-size: var(--font-size-sm);
-  line-height: 1.45;
+  font-size: var(--desktop-chat-message-text-size);
+  line-height: 1.5;
 }
 
 .messageText {
   margin: 0;
-  font-size: var(--font-size-sm);
-  line-height: 1.45;
+  font-size: var(--desktop-chat-message-text-size);
+  line-height: 1.5;
 }
 
 .messageAdPreview {
