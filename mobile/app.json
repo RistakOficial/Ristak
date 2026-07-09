@@ -14,7 +14,7 @@
       "android"
     ],
     "android": {
-      "package": "com.ristak.native",
+      "package": "com.ristak.android",
       "icon": "./assets/ristak-light-mode-icon.png",
       "permissions": [
         "CAMERA",

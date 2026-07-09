@@ -9,8 +9,9 @@ reservada para React Native/Expo Android y no debe recibir scripts, APNs,
 entitlements, targets ni codigo nativo Apple.
 
 - Proyecto: `ios/app/Ristak.xcodeproj` (target único `Ristak`)
-- Bundle id: `com.ristak.ios` (los ids `com.ristak.app` y `com.ristak.native`
-  están reservados para la app de tienda Capacitor y la app React Native)
+- Bundle id: `com.ristak.ios` (los ids `com.ristak.app` y `com.ristak.android`
+  están reservados para la app de tienda Capacitor y la app React Native
+  Android)
 - Mínimo: iOS 26.0 · Xcode 26+ · Swift 5 mode · **cero dependencias externas**
 - Universal: iPhone (tab bar compacta) + iPad (sidebar adaptable, split views,
   popovers), vertical y horizontal, claro/oscuro, Dynamic Type.

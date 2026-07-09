@@ -7,7 +7,9 @@ Ristak tiene tres rutas moviles activas y no deben mezclarse:
 2. `mobile/`: cliente React Native/Expo para dispositivos Android y el camino
    futuro de Google/Play. No debe contener configuracion, scripts, entitlements,
    APNs, targets, extensiones ni codigo nativo Apple. Si alguien necesita correr
-   Apple, esa ruta no es `mobile/`.
+   Apple, esa ruta no es `mobile/`. Su paquete Android es `com.ristak.android`;
+   no uses `com.ristak.native` porque `native` es palabra reservada de Java y
+   rompe el build Android.
 3. `ios/app`: app nativa Apple en SwiftUI para iPhone y iPad. Esta es la unica
    carpeta propietaria de la experiencia nativa Apple.
 

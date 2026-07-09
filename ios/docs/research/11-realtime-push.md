@@ -554,8 +554,8 @@ Resultado del dispatcher: `{ sent, webSent, nativeSent, skipped, reason }` con
   (`production` default; `development`/`sandbox` → host sandbox).
 - **Implicación clave para la app nueva `ios/app`**: el `apns-topic` que usa el
   broker/backend debe coincidir con el bundle id de la app instalada. Hoy los
-  envíos van al topic `com.ristak.app` (tienda). La app RN de pruebas usa
-  `com.ristak.native` y el NSE reservado es `com.ristak.app.NotificationService`
+  envíos van al topic `com.ristak.app` (tienda). La app RN Android usa
+  `com.ristak.android` y el NSE reservado es `com.ristak.app.NotificationService`
   (`docs/MOBILE_APP.md:5-15`, parity checklist 44-57). **OPEN QUESTION:** qué
   bundle id usará la app SwiftUI final; si no es `com.ristak.app`, hay que
   actualizar `APNS_BUNDLE_ID`/config central o los push nunca llegarán.
@@ -856,8 +856,8 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
 3. **RESUELTO (estado actual) — OPEN QUESTION §12.5 (bundle id):** el proyecto nuevo
    `ios/app/Ristak.xcodeproj` define `PRODUCT_BUNDLE_IDENTIFIER = com.ristak.ios`
    (project.pbxproj:278,313), que NO coincide con el topic APNs por defecto
-   (`APNS_BUNDLE_ID` default `com.ristak.app`) ni con el RN de pruebas
-   (`com.ristak.native`). **Acción requerida antes de probar push:** actualizar
+  (`APNS_BUNDLE_ID` default `com.ristak.app`) ni con el RN Android
+  (`com.ristak.android`). **Acción requerida antes de probar push:** actualizar
    `APNS_BUNDLE_ID`/config del Installer central al bundle final (o cambiar el bundle a
    `com.ristak.app`); con el mismatch actual ningún push llegará. El NSE debería ser
    `com.ristak.ios.NotificationService` si se conserva `com.ristak.ios`.
