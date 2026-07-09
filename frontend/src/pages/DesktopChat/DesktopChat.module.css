@@ -861,26 +861,21 @@
 }
 
 .avatarChannelBadge {
-  right: -2px;
-  bottom: -2px;
-  width: 21px;
-  height: 21px;
-  overflow: hidden;
-  color: #ffffff;
-  box-shadow:
-    0 0 0 1px var(--chat-border),
-    0 4px 9px rgba(15, 23, 42, 0.18);
+  right: -4px;
+  bottom: -3px;
+  width: 24px;
+  height: 24px;
+  overflow: visible;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
   pointer-events: none;
 }
 
 .avatarChannelBadge::before {
-  position: absolute;
-  inset: 1px 1px auto 1px;
-  height: 42%;
-  border-radius: 999px 999px 40% 40%;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.34), transparent);
-  content: '';
-  pointer-events: none;
+  content: none;
 }
 
 .avatarChannelBadge svg {
@@ -892,66 +887,66 @@
   stroke-width: 2.45;
 }
 
-.avatarChannelBadgeBrandIcon {
-  width: 13px;
-  height: 13px;
+.avatarChannelBadgeAssetIcon {
+  width: 100%;
+  height: 100%;
   flex: 0 0 auto;
-  color: #ffffff;
-  fill: currentColor;
+  color: currentColor;
+  object-fit: contain;
 }
 
 .avatarSm .avatarChannelBadge {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
 }
 
 .avatarSm .avatarChannelBadge svg {
-  width: 12px;
-  height: 12px;
+  width: 100%;
+  height: 100%;
 }
 
 .avatarChannelBadgeWhatsapp {
-  background: linear-gradient(145deg, #25d366 0%, #128c7e 100%);
+  color: #25d366;
 }
 
 .avatarChannelBadgeWhatsapp svg,
 .avatarSm .avatarChannelBadgeWhatsapp svg {
-  width: 15px;
-  height: 15px;
+  width: 100%;
+  height: 100%;
 }
 
 .avatarChannelBadgeMessenger {
-  background: linear-gradient(145deg, #00b2ff 0%, #006aff 52%, #a033ff 100%);
+  color: #1877f2;
 }
 
 .avatarChannelBadgeInstagram {
-  background: radial-gradient(circle at 28% 105%, #feda75 0 19%, #fa7e1e 32%, #d62976 56%, #962fbf 78%, #4f5bd5 100%);
+  color: #d62976;
 }
 
 .avatarChannelBadgeEmail {
-  background: #ea4335;
+  color: #ea4335;
 }
 
 .avatarChannelBadgeSms {
-  background: #475569;
+  color: #475569;
 }
 
 .avatarChannelBadgeWebchat {
-  background: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .avatarChannelBadgeMeta {
-  background: #1877f2;
+  color: #1877f2;
 }
 
-/* Comentarios: glifo de la red social pero fondo SÓLIDO (no el gradiente de los
-   DMs), para leerse como comentario y no confundirse con un mensaje directo. */
+/* Comentarios: usan el asset de la red social; el color solo queda como fallback
+   si el asset no puede cargarse. */
 .avatarChannelBadgeFacebookComment {
-  background: #1877f2;
+  color: #1877f2;
 }
 
 .avatarChannelBadgeInstagramComment {
-  background: #d62976;
+  color: #d62976;
 }
 
 .avatarAgentBadge {

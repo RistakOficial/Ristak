@@ -191,6 +191,12 @@ header fusionadas dentro de una sola capsula compacta. El boton de canal puede
 colorear el glifo segun el canal, pero no debe volver a meterlo en un circulo
 solido.
 
+En listas y headers de chat, el avatar del contacto no lleva aro ni contorno por
+canal. El canal se identifica con un badge inferior derecho usando los assets
+WebP nativos de `mobile/assets/channel-badges/` y
+`ios/app/Ristak/Resources/channel-badges/`, sin disco, fondo, borde ni brillo
+extra alrededor.
+
 Los envios manuales desde la conversacion nativa deben tener un candado
 sincronico antes de cualquier validacion async del agente o del canal: un doble
 tap no puede crear dos requests API. Cuando el backend responde con

@@ -1,6 +1,11 @@
 import React from 'react'
 import { Mail, MessageCircle } from 'lucide-react'
 import { FaFacebook, FaFacebookMessenger, FaInstagram } from 'react-icons/fa'
+import facebookBadge from '@/assets/channel-badges/facebook.webp'
+import gmailBadge from '@/assets/channel-badges/gmail.webp'
+import instagramBadge from '@/assets/channel-badges/instagram.webp'
+import messengerBadge from '@/assets/channel-badges/messenger.webp'
+import whatsappBadge from '@/assets/channel-badges/whatsapp.webp'
 import { Icon } from '@/components/common'
 import { cn } from '@/utils/cn'
 import styles from './PhoneMessageChannelIcon.module.css'
@@ -13,11 +18,16 @@ export type PhoneMessageChannelIconKey =
   | 'email'
   | 'sms'
   | 'sms_qr'
+  | 'facebook'
   | 'facebook_comment'
   | 'instagram_comment'
+  | 'gmail'
+  | 'webchat'
+  | 'meta'
+  | 'unknown'
 
-type NormalizedPhoneMessageChannelIconKey = 'whatsapp' | 'messenger' | 'instagram' | 'email' | 'sms' | 'facebook_comment' | 'instagram_comment'
-type PhoneMessageChannelIconVariant = 'glyph' | 'disc'
+type NormalizedPhoneMessageChannelIconKey = 'whatsapp' | 'messenger' | 'instagram' | 'facebook' | 'email' | 'sms' | 'webchat' | 'meta' | 'unknown'
+type PhoneMessageChannelIconVariant = 'glyph' | 'disc' | 'asset'
 
 interface PhoneMessageChannelIconProps {
   channel: PhoneMessageChannelIconKey
@@ -30,7 +40,18 @@ interface PhoneMessageChannelIconProps {
 function normalizePhoneMessageChannelIconKey(channel: PhoneMessageChannelIconKey): NormalizedPhoneMessageChannelIconKey {
   if (channel === 'whatsapp_api') return 'whatsapp'
   if (channel === 'sms_qr') return 'sms'
+  if (channel === 'facebook_comment') return 'facebook'
+  if (channel === 'instagram_comment') return 'instagram'
+  if (channel === 'gmail') return 'email'
   return channel
+}
+
+const PHONE_MESSAGE_CHANNEL_ASSETS: Partial<Record<NormalizedPhoneMessageChannelIconKey, string>> = {
+  whatsapp: whatsappBadge,
+  messenger: messengerBadge,
+  instagram: instagramBadge,
+  facebook: facebookBadge,
+  email: gmailBadge,
 }
 
 function renderPhoneMessageChannelGlyph(channel: NormalizedPhoneMessageChannelIconKey, size: number, className?: string) {
@@ -48,12 +69,8 @@ function renderPhoneMessageChannelGlyph(channel: NormalizedPhoneMessageChannelIc
     return <FaInstagram size={size} className={glyphClassName} aria-hidden="true" />
   }
 
-  if (channel === 'facebook_comment') {
+  if (channel === 'facebook') {
     return <FaFacebook size={size} className={glyphClassName} aria-hidden="true" />
-  }
-
-  if (channel === 'instagram_comment') {
-    return <FaInstagram size={size} className={glyphClassName} aria-hidden="true" />
   }
 
   if (channel === 'email') {
@@ -71,6 +88,24 @@ export function PhoneMessageChannelIcon({
   iconClassName
 }: PhoneMessageChannelIconProps) {
   const normalizedChannel = normalizePhoneMessageChannelIconKey(channel)
+
+  if (variant === 'asset') {
+    const asset = PHONE_MESSAGE_CHANNEL_ASSETS[normalizedChannel]
+    if (asset) {
+      return (
+        <img
+          src={asset}
+          width={size}
+          height={size}
+          className={cn(styles.asset, className)}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+        />
+      )
+    }
+    return renderPhoneMessageChannelGlyph(normalizedChannel, size, cn(styles.assetFallback, className))
+  }
 
   if (variant === 'disc') {
     return (

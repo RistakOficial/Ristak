@@ -178,7 +178,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [x] Consumir `/api/contacts/chats`.
 - [x] Remover layout tipo card en filas.
 - [x] Agregar buscador y chips visibles.
-- [x] Agregar avatar con foto/inicial y badge de canal.
+- [x] Agregar avatar con foto/inicial sin aro de canal y badge inferior derecho
+  con asset nativo.
 - [x] Quitar elementos que no existen en `/movil`, como mostrar el correo de
   sesion debajo de `Chats`.
 - [x] Usar iconos equivalentes a `/movil` en acciones superiores, buscador,
@@ -245,8 +246,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 
 - [ ] Header de conversacion con avatar/canal/estado como `/movil`.
   - Avance: `mobile/` ya abre `NativeConversationScreen` desde la bandeja, usa
-    avatar/foto/inicial, aro/badge de canal, nombre del contacto, detalle
-    principal y acciones de agente, etiqueta y busqueda en el header. Falta
+    avatar/foto/inicial sin aro de canal, badge nativo, nombre del contacto,
+    detalle principal y acciones de agente, etiqueta y busqueda en el header. Falta
     replicar estado online/agente exacto y selector de numero/remitente de
     `/movil`.
 - [ ] Timeline con globos inbound/outbound, email desplegable, media, ubicacion,

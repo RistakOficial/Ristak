@@ -1021,7 +1021,6 @@
 }
 
 .avatar {
-  --avatar-ring-color: var(--phone-chat-accent);
   --avatar-fill: var(--phone-chat-avatar-fill);
   position: relative;
   display: inline-flex;
@@ -1039,34 +1038,27 @@
   font-weight: 850;
   line-height: 1;
   letter-spacing: 0;
-  box-shadow:
-    0 0 0 2px color-mix(in srgb, var(--avatar-ring-color) 70%, transparent),
-    0 8px 18px rgba(0, 86, 190, 0.14);
+  box-shadow: 0 8px 18px color-mix(in srgb, var(--phone-chat-accent) 14%, transparent);
   overflow: visible;
 }
 
 .avatarWhatsapp {
-  --avatar-ring-color: var(--phone-channel-whatsapp);
   --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatarMessenger {
-  --avatar-ring-color: var(--phone-channel-messenger);
   --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatarInstagram {
-  --avatar-ring-color: var(--phone-channel-instagram);
   --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatarEmail {
-  --avatar-ring-color: var(--phone-channel-email);
   --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
 .avatarSms {
-  --avatar-ring-color: var(--phone-channel-sms);
   --avatar-fill: var(--phone-chat-avatar-fill);
 }
 
@@ -1091,37 +1083,25 @@
 
 .avatarChannelBadge {
   position: absolute;
-  right: -2px;
-  bottom: -1px;
+  right: -4px;
+  bottom: -3px;
   z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border: 0;
-  border-radius: 999px;
-  color: #ffffff;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.42),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.2),
-    0 4px 9px rgba(15, 23, 42, 0.2),
-    0 1px 2px rgba(15, 23, 42, 0.18);
+  border-radius: 0;
+  color: var(--phone-chat-text);
+  background: transparent;
+  box-shadow: none;
   overflow: visible;
   pointer-events: none;
 }
 
 .avatarChannelBadge::before {
-  content: "";
-  position: absolute;
-  top: 2px;
-  right: 3px;
-  left: 3px;
-  height: 38%;
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
-  opacity: 0.72;
-  pointer-events: none;
+  content: none;
 }
 
 .avatarChannelBadge svg {
@@ -1133,27 +1113,28 @@
   /* Sin stroke-width: los glifos de marca (react-icons) traen stroke="currentColor"
      y un stroke-width aqui les pinta un contorno grueso encima del relleno
      (se ven anchos/pixelados). Cada icono usa su propio strokeWidth de atributo. */
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.2));
+  filter: none;
 }
 
 .chatItem > .avatar .avatarChannelBadge {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
 }
 
 .chatItem > .avatar .avatarChannelBadge svg {
-  width: 13px;
-  height: 13px;
+  width: 100%;
+  height: 100%;
 }
 
 .avatarChannelBadgeWhatsapp {
-  background: var(--phone-channel-whatsapp);
+  color: var(--phone-channel-whatsapp);
 }
 
 .avatarChannelBadge .channelIconGlyph {
-  width: 13px;
-  height: 13px;
+  width: 100%;
+  height: 100%;
   color: currentColor;
+  object-fit: contain;
   filter: none;
 }
 
@@ -1194,54 +1175,54 @@
 }
 
 .phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadge {
-  width: 19px;
-  height: 19px;
+  width: 22px;
+  height: 22px;
 }
 
 .phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadge svg {
-  width: 11px;
-  height: 11px;
+  width: 100%;
+  height: 100%;
 }
 
 .chatItem > .avatar .avatarChannelBadge .channelIconGlyph {
-  width: 14px;
-  height: 14px;
+  width: 100%;
+  height: 100%;
 }
 
 .phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadge .channelIconGlyph {
-  width: 12px;
-  height: 12px;
+  width: 100%;
+  height: 100%;
 }
 
 .phoneChatPage[data-phone-chat-device="phone"] .chatItem > .avatar .avatarChannelBadgeWhatsapp .channelIconGlyph {
-  width: 14px;
-  height: 14px;
+  width: 100%;
+  height: 100%;
 }
 
 .avatarChannelBadgeMessenger {
-  background: var(--phone-channel-messenger);
+  color: var(--phone-channel-messenger);
 }
 
 .avatarChannelBadgeInstagram {
-  background: var(--phone-channel-instagram);
+  color: var(--phone-channel-instagram);
 }
 
-/* Comentarios: glifo de la red social pero fondo SÓLIDO (no el de los DMs),
-   para no confundirse con un mensaje directo. */
+/* Comentarios: usan el asset de la red social; el color solo queda como fallback
+   si el asset no puede cargarse. */
 .avatarChannelBadgeFacebookComment {
-  background: #1877f2;
+  color: #1877f2;
 }
 
 .avatarChannelBadgeInstagramComment {
-  background: #d62976;
+  color: #d62976;
 }
 
 .avatarChannelBadgeEmail {
-  background: var(--phone-channel-email);
+  color: var(--phone-channel-email);
 }
 
 .avatarChannelBadgeSms {
-  background: var(--phone-channel-sms);
+  color: var(--phone-channel-sms);
 }
 
 .avatarAgentBadge {
@@ -1275,11 +1256,7 @@
 }
 
 :global(body[data-phone-chat-tone="dark"]) .avatarChannelBadge {
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.34),
-    inset 0 -2px 4px rgba(0, 0, 0, 0.26),
-    0 4px 11px rgba(0, 0, 0, 0.38),
-    0 1px 2px rgba(0, 0, 0, 0.3);
+  box-shadow: none;
 }
 
 .aiAgentAvatar {

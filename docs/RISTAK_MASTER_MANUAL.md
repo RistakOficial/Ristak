@@ -436,6 +436,12 @@ propia y no debe montar el globo global del Asistente Personal AI, para no tapar
 el historial, composer ni acciones rapidas del chat. El asistente interno sigue
 disponible desde la pestaña principal `Chatbot`, seccion Ristak AI.
 
+En `/chat` desktop y `/movil`, el avatar del contacto no debe llevar aro,
+contorno ni relleno coloreado por red social. La identidad del canal vive en el
+badge inferior derecho usando los mismos assets WebP de canal que `mobile/` e
+`ios/app` (`whatsapp`, `facebook`, `messenger`, `instagram`, `gmail`), pintados
+como iconos libres sin disco, borde, brillo ni contenedor circular extra.
+
 En `/chat` y en el chat movil bajo `/movil`, el historial de conversacion acepta
 drag and drop de archivos. Mientras el usuario arrastra archivos sobre el area de
 mensajes, la superficie se cubre con un overlay borroso con borde punteado y el
@@ -2228,13 +2234,13 @@ puede ser nativa distinta, pero el usuario no debe sentir que esta usando una ap
 diferente o recortada.
 
 La lista de chats nativa debe mantenerse alineada con `PhoneChat`: header de
-chats, buscador, chips de filtros, filas planas, avatares con aro/badge de canal,
-preview de ultimo mensaje, estados de no leido, fila/vista de archivados,
-swipe lateral `Mas` + `Archivar`/`Restaurar` y seleccion multiple por long
-press. Tambien debe usar sheets nativos para `Mas`, `+`/nuevo chat y selector de
-destinatarios despues de camara. Cuando cambien filtros, labels, canales,
-unread, archivados, seleccion, swipe, camara, sheets o preview en `/movil`, se
-debe revisar el equivalente en
+chats, buscador, chips de filtros, filas planas, avatares sin aro de canal y
+badge inferior derecho con asset nativo, preview de ultimo mensaje, estados de
+no leido, fila/vista de archivados, swipe lateral `Mas` + `Archivar`/`Restaurar`
+y seleccion multiple por long press. Tambien debe usar sheets nativos para
+`Mas`, `+`/nuevo chat y selector de destinatarios despues de camara. Cuando
+cambien filtros, labels, canales, unread, archivados, seleccion, swipe, camara,
+sheets o preview en `/movil`, se debe revisar el equivalente en
 `mobile/src/App.tsx` y documentar cualquier brecha temporal en
 `docs/MOBILE_APP.md`. En la conversacion nativa, si un agente conversacional
 esta activo, enviar un mensaje manual debe pedir primero que el usuario pause el

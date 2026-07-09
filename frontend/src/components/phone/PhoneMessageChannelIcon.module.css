@@ -4,6 +4,19 @@
   color: currentColor;
 }
 
+.asset {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: contain;
+  user-select: none;
+}
+
+.assetFallback {
+  display: block;
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
 .mark {
   --phone-message-channel-mark-size: 24px;
   --phone-message-channel-mark-glyph-size: 56%;

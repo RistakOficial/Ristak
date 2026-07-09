@@ -13928,7 +13928,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind) => {
-    return <PhoneMessageChannelIcon channel={kind} size={12} className={styles.channelIconGlyph} />
+    return <PhoneMessageChannelIcon channel={kind} variant="asset" size={22} className={styles.channelIconGlyph} />
   }
 
   const renderAvatar = (contact: Contact, options: { showChannelBadge?: boolean; showAgentBadge?: boolean } = {}) => {

@@ -74,6 +74,7 @@ import {
 } from '@/components/common'
 import { ContactJourney } from '@/components/common/ContactJourney'
 import { AgentRobot } from '@/components/ai'
+import { PhoneMessageChannelIcon } from '@/components/phone/PhoneMessageChannelIcon'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
@@ -7195,16 +7196,14 @@ export const DesktopChat: React.FC = () => {
   )
 
   const renderChannelBadgeIcon = (kind: ContactChannelBadgeKind, size: 'sm' | 'md') => {
-    const iconSize = size === 'sm' ? 13 : 14
-    if (kind === 'whatsapp') return <FaWhatsapp className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'messenger') return <FaFacebookMessenger className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'instagram') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'facebook_comment') return <FaFacebook className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'instagram_comment') return <FaInstagram className={styles.avatarChannelBadgeBrandIcon} aria-hidden="true" />
-    if (kind === 'email') return <Mail size={iconSize} />
-    if (kind === 'sms') return <Phone size={iconSize} />
-    if (kind === 'webchat') return <Icon name="globe" size={iconSize} />
-    return <Icon name="meta" size={iconSize} />
+    return (
+      <PhoneMessageChannelIcon
+        channel={kind}
+        variant="asset"
+        size={size === 'sm' ? 20 : 22}
+        className={styles.avatarChannelBadgeAssetIcon}
+      />
+    )
   }
 
   const renderAvatar = (
