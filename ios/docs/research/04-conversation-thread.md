@@ -573,9 +573,10 @@ body { contactId, platform: 'messenger'|'instagram', emoji,
 
 Ambas responden `{ success: true, data }` o `4xx { success:false, error }`.
 
-**Display de reacciones**: chips de emoji pegados al borde inferior del globo objetivo, máximo
-las **últimas 3** (`message.reactions.slice(-3)`), RN App.tsx:21310–21316, `/movil`
-PhoneChat.tsx:14575–14587.
+**Display de reacciones**: emoji suelto pegado al borde inferior del globo objetivo, sin
+fondo, borde, sombra ni pill/contenedor visible. Se muestran máximo las **últimas 3**
+(`message.reactions.slice(-3)`), RN App.tsx, `/movil` PhoneChat.tsx y SwiftUI
+MessageBubbleView.
 
 ---
 
@@ -639,7 +640,7 @@ RN `NativeMessageBubble` (App.tsx:21127–21322). Anatomía en orden vertical de
 
 1. Quote (si `replyTarget`), 2. attachment, 3. location, 4. contexto de comentario,
 5. email card, 6. texto formateado, 7. link preview, 8. flag "Destacado", 9. `routingReason`,
-10. fila meta (chip transporte + hora + palomitas), 11. chips de reacciones.
+10. fila meta (chip transporte + hora + palomitas), 11. emojis de reacciones.
 
 ### 7.1 Direcciones
 

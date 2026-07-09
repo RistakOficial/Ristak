@@ -488,13 +488,6 @@ struct MessageRowView: View, Equatable {
                         .font(.footnote)
                 }
             }
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(RistakTheme.surface)
-                    .overlay(Capsule().strokeBorder(RistakTheme.border, lineWidth: 0.5))
-            )
             .offset(x: isOutbound ? -8 : 8)
             .frame(maxWidth: .infinity, alignment: isOutbound ? .trailing : .leading)
         }

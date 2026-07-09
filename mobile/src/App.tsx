@@ -30601,15 +30601,11 @@ function createAppStyles() {
     bottom: -13,
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: 999,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    backgroundColor: COLORS.panel,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    gap: 2,
   },
   messageReaction: {
     fontSize: 13,
+    lineHeight: 16,
   },
   systemMessageRow: {
     alignItems: 'center',

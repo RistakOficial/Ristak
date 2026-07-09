@@ -541,7 +541,9 @@ la UI debe avisar al usuario y mandar un mensaje normal solo cuando cancele la
 respuesta seleccionada. El journey debe exponer `provider`, `provider_message_id`,
 `reply_to_provider_message_id`, `reaction_emoji` y
 `reaction_target_provider_message_id` para que las burbujas de `/chat` y
-`/movil` pinten el quote y peguen el emoji al globo correcto.
+`/movil` pinten el quote y peguen el emoji al globo correcto. Visualmente, las
+reacciones visibles en `/chat`, `/movil`, `mobile/` e iOS deben mostrarse como
+emoji suelto pegado al globo, sin fondo, borde, sombra ni pill/contenedor.
 
 Cuando el usuario abre o marca como leida una conversacion movil, el estado local
 se actualiza en `chat_read_states` y el backend debe encolar en background el
