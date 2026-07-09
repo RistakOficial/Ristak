@@ -75,7 +75,10 @@ Todos los bottom sheets nativos que usen `BottomActionSheet` deben poder cerrars
 arrastrando hacia abajo desde la zona superior del sheet (la manija y el header).
 Ese gesto debe seguir el dedo, rebotar si el arrastre es corto y cerrar con la
 misma animacion del sheet si el usuario baja lo suficiente o hace un flick hacia
-abajo. No implementes este comportamiento por sheet individual.
+abajo. No implementes este comportamiento por sheet individual. La familia de
+menus inferiores en `mobile/` debe ser una sola: filtros, acciones, selectores
+simples y sheets de informacion deben colgar de `BottomActionSheet`; no agregues
+modales `slide`/`fade` caseros para paneles que nacen desde abajo.
 
 Regla movil de movimiento: la navegacion entre pantallas nativas no debe
 aparecer/desaparecer en seco. Las secciones principales de `mobile/` usan una
