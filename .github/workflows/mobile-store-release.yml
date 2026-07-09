@@ -514,7 +514,7 @@ jobs:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON="$(jq -r '.credentials.google_play_service_account_json' "$CREDS")"
           test -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"
           printf '%s' "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/google-play-service-account.json"
-          gem install fastlane --no-document
+          sudo gem install fastlane --no-document
           RELEASE_STATUS="draft"
           if [ "$SUBMIT_FOR_REVIEW" = "true" ]; then
             RELEASE_STATUS="completed"
