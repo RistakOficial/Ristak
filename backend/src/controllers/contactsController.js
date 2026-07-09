@@ -5505,6 +5505,45 @@ export const getContactJourney = async (req, res) => {
 	      })
 	    })
 
+    const appointmentConfirmationTimestampExpression = 'COALESCE(w.processed_at, w.updated_at, w.created_at)'
+    const appointmentConfirmationCards = await db.all(
+      `SELECT
+         w.id,
+         w.appointment_id,
+         w.result_detail,
+         w.processed_at,
+         w.updated_at,
+         w.created_at,
+         a.title,
+         a.start_time,
+         a.end_time
+       FROM appointment_confirmation_windows w
+       LEFT JOIN appointments a ON a.id = w.appointment_id
+       WHERE w.contact_id = ?
+         AND w.status = 'done'
+         AND w.result = 'confirmed'
+         AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
+         ${optionalBeforeClause(appointmentConfirmationTimestampExpression, journeyMessageBefore)}
+       ORDER BY ${coalescedTimestampSortExpression('w.processed_at', 'w.updated_at', 'w.created_at')} ASC, w.id ASC`,
+      appendOptionalBeforeParam([id], journeyMessageBefore)
+    ).catch(() => [])
+
+    appointmentConfirmationCards.forEach(card => {
+      journey.push({
+        type: 'appointment_confirmation',
+        date: card.processed_at || card.updated_at || card.created_at,
+        data: {
+          id: card.id,
+          appointment_id: card.appointment_id,
+          title: card.title,
+          status: 'confirmed',
+          start_time: card.start_time,
+          end_time: card.end_time,
+          result_detail: card.result_detail
+        }
+      })
+    })
+
     if (chatMessagesOnly) {
       journey.sort((a, b) => parseSortableTimestamp(a.date) - parseSortableTimestamp(b.date))
       const limitedJourney = journeyMessageLimit ? journey.slice(-journeyMessageLimit) : journey
@@ -5603,43 +5642,6 @@ export const getContactJourney = async (req, res) => {
           end_time: appointment.end_time,
           address: appointment.address,
           notes: appointment.notes
-        }
-      })
-    })
-
-    const appointmentConfirmationCards = await db.all(
-      `SELECT
-         w.id,
-         w.appointment_id,
-         w.result_detail,
-         w.processed_at,
-         w.updated_at,
-         w.created_at,
-         a.title,
-         a.start_time,
-         a.end_time
-       FROM appointment_confirmation_windows w
-       LEFT JOIN appointments a ON a.id = w.appointment_id
-       WHERE w.contact_id = ?
-         AND w.status = 'done'
-         AND w.result = 'confirmed'
-         AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
-       ORDER BY ${coalescedTimestampSortExpression('w.processed_at', 'w.updated_at', 'w.created_at')} ASC, w.id ASC`,
-      [id]
-    ).catch(() => [])
-
-    appointmentConfirmationCards.forEach(card => {
-      journey.push({
-        type: 'appointment_confirmation',
-        date: card.processed_at || card.updated_at || card.created_at,
-        data: {
-          id: card.id,
-          appointment_id: card.appointment_id,
-          title: card.title,
-          status: 'confirmed',
-          start_time: card.start_time,
-          end_time: card.end_time,
-          result_detail: card.result_detail
         }
       })
     })

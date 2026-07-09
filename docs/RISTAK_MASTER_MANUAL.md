@@ -383,6 +383,13 @@ Capacidades:
   Los marcadores visuales de Messenger e Instagram deben diferenciar DM privado
   vs comentario con iconografia de plataforma y accion, no con el mismo glifo
   generico para todo.
+- El historial conversacional del modal de contacto no debe tratar el Viaje del
+  Cliente como si fuera chat completo. Para pintar burbujas usa
+  `/contacts/:id/journey` con `includeBusinessMessages=true` y
+  `chatMessagesOnly=true`, de modo que reciba solo mensajes reales de WhatsApp,
+  Meta social, email y tarjetas conversacionales como confirmaciones de cita por
+  IA. El journey completo sigue siendo la linea de actividad/atribucion del CRM
+  y puede incluir visitas, contacto creado, citas, pagos y compras.
 
 Los contactos alimentan reportes, automations, chat, pagos, citas y conversiones.
 
@@ -580,6 +587,12 @@ otro bloque anterior usando `beforeMessageDate`; no debe precargar el historial
 completo de todas las conversaciones de la bandeja. Al insertar mensajes antiguos
 arriba del hilo, la UI debe conservar la posicion visible del usuario y nunca
 forzar scroll al ultimo mensaje.
+
+El mismo contrato aplica al chat dentro del modal de contacto: aunque reutiliza
+el endpoint de journey por compatibilidad, siempre debe pedir `chatMessagesOnly`
+para no mezclar eventos de viaje, visitas, compras o contacto creado dentro del
+historial de WhatsApp/Meta/email. Las tarjetas `appointment_confirmation` con
+accion `chat_card` si pertenecen al hilo y se incluyen en ese modo.
 
 La recepcion rapida de mensajes de chat usa `/api/chat-events/stream` como
 camino principal en desktop (`/chat`), movil web (`/movil`), cliente nativo

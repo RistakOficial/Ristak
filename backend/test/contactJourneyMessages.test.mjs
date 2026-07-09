@@ -51,6 +51,8 @@ async function cleanup(contactId, phone, extraPhones = []) {
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
     await db.run('DELETE FROM contact_phone_numbers WHERE contact_id = ? OR phone = ?', [contactId, phoneValue]).catch(() => undefined)
   }
+  await db.run('DELETE FROM appointment_confirmation_windows WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM email_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM chat_read_states WHERE contact_id = ?', [contactId]).catch(() => undefined)
@@ -760,6 +762,88 @@ test('chat-only journey applies messageLimit globally and pages older messages w
       olderPage.map(event => event.data.message_text),
       ['Global 2', 'Global 3', 'Global 4', 'Global 5', 'Global 6']
     )
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('chat-only journey includes appointment confirmation cards without full contact journey events', async () => {
+  const id = randomUUID()
+  const contactId = `journey_chat_confirmation_${id}`
+  const appointmentId = `appointment_chat_confirmation_${id}`
+  const phone = `+52994${Date.now().toString().slice(-7)}`
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente con confirmacion',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2026-06-19T09:00:00.000Z',
+      updated_at: '2026-06-19T09:00:00.000Z'
+    })
+    await insertRow('appointments', {
+      id: appointmentId,
+      calendar_id: `calendar_chat_confirmation_${id}`,
+      contact_id: contactId,
+      title: 'Consulta inicial',
+      status: 'confirmed',
+      appointment_status: 'confirmed',
+      start_time: '2026-06-20T16:00:00.000Z',
+      end_time: '2026-06-20T17:00:00.000Z',
+      date_added: '2026-06-19T09:30:00.000Z',
+      date_updated: '2026-06-19T09:30:00.000Z'
+    })
+    await insertRow('whatsapp_api_messages', {
+      id: `api_chat_confirmation_${id}`,
+      contact_id: contactId,
+      phone,
+      from_phone: phone,
+      to_phone: '+526561000000',
+      business_phone: '+526561000000',
+      transport: 'api',
+      direction: 'inbound',
+      message_type: 'text',
+      message_text: 'Si confirmo mi cita',
+      message_timestamp: '2026-06-19T10:00:00.000Z',
+      created_at: '2026-06-19T10:00:00.000Z'
+    })
+    await insertRow('appointment_confirmation_windows', {
+      id: `window_chat_confirmation_${id}`,
+      contact_id: contactId,
+      appointment_id: appointmentId,
+      reminder_send_id: `send_chat_confirmation_${id}`,
+      status: 'done',
+      accumulated_messages: JSON.stringify(['Si confirmo mi cita']),
+      bypass_automations: 0,
+      confirmation_success_action: 'chat_card',
+      last_message_at: '2026-06-19T10:00:00.000Z',
+      result: 'confirmed',
+      result_detail: 'Confirmo asistencia',
+      processed_at: '2026-06-19T10:02:00.000Z',
+      created_at: '2026-06-19T10:01:00.000Z',
+      updated_at: '2026-06-19T10:02:00.000Z'
+    })
+
+    const journey = await readJourney(contactId, {
+      includeBusinessMessages: 'true',
+      chatMessagesOnly: 'true'
+    })
+
+    assert.deepEqual(journey.map(event => event.type), ['whatsapp_message', 'appointment_confirmation'])
+    assert.equal(journey[1].data.appointment_id, appointmentId)
+    assert.equal(journey[1].data.result_detail, 'Confirmo asistencia')
+
+    const olderJourney = await readJourney(contactId, {
+      includeBusinessMessages: 'true',
+      chatMessagesOnly: 'true',
+      beforeMessageDate: '2026-06-19T10:02:00.000Z'
+    })
+
+    assert.deepEqual(olderJourney.map(event => event.type), ['whatsapp_message'])
   } finally {
     await cleanup(contactId, phone)
   }
