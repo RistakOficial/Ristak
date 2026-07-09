@@ -208,7 +208,7 @@ export const AI_AGENT_NAV_ITEMS = [
   },
   {
     to: '/ai-agent/general',
-    label: 'Ristak AI',
+    label: 'Configuracion',
     exact: true,
     featureKeys: ['app_assistant_ai', 'ai']
   }

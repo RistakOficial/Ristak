@@ -205,15 +205,16 @@ Shell desktop protegido:
 - `/analytics`
 - `/sites`
 - `/automations`
-- `/ai-agent`: pestaña principal `Chatbot`, con secciones internas para Chatbot
-  conversacional y configuracion general de Ristak AI.
+- `/ai-agent`: pestaña principal `Chatbot`, con secciones internas `Chatbot` y
+  `Configuracion`.
 - `/mdp-program`
 - `/settings`
 
 Configuracion se organiza en:
 
 - Cuenta: cuenta, usuarios, notificaciones, privacidad, aplicacion movil.
-- Integraciones: HighLevel, Meta, WhatsApp, correos, pagos, calendarios.
+- Integraciones: HighLevel, Meta, WhatsApp, correos, Inteligencia Artificial,
+  pagos, calendarios.
 - Datos y rastreo: rastreo web, dominios, costos, media.
 - Personalizacion: campos, variables, trigger links, etiquetas.
 - Avanzado: Developers.
@@ -434,7 +435,8 @@ sincronizacion de conversaciones, read states, presencia y eventos.
 La bandeja desktop de Chat (`/chat` y subrutas) es una superficie de trabajo
 propia y no debe montar el globo global del Asistente Personal AI, para no tapar
 el historial, composer ni acciones rapidas del chat. El asistente interno sigue
-disponible desde la pestaña principal `Chatbot`, seccion Ristak AI.
+disponible desde la pestaña principal `Chatbot`, seccion `Configuracion`, y
+desde `Configuración > Inteligencia Artificial`.
 
 En `/chat` desktop y `/movil`, el avatar del contacto no debe llevar aro,
 contorno ni relleno coloreado por red social. La identidad del canal vive en el
@@ -2138,8 +2140,13 @@ Ristak expone una superficie principal de IA en el menu lateral: `Chatbot`
 
 - `Chatbot` (`/ai-agent/conversational`): agentes que interactuan con contactos
   y objetivos.
-- `Ristak AI` (`/ai-agent/general`): configuracion del asistente interno de
+- `Configuracion` (`/ai-agent/general`): configuracion del asistente interno de
   operacion, busqueda, analisis y acciones con ledger de ejecucion.
+
+La misma pantalla de configuracion general tambien esta disponible como proxy en
+`Configuración > Inteligencia Artificial` (`/settings/artificial-intelligence`),
+para que el usuario pueda ajustar token, modelo y contexto desde Configuracion o
+desde Chatbot sin duplicar estado ni rutas de backend.
 
 La API conserva endpoints separados:
 
