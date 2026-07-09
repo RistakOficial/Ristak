@@ -68,6 +68,15 @@ final class SessionStore {
 
         user = loadCachedUser()
         await APIClient.shared.configure(baseURL: storedBaseURL, token: storedToken)
+
+        // Precarga de la caché SWR a memoria ANTES de pintar el shell: cada
+        // pantalla lee su snapshot al instante (cero flash de vacío). Rápida
+        // (una lectura de directorio); namespaceada por cuenta.
+        RistakSnapshotCache.shared.configure(
+            namespace: RistakSnapshotCache.namespace(baseURL: storedBaseURL, userID: user?.id)
+        )
+        await RistakSnapshotCache.shared.preloadIntoMemory()
+
         phase = .active
 
         await verifySession(token: storedToken, timeout: Self.bootstrapVerifyTimeout)
@@ -159,6 +168,14 @@ final class SessionStore {
 
         baseURL = newBaseURL
         user = loggedUser
+
+        // Reapuntar la caché SWR a la cuenta recién autenticada y precargar lo
+        // que hubiera guardado de una sesión previa en esta misma cuenta.
+        RistakSnapshotCache.shared.configure(
+            namespace: RistakSnapshotCache.namespace(baseURL: newBaseURL, userID: loggedUser.id)
+        )
+        await RistakSnapshotCache.shared.preloadIntoMemory()
+
         licenseAlertAlreadyShown = false
         licenseBlockedAlertMessage = nil
         phase = .active
@@ -171,6 +188,9 @@ final class SessionStore {
     ///   del tenant); `false` = "Cerrar sesión" (conserva la empresa).
     func logout(switchApp: Bool = false) async {
         await pushUnregisterHandler?()
+        // Vaciar la caché SWR (memoria + disco del namespace) para que las
+        // cuentas nunca se mezclen. Solo en logout explícito, no en un 401.
+        RistakSnapshotCache.shared.reset()
         clearLocalSession(keepBaseURL: !switchApp)
     }
 

@@ -27,39 +27,65 @@ struct ChatsRootView: View {
     }
 
     var body: some View {
-        Group {
-            if !access.canRead(module: .chat) {
-                NavigationStack {
-                    RistakEmptyState(
-                        icon: "lock",
-                        title: "Sin acceso",
-                        message: "No tienes acceso a esta sección."
-                    )
-                    .navigationTitle("Chats")
-                }
-            } else if horizontalSizeClass == .regular {
-                splitLayout
-            } else {
-                stackLayout
+        // La cadena de modificadores se parte en dos propiedades para no reventar
+        // el type-checker de Swift (SwiftUI infiere un tipo anidado por cada
+        // `.onChange`; demasiados en una sola expresión lo tumban).
+        realtimeWiredLayout
+            .onChange(of: router.deepLinkVersion) {
+                consumeChatDeepLink()
             }
-        }
-        .task {
-            await bootstrap()
-        }
-        .onChange(of: scenePhase) { _, phase in
-            viewModel.setScenePaused(phase != .active)
-        }
-        .onChange(of: router.deepLinkVersion) {
-            consumeChatDeepLink()
-        }
-        .onChange(of: shell.pendingChatContactID) { _, contactID in
-            guard let contactID else { return }
-            shell.pendingChatContactID = nil
-            openConversation(contactID: contactID, resetStack: true)
-        }
-        .onChange(of: router.foregroundNudgeCount) {
-            // Push en foreground = nudge: refresh inmediato de la bandeja.
-            viewModel.requestSilentRefresh()
+            .onChange(of: shell.pendingChatContactID) { _, contactID in
+                guard let contactID else { return }
+                shell.pendingChatContactID = nil
+                openConversation(contactID: contactID, resetStack: true)
+            }
+            .onChange(of: router.foregroundNudgeCount) {
+                // Push en foreground = nudge: refresh inmediato de la bandeja.
+                viewModel.requestSilentRefresh()
+            }
+    }
+
+    /// `layout` + arranque + cableado de realtime (escena, cobertura por hilo,
+    /// clase de tamaño). Ver nota en `body` sobre por qué se divide la cadena.
+    private var realtimeWiredLayout: some View {
+        layout
+            .task {
+                await bootstrap()
+            }
+            .onChange(of: scenePhase) { _, phase in
+                viewModel.setScenePaused(phase != .active)
+            }
+            .onChange(of: path) { _, newPath in
+                // Compacto (iPhone): un hilo abierto TAPA la bandeja → suspende su
+                // realtime (evita SSE duplicado + re-bajar la bandeja detrás). En
+                // iPad (regular) el sidebar sigue visible: nunca se suspende.
+                guard horizontalSizeClass == .compact else { return }
+                viewModel.setCoveredByThread(!newPath.isEmpty)
+            }
+            .onChange(of: horizontalSizeClass) { _, newClass in
+                // Rotación/multitarea: al pasar a regular la bandeja vuelve a estar
+                // visible, así que se destapa aunque el stack siga con un hilo.
+                viewModel.setCoveredByThread(newClass == .compact && !path.isEmpty)
+            }
+    }
+
+    /// Contenido raíz según acceso y clase de tamaño. Extraído del `body` para no
+    /// reventar el type-checker de Swift al encadenarle todos los `.onChange`.
+    @ViewBuilder
+    private var layout: some View {
+        if !access.canRead(module: .chat) {
+            NavigationStack {
+                RistakEmptyState(
+                    icon: "lock",
+                    title: "Sin acceso",
+                    message: "No tienes acceso a esta sección."
+                )
+                .navigationTitle("Chats")
+            }
+        } else if horizontalSizeClass == .regular {
+            splitLayout
+        } else {
+            stackLayout
         }
     }
 

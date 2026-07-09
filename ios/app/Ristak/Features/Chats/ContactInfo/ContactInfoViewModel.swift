@@ -101,32 +101,50 @@ final class ContactInfoViewModel {
     private let contacts = ContactsService()
     private let tags = TagsService()
     private let agent = AgentStateService()
-    private let journey = JourneyService()
+
+    // MARK: Caché instantánea (Round 6 #4)
+
+    /// Tope de eventos del journey que se guardan en caché (los más recientes).
+    private static let maxJourneyCacheEvents = 200
+    private var contactCacheHydrated = false
+    private var journeyCacheHydrated = false
+    /// La carga (revalidación) inicial corre una sola vez por pantalla.
+    private var didStartLoad = false
 
     init(contactID: String) {
         self.contactID = contactID
+        // Caché instantánea: hidrata el detalle ANTES del primer render para
+        // abrir la ficha con el último dato sin flash de spinner. (El journey
+        // se hidrata en `loadJourneyIfNeeded`, que ya trae los formatters.)
+        hydrateContactFromCache()
     }
 
     // MARK: - Carga
 
     func loadIfNeeded() async {
-        guard contact == nil else { return }
+        // Se revalida SIEMPRE una vez por pantalla, aunque la caché instantánea
+        // ya haya pintado el detalle en `init` (si no, se quedaría en el dato
+        // cacheado sin refrescar contra la red).
+        guard !didStartLoad else { return }
+        didStartLoad = true
         await load()
     }
 
     func load() async {
-        phase = .loading
+        // Caché instantánea (Round 6 #4): abre la ficha con el último detalle
+        // guardado SIN spinner; el spinner solo aparece si no hay nada cacheado.
+        hydrateContactFromCache()
+        if contact == nil { phase = .loading }
         do {
-            let detail = try await contacts.fetchContact(
-                id: contactID,
-                warmProfilePictures: false,
-                refreshExternalAppointments: false
-            )
-            contact = detail
+            contact = try await fetchContactCaching(warmProfilePictures: false)
             phase = .loaded
         } catch {
-            applyLoadFailure(error)
-            return
+            // Con caché presente conservamos lo pintado (SWR); sin caché, error.
+            if contact == nil {
+                applyLoadFailure(error)
+                return
+            }
+            phase = .loaded
         }
 
         // Datos satélite en paralelo (silenciosos en carga, doc 13 §6).
@@ -156,11 +174,7 @@ final class ContactInfoViewModel {
         isRefreshing = true
         defer { isRefreshing = false }
         do {
-            contact = try await contacts.fetchContact(
-                id: contactID,
-                warmProfilePictures: true,
-                refreshExternalAppointments: false
-            )
+            contact = try await fetchContactCaching(warmProfilePictures: true)
             phase = .loaded
         } catch {
             // Silencioso: se conserva lo ya pintado. Si no había nada, cae al
@@ -169,6 +183,36 @@ final class ContactInfoViewModel {
                 applyLoadFailure(error)
             }
         }
+    }
+
+    /// `GET /contacts/:id` crudo: decodifica el detalle con la misma regla de
+    /// envelope que la tubería viva y GUARDA el `Data` crudo en la caché
+    /// instantánea (para abrir la ficha al instante la próxima vez). Evita
+    /// conformar `Encodable` en el modelo de Core.
+    private func fetchContactCaching(warmProfilePictures: Bool) async throws -> ContactDetail {
+        let data = try await APIClient.shared.rawData(
+            "/contacts/\(contactID)",
+            query: [
+                "warmProfilePictures": warmProfilePictures ? nil : "false",
+                "refreshExternalAppointments": "false",
+            ]
+        )
+        guard let detail = ChatSnapshotDecoding.decode(ContactDetail.self, from: data) else {
+            throw RistakAPIError.invalidResponse
+        }
+        RistakSnapshotCache.shared.storeRaw(data, for: ChatSnapshotKey.contactDetail(contactID))
+        return detail
+    }
+
+    /// Hidrata el detalle desde la caché instantánea (una sola vez).
+    private func hydrateContactFromCache() {
+        guard !contactCacheHydrated else { return }
+        contactCacheHydrated = true
+        guard contact == nil,
+              let data = RistakSnapshotCache.shared.rawData(for: ChatSnapshotKey.contactDetail(contactID)),
+              let cached = ChatSnapshotDecoding.decode(ContactDetail.self, from: data) else { return }
+        contact = cached
+        phase = .loaded
     }
 
     private func applyLoadFailure(_ error: Error) {
@@ -222,9 +266,23 @@ final class ContactInfoViewModel {
             if journeyPhase == .loaded { rebuildJourney(formatters: formatters) }
             return
         }
-        journeyPhase = .loading
+        // Caché instantánea (Round 6 #4): construye los hitos con los últimos
+        // eventos guardados antes de revalidar (sin quedarse en spinner si ya
+        // hay algo que pintar).
+        hydrateJourneyFromCache(formatters: formatters)
+        if journeyPhase != .loaded { journeyPhase = .loading }
         do {
-            let events = try await journey.fetchFullJourney(contactId: contactID)
+            let data = try await APIClient.shared.rawData(
+                "/contacts/\(contactID)/journey",
+                query: [
+                    "includeBusinessMessages": "true",
+                    "refreshExternalStatuses": "false",
+                ]
+            )
+            guard let events = ChatSnapshotDecoding.decode([JourneyEvent].self, from: data) else {
+                throw RistakAPIError.invalidResponse
+            }
+            persistJourneyCache(from: data)
             // La construcción de los hitos (merge por día/canal) y del archivo
             // (reconstruir mensajes + parsear adjuntos/enlaces) es CPU-intensiva
             // y corría en el main actor: eso bloqueaba el primer render de la
@@ -242,8 +300,39 @@ final class ContactInfoViewModel {
             archiveItems = built.archive
             journeyPhase = .loaded
         } catch {
-            journeyPhase = Self.isCancellation(error) ? .idle : .failed
+            // SWR: con eventos ya pintados (caché o carga previa) nunca lo
+            // dejamos en blanco/falla; solo caemos a .failed/.idle sin datos.
+            if Self.isCancellation(error) {
+                journeyPhase = journeyEvents.isEmpty ? .idle : .loaded
+            } else {
+                journeyPhase = journeyEvents.isEmpty ? .failed : .loaded
+            }
         }
+    }
+
+    /// Hidrata el journey desde la caché instantánea (una sola vez). Construye
+    /// los hitos síncronos desde ≤`maxJourneyCacheEvents` eventos (barato).
+    private func hydrateJourneyFromCache(formatters: BusinessFormatters) {
+        guard !journeyCacheHydrated else { return }
+        journeyCacheHydrated = true
+        guard journeyEvents.isEmpty,
+              let data = RistakSnapshotCache.shared.rawData(for: ChatSnapshotKey.contactJourney(contactID)),
+              let events = ChatSnapshotDecoding.decode([JourneyEvent].self, from: data),
+              !events.isEmpty else { return }
+        journeyEvents = events
+        journeyItems = ContactJourneyBuilder(formatters: formatters).items(from: events)
+        archiveItems = ContactArchiveBuilder.items(contactID: contactID, events: events)
+        journeyPhase = .loaded
+    }
+
+    /// Guarda los últimos N eventos del journey (recorta el array crudo como
+    /// `[RistakJSONValue]` para no inflar el disco). Se re-decodifica idéntico
+    /// a `[JourneyEvent]` al hidratar.
+    private func persistJourneyCache(from data: Data) {
+        guard let jsonArray = ChatSnapshotDecoding.decode([RistakJSONValue].self, from: data) else { return }
+        let capped = Array(jsonArray.suffix(Self.maxJourneyCacheEvents))
+        guard let cappedData = try? JSONEncoder().encode(capped) else { return }
+        RistakSnapshotCache.shared.storeRaw(cappedData, for: ChatSnapshotKey.contactJourney(contactID))
     }
 
     /// Reintento manual del journey (botón del panel).
@@ -618,7 +707,7 @@ final class ContactInfoViewModel {
     }
 
     private func reloadContactQuietly() async {
-        if let fresh = try? await contacts.fetchContact(id: contactID, warmProfilePictures: false) {
+        if let fresh = try? await fetchContactCaching(warmProfilePictures: false) {
             contact = fresh
         }
     }

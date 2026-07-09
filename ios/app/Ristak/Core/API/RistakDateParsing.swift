@@ -33,18 +33,37 @@ enum RistakDateParsing {
         return formatter
     }()
 
+    /// Caché de parseos (string → Date). Un timestamp del backend siempre mapea a
+    /// la MISMA fecha, así que memoizar es seguro y determinístico. Evita reprobar
+    /// hasta 4 formatters de Foundation por llamada: `ChatMessage.parsedDate` se
+    /// invoca miles de veces por poll al ordenar hilos largos. `NSCache` está
+    /// sincronizado internamente (thread-safe) y se auto-purga bajo presión.
+    nonisolated(unsafe) private static let parseCache: NSCache<NSString, NSDate> = {
+        let cache = NSCache<NSString, NSDate>()
+        cache.countLimit = 4000
+        return cache
+    }()
+
     /// Intenta parsear cualquiera de los formatos de fecha string del backend.
     static func date(fromISO value: String?) -> Date? {
         guard let value else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        if let date = isoWithFractional.date(from: trimmed) { return date }
-        if let date = iso.date(from: trimmed) { return date }
-        if let date = sqlite.date(from: trimmed) { return date }
-        if let date = dateOnly.date(from: trimmed) { return date }
+
+        let key = trimmed as NSString
+        if let cached = parseCache.object(forKey: key) { return cached as Date }
+
+        let parsed: Date?
+        if let date = isoWithFractional.date(from: trimmed) { parsed = date }
+        else if let date = iso.date(from: trimmed) { parsed = date }
+        else if let date = sqlite.date(from: trimmed) { parsed = date }
+        else if let date = dateOnly.date(from: trimmed) { parsed = date }
         // Último recurso: número serializado como string (epoch).
-        if let epoch = Double(trimmed) { return date(fromEpoch: epoch) }
-        return nil
+        else if let epoch = Double(trimmed) { parsed = date(fromEpoch: epoch) }
+        else { parsed = nil }
+
+        if let parsed { parseCache.setObject(parsed as NSDate, forKey: key) }
+        return parsed
     }
 
     /// Epoch tolerante: valores grandes (>1e11) se interpretan como milisegundos,

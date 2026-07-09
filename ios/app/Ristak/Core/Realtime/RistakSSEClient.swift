@@ -77,6 +77,20 @@ actor RistakSSEStreamEngine {
     private static let initialReconnectDelay: TimeInterval = 1
     private static let maxReconnectDelay: TimeInterval = 15
 
+    /// `URLSession` COMPARTIDO entre todos los engines. Antes cada engine creaba
+    /// el suyo y `stop()` solo cancelaba la tarea (nunca `invalidate`), así que
+    /// abrir muchos chats iba dejando `URLSession` sin liberar (fuga lenta). No se
+    /// puede invalidar en `stop()` porque el mismo engine hace start/stop en cada
+    /// cambio de escena; compartir uno estable elimina la fuga sin romper el
+    /// reinicio. Sin delegate → seguro de compartir.
+    private nonisolated static let sharedSession: URLSession = {
+        let configuration = URLSessionConfiguration.default
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 60
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }()
+
     private let path: String
     private let session: URLSession
     private var activeTask: Task<Void, Never>?
@@ -84,11 +98,7 @@ actor RistakSSEStreamEngine {
 
     init(path: String) {
         self.path = path
-        let configuration = URLSessionConfiguration.default
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 60
-        configuration.waitsForConnectivity = false
-        session = URLSession(configuration: configuration)
+        session = Self.sharedSession
     }
 
     /// Arranca (o reinicia) la conexión y devuelve el stream de frames.

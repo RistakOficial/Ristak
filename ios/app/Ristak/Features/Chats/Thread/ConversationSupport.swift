@@ -381,6 +381,32 @@ enum WhatsAppTextFormatter {
         return result
     }
 
+    private final class AttributedBox {
+        let value: AttributedString
+        init(_ value: AttributedString) { self.value = value }
+    }
+
+    /// Caché del texto formateado con la fuente por defecto (`.body`), usada por
+    /// las burbujas del hilo. El mismo texto SIEMPRE produce el mismo
+    /// `AttributedString`, así que memoizarlo evita re-parsear carácter por
+    /// carácter en cada render de fila (poll, tick, scroll). `NSCache` acotada y
+    /// thread-safe. Se cachea `AttributedString` directo (conserva los `Font` de
+    /// SwiftUI; un puente a `NSAttributedString` perdería negrita/itálica/mono).
+    nonisolated(unsafe) private static let bodyCache: NSCache<NSString, AttributedBox> = {
+        let cache = NSCache<NSString, AttributedBox>()
+        cache.countLimit = 2000
+        return cache
+    }()
+
+    /// Variante memoizada para el cuerpo de las burbujas (baseFont `.body`).
+    static func attributedBody(_ text: String) -> AttributedString {
+        let key = text as NSString
+        if let cached = bodyCache.object(forKey: key) { return cached.value }
+        let result = attributed(text, baseFont: .body)
+        bodyCache.setObject(AttributedBox(result), forKey: key)
+        return result
+    }
+
     private static func styledPiece(_ text: String, styles: Style, baseFont: Font) -> AttributedString {
         var piece = AttributedString(text)
         var font = baseFont

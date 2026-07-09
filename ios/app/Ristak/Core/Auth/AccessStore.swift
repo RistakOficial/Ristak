@@ -123,6 +123,25 @@ final class AccessStore {
 
     var user: RistakUser? { session.user }
 
+    /// Última instantánea CONOCIDA de capacidades del usuario (rol, `accessConfig`
+    /// y `licenseFeatures`). En el arranque en frío proviene del usuario cacheado
+    /// en Keychain (lo carga `SessionStore.bootstrap` ANTES de pintar el shell),
+    /// así los tabs/secciones/botones gateados se pintan con su último estado
+    /// conocido sin esperar al `verify`. Se revalida en cuanto llega el verify.
+    ///
+    /// Señales de capacidad ADICIONALES que no viven en el usuario (gateways de
+    /// pago, integraciones, features de plan) se cachean por los VMs de features
+    /// vía `RistakSnapshotCache.shared` con las llaves de `RistakCacheKey`
+    /// (`paymentsGateways`, `integrations`, …): guárdalas al cargar y léelas con
+    /// `value(_:for:)` al aparecer para no ocultar la función mientras carga.
+    var lastKnownCapabilitiesUser: RistakUser? { session.user }
+
+    /// Lee una señal de capacidad cacheada (p. ej. gateways de pago habilitados)
+    /// para pintar la función con su último estado conocido antes de revalidar.
+    func cachedCapability<T: Decodable>(_ type: T.Type, for key: String) -> T? {
+        RistakSnapshotCache.shared.value(type, for: key)
+    }
+
     /// ¿Puede leer el módulo? Con usuario aún no resuelto (nil) → permitir
     /// (fail-open de carga; el backend manda por request).
     func canRead(module: RistakModuleKey) -> Bool {

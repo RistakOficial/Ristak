@@ -143,7 +143,7 @@ struct SystemBubbleView: View {
 
 // MARK: - Fila de mensaje
 
-struct MessageRowView: View {
+struct MessageRowView: View, Equatable {
     let message: ChatMessage
     let formatters: BusinessFormatters
     let contactName: String
@@ -152,6 +152,20 @@ struct MessageRowView: View {
     /// Countdown en vivo para programados ("5m", "3h", "2d").
     let scheduledCountdown: String?
     let actions: MessageRowActions
+
+    /// Solo el mensaje y sus derivados visuales determinan el render; los closures
+    /// de `actions` se IGNORAN a propósito (capturan el viewModel estable y el
+    /// `@State` del quote, así que su comportamiento no cambia entre renders).
+    /// Con esto SwiftUI puede saltarse el `body` de una burbuja que no cambió
+    /// aunque el padre re-evalúe por un poll, un tick de 30s o un flip de scroll
+    /// — antes se re-ejecutaba el body de TODAS las burbujas visibles cada vez.
+    /// `scheduledCountdown` SÍ se compara: cambia por tick en los programados.
+    static func == (lhs: MessageRowView, rhs: MessageRowView) -> Bool {
+        lhs.message == rhs.message
+            && lhs.scheduledCountdown == rhs.scheduledCountdown
+            && lhs.contactName == rhs.contactName
+            && lhs.contactPhotoURL == rhs.contactPhotoURL
+    }
 
     @State private var dragOffset: CGFloat = 0
     /// True mientras el usuario arrastra la ruedita del scrubber de audio: bloquea
@@ -404,7 +418,7 @@ struct MessageRowView: View {
     private var textBlock: some View {
         // El globo NO repite el texto plano cuando hay emailDetails (doc 04 §7.6).
         if message.emailDetails == nil, !message.text.isEmpty {
-            Text(WhatsAppTextFormatter.attributed(message.text, baseFont: .body))
+            Text(WhatsAppTextFormatter.attributedBody(message.text))
                 .foregroundStyle(message.failed ? RistakTheme.neg : RistakTheme.bubbleTextInbound)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)

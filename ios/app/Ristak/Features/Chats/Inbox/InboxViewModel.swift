@@ -89,14 +89,22 @@ final class InboxViewModel {
     /// `startEventsStream`/`enqueueEventsStop`).
     private var realtimeControl: Task<Void, Never>?
     private var isScenePaused = false
+    /// La bandeja está tapada por un hilo abierto en pantalla compacta (iPhone).
+    /// Mientras lo esté, su realtime propio se suspende para no correr un SSE
+    /// duplicado del que ya abre el hilo ni re-bajar la bandeja entera detrás.
+    private var isCoveredByThread = false
 
-    // MARK: Búsqueda
+    // MARK: Búsqueda (instantánea local + servidor en paralelo)
 
     var searchText = ""
-    private(set) var activeQuery = ""
     private var searchDebounceTask: Task<Void, Never>?
+    /// Contactos hallados por `/contacts/search` que aún NO están en la bandeja
+    /// ya cargada (sección «Contactos encontrados»).
     private(set) var contactSuggestions: [ChatContact] = []
     private(set) var isSearchingContacts = false
+    /// La última búsqueda al servidor falló por red → aviso «Sin conexión»
+    /// (solo si además NO hubo coincidencias locales).
+    private(set) var searchServerUnavailable = false
 
     // MARK: Filtros
 
@@ -111,7 +119,12 @@ final class InboxViewModel {
     private(set) var openAIConfigured = false
     /// Visibilidad del chip Comentarios (flags Meta, doc 03 §6.11). Fail-open.
     private(set) var commentsFeatureEnabled = true
-    private(set) var tagsCatalog: [ContactTag] = []
+    private(set) var tagsCatalog: [ContactTag] = [] {
+        didSet { rebuildTagNameIndex() }
+    }
+    /// Índice id→nombre para que `tagName(for:)` sea O(1): antes hacía un scan
+    /// lineal del catálogo por cada etiqueta de cada fila visible, cada render.
+    @ObservationIgnored private var tagNameByID: [String: String] = [:]
     private var tagsLoaded = false
 
     // MARK: Selección múltiple
@@ -140,12 +153,14 @@ final class InboxViewModel {
         self.namespace = namespace
         localState.configure(namespace: namespace)
 
-        // Cache-first: pintar el snapshot guardado al instante.
-        let cached = ChatInboxDiskCache.load(namespace: namespace)
+        // Cache-first: pintar el snapshot guardado al instante (memoria del
+        // `RistakSnapshotCache`, ya precargado en el arranque → cero flash).
+        let cached = ChatInboxDiskCache.load()
         if !cached.isEmpty {
             rows = cached
             isShowingCachedData = true
             syncUnreadBadge()
+            prefetchAvatars(cached)
         }
     }
 
@@ -167,8 +182,20 @@ final class InboxViewModel {
     var phoneNumbers: [WhatsAppPhoneNumber] { whatsAppStatus?.phoneNumbers ?? [] }
     var phoneFilterEnabled: Bool { phoneNumbers.count > 1 }
 
+    @ObservationIgnored private var cachedPresetsRaw: String?
+    @ObservationIgnored private var cachedPresets: [ChatFilterPreset] = []
+    @ObservationIgnored private var hasCachedPresets = false
+
+    /// Presets parseados, memoizados por el JSON crudo. Antes se re-parseaba el
+    /// JSON en CADA `matchesActiveFilter`, o sea por fila visible por render.
     var customPresets: [ChatFilterPreset] {
-        ChatFilterPreset.parseList(fromJSON: appConfig?.customFilterPresetsRaw)
+        let raw = appConfig?.customFilterPresetsRaw
+        if !hasCachedPresets || cachedPresetsRaw != raw {
+            hasCachedPresets = true
+            cachedPresetsRaw = raw
+            cachedPresets = ChatFilterPreset.parseList(fromJSON: raw)
+        }
+        return cachedPresets
     }
 
     /// Chips visibles normalizados (config o defaults).
@@ -262,8 +289,10 @@ final class InboxViewModel {
 
     private func fetchPage(offset: Int) async throws -> [ChatContact] {
         let params = phoneQueryParams()
+        // La bandeja SIEMPRE trae la vista completa: la búsqueda es local
+        // (más `/contacts/search` en paralelo), nunca reemplaza estas filas.
         return try await chatsService.fetchChats(
-            query: activeQuery,
+            query: "",
             limit: ChatsService.defaultPageSize,
             offset: offset,
             businessPhoneNumberId: params.id,
@@ -271,16 +300,25 @@ final class InboxViewModel {
         )
     }
 
-    /// Clave de los parámetros vigentes de fetch (query + número).
+    /// Clave de los parámetros vigentes de fetch (solo el número; la búsqueda
+    /// ya no toca la bandeja).
     private var currentFetchKey: String {
-        let params = phoneQueryParams()
-        return "\(activeQuery)|\(params.id ?? "")"
+        phoneQueryParams().id ?? ""
     }
 
     /// Recarga completa (primera página) respetando query y filtro de número.
     private func reloadFromServer(showSpinner: Bool) async {
-        if showSpinner { isInitialLoading = true }
-        defer { isInitialLoading = false }
+        if showSpinner {
+            isInitialLoading = true
+        } else {
+            // Carga inicial con caché ya pintada: refresco en segundo plano; el
+            // spinner del título «Chats» lo refleja sin bloquear la vista.
+            isSilentRefreshing = true
+        }
+        defer {
+            isInitialLoading = false
+            isSilentRefreshing = false
+        }
 
         let fetchKey = currentFetchKey
         do {
@@ -290,7 +328,7 @@ final class InboxViewModel {
             guard fetchKey == currentFetchKey else { return }
             let isReplace = rows.isEmpty || isShowingCachedData || loadedFetchKey != fetchKey
             if isReplace {
-                rows = page
+                if rows != page { rows = page }
                 // Reemplazo total: el offset y hasMore se rebobinan a 1 página.
                 serverOffset = page.count
                 hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
@@ -299,16 +337,19 @@ final class InboxViewModel {
                 // Rehacer serverOffset/hasMore desde la primera página atascaría
                 // el scroll infinito (pediría offsets ya cargados) y reviviría
                 // fetches fantasma tras llegar al final (doc 03 §4.9).
-                rows = ChatInboxPaginator.mergeRefresh(rows, freshFirstPage: page)
+                // Solo reasigna (y re-renderiza la lista) si algo cambió: un poll
+                // de 12 s idéntico ya no fuerza un re-diff completo de la bandeja.
+                let merged = ChatInboxPaginator.mergeRefresh(rows, freshFirstPage: page)
+                if merged != rows { rows = merged }
                 serverOffset = max(serverOffset, page.count)
             }
             loadedFetchKey = fetchKey
-            loadErrorMessage = nil
-            isAccessDenied = false
-            isShowingCachedData = false
+            if loadErrorMessage != nil { loadErrorMessage = nil }
+            if isAccessDenied { isAccessDenied = false }
+            if isShowingCachedData { isShowingCachedData = false }
             persistCacheSnapshot()
             syncUnreadBadge()
-            await refreshContactSuggestionsIfNeeded()
+            prefetchAvatars(rows)
         } catch let error as RistakAPIError {
             isAccessDenied = error.isAccessDenied
             if rows.isEmpty {
@@ -323,11 +364,21 @@ final class InboxViewModel {
         }
     }
 
-    /// Scroll infinito: pedir la siguiente página al acercarse al final.
-    func loadMoreIfNeeded(currentRow contact: ChatContact) {
+    /// Pre-calienta la caché de imágenes con los avatares de las primeras filas,
+    /// para que aparezcan al instante en el primer scroll (no uno por uno). El
+    /// loader ya salta URLs cacheadas o en vuelo, así que llamar de más es inocuo.
+    private func prefetchAvatars(_ contacts: [ChatContact], limit: Int = 30) {
+        let urls = contacts.prefix(limit).compactMap { $0.profilePhotoUrl.flatMap(URL.init(string:)) }
+        guard !urls.isEmpty else { return }
+        Task { await RistakImageLoader.shared.prefetch(urls) }
+    }
+
+    /// Scroll infinito: dispara la siguiente página cuando el centinela del final
+    /// de la lista aparece (ver `InboxScreen`). Antes se llamaba desde el
+    /// `.onAppear` de CADA fila y hacía un `firstIndex` O(n) sobre `displayRows`
+    /// por aparición → coste ~O(n²) al hacer scroll. Ahora es O(1).
+    func loadMoreIfNeeded() {
         guard hasMore, !isLoadingMore else { return }
-        let threshold = max(0, displayRows.count - 8)
-        guard let index = displayRows.firstIndex(where: { $0.id == contact.id }), index >= threshold else { return }
         Task { await loadMore() }
     }
 
@@ -341,6 +392,7 @@ final class InboxViewModel {
             // Descartar lotes si una recarga movió los params mientras tanto.
             guard fetchKey == currentFetchKey, fetchKey == loadedFetchKey else { return }
             rows = ChatInboxPaginator.appendPage(rows, page: page)
+            prefetchAvatars(page)
             serverOffset += page.count
             hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
             syncUnreadBadge()
@@ -435,44 +487,122 @@ final class InboxViewModel {
         pollingClock.setPaused(paused)
         if paused {
             enqueueEventsStop()
-        } else if configured {
+        } else if configured && !isCoveredByThread {
             startEventsStream()
+            // El refresh de reconciliación al volver a foreground ya lo dispara
+            // `pollingClock.setPaused(false)`, que re-ejecuta el ticker "inbox"
+            // una vez. Llamar aquí de nuevo provocaba DOS recargas back-to-back.
+        }
+    }
+
+    /// El hilo abierto tapa la bandeja (solo compacto/iPhone): suspende su
+    /// realtime propio. En iPad (regular) el sidebar sigue visible, así que NUNCA
+    /// se llama con `true` — la bandeja debe mantenerse viva junto al detalle.
+    /// Al destaparse, reanuda y reconcilia con un refresh (lo que llegó mientras).
+    func setCoveredByThread(_ covered: Bool) {
+        guard configured, isCoveredByThread != covered else { return }
+        isCoveredByThread = covered
+        if covered {
+            pollingClock.cancel("inbox")
+            enqueueEventsStop()
+        } else if !isScenePaused {
+            startRealtime()
             requestSilentRefresh()
         }
     }
 
     private func persistCacheSnapshot() {
-        guard activeQuery.isEmpty, !activeFilter.isPhoneFilter, !namespace.isEmpty else { return }
-        ChatInboxDiskCache.save(rows, namespace: namespace)
+        // Solo cacheamos la vista por defecto (sin filtro de número): es lo que
+        // se pinta al instante en el arranque en frío. La búsqueda ya no toca
+        // `rows`, así que siempre reflejan la bandeja completa.
+        guard !activeFilter.isPhoneFilter else { return }
+        ChatInboxDiskCache.save(rows)
     }
 
-    // MARK: - Búsqueda (debounce 240 ms, doc 14 §6.2)
+    // MARK: - Búsqueda instantánea (local primero, servidor en paralelo)
 
+    /// Consulta comprometida (sin espacios) que dispara el filtrado.
+    private var trimmedSearch: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var isSearchActive: Bool { !trimmedSearch.isEmpty }
+
+    /// Al teclear, las coincidencias LOCALES se pintan solas (computed
+    /// `localSearchMatches`/`displayRows`, cero red). En paralelo, con ≥2
+    /// caracteres, se consulta `/contacts/search` para traer contactos que no
+    /// estén en la bandeja cargada. Debounce 240 ms (doc 14 §6.2).
     func searchTextDidChange() {
         searchDebounceTask?.cancel()
-        let text = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = trimmedSearch
+
+        guard !text.isEmpty else {
+            contactSuggestions = []
+            isSearchingContacts = false
+            searchServerUnavailable = false
+            return
+        }
+
+        // Mientras el usuario sigue escribiendo, olvidamos el aviso de red
+        // anterior (las locales se muestran igual sin esperar al servidor).
+        searchServerUnavailable = false
+
+        // 1 carácter: solo coincidencias locales, no molestamos al servidor.
+        guard text.count >= 2 else {
+            contactSuggestions = []
+            isSearchingContacts = false
+            return
+        }
+
+        isSearchingContacts = true
         searchDebounceTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 240_000_000)
             guard let self, !Task.isCancelled else { return }
-            guard self.activeQuery != text else { return }
-            self.activeQuery = text
-            self.contactSuggestions = []
-            await self.reloadFromServer(showSpinner: true)
+            await self.runServerContactSearch(query: text)
         }
     }
 
-    var isSearchActive: Bool { !searchText.isEmpty }
-
-    /// Sugerencias «Contactos encontrados» cuando la búsqueda no halla chats
-    /// (≥2 chars, doc 03 §4.9).
-    private func refreshContactSuggestionsIfNeeded() async {
-        guard activeQuery.count >= 2, rows.isEmpty else {
+    /// Búsqueda de contactos en el servidor (paralela a las locales). Si falla
+    /// por red se marca `searchServerUnavailable`; la vista solo enseña el aviso
+    /// «Sin conexión» cuando además NO hubo coincidencias locales.
+    private func runServerContactSearch(query: String) async {
+        defer { if trimmedSearch == query { isSearchingContacts = false } }
+        do {
+            let found = try await contactsService.searchContacts(query: query)
+            guard !Task.isCancelled, trimmedSearch == query else { return }
+            contactSuggestions = found
+            searchServerUnavailable = false
+        } catch {
+            guard !Task.isCancelled, trimmedSearch == query else { return }
             contactSuggestions = []
-            return
+            searchServerUnavailable = true
         }
-        isSearchingContacts = true
-        defer { isSearchingContacts = false }
-        contactSuggestions = (try? await contactsService.searchContacts(query: activeQuery)) ?? []
+    }
+
+    /// Coincidencias LOCALES instantáneas sobre la bandeja ya cargada/cacheada
+    /// (nombre, teléfono, correo, último mensaje). Sin red — se pintan al vuelo.
+    var localSearchMatches: [ChatContact] {
+        let query = trimmedSearch
+        guard !query.isEmpty else { return [] }
+        let folded = ristakFoldedText(query)
+        let digits = ChatRowSignals.digitsOnly(query)
+        return rows.filter { contact in
+            guard !contact.isCommentOnlyChat else { return false }
+            if ristakFoldedText(ChatRowSignals.displayName(contact)).contains(folded) { return true }
+            if ristakFoldedText(contact.name).contains(folded) { return true }
+            if ristakFoldedText(contact.email).contains(folded) { return true }
+            if !digits.isEmpty, ChatRowSignals.digitsOnly(contact.phone).contains(digits) { return true }
+            if ristakFoldedText(contact.lastMessageText).contains(folded) { return true }
+            return false
+        }
+    }
+
+    /// Contactos del servidor que aún NO aparecen entre las coincidencias
+    /// locales (para la sección «Contactos encontrados»).
+    var suggestionRows: [ChatContact] {
+        guard isSearchActive else { return [] }
+        let localIDs = Set(localSearchMatches.map(\.id))
+        return contactSuggestions.filter { !localIDs.contains($0.id) }
     }
 
     // MARK: - Filtros activos
@@ -534,6 +664,10 @@ final class InboxViewModel {
     /// Filas a pintar: archivados fuera de la bandeja normal, lente de
     /// comentarios, filtro activo y orden (doc 03 §4.2/§3.1).
     var displayRows: [ChatContact] {
+        // Búsqueda: coincidencias LOCALES instantáneas (sin red). Los contactos
+        // del servidor no cacheados salen aparte en «Contactos encontrados».
+        if isSearchActive { return localSearchMatches }
+
         var list: [ChatContact]
         if archivedViewActive {
             // En archivados se ignoran los filtros rápidos (doc 03 §4.8).
@@ -1053,8 +1187,15 @@ final class InboxViewModel {
         }
     }
 
+    private func rebuildTagNameIndex() {
+        tagNameByID = Dictionary(
+            tagsCatalog.map { ($0.id, $0.name) },
+            uniquingKeysWith: { first, _ in first }
+        )
+    }
+
     func tagName(for id: String) -> String? {
-        tagsCatalog.first { $0.id == id }?.name
+        tagNameByID[id]
     }
 
     /// Nombres de etiquetas de una fila (para pills; máx los que la vista pida).

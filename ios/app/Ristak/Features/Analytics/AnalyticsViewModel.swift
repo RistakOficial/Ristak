@@ -65,7 +65,10 @@ enum AnalyticsChartKind: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Punto combinado de la gráfica de doble línea.
-struct AnalyticsChartPoint: Sendable, Equatable, Identifiable {
+///
+/// Codable de la feature: la caché SWR guarda/lee `[AnalyticsChartPoint]` con
+/// round-trip nativo (el `id` es derivado y no se serializa).
+struct AnalyticsChartPoint: Codable, Sendable, Equatable, Identifiable {
     let label: String
     let value1: Double
     let value2: Double
@@ -167,6 +170,9 @@ final class AnalyticsViewModel {
         // quedaron EN «cargando» (nunca en 0 falso) y `loadCompleted` sigue en
         // `false`, así que al reaparecer la vista se recarga solo.
         guard !loadCompleted || rangeChanged else { return }
+        // SWR (#4): pinta al INSTANTE lo cacheado para esta combinación (KPIs,
+        // gráfica, embudo, origen) y solo después revalida en segundo plano.
+        hydrateAllFromCache()
         await reloadAll()
         // Solo consolidamos la carga si el task no fue cancelado a mitad
         // (al reaparecer, `.task(id:)` vuelve a llamar `start` y recargará).
@@ -183,6 +189,8 @@ final class AnalyticsViewModel {
         period = newPeriod
         customRange = nil
         range = resolveRange()
+        // Repinta al instante lo cacheado para el nuevo rango (o «…» si no hay).
+        hydrateAllFromCache()
         Task { await reloadAll() }
     }
 
@@ -198,6 +206,8 @@ final class AnalyticsViewModel {
         period = .custom
         customRange = newRange
         range = newRange
+        // Repinta al instante lo cacheado para el rango personalizado.
+        hydrateAllFromCache()
         Task { await reloadAll() }
         return nil
     }
@@ -234,6 +244,8 @@ final class AnalyticsViewModel {
         guard kind != chartKind else { return }
         chartKind = kind
         guard let range else { return }
+        // Pinta al instante la vista cacheada para esta combinación.
+        hydrateChart(range)
         Task { await loadChart(range) }
     }
 
@@ -241,6 +253,7 @@ final class AnalyticsViewModel {
         guard scope != financialScope else { return }
         financialScope = scope
         guard let range, chartKind == .revenueSpend else { return }
+        hydrateChart(range)
         Task { await loadChart(range) }
     }
 
@@ -248,6 +261,7 @@ final class AnalyticsViewModel {
         guard scope != funnelScope else { return }
         funnelScope = scope
         guard let range else { return }
+        hydrateFunnel(range)
         Task { await loadFunnel(range) }
     }
 
@@ -286,16 +300,71 @@ final class AnalyticsViewModel {
         await loadOrigin(range)
     }
 
+    // MARK: - Caché SWR: hidratación instantánea (doc Round 6 #4)
+
+    /// Pinta SÍNCRONAMENTE lo último cacheado para la combinación vigente
+    /// (rango × scope × vista) en los 4 paneles + etiquetas + números de
+    /// WhatsApp. Si un panel no tiene caché para su combinación, queda en
+    /// «cargando» (spinner/«…»); nunca en `$0.00` ni vacío falso. Debe llamarse
+    /// ANTES de disparar la revalidación de red.
+    private func hydrateAllFromCache() {
+        guard let range else { return }
+        // Etiquetas: títulos correctos al instante (sigue revalidando en red).
+        if !labelsLoaded, let cachedLabels = AnalyticsCache.readLabels() {
+            labels = cachedLabels
+        }
+        // Números de WhatsApp: son de cuenta (no de rango); solo hidrata si aún
+        // no tenemos ninguno en memoria (no pisa datos frescos de la sesión).
+        if whatsappPhones.isEmpty, let cachedPhones = AnalyticsCache.readPhones() {
+            whatsappPhones = cachedPhones
+        }
+        hydrateMetrics(range)
+        hydrateChart(range)
+        hydrateFunnel(range)
+        hydrateOrigin(range)
+    }
+
+    private func hydrateMetrics(_ range: AnalyticsDateRange) {
+        let cached = AnalyticsCache.readMetrics(range)
+        metrics.value = cached
+        metrics.isLoading = (cached == nil)
+        metrics.errorMessage = nil
+    }
+
+    private func hydrateChart(_ range: AnalyticsDateRange) {
+        let cached = AnalyticsCache.readChart(range, chartKind, financialScope)
+        chart.value = cached
+        chart.isLoading = (cached == nil)
+        chart.errorMessage = nil
+    }
+
+    private func hydrateFunnel(_ range: AnalyticsDateRange) {
+        let cached = AnalyticsCache.readFunnel(range, funnelScope)
+        funnel.value = cached
+        funnel.isLoading = (cached == nil)
+        funnel.errorMessage = nil
+    }
+
+    private func hydrateOrigin(_ range: AnalyticsDateRange) {
+        let cached = AnalyticsCache.readOrigin(range)
+        origin.value = cached
+        origin.isLoading = (cached == nil)
+        origin.errorMessage = nil
+    }
+
     private func loadLabelsIfNeeded() async {
         guard !labelsLoaded else { return }
         // Fallos silenciosos: se quedan los defaults (Interesados/Clientes).
         guard let fetched = try? await AnalyticsService.customLabels() else { return }
         labels = fetched
         labelsLoaded = true
+        AnalyticsCache.storeLabels(fetched)
     }
 
     private func loadMetrics(_ range: AnalyticsDateRange) async {
-        metrics.isLoading = true
+        // Spinner («…») SOLO si no hay valor cacheado; si lo hay, revalida en
+        // silencio (nada de vacío → spinner → dato).
+        if metrics.value == nil { metrics.isLoading = true }
         metrics.errorMessage = nil
         do {
             let snapshot = try await AnalyticsService.metrics(
@@ -305,21 +374,17 @@ final class AnalyticsViewModel {
             guard self.range == range else { return }
             metrics.value = snapshot
             metrics.isLoading = false
+            AnalyticsCache.storeMetrics(snapshot, range)
         } catch {
             guard self.range == range else { return }
-            switch classify(error) {
-            case .message(let message): metrics.isLoading = false; metrics.errorMessage = message
-            case .silentEmpty: metrics.isLoading = false; metrics.value = nil
-            case .cancelled: break // conserva isLoading = true → recarga al reaparecer
-            case .ignored: metrics.isLoading = false
-            }
+            metrics = applyFailure(classify(error), to: metrics, empty: nil)
         }
     }
 
     private func loadChart(_ range: AnalyticsDateRange) async {
         let kind = chartKind
         let scope = financialScope
-        chart.isLoading = true
+        if chart.value == nil { chart.isLoading = true }
         chart.errorMessage = nil
         do {
             let points: [AnalyticsChartPoint]
@@ -351,14 +416,10 @@ final class AnalyticsViewModel {
             guard isCurrentChartRequest(range, kind, scope) else { return }
             chart.value = points
             chart.isLoading = false
+            AnalyticsCache.storeChart(points, range, kind, scope)
         } catch {
             guard isCurrentChartRequest(range, kind, scope) else { return }
-            switch classify(error) {
-            case .message(let message): chart.isLoading = false; chart.errorMessage = message
-            case .silentEmpty: chart.isLoading = false; chart.value = []
-            case .cancelled: break // conserva isLoading = true → recarga al reaparecer
-            case .ignored: chart.isLoading = false
-            }
+            chart = applyFailure(classify(error), to: chart, empty: [])
         }
     }
 
@@ -372,7 +433,7 @@ final class AnalyticsViewModel {
 
     private func loadFunnel(_ range: AnalyticsDateRange) async {
         let scope = funnelScope
-        funnel.isLoading = true
+        if funnel.value == nil { funnel.isLoading = true }
         funnel.errorMessage = nil
         do {
             let rows = try await AnalyticsService.funnel(
@@ -383,19 +444,15 @@ final class AnalyticsViewModel {
             guard self.range == range, funnelScope == scope else { return }
             funnel.value = rows
             funnel.isLoading = false
+            AnalyticsCache.storeFunnel(rows, range, scope)
         } catch {
             guard self.range == range, funnelScope == scope else { return }
-            switch classify(error) {
-            case .message(let message): funnel.isLoading = false; funnel.errorMessage = message
-            case .silentEmpty: funnel.isLoading = false; funnel.value = []
-            case .cancelled: break // conserva isLoading = true → recarga al reaparecer
-            case .ignored: funnel.isLoading = false
-            }
+            funnel = applyFailure(classify(error), to: funnel, empty: [])
         }
     }
 
     private func loadOrigin(_ range: AnalyticsDateRange) async {
-        origin.isLoading = true
+        if origin.value == nil { origin.isLoading = true }
         origin.errorMessage = nil
         // El status de WhatsApp se pide en paralelo y sus fallos se ignoran
         // (catch → lista vacía, doc 09 §4.7).
@@ -410,15 +467,18 @@ final class AnalyticsViewModel {
             origin.value = snapshot
             whatsappPhones = phones
             origin.isLoading = false
+            AnalyticsCache.storeOrigin(snapshot, range)
+            AnalyticsCache.storePhones(phones)
         } catch {
-            _ = await phonesLoad
+            // Si el origen falla pero los teléfonos llegaron, refresca y cachea
+            // esos sin pisar los cacheados con una lista vacía.
+            let phones = await phonesLoad
             guard self.range == range else { return }
-            switch classify(error) {
-            case .message(let message): origin.isLoading = false; origin.errorMessage = message
-            case .silentEmpty: origin.isLoading = false; origin.value = nil
-            case .cancelled: break // conserva isLoading = true → recarga al reaparecer
-            case .ignored: origin.isLoading = false
+            if !phones.isEmpty {
+                whatsappPhones = phones
+                AnalyticsCache.storePhones(phones)
             }
+            origin = applyFailure(classify(error), to: origin, empty: nil)
         }
     }
 
@@ -435,6 +495,35 @@ final class AnalyticsViewModel {
         /// no pintar `$0.00` como si fuera real; la vista recarga al reaparecer.
         case cancelled
         case ignored
+    }
+
+    /// Aplica un fallo a un panel preservando el patrón SWR: si el panel YA
+    /// tiene datos (cacheados o de una carga previa), un error de red NO los
+    /// borra ni muestra la vista de error de pantalla completa del panel —
+    /// simplemente se conserva lo visible. El error inline solo aparece cuando
+    /// el panel está vacío (primera carga sin caché).
+    private func applyFailure<Value>(
+        _ failure: LoadFailure,
+        to state: AnalyticsPanelState<Value>,
+        empty: Value?
+    ) -> AnalyticsPanelState<Value> {
+        var next = state
+        switch failure {
+        case .message(let message):
+            next.isLoading = false
+            if next.value == nil { next.errorMessage = message }
+        case .silentEmpty:
+            // 403 feature-not-available: respuesta autoritativa → vaciar.
+            next.isLoading = false
+            next.value = empty
+        case .cancelled:
+            // Cambio de tab: conserva el estado tal cual (si venía de caché el
+            // valor sigue visible; si no, `isLoading` sigue → recarga al volver).
+            break
+        case .ignored:
+            next.isLoading = false
+        }
+        return next
     }
 
     private func classify(_ error: Error) -> LoadFailure {

@@ -22,6 +22,15 @@ struct ChatRemoteImage: View {
     @State private var image: UIImage?
     @State private var failed = false
 
+    init(url: URL, contentMode: ContentMode = .fill, onLoad: ((CGSize) -> Void)? = nil) {
+        self.url = url
+        self.contentMode = contentMode
+        self.onLoad = onLoad
+        // Pintado síncrono desde memoria: si ya está cacheada, sin spinner ni flash
+        // aunque la fila recicle al hacer scroll.
+        _image = State(initialValue: RistakImageLoader.shared.cachedImage(for: url))
+    }
+
     var body: some View {
         Group {
             if let image {
@@ -42,6 +51,15 @@ struct ChatRemoteImage: View {
             }
         }
         .task(id: url) {
+            // Ya la tenemos en memoria (sembrada o de una carga previa): reporta el
+            // tamaño y no vuelvas a descargar.
+            if let cached = RistakImageLoader.shared.cachedImage(for: url) {
+                if image !== cached { image = cached }
+                failed = false
+                onLoad?(cached.size)
+                return
+            }
+            if image != nil { image = nil }
             failed = false
             if let loaded = await RistakImageLoader.shared.imageIfAvailable(for: url) {
                 image = loaded
@@ -366,6 +384,11 @@ struct AudioMessageView: View {
     @Environment(AudioCascadeCoordinator.self) private var cascade: AudioCascadeCoordinator?
 
     private var audioURL: URL? {
+        // Nota de voz PROPIA: el servidor la guarda en OGG/Opus (que iOS no
+        // decodifica); si tenemos el m4a original que grabamos, reproducir ESE.
+        if isOutbound, let local = VoiceNoteLocalStore.localFileURL(forRemoteURL: attachment.url) {
+            return local
+        }
         if let raw = attachment.url {
             if raw.hasPrefix("file://"), let url = URL(string: raw) { return url }
             if let url = URL(string: raw), url.scheme != nil { return url }
@@ -818,15 +841,22 @@ struct DocumentAttachmentView: View {
             previewURL = url
             return
         }
+        // Reusa la copia ya descargada (mismo doc → misma ruta determinística):
+        // reabrir un PDF/archivo lo muestra al instante, sin spinner ni volver a
+        // bajar datos.
+        let filename = attachment.name ?? url.lastPathComponent
+        let target = FileManager.default.temporaryDirectory
+            .appendingPathComponent("chat-doc-\(abs(raw.hashValue))-\(filename)")
+        if FileManager.default.fileExists(atPath: target.path) {
+            previewURL = target
+            return
+        }
         isDownloading = true
         downloadFailed = false
         Task {
             defer { isDownloading = false }
             do {
                 let (data, _) = try await URLSession.shared.data(from: url)
-                let filename = attachment.name ?? url.lastPathComponent
-                let target = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("chat-doc-\(abs(raw.hashValue))-\(filename)")
                 try data.write(to: target)
                 previewURL = target
             } catch {

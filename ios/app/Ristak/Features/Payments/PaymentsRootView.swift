@@ -38,7 +38,12 @@ struct PaymentsRootView: View {
                 content(home: home)
                     .environment(home)
             } else {
-                RistakLoadingView(message: "Cargando pagos…")
+                // Sin loader de pantalla completa al abrir (estilo WhatsApp): el
+                // modelo hidrata su caché al instante en `init`, así que basta un
+                // fondo neutro de un frame mientras se crea. Cero spinner: el
+                // contenido cacheado aparece de inmediato.
+                RistakTheme.bgGrouped
+                    .ignoresSafeArea()
                     .onAppear {
                         let config = appConfig
                         home = PaymentsHomeModel(timeZoneProvider: { config.businessTimeZone })
@@ -413,19 +418,13 @@ private struct RecentPaymentsSection: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, RistakTheme.Spacing.md)
             }
-        } else if home.isLoadingRecent && home.recentPayments.isEmpty {
-            SectionCard {
-                HStack(spacing: RistakTheme.Spacing.sm) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Cargando…")
-                        .font(.subheadline)
-                        .foregroundStyle(RistakTheme.textDim)
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, RistakTheme.Spacing.md)
-            }
-        } else if let error = home.recentError, home.recentPayments.isEmpty {
+        } else if !home.recentPayments.isEmpty {
+            // SWR: si hay datos (cacheados o frescos) SIEMPRE mostramos la lista.
+            // Nunca la ocultamos por spinner ni por un error de revalidación.
+            paymentsList
+        } else if let error = home.recentError {
+            // Error SOLO cuando no hay nada que mostrar (primera carga sin caché
+            // fallida). Con datos visibles jamás llegamos aquí.
             SectionCard {
                 VStack(spacing: RistakTheme.Spacing.sm) {
                     Text(error.message)
@@ -441,7 +440,12 @@ private struct RecentPaymentsSection: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, RistakTheme.Spacing.sm)
             }
-        } else if home.recentPayments.isEmpty {
+        } else if home.isLoadingRecent {
+            // Primera carga sin caché: mantenemos el chrome (título + chips) y NO
+            // mostramos spinner ni un falso «no hay pagos». La lista se llena sola
+            // en cuanto llega la respuesta.
+            EmptyView()
+        } else {
             SectionCard {
                 Text("No hay pagos recibidos en este periodo.")
                     .font(.subheadline)
@@ -449,7 +453,11 @@ private struct RecentPaymentsSection: View {
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, RistakTheme.Spacing.md)
             }
-        } else {
+        }
+    }
+
+    private var paymentsList: some View {
+        Group {
             SectionCard {
                 LazyVStack(spacing: 0) {
                     ForEach(home.recentPayments) { transaction in
