@@ -12,7 +12,6 @@ import { getBusinessProfileSnapshot } from '../../services/aiAgentService.js'
 import { buildTriggerLinkPublicUrl, getTriggerLink } from '../../services/triggerLinksService.js'
 import {
   setConversationSignal,
-  setConversationStatus,
   recordConversationalAgentEvent,
   hasRecentConversationalAgentEvent,
   applyAgentSuccessExtras,
@@ -22,6 +21,7 @@ import {
   DEFAULT_GOAL_TRACKING_PARAM
 } from '../../services/conversationalAgentService.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
+import { logger } from '../../utils/logger.js'
 
 /**
  * Tools del agente conversacional. Se crean por ejecución con una factory
@@ -502,6 +502,49 @@ export function createConversationalTools(ctx) {
       const calendar = await db.get('SELECT id, name, slot_duration FROM calendars WHERE id = ?', [calendarId])
       if (!calendar) return { ok: false, error: 'Calendario no encontrado: usa list_calendars para obtener el ID real' }
 
+      // Candado funcional anti-cita-inventada: el horario debe ser un slot REAL del
+      // calendario (dentro del horario de atención, en el futuro y no bloqueado).
+      // Validamos la FORMA del horario ignorando la ocupación: la política de empalme
+      // la aplica el chequeo dedicado de más abajo (que da un mensaje específico).
+      // Aquí sólo atajamos horas inventadas, fuera de horario o en el pasado, sin
+      // importar en qué turno se ofreció el slot (revalidación al momento de agendar).
+      const startMs = start.getTime()
+      const slotWindowStart = new Date(startMs - 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      const slotWindowEnd = new Date(startMs + 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      // Fail-OPEN: distinguimos "no hay ese slot" de "no pude consultar". Si la consulta
+      // de disponibilidad falla (hipo transitorio de BD), NO afirmamos que el horario es
+      // inválido; dejamos que el chequeo de empalme de abajo y createAppointment sean la
+      // red de seguridad. El candado anti-cita-inventada sólo aplica cuando SÍ pudimos leer.
+      let availability = null
+      try {
+        availability = await getLocalFreeSlots(calendarId, slotWindowStart, slotWindowEnd, null, {
+          ignoreAppointmentConflicts: true
+        })
+      } catch (slotLookupError) {
+        logger.warn(`[Agente conversacional] No se pudo revalidar disponibilidad del slot (${slotLookupError?.message || slotLookupError}); se continúa sin bloquear.`)
+        availability = null
+      }
+      if (Array.isArray(availability)) {
+        const bookableSlotMsList = []
+        for (const day of availability) {
+          for (const iso of (Array.isArray(day?.slots) ? day.slots : [])) {
+            const ms = new Date(iso).getTime()
+            if (Number.isFinite(ms)) bookableSlotMsList.push(ms)
+          }
+        }
+        const matchedSlotMs = bookableSlotMsList.find((ms) => Math.abs(ms - startMs) < 60000)
+        if (matchedSlotMs === undefined) {
+          return {
+            ok: false,
+            invalidSlot: true,
+            error: 'Ese horario no es un slot real del calendario (puede estar fuera del horario de atención, en el pasado o inventado). Consulta get_free_slots para ese día y ofrece SÓLO un horario que devuelva la herramienta; no inventes horas ni las des por hecho.'
+          }
+        }
+        // Snap al slot exacto para no arrastrar la deriva (hasta 59s) si el modelo mandó
+        // el ISO con segundos desalineados. Así la cita cae justo en el slot ofrecido.
+        start.setTime(matchedSlotMs)
+      }
+
       const durationMinutes = Number(calendar.slot_duration) > 0 ? Number(calendar.slot_duration) : 60
       const end = new Date(start.getTime() + durationMinutes * 60000)
 
@@ -535,9 +578,12 @@ export function createConversationalTools(ctx) {
       const contact = await db.get('SELECT full_name, phone FROM contacts WHERE id = ?', [ctx.contactId])
       const finalTitle = title || `Cita - ${contact?.full_name || contact?.phone || 'Contacto'}`
 
-      pushAction(ctx, 'book_appointment', { calendarId, startTime: start.toISOString(), endTime: end.toISOString(), title: finalTitle })
+      pushAction(ctx, 'book_appointment', {
+        calendarId, startTime: start.toISOString(), endTime: end.toISOString(), title: finalTitle,
+        effect: { liveEffect: 'AGENDARÍA UNA CITA REAL y marcaría el objetivo como CUMPLIDO', marksObjectiveCompleted: true }
+      })
       if (ctx.dryRun) {
-        return { ok: true, simulated: true, appointment: { calendarId, title: finalTitle, startTime: start.toISOString(), endTime: end.toISOString() } }
+        return { ok: true, simulated: true, wouldMarkObjectiveCompleted: true, appointment: { calendarId, title: finalTitle, startTime: start.toISOString(), endTime: end.toISOString() } }
       }
 
       const result = await invokeController(createAppointment, {
@@ -586,47 +632,56 @@ export function createConversationalTools(ctx) {
 
   const markReadyTool = tool({
     name: 'mark_ready_to_advance',
-    description: 'Herramienta interna de avance. Ejecútala cuando la persona ya está lista para el siguiente paso (intención real, dudas resueltas, pidió avanzar). Crea la señal interna y mueve la conversación a prioridad. No le digas al cliente que la ejecutaste.',
+    description: 'Pasa la conversación a un humano y marca el objetivo como CUMPLIDO. Es un paso terminal: después el bot deja de responder. Ejecútala SÓLO cuando la persona pidió explícitamente hablar con alguien / avanzar, o aceptó una propuesta concreta que ya le hiciste. Mostrar interés general ("me interesa", "cuánto cuesta") NO es suficiente: en ese caso sigue conversando. No le digas al cliente que la ejecutaste.',
     parameters: z.object({
       intencionDetectada: z.string().describe('Qué quiere la persona (ej. "agendar valoración esta semana")'),
       resumen: z.string().describe('Resumen breve de la conversación y su situación'),
       urgencia: z.enum(['baja', 'media', 'alta']).describe('Qué tan pronto quiere avanzar'),
       siguientePaso: z.string().nullable().describe('Siguiente paso recomendado para el humano'),
+      confirm: z.boolean().describe('true SÓLO si la persona pidió explícitamente hablar con alguien/avanzar o aceptó una propuesta concreta que ya le hiciste. Interés general ("me interesa", "cuánto cuesta") NO cuenta. Si dudas, es false y sigues conversando.'),
       comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
       anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
-    execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso, comprobanteValidado, anticipoValidado }) => {
+    execute: async ({ intencionDetectada, resumen, urgencia, siguientePaso, confirm, comprobanteValidado, anticipoValidado }) => {
+      // Candado funcional anti-falso-cierre: no marcar objetivo cumplido por interés
+      // blando. Esto NO vive sólo en el prompt; es una barrera de código.
+      if (confirm !== true) {
+        return {
+          ok: false,
+          error: 'Aún no es momento de pasar a un humano. Sólo hazlo cuando la persona lo pida explícitamente o acepte una propuesta concreta que ya le hiciste. Si sólo mostró interés, sigue conversando: resuelve su duda real y ayúdale a definir el siguiente paso.'
+        }
+      }
       const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
       const signal = resolveAdvanceSignal(config)
-      pushAction(ctx, 'mark_ready_to_advance', { signal, intencionDetectada, urgencia, extras: config.successExtras || [] })
-      if (ctx.dryRun) return { ok: true, simulated: true, signal }
+      pushAction(ctx, 'mark_ready_to_advance', {
+        signal, intencionDetectada, urgencia, extras: config.successExtras || [],
+        effect: { liveEffect: 'MARCARÍA el objetivo como CUMPLIDO y pasaría el chat a un humano (el bot deja de responder)', marksObjectiveCompleted: true }
+      })
+      if (ctx.dryRun) return { ok: true, simulated: true, signal, wouldMarkObjectiveCompleted: true, wouldNotifyHuman: true }
 
-      if (signal) {
-        await setConversationSignal(ctx.contactId, signal, {
-          reason: `${intencionDetectada} (urgencia ${urgencia})`,
-          summary: resumen,
-          status: 'completed',
-          agentId: config.id || ''
-        })
-        await applyAgentCompletionAction(config, ctx.contactId)
-        await notifyHumanPriority(ctx, {
-          reason: intencionDetectada,
-          summary: resumen,
-          signal
-        })
-      } else {
-        // Acción "no hacer nada": el agente cumplió y solo deja registro
-        await setConversationStatus(ctx.contactId, 'completed', { updatedBy: 'agent', agentId: config.id || ctx.agentId || null })
-        await recordConversationalAgentEvent({
-          contactId: ctx.contactId,
-          eventType: 'objective_completed',
-          detail: { intencionDetectada, urgencia, resumen }
-        })
-      }
+      await setConversationSignal(ctx.contactId, signal, {
+        reason: `${intencionDetectada} (urgencia ${urgencia})`,
+        summary: resumen,
+        status: 'completed',
+        agentId: config.id || ''
+      })
+      await applyAgentCompletionAction(config, ctx.contactId)
+      await notifyHumanPriority(ctx, {
+        reason: intencionDetectada,
+        summary: resumen,
+        signal
+      })
+      // Telemetría separable: distingue "objetivo cumplido (pasa a humano)" de un
+      // simple signal_set, para poder auditar falsos cierres en reportería.
+      await recordConversationalAgentEvent({
+        contactId: ctx.contactId,
+        eventType: 'objective_completed',
+        detail: { agentId: config.id || ctx.agentId || null, signal, kind: 'ready_for_human', intencionDetectada, urgencia, siguientePaso: siguientePaso || null }
+      })
       await applyAgentSuccessExtras(config, ctx.contactId)
-      return { ok: true, signal, note: 'Objetivo registrado. Cierra con una frase mínima o no respondas más.' }
+      return { ok: true, signal, note: 'Objetivo registrado (pasa a humano). Cierra con una frase mínima o no respondas más.' }
     }
   })
 
@@ -653,7 +708,10 @@ export function createConversationalTools(ctx) {
       const contact = await getPaymentContact(ctx.contactId)
       if (!contact) return { ok: false, error: 'Contacto no encontrado' }
 
-      pushAction(ctx, 'create_payment_link', { amount, currency: currency || null, concept, channel })
+      pushAction(ctx, 'create_payment_link', {
+        amount, currency: currency || null, concept, channel,
+        effect: { liveEffect: 'ENVIARÍA un link de pago real (la venta sigue PENDIENTE hasta que se pague)', marksObjectiveCompleted: false }
+      })
       if (ctx.dryRun) {
         return { ok: true, simulated: true, amount, currency: currency || null, concept, channel }
       }
@@ -734,7 +792,10 @@ export function createConversationalTools(ctx) {
       }
       const linkContext = getGoalLinkContext(config, goalConfig)
 
-      pushAction(ctx, 'send_goal_url', { objective: config.objective, intencionDetectada, targetUrl })
+      pushAction(ctx, 'send_goal_url', {
+        objective: config.objective, intencionDetectada, targetUrl,
+        effect: { liveEffect: 'ENVIARÍA el enlace configurado (el objetivo sigue PENDIENTE hasta la confirmación con ID real)', marksObjectiveCompleted: false }
+      })
       if (ctx.dryRun) {
         return {
           ok: true,
@@ -836,7 +897,8 @@ export function createConversationalTools(ctx) {
         objective: config.objective,
         intencionDetectada,
         triggerLinkId: link.id,
-        triggerLinkPublicId: link.publicId || null
+        triggerLinkPublicId: link.publicId || null,
+        effect: { liveEffect: 'ENVIARÍA el enlace de disparo (el objetivo se cumple sólo cuando el contacto lo toque)', marksObjectiveCompleted: false }
       })
       if (!ctx.dryRun) {
         await recordConversationalAgentEvent({
@@ -873,8 +935,11 @@ export function createConversationalTools(ctx) {
       resumen: z.string().describe('Resumen breve de la situación')
     }),
     execute: async ({ motivo, resumen }) => {
-      pushAction(ctx, 'send_to_human', { motivo })
-      if (ctx.dryRun) return { ok: true, simulated: true, signal: 'ready_for_human' }
+      pushAction(ctx, 'send_to_human', {
+        motivo,
+        effect: { liveEffect: 'PASARÍA el chat a un humano (el bot deja de responder). NO marca el objetivo como cumplido.', marksObjectiveCompleted: false }
+      })
+      if (ctx.dryRun) return { ok: true, simulated: true, signal: 'ready_for_human', wouldNotifyHuman: true, wouldMarkObjectiveCompleted: false }
 
       await setConversationSignal(ctx.contactId, 'ready_for_human', {
         reason: motivo,
@@ -897,7 +962,10 @@ export function createConversationalTools(ctx) {
     }),
     execute: async ({ motivo, resumen, nivelDeRiesgo }) => {
       ctx.suppressReply = true
-      pushAction(ctx, 'discard_conversation', { motivo, nivelDeRiesgo })
+      pushAction(ctx, 'discard_conversation', {
+        motivo, nivelDeRiesgo,
+        effect: { liveEffect: 'DESCARTARÍA la conversación (el bot deja de responder). NO marca el objetivo como cumplido.', marksObjectiveCompleted: false }
+      })
       if (ctx.dryRun) return { ok: true, simulated: true, signal: 'discarded' }
 
       await setConversationSignal(ctx.contactId, 'discarded', {
@@ -930,7 +998,6 @@ export function createConversationalTools(ctx) {
     ...(ctx.followUpMode ? [] : [saveContactDataTool]),
     ...(ctx.followUpMode || config.closingStrategyMode === 'custom' ? [] : [updateClosingContextTool]),
     ...(ctx.followUpMode ? [] : [
-    markReadyTool,
     sendToHumanTool,
     discardConversationTool,
     staySilentTool
@@ -941,6 +1008,16 @@ export function createConversationalTools(ctx) {
   // escritura solo si el negocio configuró agenda directa.
   tools.push(listCalendarsTool, getFreeSlotsForAgentTool)
   if (!ctx.followUpMode) {
+    // La herramienta de cierre que se EXPONE depende del objetivo real del agente.
+    // mark_ready_to_advance marca el objetivo como CUMPLIDO (traspaso a humano), por eso
+    // NO se ofrece para citas/ventas/enlaces: ésos cierran con su acción real y
+    // verificable (una cita con horario, un pago confirmado, un enlace tocado), nunca por
+    // "avanzar" con puro interés. Se expone para ready_for_human y para cualquier config
+    // sin acción de cierre concreta (dato/filtrar/handoff), que es justo lo que el prompt
+    // referencia por defecto. Todos conservan send_to_human para escalar cuando se atoran,
+    // pero eso NO marca objetivo cumplido (queda como 'humano').
+    const CONCRETE_CLOSE_ACTIONS = ['book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link']
+    if (!CONCRETE_CLOSE_ACTIONS.includes(config?.successAction)) tools.push(markReadyTool)
     if (config?.successAction === 'book_appointment') tools.push(bookAppointmentTool)
     if (config?.successAction === 'ready_to_buy') tools.push(createPaymentLinkTool)
     if (config?.successAction === 'send_goal_url') tools.push(sendGoalUrlTool)
