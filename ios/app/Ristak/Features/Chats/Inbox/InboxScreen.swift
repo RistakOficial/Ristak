@@ -56,7 +56,7 @@ struct InboxScreen: View {
                         Button {
                             showsAgentHub = true
                         } label: {
-                            Image(systemName: "sparkles")
+                            AgentBotGlyph(color: RistakTheme.accent, size: 22)
                         }
                         .accessibilityLabel("Agente conversacional")
                     }

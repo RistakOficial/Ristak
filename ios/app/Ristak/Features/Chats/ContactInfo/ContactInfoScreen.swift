@@ -38,13 +38,22 @@ struct ContactInfoScreen: View {
 
     private let localFlags = ContactLocalFlagsStore.shared
 
-    /// Canal de mensajería del contacto (el mismo del header del hilo). Se muestra
-    /// bajo el nombre. `nil` si el hilo no detectó canal → no se pinta la fila.
-    private let channel: RistakChatChannel?
+    /// ViewModel de la conversación abierta (el hilo la pushea). Aporta el canal
+    /// de ENVÍO actual y su selector, que ahora se elige AQUÍ (bajo el nombre) en
+    /// vez del composer. `nil` si la ficha se abre fuera de un hilo → sin selector.
+    private let conversation: ConversationViewModel?
 
-    init(contactID: String, channel: RistakChatChannel? = nil) {
+    init(contactID: String, conversation: ConversationViewModel? = nil) {
         _viewModel = State(initialValue: ContactInfoViewModel(contactID: contactID))
-        self.channel = channel
+        self.conversation = conversation
+    }
+
+    /// Binding al sheet del selector de canal (vive en la conversación).
+    private var channelPickerBinding: Binding<Bool> {
+        Binding(
+            get: { conversation?.isChannelSheetPresented ?? false },
+            set: { conversation?.isChannelSheetPresented = $0 }
+        )
     }
 
     var body: some View {
@@ -154,6 +163,13 @@ struct ContactInfoScreen: View {
             ContactTagsSheet(viewModel: viewModel)
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
+        }
+        // Selector de canal de envío (movido aquí desde el composer). Se presenta
+        // desde la ficha porque el hilo queda detrás mientras esta está en pantalla.
+        .sheet(isPresented: channelPickerBinding) {
+            if let conversation {
+                ChannelPickerSheet(viewModel: conversation)
+            }
         }
         .sheet(isPresented: $showPaymentsPanel) {
             ContactPaymentsPanel(
@@ -337,15 +353,33 @@ struct ContactInfoScreen: View {
                     .foregroundStyle(RistakTheme.textDim)
             }
 
-            // Canal de mensajería del contacto (de dónde se le escribe): badge +
-            // nombre, justo bajo el nombre y encima de la etiqueta de estado.
-            if let channel {
-                HStack(spacing: RistakTheme.Spacing.xxs) {
-                    ChannelBadgeView(channel: channel, size: 16)
-                    Text(channel.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(RistakTheme.textDim)
+            // Canal de ENVÍO: se ELIGE aquí (ya no en el composer). Píldora con
+            // badge + nombre + chevron, justo bajo el nombre y encima de la
+            // etiqueta de estado; al tocarla abre el selector de canal.
+            if let conversation {
+                let channel = conversation.selectedChannel.badgeChannel
+                Button {
+                    conversation.isChannelSheetPresented = true
+                } label: {
+                    HStack(spacing: RistakTheme.Spacing.xxs) {
+                        ChannelBadgeView(channel: channel, size: 16)
+                        Text(channel.title)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(RistakTheme.textPrimary)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(RistakTheme.textDim)
+                    }
+                    .padding(.horizontal, RistakTheme.Spacing.sm)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(RistakTheme.surface)
+                            .overlay(Capsule().strokeBorder(RistakTheme.border, lineWidth: 0.5))
+                    )
                 }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Canal de envío: \(channel.title). Toca para cambiar.")
             }
 
             ContactInfoStageBadge(stage: ContactInfoStage(status: contact.status))

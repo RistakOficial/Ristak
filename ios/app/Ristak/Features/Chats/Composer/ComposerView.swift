@@ -105,10 +105,12 @@ struct ComposerView: View {
             attachmentActionsSheet
                 .presentationDetents([.medium, .large])
         }
-        .confirmationDialog(
+        // UN SOLO modal (alert): el `.confirmationDialog` de iOS separa "Cancelar"
+        // en su propio contenedor —se veía como "dos modales" en un globo—; el
+        // alert mete título, mensaje y las 3 opciones en una sola caja.
+        .alert(
             "Agente activo en este chat",
-            isPresented: $viewModel.agentConfirmationPending,
-            titleVisibility: .visible
+            isPresented: $viewModel.agentConfirmationPending
         ) {
             Button("Pausar 24h y enviar") {
                 viewModel.resolveAgentConfirmation(action: .pause)
@@ -378,17 +380,8 @@ struct ComposerView: View {
 
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: RistakTheme.Spacing.xs) {
-            // El canal va primero, antes del "+" (User #3): primero eliges por
-            // dónde envías, luego adjuntas.
-            Button {
-                viewModel.isChannelSheetPresented = true
-            } label: {
-                ChannelBadgeView(channel: viewModel.selectedChannel.badgeChannel, size: 26)
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Canal de envío")
-
+            // El canal de envío se ELIGE ahora desde la Info del contacto (bajo el
+            // nombre), no aquí — así el composer queda más limpio.
             Button {
                 viewModel.isAttachmentSheetPresented = true
             } label: {

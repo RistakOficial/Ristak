@@ -51,7 +51,7 @@ struct ConversationScreen: View {
                 }
             }
             .navigationDestination(isPresented: $showsContactInfo) {
-                ContactInfoScreen(contactID: viewModel.contactID, channel: viewModel.headerChannel)
+                ContactInfoScreen(contactID: viewModel.contactID, conversation: viewModel)
             }
             .task {
                 viewModel.bind(appConfig: appConfig)
@@ -94,9 +94,6 @@ struct ConversationScreen: View {
             }
             .sheet(isPresented: bindableViewModel.isTemplatesSheetPresented) {
                 TemplatesPickerSheet(viewModel: viewModel)
-            }
-            .sheet(isPresented: bindableViewModel.isChannelSheetPresented) {
-                ChannelPickerSheet(viewModel: viewModel)
             }
             .sheet(isPresented: bindableViewModel.isTagSheetPresented) {
                 TagPickerSheet(viewModel: viewModel)
