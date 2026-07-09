@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   createBlock,
   createImportedSiteFromHtml,
+  createSite,
   deleteSite,
   getSite,
   renderPublicSiteHtml
@@ -17,6 +18,32 @@ async function createImportedNativeSite(html, name) {
     name
   })
   return created.site
+}
+
+async function createNativeSourceForm(name) {
+  const form = await createSite({
+    name,
+    title: name,
+    siteType: 'standard_form',
+    blankCanvas: true,
+    theme: {
+      template: 'ristak',
+      submitText: 'Enviar formulario'
+    }
+  })
+
+  await createBlock(form.id, {
+    blockType: 'email',
+    label: 'Correo del lead',
+    placeholder: 'tu@correo.com',
+    required: true,
+    settings: {
+      pageId: 'page-1',
+      systemFieldKey: 'email'
+    }
+  })
+
+  return form
 }
 
 test('imported HTML native payment slots render the real Ristak checkout runtime', async () => {
@@ -139,6 +166,306 @@ test('imported HTML native payment slots render editor payment mock from preview
     assert.doesNotMatch(html, /Configura el pago de Ristak/)
   } finally {
     if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('imported HTML draft code preview renders native slots through the Ristak runtime without saving code', async () => {
+  let siteId = ''
+
+  try {
+    const originalHtml = `
+      <!doctype html>
+      <html>
+        <body>
+          <main>
+            <h1>Original headline</h1>
+            <div data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></div>
+          </main>
+        </body>
+      </html>
+    `
+    const site = await createImportedNativeSite(originalHtml, `HTML native draft runtime ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago principal',
+      content: 'Pago requerido',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'checkout-principal',
+        importedHtmlNativeType: 'payment',
+        importedHtmlNativeRenderMode: 'ristak',
+        paymentGate: {
+          enabled: true,
+          mode: 'test',
+          gateway: 'stripe',
+          amount: 1200,
+          currency: 'MXN',
+          productName: 'Consulta con borrador',
+          buttonText: 'Pagar consulta'
+        }
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const draftHtml = originalHtml.replace('Original headline', 'Draft headline from code editor')
+    const draftPreviewHtml = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true,
+      draftImportedCodeFiles: [{ path: '', content: draftHtml }]
+    })
+
+    assert.match(draftPreviewHtml, /Draft headline from code editor/)
+    assert.doesNotMatch(draftPreviewHtml, /Original headline/)
+    assert.match(draftPreviewHtml, /data-rstk-native-mounted="true"/)
+    assert.match(draftPreviewHtml, /data-rstk-payment-preview="true"/)
+    assert.match(draftPreviewHtml, /Consulta con borrador/)
+    assert.doesNotMatch(draftPreviewHtml, /data-rstk-checkout/)
+
+    const storedPreviewHtml = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true
+    })
+
+    assert.match(storedPreviewHtml, /Original headline/)
+    assert.doesNotMatch(storedPreviewHtml, /Draft headline from code editor/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('imported HTML page-asset draft preview uses the active file before native slot rendering', async () => {
+  let siteId = ''
+
+  try {
+    const created = await createImportedSiteFromHtml({
+      name: `HTML native page asset draft ${Date.now()}`,
+      filename: `asset-draft-${Date.now()}.html`,
+      siteType: 'landing_page',
+      pages: [{
+        id: 'page-landing',
+        title: 'Landing',
+        filename: 'Landing-01.html',
+        html: `
+          <!doctype html>
+          <html>
+            <body>
+              <main>
+                <h1>Asset original headline</h1>
+                <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></section>
+              </main>
+            </body>
+          </html>
+        `
+      }]
+    })
+    siteId = created.site.id
+
+    await createBlock(siteId, {
+      blockType: 'calendar_embed',
+      label: 'Agenda',
+      settings: {
+        pageId: 'page-landing',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'agenda-slot',
+        importedHtmlNativeType: 'calendar',
+        importedHtmlNativeRenderMode: 'ristak',
+        calendarId: 'cal_asset_draft',
+        calendarSlug: 'agenda-asset-draft',
+        calendarName: 'Agenda asset draft'
+      }
+    })
+
+    const currentSite = await getSite(siteId, { includeBlocks: true })
+    const draftPreviewHtml = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-landing',
+      trackingEnabled: false,
+      preview: true,
+      draftImportedCodeFiles: [{
+        path: 'Landing-01.html',
+        content: `
+          <!doctype html>
+          <html>
+            <body>
+              <main>
+                <h1>Asset draft headline from code editor</h1>
+                <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-native-render="ristak"></section>
+              </main>
+            </body>
+          </html>
+        `
+      }]
+    })
+
+    assert.match(draftPreviewHtml, /Asset draft headline from code editor/)
+    assert.doesNotMatch(draftPreviewHtml, /Asset original headline/)
+    assert.match(draftPreviewHtml, /data-rstk-native-slot-id="agenda-slot"/)
+    assert.match(draftPreviewHtml, /\/api\/sites\/public\/calendar-preview\/agenda-asset-draft\?test=1/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+  }
+})
+
+test('imported HTML draft code preview renders form, calendar, payment and video slots with the same Ristak runtime', async () => {
+  let siteId = ''
+  let formSiteId = ''
+
+  try {
+    const sourceForm = await createNativeSourceForm(`Fuente nativa HTML ${Date.now()}`)
+    formSiteId = sourceForm.id
+
+    const originalHtml = `
+      <!doctype html>
+      <html>
+        <body>
+          <main>
+            <h1>Original all native slots</h1>
+            <section data-rstk-native-element="form" data-rstk-native-id="lead-form" data-rstk-label="Formulario principal"></section>
+            <section data-rstk-native-element="calendar" data-rstk-native-id="agenda-slot" data-rstk-label="Agenda principal"></section>
+            <section data-rstk-native-element="payment" data-rstk-native-id="checkout-principal" data-rstk-label="Pago principal"></section>
+            <section data-rstk-native-element="video" data-rstk-native-id="video-principal" data-rstk-label="Video principal"></section>
+          </main>
+        </body>
+      </html>
+    `
+    const site = await createImportedNativeSite(originalHtml, `HTML all native draft ${Date.now()}`)
+    siteId = site.id
+
+    await createBlock(site.id, {
+      blockType: 'form_embed',
+      label: 'Formulario principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'lead-form',
+        importedHtmlNativeType: 'form',
+        importedHtmlNativeRenderMode: 'ristak',
+        formSiteId: sourceForm.id,
+        completionAction: 'form_default'
+      }
+    })
+
+    await createBlock(site.id, {
+      blockType: 'calendar_embed',
+      label: 'Agenda principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'agenda-slot',
+        importedHtmlNativeType: 'calendar',
+        importedHtmlNativeRenderMode: 'ristak',
+        calendarId: 'cal_all_native',
+        calendarSlug: 'agenda-all-native',
+        calendarName: 'Agenda all native'
+      }
+    })
+
+    await createBlock(site.id, {
+      blockType: 'payment',
+      label: 'Pago principal',
+      content: 'Pago requerido',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'checkout-principal',
+        importedHtmlNativeType: 'payment',
+        importedHtmlNativeRenderMode: 'ristak',
+        paymentGate: {
+          enabled: true,
+          mode: 'test',
+          gateway: 'stripe',
+          amount: 1990,
+          currency: 'MXN',
+          productName: 'Paquete completo',
+          buttonText: 'Pagar paquete'
+        }
+      }
+    })
+
+    await createBlock(site.id, {
+      blockType: 'video',
+      label: 'Video principal',
+      settings: {
+        pageId: 'page-1',
+        importedHtmlNativeElement: true,
+        importedHtmlNativeSlotId: 'video-principal',
+        importedHtmlNativeType: 'video',
+        importedHtmlNativeRenderMode: 'ristak',
+        mediaUrl: 'https://cdn.example.test/all-native.mp4',
+        videoControlsMode: 'overlay',
+        videoActions: [{
+          id: 'video-gate-action',
+          action: 'open_video_form',
+          timeSeconds: 3,
+          before: 'unchanged'
+        }],
+        videoFormGateEnabled: true,
+        videoFormGateTriggerSeconds: 3,
+        videoFormGateTitle: 'Antes de seguir',
+        videoFormGateSubmitText: 'Continuar video',
+        videoFormGateFormSiteId: sourceForm.id,
+        videoFormGateEmbeddedSiteName: sourceForm.name,
+        videoFormGateEmbeddedTheme: {
+          submitText: 'Continuar video'
+        },
+        videoFormGateEmbeddedBlocks: [{
+          id: 'video-gate-email',
+          siteId: sourceForm.id,
+          blockType: 'email',
+          label: 'Correo para video',
+          placeholder: 'video@correo.com',
+          required: true,
+          sortOrder: 0,
+          settings: {
+            pageId: 'video-form-gate',
+            systemFieldKey: 'email',
+            validation: 'email'
+          }
+        }]
+      }
+    })
+
+    const currentSite = await getSite(site.id, { includeBlocks: true })
+    const draftHtml = originalHtml.replace('Original all native slots', 'Draft all native slots')
+    const html = await renderPublicSiteHtml(currentSite, {
+      pageId: 'page-1',
+      trackingEnabled: false,
+      preview: true,
+      importedNativePreviewMock: true,
+      draftImportedCodeFiles: [{ path: '', content: draftHtml }]
+    })
+
+    assert.match(html, /Draft all native slots/)
+    assert.doesNotMatch(html, /Original all native slots/)
+    assert.match(html, /rstk-imported-native-form-frame/)
+    assert.match(html, /data-site-form/)
+    assert.match(html, /rstk-embedded-form/)
+    assert.match(html, /Correo del lead/)
+    assert.match(html, /iframe class="rstk-embed rstk-calendar-embed"/)
+    assert.match(html, /\/api\/sites\/public\/calendar-preview\/agenda-all-native\?test=1/)
+    assert.match(html, /data-rstk-payment-preview="true"/)
+    assert.match(html, /Paquete completo/)
+    assert.match(html, /class="rstk-video[^"]*rstk-video-player/)
+    assert.match(html, /data-rstk-video-src="https:\/\/cdn\.example\.test\/all-native\.mp4"/)
+    assert.match(html, /data-rstk-video-form-gate/)
+    assert.match(html, /Correo para video/)
+    assert.match(html, /Continuar video/)
+    assert.match(html, /window\.ristakVideoActionsRuntimeLoaded/)
+    assert.match(html, /window\.ristakVideoFormGateRuntimeLoaded/)
+    assert.match(html, /\/api\/sites\/public\/submit/)
+    assert.doesNotMatch(html, /Selecciona un formulario de Ristak/)
+    assert.doesNotMatch(html, /Selecciona un calendario de Ristak/)
+    assert.doesNotMatch(html, /Configura el pago de Ristak/)
+    assert.doesNotMatch(html, /Configura el video de Ristak/)
+  } finally {
+    if (siteId) await deleteSite(siteId).catch(() => undefined)
+    if (formSiteId) await deleteSite(formSiteId).catch(() => undefined)
   }
 })
 
