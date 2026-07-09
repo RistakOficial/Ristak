@@ -1,6 +1,7 @@
 import { Agent, Runner } from '@openai/agents'
 import { db } from '../../config/database.js'
 import { logger } from '../../utils/logger.js'
+import { enforceComplianceGuard } from './complianceGuard.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../../utils/dateUtils.js'
 import { getAccountLocaleSettings } from '../../utils/accountLocale.js'
 import {
@@ -1817,7 +1818,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       ctx.aiRuntime = runtime
       ctx.model = model
 
-      const reply = await executeAgent({
+      let reply = await executeAgent({
         agent,
         modelProvider: runtime.modelProvider,
         messages: messagesForAgent,
@@ -1827,6 +1828,16 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         channel: normalizedChannel,
         traceMessage
       })
+
+      // Guardián de cumplimiento: revisa las reglas de apertura de la biblia sobre la
+      // respuesta visible y la reescribe si las rompe (precio/pitch antes de calificar).
+      if (reply && !ctx.suppressReply) {
+        const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: agentConfig, runtime, model })
+        if (guarded.changed) {
+          reply = guarded.reply
+          ctx.actions.push({ type: 'compliance_rewrite', rules: guarded.violation?.rules || [], reason: guarded.violation?.reason || '', effect: { liveEffect: 'REESCRIBIÓ el mensaje para cumplir la biblia (no soltar precio/pitch antes de calificar)', marksObjectiveCompleted: false } })
+        }
+      }
 
       const responseDelayMs = getAgentResponseDelayMs(agentConfig)
       if (responseDelayMs > 0) {
@@ -2261,7 +2272,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   ctx.aiRuntime = runtime
   ctx.model = model
 
-  const reply = await executeAgent({
+  let reply = await executeAgent({
     agent,
     modelProvider: runtime.modelProvider,
     messages: messagesForAgent,
@@ -2270,6 +2281,15 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     aiProvider,
     channel: previewChannel
   })
+
+  // Guardián de cumplimiento (mismo que en vivo, para que el tester lo refleje 1:1).
+  if (reply && !ctx.suppressReply) {
+    const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: runtimeConfig, runtime, model })
+    if (guarded.changed) {
+      reply = guarded.reply
+      ctx.actions.push({ type: 'compliance_rewrite', rules: guarded.violation?.rules || [], reason: guarded.violation?.reason || '', effect: { liveEffect: 'REESCRIBIÓ el mensaje para cumplir la biblia (no soltar precio/pitch antes de calificar)', marksObjectiveCompleted: false } })
+    }
+  }
 
   const splitResult = ctx.suppressReply
     ? { messages: [] }
