@@ -355,6 +355,25 @@ function buildQrMediaPayload({ dataUrl, url, label }) {
   }
 }
 
+// Extensión para el archivo temporal de entrada de ffmpeg al transcodificar una
+// nota de voz por QR (ffmpeg detecta el formato por contenido; la extensión solo
+// ayuda). El m4a/AAC de iOS llega como audio/mp4.
+function qrAudioInputExtension(mimeType = '') {
+  const clean = cleanString(mimeType).toLowerCase().split(';')[0].trim()
+  switch (clean) {
+    case 'audio/mp4':
+    case 'audio/x-m4a':
+    case 'audio/m4a':
+    case 'audio/aac': return 'm4a'
+    case 'audio/mpeg': return 'mp3'
+    case 'audio/wav':
+    case 'audio/x-wav': return 'wav'
+    case 'audio/webm': return 'webm'
+    case 'audio/ogg': return 'ogg'
+    default: return 'audio'
+  }
+}
+
 function normalizeConnectedPhone(value = '') {
   const text = cleanString(value)
   if (isLidJid(text)) return ''
@@ -3314,7 +3333,20 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
     url: audioUrl,
     label: 'el audio'
   })
-  const mimeType = normalizeVoiceNoteMimeType(inferAudioMimeType({ mimeType: media.mimeType, url: media.sourceUrl }))
+  let mimeType = normalizeVoiceNoteMimeType(inferAudioMimeType({ mimeType: media.mimeType, url: media.sourceUrl }))
+  // Baileys/WhatsApp Web exige un contenedor OGG/Opus REAL para las notas de voz
+  // (ptt). Si el contenido es un buffer que aún NO es OGG (p. ej. el m4a/AAC que
+  // graba iOS), transcodifícalo con la MISMA tubería del canal API antes de
+  // mandarlo como PTT — mandar AAC con ptt:true rompe la reproducción en el
+  // receptor (aparece como archivo o "audio no disponible").
+  if (Buffer.isBuffer(media.content) && !/^audio\/ogg/i.test(cleanString(mimeType))) {
+    const { convertAudioToOggOpus } = await loadWhatsAppApiService()
+    media.content = await convertAudioToOggOpus({
+      buffer: media.content,
+      extension: qrAudioInputExtension(media.mimeType)
+    })
+    mimeType = WHATSAPP_VOICE_NOTE_MIME_TYPE
+  }
   const seconds = getAudioDurationSeconds(durationMs)
   const sock = await ensureOpenSocket(phone, { waitForLease: true, leaseReason: 'envío de audio' })
   const recipient = await resolveRecipientJid(sock, toPhone)

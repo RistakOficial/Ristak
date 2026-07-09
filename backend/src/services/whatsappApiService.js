@@ -937,7 +937,24 @@ async function prepareWhatsAppVideo(parsed) {
   }
 }
 
-async function convertAudioToOggOpus({ buffer, extension }) {
+// Un contenedor OGG SIEMPRE empieza con la firma "OggS" (capture pattern de la
+// primera página). Es el chequeo barato y confiable de que unos bytes son un OGG
+// real (y no un m4a/AAC disfrazado), evitando subir al proveedor algo que
+// rechazaría como application/octet-stream.
+function isOggBuffer(buffer) {
+  return Buffer.isBuffer(buffer) && buffer.length > 4 &&
+    buffer.subarray(0, 4).toString('latin1') === 'OggS'
+}
+
+function assertOggOpusBuffer(buffer) {
+  if (!isOggBuffer(buffer)) {
+    throw new Error('El audio no quedó en formato de nota de voz de WhatsApp (OGG/Opus). Intenta grabarlo otra vez.')
+  }
+}
+
+// Exportada para reutilizarla en el canal QR (Baileys también exige OGG/Opus para
+// notas de voz PTT); una sola tubería de conversión para ambos transportes.
+export async function convertAudioToOggOpus({ buffer, extension }) {
   const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-whatsapp-audio-'))
   const inputPath = join(folder, `input.${extension || 'audio'}`)
   const outputPath = join(folder, 'voice.ogg')
@@ -956,7 +973,11 @@ async function convertAudioToOggOpus({ buffer, extension }) {
       '-c:a',
       'libopus',
       '-b:a',
-      '48k',
+      '32k',
+      // `voip` es el modo Opus que WhatsApp usa para notas de voz (PTT); optimiza
+      // voz y produce el OGG/Opus que Meta/YCloud/Baileys aceptan de verdad.
+      '-application',
+      'voip',
       outputPath
     ])
 
@@ -964,6 +985,10 @@ async function convertAudioToOggOpus({ buffer, extension }) {
     if (!converted.length) {
       throw new Error('El audio convertido quedó vacío. Intenta grabarlo otra vez.')
     }
+    // Garantiza que ffmpeg REALMENTE produjo un OGG antes de subirlo: si por
+    // cualquier razón no lo es, falla claro aquí en vez de que el proveedor lo
+    // rechace como application/octet-stream tras gastar la subida.
+    assertOggOpusBuffer(converted)
 
     if (converted.length > MAX_WHATSAPP_AUDIO_BYTES) {
       throw new Error('El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp.')
@@ -1019,7 +1044,10 @@ async function convertAudioToChatPlaybackMp4({ buffer, extension }) {
 }
 
 async function prepareWhatsAppVoiceAudio(parsed) {
-  if (audioNeedsWhatsAppConversion(parsed)) {
+  // Transcodifica si el formato no es opus, O si dice ser audio/ogg;opus pero los
+  // bytes NO son un OGG real (cliente con etiqueta mentirosa). Nunca se sube un
+  // buffer no-OGG bajo la etiqueta de nota de voz → mata el rechazo octet-stream.
+  if (audioNeedsWhatsAppConversion(parsed) || !isOggBuffer(parsed.buffer)) {
     return {
       buffer: await convertAudioToOggOpus(parsed),
       mimeType: WHATSAPP_VOICE_NOTE_MIME_TYPE,

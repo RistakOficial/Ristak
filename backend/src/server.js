@@ -1,5 +1,6 @@
 import './config/initTimezone.js'
 import 'dotenv/config'
+import ffmpegStatic from 'ffmpeg-static'
 import express from 'express'
 import cors from 'cors'
 import { fileURLToPath } from 'url'
@@ -27,6 +28,15 @@ import { ensureBunnyStreamRuntimeConfigured } from './services/mediaStorageServi
 import { scheduleStartupStorageTaxonomyMigration } from './services/storageTaxonomyMigration.js'
 import { repairDefaultMessageTemplatesForCurrentConnection } from './services/messageTemplatesService.js'
 import { shutdownWhatsAppQrService } from './services/whatsappQrService.js'
+
+// Garantiza un ffmpeg con libopus en CUALQUIER runtime (Render nativo O Docker):
+// apunta FFMPEG_PATH al binario estático empaquetado. Toda la transcodificación
+// (notas de voz OGG/Opus para WhatsApp, video, previews de audio) lo lee vía
+// FFMPEG_PATH. Sin esto, un deploy sin ffmpeg de sistema rompía las notas de voz.
+if (!process.env.FFMPEG_PATH && ffmpegStatic) {
+  process.env.FFMPEG_PATH = ffmpegStatic
+  logger.info(`[audio] ffmpeg estático activo: ${ffmpegStatic}`)
+}
 
 // Force redeploy to ensure latest logs are active
 

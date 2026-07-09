@@ -858,6 +858,21 @@ function normalizeMetaSocialSendError(error, platform) {
     })
   }
 
+  // Instagram rechaza con frecuencia las notas de voz salientes por DM aunque el
+  // formato sea válido (limitación documentada de Meta con audios por Instagram,
+  // no del codec). Traducimos ese rechazo a un mensaje accionable en vez del
+  // error crudo del Graph.
+  if (cleanPlatform === 'instagram') {
+    const message = cleanString(error?.message).toLowerCase()
+    if (/unsupported attachment|attachment format is not supported|attachment.*not supported/.test(message)) {
+      return createMetaSocialMessageError(
+        'Instagram no está aceptando esta nota de voz por ahora (limitación de Meta con audios por DM). Envíala por WhatsApp o manda un mensaje de texto.',
+        error.statusCode || 400,
+        { ...(error.meta || {}), actionRequired: 'instagram_audio_unsupported' }
+      )
+    }
+  }
+
   return error
 }
 
