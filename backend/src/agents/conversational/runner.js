@@ -30,6 +30,7 @@ import {
   buildRuleContext,
   exitRulesMatch,
   contactIsOutOfScopeForAgent,
+  isStaleInheritedConversationStateForAgent,
   normalizeConversationalAgentModel,
   getAgentResponseDelayMs,
   getAgentFollowUpSteps,
@@ -1540,14 +1541,24 @@ function isRunnableConversationState(state) {
   return Boolean(state?.agentId && state.status === 'active' && !state.signal)
 }
 
-async function resolveInboundAgentForContact({ contactId, messageText, channel, ruleContext }) {
+export async function resolveInboundAgentForContact({ contactId, messageText, channel, ruleContext }) {
   const states = await listConversationStatesForContact(contactId).catch(() => [])
-  const blockedAgentIds = new Set(
-    states
-      .filter((state) => state?.agentId && !isRunnableConversationState(state))
-      .map((state) => state.agentId)
-  )
+  const blockedAgentIds = new Set()
   const releasedAgentIds = new Set()
+
+  for (const state of states.filter((item) => item?.agentId && !isRunnableConversationState(item))) {
+    const agentConfig = await getConversationalAgent(state.agentId).catch(() => null)
+    if (agentConfig && isStaleInheritedConversationStateForAgent(state, agentConfig)) {
+      await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'agent_released',
+        detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'stale_inherited_state' }
+      })
+      continue
+    }
+    blockedAgentIds.add(state.agentId)
+  }
 
   for (const state of states.filter(isRunnableConversationState)) {
     const agentConfig = await getConversationalAgent(state.agentId).catch(() => null)

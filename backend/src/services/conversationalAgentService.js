@@ -2111,11 +2111,11 @@ export function shouldMigrateLegacyConversationalAgentConfig(legacy) {
  * tiene reglas reales, crea el "Agente principal" a partir de ella.
  * La config default vacía no se migra, así una cuenta nueva empieza sin agentes.
  */
-async function backfillLegacyConversationStatesToPrimaryAgent() {
+async function backfillLegacyConversationStatesToPrimaryAgent({ includeHistoricalStates = false } = {}) {
   // Excluye agentes 'new_only': no deben adoptar conversaciones legacy de contactos viejos
   // (eso saltaría el corte de seguridad, porque la adopción ocurre antes de matchAgentForMessage).
   const primaryAgent = await db.get(`
-    SELECT id FROM conversational_agents
+    SELECT id, created_at FROM conversational_agents
     WHERE COALESCE(contact_scope, 'all') <> 'new_only'
     ORDER BY position ASC, created_at ASC LIMIT 1
   `).catch(() => null)
@@ -2134,7 +2134,20 @@ async function backfillLegacyConversationStatesToPrimaryAgent() {
         OR last_answered_inbound_message_id IS NOT NULL
         OR status IN ('paused', 'skipped', 'human', 'completed', 'discarded')
       )
-  `, [primaryAgent.id]).catch(() => undefined)
+      AND (
+        ? = 1
+        OR (
+          created_at IS NOT NULL
+          AND ? IS NOT NULL
+          AND created_at >= ?
+        )
+      )
+  `, [
+    primaryAgent.id,
+    includeHistoricalStates ? 1 : 0,
+    primaryAgent.created_at || null,
+    primaryAgent.created_at || null
+  ]).catch(() => undefined)
 }
 
 export async function ensureAgentsMigration() {
@@ -2181,7 +2194,7 @@ export async function ensureAgentsMigration() {
     JSON.stringify({ entry: [], exit: [] })
   ])
   logger.info('[Agente conversacional] Config previa migrada al contenedor "Agente principal"')
-  await backfillLegacyConversationStatesToPrimaryAgent()
+  await backfillLegacyConversationStatesToPrimaryAgent({ includeHistoricalStates: true })
 }
 
 export async function listConversationalAgents() {
@@ -3545,6 +3558,17 @@ export function contactIsOutOfScopeForAgent(agent, ctx) {
   return created < cut // el contacto nació ANTES del corte → este agente lo ignora
 }
 
+export function isStaleInheritedConversationStateForAgent(state, agent = null) {
+  if (!state?.agentId) return false
+  const stateCreatedAt = state.createdAt || state.activatedAt || null
+  const agentCreatedAt = agent?.createdAt || state.agentCreatedAt || null
+  if (!stateCreatedAt || !agentCreatedAt) return false
+  const stateCreated = parseTimestampMsUtc(stateCreatedAt)
+  const agentCreated = parseTimestampMsUtc(agentCreatedAt)
+  if (!Number.isFinite(stateCreated) || !Number.isFinite(agentCreated)) return false
+  return stateCreated < agentCreated
+}
+
 export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp', excludeAgentId = null, excludeAgentIds = [], ruleContext = null } = {}) {
   const agents = (await listConversationalAgents()).filter((agent) => agent.enabled)
   if (!agents.length) return null
@@ -3783,11 +3807,13 @@ function mapStateRow(row) {
     updatedBy: row.updated_by || null,
     agentId: row.agent_id || null,
     agentName: row.agent_name || null,
+    agentCreatedAt: row.agent_created_at || null,
     agentEnabled: hasAgentEnabled ? toBoolean(row.agent_enabled) : null,
     agentHideAttendedNotifications: hasAgentHideAttendedNotifications
       ? (toBoolean(row.agent_hide_attended_notifications) || toBoolean(row.agent_hide_attended))
       : null,
     closingContext: normalizeStoredAdvancedClosingContext(row.closing_context_json || '{}'),
+    createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
 }
@@ -3815,6 +3841,7 @@ async function loadConversationStateRow(contactId, { agentId = null } = {}) {
   if (cleanAgentId) {
     return db.get(`
       SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
+             a.created_at AS agent_created_at,
              a.hide_attended AS agent_hide_attended,
              a.hide_attended_notifications AS agent_hide_attended_notifications
       FROM conversational_agent_state s
@@ -3826,6 +3853,7 @@ async function loadConversationStateRow(contactId, { agentId = null } = {}) {
 
   return db.get(`
     SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
+           a.created_at AS agent_created_at,
            a.hide_attended AS agent_hide_attended,
            a.hide_attended_notifications AS agent_hide_attended_notifications
     FROM conversational_agent_state s
@@ -3840,6 +3868,7 @@ async function loadConversationStateRowById(stateId) {
   if (!stateId) return null
   return db.get(`
     SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
+           a.created_at AS agent_created_at,
            a.hide_attended AS agent_hide_attended,
            a.hide_attended_notifications AS agent_hide_attended_notifications
     FROM conversational_agent_state s
@@ -4004,6 +4033,7 @@ export async function listConversationStatesForContact(contactId) {
   await expirePausedConversationStates()
   const rows = await db.all(`
     SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
+           a.created_at AS agent_created_at,
            a.hide_attended AS agent_hide_attended,
            a.hide_attended_notifications AS agent_hide_attended_notifications
     FROM conversational_agent_state s

@@ -6,14 +6,18 @@ import { db } from '../src/config/database.js'
 import { updateState } from '../src/controllers/conversationalAgentController.js'
 import {
   assignAgentToConversation,
+  buildRuleContext,
   createConversationalAgent,
   getConversationState,
+  isStaleInheritedConversationStateForAgent,
   listConversationStates,
   listConversationalAgentEvents,
+  matchAgentForMessage,
   resetConversationalAgentSkippedContacts,
   setConversationStatus,
   setConversationSignal
 } from '../src/services/conversationalAgentService.js'
+import { resolveInboundAgentForContact } from '../src/agents/conversational/runner.js'
 
 const READY_BUSINESS_PROFILE = {
   businessName: 'Clínica Test',
@@ -142,10 +146,18 @@ async function seedReadyBusinessProfile() {
 async function cleanup(contactId, agentId) {
   await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
   if (agentId) {
     await db.run('DELETE FROM conversational_agent_events WHERE detail_json LIKE ?', [`%${agentId}%`]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId]).catch(() => undefined)
   }
+}
+
+async function seedContact(contactId) {
+  await db.run(`
+    INSERT INTO contacts (id, full_name, first_name, phone, source, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [contactId, 'Contacto Test', 'Contacto', '+520000000000', 'test'])
 }
 
 test('activar una conversación con agentId asigna ese agente al estado', async () => {
@@ -231,6 +243,88 @@ test('omitir una conversación conserva el estado en la lista de omitidos', asyn
     assert.equal(skipped?.activationSource, 'manual')
   } finally {
     await cleanup(contactId)
+  }
+})
+
+test('un agente nuevo catch-all no hereda omisiones legacy anteriores', async () => {
+  const contactId = `conversation_agent_legacy_skip_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    await db.run(`
+      INSERT INTO conversational_agent_state (
+        id, contact_id, status, updated_by, activated_at, activation_source, activated_by, created_at, updated_at
+      ) VALUES (?, ?, 'skipped', 'user', '2026-01-01 00:00:00', 'manual', 'user', '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+    `, [`cas_${randomUUID()}`, contactId])
+
+    const agent = await createConversationalAgent({
+      name: 'Agente nuevo todos los chats',
+      enabled: true,
+      objective: 'citas'
+    })
+    agentId = agent.id
+
+    const legacyState = await db.get(
+      'SELECT agent_id, status FROM conversational_agent_state WHERE contact_id = ?',
+      [contactId]
+    )
+    assert.equal(legacyState?.status, 'skipped')
+    assert.equal(legacyState?.agent_id, null)
+
+    const matched = await matchAgentForMessage({ contactId, messageText: 'Costos', channel: 'whatsapp' })
+    assert.equal(matched?.id, agentId)
+  } finally {
+    await cleanup(contactId, agentId)
+  }
+})
+
+test('un bloqueo heredado más viejo que el agente se suelta antes del matching automático', async () => {
+  const contactId = `conversation_agent_stale_skip_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    const agent = await createConversationalAgent({
+      name: 'Agente nuevo desbloquea legacy',
+      enabled: true,
+      objective: 'citas'
+    })
+    agentId = agent.id
+
+    await db.run(`
+      INSERT INTO conversational_agent_state (
+        id, contact_id, agent_id, status, updated_by, activated_at, activation_source, activated_by, created_at, updated_at
+      ) VALUES (?, ?, ?, 'skipped', 'user', '2026-01-01 00:00:00', 'manual', 'user', '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+    `, [`cas_${randomUUID()}`, contactId, agentId])
+
+    const staleState = await getConversationState(contactId, { agentId })
+    assert.equal(isStaleInheritedConversationStateForAgent(staleState, agent), true)
+
+    const ruleContext = await buildRuleContext({ contactId, messageText: 'Costos', channel: 'whatsapp' })
+    const resolved = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Costos',
+      channel: 'whatsapp',
+      ruleContext
+    })
+
+    assert.equal(resolved.agentConfig?.id, agentId)
+    assert.equal(resolved.assigned, true)
+    assert.equal(resolved.state?.status, 'active')
+
+    const activeState = await getConversationState(contactId, { agentId })
+    assert.equal(activeState?.status, 'active')
+    assert.equal(activeState?.activationSource, 'automatic')
+
+    const events = await listConversationalAgentEvents({ contactId })
+    assert.ok(events.some((event) => (
+      event.eventType === 'agent_released' &&
+      event.detail?.reason === 'stale_inherited_state' &&
+      event.detail?.agentId === agentId
+    )))
+  } finally {
+    await cleanup(contactId, agentId)
   }
 })
 
