@@ -2243,7 +2243,10 @@ precio/valor/costo/cotizacion (por ejemplo,
 "no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
 explicito: una pregunta directa por precio no desbloquea montos, rangos,
 descuentos, promociones ni links de pago hasta cumplir esa condicion; el agente
-debe pedir el contexto faltante de uno en uno y despues usar precios reales.
+debe pedir el contexto faltante de uno en uno y despues usar precios reales. El
+guardian de cumplimiento que reescribe aperturas riesgosas tambien debe devolver
+una pregunta visible y clara; no basta con una frase condicional tipo "si me
+dices..." cuando el contacto pidio precio o informacion en frio.
 
 Reglas:
 

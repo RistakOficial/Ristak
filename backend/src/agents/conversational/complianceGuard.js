@@ -37,6 +37,8 @@ export function complianceGuardApplies(config = {}) {
 const MONEY_RE = /(\$\s?\d|\bmxn\b|\busd\b|\d+\s?(pesos|d[oó]lares|euros)|cuesta|precio|costo|tarifa|inversi[oó]n de \$?\d)/i
 // Señales de pitch/explicación de producto (para cazar el "ofrecemos X, Y y Z").
 const PITCH_RE = /\bofrec|\btenemos\b|\bcontamos con\b|\bmanejamos\b|\brealizamos\b|nuestros?\s+(servicios|tratamientos|programas|paquetes)|\bconsiste en\b|\bincluye\b/i
+const QUESTION_MARK_RE = /[?？]/
+const DEFAULT_OPENING_QUALIFICATION_QUESTION = 'para decirte bien, qué estás buscando exactamente?'
 
 export function replyMightViolate(reply = '') {
   const text = String(reply || '')
@@ -45,6 +47,13 @@ export function replyMightViolate(reply = '') {
   const hasPitch = PITCH_RE.test(text)
   const isLongish = text.length > 130 // posible explicación/pitch
   return hasMoney || hasPitch || isLongish
+}
+
+export function ensureCorrectedGuardQuestion(reply = '') {
+  const text = String(reply || '').trim()
+  if (!text) return DEFAULT_OPENING_QUALIFICATION_QUESTION
+  if (QUESTION_MARK_RE.test(text)) return text
+  return DEFAULT_OPENING_QUALIFICATION_QUESTION
 }
 
 function conversationToText(messages = []) {
@@ -107,7 +116,7 @@ export async function enforceComplianceGuard({ reply = '', messages = [], config
   try {
     const verdict = await runGuardModel({ conversation: conversationToText(messages), reply: original, runtime, model })
     if (!verdict.violates || !verdict.corrected) return { reply: original, changed: false }
-    return { reply: verdict.corrected, changed: true, violation: { rules: verdict.rules, reason: verdict.reason } }
+    return { reply: ensureCorrectedGuardQuestion(verdict.corrected), changed: true, violation: { rules: verdict.rules, reason: verdict.reason } }
   } catch (error) {
     logger.warn(`[Guardián de cumplimiento] Falló (${error?.message || error}); se envía la respuesta original (fail-open).`)
     return { reply: original, changed: false }

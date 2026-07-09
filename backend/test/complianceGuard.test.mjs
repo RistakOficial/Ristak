@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   complianceGuardApplies,
+  ensureCorrectedGuardQuestion,
   replyMightViolate,
   enforceComplianceGuard
 } from '../src/agents/conversational/complianceGuard.js'
@@ -27,6 +28,21 @@ test('pre-filtro determinista: una pregunta corta sin precio no gasta IA', () =>
   assert.equal(replyMightViolate('son 800 pesos por sesión'), true)
   // Texto largo (posible pitch): sí podría violar.
   assert.equal(replyMightViolate('a'.repeat(250)), true)
+})
+
+test('la reescritura del guardián siempre vuelve con pregunta clara', () => {
+  assert.equal(
+    ensureCorrectedGuardQuestion('si me dices qué traes, te digo si te conviene esa opción'),
+    'para decirte bien, qué estás buscando exactamente?'
+  )
+  assert.equal(
+    ensureCorrectedGuardQuestion('claro, qué estás buscando?'),
+    'claro, qué estás buscando?'
+  )
+  assert.equal(
+    ensureCorrectedGuardQuestion(''),
+    'para decirte bien, qué estás buscando exactamente?'
+  )
 })
 
 test('sin runtime de validación: fail-open (no reescribe, deja pasar)', async () => {
