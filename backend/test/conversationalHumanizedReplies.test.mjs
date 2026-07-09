@@ -968,7 +968,7 @@ test('mark_ready_to_advance no cierra sin confirmación explícita (candado anti
     confirm: false
   }))
   assert.equal(soft.ok, false)
-  assert.match(soft.error, /Aún no es momento de pasar a un humano/)
+  assert.match(soft.error, /Aún no\. Ejecuta esto SÓLO cuando el objetivo del agente ya se cumplió/)
   assert.equal(ctx.actions.length, 0)
 
   // Con confirm: la persona pidió explícitamente avanzar -> sí procede (simulado).
@@ -985,6 +985,24 @@ test('mark_ready_to_advance no cierra sin confirmación explícita (candado anti
   assert.equal(ready.wouldMarkObjectiveCompleted, true)
   assert.equal(ctx.actions[0]?.type, 'mark_ready_to_advance')
   assert.equal(ctx.actions[0]?.effect?.marksObjectiveCompleted, true)
+})
+
+test('mark_ready_to_advance cubre datos/filtrar/personalizado (cierre por humano), no las acciones concretas', () => {
+  const toolNames = (config) => createConversationalTools({
+    contactId: 'test_obj_coverage', dryRun: true, actions: [], config
+  }).map((item) => item.name)
+
+  // datos y filtrar cierran juntando datos / calificando y avisando a un humano.
+  for (const objective of ['datos', 'filtrar', 'custom']) {
+    const names = toolNames({ objective, successAction: 'ready_for_human', goalWorkflow: {} })
+    assert.ok(names.includes('mark_ready_to_advance'), `${objective} debe exponer mark_ready_to_advance`)
+  }
+
+  // Las acciones de cierre concretas NO exponen mark_ready_to_advance: cierran con su acción real.
+  for (const successAction of ['book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link']) {
+    const names = toolNames({ objective: 'citas', successAction, goalWorkflow: {} })
+    assert.equal(names.includes('mark_ready_to_advance'), false, `${successAction} no debe exponer mark_ready_to_advance`)
+  }
 })
 
 test('agente de ventas cierra con create_payment_link, no con mark_ready_to_advance', () => {
