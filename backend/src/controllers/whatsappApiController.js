@@ -690,6 +690,7 @@ export async function sendWhatsAppApiTextMessageView(req, res) {
       phoneNumberId: req.body?.phoneNumberId,
       replyToMessageId: req.body?.replyToMessageId,
       replyToProviderMessageId: req.body?.replyToProviderMessageId,
+      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
       skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
@@ -715,6 +716,7 @@ export async function sendWhatsAppApiReactionMessageView(req, res) {
       transport: req.body?.transport,
       contactId: req.body?.contactId,
       phoneNumberId: req.body?.phoneNumberId,
+      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
       skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
@@ -741,6 +743,7 @@ export async function sendWhatsAppApiLocationMessageView(req, res) {
       transport: req.body?.transport,
       contactId: req.body?.contactId,
       phoneNumberId: req.body?.phoneNumberId,
+      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
       skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
@@ -856,6 +859,7 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
       userId: req.user?.userId,
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req),
+      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
       skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
@@ -885,6 +889,7 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
       userId: req.user?.userId,
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req),
+      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
       skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
@@ -912,6 +917,7 @@ export async function sendWhatsAppApiVideoMessageView(req, res) {
       userId: req.user?.userId,
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req),
+      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
       skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })
@@ -939,6 +945,7 @@ export async function sendWhatsAppApiAudioMessageView(req, res) {
       contactId: req.body?.contactId,
       phoneNumberId: req.body?.phoneNumberId,
       publicBaseUrl: getPublicBaseUrl(req),
+      preferOfficialApiWhenReplyWindowOpen: isManualChatMessageOrigin(req.body?.messageOrigin),
       skipQrSendProtection: isManualChatMessageOrigin(req.body?.messageOrigin)
     })
     notifyHumanTakeover({ contactId: req.body?.contactId, toPhone: req.body?.to })

@@ -6,6 +6,7 @@ import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   getWhatsAppApiConfigKeys,
   sendWhatsAppApiInteractiveMessage,
+  sendWhatsAppApiTextMessage,
   sendWhatsAppApiTemplateMessage,
   setMetaDirectFetchForTest,
   setYCloudFetchForTest
@@ -199,6 +200,41 @@ async function withMetaDirectMessageCapture(callback) {
     }
   })
 }
+
+test('mensaje manual pedido por QR usa API oficial si la ventana de 24h sigue abierta', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const to = '+5215500012400'
+    try {
+      await captures.openReplyWindow(to)
+
+      const result = await sendWhatsAppApiTextMessage({
+        to,
+        text: 'Seguimos por API',
+        transport: 'qr',
+        phoneNumberId: 'phone_ycloud_buttons_test',
+        preferOfficialApiWhenReplyWindowOpen: true
+      })
+
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'text')
+      assert.equal(captures[0].text.body, 'Seguimos por API')
+      assert.ok(result.localMessageId)
+
+      const row = await db.get(
+        `SELECT transport, message_text
+         FROM whatsapp_api_messages
+         WHERE id = ?`,
+        [result.localMessageId]
+      )
+      assert.equal(row.transport, 'api')
+      assert.equal(row.message_text, 'Seguimos por API')
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ? OR to_phone = ?', [to, to])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})
 
 test('envía botones interactivos de respuesta por YCloud', async () => {
   await withYCloudMessageCapture(async (captures) => {

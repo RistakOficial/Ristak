@@ -734,12 +734,15 @@ iniciales en su lugar.
 
 Antes de mandar mensajes libres por WhatsApp API/YCloud, `whatsappApiService`
 debe revisar la ultima respuesta entrante del cliente para ese contacto y numero
-de negocio. Si la ventana de 24 horas ya esta cerrada o no existe una respuesta
-entrante comprobable, no debe intentar YCloud: debe usar WhatsApp QR/Baileys
-directamente cuando exista un QR usable. Desktop y movil deben calcular el mismo
-transporte antes de pintar el mensaje optimista para evitar duplicados visuales
-API/QR. Las plantillas quedan fuera de este bloqueo porque son el camino permitido
-por WhatsApp cuando la conversacion esta cerrada.
+de negocio. Si la ventana de 24 horas sigue abierta, los envios manuales del chat
+deben salir por API oficial aunque el frontend haya pedido `transport='qr'` por
+un calculo local incompleto. Si la ventana ya esta cerrada o no existe una
+respuesta entrante comprobable, no debe intentar YCloud: debe usar WhatsApp
+QR/Baileys directamente cuando exista un QR usable. Desktop y movil deben
+calcular el transporte antes de pintar el mensaje optimista, pero el backend es
+la autoridad final para evitar que un QR previo secuestre conversaciones API.
+Las plantillas quedan fuera de este bloqueo porque son el camino permitido por
+WhatsApp cuando la conversacion esta cerrada.
 
 En los chats desktop y movil, el selector para enviar o programar plantillas de
 WhatsApp API debe listar solo plantillas con estado `APPROVED`. Las plantillas

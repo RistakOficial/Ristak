@@ -3100,6 +3100,30 @@ async function getOfficialApiFallbackDecision({
   }
 }
 
+async function shouldPreferOfficialApiOverRequestedQr({
+  cleanTransport,
+  preferOfficialApiWhenReplyWindowOpen = false,
+  config,
+  fromPhone,
+  phoneNumberId,
+  toPhone,
+  contactId
+} = {}) {
+  if (cleanTransport !== 'qr' || !preferOfficialApiWhenReplyWindowOpen) return false
+  const officialApiAvailable = config?.provider === META_DIRECT_PROVIDER_NAME || Boolean(config?.enabled && config?.apiKey)
+  if (!officialApiAvailable || !fromPhone || !toPhone) return false
+
+  const decision = await getOfficialApiFallbackDecision({
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId,
+    checkReplyWindow: true
+  })
+  return !decision.reason
+}
+
 function throwIfOfficialApiBlockedByReplyWindow(decision = {}) {
   if (!decision.shouldBlockOfficialApi) return
   throw new Error(decision.reason || 'La conversación está fuera de la ventana de 24 horas; usa una plantilla o QR.')
@@ -9302,6 +9326,7 @@ export async function sendWhatsAppApiInteractiveMessage({
   phoneNumberId,
   replyToMessageId = '',
   replyToProviderMessageId = '',
+  preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
@@ -9314,7 +9339,7 @@ export async function sendWhatsAppApiInteractiveMessage({
     publicBaseUrl,
     extraVariables
   })
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
   const interactivePayload = buildInteractiveMessagePayload({
     body: renderedBody,
     buttons,
@@ -9322,6 +9347,18 @@ export async function sendWhatsAppApiInteractiveMessage({
   })
 
   if (!toPhone) throw new Error('Falta el número destino')
+
+  if (await shouldPreferOfficialApiOverRequestedQr({
+    cleanTransport,
+    preferOfficialApiWhenReplyWindowOpen,
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId
+  })) {
+    cleanTransport = 'api'
+  }
 
   if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
     return sendInteractiveViaMetaDirect({
@@ -9901,6 +9938,7 @@ export async function sendWhatsAppApiTextMessage({
   phoneNumberId,
   replyToMessageId = '',
   replyToProviderMessageId = '',
+  preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false,
   agentId
 } = {}) {
@@ -9915,7 +9953,6 @@ export async function sendWhatsAppApiTextMessage({
     extraVariables
   })
   const body = cleanString(renderedText)
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
   const agentMetadata = buildConversationalAgentMessageMetadata(agentId)
 
   if (!toPhone) throw new Error('Falta el número destino')
@@ -9926,6 +9963,19 @@ export async function sendWhatsAppApiTextMessage({
     replyToProviderMessageId,
     contactId
   })
+
+  let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (await shouldPreferOfficialApiOverRequestedQr({
+    cleanTransport,
+    preferOfficialApiWhenReplyWindowOpen,
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId
+  })) {
+    cleanTransport = 'api'
+  }
 
   if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
     return sendTextViaMetaDirect({ to: toPhone, text: body, from, externalId, replyContext })
@@ -10081,10 +10131,11 @@ export async function sendWhatsAppApiReactionMessage({
   allowQrFallback = true,
   contactId,
   phoneNumberId,
+  preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const reactionEmoji = cleanString(emoji)
@@ -10098,6 +10149,18 @@ export async function sendWhatsAppApiReactionMessage({
   if (!toPhone) throw new Error('Falta el número destino')
   if (!reactionEmoji) throw new Error('Falta la reacción')
   if (!targetProviderId) throw new Error('No encontramos el mensaje original para reaccionar')
+
+  if (await shouldPreferOfficialApiOverRequestedQr({
+    cleanTransport,
+    preferOfficialApiWhenReplyWindowOpen,
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId
+  })) {
+    cleanTransport = 'api'
+  }
 
   if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
     const response = await sendReactionViaMetaDirect({
@@ -10274,16 +10337,29 @@ export async function sendWhatsAppApiLocationMessage({
   allowQrFallback = true,
   contactId,
   phoneNumberId,
+  preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const location = normalizeWhatsAppLocation({ latitude, longitude, name, address })
 
   if (!toPhone) throw new Error('Falta el número destino')
   if (!location) throw new Error('Faltan coordenadas válidas para la ubicación')
+
+  let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (await shouldPreferOfficialApiOverRequestedQr({
+    cleanTransport,
+    preferOfficialApiWhenReplyWindowOpen,
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId
+  })) {
+    cleanTransport = 'api'
+  }
 
   if (cleanTransport !== 'qr' && config.provider === META_DIRECT_PROVIDER_NAME) {
     const response = await sendLocationViaMetaDirect({ to: toPhone, location, from: fromPhone, externalId })
@@ -10469,14 +10545,10 @@ export async function sendWhatsAppApiImageMessage({
   extraVariables,
   publicBaseUrl,
   phoneNumberId,
+  preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
-  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
-
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const renderedCaption = await renderTemplateVariables(caption, {
@@ -10491,6 +10563,22 @@ export async function sendWhatsAppApiImageMessage({
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
   if (!toPhone) throw new Error('Falta el número destino')
+
+  let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (await shouldPreferOfficialApiOverRequestedQr({
+    cleanTransport,
+    preferOfficialApiWhenReplyWindowOpen,
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId
+  })) {
+    cleanTransport = 'api'
+  }
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
 
   let link = cleanImageUrl
   let providerImage = null
@@ -10703,14 +10791,10 @@ export async function sendWhatsAppApiDocumentMessage({
   extraVariables,
   publicBaseUrl,
   phoneNumberId,
+  preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
-  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
-
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const renderedCaption = await renderTemplateVariables(caption, {
@@ -10725,6 +10809,22 @@ export async function sendWhatsAppApiDocumentMessage({
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
   if (!toPhone) throw new Error('Falta el número destino')
+
+  let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (await shouldPreferOfficialApiOverRequestedQr({
+    cleanTransport,
+    preferOfficialApiWhenReplyWindowOpen,
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId
+  })) {
+    cleanTransport = 'api'
+  }
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
 
   let link = cleanDocumentUrl
   let providerDocument = null
@@ -10928,14 +11028,10 @@ export async function sendWhatsAppApiVideoMessage({
   extraVariables,
   publicBaseUrl,
   phoneNumberId,
+  preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
-  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
-
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const renderedCaption = await renderTemplateVariables(caption, {
@@ -10950,6 +11046,22 @@ export async function sendWhatsAppApiVideoMessage({
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
   if (!toPhone) throw new Error('Falta el número destino')
+
+  let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (await shouldPreferOfficialApiOverRequestedQr({
+    cleanTransport,
+    preferOfficialApiWhenReplyWindowOpen,
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId
+  })) {
+    cleanTransport = 'api'
+  }
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
 
   let link = cleanVideoUrl
   let providerVideo = null
@@ -11167,14 +11279,10 @@ export async function sendWhatsAppApiAudioMessage({
   allowQrFallback = true,
   contactId,
   phoneNumberId,
+  preferOfficialApiWhenReplyWindowOpen = false,
   skipQrSendProtection = false
 } = {}) {
   const config = await loadConfig({ includeSecrets: true })
-  const cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
-  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
-    throw new Error('WhatsApp_API no está conectado')
-  }
-
   const fromPhone = normalizePhoneForStorage(from || config.senderPhone) || cleanString(from || config.senderPhone)
   const toPhone = normalizePhoneForStorage(to) || cleanString(to)
   const cleanAudioUrl = cleanString(audioUrl)
@@ -11182,6 +11290,22 @@ export async function sendWhatsAppApiAudioMessage({
 
   if (!fromPhone) throw new Error('Falta el número emisor de WhatsApp_API')
   if (!toPhone) throw new Error('Falta el número destino')
+
+  let cleanTransport = cleanString(transport).toLowerCase() === 'qr' ? 'qr' : 'api'
+  if (await shouldPreferOfficialApiOverRequestedQr({
+    cleanTransport,
+    preferOfficialApiWhenReplyWindowOpen,
+    config,
+    fromPhone,
+    phoneNumberId,
+    toPhone,
+    contactId
+  })) {
+    cleanTransport = 'api'
+  }
+  if (cleanTransport !== 'qr' && (!config.enabled || !config.apiKey)) {
+    throw new Error('WhatsApp_API no está conectado')
+  }
 
   let link = cleanAudioUrl
   let providerAudio = null

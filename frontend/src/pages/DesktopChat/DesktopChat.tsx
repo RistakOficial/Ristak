@@ -2840,6 +2840,18 @@ function getComposerBusinessPhone(status?: WhatsAppApiStatus | null, contact?: D
     const preferred = phones.find((phone) => phone.id === preferredId)
     if (preferred) return preferred
   }
+  if (contact?.lastInboundBusinessPhoneNumberId) {
+    const lastInboundById = phones.find((phone) => phone.id === contact.lastInboundBusinessPhoneNumberId)
+    if (lastInboundById) return lastInboundById
+  }
+  if (contact?.lastInboundBusinessPhone) {
+    const lastInboundByPhone = phones.find((phone) => (
+      phoneValueMatches(phone.phone_number, contact.lastInboundBusinessPhone) ||
+      phoneValueMatches(phone.display_phone_number, contact.lastInboundBusinessPhone) ||
+      phoneValueMatches(phone.qr_connected_phone, contact.lastInboundBusinessPhone)
+    ))
+    if (lastInboundByPhone) return lastInboundByPhone
+  }
   if (contact?.lastBusinessPhoneNumberId) {
     const lastById = phones.find((phone) => phone.id === contact.lastBusinessPhoneNumberId)
     if (lastById) return lastById
@@ -2864,6 +2876,18 @@ function phoneValueMatches(left?: string | null, right?: string | null) {
   const rightDigits = normalizePhoneProbe(right)
   if (!leftDigits || !rightDigits) return false
   return leftDigits === rightDigits || leftDigits.endsWith(rightDigits) || rightDigits.endsWith(leftDigits)
+}
+
+function desktopMessageMatchesBusinessPhone(
+  message: Pick<DesktopChatMessage, 'businessPhone' | 'businessPhoneNumberId'>,
+  phone?: WhatsAppApiPhoneNumber | null,
+  phoneValue?: string | null
+) {
+  const messagePhoneNumberId = String(message.businessPhoneNumberId || '').trim()
+  if (messagePhoneNumberId && phone?.id && messagePhoneNumberId === phone.id) return true
+
+  const targetPhoneValue = String(phoneValue || getBusinessPhoneValue(phone)).trim()
+  return Boolean(targetPhoneValue && phoneValueMatches(message.businessPhone, targetPhoneValue))
 }
 
 function isPhoneQrConnected(phone?: WhatsAppApiPhoneNumber | null) {
@@ -3256,15 +3280,15 @@ export const DesktopChat: React.FC = () => {
     return [...messages]
       .filter((message) => {
         if (!desktopMessageCanOpenWhatsAppReplyWindow(message)) return false
-        if (!selectedBusinessPhoneValue) return true
-        return phoneValueMatches(message.businessPhone, selectedBusinessPhoneValue)
+        if (!selectedBusinessPhoneValue && !selectedBusinessPhone?.id) return true
+        return desktopMessageMatchesBusinessPhone(message, selectedBusinessPhone, selectedBusinessPhoneValue)
       })
       .sort((left, right) => getMessageTimeValue(right.date) - getMessageTimeValue(left.date))[0] || null
-  }, [messages, selectedBusinessPhoneValue])
+  }, [messages, selectedBusinessPhone, selectedBusinessPhoneValue])
   const apiReplyWindowOpen = isInsideWhatsAppReplyWindow(lastInboundForSelectedPhone?.date)
   const selectedQrReady = isPhoneQrReadyForSend(selectedBusinessPhone)
   const selectedApiUnavailable = selectedBusinessPhone?.availability?.apiAvailable === false || Number(selectedBusinessPhone?.api_send_enabled ?? 1) === 0
-  const nativeWhatsAppTransport: 'api' | 'qr' = selectedQrReady && (!apiReplyWindowOpen || !whatsappConnected || selectedApiUnavailable)
+  const nativeWhatsAppTransport: 'api' | 'qr' = selectedQrReady && (!whatsappConnected || selectedApiUnavailable)
     ? 'qr'
     : 'api'
 
