@@ -5,7 +5,6 @@
   "scripts": {
     "build": "cd frontend && npm install && npm run build",
     "mobile:native:start": "cd mobile && npm run start",
-    "mobile:native:ios": "cd mobile && npm run ios",
     "mobile:native:android": "cd mobile && npm run android",
     "mobile:native:prebuild": "cd mobile && npm run prebuild",
     "mobile:native:typecheck": "cd mobile && npm run typecheck",

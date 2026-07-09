@@ -1,7 +1,11 @@
 # Ristak Native Mobile Instructions
 
-This folder is the React Native mobile app for Ristak. It is not the legacy
-Capacitor `/movil` WebView shell.
+This folder is the React Native/Expo Android app for Ristak. It is not the
+`/movil` web surface and it is not the Apple native app.
+
+Apple native work belongs in `../ios/app`. Do not add iOS scripts, APNs config,
+entitlements, Xcode targets, Notification Service extensions, or Swift/Apple
+native code in `mobile/`.
 
 Before changing code in this folder:
 

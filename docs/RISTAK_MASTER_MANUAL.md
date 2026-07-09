@@ -40,7 +40,7 @@ El producto combina:
 | Backend | Node.js ESM, Express |
 | Base de datos local | SQLite |
 | Base de datos produccion | PostgreSQL en Render cuando existe `DATABASE_URL` |
-| Movil nativo | Capacitor para `/movil` en produccion; React Native/Expo en `mobile/` como cliente nativo nuevo |
+| Movil | `/movil` web/PWA; React Native/Expo Android en `mobile/`; SwiftUI Apple en `ios/app` |
 | Deploy | Render Blueprint / web service |
 | Pagos | Stripe, Conekta, Mercado Pago, CLIP, Rebill, HighLevel invoices |
 | IA | OpenAI Agents / providers configurables |
@@ -49,7 +49,7 @@ Comandos principales:
 
 - Frontend: `cd frontend && npm run typecheck`, `npm run design:audit`, `npm run build`.
 - Backend: `cd backend && npm test`.
-- Mobile React Native: `npm run mobile:native:typecheck`, `npm run mobile:native:start`, `npm run mobile:native:ios`, `npm run mobile:native:android`.
+- Mobile Android React Native: `npm run mobile:native:typecheck`, `npm run mobile:native:start`, `npm run mobile:native:android`.
 - Raiz: `npm run build`, `npm start`.
 - Docs: `git diff --check` para validar whitespace basico.
 
@@ -59,9 +59,11 @@ Comandos principales:
   startup runtime, crons y servidor de frontend en produccion.
 - `backend/src/routes/`: rutas HTTP agrupadas por dominio.
 - `backend/src/controllers/`: controladores con validacion HTTP y respuesta.
-- `mobile/`: app React Native/Expo nueva para iOS/Android. Convive con el shell
-  Capacitor de `/movil` y debe mantenerse sincronizada con cualquier cambio de
-  producto movil que tambien afecte al shell publicado.
+- `mobile/`: app React Native/Expo para Android y dispositivos Google. Convive
+  con `/movil` y debe mantenerse sincronizada con cualquier cambio de producto
+  movil que tambien afecte al shell web publicado.
+- `ios/app/`: app nativa Apple en SwiftUI para iPhone y iPad. Es la unica ruta
+  propietaria de codigo nativo Apple.
 - `backend/src/services/`: logica de negocio, integraciones y persistencia.
 - `backend/src/jobs/`: crons, watchdogs y runtime de jobs.
 - `backend/src/config/database.js`: conexion SQLite/Postgres, tablas base,
@@ -162,9 +164,9 @@ Rutas publicas:
   y contexto de inicio de sesion. Los estados de carga inicial del CRM en
   escritorio y movil usan `AppStartupLoader`/`PhoneStartupLoader` sin logo ni
   nombre visible: solo un indicador minimo y accesible sobre el fondo del tema.
-  La app nativa en `mobile/` es la excepcion: `BootScreen` y el login nativo
-  muestran el logo oficial transparente de modo noche, y `mobile/app.json` usa
-  los iconos oficiales light/dark para el launcher iOS/Android.
+  La app nativa Android en `mobile/` es la excepcion: `BootScreen` y el login
+  nativo muestran el logo oficial transparente de modo noche, y
+  `mobile/app.json` usa los iconos oficiales light/dark para el launcher Android.
 - `/license-blocked`.
 - `/pay/success` y `/pay/:publicPaymentId`.
 - Las superficies publicas de cliente no aplican el selector global de vista
@@ -2184,22 +2186,19 @@ ubicacion y uso, nunca valores.
 
 ## App movil
 
-La app movil publicada usa Capacitor y el shell web movil bajo el prefijo
-`/movil`. Incluye chat, pagos, analytics, calendario y ajustes.
+Ristak tiene tres rutas moviles activas:
 
-El nuevo cliente nativo React Native/Expo vive en `mobile/`. Es una app separada
-del WebView, con almacenamiento seguro local y consumo directo de APIs del
-backend. Arranca como app paralela con bundle/package `com.ristak.native`; no
-debe reemplazar el bundle de tienda `com.ristak.app` hasta validar la migracion
-completa. La configuracion default de `mobile/app.json` debe mantenerse en
-`com.ristak.native` para poder comparar ambas apps instaladas en el mismo
-telefono; usar `com.ristak.app` desde `mobile/` es una decision de migracion o
-release, no una configuracion local normal.
-en dispositivos reales y actualizar el flujo de release.
+1. `/movil`: experiencia movil web/PWA dentro de `frontend/`. Es la ruta usada
+   para web.
+2. `mobile/`: cliente React Native/Expo para Android y dispositivos Google. No
+   debe contener configuracion, scripts, entitlements, APNs, targets,
+   extensiones ni codigo nativo Apple.
+3. `ios/app`: app nativa Apple en SwiftUI para iPhone y iPad. Es la unica ruta
+   propietaria de la experiencia nativa Apple.
 
 Regla obligatoria para futuros cambios: si una feature, label, permiso, push,
 agenda, pago, filtro, login o contrato de API cambia la experiencia movil, la IA
-debe revisar e implementar lo necesario tanto en `/movil` como en `mobile/`.
+debe revisar las superficies que apliquen: `/movil`, `mobile/` y `ios/app`.
 Cuando solo aplique a una superficie, el resumen del cambio debe explicar por
 que.
 

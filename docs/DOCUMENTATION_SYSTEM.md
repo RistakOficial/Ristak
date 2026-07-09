@@ -53,7 +53,7 @@ decirlo explicitamente.
 | API externa, OAuth, MCP | `docs/EXTERNAL_API_ACCESS.md` |
 | Pixel/tracking/conversiones | `docs/TRACKING_PIXEL.md`, `docs/PIXEL_SETUP.md` y seccion Meta/pagos del manual |
 | Media/Bunny | `docs/MEDIA_STORAGE_BUNNY.md` |
-| Movil/store release | `docs/MOBILE_APP.md`, `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`, `docs/MOBILE_STORE_RELEASES.md`, `mobile/README.md` |
+| Movil/web, Android `mobile/`, Apple `ios/app` y store release | `docs/MOBILE_APP.md`, `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`, `docs/MOBILE_STORE_RELEASES.md`, `mobile/README.md`, `ios/README.md` |
 | Bridge MDP | `docs/mdp-program-bridge.md` |
 
 ## Cuando crear un documento nuevo

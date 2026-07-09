@@ -36,6 +36,6 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
-# generated native folders
+# Generated native folders stay disposable. Apple native code lives in ../ios/app.
 /ios
 /android

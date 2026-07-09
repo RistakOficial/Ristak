@@ -1,18 +1,24 @@
-# Ristak Native Mobile
+# Ristak Android Mobile
 
-React Native mobile app for Ristak. This app is separate from the legacy
-Capacitor `/movil` shell and talks directly to the existing Ristak backend API.
-Its default installed identity is `com.ristak.native`, while the legacy
-Capacitor app keeps the store identity `com.ristak.app`. Do not change the
-native default back to `com.ristak.app` unless the migration is intentionally
-ready to replace the store app.
+React Native/Expo Android app for Ristak. This app is separate from the `/movil`
+web surface and talks directly to the existing Ristak backend API.
+
+Mobile routes are split intentionally:
+
+- `/movil`: mobile web/PWA surface from `frontend/`.
+- `mobile/`: Android/Google-device React Native app.
+- `ios/app`: native Apple app for iPhone and iPad.
+
+Do not add iOS scripts, APNs config, entitlements, Xcode targets, Notification
+Service extensions, or Apple native code in this folder. Apple work belongs in
+`../ios/app`.
 
 ## What Works Now
 
 - Email/password login that resolves the correct Ristak installation
   automatically through the installer mobile resolver.
 - Secure token and resolved installation URL storage using Expo SecureStore.
-- Native push registration for iOS/Android, notification tap handling, and
+- Native push registration for Android, notification tap handling, and
   device-level alert activation from Settings.
 - Chat inbox from `/api/contacts/chats`.
 - Native chat inbox parity pass for `/movil`: same high-level header, search,
@@ -46,10 +52,7 @@ ready to replace the store app.
   context dictation through `expo-audio` + `/api/ai-agent/transcribe`, native
   push permission/token registration through `expo-notifications`, user/app
   preference persistence, and theme background updates for the installed app.
-- Native push registration is wired through `/api/push/mobile-devices`. The
-  default side-by-side build uses `com.ristak.native`; APNs tests that require
-  the store topic `com.ristak.app` must be run as an intentional migration or
-  release build, not as the everyday comparison build.
+- Native Android push registration is wired through `/api/push/mobile-devices`.
 
 ## Commands
 
@@ -57,7 +60,6 @@ From the repo root:
 
 ```bash
 npm run mobile:native:start
-npm run mobile:native:ios
 npm run mobile:native:android
 npm run mobile:native:typecheck
 ```
@@ -66,14 +68,13 @@ From this folder:
 
 ```bash
 npm run start
-npm run ios
 npm run android
 npm run typecheck
 ```
 
-`npm run prebuild` generates native `ios/` and `android/` directories using Expo
-Continuous Native Generation. The generated directories should stay disposable
-unless a native customization is intentionally promoted to tracked code.
+`npm run prebuild` is only allowed to promote Android output. If Expo generates
+`mobile/ios`, treat it as disposable local output and delete it; the Apple app
+lives in `../ios/app`.
 
 ## Double-Maintenance Rule
 

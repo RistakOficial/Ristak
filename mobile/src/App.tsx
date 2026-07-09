@@ -13,7 +13,6 @@ import {
   KeyboardAvoidingView,
   Linking,
   Modal,
-  NativeModules,
   PanResponder,
   Platform,
   Pressable,
@@ -37,7 +36,6 @@ import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import { DeviceMotion } from 'expo-sensors';
-import { GlassView, isGlassEffectAPIAvailable } from 'expo-glass-effect';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -358,8 +356,6 @@ const CONTACT_INFO_THEME = buildContactInfoTheme(COLORS);
 const PHONE_COMPACT_SCALE = 0.78;
 const phoneCompact = (value: number) => Math.max(1, Math.round(value * PHONE_COMPACT_SCALE));
 
-const DEFAULT_IOS_TOP_SAFE_AREA = 47;
-const DEFAULT_IOS_BOTTOM_SAFE_AREA = 34;
 const BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS = 8000;
 
 type SessionState = {
@@ -1219,9 +1215,8 @@ export default function RistakNativeApp() {
     [session.baseUrl, session.token, handleLicenseBlocked, handleFeatureBlocked],
   );
 
-  // Programa el refresco en segundo plano cuando hay sesión: iOS despierta la app
-  // de vez en cuando para actualizar la bandeja en la caché local, así al abrir
-  // ya está más fresca. Se cancela al cerrar sesión.
+  // Programa el refresco en segundo plano cuando hay sesión: Android puede dar
+  // una ventana para actualizar la bandeja en caché y abrir con datos más frescos.
   useEffect(() => {
     if (session.token) {
       void registerInboxBackgroundTask();
@@ -1726,11 +1721,6 @@ function PhoneDock({
   const tabWidth = dockWidth > 0
     ? (dockWidth - (PHONE_DOCK_HORIZONTAL_PADDING * 2)) / navItems.length
     : 0;
-  const dockGlassEffectStyle = useMemo(() => ({
-    style: 'clear',
-    animate: true,
-    animationDuration: compact ? PHONE_DOCK_COLLAPSE_DURATION_MS / 1000 : PHONE_DOCK_EXPAND_DURATION_MS / 1000,
-  } as const), [compact]);
   const dockScale = compactProgress.interpolate({
     inputRange: [0, 1],
     outputRange: [1, PHONE_DOCK_COMPACT_SCALE],
@@ -1899,12 +1889,9 @@ function PhoneDock({
         onLayout={handleDockLayout}
         style={[styles.phoneDock, swiping && styles.phoneDockSwiping]}
       >
-        <LiquidGlassLayer
-          colorScheme={activeNativeThemeTone}
+        <SurfaceLayer
           fallbackStyle={styles.phoneDockSurfaceFallback}
-          glassEffectStyle={dockGlassEffectStyle}
           style={styles.phoneDockSurface}
-          tintColor={activeNativeThemeTone === 'light' ? 'rgba(255,255,255,0.34)' : 'rgba(255,255,255,0.08)'}
         />
         <View pointerEvents="none" style={styles.phoneDockSurfaceStroke} />
         <Animated.View
@@ -1917,12 +1904,9 @@ function PhoneDock({
             },
           ]}
         >
-          <LiquidGlassLayer
-            colorScheme={activeNativeThemeTone}
+          <SurfaceLayer
             fallbackStyle={styles.phoneDockIndicatorSurfaceFallback}
-            glassEffectStyle={dockGlassEffectStyle}
             style={styles.phoneDockIndicatorSurface}
-            tintColor={activeNativeThemeTone === 'light' ? 'rgba(255,255,255,0.58)' : 'rgba(255,255,255,0.16)'}
           />
           <View pointerEvents="none" style={styles.phoneDockIndicatorSurfaceStroke} />
         </Animated.View>
@@ -2016,27 +2000,16 @@ function AppFrame({
   children: React.ReactNode;
   keyboardAvoiding?: boolean;
 }) {
-  const [topInset, setTopInset] = useState(() => {
+  const topInset = useMemo(() => {
     if (Platform.OS === 'android') return StatusBar.currentHeight || 0;
-    if (Platform.OS === 'ios') return DEFAULT_IOS_TOP_SAFE_AREA;
     return 0;
-  });
+  }, []);
 
   useEffect(() => {
     void SystemUI.setBackgroundColorAsync(backgroundColor).catch(() => undefined);
     StatusBar.setBarStyle(activeNativeThemeTone === 'light' ? 'dark-content' : 'light-content', true);
     if (Platform.OS === 'android') {
       StatusBar.setBackgroundColor(backgroundColor, true);
-    }
-
-    if (Platform.OS === 'ios') {
-      const statusBarManager = NativeModules.StatusBarManager as {
-        getHeight?: (callback: (statusBarFrameData: { height?: number }) => void) => void;
-      } | undefined;
-      statusBarManager?.getHeight?.(({ height }) => {
-        const nextHeight = Number(height);
-        if (Number.isFinite(nextHeight) && nextHeight > 0) setTopInset(nextHeight);
-      });
     }
   }, [backgroundColor]);
 
@@ -2058,7 +2031,6 @@ function AppFrame({
   // una franja entre el composer y el teclado.
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       enabled={keyboardAvoiding}
       keyboardVerticalOffset={0}
       style={[styles.appFrame, { backgroundColor }]}
@@ -2226,7 +2198,7 @@ function LoginScreen({
 
   return (
     <AppFrame keyboardAvoiding={false}>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.authWrap}>
+      <KeyboardAvoidingView style={styles.authWrap}>
         <ScrollView contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
           <View style={styles.authPanel}>
             <Image
@@ -10058,7 +10030,7 @@ function AppointmentFormSheet({
       ) : advancedPicker ? (
         renderAdvancedPickerContent()
       ) : (
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView>
           <ScrollView
             contentContainerStyle={styles.appointmentFormBody}
             keyboardShouldPersistTaps="handled"
@@ -12734,8 +12706,7 @@ function SettingsToggleRow({
         <Switch
           accessibilityElementsHidden
           importantForAccessibility="no"
-          ios_backgroundColor={COLORS.panelSoft}
-          thumbColor={Platform.OS === 'android' ? COLORS.white : undefined}
+          thumbColor={COLORS.white}
           trackColor={{
             false: COLORS.panelSoft,
             true: COLORS.accent,
@@ -14604,7 +14575,7 @@ function PaymentEntrySheet({
       onClose={onClose}
     >
       {contact ? (
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView>
           <ScrollView
             contentContainerStyle={[styles.paymentSheetBody, styles.sheetScrollableContentSafeEnd]}
             keyboardShouldPersistTaps="handled"
@@ -14678,7 +14649,7 @@ function AppointmentEntrySheet({
       onClose={onClose}
     >
       {contact ? (
-        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <KeyboardAvoidingView>
           <ScrollView
             contentContainerStyle={[styles.appointmentSheetBody, styles.sheetScrollableContentSafeEnd]}
             keyboardShouldPersistTaps="handled"
@@ -14796,7 +14767,7 @@ function ContactPickerSheet({
               <CameraShareMediaPreview media={media} />
             </View>
           </View>
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.cameraSharePanel}>
+          <KeyboardAvoidingView style={styles.cameraSharePanel}>
             <View style={styles.cameraShareSearchArea}>
               <View style={styles.sheetSearchBox}>
                 <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
@@ -19928,7 +19899,7 @@ function NativeConversationScreen({
     try {
       await audioRecorder.stop();
     } catch {
-      // The recorder can already be stopped when iOS finishes the session.
+      // The recorder can already be stopped when the native session ends.
     } finally {
       setVoiceRecordingActive(false);
       setVoiceRecordingPaused(false);
@@ -21762,12 +21733,9 @@ function NativeMessageActionSheet({
             style={styles.messageActionOverlayBackdrop}
           />
           <Animated.View pointerEvents="none" style={[styles.messageActionOverlayGlass, overlayAnimatedStyle]}>
-            <LiquidGlassLayer
-              colorScheme={activeNativeThemeTone}
+            <SurfaceLayer
               fallbackStyle={styles.messageActionOverlayGlassFallback}
-              glassEffectStyle="regular"
               style={styles.messageActionOverlayGlass}
-              tintColor={activeNativeThemeTone === 'light' ? 'rgba(255,255,255,0.24)' : 'rgba(10,10,12,0.34)'}
             />
           </Animated.View>
           <Animated.View pointerEvents="none" style={[styles.messageActionOverlayDimmer, overlayAnimatedStyle]} />
@@ -23273,10 +23241,6 @@ function formatNativeLocationCoordinates(location: NonNullable<ChatMessage['loca
 }
 
 function buildNativeLocationUrl(latitude: number, longitude: number, label = 'Ubicación') {
-  const encodedLabel = encodeURIComponent(label || 'Ubicación');
-  if (Platform.OS === 'ios') {
-    return `https://maps.apple.com/?ll=${latitude},${longitude}&q=${encodedLabel}`;
-  }
   return `https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`;
 }
 
@@ -24232,43 +24196,13 @@ function SecondaryButton({ label, onPress }: { label: string; onPress: () => voi
   );
 }
 
-type NativeLiquidGlassStyle = React.ComponentProps<typeof GlassView>['glassEffectStyle'];
-type NativeLiquidGlassColorScheme = React.ComponentProps<typeof GlassView>['colorScheme'];
-
-function canRenderNativeLiquidGlass() {
-  if (Platform.OS !== 'ios') return false;
-  try {
-    return isGlassEffectAPIAvailable();
-  } catch {
-    return false;
-  }
-}
-
-function LiquidGlassLayer({
-  colorScheme = activeNativeThemeTone,
+function SurfaceLayer({
   fallbackStyle,
-  glassEffectStyle = 'regular',
   style,
-  tintColor,
 }: {
-  colorScheme?: NativeLiquidGlassColorScheme;
   fallbackStyle?: StyleProp<ViewStyle>;
-  glassEffectStyle?: NativeLiquidGlassStyle;
   style: StyleProp<ViewStyle>;
-  tintColor?: string;
 }) {
-  if (canRenderNativeLiquidGlass()) {
-    return (
-      <GlassView
-        colorScheme={colorScheme}
-        glassEffectStyle={glassEffectStyle}
-        pointerEvents="none"
-        style={style}
-        tintColor={tintColor}
-      />
-    );
-  }
-
   return <View pointerEvents="none" style={[style, fallbackStyle]} />;
 }
 
@@ -24290,11 +24224,7 @@ function LiquidControlBackground({ selected = false, variant = 'solid' }: { sele
   return <LiquidControlSurface selected={selected} variant={variant} />;
 }
 
-const APP_FONT_FAMILY = Platform.select({
-  ios: undefined,
-  android: 'sans-serif',
-  default: undefined,
-});
+const APP_FONT_FAMILY = 'sans-serif';
 const APP_FONT_WEIGHT_MAP: Record<string, string> = {
   '100': '400',
   '200': '400',
@@ -24480,7 +24410,7 @@ function createAppStyles() {
   const sheetDisabledSurface = isLight ? 'rgba(60,60,67,0.12)' : 'rgba(235,235,245,0.10)';
   const sheetDisabledBorder = isLight ? 'rgba(60,60,67,0.20)' : 'rgba(235,235,245,0.14)';
   const sheetDisabledText = isLight ? 'rgba(60,60,67,0.52)' : 'rgba(235,235,245,0.46)';
-  const sheetFormBottomInset = Platform.OS === 'ios' ? DEFAULT_IOS_BOTTOM_SAFE_AREA + 56 : 52;
+  const sheetFormBottomInset = 52;
   return StyleSheet.create(applyAppTypography({
   appFrame: {
     flex: 1,
@@ -28259,7 +28189,7 @@ function createAppStyles() {
   },
   cameraSharePreviewPane: {
     backgroundColor: COLORS.bg,
-    paddingTop: Platform.OS === 'ios' ? DEFAULT_IOS_TOP_SAFE_AREA + 8 : (StatusBar.currentHeight || 16) + 8,
+    paddingTop: (StatusBar.currentHeight || 16) + 8,
     paddingHorizontal: 14,
     paddingBottom: 12,
     gap: 10,
@@ -28360,7 +28290,7 @@ function createAppStyles() {
     gap: 9,
     paddingHorizontal: 14,
     paddingTop: 9,
-    paddingBottom: Platform.OS === 'ios' ? 18 : 14,
+    paddingBottom: 14,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: COLORS.border,
     backgroundColor: COLORS.panel,
@@ -29183,7 +29113,7 @@ function createAppStyles() {
     textDecorationLine: 'line-through',
   },
   aiMessageTextMono: {
-    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontFamily: 'monospace',
     fontWeight: '700',
   },
   aiMessageTextLink: {
@@ -29217,7 +29147,7 @@ function createAppStyles() {
     backgroundColor: COLORS.panelSoft,
     paddingHorizontal: 9,
     paddingVertical: 7,
-    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontFamily: 'monospace',
     fontWeight: '700',
   },
   aiMessageAttachmentGrid: {
@@ -29486,7 +29416,7 @@ function createAppStyles() {
     textDecorationLine: 'line-through',
   },
   lastMessageMono: {
-    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontFamily: 'monospace',
     fontWeight: '600',
   },
   lastMessageHiddenSpacer: {
@@ -29915,7 +29845,7 @@ function createAppStyles() {
     textDecorationLine: 'line-through',
   },
   messageTextMono: {
-    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace', default: 'monospace' }),
+    fontFamily: 'monospace',
     fontWeight: '600',
   },
   messageEmailCard: {

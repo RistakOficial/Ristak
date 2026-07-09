@@ -979,12 +979,11 @@ export type WebPushPublicConfig = {
   publicKey: string;
   nativeConfigured?: boolean;
   androidConfigured?: boolean;
-  iosConfigured?: boolean;
 };
 
 export type SaveMobilePushDevicePayload = {
   token: string;
-  platform: 'ios' | 'android';
+  platform: 'android';
   calendarIds?: string[];
   appVersion?: string;
   appBuild?: string;
