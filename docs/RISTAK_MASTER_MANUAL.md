@@ -411,7 +411,9 @@ Capacidades:
   compras. Si un evento trae metadata de mensaje social o email, el tooltip debe
   explicar canal, contenido, perfil/usuario, estado e identificadores utiles; no
   debe quedarse como "Evento" sin detalle. Los mensajes de WhatsApp se resumen
-  en marcadores diarios por canal y los eventos de Messenger/Instagram se
+  en un solo marcador por dia local; si el mismo dia existe un WhatsApp directo y
+  otro atribuido a anuncio, gana/fusiona el atribuido para conservar el origen
+  sin duplicar la entrada del cliente. Los eventos de Messenger/Instagram se
   resumen por dia local, plataforma y tipo de accion (`message` vs `comment`).
   Asi un DM y un comentario del mismo dia no se pisan entre si, pero cinco
   comentarios del mismo dia siguen contando como un solo punto de comentario.

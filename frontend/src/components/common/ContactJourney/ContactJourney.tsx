@@ -1122,7 +1122,7 @@ const getDailyContactJourneyGroupKey = (event: JourneyEvent, timezone: string): 
   [
     getLocalDayKey(event.date, timezone),
     isWhatsAppJourneyEvent(event)
-      ? `whatsapp:${isAdAttributedEvent(event) ? 'ad' : 'direct'}`
+      ? 'whatsapp'
       : isMetaMessageJourneyEvent(event)
         ? `meta:${getMetaMessagePlatformKey(event)}:${getMetaMessageDailyKind(event)}`
       : isWebContactJourneyEvent(event)
@@ -1130,8 +1130,8 @@ const getDailyContactJourneyGroupKey = (event: JourneyEvent, timezone: string): 
         : 'contact'
   ].join(':')
 
-// Colapsa los eventos de contacto/mensajería por día local. Si el mismo día hay varios,
-// gana el que trae más metadata útil para explicar el origen o mensaje.
+// Colapsa los eventos de contacto/mensajería por día local. WhatsApp se muestra como
+// un solo marcador diario: directo y atribuido al anuncio son la misma entrada del cliente.
 const buildDisplayJourney = (events: JourneyEvent[], timezone: string): JourneyEvent[] => {
   const dailyJourneyEvents: JourneyEvent[] = []
   const otherEvents: JourneyEvent[] = []

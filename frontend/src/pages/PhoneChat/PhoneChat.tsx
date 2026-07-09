@@ -4498,8 +4498,7 @@ function getContactInfoJourneyDayKey(date: string, timezone: string) {
 }
 
 function getContactInfoWhatsAppGroupKey(event: JourneyEvent, timezone: string) {
-  const dayKey = getContactInfoJourneyDayKey(event.date, timezone)
-  return `${dayKey}:${isAdAttributedJourneyEvent(event) ? 'ad' : 'direct'}`
+  return getContactInfoJourneyDayKey(event.date, timezone)
 }
 
 function enrichJourneyDataWithMeta(
