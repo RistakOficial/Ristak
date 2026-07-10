@@ -379,7 +379,7 @@ type SessionState = {
 type Screen = 'boot' | 'login' | 'shell';
 type ChatFilterId = string;
 type ChatSheetMode = 'chatMore' | 'newChat' | 'cameraShare' | 'tag' | 'schedule' | null;
-type ConversationSheetMode = 'attachments' | 'messageActions' | 'chatMore' | 'tag' | 'schedule' | 'channel' | 'templates' | 'clabe' | 'payment' | 'appointment' | null;
+type ConversationSheetMode = 'attachments' | 'messageActions' | 'chatMore' | 'agent' | 'tag' | 'schedule' | 'channel' | 'templates' | 'clabe' | 'payment' | 'appointment' | null;
 type ContactInfoPanel = 'main' | 'payments' | 'appointments' | 'archives' | 'journey' | 'agent_history';
 type ContactInfoRecordDetail = { type: 'payment'; id: string } | { type: 'appointment'; id: string } | null;
 
@@ -461,7 +461,7 @@ type CalendarBootstrapCache = {
   calendars?: CalendarItem[];
   updatedAt?: string;
 };
-type AgentAction = 'activate' | 'pause' | 'take_over' | 'skip';
+type AgentAction = 'activate' | 'resume' | 'pause' | 'take_over' | 'skip' | 'clear_signal';
 type ManualAgentInterruptionAction = 'pause' | 'skip';
 type ChannelBadgeKind = 'whatsapp' | 'instagram' | 'messenger' | 'facebook_comment' | 'instagram_comment' | 'email' | 'sms' | 'unknown';
 type AdvancedChannelFilter = 'all' | 'whatsapp' | 'messenger' | 'instagram' | 'webchat' | 'sms' | 'email';
@@ -1961,10 +1961,7 @@ function PhoneDock({
         onLayout={handleDockLayout}
         style={[styles.phoneDock, swiping && styles.phoneDockSwiping]}
       >
-        <SurfaceLayer
-          fallbackStyle={styles.phoneDockSurfaceFallback}
-          style={styles.phoneDockSurface}
-        />
+        <View pointerEvents="none" style={styles.phoneDockSurface} />
         <View pointerEvents="none" style={styles.phoneDockSurfaceStroke} />
         <Animated.View
           pointerEvents="none"
@@ -1976,21 +1973,14 @@ function PhoneDock({
             },
           ]}
         >
-          <SurfaceLayer
-            fallbackStyle={styles.phoneDockIndicatorSurfaceFallback}
-            style={styles.phoneDockIndicatorSurface}
-          />
+          <View pointerEvents="none" style={styles.phoneDockIndicatorSurface} />
           <View pointerEvents="none" style={styles.phoneDockIndicatorSurfaceStroke} />
         </Animated.View>
         {navItems.map((item, index) => {
           const selected = index === visualIndex;
           const badgeCount = Math.max(0, Number(badges[item.key] || 0));
           const DockIcon = item.Icon;
-          const dockIconColor = activeNativeThemeTone === 'light'
-            ? COLORS.black
-            : selected
-              ? COLORS.text
-              : COLORS.muted;
+          const dockIconColor = selected ? COLORS.white : COLORS.muted;
           return (
             <Pressable
               key={item.key}
@@ -3671,7 +3661,8 @@ function ChatScreen({
   const scheduleSheetOpen = activeSheet === 'schedule' || closingSheet === 'schedule';
   const tagSheetClosing = activeSheet !== 'tag' && closingSheet === 'tag';
   const scheduleSheetClosing = activeSheet !== 'schedule' && closingSheet === 'schedule';
-  const sheetAgentState = sheetContact ? selectPrimaryAgentState(agentStatesByContactId[sheetContact.id]) : null;
+  const sheetAgentStates = sheetContact ? agentStatesByContactId[sheetContact.id] || [] : [];
+  const sheetAgentState = selectPrimaryAgentState(sheetAgentStates);
   const chatRouteWidth = Math.max(320, chatViewportWidth);
   const chatListTranslateX = conversationRouteProgress.interpolate({
     inputRange: [0, 1],
@@ -3974,6 +3965,7 @@ function ChatScreen({
         archived={sheetContact ? archivedChatIds.includes(sheetContact.id) : false}
         agentBusyAction={agentBusyAction}
         agentLoading={sheetContact ? agentStateLoadingId === sheetContact.id : false}
+        agentStates={sheetAgentStates}
         agentState={sheetAgentState}
         muted={sheetContact ? mutedChatIdSet.has(sheetContact.id) : false}
         unread={sheetContact ? getUnreadCount(sheetContact) : 0}
@@ -13972,10 +13964,158 @@ function SheetActionRow({
   );
 }
 
+function ConversationAgentActionRows({
+  agentBusyAction,
+  agentLoading,
+  agentStates = [],
+  contact,
+  onAgentAction,
+  sectionLabel = 'Agente conversacional',
+}: {
+  agentBusyAction?: AgentAction | null;
+  agentLoading?: boolean;
+  agentStates?: ConversationAgentState[];
+  contact: ChatContact;
+  onAgentAction: (contact: ChatContact, action: AgentAction, stateHint?: ConversationAgentState | null) => void;
+  sectionLabel?: string;
+}) {
+  const contactAgentStates = getControllableConversationAgentStates(agentStates);
+  const hasAgentControls = hasConversationAgentControls(agentStates, agentLoading);
+  const agentActionBusy = Boolean(agentBusyAction);
+  const getAgentActionTitle = (base: string, state: ConversationAgentState) => (
+    contactAgentStates.length > 1 ? `${base} ${getAgentDisplayName(state)}` : `${base} agente`
+  );
+
+  if (!hasAgentControls) return null;
+
+  return (
+    <>
+      <View style={styles.sheetSectionDivider}>
+        <Text style={styles.sheetSectionLabel}>{sectionLabel}</Text>
+        {agentLoading ? <ActivityIndicator color={COLORS.accent} /> : null}
+      </View>
+      {contactAgentStates.map((state, index) => {
+        const stateKey = state.agentId || state.id || `agent-${index}`;
+        const inactiveAgent = isInactiveAgentStatus(state.status);
+        const continueAction = getResumeAgentAction(state);
+        return (
+          <React.Fragment key={stateKey}>
+            {hasPendingAgentSignal(state) ? (
+              <SheetActionRow
+                Icon={CheckCircle2}
+                title="Marcar aviso como visto"
+                subtitle={state.signalSummary || state.signalReason || 'Limpia la alerta del agente en este chat.'}
+                busy={agentBusyAction === 'clear_signal'}
+                disabled={agentLoading || agentActionBusy}
+                onPress={() => onAgentAction(contact, 'clear_signal', state)}
+              />
+            ) : null}
+            {inactiveAgent ? (
+              <SheetActionRow
+                Icon={Play}
+                title={getAgentActionTitle(isPausedAgentStatus(state.status) ? 'Continuar' : 'Reactivar', state)}
+                subtitle={isPausedAgentStatus(state.status) ? 'El agente vuelve a atender este chat.' : 'Vuelve a asignar este chat al agente.'}
+                busy={agentBusyAction === continueAction}
+                disabled={agentLoading || agentActionBusy}
+                onPress={() => onAgentAction(contact, continueAction, state)}
+              />
+            ) : (
+              <>
+                <SheetActionRow
+                  Icon={Pause}
+                  title={getAgentActionTitle('Pausar', state)}
+                  subtitle="Detiene el agente durante 24 horas."
+                  busy={agentBusyAction === 'pause'}
+                  disabled={agentLoading || agentActionBusy}
+                  onPress={() => onAgentAction(contact, 'pause', state)}
+                />
+                <SheetActionRow
+                  Icon={User}
+                  title={getAgentActionTitle('Tomar', state)}
+                  subtitle="Detiene al agente y deja esta conversación en humano."
+                  busy={agentBusyAction === 'take_over'}
+                  disabled={agentLoading || agentActionBusy}
+                  onPress={() => onAgentAction(contact, 'take_over', state)}
+                />
+                <SheetActionRow
+                  Icon={X}
+                  title={getAgentActionTitle('Omitir', state)}
+                  subtitle="El agente no vuelve a tomar este chat hasta reactivarlo."
+                  danger
+                  busy={agentBusyAction === 'skip'}
+                  disabled={agentLoading || agentActionBusy}
+                  onPress={() => onAgentAction(contact, 'skip', state)}
+                />
+              </>
+            )}
+          </React.Fragment>
+        );
+      })}
+    </>
+  );
+}
+
+function NativeConversationAgentSheet({
+  agentBusyAction,
+  agentLoading,
+  agentStates = [],
+  closing,
+  contact,
+  open,
+  onAgentAction,
+  onClose,
+}: {
+  agentBusyAction?: AgentAction | null;
+  agentLoading?: boolean;
+  agentStates?: ConversationAgentState[];
+  closing?: boolean;
+  contact: ChatContact;
+  open: boolean;
+  onAgentAction: (contact: ChatContact, action: AgentAction, stateHint?: ConversationAgentState | null) => void;
+  onClose: () => void;
+}) {
+  const primaryState = selectPrimaryAgentState(agentStates);
+  const hasSignal = hasPendingAgentSignal(primaryState);
+  const hasRows = hasConversationAgentControls(agentStates, agentLoading);
+  return (
+    <BottomActionSheet
+      closing={closing}
+      open={open}
+      title="Agente conversacional"
+      subtitle={getContactName(contact)}
+      onClose={onClose}
+    >
+      <View style={styles.agentControlSummary}>
+        <View style={[styles.agentControlSummaryIcon, hasSignal && styles.agentControlSummaryIconAlert]}>
+          {hasSignal ? <CircleAlert size={19} color={COLORS.white} strokeWidth={2.6} /> : <Bot size={19} color={COLORS.text} strokeWidth={2.25} />}
+        </View>
+        <View style={styles.agentControlSummaryCopy}>
+          <Text style={styles.agentControlSummaryTitle}>{getAgentStatusTitle(primaryState)}</Text>
+          <Text style={styles.agentControlSummaryText}>{getAgentStatusDescription(primaryState)}</Text>
+        </View>
+      </View>
+      <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
+        <ConversationAgentActionRows
+          agentBusyAction={agentBusyAction}
+          agentLoading={agentLoading}
+          agentStates={agentStates}
+          contact={contact}
+          onAgentAction={onAgentAction}
+          sectionLabel="Controles"
+        />
+        {!hasRows && !agentLoading ? (
+          <Text style={styles.agentControlEmpty}>Este chat todavía no tiene agente asignado.</Text>
+        ) : null}
+      </ScrollView>
+    </BottomActionSheet>
+  );
+}
+
 function ChatMoreSheet({
   archived,
   agentBusyAction,
   agentLoading,
+  agentStates = [],
   agentState,
   closing,
   contact,
@@ -13996,6 +14136,7 @@ function ChatMoreSheet({
   archived: boolean;
   agentBusyAction?: AgentAction | null;
   agentLoading?: boolean;
+  agentStates?: ConversationAgentState[];
   agentState?: ConversationAgentState | null;
   closing?: boolean;
   contact: ChatContact | null;
@@ -14013,10 +14154,8 @@ function ChatMoreSheet({
   onTag: (contact: ChatContact) => void;
   onToggleMute: (contact: ChatContact) => void;
 }) {
-  const inactiveAgent = isInactiveAgentStatus(agentState?.status);
-  const primaryAgentAction: AgentAction = inactiveAgent ? 'activate' : 'pause';
-  const agentActionBusy = Boolean(agentBusyAction);
-  const hasAgentControls = Boolean(agentLoading || agentState?.agentId);
+  const resolvedAgentStates = agentStates.length ? agentStates : agentState ? [agentState] : [];
+  const hasAgentControls = hasConversationAgentControls(resolvedAgentStates, agentLoading);
   return (
     <BottomActionSheet
       closing={closing}
@@ -14029,43 +14168,13 @@ function ChatMoreSheet({
         <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
           {hasAgentControls ? (
             <>
-              <View style={styles.sheetSectionDivider}>
-                <Text style={styles.sheetSectionLabel}>Agente conversacional</Text>
-                {agentLoading ? <ActivityIndicator color={COLORS.accent} /> : null}
-              </View>
-              {agentState?.agentId ? (
-                <>
-                  <SheetActionRow
-                    Icon={inactiveAgent ? Play : Pause}
-                    title={inactiveAgent ? 'Continuar agente' : 'Pausar agente'}
-                    subtitle={inactiveAgent ? 'El agente vuelve a atender este chat.' : 'Detiene el agente durante 24 horas.'}
-                    busy={agentBusyAction === primaryAgentAction}
-                    disabled={agentLoading || agentActionBusy}
-                    onPress={() => onAgentAction(contact, primaryAgentAction, agentState)}
-                  />
-                  {!inactiveAgent ? (
-                    <>
-                      <SheetActionRow
-                        Icon={User}
-                        title="Tomar chat"
-                        subtitle="Detiene al agente y deja esta conversación en humano."
-                        busy={agentBusyAction === 'take_over'}
-                        disabled={agentLoading || agentActionBusy}
-                        onPress={() => onAgentAction(contact, 'take_over', agentState)}
-                      />
-                      <SheetActionRow
-                        Icon={X}
-                        title="Omitir agente"
-                        subtitle="El agente no vuelve a tomar este chat hasta reactivarlo."
-                        danger
-                        busy={agentBusyAction === 'skip'}
-                        disabled={agentLoading || agentActionBusy}
-                        onPress={() => onAgentAction(contact, 'skip', agentState)}
-                      />
-                    </>
-                  ) : null}
-                </>
-              ) : null}
+              <ConversationAgentActionRows
+                agentBusyAction={agentBusyAction}
+                agentLoading={agentLoading}
+                agentStates={resolvedAgentStates}
+                contact={contact}
+                onAgentAction={onAgentAction}
+              />
             </>
           ) : null}
           <View style={styles.sheetSectionDivider}>
@@ -18204,20 +18313,99 @@ function chatMatchesFilter(contact: ChatContact, filter: ChatFilterId, context: 
   return true;
 }
 
+function getAgentStateStatus(state?: ConversationAgentState | null) {
+  return String(state?.status || '').trim().toLowerCase();
+}
+
+function getAgentStateTimestamp(state?: ConversationAgentState | null) {
+  const candidates = [state?.signalAt, state?.updatedAt, state?.activatedAt, state?.lastReplyAt];
+  return candidates.reduce((latest, value) => {
+    const time = Date.parse(String(value || ''));
+    return Number.isFinite(time) ? Math.max(latest, time) : latest;
+  }, 0);
+}
+
+function hasPendingAgentSignal(state?: ConversationAgentState | null) {
+  const signal = String(state?.signal || '').trim().toLowerCase();
+  return Boolean(signal && !['none', 'clear', 'cleared', 'resolved', 'discarded'].includes(signal));
+}
+
+function getAgentDisplayName(state?: ConversationAgentState | null) {
+  return state?.agentName || 'agente conversacional';
+}
+
+function isPausedAgentStatus(status?: string | null) {
+  return String(status || '').trim().toLowerCase() === 'paused';
+}
+
+function getResumeAgentAction(state?: ConversationAgentState | null): AgentAction {
+  return isPausedAgentStatus(state?.status) ? 'resume' : 'activate';
+}
+
 function selectPrimaryAgentState(states?: ConversationAgentState[]) {
   if (!Array.isArray(states) || !states.length) return null;
-  return states.find((state) => state.agentId) || states[0] || null;
+  return [...states].sort((left, right) => {
+    const scoreState = (state: ConversationAgentState) => {
+      const status = getAgentStateStatus(state);
+      if (status === 'active' && state.agentId && !hasPendingAgentSignal(state)) return 5;
+      if (hasPendingAgentSignal(state)) return 4;
+      if (state.agentId) return 3;
+      return 1;
+    };
+    const scoreDiff = scoreState(right) - scoreState(left);
+    if (scoreDiff !== 0) return scoreDiff;
+    return getAgentStateTimestamp(right) - getAgentStateTimestamp(left);
+  })[0] || null;
+}
+
+function getControllableConversationAgentStates(states?: ConversationAgentState[]) {
+  if (!Array.isArray(states) || !states.length) return [];
+  const withAgent = states.filter((state) => state.agentId);
+  if (withAgent.length) return withAgent;
+  const primary = selectPrimaryAgentState(states);
+  return primary ? [primary] : [];
+}
+
+function hasConversationAgentControls(states?: ConversationAgentState[], loading?: boolean) {
+  return Boolean(loading || getControllableConversationAgentStates(states).length);
 }
 
 function getActiveConversationAgentStates(states?: ConversationAgentState[]) {
-  if (!Array.isArray(states)) return [];
-  return states.filter((state) => state.agentId && String(state.status || '').toLowerCase() === 'active');
+  return getControllableConversationAgentStates(states).filter((state) => getAgentStateStatus(state) === 'active');
 }
 
 function getManualAgentSendLabel(states: ConversationAgentState[]) {
   if (states.length === 0) return 'el agente conversacional';
-  if (states.length === 1) return states[0].agentName || 'el agente conversacional';
+  if (states.length === 1) return getAgentDisplayName(states[0]);
   return `${states.length} agentes conversacionales`;
+}
+
+function getAgentStatusTitle(state?: ConversationAgentState | null) {
+  if (!state) return 'Agente conversacional';
+  if (hasPendingAgentSignal(state)) return 'El agente pidió atención';
+  const status = getAgentStateStatus(state);
+  if (status === 'active') return 'El agente atiende este chat';
+  if (status === 'paused') return 'Agente pausado';
+  if (status === 'human' || status === 'take_over') return 'Chat tomado por humano';
+  if (status === 'skipped') return 'Agente omitido';
+  if (status === 'completed') return 'Meta completada';
+  if (status === 'discarded') return 'Chat descartado por el agente';
+  return state.agentId ? 'Agente asignado' : 'Agente conversacional';
+}
+
+function getAgentStatusDescription(state?: ConversationAgentState | null) {
+  if (!state) return 'No hay agente asignado a este chat.';
+  if (hasPendingAgentSignal(state)) {
+    return state.signalSummary || state.signalReason || 'Revisa el chat y decide si lo tomas, pausas u omites.';
+  }
+  const status = getAgentStateStatus(state);
+  if (status === 'active') return `${getAgentDisplayName(state)} puede responder automáticamente.`;
+  if (status === 'paused') return state.pausedUntilAt ? 'Está detenido temporalmente y puedes continuarlo cuando quieras.' : 'Está detenido temporalmente.';
+  if (status === 'human' || status === 'take_over') return 'El agente no responderá mientras el chat esté en manos humanas.';
+  if (status === 'skipped') return 'No volverá a tomar este contacto hasta que lo reactives.';
+  if (status === 'completed') return 'El agente registró la meta como completada para este contacto.';
+  if (status === 'discarded') return 'El agente dejó fuera este chat de su flujo actual.';
+  return 'Controla si el agente debe atender, pausar u omitir este chat.';
 }
 
 function upsertConversationAgentState(states: ConversationAgentState[], nextState: ConversationAgentState) {
@@ -19945,6 +20133,10 @@ function NativeConversationScreen({
   const hasComposerContent = Boolean(draft.trim() || draftAttachments.length > 0 || paymentLinkDraftPreview);
   const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
   const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
+  const primaryAgentState = useMemo(() => selectPrimaryAgentState(agentStates), [agentStates]);
+  const agentSignalState = useMemo(() => agentStates.find((state) => hasPendingAgentSignal(state)) || null, [agentStates]);
+  const agentNoticeState = agentSignalState || ((primaryAgentState && getAgentStateStatus(primaryAgentState) !== 'active') ? primaryAgentState : null);
+  const agentControlsAvailable = hasConversationAgentControls(agentStates, agentLoading);
   const activeManualAgentStates = useMemo(() => getActiveConversationAgentStates(agentStates), [agentStates]);
   const manualAgentPromptStates = manualAgentSendPrompt || activeManualAgentStates;
   const manualAgentSendLabel = useMemo(() => getManualAgentSendLabel(manualAgentPromptStates), [manualAgentPromptStates]);
@@ -20622,6 +20814,11 @@ function NativeConversationScreen({
     void refreshAgentStates();
   };
 
+  const openAgentControls = () => {
+    openSheet('agent');
+    void refreshAgentStates();
+  };
+
   const openAttachmentActions = () => {
     openSheet('attachments');
     void refreshAgentStates({ silent: true });
@@ -21160,7 +21357,46 @@ function NativeConversationScreen({
             <CircleDollarSign size={21} color={COLORS.text} strokeWidth={1.95} />
           </Pressable>
         </View>
+        {agentControlsAvailable ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Controlar agente conversacional"
+            onPress={openAgentControls}
+            style={({ pressed }) => [
+              styles.conversationAgentButton,
+              agentSignalState && styles.conversationAgentButtonAlert,
+              pressed && styles.pressed,
+            ]}
+          >
+            {agentLoading ? (
+              <ActivityIndicator color={agentSignalState ? COLORS.white : COLORS.accent} size="small" />
+            ) : agentSignalState ? (
+              <CircleAlert size={20} color={COLORS.white} strokeWidth={2.6} />
+            ) : (
+              <Bot size={20} color={COLORS.text} strokeWidth={2.2} />
+            )}
+            {agentSignalState ? <View style={styles.conversationAgentSignalDot} /> : null}
+          </Pressable>
+        ) : null}
       </View>
+
+      {agentNoticeState ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Abrir controles del agente conversacional"
+          onPress={openAgentControls}
+          style={({ pressed }) => [styles.conversationAgentNotice, pressed && styles.pressed]}
+        >
+          <View style={[styles.conversationAgentNoticeIcon, hasPendingAgentSignal(agentNoticeState) && styles.conversationAgentNoticeIconAlert]}>
+            {hasPendingAgentSignal(agentNoticeState) ? <CircleAlert size={17} color={COLORS.white} strokeWidth={2.55} /> : <Bot size={17} color={COLORS.text} strokeWidth={2.25} />}
+          </View>
+          <View style={styles.conversationAgentNoticeCopy}>
+            <Text numberOfLines={1} style={styles.conversationAgentNoticeTitle}>{getAgentStatusTitle(agentNoticeState)}</Text>
+            <Text numberOfLines={2} style={styles.conversationAgentNoticeText}>{getAgentStatusDescription(agentNoticeState)}</Text>
+          </View>
+          <ChevronRight size={18} color={COLORS.muted} strokeWidth={2.45} />
+        </Pressable>
+      ) : null}
 
       {searchOpen ? (
         <View style={styles.conversationSearchBar}>
@@ -21446,6 +21682,17 @@ function NativeConversationScreen({
         onSkipAndSend={() => void handleManualAgentSendDecision('skip')}
       />
 
+      <NativeConversationAgentSheet
+        agentBusyAction={agentBusyAction}
+        agentLoading={agentLoading}
+        agentStates={agentStates}
+        closing={activeSheet !== 'agent' && closingSheet === 'agent'}
+        contact={contact}
+        open={activeSheet === 'agent' || closingSheet === 'agent'}
+        onAgentAction={runAgentAction}
+        onClose={closeSheet}
+      />
+
       <NativeConversationAttachmentSheet
         agentBusyAction={agentBusyAction}
         agentLoading={agentLoading}
@@ -21540,7 +21787,8 @@ function NativeConversationScreen({
         archived={archived}
         agentBusyAction={agentBusyAction}
         agentLoading={agentLoading}
-        agentState={selectPrimaryAgentState(agentStates)}
+        agentStates={agentStates}
+        agentState={primaryAgentState}
         closing={activeSheet !== 'chatMore' && closingSheet === 'chatMore'}
         contact={contact}
         muted={muted}
@@ -21767,12 +22015,7 @@ function NativeConversationAttachmentSheet({
   onTag: () => void;
   onTemplates: () => void;
 }) {
-  const contactAgentStates = agentStates.filter((state) => state.agentId);
-  const hasAgentControls = Boolean(agentLoading || contactAgentStates.length);
-  const agentActionBusy = Boolean(agentBusyAction);
-  const getAgentActionTitle = (base: string, state: ConversationAgentState) => (
-    contactAgentStates.length > 1 ? `${base} ${state.agentName || 'agente'}` : `${base} agente`
-  );
+  const hasAgentControls = hasConversationAgentControls(agentStates, agentLoading);
 
   return (
     <BottomActionSheet
@@ -21785,56 +22028,13 @@ function NativeConversationAttachmentSheet({
       <ScrollView contentContainerStyle={styles.sheetActionList} showsVerticalScrollIndicator={false}>
         {hasAgentControls ? (
           <>
-            <View style={styles.sheetSectionDivider}>
-              <Text style={styles.sheetSectionLabel}>Agente conversacional</Text>
-              {agentLoading ? <ActivityIndicator color={COLORS.accent} /> : null}
-            </View>
-            {contactAgentStates.map((state, index) => {
-              const stateKey = state.agentId || state.id || `agent-${index}`;
-              const inactiveAgent = isInactiveAgentStatus(state.status);
-              if (inactiveAgent) {
-                return (
-                  <SheetActionRow
-                    key={`${stateKey}-activate`}
-                    Icon={Play}
-                    title={getAgentActionTitle('Continuar', state)}
-                    subtitle="El agente vuelve a atender este chat."
-                    busy={agentBusyAction === 'activate'}
-                    disabled={agentLoading || agentActionBusy}
-                    onPress={() => onAgentAction(contact, 'activate', state)}
-                  />
-                );
-              }
-              return (
-                <React.Fragment key={stateKey}>
-                  <SheetActionRow
-                    Icon={Pause}
-                    title={getAgentActionTitle('Pausar', state)}
-                    subtitle="Detiene el agente durante 24 horas."
-                    busy={agentBusyAction === 'pause'}
-                    disabled={agentLoading || agentActionBusy}
-                    onPress={() => onAgentAction(contact, 'pause', state)}
-                  />
-                  <SheetActionRow
-                    Icon={User}
-                    title="Tomar chat"
-                    subtitle="Detiene al agente y deja esta conversación en humano."
-                    busy={agentBusyAction === 'take_over'}
-                    disabled={agentLoading || agentActionBusy}
-                    onPress={() => onAgentAction(contact, 'take_over', state)}
-                  />
-                  <SheetActionRow
-                    Icon={X}
-                    title={getAgentActionTitle('Omitir', state)}
-                    subtitle="El agente no vuelve a tomar este chat hasta reactivarlo."
-                    danger
-                    busy={agentBusyAction === 'skip'}
-                    disabled={agentLoading || agentActionBusy}
-                    onPress={() => onAgentAction(contact, 'skip', state)}
-                  />
-                </React.Fragment>
-              );
-            })}
+            <ConversationAgentActionRows
+              agentBusyAction={agentBusyAction}
+              agentLoading={agentLoading}
+              agentStates={agentStates}
+              contact={contact}
+              onAgentAction={onAgentAction}
+            />
             <View style={styles.sheetSectionDivider}>
               <Text style={styles.sheetSectionLabel}>Adjuntos</Text>
             </View>
@@ -24640,12 +24840,10 @@ function applyAppTypography<T extends AppStyleSheet<T>>(styleMap: T): T {
 
 function createAppStyles() {
   const isLight = activeNativeThemeTone === 'light';
-  const liquidSurface = isLight ? 'rgba(255,255,255,0.56)' : 'rgba(28,28,30,0.62)';
-  const liquidSurfaceSelected = isLight ? 'rgba(255,255,255,0.72)' : 'rgba(58,58,60,0.66)';
-  const liquidBorder = isLight ? 'rgba(60,60,67,0.16)' : 'rgba(245,245,247,0.18)';
-  const liquidBorderSelected = isLight ? 'rgba(60,60,67,0.24)' : 'rgba(245,245,247,0.28)';
   const liquidShadowColor = isLight ? 'rgba(29,29,31,0.16)' : 'rgba(0,0,0,0.54)';
-  const dockBackground = isLight ? 'rgba(255,255,255,0.64)' : 'rgba(28,28,30,0.62)';
+  const dockBackground = isLight ? COLORS.panel : COLORS.panelSoft;
+  const dockBorder = isLight ? 'rgba(60,60,67,0.20)' : 'rgba(235,235,245,0.22)';
+  const dockSelectedSurface = COLORS.primary;
   const neutralSelectedSurface = isLight ? 'rgba(118,118,128,0.10)' : 'rgba(255,255,255,0.075)';
   const neutralSelectedBorder = isLight ? 'rgba(60,60,67,0.16)' : 'rgba(245,245,247,0.20)';
   // Selectable inline controls (chips / tabs / segments / slots / toggles): flat, no glass,
@@ -24817,13 +25015,13 @@ function createAppStyles() {
   phoneDock: {
     minHeight: 56,
     borderRadius: 28,
-    borderWidth: 0,
-    borderColor: 'transparent',
-    backgroundColor: 'transparent',
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: dockBorder,
+    backgroundColor: dockBackground,
     flexDirection: 'row',
     paddingHorizontal: PHONE_DOCK_HORIZONTAL_PADDING,
     paddingVertical: 3,
-    overflow: 'visible',
+    overflow: 'hidden',
   },
   phoneDockSwiping: {
     shadowOpacity: 0,
@@ -24831,15 +25029,13 @@ function createAppStyles() {
   phoneDockSurface: {
     ...StyleSheet.absoluteFill,
     borderRadius: 28,
-  },
-  phoneDockSurfaceFallback: {
     backgroundColor: dockBackground,
   },
   phoneDockSurfaceStroke: {
     ...StyleSheet.absoluteFill,
     borderRadius: 28,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: liquidBorder,
+    borderColor: dockBorder,
   },
   phoneDockIndicator: {
     position: 'absolute',
@@ -24848,28 +25044,26 @@ function createAppStyles() {
     width: PHONE_DOCK_INDICATOR_WIDTH,
     height: PHONE_DOCK_INDICATOR_HEIGHT,
     borderRadius: PHONE_DOCK_INDICATOR_HEIGHT / 2,
-    backgroundColor: 'transparent',
+    backgroundColor: dockSelectedSurface,
     borderWidth: 0,
     borderColor: 'transparent',
-    shadowColor: 'transparent',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0,
-    shadowRadius: 0,
-    elevation: 0,
+    shadowColor: isLight ? 'rgba(29,29,31,0.28)' : '#000000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: isLight ? 0.18 : 0.32,
+    shadowRadius: 12,
+    elevation: 7,
     overflow: 'hidden',
   },
   phoneDockIndicatorSurface: {
     ...StyleSheet.absoluteFill,
     borderRadius: PHONE_DOCK_INDICATOR_HEIGHT / 2,
-  },
-  phoneDockIndicatorSurfaceFallback: {
-    backgroundColor: liquidSurfaceSelected,
+    backgroundColor: dockSelectedSurface,
   },
   phoneDockIndicatorSurfaceStroke: {
     ...StyleSheet.absoluteFill,
     borderRadius: PHONE_DOCK_INDICATOR_HEIGHT / 2,
     borderWidth: StyleSheet.hairlineWidth,
-    borderColor: liquidBorderSelected,
+    borderColor: isLight ? 'rgba(255,255,255,0.26)' : 'rgba(255,255,255,0.18)',
   },
   liquidControlSurfaceRest: {
     ...StyleSheet.absoluteFill,
@@ -28400,6 +28594,57 @@ function createAppStyles() {
     fontWeight: '900',
     textTransform: 'uppercase',
   },
+  agentControlSummary: {
+    minHeight: 76,
+    marginHorizontal: 16,
+    marginTop: 12,
+    marginBottom: 2,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: neutralSelectedBorder,
+    backgroundColor: sheetRowSurface,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 13,
+    paddingVertical: 12,
+  },
+  agentControlSummaryIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  agentControlSummaryIconAlert: {
+    backgroundColor: COLORS.danger,
+  },
+  agentControlSummaryCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  agentControlSummaryTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '900',
+  },
+  agentControlSummaryText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+  agentControlEmpty: {
+    color: COLORS.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '700',
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+  },
   manualAgentPromptBody: {
     paddingHorizontal: 18,
     paddingTop: 14,
@@ -29802,6 +30047,30 @@ function createAppStyles() {
     fontWeight: '700',
     marginTop: 1,
   },
+  conversationAgentButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: controlRestSurface,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: neutralSelectedBorder,
+    position: 'relative',
+  },
+  conversationAgentButtonAlert: {
+    backgroundColor: COLORS.danger,
+    borderColor: COLORS.danger,
+  },
+  conversationAgentSignalDot: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: COLORS.white,
+  },
   conversationHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -29817,6 +30086,49 @@ function createAppStyles() {
   },
   conversationHeaderIconButtonActive: {
     ...liquidControlSelected,
+  },
+  conversationAgentNotice: {
+    minHeight: 54,
+    marginHorizontal: 10,
+    marginTop: 8,
+    marginBottom: 3,
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: neutralSelectedBorder,
+    backgroundColor: isLight ? COLORS.panel : 'rgba(28,28,30,0.86)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 9,
+    paddingHorizontal: 11,
+    paddingVertical: 8,
+  },
+  conversationAgentNoticeIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.accentSoft,
+  },
+  conversationAgentNoticeIconAlert: {
+    backgroundColor: COLORS.danger,
+  },
+  conversationAgentNoticeCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  conversationAgentNoticeTitle: {
+    color: COLORS.text,
+    fontSize: 13,
+    lineHeight: 17,
+    fontWeight: '900',
+  },
+  conversationAgentNoticeText: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+    marginTop: 1,
   },
   conversationSearchBar: {
     minHeight: 48,

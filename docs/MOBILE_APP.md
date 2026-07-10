@@ -590,16 +590,20 @@ animado que persigue la coordenada real del dedo, badge de Chats y espacio
 inferior reservado para que las listas no queden cortadas detras del panel. El
 dock se compacta suavemente al hacer scroll hacia abajo y vuelve a su tamano
 normal al subir, sin perder el centrado de iconos ni del indicador. Evita
-contornos duros, rellenos opacos y elevaciones pesadas: los controles flotantes e
-iconograficos usan superficies neutrales, borde sutil y sombra ligera. No pintes
-rellenos azules o cian para simular material; los estados seleccionados de
-tablists, filtros y segmented controls se leen por superficie neutral, sombra,
-contraste y texto. Los iconos de navegacion y toolbar deben mantenerse finos
-(`strokeWidth` aproximado 1.75-2.0); reserva trazos mas gruesos solo para badges
-o estados muy pequenos donde la legibilidad lo exija. El indicador activo del
-dock es una unica capsula neutral que se mueve con `translateX` siguiendo el
-dedo; no debe convertirse en un circulo solido azul. En tema claro, los iconos
-del dock son negros; en tema oscuro, claros.
+contornos duros y elevaciones pesadas: los controles flotantes e iconograficos
+usan superficies neutrales, borde sutil y sombra ligera. El dock inferior no
+debe depender de una capa tipo liquid glass/translucida que se pierda sobre el
+fondo: la capsula base debe tener color real desde la paleta activa y el
+indicador seleccionado debe ser una capsula solida de la paleta primaria, con
+icono blanco y contraste claro. Los iconos no seleccionados usan el tono muted
+del tema activo. No pintes rellenos azules o cian para simular material; los
+estados seleccionados de tablists, filtros y segmented controls se leen por
+superficie neutral, sombra, contraste y texto. Los iconos de navegacion y
+toolbar deben mantenerse finos (`strokeWidth` aproximado 1.75-2.0); reserva
+trazos mas gruesos solo para badges o estados muy pequenos donde la legibilidad
+lo exija. El indicador activo del dock se mueve con `translateX` siguiendo el
+dedo y debe recalcular sus colores cuando cambie `mobile_chat_theme_preference`
+o el tema de sistema.
 
 Regla de criterio: el verde se reserva para marca WhatsApp
 (`--phone-channel-whatsapp`, `PhoneMessageChannelIcon`, iconos/canal WhatsApp) o
@@ -1017,11 +1021,17 @@ mensaje manual desde `mobile/` debe abrir una confirmacion antes de mandar: el
 usuario elige pausar el agente por 24 horas y enviar, quitar el contacto del
 agente y enviar, o cancelar. El boton `+` de la conversacion debe priorizar los
 controles del agente arriba del sheet cuando haya estado de agente asignado, con
-acciones rapidas para pausar, tomar/continuar u omitir segun el estado. En
-`/movil`/`ios/app`, los banners y acciones de agente deben contar solo estados
-cuyo `agent_id` pertenezca a un agente configurado actualmente; los estados
-historicos o cacheados de agentes eliminados no deben mostrarse como "agentes
-asignados" ni habilitar acciones. El
+acciones rapidas para pausar, tomar/continuar u omitir segun el estado. Ademas,
+la conversacion Android debe exponer un control visible del agente en el header:
+boton compacto con `Bot`/alerta, banner solo cuando el agente pide atencion o no
+esta activo, y sheet dedicado `Agente conversacional`. Ese sheet debe usar las
+mismas acciones que `/movil` e `ios/app`: `pause`, `take_over`, `skip`,
+`resume` para estados pausados, `activate` para reactivar estados omitidos o
+humanos, y `clear_signal` para marcar avisos como vistos. En `/movil`/`ios/app`
+y `mobile/`, los banners y acciones de agente deben contar solo estados cuyo
+`agent_id` pertenezca a un agente configurado actualmente; los estados historicos
+o cacheados de agentes eliminados no deben mostrarse como "agentes asignados" ni
+habilitar acciones. El
 composer nativo manda texto por `/whatsapp-api/messages/text`,
 fotos por `/whatsapp-api/messages/image`, videos por
 `/whatsapp-api/messages/video`, documentos por

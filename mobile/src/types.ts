@@ -138,8 +138,16 @@ export type ConversationAgentState = {
   contactId?: string;
   agentId?: string | null;
   agentName?: string | null;
+  contactName?: string | null;
+  contactPhone?: string | null;
   status?: string | null;
   signal?: string | null;
+  signalReason?: string | null;
+  signalSummary?: string | null;
+  signalAt?: string | null;
+  pausedUntilAt?: string | null;
+  lastReplyAt?: string | null;
+  lastAnsweredInboundMessageId?: string | null;
   updatedAt?: string | null;
   activatedAt?: string | null;
 };

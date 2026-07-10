@@ -206,6 +206,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     `/movil`.
 - [ ] Replicar estados de agente: prioridad humana, agente activo/inactivo,
   hub de agente y badges.
+  - Avance: Android ya selecciona el estado primario con prioridad similar a
+    `/movil`/`ios/app`, muestra control compacto del agente en el header,
+    banner cuando hay senal o estado no activo, y sheet dedicado con `pause`,
+    `take_over`, `skip`, `resume`, `activate` y `clear_signal`.
 - [x] Reemplazar swipe lateral por acciones con long press.
   - Avance: por decision de producto, `mobile/` ya no muestra `Mas` ni
     `Archivar/Restaurar` como botones laterales por swipe. Tocar una fila abre
@@ -247,8 +251,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Header de conversacion con avatar/canal/estado como `/movil`.
   - Avance: `mobile/` ya abre `NativeConversationScreen` desde la bandeja, usa
     avatar/foto/inicial sin aro de canal, badge nativo, nombre del contacto,
-    detalle principal y acciones de agente, etiqueta y busqueda en el header. Falta
-    replicar estado online/agente exacto y selector de numero/remitente de
+    detalle principal y acciones de agente, etiqueta y busqueda en el header. El
+    agente conversacional ya tiene boton compacto, alerta visual y banner de
+    estado cuando aplica. Falta replicar estado online exacto y selector de
+    numero/remitente de
     `/movil`.
 - [ ] Timeline con globos inbound/outbound, email desplegable, media, ubicacion,
   notas de voz, documentos y comentarios FB/IG.
@@ -268,7 +274,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     respuesta, tira de fotos preparadas y boton enviar/mic visual. El `+` abre
     sheet con tomar foto, elegir foto, cita, pagos, programar, etiqueta y mas
     acciones; cuando el chat tiene agente asignado, los controles del agente
-    aparecen arriba para pausar, tomar, omitir o continuar segun el estado.
+    aparecen arriba para pausar, tomar, omitir, reactivar o continuar segun el
+    estado, y pueden limpiar avisos del agente con `clear_signal`.
     Enviar manualmente con agente activo abre confirmacion para pausar 24h y
     enviar, quitar del agente y enviar o cancelar. Falta voice note real,
     ubicacion, sugerencia IA, plantillas, picker avanzado de fecha/hora y
@@ -306,6 +313,10 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     `/whatsapp-api/messages/video` al contacto seleccionado. Pendiente extender
     esta accion a canales no WhatsApp si el contacto no tiene telefono.
 - [ ] Menu global de agente.
+  - Avance: la conversacion Android ya tiene sheet dedicado
+    `Agente conversacional` accesible desde el header y reutiliza la misma
+    accion real que el menu `+`/`Mas acciones`. Falta validar si `/movil`
+    requiere un hub global fuera del chat abierto.
 - [ ] Administrador de filtros.
 - [ ] Mas acciones de chat.
   - Avance: `mobile/` ya usa bottom sheet desde long press de fila, no
@@ -390,7 +401,9 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   `mobile_chat_theme_preference` ya se guarda, Ajustes calcula sistema/horario,
   actualiza `StatusBar` y el fondo nativo con `expo-system-ui`; falta que todos
   los componentes centrales de Chat/Citas/Pagos/Analiticas consuman una paleta
-  clara completa en vez de depender de la paleta oscura base.
+  clara completa en vez de depender de la paleta oscura base. Dock inferior ya
+  usa capsula opaca de paleta activa, indicador primario solido e iconos muted /
+  blancos recalculados al cambiar sistema/claro/noche.
 - [ ] Validar visualmente contra `/movil` en Android real y corregir diferencias
   finas de espaciado/tipografia.
 

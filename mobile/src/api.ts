@@ -635,7 +635,7 @@ export class RistakApiClient {
 
   updateAgentState(
     contactId: string,
-    action: 'activate' | 'pause' | 'take_over' | 'skip',
+    action: 'activate' | 'resume' | 'pause' | 'take_over' | 'skip' | 'clear_signal',
     options: { agentId?: string } = {},
   ) {
     return this.request<ConversationAgentState>(`/conversational-agent/states/${encodeURIComponent(contactId)}`, {
