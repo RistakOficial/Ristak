@@ -7,6 +7,10 @@ agente este parado en este repo (`Ristak`) o en `Ristak - Installer`.
 El usuario puede decir "MSP"; en este proyecto se refiere al MCP de soporte del
 Installer.
 
+Si la solicitud es **subir la app a App Store o Play Store**, no uses este flujo
+de soporte. Lee [`MOBILE_STORE_RELEASES.md`](./MOBILE_STORE_RELEASES.md) y usa el
+MCP `ristak-mobile-stores` del Installer.
+
 ## Fuente de verdad
 
 - El control plane es `Ristak - Installer`.

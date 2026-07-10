@@ -12,9 +12,64 @@ Actions for the current run.
 Operational rule for agents: if the user asks from this repo to upload a mobile
 build, do not hunt for Apple/Google secrets in Ristak or create new credentials.
 Use Ristak Installer as the control plane. Trigger the **Tiendas móviles** button
-or call Installer's `publishMobileStoreRelease` service from the deployed
-Installer environment, keeping `submit_for_review=false` unless the user
-explicitly says the store listing is ready for review.
+or use the Installer MCP `ristak-mobile-stores`, keeping
+`submit_for_review=false` unless the user explicitly says the store listing is
+ready for review.
+
+## MCP route from this repo
+
+If Raul says from `Ristak` "sube la app", "manda iOS", "sube Android" or
+anything equivalent, the agent should go through Ristak Installer. This repo owns
+the product code and the GitHub workflow, but Installer owns the encrypted store
+credentials and the temporary release token.
+
+Start the MCP from the Installer backend:
+
+```bash
+npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run mobile:stores:mcp
+```
+
+The MCP server name is `ristak-mobile-stores`. Its tools are:
+
+- `ristak_mobile_store_check`: checks whether App Store / Play Store credentials
+  are ready and shows recent release events. It does not dispatch GitHub Actions.
+- `ristak_mobile_store_history`: reads recent mobile release history from
+  Installer.
+- `ristak_mobile_store_publish`: prepares or dispatches the official
+  `mobile-store-release.yml` workflow.
+
+`ristak_mobile_store_publish` is dry-run by default. A real upload requires:
+
+```json
+{
+  "platform": "both",
+  "dryRun": false,
+  "confirmText": "GENERAR",
+  "submitForReview": false,
+  "iosVersion": "1.0",
+  "androidVersionName": "1.0",
+  "androidTrack": "internal"
+}
+```
+
+Accepted confirmations are `GENERAR`, `ENVIAR`, and `PUBLICAR`. Keep
+`submitForReview=false` unless Raul explicitly confirms that the App Store /
+Play Store listing, privacy/data safety, screenshots, reviewer credentials and
+release notes are ready. Sí, es burocracia, pero es burocracia que evita que
+Apple nos dé un portazo por mensos.
+
+When the MCP dispatches a real upload, Installer:
+
+1. validates requested platform credentials from encrypted `app_settings`;
+2. runs the iOS App Store Connect preflight when iOS is included;
+3. refreshes/creates provisioning profiles for `com.ristak.app` and
+   `com.ristak.app.NotificationService` if needed;
+4. creates a short-lived `mobile_release_token`;
+5. dispatches GitHub Actions on `main`;
+6. records queued events in Installer's `mobile_release_events` history.
+
+Do not copy `DATABASE_URL`, Apple keys, `.p8`, `.p12`, provisioning profiles,
+keystores, Google Play JSON or the temporary release token into this repo.
 
 For this local machine, use the private operator file:
 

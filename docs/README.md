@@ -38,7 +38,7 @@ correcto. Si de verdad hace falta un documento nuevo, debe quedar enlazado aqui.
 | Media, Bunny Storage, Bunny Stream y cuotas | [MEDIA_STORAGE_BUNNY.md](./MEDIA_STORAGE_BUNNY.md) |
 | Rutas moviles, `/movil` web y app Android `mobile/` | [MOBILE_APP.md](./MOBILE_APP.md) y [MOBILE_NATIVE_PARITY_CHECKLIST.md](./MOBILE_NATIVE_PARITY_CHECKLIST.md) |
 | App nativa Apple (SwiftUI, iPhone/iPad) | [../ios/README.md](../ios/README.md), [../ios/docs/ARCHITECTURE.md](../ios/docs/ARCHITECTURE.md) y [../ios/docs/research/](../ios/docs/research/) |
-| Builds para App Store / Play Store | [MOBILE_STORE_RELEASES.md](./MOBILE_STORE_RELEASES.md) |
+| Builds para App Store / Play Store via Ristak Installer/MCP | [MOBILE_STORE_RELEASES.md](./MOBILE_STORE_RELEASES.md) |
 | Bridge embebido MDP | [mdp-program-bridge.md](./mdp-program-bridge.md) |
 | Calendarios locales y embebidos | [../backend/src/services/README_CALENDARS.md](../backend/src/services/README_CALENDARS.md) y [../frontend/src/pages/Appointments/README.md](../frontend/src/pages/Appointments/README.md) |
 
