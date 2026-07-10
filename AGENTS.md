@@ -31,8 +31,23 @@
 
 ## UI / diseño — OBLIGATORIO
 
-- **ALTO antes de tocar UI.** Antes de crear o modificar CUALQUIER pantalla,
-  componente, estilo o función con interfaz del frontend de escritorio:
+- **Compuerta de alcance: estas reglas NO son globales.** Se activan solamente
+  cuando el cambio modifica de forma intencional la presentación visual o la
+  interacción visible del frontend de escritorio: estructura JSX/TSX renderizada,
+  componentes visuales, estilos, tokens, layout, responsive o estados visuales.
+  También se activan si Raúl pide explícitamente una revisión de diseño.
+- **No activar por asociación.** No leas `docs/DESIGN_SYSTEM.md`, no abras la
+  referencia visual y no corras `design:audit` para cambios exclusivos de backend,
+  rutas, servicios, base de datos, migraciones, jobs, integraciones, tests,
+  documentación, copy sin cambio visual o lógica frontend que conserve exactamente
+  el mismo markup y estilos. Que un bug de backend tenga un síntoma visible en la
+  app no convierte automáticamente el arreglo en una tarea de diseño.
+- **Bugs full-stack.** Si la solución realmente modifica UI visual de escritorio,
+  aplica estas reglas solo a esa parte del cambio. Si la causa raíz y el arreglo
+  quedan en backend o en lógica no visual, valida esas capas y omite por completo
+  el ritual de diseño.
+- **ALTO antes de tocar UI visual.** Antes de crear o modificar cualquier elemento
+  que sí caiga dentro del alcance visual definido arriba:
   1. Lee **`docs/DESIGN_SYSTEM.md`** completo (reglas estrictas / lista de rechazo).
   2. Abre **`docs/design-reference/design-system.html`** en el navegador
      interno/aislado del agente (en Codex: `browser:control-in-app-browser` /
