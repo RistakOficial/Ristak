@@ -2611,6 +2611,13 @@ sheets o preview en `/movil`, se debe revisar el equivalente en
 esta activo, enviar un mensaje manual debe pedir primero que el usuario pause el
 agente 24 horas, quite el contacto del agente o cancele; el menu `+` debe poner
 los controles del agente al inicio cuando haya estado de agente asignado.
+La bandeja Android expone el Hub del agente conversacional desde el robot de la
+esquina superior izquierda, con control individual para encender/pausar,
+reiniciar omisiones y editar la configuracion principal. Dentro de un chat con
+agente asignado, el robot vive a la izquierda del calendario en la capsula del
+header y abre los controles por contacto (`pause`, `take_over`, `skip`,
+`resume`/`activate` y `clear_signal`). El runtime global es un detalle interno:
+la app no presenta `Apagar todos`.
 
 La pantalla de analiticas nativa debe mantenerse alineada con
 `PhoneAnalytics`: periodos `30d`/`60d`/`180d`/`year`/`custom`, 8 KPIs, grafica

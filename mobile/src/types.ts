@@ -152,6 +152,55 @@ export type ConversationAgentState = {
   activatedAt?: string | null;
 };
 
+export type ConversationalBusinessPromptStatus = {
+  ready?: boolean;
+  status?: string | null;
+  businessName?: string | null;
+  industry?: string | null;
+  summary?: string | null;
+};
+
+export type ConversationalAgentConfig = {
+  enabled?: boolean;
+  aiProvider?: string;
+  model?: string;
+  businessPromptStatus?: ConversationalBusinessPromptStatus | null;
+};
+
+export type ConversationalAgentDefinition = {
+  id: string;
+  name?: string;
+  enabled?: boolean;
+  aiProvider?: string;
+  model?: string;
+  identityMode?: string;
+  identityUserId?: string;
+  identityUserName?: string;
+  identityCustomName?: string;
+  position?: number;
+  objective?: string;
+  customObjective?: string;
+  successAction?: string;
+  requiredData?: string;
+  handoffRules?: string;
+  extraInstructions?: string;
+  allowEmojis?: boolean;
+  hideAttended?: boolean;
+  hideAttendedNotifications?: boolean;
+  defaultCalendarId?: string | null;
+  persuasionLevel?: string;
+  languageLevel?: string;
+  contactScope?: string;
+  responseDelay?: Record<string, unknown>;
+  replyDelivery?: Record<string, unknown>;
+  followUp?: Record<string, unknown>;
+  goalWorkflow?: Record<string, unknown>;
+  filters?: Record<string, unknown>;
+  successExtras?: Array<Record<string, unknown>>;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
 export type JourneyEvent = {
   type: string;
   date: string;

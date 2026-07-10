@@ -142,7 +142,7 @@ import {
 import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveMessageEvent } from './api';
-import { hasPhoneSectionAccess } from './access';
+import { hasModuleAccess, hasPhoneSectionAccess } from './access';
 import {
   configureNativePushTokenRefresh,
   configureNativeNotificationListeners,
@@ -202,6 +202,8 @@ import type {
   ContactTag,
   CustomLabels,
   ConversationAgentState,
+  ConversationalAgentConfig,
+  ConversationalAgentDefinition,
   AIAgentClarificationOption,
   AIAgentAttachment,
   AIAgentAttachmentKind,
@@ -1391,6 +1393,7 @@ function PhoneShell({
   onChangeServer: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
+  const canUseConversationalAgent = user ? hasModuleAccess(user, 'ai_agent', 'read') : true;
   const allowedNavItems = useMemo(() => {
     const filtered = PHONE_NAV_ITEMS.filter((item) => hasPhoneSectionAccess(user, item.key));
     return filtered.length ? filtered : PHONE_NAV_ITEMS;
@@ -1649,6 +1652,7 @@ function PhoneShell({
 	            <ChatScreen
               api={api}
               baseUrl={baseUrl}
+              canUseConversationalAgent={canUseConversationalAgent}
               customLabels={customLabels}
               settings={mobileChatSettings}
               notificationContactId={notificationContactId}
@@ -2329,6 +2333,7 @@ function LoginScreen({
 function ChatScreen({
   api,
   baseUrl = '',
+  canUseConversationalAgent = true,
   customLabels = DEFAULT_CUSTOM_LABELS,
   footer,
   notificationContactId,
@@ -2344,6 +2349,7 @@ function ChatScreen({
 }: {
   api: RistakApiClient;
   baseUrl?: string;
+  canUseConversationalAgent?: boolean;
   customLabels?: CustomLabels;
   footer?: React.ReactNode;
   notificationContactId?: string;
@@ -2394,6 +2400,7 @@ function ChatScreen({
   const [agentStatesByContactId, setAgentStatesByContactId] = useState<Record<string, ConversationAgentState[]>>({});
   const [agentStateLoadingId, setAgentStateLoadingId] = useState<string | null>(null);
   const [agentBusyAction, setAgentBusyAction] = useState<AgentAction | null>(null);
+  const [agentHubOpen, setAgentHubOpen] = useState(false);
   const [cameraAttachment, setCameraAttachment] = useState<ConversationDraftAttachment | null>(null);
   const [cameraRecipients, setCameraRecipients] = useState<ChatContact[]>([]);
   const [cameraCaption, setCameraCaption] = useState('');
@@ -3755,6 +3762,17 @@ function ChatScreen({
       >
       <View style={styles.chatListHeader}>
         <View style={styles.chatTopActionRow}>
+          {canUseConversationalAgent ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Agente conversacional"
+              onPress={() => setAgentHubOpen(true)}
+              style={({ pressed }) => [styles.headerIconButton, pressed && styles.pressed]}
+            >
+              <LiquidControlBackground />
+              <Bot size={25} color={COLORS.accent} strokeWidth={2.15} />
+            </Pressable>
+          ) : <View />}
           <View style={styles.chatHeaderActions}>
             <Pressable
               accessibilityRole="button"
@@ -3983,6 +4001,11 @@ function ChatScreen({
         onSetDraft={setCustomFilterDraft}
         onSetMode={setFilterManagerMode}
         onToggleVisible={toggleVisibleFilter}
+      />
+      <NativeAgentHubSheet
+        api={api}
+        open={agentHubOpen}
+        onClose={() => setAgentHubOpen(false)}
       />
       <ChatMoreSheet
         contact={sheetContact}
@@ -14076,6 +14099,483 @@ function SheetActionRow({
   );
 }
 
+type AgentEditorDraft = {
+  name: string;
+  aiProvider: string;
+  model: string;
+  identityMode: string;
+  identityUserName: string;
+  identityCustomName: string;
+  persuasionLevel: string;
+  languageLevel: string;
+  objective: string;
+  customObjective: string;
+  successAction: string;
+  extraInstructions: string;
+  requiredData: string;
+  handoffRules: string;
+  contactScope: string;
+  allowEmojis: boolean;
+  hideAttendedNotifications: boolean;
+};
+
+const AGENT_PROVIDER_OPTIONS = [
+  { id: 'openai', label: 'OpenAI' },
+  { id: 'gemini', label: 'Gemini' },
+  { id: 'claude', label: 'Claude' },
+  { id: 'deepseek', label: 'DeepSeek' },
+];
+const AGENT_MODEL_OPTIONS: Record<string, Array<{ id: string; label: string }>> = {
+  openai: [
+    { id: 'gpt-5.5', label: 'GPT-5.5' },
+    { id: 'gpt-5.5-pro', label: 'GPT-5.5 pro' },
+    { id: 'gpt-5.4', label: 'GPT-5.4' },
+    { id: 'gpt-5.4-pro', label: 'GPT-5.4 pro' },
+    { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+    { id: 'gpt-5.4-nano', label: 'GPT-5.4 nano' },
+    { id: 'gpt-5.2', label: 'GPT-5.2' },
+    { id: 'gpt-5-mini', label: 'GPT-5 mini' },
+    { id: 'gpt-4.1', label: 'GPT-4.1' },
+    { id: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
+  ],
+  gemini: [
+    { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+    { id: 'gemini-3-flash', label: 'Gemini 3 Flash' },
+    { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
+    { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+    { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+  ],
+  claude: [
+    { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+    { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+    { id: 'claude-opus-4-8', label: 'Claude Opus 4.8' },
+    { id: 'claude-fable-5', label: 'Claude Fable 5' },
+  ],
+  deepseek: [
+    { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+    { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+    { id: 'deepseek-chat', label: 'DeepSeek Chat' },
+    { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+  ],
+};
+const AGENT_PROVIDER_DEFAULT_MODEL: Record<string, string> = {
+  openai: 'gpt-5.4-mini',
+  gemini: 'gemini-3.5-flash',
+  claude: 'claude-haiku-4-5',
+  deepseek: 'deepseek-v4-flash',
+};
+const AGENT_IDENTITY_OPTIONS = [
+  { id: 'business', label: 'Representante del negocio' },
+  { id: 'user', label: 'Persona del equipo' },
+  { id: 'custom', label: 'Nombre personalizado' },
+  { id: 'agent', label: 'Nombre del agente' },
+];
+const AGENT_PERSUASION_OPTIONS = [
+  { id: 'low', label: 'Anfitrión' },
+  { id: 'medium', label: 'Estratega' },
+  { id: 'high', label: 'Cerrador' },
+];
+const AGENT_LANGUAGE_OPTIONS = [
+  { id: 'professional', label: 'Ejecutivo' },
+  { id: 'intermediate', label: 'Cómplice' },
+  { id: 'colloquial', label: 'Callejero' },
+];
+const AGENT_OBJECTIVE_OPTIONS = [
+  { id: 'citas', label: 'Agendar citas' },
+  { id: 'ventas', label: 'Cerrar ventas' },
+  { id: 'datos', label: 'Pedir datos' },
+  { id: 'filtrar', label: 'Filtrar curiosos' },
+  { id: 'custom', label: 'Objetivo propio' },
+];
+const AGENT_SUCCESS_OPTIONS = [
+  { id: 'ready_for_human', label: 'Pasar a humano' },
+  { id: 'book_appointment', label: 'Agendar la cita' },
+  { id: 'ready_to_buy', label: 'Dejar listo para comprar' },
+  { id: 'send_goal_url', label: 'Enviar enlace del objetivo' },
+  { id: 'send_trigger_link', label: 'Enviar enlace disparador' },
+];
+const AGENT_SCOPE_OPTIONS = [
+  { id: 'all', label: 'Cualquier chat' },
+  { id: 'new_only', label: 'Solo contactos nuevos' },
+];
+
+function createAgentEditorDraft(agent: ConversationalAgentDefinition): AgentEditorDraft {
+  const provider = AGENT_PROVIDER_OPTIONS.some((item) => item.id === agent.aiProvider) ? String(agent.aiProvider) : 'openai';
+  const model = String(agent.model || AGENT_PROVIDER_DEFAULT_MODEL[provider]);
+  return {
+    name: String(agent.name || 'Agente'),
+    aiProvider: provider,
+    model,
+    identityMode: String(agent.identityMode || 'business'),
+    identityUserName: String(agent.identityUserName || ''),
+    identityCustomName: String(agent.identityCustomName || ''),
+    persuasionLevel: String(agent.persuasionLevel || 'high'),
+    languageLevel: String(agent.languageLevel || 'intermediate'),
+    objective: String(agent.objective || 'citas'),
+    customObjective: String(agent.customObjective || ''),
+    successAction: String(agent.successAction || 'ready_for_human'),
+    extraInstructions: String(agent.extraInstructions || ''),
+    requiredData: String(agent.requiredData || ''),
+    handoffRules: String(agent.handoffRules || ''),
+    contactScope: String(agent.contactScope || 'all'),
+    allowEmojis: Boolean(agent.allowEmojis),
+    hideAttendedNotifications: Boolean(agent.hideAttendedNotifications),
+  };
+}
+
+function AgentOptionGroup({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  options: Array<{ id: string; label: string }>;
+  selected: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <View style={styles.agentEditorFieldGroup}>
+      <Text style={styles.agentEditorFieldLabel}>{label}</Text>
+      <View style={styles.agentEditorOptions}>
+        {options.map((option) => {
+          const active = option.id === selected;
+          return (
+            <Pressable
+              key={option.id}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: active }}
+              onPress={() => onChange(option.id)}
+              style={({ pressed }) => [
+                styles.agentEditorOption,
+                active && styles.agentEditorOptionActive,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.agentEditorOptionText, active && styles.agentEditorOptionTextActive]}>{option.label}</Text>
+              {active ? <Check size={15} color={COLORS.white} strokeWidth={2.6} /> : null}
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
+function AgentEditorTextField({
+  label,
+  value,
+  placeholder,
+  multiline = false,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  multiline?: boolean;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <View style={styles.agentEditorFieldGroup}>
+      <Text style={styles.agentEditorFieldLabel}>{label}</Text>
+      <TextInput
+        value={value}
+        onChangeText={onChange}
+        multiline={multiline}
+        textAlignVertical={multiline ? 'top' : 'center'}
+        placeholder={placeholder}
+        placeholderTextColor={COLORS.muted}
+        style={[styles.agentEditorInput, multiline && styles.agentEditorTextarea]}
+      />
+    </View>
+  );
+}
+
+function NativeAgentHubSheet({
+  api,
+  open,
+  onClose,
+}: {
+  api: RistakApiClient;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [aiStatus, setAiStatus] = useState<AIAgentConfigStatus | null>(null);
+  const [config, setConfig] = useState<ConversationalAgentConfig | null>(null);
+  const [agents, setAgents] = useState<ConversationalAgentDefinition[]>([]);
+  const [busyAgentIds, setBusyAgentIds] = useState<string[]>([]);
+  const [editingAgent, setEditingAgent] = useState<ConversationalAgentDefinition | null>(null);
+  const [draft, setDraft] = useState<AgentEditorDraft | null>(null);
+  const [savingEditor, setSavingEditor] = useState(false);
+
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError('');
+    try {
+      const nextAiStatus = await api.getAIAgentConfig();
+      setAiStatus(nextAiStatus);
+      if (!nextAiStatus?.configured || nextAiStatus?.needsReconnect) {
+        setConfig(null);
+        setAgents([]);
+        return;
+      }
+      const [nextConfig, nextAgents] = await Promise.all([
+        api.getConversationalAgentConfig(),
+        api.getConversationalAgents(),
+      ]);
+      setConfig(nextConfig);
+      setAgents((Array.isArray(nextAgents) ? nextAgents : []).slice().sort((a, b) => Number(a.position || 0) - Number(b.position || 0)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'No se pudo cargar el agente conversacional.';
+      if (silent) setNotice('No se pudo actualizar el Hub. Se conserva la última información cargada.');
+      else setError(message);
+    } finally {
+      if (!silent) setLoading(false);
+    }
+  }, [api]);
+
+  useEffect(() => {
+    if (!open) return;
+    setNotice('');
+    void load(Boolean(agents.length));
+  }, [open]);
+
+  const patchBusy = (agentId: string, busy: boolean) => {
+    setBusyAgentIds((current) => busy
+      ? Array.from(new Set([...current, agentId]))
+      : current.filter((id) => id !== agentId));
+  };
+
+  const toggleAgent = async (agent: ConversationalAgentDefinition) => {
+    if (busyAgentIds.includes(agent.id)) return;
+    const nextEnabled = !agent.enabled;
+    const previousAgent = agent;
+    patchBusy(agent.id, true);
+    setNotice('');
+    setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, enabled: nextEnabled } : item));
+    try {
+      const updated = await api.updateConversationalAgent(agent.id, { enabled: nextEnabled });
+      setAgents((current) => current.map((item) => item.id === agent.id ? { ...item, ...updated } : item));
+      if (nextEnabled && config?.enabled === false) {
+        try {
+          const updatedConfig = await api.saveConversationalAgentConfig({ enabled: true });
+          setConfig(updatedConfig);
+        } catch (err) {
+          await api.updateConversationalAgent(agent.id, { enabled: false }).catch(() => undefined);
+          setAgents((current) => current.map((item) => item.id === agent.id ? previousAgent : item));
+          Alert.alert('No se pudo encender', err instanceof Error ? err.message : 'No se pudo reactivar el runtime interno del agente.');
+        }
+      }
+    } catch (err) {
+      setAgents((current) => current.map((item) => item.id === agent.id ? previousAgent : item));
+      Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudo cambiar el estado del agente.');
+    } finally {
+      patchBusy(agent.id, false);
+    }
+  };
+
+  const resetSkipped = async (agent: ConversationalAgentDefinition) => {
+    if (busyAgentIds.includes(agent.id)) return;
+    patchBusy(agent.id, true);
+    setNotice('');
+    try {
+      await api.resetConversationalAgentSkippedContacts(agent.id);
+      setNotice(`${agent.name || 'El agente'} puede volver a tomar los chats que había omitido.`);
+    } catch (err) {
+      Alert.alert('Agente conversacional', err instanceof Error ? err.message : 'No se pudieron reiniciar las omisiones.');
+    } finally {
+      patchBusy(agent.id, false);
+    }
+  };
+
+  const editAgent = (agent: ConversationalAgentDefinition) => {
+    setEditingAgent(agent);
+    setDraft(createAgentEditorDraft(agent));
+    setNotice('');
+  };
+
+  const saveAgent = async () => {
+    if (!editingAgent || !draft || savingEditor) return;
+    const name = draft.name.trim();
+    if (!name) {
+      Alert.alert('Falta el nombre', 'Ponle un nombre al agente antes de guardar.');
+      return;
+    }
+    setSavingEditor(true);
+    try {
+      const updated = await api.updateConversationalAgent(editingAgent.id, {
+        name,
+        aiProvider: draft.aiProvider,
+        model: draft.model,
+        identityMode: draft.identityMode,
+        identityUserName: draft.identityMode === 'user' ? draft.identityUserName.trim() : editingAgent.identityUserName,
+        identityCustomName: draft.identityMode === 'custom' ? draft.identityCustomName.trim() : '',
+        persuasionLevel: draft.persuasionLevel,
+        languageLevel: draft.languageLevel,
+        objective: draft.objective,
+        customObjective: draft.objective === 'custom' ? draft.customObjective.trim() : '',
+        successAction: draft.successAction,
+        extraInstructions: draft.extraInstructions.trim(),
+        requiredData: draft.requiredData.trim(),
+        handoffRules: draft.handoffRules.trim(),
+        contactScope: draft.contactScope,
+        allowEmojis: draft.allowEmojis,
+        hideAttendedNotifications: draft.hideAttendedNotifications,
+      });
+      setAgents((current) => current.map((agent) => agent.id === updated.id ? { ...agent, ...updated } : agent));
+      setEditingAgent(null);
+      setDraft(null);
+      setNotice('Cambios guardados.');
+    } catch (err) {
+      Alert.alert('No se pudo guardar', err instanceof Error ? err.message : 'Intenta otra vez.');
+    } finally {
+      setSavingEditor(false);
+    }
+  };
+
+  const close = () => {
+    if (editingAgent) {
+      setEditingAgent(null);
+      setDraft(null);
+      return;
+    }
+    onClose();
+  };
+
+  const aiReady = Boolean(aiStatus?.configured && !aiStatus?.needsReconnect);
+  const businessPromptReady = config?.businessPromptStatus?.ready !== false;
+
+  return (
+    <BottomActionSheet
+      open={open}
+      title={editingAgent ? 'Editar agente' : 'Agente conversacional'}
+      subtitle={editingAgent ? (editingAgent.name || 'Agente') : 'Control y configuración'}
+      onClose={close}
+    >
+      {editingAgent && draft ? (
+        <ScrollView contentContainerStyle={styles.agentEditorContent} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+          <Pressable accessibilityRole="button" onPress={close} style={({ pressed }) => [styles.agentEditorBack, pressed && styles.pressed]}>
+            <ChevronLeft size={20} color={COLORS.text} strokeWidth={2.4} />
+            <Text style={styles.agentEditorBackText}>Volver a agentes</Text>
+          </Pressable>
+          <View style={styles.agentEditorSection}>
+            <Text style={styles.agentEditorSectionTitle}>1. Personalidad e instrucciones</Text>
+            <AgentEditorTextField label="Nombre del agente" value={draft.name} placeholder="Nombre del agente" onChange={(name) => setDraft((current) => current ? { ...current, name } : current)} />
+            <AgentOptionGroup label="¿Cómo se identifica?" options={AGENT_IDENTITY_OPTIONS} selected={draft.identityMode} onChange={(identityMode) => setDraft((current) => current ? { ...current, identityMode } : current)} />
+            {draft.identityMode === 'custom' ? (
+              <AgentEditorTextField label="Nombre visible" value={draft.identityCustomName} placeholder="Ej. Marcos o Robot 34" onChange={(identityCustomName) => setDraft((current) => current ? { ...current, identityCustomName } : current)} />
+            ) : null}
+            {draft.identityMode === 'user' ? (
+              <AgentEditorTextField label="Nombre de la persona" value={draft.identityUserName} placeholder="Nombre visible del integrante del equipo" onChange={(identityUserName) => setDraft((current) => current ? { ...current, identityUserName } : current)} />
+            ) : null}
+            <AgentOptionGroup label="Qué tan persuasivo debe ser" options={AGENT_PERSUASION_OPTIONS} selected={draft.persuasionLevel} onChange={(persuasionLevel) => setDraft((current) => current ? { ...current, persuasionLevel } : current)} />
+            <AgentOptionGroup label="Cómo debe hablar" options={AGENT_LANGUAGE_OPTIONS} selected={draft.languageLevel} onChange={(languageLevel) => setDraft((current) => current ? { ...current, languageLevel } : current)} />
+            <AgentEditorTextField multiline label="Personalización y capacitación" value={draft.extraInstructions} placeholder="Reglas del negocio, límites y casos especiales." onChange={(extraInstructions) => setDraft((current) => current ? { ...current, extraInstructions } : current)} />
+            <SettingsToggleRow embedded title="Puede usar emojis" description="Apágalo si quieres un tono más serio." checked={draft.allowEmojis} onChange={(allowEmojis) => setDraft((current) => current ? { ...current, allowEmojis } : current)} />
+          </View>
+          <View style={styles.agentEditorSection}>
+            <Text style={styles.agentEditorSectionTitle}>2. Operación técnica del chat</Text>
+            <AgentOptionGroup label="¿Qué IA va a contestar?" options={AGENT_PROVIDER_OPTIONS} selected={draft.aiProvider} onChange={(aiProvider) => setDraft((current) => current ? { ...current, aiProvider, model: AGENT_PROVIDER_DEFAULT_MODEL[aiProvider] } : current)} />
+            <AgentOptionGroup
+              label="Modelo"
+              options={(AGENT_MODEL_OPTIONS[draft.aiProvider] || []).some((option) => option.id === draft.model)
+                ? (AGENT_MODEL_OPTIONS[draft.aiProvider] || [])
+                : [{ id: draft.model, label: draft.model }, ...(AGENT_MODEL_OPTIONS[draft.aiProvider] || [])]}
+              selected={draft.model}
+              onChange={(model) => setDraft((current) => current ? { ...current, model } : current)}
+            />
+            <SettingsToggleRow embedded title="Ocultar notificaciones mientras atiende" description="Evita alertas normales mientras la IA lleva la conversación." checked={draft.hideAttendedNotifications} onChange={(hideAttendedNotifications) => setDraft((current) => current ? { ...current, hideAttendedNotifications } : current)} />
+          </View>
+          <View style={styles.agentEditorSection}>
+            <Text style={styles.agentEditorSectionTitle}>3. Objetivo y cierre</Text>
+            <AgentOptionGroup label="¿Cuál es la meta?" options={AGENT_OBJECTIVE_OPTIONS} selected={draft.objective} onChange={(objective) => setDraft((current) => current ? { ...current, objective } : current)} />
+            {draft.objective === 'custom' ? (
+              <AgentEditorTextField multiline label="Objetivo propio" value={draft.customObjective} placeholder="Describe el resultado que debe conseguir." onChange={(customObjective) => setDraft((current) => current ? { ...current, customObjective } : current)} />
+            ) : null}
+            <AgentOptionGroup label="Al cumplir la meta" options={AGENT_SUCCESS_OPTIONS} selected={draft.successAction} onChange={(successAction) => setDraft((current) => current ? { ...current, successAction } : current)} />
+          </View>
+          <View style={styles.agentEditorSection}>
+            <Text style={styles.agentEditorSectionTitle}>4. Reglas de atención</Text>
+            <AgentEditorTextField multiline label="Datos que debe pedir" value={draft.requiredData} placeholder="Nombre, servicio, presupuesto o datos obligatorios." onChange={(requiredData) => setDraft((current) => current ? { ...current, requiredData } : current)} />
+            <AgentEditorTextField multiline label="Cuándo pasar al equipo" value={draft.handoffRules} placeholder="Casos que debe revisar una persona." onChange={(handoffRules) => setDraft((current) => current ? { ...current, handoffRules } : current)} />
+          </View>
+          <View style={styles.agentEditorSection}>
+            <Text style={styles.agentEditorSectionTitle}>5. Entrada y salida</Text>
+            <AgentOptionGroup label="¿A quién puede atender?" options={AGENT_SCOPE_OPTIONS} selected={draft.contactScope} onChange={(contactScope) => setDraft((current) => current ? { ...current, contactScope } : current)} />
+            <Text style={styles.agentEditorHelp}>Las reglas avanzadas ya guardadas se conservan intactas. Puedes afinarlas desde el panel completo cuando necesites condiciones por etiquetas, anuncios, horarios o campos personalizados.</Text>
+          </View>
+          <PrimaryButton label="Guardar cambios" busy={savingEditor} busyLabel="Guardando..." onPress={() => void saveAgent()} />
+        </ScrollView>
+      ) : loading && !agents.length ? (
+        <View style={styles.agentHubState}>
+          <ActivityIndicator color={COLORS.accent} />
+        </View>
+      ) : !aiReady ? (
+        <View style={styles.agentHubState}>
+          <View style={styles.agentHubStateIcon}><Bot size={24} color={COLORS.muted} strokeWidth={2.2} /></View>
+          <Text style={styles.agentHubStateTitle}>{aiStatus?.needsReconnect ? 'Reconecta OpenAI' : 'Conecta OpenAI'}</Text>
+          <Text style={styles.agentHubStateText}>Hazlo en Ajustes → Asistente Personal AI para usar el agente conversacional.</Text>
+        </View>
+      ) : error ? (
+        <View style={styles.agentHubState}>
+          <Text style={styles.errorText}>{error}</Text>
+          <SecondaryButton label="Reintentar" onPress={() => void load()} />
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.agentHubContent} showsVerticalScrollIndicator={false}>
+          {!businessPromptReady ? (
+            <View style={styles.agentHubWarning}>
+              <CircleAlert size={18} color={COLORS.danger} strokeWidth={2.4} />
+              <Text style={styles.agentHubWarningText}>Completa la descripción de tu negocio en Ajustes → Asistente Personal AI para poder encender agentes.</Text>
+            </View>
+          ) : null}
+          {notice ? <Text style={styles.agentHubNotice}>{notice}</Text> : null}
+          {agents.length ? agents.map((agent) => {
+            const busy = busyAgentIds.includes(agent.id);
+            return (
+              <View key={agent.id} style={styles.agentHubRow}>
+                <View style={[styles.agentHubRobot, agent.enabled && styles.agentHubRobotActive]}>
+                  <Bot size={21} color={agent.enabled ? COLORS.white : COLORS.muted} strokeWidth={2.25} />
+                </View>
+                <View style={styles.agentHubRowCopy}>
+                  <Text numberOfLines={1} style={styles.agentHubRowTitle}>{agent.name || 'Agente'}</Text>
+                  <Text style={[styles.agentHubRowStatus, agent.enabled && styles.agentHubRowStatusActive]}>{agent.enabled ? 'Activo' : 'Pausado'}</Text>
+                  <Text numberOfLines={1} style={styles.agentHubRowMeta}>{agent.aiProvider || 'OpenAI'} · {agent.model || 'Modelo automático'}</Text>
+                </View>
+                {busy ? <ActivityIndicator color={COLORS.accent} size="small" /> : (
+                  <Switch
+                    accessibilityLabel={`Activar ${agent.name || 'agente'}`}
+                    value={Boolean(agent.enabled)}
+                    onValueChange={() => void toggleAgent(agent)}
+                    thumbColor={COLORS.white}
+                    trackColor={{ false: COLORS.panelSoft, true: COLORS.accent }}
+                  />
+                )}
+                <View style={styles.agentHubRowActions}>
+                  <Pressable accessibilityRole="button" accessibilityLabel={`Editar ${agent.name || 'agente'}`} onPress={() => editAgent(agent)} style={({ pressed }) => [styles.agentHubIconButton, pressed && styles.pressed]}>
+                    <Pencil size={17} color={COLORS.text} strokeWidth={2.25} />
+                  </Pressable>
+                  <Pressable accessibilityRole="button" accessibilityLabel={`Reiniciar omisiones de ${agent.name || 'agente'}`} disabled={busy} onPress={() => void resetSkipped(agent)} style={({ pressed }) => [styles.agentHubIconButton, busy && styles.disabledButton, pressed && styles.pressed]}>
+                    <Repeat2 size={17} color={COLORS.muted} strokeWidth={2.25} />
+                  </Pressable>
+                </View>
+              </View>
+            );
+          }) : (
+            <View style={styles.agentHubState}>
+              <Text style={styles.agentHubStateTitle}>Aún no hay agentes</Text>
+              <Text style={styles.agentHubStateText}>Créalo desde el panel de escritorio; aquí podrás encenderlo, pausarlo y configurarlo.</Text>
+            </View>
+          )}
+        </ScrollView>
+      )}
+    </BottomActionSheet>
+  );
+}
+
 function ConversationAgentActionRows({
   agentBusyAction,
   agentLoading,
@@ -21432,8 +21932,33 @@ function NativeConversationScreen({
             <Text numberOfLines={1} style={styles.conversationSubtitle}>{getContactDetail(contact)}</Text>
           </View>
         </Pressable>
-        <View style={styles.conversationCallActions}>
+        <View style={[styles.conversationCallActions, agentControlsAvailable && styles.conversationCallActionsWithAgent]}>
           <LiquidControlBackground />
+          {agentControlsAvailable ? (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Controlar agente conversacional"
+                onPress={openAgentControls}
+                style={({ pressed }) => [
+                  styles.conversationCallButton,
+                  styles.conversationAgentButton,
+                  agentSignalState && styles.conversationAgentButtonAlert,
+                  pressed && styles.pressed,
+                ]}
+              >
+                {agentLoading ? (
+                  <ActivityIndicator color={agentSignalState ? COLORS.white : COLORS.accent} size="small" />
+                ) : agentSignalState ? (
+                  <CircleAlert size={20} color={COLORS.white} strokeWidth={2.6} />
+                ) : (
+                  <Bot size={20} color={COLORS.text} strokeWidth={2.2} />
+                )}
+                {agentSignalState ? <View style={styles.conversationAgentSignalDot} /> : null}
+              </Pressable>
+              <View pointerEvents="none" style={styles.conversationCallDivider} />
+            </>
+          ) : null}
           <Pressable accessibilityRole="button" accessibilityLabel="Agendar cita" onPress={() => navigateToContactTool(contact, 'calendar')} style={({ pressed }) => [styles.conversationCallButton, pressed && styles.pressed]}>
             <CalendarDays size={21} color={COLORS.text} strokeWidth={1.95} />
           </Pressable>
@@ -21442,27 +21967,6 @@ function NativeConversationScreen({
             <CircleDollarSign size={21} color={COLORS.text} strokeWidth={1.95} />
           </Pressable>
         </View>
-        {agentControlsAvailable ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Controlar agente conversacional"
-            onPress={openAgentControls}
-            style={({ pressed }) => [
-              styles.conversationAgentButton,
-              agentSignalState && styles.conversationAgentButtonAlert,
-              pressed && styles.pressed,
-            ]}
-          >
-            {agentLoading ? (
-              <ActivityIndicator color={agentSignalState ? COLORS.white : COLORS.accent} size="small" />
-            ) : agentSignalState ? (
-              <CircleAlert size={20} color={COLORS.white} strokeWidth={2.6} />
-            ) : (
-              <Bot size={20} color={COLORS.text} strokeWidth={2.2} />
-            )}
-            {agentSignalState ? <View style={styles.conversationAgentSignalDot} /> : null}
-          </Pressable>
-        ) : null}
       </View>
 
       {agentNoticeState ? (
@@ -28169,7 +28673,7 @@ function createAppStyles() {
     minHeight: 42,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
+    justifyContent: 'space-between',
     marginBottom: 4,
   },
   chatHeaderActions: {
@@ -28749,6 +29253,222 @@ function createAppStyles() {
     fontWeight: '700',
     paddingHorizontal: 18,
     paddingVertical: 16,
+  },
+  agentHubContent: {
+    paddingHorizontal: 14,
+    paddingTop: 12,
+    paddingBottom: 34,
+    gap: 10,
+  },
+  agentHubWarning: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 9,
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    padding: 12,
+  },
+  agentHubWarningText: {
+    flex: 1,
+    minWidth: 0,
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  agentHubNotice: {
+    color: COLORS.success,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '800',
+    paddingHorizontal: 4,
+  },
+  agentHubRow: {
+    minHeight: 82,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: COLORS.border,
+    paddingVertical: 10,
+  },
+  agentHubRobot: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panelSoft,
+  },
+  agentHubRobotActive: {
+    backgroundColor: COLORS.accent,
+  },
+  agentHubRowCopy: {
+    flex: 1,
+    minWidth: 0,
+    gap: 2,
+  },
+  agentHubRowTitle: {
+    color: COLORS.text,
+    fontSize: 15,
+    lineHeight: 19,
+    fontWeight: '800',
+  },
+  agentHubRowStatus: {
+    alignSelf: 'flex-start',
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '800',
+  },
+  agentHubRowStatusActive: {
+    color: COLORS.success,
+  },
+  agentHubRowMeta: {
+    color: COLORS.muted,
+    fontSize: 11,
+    lineHeight: 15,
+    fontWeight: '500',
+    textTransform: 'capitalize',
+  },
+  agentHubRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  agentHubIconButton: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panelSoft,
+  },
+  agentHubState: {
+    minHeight: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingHorizontal: 28,
+    paddingVertical: 28,
+  },
+  agentHubStateIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.panelSoft,
+  },
+  agentHubStateTitle: {
+    color: COLORS.text,
+    fontSize: 18,
+    lineHeight: 23,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  agentHubStateText: {
+    color: COLORS.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  agentEditorContent: {
+    paddingHorizontal: 14,
+    paddingTop: 10,
+    paddingBottom: 44,
+    gap: 12,
+  },
+  agentEditorBack: {
+    alignSelf: 'flex-start',
+    minHeight: 38,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    paddingHorizontal: 8,
+  },
+  agentEditorBackText: {
+    color: COLORS.text,
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  agentEditorSection: {
+    borderRadius: 18,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 14,
+    gap: 14,
+  },
+  agentEditorSectionTitle: {
+    color: COLORS.text,
+    fontSize: 17,
+    lineHeight: 22,
+    fontWeight: '800',
+  },
+  agentEditorFieldGroup: {
+    gap: 7,
+  },
+  agentEditorFieldLabel: {
+    color: COLORS.text,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '700',
+  },
+  agentEditorInput: {
+    minHeight: 46,
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    lineHeight: 20,
+    fontWeight: '500',
+  },
+  agentEditorTextarea: {
+    minHeight: 94,
+  },
+  agentEditorOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 7,
+  },
+  agentEditorOption: {
+    minHeight: 38,
+    borderRadius: 19,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panelSoft,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 11,
+    paddingVertical: 7,
+  },
+  agentEditorOptionActive: {
+    borderColor: COLORS.accent,
+    backgroundColor: COLORS.accent,
+  },
+  agentEditorOptionText: {
+    color: COLORS.text,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: '700',
+  },
+  agentEditorOptionTextActive: {
+    color: COLORS.white,
+  },
+  agentEditorHelp: {
+    color: COLORS.muted,
+    fontSize: 12,
+    lineHeight: 18,
+    fontWeight: '500',
   },
   manualAgentPromptBody: {
     paddingHorizontal: 18,
@@ -30153,14 +30873,14 @@ function createAppStyles() {
     marginTop: 1,
   },
   conversationAgentButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 38,
+    height: 38,
+    borderRadius: 19,
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: controlRestSurface,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: neutralSelectedBorder,
+    borderWidth: 0,
+    borderColor: 'transparent',
     position: 'relative',
   },
   conversationAgentButtonAlert: {
@@ -33559,6 +34279,10 @@ function createAppStyles() {
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
+  },
+  conversationCallActionsWithAgent: {
+    width: 132,
+    minWidth: 132,
   },
   conversationCallButton: {
     width: 38,

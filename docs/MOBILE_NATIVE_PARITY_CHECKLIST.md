@@ -207,9 +207,14 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Replicar estados de agente: prioridad humana, agente activo/inactivo,
   hub de agente y badges.
   - Avance: Android ya selecciona el estado primario con prioridad similar a
-    `/movil`/`ios/app`, muestra control compacto del agente en el header,
-    banner cuando hay senal o estado no activo, y sheet dedicado con `pause`,
-    `take_over`, `skip`, `resume`, `activate` y `clear_signal`.
+    `/movil`/`ios/app`, muestra el robot dentro de la capsula del header justo a
+    la izquierda del calendario, banner cuando hay senal o estado no activo, y
+    sheet dedicado con `pause`, `take_over`, `skip`, `resume`, `activate` y
+    `clear_signal`. La bandeja ya abre el Hub global desde el robot superior
+    izquierdo: lista agentes, permite encender/pausar por agente, reiniciar
+    omisiones y editar nombre, identidad, proveedor/modelo, tono, objetivo,
+    reglas principales y alcance. Falta portar al editor Android el constructor
+    avanzado de condiciones y todos los subflujos de objetivo de iOS.
 - [x] Reemplazar swipe lateral por acciones con long press.
   - Avance: por decision de producto, `mobile/` ya no muestra `Mas` ni
     `Archivar/Restaurar` como botones laterales por swipe. Tocar una fila abre
@@ -312,11 +317,12 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     `expo-file-system` y envia por `/whatsapp-api/messages/image` o
     `/whatsapp-api/messages/video` al contacto seleccionado. Pendiente extender
     esta accion a canales no WhatsApp si el contacto no tiene telefono.
-- [ ] Menu global de agente.
-  - Avance: la conversacion Android ya tiene sheet dedicado
-    `Agente conversacional` accesible desde el header y reutiliza la misma
-    accion real que el menu `+`/`Mas acciones`. Falta validar si `/movil`
-    requiere un hub global fuera del chat abierto.
+- [x] Menu global de agente.
+  - Avance: la bandeja Android ya tiene botón robot en la esquina superior
+    izquierda y abre un Hub nativo conectado a `/conversational-agent/config`
+    y `/conversational-agent/agents`. Permite encender/pausar cada agente,
+    reiniciar omisiones y entrar a su editor; no muestra controles globales
+    `Todos`/`Apagar todos`.
 - [ ] Administrador de filtros.
 - [ ] Mas acciones de chat.
   - Avance: `mobile/` ya usa bottom sheet desde long press de fila, no

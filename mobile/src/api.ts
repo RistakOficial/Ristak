@@ -17,6 +17,8 @@ import type {
   AIAgentMessage,
   AIAgentViewContext,
   ConversationAgentState,
+  ConversationalAgentConfig,
+  ConversationalAgentDefinition,
   CreateTransactionInput,
   DashboardFinancialPoint,
   DashboardFunnelRow,
@@ -630,6 +632,35 @@ export class RistakApiClient {
       params: {
         includeAll: 1,
       },
+    });
+  }
+
+  getConversationalAgentConfig() {
+    return this.request<ConversationalAgentConfig>('/conversational-agent/config');
+  }
+
+  saveConversationalAgentConfig(config: Partial<ConversationalAgentConfig>) {
+    return this.request<ConversationalAgentConfig>('/conversational-agent/config', {
+      method: 'POST',
+      body: JSON.stringify(config),
+    });
+  }
+
+  getConversationalAgents() {
+    return this.request<ConversationalAgentDefinition[]>('/conversational-agent/agents');
+  }
+
+  updateConversationalAgent(agentId: string, patch: Partial<ConversationalAgentDefinition>) {
+    return this.request<ConversationalAgentDefinition>(`/conversational-agent/agents/${encodeURIComponent(agentId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+  }
+
+  resetConversationalAgentSkippedContacts(agentId: string) {
+    return this.request(`/conversational-agent/agents/${encodeURIComponent(agentId)}/reset-skipped`, {
+      method: 'POST',
+      body: JSON.stringify({}),
     });
   }
 
