@@ -47,38 +47,71 @@ import {
   restoreWhatsAppPhoneNumberContactsView
 } from '../controllers/whatsappApiController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
+const requireChatAccess = requireModuleAccess('chat')
 
-router.post('/meta/connect/complete', completeMetaDirectConnectionView)
-router.post('/meta/setup-prefill', getMetaDirectSetupPrefillView)
-router.post('/meta/webhook-relay', handleMetaDirectWebhookRelayView)
+function requireFeatureAndModule(feature, moduleKey) {
+  const featureGate = requireFeature(feature)
+  const moduleGate = requireModuleAccess(moduleKey)
+  return (req, res, next) => featureGate(req, res, (error) => {
+    if (error) return next(error)
+    return moduleGate(req, res, next)
+  })
+}
+
+const requireWhatsAppApiAccess = requireFeature('whatsapp_api')
+const requireWhatsAppApiChatAccess = requireFeatureAndModule('whatsapp_api', 'chat')
+const requireWhatsAppTemplatesChatAccess = requireFeatureAndModule('whatsapp_templates', 'chat')
+
+function requireWhatsAppMessageTransportAccess(req, res, next) {
+  if (String(req.body?.transport || '').trim().toLowerCase() === 'qr') {
+    return requireChatAccess(req, res, next)
+  }
+
+  return requireWhatsAppApiChatAccess(req, res, next)
+}
+
+function requireScheduledChatMessageAccess(req, res, next) {
+  const provider = String(req.body?.provider || '').trim().toLowerCase()
+  const messageType = String(req.body?.messageType || '').trim().toLowerCase()
+  const hasTemplate = messageType === 'template' || Boolean(req.body?.templateId || req.body?.templateName)
+
+  if (hasTemplate) return requireWhatsAppTemplatesChatAccess(req, res, next)
+  if (provider === 'highlevel') return requireFeatureAndModule('highlevel_integration', 'chat')(req, res, next)
+  return requireWhatsAppMessageTransportAccess(req, res, next)
+}
+
+router.post('/meta/connect/complete', requireWhatsAppApiAccess, completeMetaDirectConnectionView)
+router.post('/meta/setup-prefill', requireWhatsAppApiAccess, getMetaDirectSetupPrefillView)
+router.post('/meta/webhook-relay', requireWhatsAppApiAccess, handleMetaDirectWebhookRelayView)
 
 router.use(requireAuth)
 
 router.get('/status', getWhatsAppApiConnectionStatus)
-router.get('/meta/business-account', getWhatsAppMetaBusinessAccountView)
-router.get('/meta/connect-url', getMetaDirectConnectUrlView)
-router.post('/meta/provider', setWhatsAppActiveProviderView)
-router.post('/meta/test', testMetaDirectConnectionView)
-router.post('/meta/messages/test', sendMetaDirectTestMessageView)
-router.post('/meta/social/messages/text', sendMetaSocialTextMessageView)
-router.post('/meta/social/messages/audio', sendMetaSocialAudioMessageView)
-router.post('/meta/social/messages/reaction', sendMetaSocialReactionMessageView)
-router.post('/meta/social/comments/reply', sendMetaSocialCommentReplyView)
-router.get('/meta/social/posts', listMetaSocialPostsView)
-router.post('/meta/sync-history', syncMetaDirectHistoryView)
-router.post('/meta/disconnect', disconnectMetaDirectConnectionView)
-router.post('/connect', connectWhatsAppApiView)
-router.post('/phone-numbers/preview', previewWhatsAppApiPhoneNumbersView)
-router.post('/phone-numbers/default', setWhatsAppApiDefaultPhoneNumberView)
-router.post('/phone-numbers/:id/reroute', rerouteWhatsAppPhoneNumberContactsView)
-router.post('/phone-numbers/:id/restore', restoreWhatsAppPhoneNumberContactsView)
-router.post('/refresh', refreshWhatsAppApiView)
-router.post('/contacts/profile-pictures/backfill', requireModuleAccess('settings_whatsapp'), backfillWhatsAppContactProfilePicturesView)
-router.post('/disconnect', disconnectWhatsAppApiView)
-router.post('/reset', resetWhatsAppApiCredentialsView)
+router.get('/meta/business-account', requireWhatsAppApiAccess, getWhatsAppMetaBusinessAccountView)
+router.get('/meta/connect-url', requireWhatsAppApiAccess, getMetaDirectConnectUrlView)
+router.post('/meta/provider', requireWhatsAppApiAccess, setWhatsAppActiveProviderView)
+router.post('/meta/test', requireWhatsAppApiAccess, testMetaDirectConnectionView)
+router.post('/meta/messages/test', requireWhatsAppApiAccess, sendMetaDirectTestMessageView)
+router.post('/meta/social/messages/text', requireWhatsAppApiAccess, sendMetaSocialTextMessageView)
+router.post('/meta/social/messages/audio', requireWhatsAppApiAccess, sendMetaSocialAudioMessageView)
+router.post('/meta/social/messages/reaction', requireWhatsAppApiAccess, sendMetaSocialReactionMessageView)
+router.post('/meta/social/comments/reply', requireWhatsAppApiAccess, sendMetaSocialCommentReplyView)
+router.get('/meta/social/posts', requireWhatsAppApiAccess, listMetaSocialPostsView)
+router.post('/meta/sync-history', requireWhatsAppApiAccess, syncMetaDirectHistoryView)
+router.post('/meta/disconnect', requireWhatsAppApiAccess, disconnectMetaDirectConnectionView)
+router.post('/connect', requireWhatsAppApiAccess, connectWhatsAppApiView)
+router.post('/phone-numbers/preview', requireWhatsAppApiAccess, previewWhatsAppApiPhoneNumbersView)
+router.post('/phone-numbers/default', requireWhatsAppApiAccess, setWhatsAppApiDefaultPhoneNumberView)
+router.post('/phone-numbers/:id/reroute', requireWhatsAppApiAccess, rerouteWhatsAppPhoneNumberContactsView)
+router.post('/phone-numbers/:id/restore', requireWhatsAppApiAccess, restoreWhatsAppPhoneNumberContactsView)
+router.post('/refresh', requireWhatsAppApiAccess, refreshWhatsAppApiView)
+router.post('/contacts/profile-pictures/backfill', requireWhatsAppApiAccess, requireModuleAccess('settings_whatsapp'), backfillWhatsAppContactProfilePicturesView)
+router.post('/disconnect', requireWhatsAppApiAccess, disconnectWhatsAppApiView)
+router.post('/reset', requireWhatsAppApiAccess, resetWhatsAppApiCredentialsView)
 router.get('/qr/drip-settings', getWhatsAppQrDripSettingsView)
 router.put('/qr/drip-settings', updateWhatsAppQrDripSettingsView)
 router.get('/qr', getWhatsAppQrView)
@@ -86,18 +119,18 @@ router.post('/qr/phone-numbers', createWhatsAppQrPhoneNumberView)
 router.delete('/qr/phone-numbers/:id', deleteWhatsAppQrPhoneNumberView)
 router.post('/qr/connect', connectWhatsAppQrView)
 router.post('/qr/disconnect', disconnectWhatsAppQrView)
-router.get('/messages/scheduled', listScheduledChatMessagesView)
-router.post('/messages/scheduled', scheduleChatMessageView)
-router.delete('/messages/scheduled/:id', cancelScheduledChatMessageView)
-router.post('/messages/text', sendWhatsAppApiTextMessageView)
-router.post('/messages/reaction', sendWhatsAppApiReactionMessageView)
-router.post('/messages/location', sendWhatsAppApiLocationMessageView)
-router.post('/messages/interactive', sendWhatsAppApiInteractiveMessageView)
-router.post('/messages/image', sendWhatsAppApiImageMessageView)
-router.post('/messages/document', sendWhatsAppApiDocumentMessageView)
-router.post('/messages/video', sendWhatsAppApiVideoMessageView)
-router.post('/messages/audio', sendWhatsAppApiAudioMessageView)
-router.get('/templates', getWhatsAppApiTemplatesView)
-router.post('/templates/send', sendWhatsAppApiTemplateMessageView)
+router.get('/messages/scheduled', requireChatAccess, listScheduledChatMessagesView)
+router.post('/messages/scheduled', requireScheduledChatMessageAccess, scheduleChatMessageView)
+router.delete('/messages/scheduled/:id', requireChatAccess, cancelScheduledChatMessageView)
+router.post('/messages/text', requireWhatsAppMessageTransportAccess, sendWhatsAppApiTextMessageView)
+router.post('/messages/reaction', requireWhatsAppMessageTransportAccess, sendWhatsAppApiReactionMessageView)
+router.post('/messages/location', requireWhatsAppMessageTransportAccess, sendWhatsAppApiLocationMessageView)
+router.post('/messages/interactive', requireWhatsAppMessageTransportAccess, sendWhatsAppApiInteractiveMessageView)
+router.post('/messages/image', requireWhatsAppMessageTransportAccess, sendWhatsAppApiImageMessageView)
+router.post('/messages/document', requireWhatsAppMessageTransportAccess, sendWhatsAppApiDocumentMessageView)
+router.post('/messages/video', requireWhatsAppMessageTransportAccess, sendWhatsAppApiVideoMessageView)
+router.post('/messages/audio', requireWhatsAppMessageTransportAccess, sendWhatsAppApiAudioMessageView)
+router.get('/templates', requireFeature('whatsapp_templates'), getWhatsAppApiTemplatesView)
+router.post('/templates/send', requireWhatsAppTemplatesChatAccess, sendWhatsAppApiTemplateMessageView)
 
 export default router

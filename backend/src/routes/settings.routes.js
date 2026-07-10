@@ -12,6 +12,7 @@ import {
 } from '../controllers/settingsController.js';
 import { getNotificationsView } from '../controllers/notificationsController.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
+import { requireFeature } from '../middleware/licenseMiddleware.js';
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js';
 import {
   createTriggerLinkHandler,
@@ -83,11 +84,11 @@ router.put('/variable-fields/:variableFieldId', requireCustomFieldsAccess, updat
 router.delete('/variable-fields/:variableFieldId', requireCustomFieldsAccess, deleteVariableFieldHandler);
 
 // Trigger links / enlaces de disparo
-router.get('/trigger-links', requireCustomFieldsAccess, listTriggerLinksHandler);
-router.post('/trigger-links', requireCustomFieldsAccess, createTriggerLinkHandler);
-router.put('/trigger-links/:triggerLinkId', requireCustomFieldsAccess, updateTriggerLinkHandler);
-router.delete('/trigger-links/:triggerLinkId', requireCustomFieldsAccess, deleteTriggerLinkHandler);
-router.get('/trigger-links/:triggerLinkId/events', requireCustomFieldsAccess, listTriggerLinkEventsHandler);
+router.get('/trigger-links', requireCustomFieldsAccess, requireFeature('trigger_links'), listTriggerLinksHandler);
+router.post('/trigger-links', requireCustomFieldsAccess, requireFeature('trigger_links'), createTriggerLinkHandler);
+router.put('/trigger-links/:triggerLinkId', requireCustomFieldsAccess, requireFeature('trigger_links'), updateTriggerLinkHandler);
+router.delete('/trigger-links/:triggerLinkId', requireCustomFieldsAccess, requireFeature('trigger_links'), deleteTriggerLinkHandler);
+router.get('/trigger-links/:triggerLinkId/events', requireCustomFieldsAccess, requireFeature('trigger_links'), listTriggerLinkEventsHandler);
 
 // GET /api/settings/notifications
 router.get('/notifications', requireAccountAccess, getNotificationsView);
@@ -98,23 +99,23 @@ router.post('/payments', requirePaymentsAccess, savePaymentSettingsView);
 router.post('/payments/receipt-preview-session', requirePaymentsAccess, createPaymentReceiptPreviewSessionView);
 
 // WhatsApp message templates
-router.get('/message-templates', requireWhatsAppAccess, getMessageTemplatesView);
-router.get('/message-templates/variables', requireWhatsAppAccess, getMessageTemplateVariablesView);
-router.post('/message-templates/preview', requireWhatsAppAccess, previewMessageTemplateView);
-router.post('/message-templates/sync', requireWhatsAppAccess, syncAllMessageTemplatesWithYCloudView);
+router.get('/message-templates', requireWhatsAppAccess, requireFeature('whatsapp_templates'), getMessageTemplatesView);
+router.get('/message-templates/variables', requireWhatsAppAccess, requireFeature('whatsapp_templates'), getMessageTemplateVariablesView);
+router.post('/message-templates/preview', requireWhatsAppAccess, requireFeature('whatsapp_templates'), previewMessageTemplateView);
+router.post('/message-templates/sync', requireWhatsAppAccess, requireFeature('whatsapp_templates'), syncAllMessageTemplatesWithYCloudView);
 
-router.post('/message-templates/folders', requireWhatsAppAccess, createTemplateFolderView);
-router.put('/message-templates/folders/:id', requireWhatsAppAccess, updateTemplateFolderView);
-router.delete('/message-templates/folders/:id', requireWhatsAppAccess, deleteTemplateFolderView);
+router.post('/message-templates/folders', requireWhatsAppAccess, requireFeature('whatsapp_templates'), createTemplateFolderView);
+router.put('/message-templates/folders/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), updateTemplateFolderView);
+router.delete('/message-templates/folders/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), deleteTemplateFolderView);
 
-router.post('/message-templates/custom-fields', requireWhatsAppAccess, createTemplateCustomFieldView);
-router.delete('/message-templates/custom-fields/:id', requireWhatsAppAccess, deleteTemplateCustomFieldView);
+router.post('/message-templates/custom-fields', requireWhatsAppAccess, requireFeature('whatsapp_templates'), createTemplateCustomFieldView);
+router.delete('/message-templates/custom-fields/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), deleteTemplateCustomFieldView);
 
-router.post('/message-templates', requireWhatsAppAccess, createMessageTemplateView);
-router.post('/message-templates/:id/submit', requireWhatsAppAccess, submitMessageTemplateToYCloudView);
-router.post('/message-templates/:id/sync', requireWhatsAppAccess, syncMessageTemplateStatusView);
-router.post('/message-templates/:id/send-test', requireWhatsAppAccess, sendMessageTemplateTestView);
-router.put('/message-templates/:id', requireWhatsAppAccess, updateMessageTemplateView);
-router.delete('/message-templates/:id', requireWhatsAppAccess, deleteMessageTemplateView);
+router.post('/message-templates', requireWhatsAppAccess, requireFeature('whatsapp_templates'), createMessageTemplateView);
+router.post('/message-templates/:id/submit', requireWhatsAppAccess, requireFeature('whatsapp_templates'), submitMessageTemplateToYCloudView);
+router.post('/message-templates/:id/sync', requireWhatsAppAccess, requireFeature('whatsapp_templates'), syncMessageTemplateStatusView);
+router.post('/message-templates/:id/send-test', requireWhatsAppAccess, requireFeature('whatsapp_templates'), sendMessageTemplateTestView);
+router.put('/message-templates/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), updateMessageTemplateView);
+router.delete('/message-templates/:id', requireWhatsAppAccess, requireFeature('whatsapp_templates'), deleteMessageTemplateView);
 
 export default router;

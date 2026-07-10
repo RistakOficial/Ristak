@@ -38,9 +38,11 @@ import {
   Switch
 } from '@/components/common'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useUrlStringState } from '@/hooks'
 import { WhatsAppApiAlert, WhatsAppApiPhoneNumber, WhatsAppApiStatus, WhatsAppQrDripDelayUnit, WhatsAppQrDripSettings, WhatsAppQrSession, whatsappApiService } from '@/services/whatsappApiService'
 import { formatInTimezone, getStoredBusinessTimezone } from '@/utils/timezone'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import { MessageTemplates } from './MessageTemplates'
 import styles from './WhatsAppSettings.module.css'
 
@@ -252,6 +254,7 @@ const buildWhatsAppSettingsPath = (section: ConnectedSection) => `/settings/what
 
 export const WhatsAppSettings: React.FC = () => {
   const { showToast, showConfirm } = useNotification()
+  const { user } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
   const routeSection = useMemo(() => parseWhatsAppSection(location.pathname), [location.pathname])
@@ -288,8 +291,20 @@ export const WhatsAppSettings: React.FC = () => {
   const [qrDripDisableConfirmOpen, setQrDripDisableConfirmOpen] = useState(false)
   const [defaultingPhoneId, setDefaultingPhoneId] = useState('')
 
-  const apiConnected = Boolean(apiStatus?.connected)
-  const hasWhatsAppNumbers = Boolean(apiStatus?.phoneNumbers?.length)
+  const hasWhatsAppApiAccess = hasLicenseFeature(user, ['whatsapp_api'])
+  const hasWhatsAppTemplatesAccess = hasLicenseFeature(user, ['whatsapp_templates'])
+  const visiblePhoneNumbers = useMemo(
+    () => hasWhatsAppApiAccess
+      ? apiStatus?.phoneNumbers || []
+      : (apiStatus?.phoneNumbers || []).filter((phone) => (
+        isStandaloneQrPhone(phone) ||
+        Number(phone.qr_send_enabled || 0) === 1 ||
+        isQrWorkingStatus(phone.qr_status)
+      )),
+    [apiStatus?.phoneNumbers, hasWhatsAppApiAccess]
+  )
+  const apiConnected = hasWhatsAppApiAccess && Boolean(apiStatus?.connected)
+  const hasWhatsAppNumbers = visiblePhoneNumbers.length > 0
   const hasAnyWhatsAppConnection = apiConnected || hasWhatsAppNumbers
   const qrDripSettings = useMemo(() => normalizeQrDripSettings(apiStatus?.qr?.drip), [apiStatus?.qr?.drip])
   const qrDripExample = useMemo(() => buildQrDripExample(qrDripDelayDraft), [qrDripDelayDraft])
@@ -306,14 +321,22 @@ export const WhatsAppSettings: React.FC = () => {
     setActiveSection(current => current === routeSection ? current : routeSection)
   }, [routeSection])
 
+  useEffect(() => {
+    if (hasWhatsAppTemplatesAccess || routeSection !== 'templates') return
+    navigate('/settings/whatsapp/numbers', { replace: true })
+  }, [hasWhatsAppTemplatesAccess, navigate, routeSection])
+
   const selectSection = (section: ConnectedSection) => {
     setActiveSection(section)
     navigate(buildWhatsAppSettingsPath(section))
   }
 
   const selectedPhone = useMemo(() => {
-    return apiStatus?.phoneNumbers.find(phone => phone.id === selectedPhoneId) || apiStatus?.selectedPhone || apiStatus?.phoneNumbers[0] || null
-  }, [apiStatus?.phoneNumbers, apiStatus?.selectedPhone, selectedPhoneId])
+    return visiblePhoneNumbers.find(phone => phone.id === selectedPhoneId) ||
+      (hasWhatsAppApiAccess ? apiStatus?.selectedPhone : null) ||
+      visiblePhoneNumbers[0] ||
+      null
+  }, [apiStatus?.selectedPhone, hasWhatsAppApiAccess, selectedPhoneId, visiblePhoneNumbers])
   const ycloudAssetId = selectedPhone?.waba_id || apiStatus?.sender.wabaId || ''
 
   const qrSessionsByPhoneId = useMemo(() => {
@@ -423,7 +446,7 @@ export const WhatsAppSettings: React.FC = () => {
   }, [])
 
   useEffect(() => {
-    const hasPendingQr = apiStatus?.phoneNumbers.some((phone) => {
+    const hasPendingQr = visiblePhoneNumbers.some((phone) => {
       const status = String(qrSessionsByPhoneId.get(phone.id)?.status || phone.qr_status || '').toLowerCase()
       return status === 'starting' || status === 'qr_pending' || status === 'restarting' || status === 'reconnecting'
     })
@@ -435,7 +458,7 @@ export const WhatsAppSettings: React.FC = () => {
     }, 4000)
 
     return () => window.clearInterval(timer)
-  }, [apiStatus?.phoneNumbers, qrConnectingPhoneId, qrSessionsByPhoneId])
+  }, [qrConnectingPhoneId, qrSessionsByPhoneId, visiblePhoneNumbers])
 
   const connectApi = async (event?: React.FormEvent) => {
     event?.preventDefault()
@@ -849,11 +872,13 @@ export const WhatsAppSettings: React.FC = () => {
 
   const renderConnectionChooser = (onSelect: (choice: ConnectionChoice) => void) => (
     <div className={styles.connectionPicker}>
-      <button type="button" className={styles.connectionCard} onClick={() => onSelect('api')}>
-        <Cloud size={22} />
-        <strong>WhatsApp API</strong>
-        <span>Conexión oficial para plantillas, revisión de Meta y envío estable.</span>
-      </button>
+      {hasWhatsAppApiAccess && (
+        <button type="button" className={styles.connectionCard} onClick={() => onSelect('api')}>
+          <Cloud size={22} />
+          <strong>WhatsApp API</strong>
+          <span>Conexión oficial para plantillas, revisión de Meta y envío estable.</span>
+        </button>
+      )}
       <button type="button" className={styles.connectionCard} onClick={() => onSelect('qr')} disabled={qrCreatingPhone}>
         <QrCode size={22} />
         <strong>Mediante QR</strong>
@@ -935,7 +960,7 @@ export const WhatsAppSettings: React.FC = () => {
       )
     }
 
-    if (addNumberChoice === 'api') {
+    if (addNumberChoice === 'api' && hasWhatsAppApiAccess) {
       return (
         <div className={styles.qrConsentBody}>
           {renderConnectionBack(() => setAddNumberChoice(null))}
@@ -971,9 +996,11 @@ export const WhatsAppSettings: React.FC = () => {
           <div className={styles.connectCopy}>
             <p className={styles.eyebrow}>Conexión</p>
             <h3>Elige cómo conectar WhatsApp</h3>
-            <span>Conecta por WhatsApp API para plantillas oficiales o mediante QR para una sesión de WhatsApp Web.</span>
+            <span>{hasWhatsAppApiAccess
+              ? 'Conecta por WhatsApp API para plantillas oficiales o mediante QR para una sesión de WhatsApp Web.'
+              : 'Conecta mediante QR para una sesión de WhatsApp Web.'}</span>
           </div>
-          {apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
+          {hasWhatsAppApiAccess && apiStatus?.lastError && <p className={styles.errorText}>{apiStatus.lastError}</p>}
           {renderConnectionChooser((choice) => {
             if (choice === 'qr') {
               startStandaloneQrConnection().catch(() => null)
@@ -1022,9 +1049,9 @@ export const WhatsAppSettings: React.FC = () => {
   const renderNumbersStage = () => {
     if (!apiStatus) return null
 
-    const selectedApiPhone = selectedPhone || apiStatus.selectedPhone || apiStatus.phoneNumbers[0] || null
-    const balance = apiStatus.balance
-    const phoneRows = apiStatus.phoneNumbers.length ? apiStatus.phoneNumbers : selectedApiPhone ? [selectedApiPhone] : []
+    const selectedApiPhone = selectedPhone || (hasWhatsAppApiAccess ? apiStatus.selectedPhone : null) || visiblePhoneNumbers[0] || null
+    const balance = hasWhatsAppApiAccess ? apiStatus.balance : null
+    const phoneRows = visiblePhoneNumbers.length ? visiblePhoneNumbers : selectedApiPhone ? [selectedApiPhone] : []
     const enrichedPhones = phoneRows.map((phone) => {
       const phoneProfile = getPhoneProfile(phone)
       const qrSession = qrSessionsByPhoneId.get(phone.id)
@@ -1064,7 +1091,7 @@ export const WhatsAppSettings: React.FC = () => {
       ].some((value) => String(value || '').toLowerCase().includes(query))
     })
     const balanceLabel = balance ? formatCurrency(balance.amount, balance.currency) : 'Saldo pendiente'
-    const hasAdvancedActions = Boolean(paymentConfigUrl || apiConnected)
+    const hasAdvancedActions = hasWhatsAppApiAccess && Boolean(paymentConfigUrl || apiConnected)
 
     return (
       <div className={styles.layout}>
@@ -1533,7 +1560,9 @@ export const WhatsAppSettings: React.FC = () => {
       <PageHeader
         eyebrow="Sistema"
         title="WhatsApp"
-        subtitle="Conexiones por WhatsApp API o mediante QR para números, alertas y plantillas."
+        subtitle={hasWhatsAppApiAccess
+          ? 'Conexiones por WhatsApp API o mediante QR para números, alertas y plantillas.'
+          : 'Conecta y administra números de WhatsApp mediante QR.'}
         actions={hasAnyWhatsAppConnection ? (
           <div className={styles.headerActions} role="group" aria-label="Secciones de WhatsApp">
             <button
@@ -1546,14 +1575,16 @@ export const WhatsAppSettings: React.FC = () => {
             </button>
             {apiConnected && (
               <>
-                <button
-                  type="button"
-                  className={`${styles.headerActionButton} ${activeSection === 'templates' ? styles.headerActionActive : ''}`}
-                  onClick={() => selectSection('templates')}
-                >
-                  <FileText size={15} />
-                  Plantillas
-                </button>
+                {hasWhatsAppTemplatesAccess && (
+                  <button
+                    type="button"
+                    className={`${styles.headerActionButton} ${activeSection === 'templates' ? styles.headerActionActive : ''}`}
+                    onClick={() => selectSection('templates')}
+                  >
+                    <FileText size={15} />
+                    Plantillas
+                  </button>
+                )}
                 <button
                   type="button"
                   className={`${styles.headerActionButton} ${activeSection === 'alerts' ? styles.headerActionActive : ''}`}
@@ -1572,7 +1603,7 @@ export const WhatsAppSettings: React.FC = () => {
       <div className={styles.stage}>
         {!hasAnyWhatsAppConnection
           ? renderConnectStage()
-          : activeSection === 'templates' && apiConnected
+          : activeSection === 'templates' && apiConnected && hasWhatsAppTemplatesAccess
             ? renderTemplatesStage()
             : activeSection === 'alerts' && apiConnected
               ? renderAlertsStage()
@@ -1615,7 +1646,7 @@ export const WhatsAppSettings: React.FC = () => {
 
       {(() => {
         const qrModalPhone = qrConsentPhone
-          ? apiStatus?.phoneNumbers.find(phone => phone.id === qrConsentPhone.id) || qrConsentPhone
+          ? visiblePhoneNumbers.find(phone => phone.id === qrConsentPhone.id) || qrConsentPhone
           : null
         const qrModalStandalone = isStandaloneQrPhone(qrModalPhone)
         const qrModalSession = qrModalPhone ? qrSessionsByPhoneId.get(qrModalPhone.id) : null
@@ -1738,7 +1769,7 @@ export const WhatsAppSettings: React.FC = () => {
       })()}
 
       <Modal
-        isOpen={Boolean(apiStatus?.needsDefaultSelection)}
+        isOpen={hasWhatsAppApiAccess && Boolean(apiStatus?.needsDefaultSelection)}
         onClose={() => null}
         title="Elige tu número principal"
         type="custom"
@@ -1751,7 +1782,7 @@ export const WhatsAppSettings: React.FC = () => {
             El número principal se usa para contactos nuevos, importaciones, campañas y
             automatizaciones cuando un chat no tiene un número asignado.
           </p>
-          {(apiStatus?.phoneNumbers || []).map((phone) => (
+          {visiblePhoneNumbers.map((phone) => (
             <button
               key={phone.id}
               type="button"

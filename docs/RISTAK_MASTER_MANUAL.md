@@ -276,6 +276,19 @@ un formulario personalizado de Sites dentro del calendario requiere `forms` y
 básico y el backend bloquea/limpia esa configuración aunque la UI vieja mande el
 payload.
 
+Campos personalizados, campos variables y etiquetas pertenecen al CRM base y
+están disponibles también en Basic; se rigen por permiso de usuario, no por
+`forms`, `settings_custom_fields`, `variable_fields` ni `tags` comerciales.
+`forms` se reserva para formularios de Sites y calendarios personalizados. Los
+enlaces de disparo siguen siendo una función separada y requieren
+`trigger_links` en ruta, navegación y backend.
+
+Las superficies incrustadas deben validar su propia subfeature: HighLevel usa
+`highlevel_integration`; WhatsApp API usa `whatsapp_api`; plantillas de WhatsApp
+usan `whatsapp_templates`; checkout, pasarelas y automatizaciones de pago usan
+`payment_checkout`, `payment_gateways` y `payment_automations`. No se permite
+abrir estas superficies solo porque su módulo padre esté disponible.
+
 Modulos de acceso principales:
 
 - dashboard, appointments, payments, contacts, chat, reports, analytics,
@@ -329,6 +342,12 @@ Capacidades:
   campos sin carpeta quedan bajo "Campos personalizados". La edicion se guarda
   como actualizacion manual del contacto y conserva el flujo normal de
   automatizaciones.
+- Etiquetas, campos personalizados y campos variables son parte del CRM base,
+  incluido el plan Basic. El plan no debe ocultarlos ni rechazar sus endpoints;
+  los permisos de usuario siguen aplicando.
+- La sección de automatizaciones en la ficha de contacto, el modal del chat y
+  las acciones masivas solo aparece con `automations`; el backend rechaza también
+  las inscripciones o filtros avanzados de automatizaciones sin esa feature.
 - Los nombres configurables de la cuenta para contacto convertido y oportunidad
   (`labels.customer`, `labels.customers`, `labels.lead`, `labels.leads`) son la
   fuente visible para CRM, chat desktop, chat movil web, app nativa,
@@ -1077,6 +1096,12 @@ hay ninguna pasarela de pago conectada, la app movil tambien debe limitarse al
 pago unico offline; los flujos avanzados aparecen solo cuando la licencia permite
 `payment_plans`/`subscriptions` y existe al menos una pasarela conectada.
 
+En Configuración > Pagos, Basic no muestra página de cobro, pasarelas ni
+automatizaciones: requieren, respectivamente, `payment_checkout`,
+`payment_gateways` y `payment_automations`. Los checkouts públicos de Sites y
+sus bloques de cobro validan `payment_checkout` en backend, incluso si una página
+existía antes de un downgrade.
+
 En el flujo movil, cualquier pago unico, plan de pagos o suscripcion que genere
 un link/autorizacion debe regresar al chat del contacto con el preview del link
 preparado para enviar. Las suscripciones deben usar la URL devuelta por el
@@ -1238,6 +1263,9 @@ requerido` no deben aparecer como si fueran el resultado del pago.
 
 Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
 avisos de cobro fallido desde `payments_settings.automations`.
+
+Esta sección y todo su despacho en segundo plano requieren
+`payment_automations`. Tener el módulo `payments` no basta.
 
 - Canales soportados: WhatsApp API, WhatsApp QR solo, correo electronico o ambos.
 - Cada automatizacion de pago puede usar `contentMode='template'` o
@@ -2291,10 +2319,11 @@ desconectar o cambiar modo relevante.
 Ademas, cada tick que pueda enviar mensajes, sincronizar datos premium o cobrar
 debe validar `canRunBackgroundJob(feature)`. Ejemplos: mensajes programados y
 watchdog QR requieren `whatsapp`; recordatorios de citas requieren
-`appointments` y para envio `whatsapp`; automatizaciones de pago y crons de
-parcialidades requieren `payments`/`payment_plans`; Meta requiere `meta_ads`;
+`appointments` y para envio `whatsapp`; automatizaciones de pago requieren
+`payment_automations` y crons de parcialidades requieren
+`payments`/`payment_plans`; Meta requiere `meta_ads`;
 Google Calendar requiere `google_calendar`; email inbound requiere `email`;
-HighLevel requiere `integrations` y sus conversaciones tambien `chat`.
+HighLevel requiere `highlevel_integration` y sus conversaciones tambien `chat`.
 
 ## Media y Bunny
 

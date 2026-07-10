@@ -12,7 +12,7 @@ let running = false
 
 async function runPaymentAutomations(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
-  if (!(await canRunBackgroundJob('payments'))) return
+  if (!(await canRunBackgroundJob('payment_automations'))) return
   running = true
 
   try {

@@ -79,6 +79,7 @@ import {
 import { detectWhatsAppAttributionFields } from '../utils/whatsappAttribution.js'
 import { resolveTagIds, tagNamesForIds, listContactTags } from '../services/contactTagsService.js'
 import { getEmailStatus } from '../services/emailService.js'
+import { hasFeature } from '../services/licenseService.js'
 import fetch from 'node-fetch'
 import { randomUUID } from 'crypto'
 import { extractConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
@@ -86,6 +87,36 @@ import { extractConversationalAgentMessageMetadata } from '../utils/conversation
 const CHAT_SEND_READ_RECEIPTS_CONFIG_KEY = 'chat_send_read_receipts_enabled'
 const DISABLED_CONFIG_VALUES = new Set(['0', 'false', 'no', 'off', 'disabled'])
 const PROVIDER_READ_RECEIPT_TIMEOUT_MS = 3500
+const CONTACT_ADVANCED_FILTER_FEATURES = [
+  {
+    feature: 'automations',
+    matches: (field) => field === 'active_automation' || field.startsWith('automation_')
+  },
+  {
+    feature: 'payment_plans',
+    matches: (field) => field === 'has_payment_plan' || field.startsWith('payment_plan_')
+  }
+]
+
+async function assertContactAdvancedFilterFeatureAccess(res, advancedFilterConfig = {}) {
+  const fields = (advancedFilterConfig.groups || [])
+    .flatMap((group) => Array.isArray(group?.rules) ? group.rules : [])
+    .map((rule) => String(rule?.field || '').trim())
+    .filter(Boolean)
+
+  for (const rule of CONTACT_ADVANCED_FILTER_FEATURES) {
+    if (!fields.some(rule.matches) || await hasFeature(rule.feature)) continue
+    res.status(403).json({
+      success: false,
+      code: 'feature_not_available',
+      feature: rule.feature,
+      message: 'Esta función no está incluida en tu plan actual. Contacta al administrador para activarla.'
+    })
+    return false
+  }
+
+  return true
+}
 
 const isProviderReadReceiptsEnabled = (value) => {
   const normalizedValue = String(value ?? '').trim().toLowerCase()
@@ -2843,6 +2874,7 @@ export const getContacts = async (req, res) => {
     const quickFilter = normalizeContactListQuickFilter(filter)
     const trackingFilters = normalizeContactListTrackingFilters(req.query.trackingFilters || req.query.filters)
     const advancedFilterConfig = normalizeContactAdvancedFilters(req.query.advancedFilters || req.query.conditions)
+    if (!(await assertContactAdvancedFilterFeatureAccess(res, advancedFilterConfig))) return
     const advancedSort = getContactAdvancedSort(advancedFilterConfig)
 
     const range = await resolveDateRangeWithGHLTimezone({ startDate, endDate })
@@ -4048,6 +4080,8 @@ export const createContact = async (req, res) => {
 export const getContactStats = async (req, res) => {
   try {
     const { startDate, endDate, search = '', filter = 'all' } = req.query
+    const advancedFilterConfig = normalizeContactAdvancedFilters(req.query.advancedFilters || req.query.conditions)
+    if (!(await assertContactAdvancedFilterFeatureAccess(res, advancedFilterConfig))) return
 
     const { range, metrics } = await buildContactStats({
       startDate,
@@ -4055,7 +4089,7 @@ export const getContactStats = async (req, res) => {
       search,
       filter: normalizeContactListQuickFilter(filter),
       trackingFilters: normalizeContactListTrackingFilters(req.query.trackingFilters || req.query.filters),
-      advancedFilters: normalizeContactAdvancedFilters(req.query.advancedFilters || req.query.conditions)
+      advancedFilters: advancedFilterConfig
     })
 
     const rangeLabel = range.isFiltered

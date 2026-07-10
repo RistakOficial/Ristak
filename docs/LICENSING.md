@@ -78,6 +78,10 @@ Features principales: `dashboard`, `contacts`, `chat`, `appointments`, `payments
 `subscriptions`, `web_analytics` y las variantes de cobro de calendarios
 (`calendar_payments`, `calendar_payment`, `calendar_booking_payments`).
 
+Subfeatures que no deben heredarse del módulo general: `payment_checkout`,
+`payment_gateways`, `payment_automations`, `highlevel_integration`,
+`whatsapp_api`, `whatsapp_templates` y `trigger_links`.
+
 El backend valida el plan en varias capas:
 
 - `requireActiveLicense` bloquea instalaciones sin licencia activa.
@@ -116,15 +120,29 @@ en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el 
   features necesarias están activas. Las tools genéricas de tablas aplican el
   mismo mapeo por recurso.
 - `/api/sites` requiere `sites`; el checkout público y cualquier bloque/gate de
-  cobro en Sites requiere `payments`, y la preparación de parcialidades requiere
+  cobro en Sites requiere `payment_checkout`, y la preparación de parcialidades requiere
   `payment_plans`.
 - Calendarios base requieren `appointments`. El formulario básico para agendar
   vive dentro de calendarios, pero usar un formulario personalizado de Sites
   dentro del calendario requiere `forms` y `sites`; si el plan baja, el público
   vuelve al formulario básico y el backend limpia/bloquea esa configuración.
-- `/api/highlevel` requiere `integrations`; sus endpoints operativos además piden
+- `/api/highlevel` requiere `highlevel_integration`; sus endpoints operativos además piden
   el módulo real (`contacts`, `chat`, `payments`, `settings_users`) y las
   parcialidades piden `payment_plans`.
+- Campos personalizados, campos variables y etiquetas son capacidades base del
+  CRM: requieren el permiso de usuario `settings_custom_fields`/`contacts`, pero
+  no una feature comercial. Los enlaces de disparo son distintos y requieren
+  `trigger_links` tanto en la navegación como en `/api/settings/trigger-links`.
+- Inscribir un contacto en automatizaciones, desde ficha, chat o acciones
+  masivas, requiere `automations` en frontend y backend. La ficha iOS aplica la
+  misma regla.
+- WhatsApp QR sigue bajo `whatsapp`; la conexión API, sus acciones operativas y
+  los envíos API requieren `whatsapp_api`. La administración, consulta y envío de
+  plantillas requieren `whatsapp_templates`.
+- Configuración > Pagos muestra checkout, pasarelas y automatizaciones solo con
+  `payment_checkout`, `payment_gateways` y `payment_automations`,
+  respectivamente. El job de automatizaciones de pago valida
+  `payment_automations`, no el módulo genérico `payments`.
 - Automatizaciones validan features al guardar, publicar, probar y ejecutar:
   nodos WhatsApp requieren `whatsapp`, Email requiere `email`, Meta/Messenger/
   Instagram requiere `campaigns`, formularios `forms`, pagos `payments`,

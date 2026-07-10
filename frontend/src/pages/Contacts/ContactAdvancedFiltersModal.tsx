@@ -3,10 +3,12 @@ import { createPortal } from 'react-dom'
 import { ListFilter, Pencil, Plus, RotateCcw, Trash2, X } from 'lucide-react'
 import { Button, CustomSelect, SearchField } from '@/components/common'
 import { useLabels } from '@/contexts/LabelsContext'
+import { useAuth } from '@/contexts/AuthContext'
 import type { ContactCustomFieldDefinition } from '@/types'
 import type { ContactTag } from '@/services/contactTagsService'
 import { globalSearchService, type GlobalSearchItem, type GlobalSearchItemType } from '@/services/globalSearchService'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import styles from './Contacts.module.css'
 import {
   CONTACT_ADVANCED_FIELD_GROUPS,
@@ -267,6 +269,8 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
   onApply
 }) => {
   const { labels } = useLabels()
+  const { user } = useAuth()
+  const hasAutomationsAccess = hasLicenseFeature(user, ['automations'])
   const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
   const leadLabel = labels.lead?.trim() || DEFAULT_CRM_LABELS.lead
   const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
@@ -276,7 +280,12 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
   const [fieldPickerTarget, setFieldPickerTarget] = useState<FieldPickerTarget | null>(null)
   const localizedStaticFieldGroups = useMemo(() => CONTACT_ADVANCED_FIELD_GROUPS.map(fieldGroup => ({
     ...fieldGroup,
-    fields: fieldGroup.fields.map(field => {
+    fields: fieldGroup.fields
+      .filter((field) => {
+        if (!hasAutomationsAccess && (field.key === 'active_automation' || field.key.startsWith('automation_'))) return false
+        return true
+      })
+      .map(field => {
       if (field.key === 'status') {
         return {
           ...field,
@@ -300,8 +309,14 @@ export const ContactAdvancedFiltersModal: React.FC<ContactAdvancedFiltersModalPr
       }
 
       return field
-    })
-  })), [customerLabel, customersLowerLabel, leadLabel, leadsLowerLabel])
+      })
+  })).filter((group) => group.fields.length > 0), [
+    customerLabel,
+    customersLowerLabel,
+    hasAutomationsAccess,
+    leadLabel,
+    leadsLowerLabel
+  ])
 
   useEffect(() => {
     if (!isOpen) return

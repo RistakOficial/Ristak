@@ -42,7 +42,7 @@ import { TagsSettings } from './TagsSettings'
 import { AIAgentSettings } from './AIAgentSettings'
 import { HighLevelIcon, MetaIcon, WhatsAppIcon } from '@/components/common/Icon/CustomIcons'
 import { useAuth } from '@/contexts/AuthContext'
-import { getFirstAllowedAppPath, hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
+import { getFirstAllowedAppPath, hasLicenseFeature, hasModuleAccess, type PermissionKey } from '@/utils/accessControl'
 import { cn } from '@/utils/cn'
 import {
   getFirstAllowedSettingsPath,
@@ -53,10 +53,10 @@ import {
 } from './settingsNav'
 import styles from './Settings.module.css'
 
-const SettingsAccessGate: React.FC<{ moduleKey: PermissionKey; children: React.ReactNode }> = ({ moduleKey, children }) => {
+const SettingsAccessGate: React.FC<{ moduleKey: PermissionKey; featureKeys?: readonly string[]; children: React.ReactNode }> = ({ moduleKey, featureKeys, children }) => {
   const { user } = useAuth()
 
-  if (!hasModuleAccess(user, moduleKey, 'read')) {
+  if (!hasModuleAccess(user, moduleKey, 'read') || (featureKeys && !hasLicenseFeature(user, featureKeys))) {
     return <Navigate to={getFirstAllowedAppPath(user)} replace />
   }
 
@@ -148,7 +148,7 @@ export const Settings: React.FC = () => {
           <div className={styles.mainContent}>
             <Routes>
               <Route index element={<Navigate to={firstAllowedSettingsPath} replace />} />
-              <Route path="highlevel" element={<SettingsAccessGate moduleKey="settings_integrations"><HighLevelIntegration /></SettingsAccessGate>} />
+              <Route path="highlevel" element={<SettingsAccessGate moduleKey="settings_integrations" featureKeys={['highlevel_integration']}><HighLevelIntegration /></SettingsAccessGate>} />
               <Route path="costs/*" element={<SettingsAccessGate moduleKey="settings_costs"><Costs /></SettingsAccessGate>} />
               <Route path="meta-ads/*" element={<SettingsAccessGate moduleKey="campaigns"><MetaAdsIntegration /></SettingsAccessGate>} />
               <Route path="whatsapp/*" element={<SettingsAccessGate moduleKey="settings_whatsapp"><WhatsAppSettings /></SettingsAccessGate>} />
@@ -160,7 +160,7 @@ export const Settings: React.FC = () => {
               <Route path="media" element={<SettingsAccessGate moduleKey="settings_media"><MediaSettings /></SettingsAccessGate>} />
               <Route path="custom-fields/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><CustomFields /></SettingsAccessGate>} />
               <Route path="variable-fields/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><VariableFields /></SettingsAccessGate>} />
-              <Route path="trigger-links/*" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TriggerLinks /></SettingsAccessGate>} />
+              <Route path="trigger-links/*" element={<SettingsAccessGate moduleKey="settings_custom_fields" featureKeys={['trigger_links']}><TriggerLinks /></SettingsAccessGate>} />
               <Route path="tags" element={<SettingsAccessGate moduleKey="settings_custom_fields"><TagsSettings /></SettingsAccessGate>} />
               <Route path="artificial-intelligence" element={<SettingsAccessGate moduleKey="ai_agent"><AIAgentSettings /></SettingsAccessGate>} />
               <Route path="ai-agent" element={<SettingsAccessGate moduleKey="ai_agent"><Navigate to="/settings/artificial-intelligence" replace /></SettingsAccessGate>} />

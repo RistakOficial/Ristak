@@ -34,6 +34,7 @@ import { calendarsService, type CalendarEvent } from '@/services/calendarsServic
 import type { ContactAppointment, ContactCustomField, ContactCustomFieldDefinition, ContactPayment, ContactPhoneNumber } from '@/types'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAuth } from '@/contexts/AuthContext'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import styles from './Contacts.module.css'
 import { getContactDisplayName } from '@/utils/contactAvatar'
 import { getContactStageBadge, isAttendedAppointmentStatus } from '@/utils/contactStageBadge'
@@ -551,7 +552,9 @@ const ContactsTable: React.FC = () => {
   const { labels } = useLabels()
   const { formatLocalDateShort } = useTimezone()
   const [accountCurrency] = useAccountCurrency()
-  const { locationId, accessToken } = useAuth()
+  const { locationId, accessToken, user } = useAuth()
+  const hasWhatsAppTemplatesAccess = hasLicenseFeature(user, ['whatsapp_templates'])
+  const hasAutomationsAccess = hasLicenseFeature(user, ['automations'])
   const [contacts, setContacts] = useState<Contact[]>([])
   const [stats, setStats] = useState<ContactStats | null>(null)
   const [filter, setFilter] = useState(routeState.filter)
@@ -1811,7 +1814,8 @@ const ContactsTable: React.FC = () => {
         <ListPlus size={16} />
         Campos personalizados
       </Button>
-      <Button
+      {hasWhatsAppTemplatesAccess && (
+        <Button
         type="button"
         variant="secondary"
         size="sm"
@@ -1819,8 +1823,10 @@ const ContactsTable: React.FC = () => {
       >
         <MessageSquare size={16} />
         Mandar WhatsApp
-      </Button>
-      <Button
+        </Button>
+      )}
+      {hasAutomationsAccess && (
+        <Button
         type="button"
         variant="secondary"
         size="sm"
@@ -1828,7 +1834,8 @@ const ContactsTable: React.FC = () => {
       >
         <Workflow size={16} />
         Añadir a automatización
-      </Button>
+        </Button>
+      )}
       <Button
         type="button"
         variant="danger"
@@ -2047,8 +2054,8 @@ const ContactsTable: React.FC = () => {
         <ContactBulkActionModals
           selectedContacts={selectedContacts}
           whatsappPhoneNumbers={whatsappPhoneNumbers}
-          whatsappOpen={showBulkWhatsAppModal}
-          automationOpen={showBulkAutomationModal}
+          whatsappOpen={hasWhatsAppTemplatesAccess && showBulkWhatsAppModal}
+          automationOpen={hasAutomationsAccess && showBulkAutomationModal}
           onCloseWhatsApp={() => setShowBulkWhatsAppModal(false)}
           onCloseAutomation={() => setShowBulkAutomationModal(false)}
           onCreated={() => setSelectedContactIds([])}

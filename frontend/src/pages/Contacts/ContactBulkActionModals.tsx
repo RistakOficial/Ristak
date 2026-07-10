@@ -8,6 +8,8 @@ import { whatsappApiService, type WhatsAppApiPhoneNumber, type WhatsAppApiTempla
 import type { Contact } from '@/services/contactsService'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
+import { useAuth } from '@/contexts/AuthContext'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import { localDateTimeInputToUTCISOString, toDateTimeLocalInputValue } from '@/utils/timezone'
 import styles from './Contacts.module.css'
 
@@ -68,6 +70,9 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   const navigate = useNavigate()
   const { showToast } = useNotification()
   const { timezone } = useTimezone()
+  const { user } = useAuth()
+  const hasWhatsAppTemplatesAccess = hasLicenseFeature(user, ['whatsapp_templates'])
+  const hasAutomationsAccess = hasLicenseFeature(user, ['automations'])
   const selectedIds = useMemo(() => selectedContacts.map((contact) => contact.id), [selectedContacts])
   const selectedCount = selectedContacts.length
 
@@ -99,7 +104,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   const missingVariables = variableNumbers.filter((number) => !String(templateVariables[number] || '').trim())
 
   useEffect(() => {
-    if (!whatsappOpen) return
+    if (!hasWhatsAppTemplatesAccess || !whatsappOpen) return
     setTemplatesLoading(true)
     whatsappApiService.getTemplates('APPROVED')
       .then((response) => {
@@ -110,7 +115,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
         showToast('error', 'No se pudieron cargar plantillas', error instanceof Error ? error.message : 'Intenta otra vez.')
       })
       .finally(() => setTemplatesLoading(false))
-  }, [showToast, whatsappOpen])
+  }, [hasWhatsAppTemplatesAccess, showToast, whatsappOpen])
 
   useEffect(() => {
     if (!whatsappOpen) return
@@ -133,7 +138,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   }, [selectedTemplate])
 
   useEffect(() => {
-    if (!automationOpen) return
+    if (!hasAutomationsAccess || !automationOpen) return
     setAutomationsLoading(true)
     automationsService.getOverview()
       .then((overview) => {
@@ -145,7 +150,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
         showToast('error', 'No se pudieron cargar automatizaciones', error instanceof Error ? error.message : 'Intenta otra vez.')
       })
       .finally(() => setAutomationsLoading(false))
-  }, [automationId, automationOpen, showToast])
+  }, [automationId, automationOpen, hasAutomationsAccess, showToast])
 
   const closeWhatsApp = () => {
     if (sendingWhatsApp) return
@@ -163,7 +168,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   }
 
   const submitWhatsApp = async () => {
-    if (!selectedTemplate || !selectedPhone) return
+    if (!hasWhatsAppTemplatesAccess || !selectedTemplate || !selectedPhone) return
     if (missingVariables.length > 0) {
       showToast('error', 'Faltan variables', 'Llena todos los campos que pide la plantilla.')
       return
@@ -191,7 +196,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   }
 
   const submitAutomation = async () => {
-    if (!automationId) return
+    if (!hasAutomationsAccess || !automationId) return
     setSendingAutomation(true)
     try {
       const action = await contactBulkActionsService.createAutomation({
@@ -218,7 +223,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
   return (
     <>
       <Modal
-        isOpen={whatsappOpen}
+        isOpen={hasWhatsAppTemplatesAccess && whatsappOpen}
         onClose={closeWhatsApp}
         title="Mandar WhatsApp"
         size="sm"
@@ -364,7 +369,7 @@ export const ContactBulkActionModals: React.FC<ContactBulkActionModalsProps> = (
       </Modal>
 
       <Modal
-        isOpen={automationOpen}
+        isOpen={hasAutomationsAccess && automationOpen}
         onClose={closeAutomation}
         title="Añadir a automatización"
         size="sm"

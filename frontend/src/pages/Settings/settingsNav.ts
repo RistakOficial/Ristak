@@ -1,5 +1,6 @@
 import {
   getFirstAllowedAppPath,
+  hasLicenseFeature,
   hasModuleAccess,
   type AccessControlledUser,
   type PermissionKey
@@ -22,6 +23,7 @@ export interface SettingsNavItem {
   label: string
   group: SettingsNavGroup
   permissionKey?: PermissionKey
+  featureKeys?: readonly string[]
 }
 
 export const settingsNavigation: SettingsNavItem[] = [
@@ -32,7 +34,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/mobile-app', label: 'Aplicación móvil', group: 'Cuenta', permissionKey: 'settings_mobile' },
   { to: '/settings/calendars', label: 'Calendarios', group: 'Agenda', permissionKey: 'settings_calendars' },
   { to: '/settings/payments', label: 'Pagos', group: 'Cobros', permissionKey: 'settings_payments' },
-  { to: '/settings/highlevel', label: 'HighLevel', group: 'Plataformas conectadas', permissionKey: 'settings_integrations' },
+  { to: '/settings/highlevel', label: 'HighLevel', group: 'Plataformas conectadas', permissionKey: 'settings_integrations', featureKeys: ['highlevel_integration'] },
   { to: '/settings/meta-ads', label: 'Meta Ads', group: 'Plataformas conectadas', permissionKey: 'campaigns' },
   { to: '/settings/whatsapp', label: 'WhatsApp', group: 'Plataformas conectadas', permissionKey: 'settings_whatsapp' },
   { to: '/settings/email', label: 'Correos', group: 'Plataformas conectadas', permissionKey: 'settings_email' },
@@ -43,7 +45,7 @@ export const settingsNavigation: SettingsNavItem[] = [
   { to: '/settings/media', label: 'Media', group: 'Datos y rastreo', permissionKey: 'settings_media' },
   { to: '/settings/custom-fields', label: 'Campos personalizados', group: 'Personalización', permissionKey: 'settings_custom_fields' },
   { to: '/settings/variable-fields', label: 'Campos variables', group: 'Personalización', permissionKey: 'settings_custom_fields' },
-  { to: '/settings/trigger-links', label: 'Enlaces de disparo', group: 'Personalización', permissionKey: 'settings_custom_fields' },
+  { to: '/settings/trigger-links', label: 'Enlaces de disparo', group: 'Personalización', permissionKey: 'settings_custom_fields', featureKeys: ['trigger_links'] },
   { to: '/settings/tags', label: 'Etiquetas', group: 'Personalización', permissionKey: 'settings_custom_fields' },
   { to: '/settings/developers', label: 'Developers', group: 'Avanzado', permissionKey: 'settings_api_access' }
 ]
@@ -59,7 +61,10 @@ export const settingsGroupOrder: SettingsNavGroup[] = [
 ]
 
 export const getVisibleSettingsNavigation = (user?: AccessControlledUser | null) =>
-  settingsNavigation.filter((item) => !item.permissionKey || hasModuleAccess(user, item.permissionKey, 'read'))
+  settingsNavigation.filter((item) => (
+    (!item.permissionKey || hasModuleAccess(user, item.permissionKey, 'read')) &&
+    (!item.featureKeys || hasLicenseFeature(user, item.featureKeys))
+  ))
 
 export const getFirstAllowedSettingsPath = (user?: AccessControlledUser | null) =>
   getVisibleSettingsNavigation(user)[0]?.to || getFirstAllowedAppPath(user)

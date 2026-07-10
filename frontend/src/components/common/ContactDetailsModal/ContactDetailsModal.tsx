@@ -715,6 +715,7 @@ export function ContactDetailsModal({
 }: ContactDetailsModalProps) {
   const { user } = useAuth()
   const hasEmailAccess = hasLicenseFeature(user, ['email'])
+  const hasAutomationsAccess = hasLicenseFeature(user, ['automations'])
   const [selectedContact, setSelectedContact] = useState<ContactDetail | null>(null)
   const chatMessagesRef = useRef<HTMLDivElement | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -964,7 +965,7 @@ export function ContactDetailsModal({
 
   const loadAutomationData = useCallback(async (options: { silent?: boolean } = {}) => {
     const contactId = selectedContact?.id
-    if (!contactId) return
+    if (!contactId || !hasAutomationsAccess) return
     if (!options.silent) {
       setAutomationActivityLoading(true)
       setAutomationCatalogLoading(true)
@@ -983,17 +984,23 @@ export function ContactDetailsModal({
       setAutomationActivityLoading(false)
       setAutomationCatalogLoading(false)
     }
-  }, [selectedContact?.id])
+  }, [hasAutomationsAccess, selectedContact?.id])
 
   useEffect(() => {
+    if (!hasAutomationsAccess) {
+      setAutomationsExpanded(false)
+      setAutomationActivity(null)
+      setAutomationCatalog([])
+      return
+    }
     if (!isOpen || !selectedContact) return
     void loadAutomationData({ silent: true })
-  }, [isOpen, loadAutomationData, selectedContact?.id])
+  }, [hasAutomationsAccess, isOpen, loadAutomationData, selectedContact?.id])
 
   useEffect(() => {
-    if (!isOpen || !selectedContact || !automationsExpanded) return
+    if (!hasAutomationsAccess || !isOpen || !selectedContact || !automationsExpanded) return
     void loadAutomationData()
-  }, [automationsExpanded, isOpen, loadAutomationData, selectedContact?.id])
+  }, [automationsExpanded, hasAutomationsAccess, isOpen, loadAutomationData, selectedContact?.id])
 
   const publishedAutomations = useMemo(
     () => automationCatalog.filter(automation => automation.status === 'published'),
@@ -1013,6 +1020,7 @@ export function ContactDetailsModal({
   }, [preparedAutomationSearch, publishedAutomations])
 
   const openEnrollmentModal = (automation: AutomationSummary) => {
+    if (!hasAutomationsAccess) return
     setSelectedAutomationForEnrollment(automation)
     setEnrollMode('now')
     setEnrollScheduledAt(defaultAutomationScheduleValue(timezone))
@@ -1028,7 +1036,7 @@ export function ContactDetailsModal({
   }
 
   const submitAutomationEnrollment = async () => {
-    if (!selectedContact || !selectedAutomationForEnrollment) return
+    if (!hasAutomationsAccess || !selectedContact || !selectedAutomationForEnrollment) return
     let scheduledAt: string | undefined
     if (enrollMode === 'scheduled') {
       const scheduledIso = localDateTimeInputToUTCISOString(enrollScheduledAt, timezone)
@@ -2292,7 +2300,8 @@ export function ContactDetailsModal({
                   />
                 </div>
 
-                <div className={styles.detailSection}>
+                {hasAutomationsAccess && (
+                  <div className={styles.detailSection}>
                   <button
                     type="button"
                     className={styles.customFieldsToggle}
@@ -2383,7 +2392,8 @@ export function ContactDetailsModal({
                       </div>
                     </div>
                   )}
-                </div>
+                  </div>
+                )}
 
                 {/* Primera Atribución (Primer Toque) */}
                 {selectedContact.firstSession && (
@@ -2756,7 +2766,7 @@ export function ContactDetailsModal({
           )}
         </div>
 
-        {selectedAutomationForEnrollment && (
+        {hasAutomationsAccess && selectedAutomationForEnrollment && (
           <Modal
             isOpen={enrollModalOpen}
             onClose={closeEnrollmentModal}

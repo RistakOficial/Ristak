@@ -48,6 +48,7 @@ import {
 } from '@/components/common'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useAccountCurrency, useAppConfig } from '@/hooks'
 import { useHighLevelConnected } from '@/hooks/useHighLevelConnected'
 import {
@@ -98,6 +99,7 @@ import {
   type FlowVariable
 } from '@/pages/Automations/editor/variablesCatalog'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower, formatCrmLabelWithDefiniteArticle } from '@/utils/crmLabels'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import styles from './PaymentsConfiguration.module.css'
 
 type PaymentsSectionId = 'checkout' | 'receipt' | 'meta' | 'automations' | 'gateways' | 'taxes'
@@ -732,6 +734,7 @@ export const PaymentsConfiguration: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const { showToast, showConfirm } = useNotification()
+  const { user } = useAuth()
   const { labels } = useLabels()
   const customerLabel = labels.customer?.trim() || DEFAULT_CRM_LABELS.customer
   const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
@@ -739,6 +742,9 @@ export const PaymentsConfiguration: React.FC = () => {
   const customerWithPlainArticle = formatCrmLabelWithDefiniteArticle(labels.customer, DEFAULT_CRM_LABELS.customer, 'none')
   const customersLowerLabel = formatCrmLabelLower(labels.customers, DEFAULT_CRM_LABELS.customers)
   const { connected: highLevelConnected, loading: loadingHighLevelConnection } = useHighLevelConnected()
+  const hasPaymentCheckoutAccess = hasLicenseFeature(user, ['payment_checkout'])
+  const hasPaymentAutomationsAccess = hasLicenseFeature(user, ['payment_automations'])
+  const hasPaymentGatewaysAccess = hasLicenseFeature(user, ['payment_gateways'])
   const [accountCurrency] = useAccountCurrency()
   const [accountBusinessProfileRaw] = useAppConfig<AccountBusinessProfile>(
     ACCOUNT_BUSINESS_PROFILE_CONFIG_KEY,
@@ -746,6 +752,19 @@ export const PaymentsConfiguration: React.FC = () => {
   )
 
   const [activeSection, setActiveSection] = useState<PaymentsSectionId>(() => getInitialSection(location.pathname))
+  const defaultSection: PaymentsSectionId = hasPaymentCheckoutAccess ? 'checkout' : 'receipt'
+  const visibleSectionItems = useMemo(() => sectionItems.filter((item) => {
+    if (item.id === 'checkout') return hasPaymentCheckoutAccess
+    if (item.id === 'automations') return hasPaymentAutomationsAccess
+    if (item.id === 'gateways') return hasPaymentGatewaysAccess
+    return true
+  }), [hasPaymentAutomationsAccess, hasPaymentCheckoutAccess, hasPaymentGatewaysAccess])
+
+  useEffect(() => {
+    if (visibleSectionItems.some((item) => item.id === activeSection)) return
+    setActiveSection(defaultSection)
+    navigate(defaultSection === 'checkout' ? '/settings/payments' : `/settings/payments/${defaultSection}`, { replace: true })
+  }, [activeSection, defaultSection, navigate, visibleSectionItems])
   const [settings, setSettings] = useState<PaymentSettings>(defaultPaymentSettings)
   const [loadingSettings, setLoadingSettings] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
@@ -2096,7 +2115,7 @@ export const PaymentsConfiguration: React.FC = () => {
   }
 
   const handleSectionChange = (sectionId: string) => {
-    if (!isPaymentsSectionId(sectionId)) return
+    if (!isPaymentsSectionId(sectionId) || !visibleSectionItems.some((item) => item.id === sectionId)) return
     setActiveSection(sectionId)
     navigate(sectionId === 'checkout' ? '/settings/payments' : `/settings/payments/${sectionId}`)
   }
@@ -4908,14 +4927,16 @@ export const PaymentsConfiguration: React.FC = () => {
         className={styles.pageHeader}
         eyebrow="Configuración"
         title="Pagos"
-        subtitle="Configura el cobro, comprobante, automatizaciones, pasarelas e impuestos desde un solo setup."
+        subtitle={hasPaymentCheckoutAccess || hasPaymentGatewaysAccess || hasPaymentAutomationsAccess
+          ? 'Configura el cobro, comprobante, automatizaciones, pasarelas e impuestos desde un solo setup.'
+          : 'Configura comprobantes, impuestos y la operación de tus cobros.'}
       />
 
       <div className={styles.setupHeader}>
         <SegmentTabs
           aria-label="Setup de configuración de pagos"
           className={styles.setupTabs}
-          tabs={sectionItems.map((item) => ({
+          tabs={visibleSectionItems.map((item) => ({
             id: item.id,
             label: item.label,
             icon: item.icon
@@ -4925,11 +4946,11 @@ export const PaymentsConfiguration: React.FC = () => {
         />
       </div>
 
-      {activeSection === 'checkout' && renderCheckoutSection()}
+      {hasPaymentCheckoutAccess && activeSection === 'checkout' && renderCheckoutSection()}
       {activeSection === 'receipt' && renderReceiptSection()}
       {activeSection === 'meta' && renderMetaSection()}
-      {activeSection === 'automations' && renderAutomationsSection()}
-      {activeSection === 'gateways' && renderGatewaysSection()}
+      {hasPaymentAutomationsAccess && activeSection === 'automations' && renderAutomationsSection()}
+      {hasPaymentGatewaysAccess && activeSection === 'gateways' && renderGatewaysSection()}
       {activeSection === 'taxes' && renderTaxesSection()}
     </PageContainer>
   )

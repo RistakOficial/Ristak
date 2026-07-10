@@ -4,6 +4,7 @@ import { API_URLS } from '../config/constants.js'
 import { getMetaConfig, getMetaSyncProgress } from './metaAdsService.js'
 import { getSitesPublicDomain } from './sitesService.js'
 import { listAutomationReviewProblems } from './automationReferenceResolver.js'
+import { canRunBackgroundJob } from './licenseService.js'
 import { sendAppNotificationPayload } from './pushNotificationsService.js'
 import { logger } from '../utils/logger.js'
 import { createRistakId } from '../utils/idGenerator.js'
@@ -1171,6 +1172,7 @@ async function getAiNotifications() {
 
 async function getAutomationReviewNotifications() {
   try {
+    if (!(await canRunBackgroundJob('automations'))) return []
     const problems = await listAutomationReviewProblems({ limit: 5 })
     if (!problems.length) return []
 

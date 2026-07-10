@@ -90,7 +90,7 @@ const FEATURE_DEPENDENCIES = {
   reports: ['advanced_reports', 'settings_costs'],
   campaigns: ['meta_ads'],
   sites: ['settings_domains', 'settings_tracking', 'settings_media'],
-  forms: ['settings_custom_fields'],
+  forms: [],
   ai_agent: ['app_assistant_ai', 'conversational_ai'],
   whatsapp: ['settings_whatsapp'],
   email: ['settings_email'],
@@ -123,7 +123,6 @@ const LICENSE_FEATURES_BY_MODULE = {
   settings_domains: { primary: 'sites', legacy: ['settings_domains'] },
   settings_costs: { primary: 'reports', legacy: ['advanced_reports', 'settings_costs'] },
   settings_media: { primary: 'sites', legacy: ['settings_media'] },
-  settings_custom_fields: { primary: 'forms', legacy: ['settings_custom_fields'] },
   settings_api_access: { primary: 'developers', legacy: ['settings_api_access'] },
   settings_users: { primary: 'team_access', legacy: ['settings_users'] }
 }

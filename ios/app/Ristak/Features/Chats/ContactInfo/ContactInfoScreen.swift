@@ -1056,7 +1056,7 @@ struct ContactInfoScreen: View {
     /// re-valida el módulo de automatizaciones por request.
     @ViewBuilder
     private var automationsSection: some View {
-        if canEditContact {
+        if canEditContact && access.canWrite(module: .automations) {
             SectionCard {
                 Button {
                     showAutomationsSheet = true

@@ -46,7 +46,7 @@ import { requireFeature } from '../middleware/licenseMiddleware.js'
 const router = express.Router()
 
 router.use(requireAuth)
-router.use(requireFeature('integrations'))
+router.use(requireFeature('highlevel_integration'))
 // (GHL-007) Decisión del dueño: restringir a solo admin las rutas de ADMINISTRACIÓN de
 // HighLevel (conectar/guardar/borrar config, disparar sincronizaciones, revelar token,
 // etiquetas/config de facturación). NO se gatean a admin las rutas OPERATIVAS que usan

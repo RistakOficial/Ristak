@@ -8,6 +8,7 @@ import {
 } from '../utils/dateUtils.js'
 import { getPaymentSettings } from './paymentSettingsService.js'
 import { getAccountCurrency } from '../utils/accountLocale.js'
+import { canRunBackgroundJob } from './licenseService.js'
 import {
   buildDefaultMessageTemplateFallbackText,
   buildDefaultMessageTemplateSendComponents
@@ -957,6 +958,10 @@ function summarizeDispatchResults(type, results = []) {
 }
 
 export async function sendPaymentAutomationMessage(type, paymentInput, options = {}) {
+  if (!(await canRunBackgroundJob('payment_automations'))) {
+    return { sent: false, skipped: true, reason: 'feature_not_available' }
+  }
+
   const settings = options.settings || await getPaymentSettings()
   const timezone = options.timezone || await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const fallbackCurrency = options.currency || await getAccountCurrency().catch(() => '')
@@ -1064,6 +1069,8 @@ async function getFailedCandidates(settings, now, limit, paymentIds = []) {
 }
 
 export async function processDuePaymentAutomations({ now = new Date(), limit = 100, paymentIds = [] } = {}) {
+  if (!(await canRunBackgroundJob('payment_automations'))) return []
+
   const settings = await getPaymentSettings()
   const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
   const results = []

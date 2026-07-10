@@ -90,15 +90,15 @@ function containsSitePaymentFeature(value, depth = 0) {
 
 function requirePaymentsForSitePaymentFeature(req, res, next) {
   if (!containsSitePaymentFeature(req.body)) return next()
-  return requireFeature('payments')(req, res, next)
+  return requireFeature('payment_checkout')(req, res, next)
 }
 
 router.post('/public/submit', submitPublicSiteHandler)
 router.get('/public/contact-prefill', publicSiteContactPrefillHandler)
-router.get('/public/payments/:publicPaymentId/status', requireFeature('payments'), publicSitePaymentStatusHandler)
-router.post('/public/checkout/init', requireFeature('payments'), sitePaymentCheckoutInitHandler)
-router.post('/public/checkout/pay', requireFeature('payments'), sitePaymentCheckoutPayHandler)
-router.post('/public/checkout/prepare-installments', requireFeature('payments'), requireFeature('payment_plans'), sitePaymentCheckoutPrepareHandler)
+router.get('/public/payments/:publicPaymentId/status', requireFeature('payment_checkout'), publicSitePaymentStatusHandler)
+router.post('/public/checkout/init', requireFeature('payment_checkout'), sitePaymentCheckoutInitHandler)
+router.post('/public/checkout/pay', requireFeature('payment_checkout'), sitePaymentCheckoutPayHandler)
+router.post('/public/checkout/prepare-installments', requireFeature('payment_checkout'), requireFeature('payment_plans'), sitePaymentCheckoutPrepareHandler)
 router.post('/public/meta-event', metaPageEventPublicHandler)
 router.get('/public/fonts.css', sitesFontCssHandler)
 router.get('/public/font-file', sitesFontFileHandler)

@@ -21,6 +21,7 @@ enum RistakModuleKey: String, CaseIterable, Sendable {
     case payments
     case analytics
     case contacts
+    case automations
     case aiAgent = "ai_agent"
     case settingsMobile = "settings_mobile"
     case dashboard
@@ -41,6 +42,7 @@ enum RistakAccessRules {
         .payments: LicenseFeatureRule(primary: "payments", legacy: []),
         .analytics: LicenseFeatureRule(primary: "analytics", legacy: []),
         .contacts: LicenseFeatureRule(primary: "contacts", legacy: []),
+        .automations: LicenseFeatureRule(primary: "automations", legacy: []),
         .aiAgent: LicenseFeatureRule(primary: "ai_agent", legacy: ["app_assistant_ai", "conversational_ai", "ai"]),
         .settingsMobile: LicenseFeatureRule(primary: "mobile_app", legacy: ["settings_mobile"]),
         .dashboard: LicenseFeatureRule(primary: "dashboard", legacy: []),
@@ -71,7 +73,7 @@ enum RistakAccessRules {
         if !rule.legacy.isEmpty {
             return rule.legacy.contains { features[$0] == true }
         }
-        return true
+        return false
     }
 
     /// Licencia + rol + `accessConfig` (con herencia legada chat→contacts).

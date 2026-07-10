@@ -3818,6 +3818,7 @@ export const DesktopChat: React.FC = () => {
   const detectedComposerChannel = normalizeComposerChannel(activeContact?.lastMessageChannel || activeContact?.lastMessageTransport || messages[messages.length - 1]?.transport || '')
   const activeConversationChannel = getHighLevelChannelForComposer(composerChannel)
   const hasEmailAccess = hasLicenseFeature(user, ['email'])
+  const hasAutomationsAccess = hasLicenseFeature(user, ['automations'])
   const isEmailComposer = composerChannel === 'email'
   const emailPlainText = useMemo(
     () => isEmailComposer ? emailHtmlToPlainText(emailBodyHtml) : '',
@@ -6211,11 +6212,12 @@ export const DesktopChat: React.FC = () => {
   }, [])
 
   const openAutomationModal = useCallback(() => {
+    if (!hasAutomationsAccess) return
     setAutomationModalOpen(true)
-  }, [])
+  }, [hasAutomationsAccess])
 
   useEffect(() => {
-    if (!automationModalOpen) return
+    if (!hasAutomationsAccess || !automationModalOpen) return
     let cancelled = false
     setAutomationsLoading(true)
     automationsService.getOverview()
@@ -6237,10 +6239,10 @@ export const DesktopChat: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [automationModalOpen])
+  }, [automationModalOpen, hasAutomationsAccess])
 
   const handleEnrollAutomation = async () => {
-    if (!activeContact?.id || !selectedAutomationId) return
+    if (!hasAutomationsAccess || !activeContact?.id || !selectedAutomationId) return
     setAutomationSubmitting(true)
     try {
       await automationsService.enrollContact(selectedAutomationId, {
@@ -9056,10 +9058,12 @@ export const DesktopChat: React.FC = () => {
                     />
                     {savingTags ? <small>Guardando etiquetas...</small> : null}
                   </div>
-                  <button type="button" className={styles.automationButton} onClick={openAutomationModal}>
-                    <Workflow size={15} />
-                    <span>Mandar a automatización</span>
-                  </button>
+                  {hasAutomationsAccess && (
+                    <button type="button" className={styles.automationButton} onClick={openAutomationModal}>
+                      <Workflow size={15} />
+                      <span>Mandar a automatización</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -9544,7 +9548,7 @@ export const DesktopChat: React.FC = () => {
       />
 
       <Modal
-        isOpen={automationModalOpen}
+        isOpen={hasAutomationsAccess && automationModalOpen}
         onClose={() => setAutomationModalOpen(false)}
         title="Mandar a automatización"
         size="md"

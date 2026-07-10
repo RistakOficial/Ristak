@@ -41,6 +41,7 @@ import {
 } from '../controllers/contactAssignmentController.js'
 import { getContactLinkedSocial } from '../controllers/contactSocialProfileController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
+import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
@@ -71,8 +72,8 @@ router.post('/sync-stats', syncContactsStats)
 router.post('/bulk/tags', bulkUpdateContactTags)
 router.post('/bulk/custom-fields', bulkUpdateContactCustomFields)
 router.get('/bulk-actions', listBulkContactActions)
-router.post('/bulk-actions/whatsapp-template', createBulkWhatsAppTemplateAction)
-router.post('/bulk-actions/automation', createBulkAutomationAction)
+router.post('/bulk-actions/whatsapp-template', requireFeature('whatsapp_templates'), createBulkWhatsAppTemplateAction)
+router.post('/bulk-actions/automation', requireFeature('automations'), createBulkAutomationAction)
 router.get('/bulk-actions/:actionId', getBulkContactAction)
 router.post('/bulk-actions/:actionId/pause', pauseBulkContactAction)
 router.post('/bulk-actions/:actionId/resume', resumeBulkContactAction)
