@@ -46,11 +46,11 @@ struct ContactArchiveItem: Identifiable, Equatable, Sendable {
 enum ContactArchiveBuilder {
     /// Reconstruye los mensajes del journey y extrae adjuntos + enlaces
     /// (paridad `getContactArchiveItems`). Los audios se ignoran.
-    static func items(contactID: String, events: [JourneyEvent]) -> [ContactArchiveItem] {
+    static func items(contactID: String, events: [JourneyEvent], appBaseURL: URL? = nil) -> [ContactArchiveItem] {
         var items: [ContactArchiveItem] = []
         var seenLinks = Set<String>()
 
-        let messages = ChatJourneyParser.buildMessages(contactId: contactID, events: events)
+        let messages = ChatJourneyParser.buildMessages(contactId: contactID, events: events, appBaseURL: appBaseURL)
         for message in messages {
             if let attachment = message.attachment, attachment.type != .audio,
                let item = archiveItem(from: attachment, message: message, index: items.count) {

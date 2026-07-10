@@ -269,7 +269,7 @@ final class ContactInfoViewModel {
         // Caché instantánea (Round 6 #4): construye los hitos con los últimos
         // eventos guardados antes de revalidar (sin quedarse en spinner si ya
         // hay algo que pintar).
-        hydrateJourneyFromCache(formatters: formatters)
+        await hydrateJourneyFromCache(formatters: formatters)
         if journeyPhase != .loaded { journeyPhase = .loading }
         do {
             let data = try await APIClient.shared.rawData(
@@ -283,6 +283,7 @@ final class ContactInfoViewModel {
                 throw RistakAPIError.invalidResponse
             }
             persistJourneyCache(from: data)
+            let appBaseURL = await APIClient.shared.currentBaseURL
             // La construcción de los hitos (merge por día/canal) y del archivo
             // (reconstruir mensajes + parsear adjuntos/enlaces) es CPU-intensiva
             // y corría en el main actor: eso bloqueaba el primer render de la
@@ -292,7 +293,7 @@ final class ContactInfoViewModel {
             let built = await Task.detached(priority: .userInitiated) {
                 () -> (items: [ContactJourneyItem], archive: [ContactArchiveItem]) in
                 let items = ContactJourneyBuilder(formatters: formatters).items(from: events)
-                let archive = ContactArchiveBuilder.items(contactID: contactID, events: events)
+                let archive = ContactArchiveBuilder.items(contactID: contactID, events: events, appBaseURL: appBaseURL)
                 return (items, archive)
             }.value
             journeyEvents = events
@@ -312,16 +313,17 @@ final class ContactInfoViewModel {
 
     /// Hidrata el journey desde la caché instantánea (una sola vez). Construye
     /// los hitos síncronos desde ≤`maxJourneyCacheEvents` eventos (barato).
-    private func hydrateJourneyFromCache(formatters: BusinessFormatters) {
+    private func hydrateJourneyFromCache(formatters: BusinessFormatters) async {
         guard !journeyCacheHydrated else { return }
         journeyCacheHydrated = true
         guard journeyEvents.isEmpty,
               let data = RistakSnapshotCache.shared.rawData(for: ChatSnapshotKey.contactJourney(contactID)),
               let events = ChatSnapshotDecoding.decode([JourneyEvent].self, from: data),
               !events.isEmpty else { return }
+        let appBaseURL = await APIClient.shared.currentBaseURL
         journeyEvents = events
         journeyItems = ContactJourneyBuilder(formatters: formatters).items(from: events)
-        archiveItems = ContactArchiveBuilder.items(contactID: contactID, events: events)
+        archiveItems = ContactArchiveBuilder.items(contactID: contactID, events: events, appBaseURL: appBaseURL)
         journeyPhase = .loaded
     }
 

@@ -314,7 +314,8 @@ final class ConversationViewModel {
         let scheduled = await scheduledTask
         let freshMarkers = await markersTask
 
-        let fresh = ChatJourneyParser.buildMessages(contactId: contactID, events: events)
+        let appBaseURL = await journeyService.currentBaseURL()
+        let fresh = ChatJourneyParser.buildMessages(contactId: contactID, events: events, appBaseURL: appBaseURL)
         var freshContexts = ConversationTimelineBuilder.buildCommentContexts(from: events)
 
         let merged: [ChatMessage]
@@ -534,7 +535,8 @@ final class ConversationViewModel {
                 limit: JourneyService.defaultMessageLimit,
                 beforeMessageDate: before
             )
-            let older = ChatJourneyParser.buildMessages(contactId: contactID, events: events)
+            let appBaseURL = await journeyService.currentBaseURL()
+            let older = ChatJourneyParser.buildMessages(contactId: contactID, events: events, appBaseURL: appBaseURL)
             if older.count < JourneyService.defaultMessageLimit {
                 oldestPageExhausted = true
                 hasOlderMessages = false

@@ -319,19 +319,19 @@ enum ChatJourneyParser {
 
     /// Construye los mensajes del hilo a partir de los eventos del journey.
     /// (`buildMessagesFromJourney`, format.ts:920-1009 + audit doc 04.)
-    static func buildMessages(contactId: String, events: [JourneyEvent]) -> [ChatMessage] {
+    static func buildMessages(contactId: String, events: [JourneyEvent], appBaseURL: URL? = nil) -> [ChatMessage] {
         var messages: [ChatMessage] = []
         messages.reserveCapacity(events.count)
         for event in events {
             guard let date = event.date, !date.isEmpty else { continue }
-            if let message = parseEvent(event, date: date, contactId: contactId) {
+            if let message = parseEvent(event, date: date, contactId: contactId, appBaseURL: appBaseURL) {
                 messages.append(message)
             }
         }
         return mergeById(messages)
     }
 
-    private static func parseEvent(_ event: JourneyEvent, date: String, contactId: String) -> ChatMessage? {
+    private static func parseEvent(_ event: JourneyEvent, date: String, contactId: String, appBaseURL: URL?) -> ChatMessage? {
         let data = event.data
 
         if event.type == "appointment_confirmation" {
@@ -354,7 +354,7 @@ enum ChatJourneyParser {
         let messageType = readString(data, ["message_type", "messageType", "type"])
         let status = readString(data, ["status"])
         let emailDetails = event.type == "email_message" ? buildEmailDetails(data, status: status) : nil
-        let attachment = mediaAttachment(from: data)
+        let attachment = mediaAttachment(from: data, appBaseURL: appBaseURL)
         let location = journeyLocation(from: data)
         let rawText: String
         if let emailDetails {
@@ -674,7 +674,7 @@ enum ChatJourneyParser {
 
     // MARK: Attachment (`getJourneyMediaAttachment`, format.ts:667-686)
 
-    static func mediaAttachment(from data: [String: RistakJSONValue]) -> ChatAttachment? {
+    static func mediaAttachment(from data: [String: RistakJSONValue], appBaseURL: URL? = nil) -> ChatAttachment? {
         var source = data
         if let nested = pickNestedRecord(data, ["media", "attachment", "file", "document", "image", "video", "audio"]) {
             source.merge(nested) { _, nestedValue in nestedValue }
@@ -683,7 +683,7 @@ enum ChatJourneyParser {
         let mimeType = readString(source, ["media_mime_type", "mediaMimeType", "mimeType", "mime_type", "mimetype"])
         let name = readString(source, ["media_filename", "mediaFilename", "filename", "fileName", "name"])
         let mediaId = readString(source, ["media_id", "mediaId", "id"])
-        let url = pickMediaUrl(source)
+        let url = resolveMediaUrl(pickMediaUrl(source), appBaseURL: appBaseURL)
         guard let type = attachmentType(messageType: messageType, mimeType: mimeType, filename: name, mediaUrl: url) else {
             return nil
         }
@@ -706,6 +706,22 @@ enum ChatJourneyParser {
             "audio_url", "audioUrl", "document_url", "documentUrl",
             "file_url", "fileUrl", "url", "link", "publicUrl", "public_url",
         ])
+    }
+
+    static func resolveMediaUrl(_ value: String, appBaseURL: URL?) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if let url = URL(string: trimmed), url.scheme != nil {
+            return trimmed
+        }
+        if trimmed.hasPrefix("//") {
+            return "\(appBaseURL?.scheme ?? "https"):\(trimmed)"
+        }
+        guard trimmed.hasPrefix("/"), let appBaseURL,
+              let resolved = URL(string: trimmed, relativeTo: appBaseURL)?.absoluteURL else {
+            return trimmed
+        }
+        return resolved.absoluteString
     }
 
     static func attachmentType(messageType: String, mimeType: String, filename: String, mediaUrl: String) -> ChatAttachment.Kind? {

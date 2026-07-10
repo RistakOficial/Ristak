@@ -655,6 +655,10 @@ Independientemente del formato que exija el proveedor, Ristak debe persistir una
 copia publica reproducible en el historial (`media_url`, MIME y nombre de
 archivo), usando MP4/M4A cuando haga falta para que `/chat`, `/movil`, `mobile/`
 y la app iOS puedan volver a reproducir audios salientes despues de recargar. En
+clientes nativos (`mobile/` e `ios/app`), cualquier `media_url` relativo
+(`/media/...`) debe resolverse contra la URL base del tenant antes de pintar la
+burbuja, visor o archivo compartido; `Image`/`URL(string:)` no deben recibir
+rutas sin host. En
 `/chat` desktop, las burbujas de media deben mostrar solo el contenido principal:
 foto/video completo, audio con icono/control del lado izquierdo o mapa completo.
 La hora, etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de

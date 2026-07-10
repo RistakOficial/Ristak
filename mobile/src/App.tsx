@@ -19850,7 +19850,7 @@ function NativeConversationScreen({
       setJourneyEvents((current) => (
         JSON.stringify(current) === JSON.stringify(nextJourneyEvents) ? current : nextJourneyEvents
       ));
-      const journeyMessages = buildMessagesFromJourney(contact.id, journey);
+      const journeyMessages = buildMessagesFromJourney(contact.id, journey, appBaseUrl);
       const receivedFullPage = journeyMessages.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
       conversationHasOlderMessagesRef.current = receivedFullPage && conversationHistoryExhaustedContactIdRef.current !== contact.id;
       if (!receivedFullPage) {
@@ -19886,7 +19886,7 @@ function NativeConversationScreen({
         setLoading(false);
       }
     }
-  }, [api, contact.id]);
+  }, [api, appBaseUrl, contact.id]);
 
   const loadOlderConversationMessages = useCallback(async () => {
     if (loading || olderMessagesLoadingRef.current || !conversationHasOlderMessagesRef.current) return;
@@ -19903,7 +19903,7 @@ function NativeConversationScreen({
     try {
       const olderJourney = await api.getConversation(contactId, CHAT_CONVERSATION_MESSAGE_LIMIT, beforeMessageDate);
       if (activeConversationContactIdRef.current !== contactId) return;
-      const olderMessages = buildMessagesFromJourney(contactId, olderJourney);
+      const olderMessages = buildMessagesFromJourney(contactId, olderJourney, appBaseUrl);
       const receivedFullPage = olderMessages.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
       conversationHasOlderMessagesRef.current = receivedFullPage;
       if (!receivedFullPage) {
@@ -19922,7 +19922,7 @@ function NativeConversationScreen({
         setOlderMessagesLoading(false);
       }
     }
-  }, [api, contact.id, loading]);
+  }, [api, appBaseUrl, contact.id, loading]);
 
   // Hidratar el hilo desde disco al abrirlo: si no hay copia en memoria (arranque
   // en frío) leemos la última conversación guardada y la pintamos al instante

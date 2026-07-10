@@ -46,11 +46,16 @@ struct JourneyService: Sendable {
             limit: limit,
             beforeMessageDate: beforeMessageDate
         )
-        let messages = ChatJourneyParser.buildMessages(contactId: contactId, events: events)
+        let appBaseURL = await client.currentBaseURL
+        let messages = ChatJourneyParser.buildMessages(contactId: contactId, events: events, appBaseURL: appBaseURL)
         return ChatConversationPage(
             messages: messages,
             hasOlderMessages: messages.count >= limit
         )
+    }
+
+    func currentBaseURL() async -> URL? {
+        await client.currentBaseURL
     }
 
     /// Journey completo sin filtrar (activity markers + Info del contacto).

@@ -47,6 +47,15 @@ export function cleanBaseUrl(value: string) {
   }
 }
 
+export function resolveAppMediaUrl(value: string, appBaseUrl = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return '';
+  if (/^(data:|file:|blob:|https?:\/\/)/i.test(trimmed)) return trimmed;
+  if (!trimmed.startsWith('/')) return trimmed;
+  const base = cleanBaseUrl(appBaseUrl);
+  return base ? `${base}${trimmed}` : trimmed;
+}
+
 export function getContactName(contact?: ChatContact | null) {
   if (!contact) return 'Contacto';
   const directName = [
@@ -694,14 +703,14 @@ function getMediaAttachmentType(messageType = '', mimeType = '', filename = '', 
   return '';
 }
 
-function getJourneyMediaAttachment(data: Record<string, unknown>): ChatAttachment | undefined {
+function getJourneyMediaAttachment(data: Record<string, unknown>, appBaseUrl = ''): ChatAttachment | undefined {
   const nestedMedia = pickNestedRecord(data, ['media', 'attachment', 'file', 'document', 'image', 'video', 'audio']);
   const source = nestedMedia ? { ...data, ...nestedMedia } : data;
   const messageType = readString(source, ['message_type', 'messageType', 'type']);
   const mimeType = readString(source, ['media_mime_type', 'mediaMimeType', 'mimeType', 'mime_type', 'mimetype']);
   const name = readString(source, ['media_filename', 'mediaFilename', 'filename', 'fileName', 'name']);
   const mediaId = readString(source, ['media_id', 'mediaId', 'id']);
-  const url = pickMediaUrl(source);
+  const url = resolveAppMediaUrl(pickMediaUrl(source), appBaseUrl);
   const attachmentType = getMediaAttachmentType(messageType, mimeType, name, url);
   if (!attachmentType || (!url && !mediaId)) return undefined;
 
@@ -963,7 +972,7 @@ function mergeChatMessagesById(messages: ChatMessage[]) {
     .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
 }
 
-export function buildMessagesFromJourney(contactId: string, events: JourneyEvent[]) {
+export function buildMessagesFromJourney(contactId: string, events: JourneyEvent[], appBaseUrl = '') {
   const messages = events
     .filter((event) => event && typeof event === 'object' && event.date)
     .map((event, index): ChatMessage | null => {
@@ -987,7 +996,7 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
       const messageType = readString(data, ['message_type', 'messageType', 'type']);
       const status = readString(data, ['status']);
       const emailDetails = event.type === 'email_message' ? buildJourneyEmailDetails(data, status) : undefined;
-      const attachment = getJourneyMediaAttachment(data);
+      const attachment = getJourneyMediaAttachment(data, appBaseUrl);
       const location = getJourneyLocation(data);
       const rawText = emailDetails
         ? buildEmailMessageText(emailDetails.subject, emailDetails.body)
