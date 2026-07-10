@@ -1900,6 +1900,8 @@ async function initTables() {
         user_id TEXT,
         platform TEXT NOT NULL,
         token TEXT UNIQUE NOT NULL,
+        client_type TEXT,
+        app_package TEXT,
         calendar_ids_json TEXT,
         enabled INTEGER DEFAULT 1,
         app_version TEXT,
@@ -1939,6 +1941,10 @@ async function initTables() {
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_enabled ON mobile_push_devices(enabled)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_user ON mobile_push_devices(user_id)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_mobile_push_devices_platform ON mobile_push_devices(platform)')
+      await ensureTableColumns('mobile_push_devices', [
+        ['client_type', 'TEXT'],
+        ['app_package', 'TEXT']
+      ])
       await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_recipient ON internal_notifications(recipient_user_id, updated_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_contact ON internal_notifications(contact_id, updated_at)')
       await db.run('CREATE INDEX IF NOT EXISTS idx_internal_notifications_automation ON internal_notifications(automation_id, updated_at)')

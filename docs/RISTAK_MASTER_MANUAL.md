@@ -2583,16 +2583,17 @@ El login de `com.ristak.app` muestra marca Ristak, solo pide correo y contrasena
 no expone configuracion avanzada de servidor y resuelve automaticamente la
 instalacion correcta por correo via `https://www.ristak.com/api/mobile/resolve`
 antes de autenticar contra el backend del cliente.
-En Android, el binario necesita `frontend/android/app/google-services.json` fuera
-de Git y el envio puede resolverse por FCM local o por Ristak Installer central.
-Si el portal central reporta Android configurado, la instalacion cliente debe
-delegar al Installer los tokens Android cuando no tenga FCM local, igual que con
-iOS/APNs central. Las push Android deben enviarse como FCM data-only para que
-`RistakFirebaseMessagingService` dibuje la notificacion nativa con el small icon
-`ic_stat_ristak`, el avatar circular del contacto como large icon, el AppIcon de
-Ristak cuando no hay avatar y `notificationImageUrl` solo como preview multimedia
-real. No debe mandarse `message.notification` para Android porque Firebase
-renderiza una notificacion generica y se pierde el look alineado a iOS.
+En Android hay dos contratos: el legacy Capacitor (`frontend/android`,
+`com.ristak.app`) sigue usando FCM data-only para que
+`RistakFirebaseMessagingService` dibuje la notificacion nativa; la app Play/Expo
+(`mobile/`, `com.ristak.android`) registra el token con `clientType=expo` y debe
+recibir `message.notification` visible mas `message.data` completa para
+navegacion. Ristak Installer guarda cifrado el `google-services.json` de
+Firebase para `com.ristak.android` como `mobile_android_google_services_json` y
+lo entrega temporalmente al workflow de tienda; no se commitea en este repo.
+Si el portal central reporta Android configurado, la instalacion cliente delega
+al Installer los tokens Android cuando no tenga FCM local, igual que con iOS/APNs
+central.
 
 ## Licenciamiento y distribucion
 

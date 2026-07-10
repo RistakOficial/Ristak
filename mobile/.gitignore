@@ -11,6 +11,7 @@ expo-env.d.ts
 
 # Native
 .kotlin/
+google-services.json
 *.orig.*
 *.jks
 *.p8

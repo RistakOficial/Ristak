@@ -1568,6 +1568,12 @@ function getAndroidChannelId({ soundEnabled = true, vibrationEnabled = true } = 
   return ANDROID_CHANNELS.silent
 }
 
+function isExpoAndroidPushDevice(row = {}) {
+  const clientType = String(row.client_type || row.clientType || '').trim().toLowerCase()
+  const appPackage = String(row.app_package || row.appPackage || '').trim().toLowerCase()
+  return clientType === 'expo' || appPackage === 'com.ristak.android'
+}
+
 function getNotificationCategory(payload = {}) {
   const category = cleanNotificationText(payload.category || 'ristak')
   return category || 'ristak'
@@ -1666,6 +1672,8 @@ export async function saveMobilePushDevice({
   token,
   platform,
   userId = null,
+  clientType = '',
+  appPackage = '',
   calendarIds = [],
   appVersion = '',
   appBuild = '',
@@ -1685,16 +1693,21 @@ export async function saveMobilePushDevice({
 
   const id = getNativeDeviceId(normalizedPlatform, normalizedToken)
   const normalizedCalendarIds = normalizeCalendarIds(calendarIds)
+  const rawClientType = String(clientType || '').trim().toLowerCase()
+  const normalizedClientType = ['expo', 'native'].includes(rawClientType) ? rawClientType : ''
+  const normalizedAppPackage = String(appPackage || '').trim().toLowerCase().slice(0, 128)
 
   await db.run(`
     INSERT INTO mobile_push_devices (
-      id, user_id, platform, token, calendar_ids_json, enabled,
+      id, user_id, platform, token, client_type, app_package, calendar_ids_json, enabled,
       app_version, app_build, device_model, os_version, last_error,
       created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
     ON CONFLICT(token) DO UPDATE SET
       user_id = COALESCE(excluded.user_id, mobile_push_devices.user_id),
       platform = excluded.platform,
+      client_type = excluded.client_type,
+      app_package = excluded.app_package,
       calendar_ids_json = excluded.calendar_ids_json,
       enabled = 1,
       app_version = excluded.app_version,
@@ -1708,6 +1721,8 @@ export async function saveMobilePushDevice({
     userId,
     normalizedPlatform,
     normalizedToken,
+    normalizedClientType,
+    normalizedAppPackage,
     JSON.stringify(normalizedCalendarIds),
     String(appVersion || '').trim(),
     String(appBuild || '').trim(),
@@ -1718,6 +1733,8 @@ export async function saveMobilePushDevice({
   return {
     id,
     platform: normalizedPlatform,
+    clientType: normalizedClientType,
+    appPackage: normalizedAppPackage,
     enabled: true,
     calendarIds: normalizedCalendarIds
   }
@@ -1759,7 +1776,7 @@ async function getEnabledSubscriptions(userIds = null) {
 
 async function getMobileDevicesForCalendar(calendarId) {
   const rows = await db.all(`
-    SELECT id, user_id, platform, token, calendar_ids_json
+    SELECT id, user_id, platform, token, client_type, app_package, calendar_ids_json
     FROM mobile_push_devices
     WHERE enabled = 1
   `)
@@ -1772,7 +1789,7 @@ async function getMobileDevicesForCalendar(calendarId) {
 
 async function getEnabledMobileDevices(userIds = null) {
   const rows = await db.all(`
-    SELECT id, user_id, platform, token, calendar_ids_json
+    SELECT id, user_id, platform, token, client_type, app_package, calendar_ids_json
     FROM mobile_push_devices
     WHERE enabled = 1
   `)
@@ -1843,14 +1860,30 @@ export function buildFcmMessageBody(row, payload = {}, experience = {}) {
     vibrationEnabled: String(experience.vibrationEnabled !== false)
   }
 
+  const message = {
+    token: row.token,
+    data,
+    android: {
+      priority: 'HIGH',
+      collapse_key: getNotificationThreadId(payload)
+    }
+  }
+
+  if (isExpoAndroidPushDevice(row)) {
+    message.notification = {
+      title: notificationTitle,
+      body: notificationBody
+    }
+    message.android.notification = {
+      channel_id: channelId,
+      tag: getNotificationThreadId(payload),
+      notification_priority: 'PRIORITY_HIGH'
+    }
+  }
+
   return {
     message: {
-      token: row.token,
-      data,
-      android: {
-        priority: 'HIGH',
-        collapse_key: getNotificationThreadId(payload)
-      }
+      ...message
     }
   }
 }
@@ -2014,12 +2047,15 @@ async function sendMobileNotificationRows(rows = [], payload = {}, experience = 
     const rowExperience = await resolveExperienceForRow(experience, row) // (MOB-006) por usuario
 
     if (shouldSendThroughCentral(platform)) {
-      centralDevices.push({
+      const centralDevice = {
         id: row.id,
         platform,
         token: row.token,
         experience: rowExperience
-      })
+      }
+      if (row.client_type) centralDevice.clientType = row.client_type
+      if (row.app_package) centralDevice.appPackage = row.app_package
+      centralDevices.push(centralDevice)
       centralRowsById.set(String(row.id || '').trim(), row)
       return
     }

@@ -104,6 +104,8 @@ export async function saveMobileDevice(req, res) {
     const saved = await saveMobilePushDevice({
       token: req.body?.token,
       platform: req.body?.platform,
+      clientType: req.body?.clientType,
+      appPackage: req.body?.appPackage,
       calendarIds: req.body?.calendarIds,
       appVersion: req.body?.appVersion,
       appBuild: req.body?.appBuild,

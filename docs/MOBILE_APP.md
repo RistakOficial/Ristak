@@ -553,28 +553,25 @@ Messenger, Instagram o HighLevel se manda como texto con link de mapa cuando no
 exista soporte nativo verificado. iOS requiere
 `NSLocationWhenInUseUsageDescription` en `ios/app/Support/Info.plist`.
 
-En Android el small icon del sistema sigue siendo `ic_stat_ristak` porque
-Android exige un icono monocromatico de la app. El payload FCM de Android debe
-ser data-only: `title`, `body`, `contactAvatarUrl`/`senderAvatarUrl`,
-`notificationImageUrl`/`notificationAttachmentUrl`, `threadId`, `messageId`,
-`url` y `androidChannelId` viajan en `message.data`. El servicio nativo
-`frontend/android/app/src/main/java/com/ristak/app/RistakFirebaseMessagingService.java`
-reemplaza el `MessagingService` generico de Capacitor, conserva el registro de
-token llamando a `PushNotificationsPlugin.onNewToken(...)` y renderiza las push
-con `MessagingStyle`, `largeIcon` circular del avatar cuando existe y AppIcon de
-Ristak solo cuando la alerta no pertenece a un contacto unico. Si llega media real, la muestra con
-`BigPictureStyle` y mantiene el avatar/logo como large icon. No vuelvas a usar
-`message.notification` ni `android.notification.image` para Android porque el
-sistema/Firebase toma el control visual y se pierden avatar, logo correcto y
-estilo de conversación.
+En Android hay dos contratos de push y no se deben mezclar:
 
-En `mobile/`, la app React Native registra el token nativo con
-`expo-notifications` contra `/api/push/mobile-devices`, crea los mismos canales
-Android (`ristak_alerts`, `ristak_sound`, `ristak_vibrate`, `ristak_silent`) y
-abre el chat correcto al tocar una push usando `contactId` o `url`. Mientras el
-proyecto `mobile/android` no este generado/tracked, la paridad Android del
-renderer `RistakFirebaseMessagingService` sigue pendiente; no sustituye todavia
-al renderer Android de `frontend/android`.
+- Android legacy Capacitor (`frontend/android`, paquete `com.ristak.app`) usa
+  `RistakFirebaseMessagingService` y debe recibir FCM data-only. En ese caso
+  `title`, `body`, `contactAvatarUrl`/`senderAvatarUrl`,
+  `notificationImageUrl`/`notificationAttachmentUrl`, `threadId`, `messageId`,
+  `url` y `androidChannelId` viajan en `message.data`; no debe mandarse
+  `message.notification` porque Firebase tomaria el control visual y se pierde
+  el renderer custom.
+- Android Play/Expo (`mobile/`, paquete `com.ristak.android`) registra el token
+  con `clientType=expo` y `appPackage=com.ristak.android`. Para ese cliente FCM
+  debe mandar `message.notification` con titulo/cuerpo visibles y mantener toda
+  la data de navegacion en `message.data`. Asi Android muestra la alerta cuando
+  la app esta cerrada, y `mobile/src/notifications.ts` puede abrir el chat,
+  calendario, pagos o seccion correcta al tocarla.
+
+En ambos casos el small icon del sistema sigue siendo el icono monocromatico de
+la app y los canales Android oficiales son `ristak_alerts`, `ristak_sound`,
+`ristak_vibrate` y `ristak_silent`.
 
 En iOS/APNs, cualquier payload, extension de notificaciones, capability o perfil
 de firma pertenece a la app Apple bajo `ios/app`, no a `mobile/`. Si hace falta
@@ -1248,9 +1245,12 @@ FCM_SERVICE_ACCOUNT_JSON=
 ```
 
 `FCM_SERVICE_ACCOUNT_JSON` es secreto de servidor y nunca debe commitearse. El
-`google-services.json` de Android tampoco se commitea en este repo; se coloca en
-`frontend/android/app/google-services.json` antes de compilar el binario de
-tienda.
+`google-services.json` de Android tampoco se commitea en este repo. Para la app
+Play/Expo, Ristak Installer lo guarda cifrado como
+`mobile_android_google_services_json` y el workflow de tienda lo escribe
+temporalmente en `mobile/google-services.json` antes de `expo prebuild`. Para el
+Android legacy Capacitor, el archivo local historico vive fuera de Git en
+`frontend/android/app/google-services.json`.
 
 iOS nativo (`ios/app`):
 

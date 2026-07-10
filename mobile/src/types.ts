@@ -1006,12 +1006,15 @@ export type WebPushPublicConfig = {
   configured: boolean;
   publicKey: string;
   nativeConfigured?: boolean;
+  iosConfigured?: boolean;
   androidConfigured?: boolean;
 };
 
 export type SaveMobilePushDevicePayload = {
   token: string;
   platform: 'android';
+  clientType?: 'expo' | 'native';
+  appPackage?: string;
   calendarIds?: string[];
   appVersion?: string;
   appBuild?: string;

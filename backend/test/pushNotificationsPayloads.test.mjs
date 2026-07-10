@@ -566,3 +566,33 @@ test('payload FCM Android viaja data-only para que la app renderice avatar y med
   assert.equal(requestBody.message.data.soundEnabled, 'false')
   assert.equal(requestBody.message.data.vibrationEnabled, 'true')
 })
+
+test('payload FCM Android Play Expo incluye alerta visible y conserva data de navegacion', () => {
+  const requestBody = buildFcmMessageBody(
+    { token: 'android-token-expo', client_type: 'expo', app_package: 'com.ristak.android' },
+    {
+      title: 'Paciente Demo',
+      body: 'Hola desde Play Store',
+      url: '/movil?contact=con_1',
+      category: 'chat',
+      tag: 'chat-message-1',
+      threadId: 'chat-con_1',
+      contactId: 'con_1'
+    },
+    { soundEnabled: true, vibrationEnabled: true }
+  )
+
+  assert.equal(requestBody.message.token, 'android-token-expo')
+  assert.equal(requestBody.message.notification.title, 'Paciente Demo')
+  assert.equal(requestBody.message.notification.body, 'Hola desde Play Store')
+  assert.equal(requestBody.message.android.priority, 'HIGH')
+  assert.equal(requestBody.message.android.notification.channel_id, 'ristak_alerts')
+  assert.equal(requestBody.message.android.notification.tag, 'chat-con_1')
+  assert.equal(requestBody.message.android.notification.notification_priority, 'PRIORITY_HIGH')
+  assert.equal(requestBody.message.data.title, 'Paciente Demo')
+  assert.equal(requestBody.message.data.body, 'Hola desde Play Store')
+  assert.equal(requestBody.message.data.url, '/movil?contact=con_1')
+  assert.equal(requestBody.message.data.contactId, 'con_1')
+  assert.equal(requestBody.message.data.channelId, 'ristak_alerts')
+  assert.equal(requestBody.message.data.androidChannelId, 'ristak_alerts')
+})

@@ -30,6 +30,10 @@ type PermissionStatusProbe = {
   status?: unknown;
 };
 
+const ANDROID_EXPO_APP_PACKAGE = 'com.ristak.android';
+const ANDROID_EXPO_CLIENT_TYPE = 'expo';
+let lastRegisteredNativePushToken = '';
+
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowBanner: true,
@@ -45,6 +49,13 @@ function isNativeMobilePlatform() {
 
 function asString(value: unknown) {
   return typeof value === 'string' ? value : '';
+}
+
+function getNativeTokenString(nativeToken: { data?: unknown } | null | undefined) {
+  if (!nativeToken) return '';
+  if (typeof nativeToken.data === 'string') return nativeToken.data;
+  if (nativeToken.data == null) return '';
+  return JSON.stringify(nativeToken.data);
 }
 
 function normalizePermissionStatus(status: unknown, granted?: boolean): NativePushPermissionStatus {
@@ -193,6 +204,46 @@ export function configureNativeNotificationListeners(
   };
 }
 
+async function saveNativePushToken(
+  api: RistakApiClient,
+  token: string,
+  { calendarIds = [] }: { calendarIds?: string[] } = {},
+) {
+  const normalizedToken = token.trim();
+  if (!normalizedToken) return;
+
+  await api.saveMobilePushDevice({
+    token: normalizedToken,
+    platform: 'android',
+    clientType: ANDROID_EXPO_CLIENT_TYPE,
+    appPackage: ANDROID_EXPO_APP_PACKAGE,
+    calendarIds,
+    appVersion: '',
+    appBuild: '',
+    deviceModel: Device.modelName || Device.modelId || Device.brand || '',
+    osVersion: Device.osVersion || '',
+  });
+
+  lastRegisteredNativePushToken = normalizedToken;
+}
+
+export function configureNativePushTokenRefresh(
+  api: RistakApiClient,
+  { calendarIds = [] }: { calendarIds?: string[] } = {},
+) {
+  if (!isNativeMobilePlatform()) return () => undefined;
+
+  const subscription = Notifications.addPushTokenListener((nativeToken) => {
+    const token = getNativeTokenString(nativeToken);
+    if (!token || token === lastRegisteredNativePushToken) return;
+    void saveNativePushToken(api, token, { calendarIds }).catch(() => undefined);
+  });
+
+  return () => {
+    subscription.remove();
+  };
+}
+
 export async function subscribeToNativePushNotifications(
   api: RistakApiClient,
   { calendarIds = [] }: { calendarIds?: string[] } = {},
@@ -238,19 +289,8 @@ export async function subscribeToNativePushNotifications(
 
   try {
     const nativeToken = await Notifications.getDevicePushTokenAsync();
-    const token = typeof nativeToken.data === 'string'
-      ? nativeToken.data
-      : JSON.stringify(nativeToken.data);
-
-    await api.saveMobilePushDevice({
-      token,
-      platform: 'android',
-      calendarIds,
-      appVersion: '',
-      appBuild: '',
-      deviceModel: Device.modelName || Device.modelId || Device.brand || '',
-      osVersion: Device.osVersion || '',
-    });
+    const token = getNativeTokenString(nativeToken);
+    await saveNativePushToken(api, token, { calendarIds });
 
     return { status: 'subscribed' };
   } catch (error) {
@@ -258,5 +298,29 @@ export async function subscribeToNativePushNotifications(
       status: 'denied',
       reason: error instanceof Error ? error.message : 'Este celular no pudo registrarse para alertas.',
     };
+  }
+}
+
+export async function unsubscribeFromNativePushNotifications(api: RistakApiClient) {
+  if (!isNativeMobilePlatform() || !Device.isDevice) return;
+
+  let token = lastRegisteredNativePushToken;
+  if (!token) {
+    try {
+      const permission = await Notifications.getPermissionsAsync() as PermissionStatusProbe;
+      if (normalizePermissionStatus(permission.status, permission.granted) !== 'granted') return;
+      token = getNativeTokenString(await Notifications.getDevicePushTokenAsync());
+    } catch {
+      token = '';
+    }
+  }
+
+  if (!token) return;
+
+  try {
+    await api.deleteMobilePushDevice(token);
+    lastRegisteredNativePushToken = '';
+  } catch {
+    // Cierre de sesion no debe bloquearse si el servidor no alcanza a desactivar el token.
   }
 }

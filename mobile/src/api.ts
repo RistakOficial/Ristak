@@ -1392,6 +1392,13 @@ export class RistakApiClient {
       body: JSON.stringify(payload),
     });
   }
+
+  deleteMobilePushDevice(token: string) {
+    return this.request<{ disabled?: boolean }>('/push/mobile-devices', {
+      method: 'DELETE',
+      body: JSON.stringify({ token }),
+    });
+  }
 }
 
 export async function resolveMobileTenant(identifier: string): Promise<RuntimeTenant> {

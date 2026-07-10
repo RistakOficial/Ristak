@@ -471,6 +471,20 @@ jobs:
             -d '{"platform":"android"}' \
             > "$RUNNER_TEMP/mobile-android-credentials.json"
 
+      - name: Install Android Firebase config
+        run: |
+          CREDS="$RUNNER_TEMP/mobile-android-credentials.json"
+          ANDROID_GOOGLE_SERVICES_JSON="$(jq -r '.credentials.android_google_services_json // empty' "$CREDS")"
+          if [ -z "$ANDROID_GOOGLE_SERVICES_JSON" ]; then
+            echo "Falta Android Firebase google-services.json en Ristak Installer > Configuracion > Tiendas moviles."
+            exit 1
+          fi
+          printf '%s' "$ANDROID_GOOGLE_SERVICES_JSON" > mobile/google-services.json
+          if ! jq -e --arg pkg "$ANDROID_APP_PACKAGE_NAME" 'any(.client[]?; .client_info.android_client_info.package_name == $pkg)' mobile/google-services.json >/dev/null; then
+            echo "El google-services.json de Android no pertenece a $ANDROID_APP_PACKAGE_NAME."
+            exit 1
+          fi
+
       - name: Generate Android native project
         run: CI=1 npm --prefix mobile run prebuild -- --platform android
 

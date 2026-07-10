@@ -145,9 +145,11 @@ import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaVie
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveMessageEvent } from './api';
 import { hasPhoneSectionAccess } from './access';
 import {
+  configureNativePushTokenRefresh,
   configureNativeNotificationListeners,
   getNativePushPermissionStatus,
   subscribeToNativePushNotifications,
+  unsubscribeFromNativePushNotifications,
   type NativePushPermissionStatus,
   type NativeNotificationIntent,
 } from './notifications';
@@ -1333,6 +1335,7 @@ export default function RistakNativeApp() {
   };
 
   const logout = async () => {
+    await unsubscribeFromNativePushNotifications(api);
     await clearAuthToken();
     // Limpiar la copia local: evita que la siguiente sesión vea datos ajenos.
     void clearAllCache();
@@ -1342,6 +1345,7 @@ export default function RistakNativeApp() {
   };
 
   const resetServer = async () => {
+    await unsubscribeFromNativePushNotifications(api);
     await clearRuntimeState();
     void clearAllCache();
     await applyStoredThemePreference();
@@ -1610,6 +1614,8 @@ function PhoneShell({
 	    // Foreground push received: nudge the inbox / open thread to refresh now.
 	    DeviceEventEmitter.emit(CHAT_REFRESH_EVENT, intent);
 	  }), [navigateSection]);
+
+  useEffect(() => configureNativePushTokenRefresh(api), [api]);
 
   useEffect(() => {
     const userId = String(user?.id || user?.email || '').trim();

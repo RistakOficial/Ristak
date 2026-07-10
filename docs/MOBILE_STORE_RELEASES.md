@@ -157,6 +157,7 @@ Android:
 - Android store password
 - Android key alias
 - Android key password
+- Android `google-services.json` for Firebase package `com.ristak.android`
 - Google Play service account JSON
 
 Local direct signing/upload is supported only as a fallback for this Mac. In that
@@ -236,6 +237,10 @@ Android:
   `mobile/android/app/ristak-play-upload.jks`.
 - `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_PATH`: private Google Play service account
   JSON, usually `.mobile-release/android/google-play-service-account.json`.
+- `ANDROID_GOOGLE_SERVICES_JSON_PATH`: private Firebase Android config for
+  `com.ristak.android`, only for local fallback builds. In managed releases this
+  comes from Ristak Installer as `mobile_android_google_services_json` and is
+  written temporarily to `mobile/google-services.json` during CI.
 
 Get the keystore from the existing Play upload key or create the upload key for
 this package. Get the service account JSON from Google Play Console > Setup >
