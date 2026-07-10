@@ -28,7 +28,9 @@ import { useAIAgentAvailability, useAppConfig } from '@/hooks'
 import {
   conversationalAgentService,
   isConversationalAgentEntryConflictError,
+  DEFAULT_AGENT_ATTENTION,
   DEFAULT_AGENT_DEPOSIT_METHODS,
+  type AgentAttentionConfig,
   type AgentFilterOptions,
   type AgentCompletionMode,
   type AgentDepositMethodsConfig,
@@ -319,7 +321,8 @@ const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
     mode: 'notify_only',
     userId: '',
     userName: ''
-  }
+  },
+  attention: { ...DEFAULT_AGENT_ATTENTION }
 }
 
 interface ProductPrice {
@@ -992,6 +995,10 @@ function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowC
     completion: {
       ...defaultGoalWorkflow.completion,
       ...((workflow.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
+    },
+    attention: {
+      ...DEFAULT_AGENT_ATTENTION,
+      ...((workflow.attention || {}) as Partial<AgentAttentionConfig>)
     }
   }
 }
@@ -1115,6 +1122,11 @@ function mergeGoalWorkflow(
     completion: {
       ...base.completion,
       ...((patch.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
+    },
+    attention: {
+      ...DEFAULT_AGENT_ATTENTION,
+      ...((base.attention || {}) as Partial<AgentAttentionConfig>),
+      ...((patch.attention || {}) as Partial<AgentAttentionConfig>)
     }
   }
 }
@@ -3305,6 +3317,24 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                   />
                 )}
               </QuestionSelectRow>
+
+              <div className={styles.configQuestion}>
+                <div className={styles.configQuestionHeader}>
+                  <div className={styles.configQuestionCopy}>
+                    <span>Clientes existentes van con tu equipo</span>
+                    <small>
+                      Si la IA detecta que ya es cliente (tiene pagos o citas previas, o dice serlo aunque escriba de otro número), pasa el chat directo a un humano.
+                    </small>
+                  </div>
+                  <div className={styles.configQuestionSwitch}>
+                    <Switch
+                      checked={Boolean(goalWorkflow.attention?.pastClientsToHuman)}
+                      onChange={(next) => updateGoalWorkflow({ attention: { pastClientsToHuman: next } })}
+                      aria-label="Clientes existentes van con tu equipo"
+                    />
+                  </div>
+                </div>
+              </div>
 
             </div>
           </div>

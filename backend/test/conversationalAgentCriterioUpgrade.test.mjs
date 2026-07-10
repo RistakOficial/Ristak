@@ -215,16 +215,19 @@ test('crear un agente de citas publicado sin calendario se rechaza de raíz', as
     (error) => error.code === 'CONVERSATIONAL_AGENT_CALENDAR_REQUIRED'
   )
 
+  // El caso positivo se crea APAGADO para no chocar con agentes catch-all de
+  // otras suites cuando los tests corren en paralelo (la validación de publicar
+  // con calendario ya está cubierta unitariamente arriba).
   let agent = null
   try {
     agent = await createConversationalAgent({
       name: 'Agente con calendario',
-      enabled: true,
+      enabled: false,
       objective: 'citas',
       defaultCalendarId: 'cal_criterio_create'
     })
-    assert.equal(agent.enabled, true)
     assert.equal(agent.defaultCalendarId, 'cal_criterio_create')
+    assert.equal(agent.goalWorkflow.attention.pastClientsToHuman, false)
   } finally {
     if (agent?.id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [agent.id]).catch(() => undefined)
   }
@@ -373,4 +376,163 @@ test('getDepositPaymentMethods trata configs previas como link de pago activo', 
   assert.equal(configured.paymentLink, false)
   assert.equal(configured.bankTransfer, true)
   assert.equal(configured.bankTransferDetails, 'CLABE 012')
+})
+
+// ——— Escalera de intención de agenda y clientes existentes ———
+
+test('countSchedulingInsistence detecta peticiones de cita en mensajes entrantes', async () => {
+  const { countSchedulingInsistence, messageAsksToSchedule } = await import('../src/agents/conversational/prompt.js')
+
+  assert.equal(messageAsksToSchedule('quiero agendar una cita'), true)
+  assert.equal(messageAsksToSchedule('qué horarios tienes?'), true)
+  assert.equal(messageAsksToSchedule('cuándo me pueden atender'), true)
+  assert.equal(messageAsksToSchedule('me interesa saber más del tratamiento'), false)
+
+  const messages = [
+    { role: 'user', content: 'hola, info del tratamiento' },
+    { role: 'assistant', content: 'claro, cuéntame' },
+    { role: 'user', content: 'quiero agendar una cita' },
+    { role: 'assistant', content: 'va, te paso horarios' },
+    { role: 'user', content: 'sí, qué horarios tienes esta semana?' },
+    { role: 'user', content: '[Contexto interno de Ristak: pendiente agendar]' }
+  ]
+  assert.equal(countSchedulingInsistence(messages), 2)
+})
+
+test('la sección de agenda escala y se adapta a quién agenda', async () => {
+  const { buildSchedulingIntentSection } = await import('../src/agents/conversational/prompt.js')
+
+  // Solo aplica a objetivo citas.
+  assert.equal(buildSchedulingIntentSection(3, { objective: 'ventas' }), '')
+  assert.equal(buildSchedulingIntentSection(0, buildCitasConfig()), '')
+
+  const gentle = buildSchedulingIntentSection(1, buildCitasConfig())
+  assert.match(gentle, /La persona ya pidió agendar/)
+  assert.match(gentle, /Prioriza ofrecer horarios reales/)
+  assert.match(gentle, /get_free_slots/)
+
+  const hard = buildSchedulingIntentSection(2, buildCitasConfig())
+  assert.match(hard, /REGLA DURA: la persona quiere agendar \(2 peticiones\)/)
+  assert.match(hard, /book_appointment/)
+
+  const humanOwner = buildSchedulingIntentSection(2, buildCitasConfig({
+    successAction: 'ready_for_human',
+    goalWorkflow: { appointments: { owner: 'human', calendarId: 'cal_criterio_test' } }
+  }))
+  assert.match(humanOwner, /mark_ready_to_advance/)
+
+  const urlOwner = buildSchedulingIntentSection(2, buildCitasConfig({
+    successAction: 'send_goal_url',
+    goalWorkflow: { appointments: { owner: 'url', calendarId: 'cal_criterio_test' } }
+  }))
+  assert.match(urlOwner, /send_goal_url/)
+})
+
+test('las instrucciones inyectan la escalera de agenda y la regla de clientes existentes', () => {
+  const withScheduling = buildConversationalInstructions({
+    config: buildCitasConfig(),
+    ...BASE_PROMPT_CONTEXT,
+    schedulingInsistenceCount: 2
+  })
+  assert.match(withScheduling, /REGLA DURA: la persona quiere agendar/)
+
+  const withoutScheduling = buildConversationalInstructions({
+    config: buildCitasConfig(),
+    ...BASE_PROMPT_CONTEXT,
+    schedulingInsistenceCount: 0
+  })
+  assert.doesNotMatch(withoutScheduling, /REGLA DURA: la persona quiere agendar/)
+
+  // Clientes existentes: apagado no inyecta nada; encendido sin evidencia inyecta
+  // la regla conversacional; con evidencia CRM exige send_to_human de entrada.
+  const disabled = buildConversationalInstructions({
+    config: buildCitasConfig(),
+    ...BASE_PROMPT_CONTEXT,
+    pastClientContext: null
+  })
+  assert.doesNotMatch(disabled, /Clientes existentes van con el equipo/)
+
+  const enabledNoEvidence = buildConversationalInstructions({
+    config: buildCitasConfig(),
+    ...BASE_PROMPT_CONTEXT,
+    pastClientContext: { enabled: true, evidence: null }
+  })
+  assert.match(enabledNoEvidence, /Clientes existentes van con el equipo/)
+  assert.match(enabledNoEvidence, /AUNQUE escriba desde un número o canal nuevo/)
+  assert.doesNotMatch(enabledNoEvidence, /El sistema YA confirmó historial real/)
+
+  const enabledWithEvidence = buildConversationalInstructions({
+    config: buildCitasConfig(),
+    ...BASE_PROMPT_CONTEXT,
+    pastClientContext: { enabled: true, evidence: { isPastClient: true, facts: ['Pago registrado de 500 MXN el 2026-01-15'] } }
+  })
+  assert.match(enabledWithEvidence, /El sistema YA confirmó historial real/)
+  assert.match(enabledWithEvidence, /Pago registrado de 500 MXN el 2026-01-15/)
+  assert.match(enabledWithEvidence, /PRIMER turno ejecuta send_to_human/)
+
+  // En seguimiento no se inyectan (no hay tools de cierre ahí).
+  const followUp = buildConversationalInstructions({
+    config: buildCitasConfig(),
+    ...BASE_PROMPT_CONTEXT,
+    followUpContext: { index: 1, strategy: 'Retoma.' },
+    schedulingInsistenceCount: 3,
+    pastClientContext: { enabled: true, evidence: null }
+  })
+  assert.doesNotMatch(followUp, /REGLA DURA: la persona quiere agendar/)
+  assert.doesNotMatch(followUp, /Clientes existentes van con el equipo/)
+})
+
+test('normalizeAgentGoalWorkflow conserva attention.pastClientsToHuman', () => {
+  assert.equal(normalizeAgentGoalWorkflow({}).attention.pastClientsToHuman, false)
+  assert.equal(
+    normalizeAgentGoalWorkflow({ attention: { pastClientsToHuman: true } }).attention.pastClientsToHuman,
+    true
+  )
+  assert.equal(
+    normalizeAgentGoalWorkflow({ attention: { past_clients_to_human: 1 } }).attention.pastClientsToHuman,
+    true
+  )
+})
+
+test('detectPastClientEvidence encuentra historial real y respeta el corte de la conversación', async () => {
+  const { detectPastClientEvidence } = await import('../src/agents/conversational/runner.js')
+  const suffix = randomUUID().slice(0, 8)
+  const contactId = `contact_past_client_${suffix}`
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, full_name, created_at, updated_at)
+       VALUES (?, ?, ?, '2025-01-01T10:00:00.000Z', '2025-01-01T10:00:00.000Z')`,
+      [contactId, `+52555${Date.now().toString().slice(-7)}`, 'Cliente Previo Test']
+    )
+    await db.run(
+      `INSERT INTO payments (id, contact_id, amount, currency, status, payment_method, payment_mode, paid_at, date, created_at, updated_at)
+       VALUES (?, ?, 800, 'MXN', 'paid', 'card', 'live', '2025-06-01T10:00:00.000Z', '2025-06-01T10:00:00.000Z', '2025-06-01T10:00:00.000Z', '2025-06-01T10:00:00.000Z')`,
+      [`payment_past_${suffix}`, contactId]
+    )
+    await db.run(
+      `INSERT INTO appointments (id, contact_id, calendar_id, title, appointment_status, start_time, end_time, date_added, date_updated)
+       VALUES (?, ?, 'cal_past_test', 'Cita previa', 'showed', '2025-05-10T16:00:00.000Z', '2025-05-10T17:00:00.000Z', '2025-05-01T10:00:00.000Z', '2025-05-01T10:00:00.000Z')`,
+      [`appt_past_${suffix}`, contactId]
+    )
+
+    // Sin corte: encuentra pago y cita.
+    const evidence = await detectPastClientEvidence(contactId)
+    assert.equal(evidence.isPastClient, true)
+    assert.ok(evidence.facts.some((fact) => fact.includes('Pago registrado de 800 MXN')))
+    assert.ok(evidence.facts.some((fact) => fact.includes('Cita previa el 2025-05-10')))
+
+    // Con corte ANTERIOR a la evidencia (la conversación empezó antes de que
+    // pagara): el pago de este chat no lo convierte en "cliente previo".
+    const cutBefore = await detectPastClientEvidence(contactId, { beforeIso: '2025-01-15T00:00:00.000Z' })
+    assert.equal(cutBefore.isPastClient, false)
+
+    // Contacto sin historial: sin evidencia.
+    const empty = await detectPastClientEvidence(`contact_sin_historial_${suffix}`)
+    assert.equal(empty.isPastClient, false)
+  } finally {
+    await db.run('DELETE FROM payments WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+  }
 })

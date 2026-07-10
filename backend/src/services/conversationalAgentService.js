@@ -1175,6 +1175,11 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     mode: 'notify_only',
     userId: '',
     userName: ''
+  },
+  attention: {
+    // Clientes existentes (con historial o que dicen serlo) van directo con
+    // un humano en cuanto el agente los detecta.
+    pastClientsToHuman: false
   }
 }
 
@@ -1415,6 +1420,12 @@ export function normalizeAgentGoalWorkflow(input) {
       mode: normalizeCompletionMode(completion.mode, DEFAULT_GOAL_WORKFLOW_CONFIG.completion.mode),
       userId: String(completion.userId || completion.user_id || '').trim().slice(0, 120),
       userName: String(completion.userName || completion.user_name || '').trim().slice(0, 180)
+    },
+    attention: {
+      pastClientsToHuman: toBoolean(
+        (raw.attention && typeof raw.attention === 'object' ? raw.attention : {}).pastClientsToHuman ??
+        (raw.attention && typeof raw.attention === 'object' ? raw.attention : {}).past_clients_to_human
+      )
     }
   }
 }

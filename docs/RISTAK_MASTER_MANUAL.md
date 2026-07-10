@@ -2686,6 +2686,30 @@ perfil/formulario (`renderClosingStrategyTemplate`). La base directa
 registro Ejecutivo se calibra dentro del guion con la directiva de registro, ya
 no cambiando de base.
 
+Intencion de agenda (misma filosofia anti-toreo, solo objetivo citas):
+`countSchedulingInsistence` cuenta mensajes entrantes que piden cita/horarios.
+A la 1a peticion el prompt baja el descubrimiento a segundo plano y prioriza
+ofrecer horarios reales (maximo una pregunta operativa indispensable); a la 2a+
+inyecta REGLA DURA de ofrecer horarios o concretar la cita en esa misma
+respuesta, adaptada a quien agenda (IA -> get_free_slots + book_appointment;
+humano -> ofrecer horarios + mark_ready_to_advance; URL -> send_goal_url). El
+unico freno permitido es un requisito operativo configurado (p. ej. anticipo),
+que se resuelve en el mismo movimiento. Los candados de evidencia
+(confirmacion de slot real, closingPhaseGate) siguen intactos.
+
+Clientes existentes (opcional por agente): el toggle
+`goalWorkflow.attention.pastClientsToHuman` hace que los clientes previos pasen
+directo con el equipo. Dos senales: (1) evidencia CRM determinista
+(`detectPastClientEvidence` en runner.js: pagos exitosos live o citas pasadas no
+canceladas ANTERIORES al arranque de la conversacion, para no confundir un
+anticipo pagado en el mismo chat) — con evidencia, el prompt exige
+send_to_human en el primer turno con resumen; (2) senales conversacionales (la
+persona dice ser cliente, menciona su ultima visita/pedido) — aplica aunque
+escriba desde un numero o canal nuevo; ante ambiguedad, una pregunta ligera de
+confirmacion y al confirmar, traspaso. El traspaso usa la via normal de
+send_to_human (estado `human` + push prioritaria); no hay handoff forzado por
+regex del runtime.
+
 ### Aprendizaje, metricas y seguridad
 
 Los eventos nuevos guardan `agent_id`, de modo que un snapshot de aprendizaje no

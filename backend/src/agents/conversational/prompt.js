@@ -911,6 +911,78 @@ La persona ya pidió el precio/costo ${count} veces. Se acabó el rebote: seguir
 - Si de verdad NO existe un precio fijo (depende del caso), dilo honesto en una línea y aterriza el siguiente paso concreto. Jamás inventes un importe ni digas que no lo tienes a la mano.`
 }
 
+// Detección determinista de "la persona quiere agendar". Misma filosofía que el
+// precio: cuando la intención de cita ya es explícita, el descubrimiento sobra
+// y el agente debe ofrecer horarios reales en lugar de seguir preguntando.
+const SCHEDULING_REQUEST_PATTERN = /(agendar|agendarme|ag[eé]ndame|agendemos|una cita|la cita|mi cita|reservar|reservaci[oó]n|apartar|ap[aá]rtame|un turno|horarios?\s+(?:disponibles?|que\s+(?:tienes|tienen|manejan))|qu[eé]\s+horarios?|cu[aá]ndo\s+(?:me\s+)?(?:puedes?|pueden|podr[ií]an?|hay|tienes?|tienen|atienden)|disponibilidad|para\s+cu[aá]ndo|d[ií]a\s+y\s+hora|quiero\s+(?:ir|pasar|una\s+valoraci[oó]n|una\s+consulta))/i
+
+export function messageAsksToSchedule(text = '') {
+  return SCHEDULING_REQUEST_PATTERN.test(String(text || ''))
+}
+
+export function countSchedulingInsistence(messages = []) {
+  let count = 0
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (!message || message.role !== 'user') continue
+    const text = typeof message.content === 'string' ? message.content : ''
+    if (!text || text.startsWith('[Contexto interno de Ristak:')) continue
+    if (messageAsksToSchedule(text)) count += 1
+  }
+  return count
+}
+
+export function buildSchedulingIntentSection(schedulingInsistenceCount = 0, config = {}) {
+  if (config.objective !== 'citas') return ''
+  const count = Number(schedulingInsistenceCount) || 0
+  if (count < 1) return ''
+
+  const owner = config.goalWorkflow?.appointments?.owner || 'human'
+  const advanceLine = owner === 'ai'
+    ? 'Consulta get_free_slots del calendario configurado y ofrece pocas opciones concretas en ESTA respuesta. Cuando confirme día y hora exactos, agenda con book_appointment.'
+    : owner === 'url'
+      ? 'Confirma que quiere agendar y manda el enlace con send_goal_url en cuanto acepte; no la hagas contarte toda su historia primero.'
+      : 'Consulta get_free_slots del calendario configurado, ofrece pocas opciones concretas y, cuando elija o acepte un horario, ejecuta mark_ready_to_advance con ese horario en el resumen.'
+
+  if (count === 1) {
+    return `## La persona ya pidió agendar
+Hay una petición de cita en la conversación. Tu descubrimiento pasa a segundo plano:
+- Prioriza ofrecer horarios reales sobre seguir explorando el problema. Si el contexto ya favorece la cita (interés claro, dudas resueltas), avanza directo.
+- ${advanceLine}
+- Máximo UNA pregunta operativa indispensable antes de ofrecer horarios (p. ej. qué servicio o para quién), y sólo si de verdad cambia la cita. Nada de preguntas de calificación extra.
+- Si el contexto interno de Ristak recomienda proponer el siguiente paso o ejecutar la agenda, obedécelo en esta misma respuesta.`
+  }
+
+  return `## REGLA DURA: la persona quiere agendar (${count} peticiones)
+Ya pidió la cita ${count} veces. Seguir preguntando en vez de agendar la va a perder.
+- En ESTA respuesta ofrece horarios reales o concreta la cita según el flujo configurado. ${advanceLine}
+- Esta regla manda sobre el descubrimiento, la construcción de valor y cualquier pregunta de calificación pendiente. La única excepción es un requisito operativo configurado por el negocio (p. ej. el anticipo): resuélvelo en el mismo movimiento, sin frenar la cita.
+- No repitas datos que ya dio ni condiciones que ya aceptó.`
+}
+
+/**
+ * Regla opcional del negocio: clientes existentes van directo con el equipo.
+ * Cubre dos señales: evidencia real del CRM (pagos o citas previas) y lo que la
+ * persona DICE en la conversación (clave cuando escribe desde un número o canal
+ * nuevo y el CRM no la reconoce).
+ */
+export function buildPastClientHandoffSection(pastClientContext = null) {
+  if (!pastClientContext?.enabled) return ''
+  const facts = Array.isArray(pastClientContext.evidence?.facts)
+    ? pastClientContext.evidence.facts.filter(Boolean).slice(0, 4)
+    : []
+
+  const detectedBlock = facts.length
+    ? `- El sistema YA confirmó historial real de este contacto:\n${facts.map((fact) => `  - ${fact}`).join('\n')}\n- Por lo tanto: en tu PRIMER turno ejecuta send_to_human con motivo "cliente existente" y un resumen breve de lo que pide. No lo califiques, no le vendas y no lo hagas repetir su historia.`
+    : ''
+
+  return `## Clientes existentes van con el equipo (regla del negocio)
+Este negocio configuró que las personas que YA son clientes (compraron, pagaron o fueron atendidas antes) pasen directo con un humano.
+${detectedBlock ? `${detectedBlock}\n` : ''}- Si la persona dice o deja ver que ya es cliente (ya la atendieron, ya compró, "soy paciente de...", menciona su última visita, pedido o tratamiento), ejecuta send_to_human de inmediato con el motivo y lo que contó. Aplica AUNQUE escriba desde un número o canal nuevo: la gente cambia de teléfono.
+- Si sólo lo sospechas (algo ambiguo), confírmalo con UNA pregunta ligera y natural ("ya te habíamos atendido antes, cierto?") y al confirmar manda a humano.
+- No acuses ni asumas: una persona nueva preguntando por primera vez se atiende normal con tu estrategia.
+- Al transferir no anuncies procesos internos; si hace falta cerrar, una línea cálida de puente basta.`
+}
+
 function resolveAgentIdentity(config = {}, businessName = '') {
   const mode = cleanAgentIdentityText(config.identityMode, 24)
   const businessLabel = cleanAgentIdentityText(businessName, 120) || 'el negocio'
@@ -1029,7 +1101,7 @@ export function buildLanguageRegisterDirective(config = {}) {
   return ''
 }
 
-export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, channel = 'chat', advancedClosingContext = null, accountLocale = {}, followUpContext = null, priceInsistenceCount = 0 }) {
+export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, channel = 'chat', advancedClosingContext = null, accountLocale = {}, followUpContext = null, priceInsistenceCount = 0, schedulingInsistenceCount = 0, pastClientContext = null }) {
   const sections = []
   const channelLabel = getClosingChannelLabel(channel)
   // Base completa de parámetros del guion (con fallbacks instructivos) para que
@@ -1245,6 +1317,16 @@ ${businessRules}`)
   const priceInsistenceSection = followUpContext ? '' : buildPriceInsistenceSection(priceInsistenceCount)
   if (priceInsistenceSection) {
     sections.push(priceInsistenceSection)
+  }
+
+  const schedulingIntentSection = followUpContext ? '' : buildSchedulingIntentSection(schedulingInsistenceCount, config)
+  if (schedulingIntentSection) {
+    sections.push(schedulingIntentSection)
+  }
+
+  const pastClientSection = followUpContext ? '' : buildPastClientHandoffSection(pastClientContext)
+  if (pastClientSection) {
+    sections.push(pastClientSection)
   }
 
   sections.push(`## Contexto actual

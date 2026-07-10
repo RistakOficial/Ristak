@@ -14121,6 +14121,11 @@ type AgentEditorDraft = {
   contactScope: string;
   allowEmojis: boolean;
   hideAttendedNotifications: boolean;
+  calendarId: string;
+  depositPaymentLink: boolean;
+  depositBankTransfer: boolean;
+  depositBankTransferDetails: string;
+  pastClientsToHuman: boolean;
 };
 
 const AGENT_PROVIDER_OPTIONS = [
@@ -14203,9 +14208,35 @@ const AGENT_SCOPE_OPTIONS = [
   { id: 'new_only', label: 'Solo contactos nuevos' },
 ];
 
+function asAgentWorkflowRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+// Espejo de agentDepositApplies del backend: el anticipo aplica en ventas con
+// paymentMode 'deposit' (o legacy deposit.enabled sin modo) y en citas con
+// deposit.enabled. El agente conserva su goalWorkflow normalizado por el backend,
+// por eso comparamos booleanos estrictos.
+function agentEditorDepositApplies(objective: string, workflow: Record<string, unknown>): boolean {
+  const deposit = asAgentWorkflowRecord(workflow.deposit);
+  const depositEnabled = deposit.enabled === true;
+  if (objective === 'ventas') {
+    const sales = asAgentWorkflowRecord(workflow.sales);
+    const mode = String(sales.paymentMode || '').trim();
+    return mode === 'deposit' || (!mode && depositEnabled);
+  }
+  return objective === 'citas' && depositEnabled;
+}
+
 function createAgentEditorDraft(agent: ConversationalAgentDefinition): AgentEditorDraft {
   const provider = AGENT_PROVIDER_OPTIONS.some((item) => item.id === agent.aiProvider) ? String(agent.aiProvider) : 'openai';
   const model = String(agent.model || AGENT_PROVIDER_DEFAULT_MODEL[provider]);
+  const workflow = asAgentWorkflowRecord(agent.goalWorkflow);
+  const appointments = asAgentWorkflowRecord(workflow.appointments);
+  const deposit = asAgentWorkflowRecord(workflow.deposit);
+  const depositMethods = asAgentWorkflowRecord(deposit.methods);
+  const attention = asAgentWorkflowRecord(workflow.attention);
   return {
     name: String(agent.name || 'Agente'),
     aiProvider: provider,
@@ -14224,6 +14255,12 @@ function createAgentEditorDraft(agent: ConversationalAgentDefinition): AgentEdit
     contactScope: String(agent.contactScope || 'all'),
     allowEmojis: Boolean(agent.allowEmojis),
     hideAttendedNotifications: Boolean(agent.hideAttendedNotifications),
+    calendarId: String(appointments.calendarId || agent.defaultCalendarId || '').trim(),
+    // paymentLink default true: espejo de la normalización del backend para configs previas.
+    depositPaymentLink: depositMethods.paymentLink === undefined ? true : depositMethods.paymentLink === true,
+    depositBankTransfer: depositMethods.bankTransfer === true,
+    depositBankTransferDetails: String(deposit.bankTransferDetails || ''),
+    pastClientsToHuman: attention.pastClientsToHuman === true,
   };
 }
 
@@ -14314,6 +14351,24 @@ function NativeAgentHubSheet({
   const [editingAgent, setEditingAgent] = useState<ConversationalAgentDefinition | null>(null);
   const [draft, setDraft] = useState<AgentEditorDraft | null>(null);
   const [savingEditor, setSavingEditor] = useState(false);
+  const [calendars, setCalendars] = useState<CalendarItem[]>([]);
+  const [calendarsLoading, setCalendarsLoading] = useState(false);
+  const calendarsRequestedRef = useRef(false);
+
+  const loadCalendars = useCallback(async () => {
+    if (calendarsRequestedRef.current) return;
+    calendarsRequestedRef.current = true;
+    setCalendarsLoading(true);
+    try {
+      const response = await api.getCalendars();
+      setCalendars(unwrapCalendars(response).filter(calendarIsActive));
+    } catch {
+      // Permite reintentar al volver a abrir el editor.
+      calendarsRequestedRef.current = false;
+    } finally {
+      setCalendarsLoading(false);
+    }
+  }, [api]);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -14399,6 +14454,7 @@ function NativeAgentHubSheet({
     setEditingAgent(agent);
     setDraft(createAgentEditorDraft(agent));
     setNotice('');
+    void loadCalendars();
   };
 
   const saveAgent = async () => {
@@ -14408,6 +14464,45 @@ function NativeAgentHubSheet({
       Alert.alert('Falta el nombre', 'Ponle un nombre al agente antes de guardar.');
       return;
     }
+    const calendarId = draft.calendarId.trim();
+    if (draft.objective === 'citas' && !calendarId) {
+      Alert.alert('Falta el calendario', 'Elige el calendario para las citas antes de guardar.');
+      return;
+    }
+    const currentWorkflow = asAgentWorkflowRecord(editingAgent.goalWorkflow);
+    if (agentEditorDepositApplies(draft.objective, currentWorkflow)) {
+      if (!draft.depositPaymentLink && !draft.depositBankTransfer) {
+        Alert.alert('Falta el método del anticipo', 'Activa al menos un método para cobrar el anticipo (link de pago o transferencia).');
+        return;
+      }
+      if (draft.depositBankTransfer && !draft.depositBankTransferDetails.trim()) {
+        Alert.alert('Faltan los datos de transferencia', 'Escribe los datos de transferencia (banco, cuenta o CLABE y titular) para el anticipo.');
+        return;
+      }
+    }
+    // El backend reemplaza goalWorkflow completo cuando viene en el payload:
+    // siempre se parte del workflow actual del agente y se aplican solo los
+    // parches del editor para no pisar el resto de la configuración avanzada.
+    const nextGoalWorkflow: Record<string, unknown> = {
+      ...currentWorkflow,
+      appointments: {
+        ...asAgentWorkflowRecord(currentWorkflow.appointments),
+        calendarId,
+      },
+      deposit: {
+        ...asAgentWorkflowRecord(currentWorkflow.deposit),
+        methods: {
+          ...asAgentWorkflowRecord(asAgentWorkflowRecord(currentWorkflow.deposit).methods),
+          paymentLink: draft.depositPaymentLink,
+          bankTransfer: draft.depositBankTransfer,
+        },
+        bankTransferDetails: draft.depositBankTransferDetails.trim(),
+      },
+      attention: {
+        ...asAgentWorkflowRecord(currentWorkflow.attention),
+        pastClientsToHuman: draft.pastClientsToHuman,
+      },
+    };
     setSavingEditor(true);
     try {
       const updated = await api.updateConversationalAgent(editingAgent.id, {
@@ -14428,6 +14523,8 @@ function NativeAgentHubSheet({
         contactScope: draft.contactScope,
         allowEmojis: draft.allowEmojis,
         hideAttendedNotifications: draft.hideAttendedNotifications,
+        defaultCalendarId: calendarId || null,
+        goalWorkflow: nextGoalWorkflow,
       });
       setAgents((current) => current.map((agent) => agent.id === updated.id ? { ...agent, ...updated } : agent));
       setEditingAgent(null);
@@ -14451,6 +14548,16 @@ function NativeAgentHubSheet({
 
   const aiReady = Boolean(aiStatus?.configured && !aiStatus?.needsReconnect);
   const businessPromptReady = config?.businessPromptStatus?.ready !== false;
+  const depositApplies = Boolean(editingAgent && draft
+    && agentEditorDepositApplies(draft.objective, asAgentWorkflowRecord(editingAgent.goalWorkflow)));
+  const draftCalendarId = draft?.calendarId?.trim() || '';
+  const calendarOptions = useMemo(() => {
+    const options = calendars.map((calendar) => ({ id: getCalendarKey(calendar), label: getCalendarTitle(calendar) }));
+    if (draftCalendarId && !options.some((option) => option.id === draftCalendarId)) {
+      options.unshift({ id: draftCalendarId, label: 'Calendario actual' });
+    }
+    return options;
+  }, [calendars, draftCalendarId]);
 
   return (
     <BottomActionSheet
@@ -14500,11 +14607,37 @@ function NativeAgentHubSheet({
               <AgentEditorTextField multiline label="Objetivo propio" value={draft.customObjective} placeholder="Describe el resultado que debe conseguir." onChange={(customObjective) => setDraft((current) => current ? { ...current, customObjective } : current)} />
             ) : null}
             <AgentOptionGroup label="Al cumplir la meta" options={AGENT_SUCCESS_OPTIONS} selected={draft.successAction} onChange={(successAction) => setDraft((current) => current ? { ...current, successAction } : current)} />
+            {draft.objective === 'citas' ? (
+              calendarsLoading && !calendarOptions.length ? (
+                <View style={styles.agentEditorFieldGroup}>
+                  <Text style={styles.agentEditorFieldLabel}>Calendario para las citas</Text>
+                  <ActivityIndicator color={COLORS.accent} size="small" />
+                </View>
+              ) : calendarOptions.length ? (
+                <AgentOptionGroup label="Calendario para las citas" options={calendarOptions} selected={draft.calendarId} onChange={(calendarId) => setDraft((current) => current ? { ...current, calendarId } : current)} />
+              ) : (
+                <View style={styles.agentEditorFieldGroup}>
+                  <Text style={styles.agentEditorFieldLabel}>Calendario para las citas</Text>
+                  <Text style={styles.agentEditorHelp}>No hay calendarios activos. Activa uno en Calendario para que el agente pueda ofrecer espacios.</Text>
+                </View>
+              )
+            ) : null}
+            {depositApplies ? (
+              <View style={styles.agentEditorFieldGroup}>
+                <Text style={styles.agentEditorFieldLabel}>Cómo cobrar el anticipo</Text>
+                <SettingsToggleRow embedded title="Link de pago" description="Comparte un enlace de pago para cubrir el anticipo." checked={draft.depositPaymentLink} onChange={(depositPaymentLink) => setDraft((current) => current ? { ...current, depositPaymentLink } : current)} />
+                <SettingsToggleRow embedded title="Transferencia bancaria" description="Comparte tus datos bancarios para recibir el anticipo." checked={draft.depositBankTransfer} onChange={(depositBankTransfer) => setDraft((current) => current ? { ...current, depositBankTransfer } : current)} />
+              </View>
+            ) : null}
+            {depositApplies && draft.depositBankTransfer ? (
+              <AgentEditorTextField multiline label="Datos para transferencia" value={draft.depositBankTransferDetails} placeholder="Banco, cuenta o CLABE y titular." onChange={(depositBankTransferDetails) => setDraft((current) => current ? { ...current, depositBankTransferDetails } : current)} />
+            ) : null}
           </View>
           <View style={styles.agentEditorSection}>
             <Text style={styles.agentEditorSectionTitle}>4. Reglas de atención</Text>
             <AgentEditorTextField multiline label="Datos que debe pedir" value={draft.requiredData} placeholder="Nombre, servicio, presupuesto o datos obligatorios." onChange={(requiredData) => setDraft((current) => current ? { ...current, requiredData } : current)} />
             <AgentEditorTextField multiline label="Cuándo pasar al equipo" value={draft.handoffRules} placeholder="Casos que debe revisar una persona." onChange={(handoffRules) => setDraft((current) => current ? { ...current, handoffRules } : current)} />
+            <SettingsToggleRow embedded title="Clientes existentes van con tu equipo" description="Si detecta que ya es cliente (o dice serlo), pasa el chat directo a un humano." checked={draft.pastClientsToHuman} onChange={(pastClientsToHuman) => setDraft((current) => current ? { ...current, pastClientsToHuman } : current)} />
           </View>
           <View style={styles.agentEditorSection}>
             <Text style={styles.agentEditorSectionTitle}>5. Entrada y salida</Text>

@@ -15,6 +15,9 @@ enum ConversationalAgentErrorCode {
     static let entryConflict = "CONVERSATIONAL_AGENT_ENTRY_CONFLICT"
     static let limitReached = "CONVERSATIONAL_AGENT_LIMIT_REACHED"
     static let businessPromptNotReady = "CONVERSATIONAL_BUSINESS_PROMPT_NOT_READY"
+    static let calendarRequired = "CONVERSATIONAL_AGENT_CALENDAR_REQUIRED"
+    static let depositMethodRequired = "CONVERSATIONAL_AGENT_DEPOSIT_METHOD_REQUIRED"
+    static let transferDetailsRequired = "CONVERSATIONAL_AGENT_TRANSFER_DETAILS_REQUIRED"
 }
 
 // MARK: Estado del "prompt del negocio" (bloquea encender/crear si no está listo)
@@ -460,6 +463,7 @@ struct AgentGoalWorkflowConfig: Codable, Sendable, Equatable {
     var triggerLink: AgentGoalTriggerLinkWorkflow
     var deposit: AgentGoalDepositWorkflow
     var completion: AgentGoalCompletionWorkflow
+    var attention: AgentGoalAttentionWorkflow
 
     static let `default` = AgentGoalWorkflowConfig(
         appointments: .default,
@@ -468,8 +472,48 @@ struct AgentGoalWorkflowConfig: Codable, Sendable, Equatable {
         qualification: .default,
         triggerLink: .default,
         deposit: .default,
-        completion: .default
+        completion: .default,
+        attention: .default
     )
+
+    init(
+        appointments: AgentGoalAppointmentsWorkflow,
+        sales: AgentGoalSalesWorkflow,
+        data: AgentGoalDataWorkflow,
+        qualification: AgentGoalQualificationWorkflow,
+        triggerLink: AgentGoalTriggerLinkWorkflow,
+        deposit: AgentGoalDepositWorkflow,
+        completion: AgentGoalCompletionWorkflow,
+        attention: AgentGoalAttentionWorkflow
+    ) {
+        self.appointments = appointments
+        self.sales = sales
+        self.data = data
+        self.qualification = qualification
+        self.triggerLink = triggerLink
+        self.deposit = deposit
+        self.completion = completion
+        self.attention = attention
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case appointments, sales, data, qualification, triggerLink, deposit, completion, attention
+    }
+
+    /// Decode tolerante: cada sub-config cae a su default si falta o viene mal
+    /// formada, para que un backend viejo (sin `attention` o sin `deposit.methods`)
+    /// no tire todo el workflow al default y el PUT completo no borre nada.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        appointments = (try? c.decodeIfPresent(AgentGoalAppointmentsWorkflow.self, forKey: .appointments)) ?? .default
+        sales = (try? c.decodeIfPresent(AgentGoalSalesWorkflow.self, forKey: .sales)) ?? .default
+        data = (try? c.decodeIfPresent(AgentGoalDataWorkflow.self, forKey: .data)) ?? .default
+        qualification = (try? c.decodeIfPresent(AgentGoalQualificationWorkflow.self, forKey: .qualification)) ?? .default
+        triggerLink = (try? c.decodeIfPresent(AgentGoalTriggerLinkWorkflow.self, forKey: .triggerLink)) ?? .default
+        deposit = (try? c.decodeIfPresent(AgentGoalDepositWorkflow.self, forKey: .deposit)) ?? .default
+        completion = (try? c.decodeIfPresent(AgentGoalCompletionWorkflow.self, forKey: .completion)) ?? .default
+        attention = (try? c.decodeIfPresent(AgentGoalAttentionWorkflow.self, forKey: .attention)) ?? .default
+    }
 }
 
 struct AgentGoalAppointmentsWorkflow: Codable, Sendable, Equatable {
@@ -541,6 +585,8 @@ struct AgentGoalDepositWorkflow: Codable, Sendable, Equatable {
     var minAmount: Double?
     var maxAmount: Double?
     var currency: String
+    var methods: AgentGoalDepositMethods
+    var bankTransferDetails: String
 
     static let `default` = AgentGoalDepositWorkflow(
         enabled: false,
@@ -548,8 +594,94 @@ struct AgentGoalDepositWorkflow: Codable, Sendable, Equatable {
         amount: nil,
         minAmount: nil,
         maxAmount: nil,
-        currency: ""
+        currency: "",
+        methods: .default,
+        bankTransferDetails: ""
     )
+
+    init(
+        enabled: Bool,
+        mode: String,
+        amount: Double?,
+        minAmount: Double?,
+        maxAmount: Double?,
+        currency: String,
+        methods: AgentGoalDepositMethods = .default,
+        bankTransferDetails: String = ""
+    ) {
+        self.enabled = enabled
+        self.mode = mode
+        self.amount = amount
+        self.minAmount = minAmount
+        self.maxAmount = maxAmount
+        self.currency = currency
+        self.methods = methods
+        self.bankTransferDetails = bankTransferDetails
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case enabled, mode, amount, minAmount, maxAmount, currency, methods, bankTransferDetails
+    }
+
+    /// Decode tolerante: `methods` y `bankTransferDetails` son campos nuevos del
+    /// backend; si faltan caen a sus defaults en vez de tumbar el decode. Todos
+    /// los campos se codifican en el PUT para no borrar configuración hecha en web.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = c.flexibleBool(forKey: .enabled) ?? Self.default.enabled
+        mode = c.flexibleString(forKey: .mode) ?? Self.default.mode
+        amount = c.flexibleDouble(forKey: .amount)
+        minAmount = c.flexibleDouble(forKey: .minAmount)
+        maxAmount = c.flexibleDouble(forKey: .maxAmount)
+        currency = c.flexibleString(forKey: .currency) ?? Self.default.currency
+        methods = (try? c.decodeIfPresent(AgentGoalDepositMethods.self, forKey: .methods)) ?? .default
+        bankTransferDetails = c.flexibleString(forKey: .bankTransferDetails) ?? Self.default.bankTransferDetails
+    }
+}
+
+/// Métodos con los que la IA puede cobrar el anticipo.
+/// `paymentLink` default true para no cambiar el comportamiento de configs previas.
+struct AgentGoalDepositMethods: Codable, Sendable, Equatable {
+    var paymentLink: Bool
+    var bankTransfer: Bool
+
+    static let `default` = AgentGoalDepositMethods(paymentLink: true, bankTransfer: false)
+
+    init(paymentLink: Bool, bankTransfer: Bool) {
+        self.paymentLink = paymentLink
+        self.bankTransfer = bankTransfer
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case paymentLink, bankTransfer
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        paymentLink = c.flexibleBool(forKey: .paymentLink) ?? Self.default.paymentLink
+        bankTransfer = c.flexibleBool(forKey: .bankTransfer) ?? Self.default.bankTransfer
+    }
+}
+
+/// Reglas de atención transversales al objetivo. `pastClientsToHuman`: si la IA
+/// detecta que ya es cliente (o dice serlo), pasa el chat directo a un humano.
+struct AgentGoalAttentionWorkflow: Codable, Sendable, Equatable {
+    var pastClientsToHuman: Bool
+
+    static let `default` = AgentGoalAttentionWorkflow(pastClientsToHuman: false)
+
+    init(pastClientsToHuman: Bool) {
+        self.pastClientsToHuman = pastClientsToHuman
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case pastClientsToHuman
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pastClientsToHuman = c.flexibleBool(forKey: .pastClientsToHuman) ?? Self.default.pastClientsToHuman
+    }
 }
 
 struct AgentGoalCompletionWorkflow: Codable, Sendable, Equatable {

@@ -116,6 +116,10 @@ export interface AgentDepositMethodsConfig {
   paymentLink: boolean
   bankTransfer: boolean
 }
+
+export interface AgentAttentionConfig {
+  pastClientsToHuman: boolean
+}
 export type AgentSalesPaymentMode = 'full_payment' | 'deposit'
 export type AgentCompletionMode = 'notify_only' | 'assign_user'
 export type AgentIdentityMode = 'business' | 'user' | 'custom' | 'agent'
@@ -169,6 +173,7 @@ export interface AgentGoalWorkflowConfig {
     userId: string
     userName: string
   }
+  attention?: AgentAttentionConfig
 }
 
 export interface ConversationalAgentConfig {
@@ -587,6 +592,10 @@ export const DEFAULT_AGENT_DEPOSIT_METHODS: AgentDepositMethodsConfig = {
   bankTransfer: false
 }
 
+export const DEFAULT_AGENT_ATTENTION: AgentAttentionConfig = {
+  pastClientsToHuman: false
+}
+
 export const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
@@ -635,7 +644,8 @@ export const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     mode: 'notify_only',
     userId: '',
     userName: ''
-  }
+  },
+  attention: { ...DEFAULT_AGENT_ATTENTION }
 }
 
 const DEFAULT_AGENT_FOLLOW_UP: AgentFollowUpConfig = {
@@ -772,6 +782,10 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
       completion: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.completion,
         ...((agent.goalWorkflow?.completion || {}) as Partial<AgentGoalWorkflowConfig['completion']>)
+      },
+      attention: {
+        ...DEFAULT_AGENT_ATTENTION,
+        ...((agent.goalWorkflow?.attention || {}) as Partial<AgentAttentionConfig>)
       }
     }
   }

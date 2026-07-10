@@ -480,6 +480,13 @@
   min-width: 0;
 }
 
+.configQuestionSwitch {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  min-height: 34px;
+}
+
 .configQuestionBody {
   display: flex;
   flex-direction: column;
@@ -1092,6 +1099,11 @@
   .configQuestionHeader,
   .inlineFields {
     grid-template-columns: 1fr;
+  }
+
+  .configQuestionSwitch {
+    justify-content: flex-start;
+    min-height: 0;
   }
 
   .selectAlignedFields {

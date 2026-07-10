@@ -884,6 +884,17 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 onChange={(e) => patch({ handoffRules: e.target.value })}
               />
               <p className={styles.fieldHint}>Puedes dejarlo en blanco y configurarlo después.</p>
+              <div className={styles.field}>
+                <div className={styles.depositMethodRow}>
+                  <Switch
+                    checked={draft.pastClientsToHuman}
+                    onChange={(next) => patch({ pastClientsToHuman: next })}
+                    aria-label="Clientes existentes van con tu equipo"
+                  />
+                  <span>Clientes existentes van con tu equipo</span>
+                </div>
+                <p className={styles.fieldHint}>Si la IA detecta que ya es cliente (tiene pagos o citas previas, o dice serlo aunque escriba de otro número), pasa el chat directo a un humano.</p>
+              </div>
             </>
           )}
 
@@ -950,6 +961,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 <RecapRow label="Atiende a" value={draft.contactScope === 'new_only' ? 'Solo contactos nuevos' : 'Todos (nuevos y actuales)'} />
                 <RecapRow label="Pide datos" value={draft.requiredData.trim() ? 'Sí' : 'No por ahora'} />
                 <RecapRow label="Pasa al equipo" value={draft.handoffRules.trim() ? 'Con reglas propias' : 'Sin reglas extra'} />
+                <RecapRow label="Clientes existentes" value={draft.pastClientsToHuman ? 'Van con tu equipo' : 'Los atiende la IA'} />
                 <RecapRow label="Personalización" value={draft.extraInstructions.trim() ? 'Sí, con reglas propias' : 'Ninguna por ahora'} />
               </div>
             </>

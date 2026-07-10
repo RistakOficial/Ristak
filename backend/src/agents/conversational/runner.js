@@ -65,12 +65,14 @@ import {
   buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
   countPriceInsistence,
+  countSchedulingInsistence,
   getAccountRegionalLocaleTag,
   getClosingChannelLabel,
   hasConfiguredPriceDisclosureGate,
   PRICE_INSISTENCE_HARD_THRESHOLD
 } from './prompt.js'
 import { createConversationalTools } from './tools.js'
+import { NON_LIVE_PAYMENT_MODES, SUCCESS_PAYMENT_STATUSES } from './actionEvidence.js'
 import { buildInputItems } from '../runner.js'
 import {
   splitMessageIntoBubbles,
@@ -1247,7 +1249,73 @@ async function loadInboundMessagesForRecoveryWindow(channel, {
   return rows
 }
 
-async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '', executionId = '', priceInsistenceCount = 0 }) {
+// Evidencia de "cliente existente" para la regla opcional de mandarlos con el
+// equipo: pagos exitosos reales o citas pasadas no canceladas ANTERIORES al
+// arranque de esta conversación (para no confundir un anticipo pagado en este
+// mismo chat con un cliente previo).
+export async function detectPastClientEvidence(contactId, { beforeIso = null } = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  if (!cleanContactId) return { isPastClient: false, facts: [] }
+  const cutoffMs = (() => {
+    const parsed = new Date(beforeIso || '')
+    return Number.isNaN(parsed.getTime()) ? Date.now() : parsed.getTime()
+  })()
+
+  const [payments, appointments] = await Promise.all([
+    db.all(`
+      SELECT amount, currency, status, payment_mode, COALESCE(paid_at, date, created_at) AS paid_ts
+      FROM payments
+      WHERE contact_id = ?
+      ORDER BY COALESCE(paid_at, date, created_at) DESC
+      LIMIT 50
+    `, [cleanContactId]).catch(() => []),
+    db.all(`
+      SELECT start_time, COALESCE(appointment_status, status, '') AS appointment_state
+      FROM appointments
+      WHERE contact_id = ? AND deleted_at IS NULL AND start_time < ?
+      ORDER BY start_time DESC
+      LIMIT 20
+    `, [cleanContactId, new Date().toISOString()]).catch(() => [])
+  ])
+
+  const facts = []
+  for (const payment of payments || []) {
+    const status = String(payment.status || '').trim().toLowerCase()
+    const mode = String(payment.payment_mode || '').trim().toLowerCase()
+    const paidMs = new Date(payment.paid_ts || '').getTime()
+    if (!SUCCESS_PAYMENT_STATUSES.has(status) || NON_LIVE_PAYMENT_MODES.has(mode)) continue
+    if (!Number.isFinite(paidMs) || paidMs >= cutoffMs) continue
+    facts.push(`Pago registrado de ${payment.amount} ${String(payment.currency || '').toUpperCase()} el ${String(payment.paid_ts).slice(0, 10)}`)
+    if (facts.length >= 2) break
+  }
+  for (const appointment of appointments || []) {
+    const state = String(appointment.appointment_state || '').trim().toLowerCase()
+    const startMs = new Date(appointment.start_time || '').getTime()
+    if (['cancelled', 'noshow'].includes(state)) continue
+    if (!Number.isFinite(startMs) || startMs >= cutoffMs) continue
+    facts.push(`Cita previa el ${String(appointment.start_time).slice(0, 10)}${state ? ` (${state})` : ''}`)
+    if (facts.length >= 4) break
+  }
+
+  return { isPastClient: facts.length > 0, facts }
+}
+
+function pastClientHandoffEnabled(config = {}) {
+  return Boolean(config?.goalWorkflow?.attention?.pastClientsToHuman)
+}
+
+async function buildPastClientRuntimeContext({ config, contactId, agentState = null, dryRun = false }) {
+  if (!pastClientHandoffEnabled(config)) return null
+  if (dryRun || !contactId) {
+    // El tester no tiene contacto real: la regla conversacional sigue activa.
+    return { enabled: true, evidence: null }
+  }
+  const beforeIso = agentState?.activated_at || agentState?.created_at || null
+  const evidence = await detectPastClientEvidence(contactId, { beforeIso }).catch(() => ({ isPastClient: false, facts: [] }))
+  return { enabled: true, evidence: evidence.isPastClient ? evidence : null }
+}
+
+async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '', executionId = '', priceInsistenceCount = 0, schedulingInsistenceCount = 0, pastClientContext = null }) {
   const [aiConfig, timezone, businessProfile, accountLocale, approvedLearning] = await Promise.all([
     getAIAgentConfig({}),
     getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
@@ -1305,7 +1373,9 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     advancedClosingContext,
     accountLocale,
     followUpContext,
-    priceInsistenceCount
+    priceInsistenceCount,
+    schedulingInsistenceCount,
+    pastClientContext
   })
 
   const agent = new Agent({
@@ -2395,6 +2465,13 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       const decisionContextMessage = buildConversationDecisionContextMessage(conversationDecision)
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
       const priceInsistenceCount = countPriceInsistence(baseMessagesForAgent)
+      const schedulingInsistenceCount = countSchedulingInsistence(baseMessagesForAgent)
+      const pastClientContext = await buildPastClientRuntimeContext({
+        config: agentConfig,
+        contactId,
+        agentState,
+        dryRun: false
+      })
 
       const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
         config: agentConfig,
@@ -2406,7 +2483,9 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       ruleContext,
       executionId: latest.id,
       knowledgeQuery: traceMessage,
-      priceInsistenceCount
+      priceInsistenceCount,
+      schedulingInsistenceCount,
+      pastClientContext
       })
       const previousIntelligence = await loadConversationIntelligenceState({
         stateId: agentState.id,
@@ -3039,6 +3118,13 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   }
 
   const previewPriceInsistenceCount = countPriceInsistence(cleanMessages)
+  const previewSchedulingInsistenceCount = countSchedulingInsistence(cleanMessages)
+  const previewPastClientContext = await buildPastClientRuntimeContext({
+    config: runtimeConfig,
+    contactId: null,
+    agentState: null,
+    dryRun: true
+  })
   const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
     config: runtimeConfig,
     conversationModel: runtimeConfig.model || runtimeDefaults.model,
@@ -3048,7 +3134,9 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     channel: previewChannel,
     ruleContext: null,
     knowledgeQuery: cleanMessages.map((message) => message.content).join(' ').slice(-4000),
-    priceInsistenceCount: previewPriceInsistenceCount
+    priceInsistenceCount: previewPriceInsistenceCount,
+    schedulingInsistenceCount: previewSchedulingInsistenceCount,
+    pastClientContext: previewPastClientContext
   })
 
   const openAIFallbackApiKey = aiProvider === 'openai'

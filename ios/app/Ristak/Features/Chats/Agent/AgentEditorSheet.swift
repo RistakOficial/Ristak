@@ -407,21 +407,28 @@ struct AgentEditorSheet: View {
 
     private var appointmentGoalControls: some View {
         VStack(alignment: .leading, spacing: RistakTheme.Spacing.xs) {
+            // El calendario es obligatorio para citas sin importar quién cumple la
+            // meta: el agente lo usa para ofrecer los espacios disponibles.
+            menuField(
+                "Calendario",
+                selected: goalCalendarName(goalWorkflow.appointments.calendarId ?? agent.defaultCalendarId),
+                options: goalCalendarChoices
+            ) { calendarId in
+                let selected = calendarId.isEmpty ? nil : calendarId
+                goalWorkflow.appointments.calendarId = selected
+            }
+
             if successAction == AgentSuccessActionOption.bookAppointment.rawValue ||
                 successAction == AgentSuccessActionOption.sendGoalURL.rawValue {
-                menuField(
-                    "Calendario",
-                    selected: calendarName(goalWorkflow.appointments.calendarId ?? agent.defaultCalendarId),
-                    options: calendarChoices
-                ) { calendarId in
-                    let selected = calendarId.isEmpty ? nil : calendarId
-                    goalWorkflow.appointments.calendarId = selected
-                }
                 SettingsToggleRow(
                     title: "Permitir mismo horario",
                     subtitle: "Úsalo sólo si tu operación acepta citas sobrepuestas.",
                     isOn: goalWorkflow.appointments.allowOverlappingAppointments
                 ) { goalWorkflow.appointments.allowOverlappingAppointments = $0 }
+            }
+
+            if successAction == AgentSuccessActionOption.bookAppointment.rawValue {
+                depositControls
             }
 
             if successAction == AgentSuccessActionOption.sendGoalURL.rawValue {
@@ -467,7 +474,11 @@ struct AgentEditorSheet: View {
                 isOn: goalWorkflow.deposit.enabled
             ) { enabled in
                 goalWorkflow.deposit.enabled = enabled
-                goalWorkflow.sales.paymentMode = enabled ? AgentSalesPaymentModeOption.deposit.rawValue : AgentSalesPaymentModeOption.full_payment.rawValue
+                // El modo de venta sólo existe en el objetivo de ventas; en citas
+                // el anticipo vive únicamente en deposit.enabled.
+                if objective == AgentObjectiveOption.ventas.rawValue {
+                    goalWorkflow.sales.paymentMode = enabled ? AgentSalesPaymentModeOption.deposit.rawValue : AgentSalesPaymentModeOption.full_payment.rawValue
+                }
                 if enabled { ensureWorkflowCurrency() }
             }
             if goalWorkflow.deposit.enabled {
@@ -485,8 +496,58 @@ struct AgentEditorSheet: View {
                     numberField("Anticipo", value: doubleText($goalWorkflow.deposit.amount))
                 }
                 textField("Moneda del anticipo", text: $goalWorkflow.deposit.currency, placeholder: appConfig.accountCurrency ?? "Cuenta")
+
+                depositMethodControls
             }
         }
+    }
+
+    private var depositMethodControls: some View {
+        VStack(alignment: .leading, spacing: RistakTheme.Spacing.xs) {
+            Text("Cómo puede pagar el anticipo")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(RistakTheme.textDim)
+
+            SettingsToggleRow(
+                title: "Link de pago",
+                subtitle: "La IA manda un link para pagar el anticipo.",
+                isOn: goalWorkflow.deposit.methods.paymentLink
+            ) { goalWorkflow.deposit.methods.paymentLink = $0 }
+
+            SettingsToggleRow(
+                title: "Transferencia bancaria",
+                subtitle: "La IA comparte tus datos bancarios para el anticipo.",
+                isOn: goalWorkflow.deposit.methods.bankTransfer
+            ) { goalWorkflow.deposit.methods.bankTransfer = $0 }
+
+            if !goalWorkflow.deposit.methods.paymentLink && !goalWorkflow.deposit.methods.bankTransfer {
+                Text("Activa al menos un método para cobrar el anticipo.")
+                    .font(.footnote)
+                    .foregroundStyle(RistakTheme.neg)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if goalWorkflow.deposit.methods.bankTransfer {
+                editorField(
+                    "Datos para transferencia",
+                    text: bankTransferDetailsBinding,
+                    minHeight: 88,
+                    placeholder: "Banco, CLABE o cuenta, titular…"
+                )
+                Text("El agente compartirá estos datos y pedirá foto del comprobante.")
+                    .font(.footnote)
+                    .foregroundStyle(RistakTheme.textDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Binding con tope de 1200 caracteres (mismo límite que el backend).
+    private var bankTransferDetailsBinding: Binding<String> {
+        Binding(
+            get: { goalWorkflow.deposit.bankTransferDetails },
+            set: { goalWorkflow.deposit.bankTransferDetails = String($0.prefix(1200)) }
+        )
     }
 
     private var qualificationControls: some View {
@@ -613,6 +674,12 @@ struct AgentEditorSheet: View {
                 if handoffRulesOpen {
                     editorField("Cuándo pasar al equipo", text: $handoffRules, minHeight: 88, placeholder: "Ej.\n- Se enojó\n- Pregunta por facturación")
                 }
+
+                SettingsToggleRow(
+                    title: "Clientes existentes van con tu equipo",
+                    subtitle: "Si detecta que ya es cliente (o dice serlo), pasa el chat directo a un humano.",
+                    isOn: goalWorkflow.attention.pastClientsToHuman
+                ) { goalWorkflow.attention.pastClientsToHuman = $0 }
             }
         }
     }
@@ -674,6 +741,10 @@ struct AgentEditorSheet: View {
         guard canSave else { return }
         guard timingValidationMessage == nil else {
             errorMessage = timingValidationMessage
+            return
+        }
+        guard goalValidationMessage == nil else {
+            errorMessage = goalValidationMessage
             return
         }
         isSaving = true
@@ -829,6 +900,16 @@ struct AgentEditorSheet: View {
         return [PickerChoice(id: "", title: referenceLoading ? "Cargando calendarios..." : "Sin calendario fijo")] + choices
     }
 
+    /// Opciones del calendario del objetivo de citas: aquí el calendario es
+    /// obligatorio, así que no existe la opción "Sin calendario fijo".
+    private var goalCalendarChoices: [PickerChoice] {
+        let choices = calendars.map { PickerChoice(id: $0.id, title: $0.name) }
+        if choices.isEmpty {
+            return [PickerChoice(id: "", title: referenceLoading ? "Cargando calendarios..." : "No hay calendarios activos")]
+        }
+        return choices
+    }
+
     private var timingValidationMessage: String? {
         if responseDelay.mode == AgentResponseDelayModeOption.random.rawValue, responseDelay.minValue > responseDelay.maxValue {
             return "Revisa el rango de espera."
@@ -848,6 +929,42 @@ struct AgentEditorSheet: View {
             return "Falta la estrategia de seguimiento."
         }
         return nil
+    }
+
+    /// Espejo local de `assertAgentGoalRequirements` del backend: un agente de
+    /// citas publicado necesita calendario, y el anticipo necesita al menos un
+    /// método de cobro (con datos bancarios si es por transferencia).
+    private var goalValidationMessage: String? {
+        if objective == AgentObjectiveOption.citas.rawValue, agent.enabled {
+            let calendarId = (goalWorkflow.appointments.calendarId ?? agent.defaultCalendarId ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if calendarId.isEmpty {
+                return "Elige el calendario para las citas antes de guardar."
+            }
+        }
+        if depositApplies {
+            let methods = goalWorkflow.deposit.methods
+            if !methods.paymentLink && !methods.bankTransfer {
+                return "Activa al menos un método para cobrar el anticipo (link de pago o transferencia)."
+            }
+            if methods.bankTransfer,
+               goalWorkflow.deposit.bankTransferDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                return "Escribe los datos de transferencia (banco, cuenta o CLABE y titular) para el anticipo."
+            }
+        }
+        return nil
+    }
+
+    /// Cuándo aplica el anticipo (mismo criterio que backend y web):
+    /// citas → deposit.enabled; ventas → modo de venta "deposit".
+    private var depositApplies: Bool {
+        if objective == AgentObjectiveOption.citas.rawValue {
+            return goalWorkflow.deposit.enabled
+        }
+        if objective == AgentObjectiveOption.ventas.rawValue {
+            return goalWorkflow.sales.paymentMode == AgentSalesPaymentModeOption.deposit.rawValue
+        }
+        return false
     }
 
     private func ensureValidSuccessAction() {
@@ -885,6 +1002,13 @@ struct AgentEditorSheet: View {
         return calendars.first(where: { $0.id == id })?.name ?? "Calendario guardado"
     }
 
+    /// Label del calendario del objetivo de citas: sin calendario elegido es un
+    /// placeholder de selección, no una opción válida.
+    private func goalCalendarName(_ id: String?) -> String {
+        guard let id, !id.isEmpty else { return referenceLoading ? "Cargando calendarios..." : "Elegir calendario" }
+        return calendars.first(where: { $0.id == id })?.name ?? "Calendario guardado"
+    }
+
     private func delayUnitLabel(_ value: String) -> String {
         AgentResponseDelayUnitOption(rawValue: value)?.label ?? "Segundos"
     }
@@ -917,6 +1041,12 @@ struct AgentEditorSheet: View {
             return "Otro agente ya cubre estas condiciones de entrada. Ajusta el objetivo o el alcance."
         case ConversationalAgentErrorCode.limitReached:
             return "Alcanzaste el máximo de agentes de tu plan."
+        case ConversationalAgentErrorCode.calendarRequired:
+            return apiError.message.isEmpty ? "Elige el calendario para las citas antes de guardar." : apiError.message
+        case ConversationalAgentErrorCode.depositMethodRequired:
+            return apiError.message.isEmpty ? "Activa al menos un método para cobrar el anticipo (link de pago o transferencia)." : apiError.message
+        case ConversationalAgentErrorCode.transferDetailsRequired:
+            return apiError.message.isEmpty ? "Escribe los datos de transferencia (banco, cuenta o CLABE y titular) para el anticipo." : apiError.message
         default:
             return apiError.message.isEmpty ? "Intenta otra vez." : apiError.message
         }

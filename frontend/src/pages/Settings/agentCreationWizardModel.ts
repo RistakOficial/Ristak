@@ -5,6 +5,7 @@ import {
   type ConversationalAIProviderId
 } from '@/constants/conversationalAIProviders'
 import {
+  DEFAULT_AGENT_ATTENTION,
   DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_AGENT_GOAL_WORKFLOW,
   type AgentCompletionMode,
@@ -46,6 +47,7 @@ export interface AgentWizardDraft {
   contactScope: ConversationalContactScope
   extraInstructions: string
   handoffRules: string
+  pastClientsToHuman: boolean
   responseDelay: AgentResponseDelayConfig
   replyDelivery: AgentReplyDeliveryConfig
   hideAttendedNotifications: boolean
@@ -133,6 +135,7 @@ export function buildInitialAgentWizardDraft(
     contactScope: 'new_only',
     extraInstructions: '',
     handoffRules: '',
+    pastClientsToHuman: false,
     responseDelay: { ...DEFAULT_AGENT_RESPONSE_DELAY },
     replyDelivery: { ...DEFAULT_AGENT_REPLY_DELIVERY },
     hideAttendedNotifications: false,
@@ -161,7 +164,8 @@ export function buildGoalWorkflowFromDraft(draft: AgentWizardDraft, accountCurre
     qualification: { ...DEFAULT_AGENT_GOAL_WORKFLOW.qualification },
     triggerLink: { ...DEFAULT_AGENT_GOAL_WORKFLOW.triggerLink },
     deposit: { ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit, methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS } },
-    completion: { ...DEFAULT_AGENT_GOAL_WORKFLOW.completion }
+    completion: { ...DEFAULT_AGENT_GOAL_WORKFLOW.completion },
+    attention: { ...DEFAULT_AGENT_ATTENTION, pastClientsToHuman: draft.pastClientsToHuman }
   }
 
   const buildDepositFromDraft = (): AgentGoalWorkflowConfig['deposit'] => ({

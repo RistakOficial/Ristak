@@ -1,6 +1,6 @@
 import { DateTime } from 'luxon'
 
-const SUCCESS_PAYMENT_STATUSES = new Set([
+export const SUCCESS_PAYMENT_STATUSES = new Set([
   'paid',
   'succeeded',
   'completed',
@@ -12,7 +12,7 @@ const SUCCESS_PAYMENT_STATUSES = new Set([
   'accredited'
 ])
 
-const NON_LIVE_PAYMENT_MODES = new Set(['test', 'sandbox', 'demo', 'preview', 'simulation', 'simulated'])
+export const NON_LIVE_PAYMENT_MODES = new Set(['test', 'sandbox', 'demo', 'preview', 'simulation', 'simulated'])
 
 // Una confirmacion puede llegar de forma asincrona en WhatsApp/correo, pero no
 // puede convertirse en una autorizacion permanente. Siete dias conserva chats
