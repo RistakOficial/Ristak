@@ -60,7 +60,8 @@ import {
   shouldSendConversationalReplyThroughHighLevel,
   shouldIncludeConversationalBinaryMedia,
   shouldRecoverPendingInbound,
-  splitReplyIntoParts
+  splitReplyIntoParts,
+  buildRuntimeBusinessContext
 } from '../src/agents/conversational/runner.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
 import {
@@ -3160,6 +3161,26 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /Cuándo NO te quedes callado/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /El PRIMER regreso es el más delicado/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /dosis EXTRA de calidez/)
+})
+
+test('[Fase 2] buildRuntimeBusinessContext usa el texto libre como fuente de verdad + anti-invención', () => {
+  // Todo sale de un solo texto libre (el campo "información del negocio"); no de campos
+  // estructurados ni de un formulario aparte. Se enmarca con la regla anti-invención.
+  const infoText = 'Barbería El Corte. Av. Siempre Viva 742, Col. Centro. Lun a Sáb 10-8. Corte $150, tinte $400. Aceptamos efectivo y tarjeta.'
+  const ctx = buildRuntimeBusinessContext(infoText, { configured: true, sourceContext: infoText, summary: '' })
+  assert.match(ctx, /INFORMACIÓN DEL NEGOCIO \(tu única fuente de verdad/)
+  assert.match(ctx, /NO lo inventes/)
+  assert.match(ctx, /Av\. Siempre Viva 742/)
+  assert.match(ctx, /Corte \$150/)
+
+  // Prefiere sourceContext del perfil sobre el rawContext suelto.
+  const fromProfile = buildRuntimeBusinessContext('texto viejo del config', { configured: true, sourceContext: 'Clínica X, dirección real aquí', summary: '' })
+  assert.match(fromProfile, /Clínica X, dirección real aquí/)
+  assert.doesNotMatch(fromProfile, /texto viejo del config/)
+
+  // Sin info del negocio: no inyecta una sección vacía (evita ruido en el prompt).
+  assert.equal(buildRuntimeBusinessContext('', null), '')
+  assert.equal(buildRuntimeBusinessContext('', { configured: false }), '')
 })
 
 test('base ligera y directa existe y es mas ligera que la fabrica', () => {
