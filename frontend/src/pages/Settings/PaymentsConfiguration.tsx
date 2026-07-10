@@ -533,12 +533,14 @@ function calculatePreviewTax(baseAmount: number, taxes: PaymentTaxSettings) {
 
 const channelOptions = [
   { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'whatsapp_qr', label: 'WhatsApp QR solo' },
   { value: 'email', label: 'Correo electrónico' },
   { value: 'both', label: 'WhatsApp y correo electrónico' }
 ]
 
 const channelLabelById: Record<PaymentAutomationSettings['reminderChannel'], string> = {
   whatsapp: 'WhatsApp',
+  whatsapp_qr: 'WhatsApp QR solo',
   email: 'correo electrónico',
   both: 'WhatsApp y correo electrónico'
 }
@@ -554,6 +556,9 @@ const paymentAutomationTemplateDefaults: Record<PaymentAutomationTemplateKind, {
   label: string
   defaultName: string
   defaultLanguage: string
+  defaultMessageText: string
+  contentModeKey: keyof PaymentAutomationSettings
+  messageTextKey: keyof PaymentAutomationSettings
   templateIdKey: keyof PaymentAutomationSettings
   templateNameKey: keyof PaymentAutomationSettings
   templateLanguageKey: keyof PaymentAutomationSettings
@@ -562,6 +567,9 @@ const paymentAutomationTemplateDefaults: Record<PaymentAutomationTemplateKind, {
     label: 'Recordatorio de pago',
     defaultName: 'recordatorio_pago_pendiente',
     defaultLanguage: 'es_MX',
+    defaultMessageText: 'Hola {{contact.first_name}}, tienes un pago pendiente de {{payment.amount}} por {{payment.product}}. Puedes completarlo aquí: {{payment.url}}',
+    contentModeKey: 'reminderContentMode',
+    messageTextKey: 'reminderMessageText',
     templateIdKey: 'reminderTemplateId',
     templateNameKey: 'reminderTemplateName',
     templateLanguageKey: 'reminderTemplateLanguage'
@@ -570,6 +578,9 @@ const paymentAutomationTemplateDefaults: Record<PaymentAutomationTemplateKind, {
     label: 'Comprobante de pago',
     defaultName: 'comprobante_pago_recibido',
     defaultLanguage: 'es_MX',
+    defaultMessageText: 'Hola {{contact.first_name}}, recibimos tu pago de {{payment.amount}} por {{payment.product}}. Puedes descargar tu comprobante aquí: {{payment.receipt_url}}',
+    contentModeKey: 'receiptContentMode',
+    messageTextKey: 'receiptMessageText',
     templateIdKey: 'receiptTemplateId',
     templateNameKey: 'receiptTemplateName',
     templateLanguageKey: 'receiptTemplateLanguage'
@@ -578,6 +589,9 @@ const paymentAutomationTemplateDefaults: Record<PaymentAutomationTemplateKind, {
     label: 'Cobro fallido',
     defaultName: 'pago_fallido_reintento',
     defaultLanguage: 'es_MX',
+    defaultMessageText: 'Hola {{contact.first_name}}, no pudimos procesar tu pago de {{payment.amount}} por {{payment.product}}. Puedes intentarlo de nuevo aquí: {{payment.url}}',
+    contentModeKey: 'failedPaymentContentMode',
+    messageTextKey: 'failedPaymentMessageText',
     templateIdKey: 'failedPaymentTemplateId',
     templateNameKey: 'failedPaymentTemplateName',
     templateLanguageKey: 'failedPaymentTemplateLanguage'
@@ -585,8 +599,10 @@ const paymentAutomationTemplateDefaults: Record<PaymentAutomationTemplateKind, {
 }
 
 const channelUsesWhatsApp = (channel: PaymentAutomationSettings['reminderChannel']) => (
-  channel === 'whatsapp' || channel === 'both'
+  channel === 'whatsapp' || channel === 'whatsapp_qr' || channel === 'both'
 )
+
+const channelUsesWhatsappQrOnly = (channel: PaymentAutomationSettings['reminderChannel']) => channel === 'whatsapp_qr'
 
 const defaultWhatsAppAvailability: WhatsAppConnectionAvailability = {
   hasApiConnected: false,
@@ -3248,6 +3264,17 @@ export const PaymentsConfiguration: React.FC = () => {
   ) => {
     if (!channelUsesWhatsApp(channel)) return null
 
+    if (channelUsesWhatsappQrOnly(channel)) {
+      return (
+        <div className={`${styles.automationQrFallback} ${styles.automationQrPrimary}`}>
+          <div>
+            <strong>WhatsApp QR solo</strong>
+            <span>Estas automatizaciones enviarán por QR como canal principal. No es respaldo de WhatsApp API aunque la API también esté conectada.</span>
+          </div>
+        </div>
+      )
+    }
+
     if (!whatsappAvailability.canShowQrFallbackSwitch) {
       if (!whatsappAvailability.hasQrConnected) return null
 
@@ -3282,6 +3309,7 @@ export const PaymentsConfiguration: React.FC = () => {
     apiHelp: string
   ) => {
     if (!channelUsesWhatsApp(channel)) return undefined
+    if (channelUsesWhatsappQrOnly(channel)) return 'Usa WhatsApp QR como canal principal. No requiere plantilla aprobada de Meta ni ventana de 24 horas.'
     if (whatsappAvailability.hasApiConnected) return apiHelp
     if (whatsappAvailability.hasQrConnected) return 'Sólo hay QR conectado; se enviará el texto del mensaje por WhatsApp QR.'
     return 'Conecta WhatsApp API o WhatsApp QR para enviar mensajes por WhatsApp desde esta automatización.'
@@ -3297,6 +3325,35 @@ export const PaymentsConfiguration: React.FC = () => {
   const getAutomationTemplateName = (kind: PaymentAutomationTemplateKind) => {
     const template = paymentAutomationTemplateDefaults[kind]
     return String(automations[template.templateNameKey] || template.defaultName)
+  }
+
+  const getAutomationContentMode = (kind: PaymentAutomationTemplateKind) => {
+    const template = paymentAutomationTemplateDefaults[kind]
+    return automations[template.contentModeKey] === 'direct' ? 'direct' : 'template'
+  }
+
+  const setAutomationContentMode = (kind: PaymentAutomationTemplateKind, value: 'template' | 'direct') => {
+    const template = paymentAutomationTemplateDefaults[kind]
+    patchAutomationValues({ [template.contentModeKey]: value } as Partial<PaymentAutomationSettings>)
+  }
+
+  const getAutomationDirectMessage = (kind: PaymentAutomationTemplateKind) => {
+    const template = paymentAutomationTemplateDefaults[kind]
+    return String(automations[template.messageTextKey] || template.defaultMessageText)
+  }
+
+  const setAutomationDirectMessage = (kind: PaymentAutomationTemplateKind, value: string) => {
+    const template = paymentAutomationTemplateDefaults[kind]
+    patchAutomationValues({ [template.messageTextKey]: value } as Partial<PaymentAutomationSettings>)
+  }
+
+  const getAutomationContentSummary = (
+    kind: PaymentAutomationTemplateKind,
+    channel: PaymentAutomationSettings['reminderChannel']
+  ) => {
+    if (getAutomationContentMode(kind) === 'direct') return 'mensaje directo'
+    if (channelUsesWhatsApp(channel)) return getAutomationTemplateName(kind)
+    return 'mensaje predeterminado'
   }
 
   const setAutomationTemplateValue = (kind: PaymentAutomationTemplateKind, value: string) => {
@@ -3337,9 +3394,10 @@ export const PaymentsConfiguration: React.FC = () => {
     kind: PaymentAutomationTemplateKind,
     channel: PaymentAutomationSettings['reminderChannel']
   ) => {
-    if (!channelUsesWhatsApp(channel)) return null
-
     const config = paymentAutomationTemplateDefaults[kind]
+    const mode = getAutomationContentMode(kind)
+    const usesWhatsApp = channelUsesWhatsApp(channel)
+    const usesQrOnly = channelUsesWhatsappQrOnly(channel)
     const value = getAutomationTemplateValue(kind)
     const selectedTemplate = paymentWhatsappTemplates.find((template) => (
       template.id === value || template.name === value
@@ -3349,7 +3407,42 @@ export const PaymentsConfiguration: React.FC = () => {
     return (
       <div className={styles.automationTemplateBlock}>
         {renderField(
-          whatsappAvailability.hasApiConnected ? 'Plantilla WhatsApp API' : 'Mensaje de WhatsApp',
+          'Contenido',
+          <CustomSelect
+            value={mode}
+            onValueChange={(nextValue) => setAutomationContentMode(kind, nextValue as 'template' | 'direct')}
+            options={[
+              { value: 'template', label: usesQrOnly ? 'Plantilla como texto QR' : usesWhatsApp ? 'Plantilla / predeterminado' : 'Mensaje predeterminado' },
+              { value: 'direct', label: 'Mensaje directo' }
+            ]}
+          />,
+          mode === 'direct'
+            ? usesWhatsApp
+              ? usesQrOnly
+                ? 'Usará este texto por WhatsApp QR como canal principal, sin aprobación de Meta ni ventana de 24 horas.'
+                : 'Usará este texto. En WhatsApp API necesita conversación abierta de 24 horas; con QR se manda como texto normal.'
+              : 'Usará el texto que escribas aquí para los canales seleccionados.'
+            : usesWhatsApp
+              ? usesQrOnly
+                ? 'WhatsApp QR usará el texto del mensaje seleccionado, no una plantilla API aprobada.'
+                : 'WhatsApp usará plantilla; correo usará el mensaje predeterminado del sistema.'
+              : 'Correo usará el mensaje predeterminado del sistema.'
+        )}
+
+        {mode === 'direct' ? (
+          renderField(
+            'Mensaje directo',
+            <textarea
+              value={getAutomationDirectMessage(kind)}
+              onChange={(event) => setAutomationDirectMessage(kind, event.target.value)}
+              placeholder={`Mensaje directo para ${config.label.toLowerCase()}.`}
+            />,
+            'Variables disponibles: {{contact.first_name}}, {{payment.amount}}, {{payment.product}}, {{payment.url}}, {{payment.receipt_url}}.'
+          )
+        ) : usesWhatsApp ? (
+          <>
+        {renderField(
+          usesQrOnly ? 'Mensaje de WhatsApp QR' : whatsappAvailability.hasApiConnected ? 'Plantilla WhatsApp API' : 'Mensaje de WhatsApp',
           <CustomSelect
             value={value}
             onValueChange={(nextValue) => setAutomationTemplateValue(kind, nextValue)}
@@ -3358,8 +3451,12 @@ export const PaymentsConfiguration: React.FC = () => {
             disabled={loadingPaymentWhatsappTemplates && paymentWhatsappTemplateOptions.length === 0}
           />,
           selectedTemplate
-            ? `Usará ${selectedTemplate.name} (${selectedTemplate.language || config.defaultLanguage}).`
-            : whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected
+            ? usesQrOnly
+              ? `Usará el texto de ${selectedTemplate.name} (${selectedTemplate.language || config.defaultLanguage}) por QR.`
+              : `Usará ${selectedTemplate.name} (${selectedTemplate.language || config.defaultLanguage}).`
+            : usesQrOnly
+              ? `Usará el texto del mensaje ${templateName} por QR.`
+              : whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected
               ? `Usará el texto del mensaje predeterminado ${templateName}.`
               : `Usará la plantilla predeterminada ${templateName}.`
         )}
@@ -3379,6 +3476,12 @@ export const PaymentsConfiguration: React.FC = () => {
             Cargando plantillas aprobadas
           </span>
         )}
+          </>
+        ) : (
+          <span className={styles.automationTemplateLoading}>
+            Correo usará el mensaje predeterminado de {config.label.toLowerCase()}.
+          </span>
+        )}
       </div>
     )
   }
@@ -3388,6 +3491,7 @@ export const PaymentsConfiguration: React.FC = () => {
     qrFallbackEnabled: boolean
   ) => {
     if (!channelUsesWhatsApp(channel)) return ''
+    if (channelUsesWhatsappQrOnly(channel)) return ' · QR solo'
     if (whatsappAvailability.canShowQrFallbackSwitch && qrFallbackEnabled) return ' · QR respaldo'
     if (whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected) return ' · QR'
     return ''
@@ -3546,17 +3650,17 @@ export const PaymentsConfiguration: React.FC = () => {
         <div>
           <Clock size={17} />
           <strong>{automations.remindersEnabled ? `${automations.reminderDaysBefore} días antes` : 'Recordatorios apagados'}</strong>
-          <span>{channelLabelById[automations.reminderChannel]}{channelUsesWhatsApp(automations.reminderChannel) ? ` · ${getAutomationTemplateName('reminder')}` : ''}{getAutomationTransportSummary(automations.reminderChannel, automations.reminderQrFallbackEnabled)}</span>
+          <span>{channelLabelById[automations.reminderChannel]} · {getAutomationContentSummary('reminder', automations.reminderChannel)}{getAutomationTransportSummary(automations.reminderChannel, automations.reminderQrFallbackEnabled)}</span>
         </div>
         <div>
           <CheckCircle size={17} />
           <strong>{automations.receiptDeliveryEnabled ? 'Comprobante activo' : 'Comprobante apagado'}</strong>
-          <span>{afterPaymentActionLabelById[automations.afterPaymentAction]} · {channelLabelById[automations.receiptDeliveryChannel]}{channelUsesWhatsApp(automations.receiptDeliveryChannel) ? ` · ${getAutomationTemplateName('receipt')}` : ''}{getAutomationTransportSummary(automations.receiptDeliveryChannel, automations.receiptQrFallbackEnabled)}</span>
+          <span>{afterPaymentActionLabelById[automations.afterPaymentAction]} · {channelLabelById[automations.receiptDeliveryChannel]} · {getAutomationContentSummary('receipt', automations.receiptDeliveryChannel)}{getAutomationTransportSummary(automations.receiptDeliveryChannel, automations.receiptQrFallbackEnabled)}</span>
         </div>
         <div>
           <AlertTriangle size={17} />
           <strong>{automations.failedPaymentEnabled ? `${automations.failedPaymentDelayHours} h tras fallo` : 'Sin seguimiento'}</strong>
-          <span>{channelLabelById[automations.failedPaymentChannel]}{channelUsesWhatsApp(automations.failedPaymentChannel) ? ` · ${getAutomationTemplateName('failed')}` : ''}{getAutomationTransportSummary(automations.failedPaymentChannel, automations.failedPaymentQrFallbackEnabled)}</span>
+          <span>{channelLabelById[automations.failedPaymentChannel]} · {getAutomationContentSummary('failed', automations.failedPaymentChannel)}{getAutomationTransportSummary(automations.failedPaymentChannel, automations.failedPaymentQrFallbackEnabled)}</span>
         </div>
       </div>
     </div>

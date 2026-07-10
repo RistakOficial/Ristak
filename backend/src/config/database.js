@@ -6032,6 +6032,7 @@ async function initTables() {
         template_id TEXT,
         template_name TEXT,
         template_language TEXT DEFAULT 'es_MX',
+        content_mode TEXT DEFAULT 'template',
         qr_fallback_enabled INTEGER DEFAULT 0,
         timing_anchor TEXT DEFAULT 'before_appointment',
         offset_value INTEGER DEFAULT 1,
@@ -6162,6 +6163,10 @@ async function initTables() {
 
     try {
       await db.run("ALTER TABLE appointment_reminders ADD COLUMN template_language TEXT DEFAULT 'es_MX'")
+    } catch (_) { /* columna ya existe */ }
+
+    try {
+      await db.run("ALTER TABLE appointment_reminders ADD COLUMN content_mode TEXT DEFAULT 'template'")
     } catch (_) { /* columna ya existe */ }
 
     try {

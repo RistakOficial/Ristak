@@ -33,25 +33,33 @@ export interface PaymentReceiptSettings {
   showTerms: boolean
 }
 
+export type PaymentAutomationChannel = 'whatsapp' | 'whatsapp_qr' | 'email' | 'both'
+
 export interface PaymentAutomationSettings {
   remindersEnabled: boolean
   reminderDaysBefore: number
-  reminderChannel: 'whatsapp' | 'email' | 'both'
+  reminderChannel: PaymentAutomationChannel
   reminderQrFallbackEnabled: boolean
+  reminderContentMode: 'template' | 'direct'
+  reminderMessageText: string
   reminderTemplateId: string
   reminderTemplateName: string
   reminderTemplateLanguage: string
   receiptDeliveryEnabled: boolean
-  receiptDeliveryChannel: 'whatsapp' | 'email' | 'both'
+  receiptDeliveryChannel: PaymentAutomationChannel
   receiptQrFallbackEnabled: boolean
+  receiptContentMode: 'template' | 'direct'
+  receiptMessageText: string
   receiptTemplateId: string
   receiptTemplateName: string
   receiptTemplateLanguage: string
   afterPaymentAction: 'none' | 'send_receipt' | 'start_automation' | 'tag_contact'
   afterPaymentMessage: string
   failedPaymentEnabled: boolean
-  failedPaymentChannel: 'whatsapp' | 'email' | 'both'
+  failedPaymentChannel: PaymentAutomationChannel
   failedPaymentQrFallbackEnabled: boolean
+  failedPaymentContentMode: 'template' | 'direct'
+  failedPaymentMessageText: string
   failedPaymentTemplateId: string
   failedPaymentTemplateName: string
   failedPaymentTemplateLanguage: string
@@ -137,12 +145,16 @@ export const defaultPaymentSettings: PaymentSettings = {
     reminderDaysBefore: 3,
     reminderChannel: 'whatsapp',
     reminderQrFallbackEnabled: false,
+    reminderContentMode: 'template',
+    reminderMessageText: 'Hola {{contact.first_name}}, tienes un pago pendiente de {{payment.amount}} por {{payment.product}}. Puedes completarlo aquí: {{payment.url}}',
     reminderTemplateId: '',
     reminderTemplateName: 'recordatorio_pago_pendiente',
     reminderTemplateLanguage: 'es_MX',
     receiptDeliveryEnabled: true,
     receiptDeliveryChannel: 'email',
     receiptQrFallbackEnabled: false,
+    receiptContentMode: 'template',
+    receiptMessageText: 'Hola {{contact.first_name}}, recibimos tu pago de {{payment.amount}} por {{payment.product}}. Puedes descargar tu comprobante aquí: {{payment.receipt_url}}',
     receiptTemplateId: '',
     receiptTemplateName: 'comprobante_pago_recibido',
     receiptTemplateLanguage: 'es_MX',
@@ -151,6 +163,8 @@ export const defaultPaymentSettings: PaymentSettings = {
     failedPaymentEnabled: true,
     failedPaymentChannel: 'whatsapp',
     failedPaymentQrFallbackEnabled: false,
+    failedPaymentContentMode: 'template',
+    failedPaymentMessageText: 'Hola {{contact.first_name}}, no pudimos procesar tu pago de {{payment.amount}} por {{payment.product}}. Puedes intentarlo de nuevo aquí: {{payment.url}}',
     failedPaymentTemplateId: '',
     failedPaymentTemplateName: 'pago_fallido_reintento',
     failedPaymentTemplateLanguage: 'es_MX',

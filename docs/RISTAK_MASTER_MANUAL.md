@@ -1228,12 +1228,25 @@ requerido` no deben aparecer como si fueran el resultado del pago.
 Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
 avisos de cobro fallido desde `payments_settings.automations`.
 
-- Canales soportados: WhatsApp, correo electronico o ambos.
-- WhatsApp usa API oficial con plantillas aprobadas cuando hay remitente API
-  conectado. Si solo hay WhatsApp QR conectado, envia el texto renderizado del
-  mensaje por QR como canal principal.
-- WhatsApp registra el despacho en
-  `payment_automation_dispatches` con `channel='whatsapp'`.
+- Canales soportados: WhatsApp, WhatsApp QR solo, correo electronico o ambos.
+- Cada automatizacion de pago puede usar `contentMode='template'` o
+  `contentMode='direct'`. En `template`, WhatsApp usa la plantilla configurada y
+  correo usa el mensaje predeterminado del sistema. En `direct`, el texto
+  editable (`reminderMessageText`, `receiptMessageText` o
+  `failedPaymentMessageText`) se renderiza con variables de pago/contacto y se
+  usa para los canales seleccionados.
+- `channel='whatsapp'` usa API oficial con plantillas aprobadas cuando hay
+  remitente API conectado; QR solo entra como respaldo si el switch de respaldo
+  esta activo o si no existe API y QR es la unica ruta disponible.
+- `channel='whatsapp_qr'` usa WhatsApp QR como canal principal aunque tambien
+  exista API conectada. En ese modo Ristak renderiza el mensaje como texto y no
+  exige aprobacion de Meta ni ventana de 24 horas.
+- Los mensajes directos por WhatsApp API no sustituyen a las plantillas fuera de
+  la ventana permitida por Meta: solo salen si existe conversacion abierta de 24
+  horas o si QR queda como ruta principal/respaldo. Fuera de esa ventana, para
+  automatizaciones proactivas debe usarse plantilla aprobada o QR.
+- WhatsApp registra el despacho en `payment_automation_dispatches` con
+  `channel='whatsapp'` o `channel='whatsapp_qr'` segun la ruta elegida.
 - Correo electronico usa la conexion SMTP guardada en Configuracion > Integraciones
   > Correos. El password vive cifrado en `app_config.email_smtp_password`; no se
   agrega env var nueva para arrancar el servicio.
@@ -1266,6 +1279,18 @@ inicio de la cita. Los avisos `after_booking` se anclan a la fecha de reserva
 local en Ristak; citas sincronizadas desde Google/GHL no reciben avisos de
 reserva como si el cliente hubiera agendado por Ristak.
 
+Cada recordatorio/aviso guarda canal y contenido por separado. `channel` puede
+ser `whatsapp`, `whatsapp_qr`, `email`, `messenger` o `instagram`.
+`channel='whatsapp'` usa WhatsApp API como ruta principal y QR solo como
+respaldo opcional. `channel='whatsapp_qr'` usa WhatsApp QR como ruta principal
+aunque tambien exista API conectada. En los dos canales de WhatsApp, el contenido
+puede ser `content_mode='template'` para seleccionar un mensaje guardado o
+`content_mode='direct'` para texto editable; en QR el mensaje guardado se renderiza
+como texto y no depende de aprobacion de Meta. En correo, Messenger e Instagram,
+Ristak fuerza mensaje directo porque esos canales no usan plantillas de WhatsApp.
+El texto directo usa variables como `{{contact.first_name}}`, `{{cita.fecha}}` y
+`{{cita.hora}}`.
+
 La confirmacion de asistencia no es un tipo principal de mensaje. En la UI de
 Citas, cualquier recordatorio o aviso puede activar "Usar como confirmacion de
 cita". Internamente eso guarda `message_type='confirmation'`, habilita las
@@ -1276,9 +1301,16 @@ apagado, el mensaje queda como `message_type='reminder'` aunque su ancla sea
 
 Si solo hay WhatsApp QR conectado, recordatorios y avisos de cita envian el
 texto renderizado del mensaje por QR aunque la plantilla de WhatsApp API este
-pendiente o no exista remotamente. Si hay API y QR conectados, la API sigue
-siendo la ruta principal; QR entra solo como respaldo cuando el switch de
-respaldo esta activo.
+pendiente o no exista remotamente. Si hay API y QR conectados, `whatsapp` sigue
+usando API como ruta principal y QR entra solo como respaldo cuando el switch de
+respaldo esta activo; `whatsapp_qr` usa QR como canal elegido y no muestra el
+switch de respaldo.
+
+Los mensajes directos por WhatsApp API en citas tambien dependen de ventana de
+conversacion abierta de 24 horas. Si no existe una respuesta reciente del
+contacto, el envio libre por API falla de forma explicita; para mensajes
+proactivos fuera de ventana debe usarse plantilla aprobada o QR cuando este
+conectado y habilitado.
 
 Cada par `reminder_id + appointment_id` se reclama en
 `appointment_reminder_sends` antes de enviar para evitar duplicados. Estados

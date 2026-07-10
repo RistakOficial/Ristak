@@ -6,6 +6,11 @@ import {
   sendWhatsAppApiTemplateMessage,
   sendWhatsAppApiTextMessage
 } from './whatsappApiService.js'
+import { getEmailStatus, sendEmailToContact } from './emailService.js'
+import {
+  isMetaSocialMessagingEnabled,
+  sendMetaSocialTextMessage
+} from './metaSocialMessagingService.js'
 import { ensureDefaultAppointmentMessageTemplates } from './messageTemplatesService.js'
 import { logger } from '../utils/logger.js'
 import {
@@ -41,6 +46,8 @@ const AFTER_OFFSET_UNITS = new Set(['seconds', 'minutes', 'hours'])
 const MAX_AFTER_BOOKING_MS = 24 * 60 * 60 * 1000
 const SENDER_MODES = new Set(['contact', 'default', 'specific'])
 const SMART_OVERFLOWS = new Set(['before', 'next_day'])
+const CONTENT_MODES = new Set(['template', 'direct'])
+const REMINDER_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'email', 'messenger', 'instagram'])
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
 const CONFIRMATION_SUCCESS_ACTIONS = new Set(['mark_confirmed', 'chat_card', 'notify_push', 'chat_badge'])
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
@@ -63,10 +70,22 @@ const FALLBACK_TEMPLATE_STATUSES = new Set([
   'ARCHIVED',
   'DELETED'
 ])
+const CHANNEL_LABELS = {
+  whatsapp: 'WhatsApp',
+  whatsapp_qr: 'WhatsApp QR',
+  email: 'correo electrónico',
+  messenger: 'Messenger',
+  instagram: 'Instagram DM'
+}
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+function isWhatsAppReminderChannel(channel = '') {
+  const normalized = cleanString(channel).toLowerCase()
+  return normalized === 'whatsapp' || normalized === 'whatsapp_qr'
 }
 
 function parseJson(value, fallback) {
@@ -145,18 +164,26 @@ function normalizeReminderRow(row = {}) {
   )
   const templateName = cleanString(row.template_name || row.resolved_template_name)
   const templateLanguage = cleanString(row.template_language || row.resolved_template_language) || 'es_MX'
+  const rawChannel = cleanString(row.channel).toLowerCase()
+  const channel = REMINDER_CHANNELS.has(rawChannel) ? rawChannel : 'whatsapp'
+  const rawContentMode = cleanString(row.content_mode).toLowerCase()
+  const hasTemplate = Boolean(cleanString(row.template_id) || templateName)
+  const contentMode = isWhatsAppReminderChannel(channel)
+    ? (CONTENT_MODES.has(rawContentMode) ? rawContentMode : (hasTemplate ? 'template' : 'direct'))
+    : 'direct'
   return {
     id: cleanString(row.id),
     name: cleanString(row.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
     enabled: Number(row.enabled || 0) === 1,
     messageType: MESSAGE_TYPES.has(cleanString(row.message_type)) ? cleanString(row.message_type) : 'reminder',
     aiEnabled: Number(row.ai_enabled || 0) === 1,
-    channel: cleanString(row.channel) || 'whatsapp',
+    channel,
     senderMode: SENDER_MODES.has(cleanString(row.sender_mode)) ? cleanString(row.sender_mode) : 'contact',
     senderPhoneNumberId: cleanString(row.sender_phone_number_id) || null,
     templateId: cleanString(row.template_id) || null,
     templateName: templateName || null,
     templateLanguage,
+    contentMode,
     timingAnchor,
     offsetValue,
     offsetUnit,
@@ -168,7 +195,7 @@ function normalizeReminderRow(row = {}) {
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(row.no_confirm_action)) ? cleanString(row.no_confirm_action) : 'no_action',
     confirmationSuccessAction: CONFIRMATION_SUCCESS_ACTIONS.has(cleanString(row.confirmation_success_action)) ? cleanString(row.confirmation_success_action) : 'chat_card',
     bypassAutomations: Number(row.bypass_automations || 0) === 1,
-    qrFallbackEnabled: Number(row.qr_fallback_enabled || 0) === 1,
+    qrFallbackEnabled: channel === 'whatsapp' && Number(row.qr_fallback_enabled || 0) === 1,
     position: Number(row.position || 0),
     createdAt: cleanString(row.created_at),
     updatedAt: cleanString(row.updated_at)
@@ -230,6 +257,15 @@ async function getDefaultReminderTemplate(data = {}) {
 }
 
 async function resolveReminderTemplateSelection(data = {}) {
+  if (data.contentMode === 'direct' || !isWhatsAppReminderChannel(data.channel)) {
+    return {
+      ...data,
+      templateId: null,
+      templateName: '',
+      templateLanguage: cleanString(data.templateLanguage) || 'es_MX'
+    }
+  }
+
   let template = await getReminderTemplateById(data.templateId)
   if (!template && data.templateName) {
     template = await getReminderTemplateByName(data.templateName, data.templateLanguage)
@@ -251,7 +287,9 @@ async function backfillMissingReminderTemplates() {
   const rows = await db.all(`
     SELECT id, message_type, timing_anchor
     FROM appointment_reminders
-    WHERE COALESCE(template_id, '') = ''
+    WHERE COALESCE(channel, 'whatsapp') IN ('whatsapp', 'whatsapp_qr')
+      AND COALESCE(content_mode, 'template') = 'template'
+      AND COALESCE(template_id, '') = ''
   `)
 
   for (const row of rows) {
@@ -353,7 +391,7 @@ function describeTemplateStatus(status = '') {
   return normalizeTemplateStatus(status) || 'sin enviar a revisión'
 }
 
-function buildReminderDeliveryHealth(reminder, template, senders = []) {
+function buildReminderDeliveryHealth(reminder, template, senders = [], channelState = {}) {
   if (!reminder.enabled) {
     return {
       status: 'paused',
@@ -364,17 +402,79 @@ function buildReminderDeliveryHealth(reminder, template, senders = []) {
 
   const errors = []
   const warnings = []
+  const channel = REMINDER_CHANNELS.has(cleanString(reminder.channel)) ? cleanString(reminder.channel) : 'whatsapp'
+  const contentMode = isWhatsAppReminderChannel(channel) && reminder.contentMode !== 'direct' ? 'template' : 'direct'
+
+  if (contentMode === 'direct' && !cleanString(reminder.messageText)) {
+    errors.push('Escribe el mensaje directo que se enviará en este recordatorio.')
+  }
+
+  if (channel === 'email') {
+    if (!channelState.emailConnected) {
+      errors.push('Conecta el correo en Configuración > Correos para enviar este recordatorio.')
+    }
+    const details = errors.length ? errors : warnings
+    return {
+      status: errors.length ? 'error' : warnings.length ? 'warning' : 'ready',
+      message: details[0] || 'Listo para enviar por correo electrónico.',
+      details
+    }
+  }
+
+  if (channel === 'messenger' || channel === 'instagram') {
+    const connected = channel === 'instagram'
+      ? channelState.instagramConnected
+      : channelState.messengerConnected
+    if (!connected) {
+      errors.push(`Activa ${CHANNEL_LABELS[channel]} en Configuración > Meta Ads > Redes sociales para enviar este recordatorio.`)
+    }
+    const details = errors.length ? errors : warnings
+    return {
+      status: errors.length ? 'error' : warnings.length ? 'warning' : 'ready',
+      message: details[0] || `Listo para enviar por ${CHANNEL_LABELS[channel]}.`,
+      details
+    }
+  }
+
   const apiSenders = senders.filter(sender => sender.apiEnabled)
   const qrSenders = senders.filter(sender => sender.qrConnected)
   const selectedSender = reminder.senderMode === 'specific'
     ? senders.find(sender => sender.id === reminder.senderPhoneNumberId)
     : null
+
+  if (channel === 'whatsapp_qr') {
+    if (contentMode === 'template' && !template) {
+      errors.push('Selecciona un mensaje de WhatsApp para renderizarlo por QR.')
+    }
+    if (reminder.senderMode === 'specific') {
+      if (!selectedSender) {
+        errors.push('El remitente QR elegido ya no está conectado.')
+      } else if (!selectedSender.qrConnected) {
+        errors.push('El remitente elegido no está conectado por WhatsApp QR.')
+      }
+    }
+    if (!qrSenders.length) {
+      errors.push('Conecta un número de WhatsApp QR para enviar este recordatorio.')
+    }
+
+    const details = errors.length ? errors : warnings
+    return {
+      status: errors.length ? 'error' : warnings.length ? 'warning' : 'ready',
+      message: details[0] || 'Listo para enviar por WhatsApp QR.',
+      details
+    }
+  }
+
   const selectedQrPrimary = selectedSender && !selectedSender.apiEnabled && selectedSender.qrConnected
   const qrPrimaryAvailable = Boolean(selectedQrPrimary || (!apiSenders.length && qrSenders.length))
 
-  if (!template) {
+  if (contentMode === 'direct' && apiSenders.length && !qrPrimaryAvailable && !reminder.qrFallbackEnabled) {
+    warnings.push('Los mensajes directos por WhatsApp API sólo salen si el contacto tiene una conversación abierta de 24 horas; si no, usa plantilla o activa QR como respaldo.')
+  }
+
+  if (contentMode === 'template' && !template) {
     errors.push('Selecciona una plantilla de WhatsApp para este recordatorio.')
-  } else {
+  } else if (contentMode === 'template') {
     const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
     if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus) && !qrPrimaryAvailable) {
       const statusLabel = describeTemplateStatus(templateStatus)
@@ -434,7 +534,33 @@ export async function getAppointmentRemindersOverview() {
   } catch (error) {
     logger.warn(`[Recordatorios] No se pudieron cargar remitentes de WhatsApp (no crítico): ${error.message}`)
   }
-  const whatsappConnected = senders.some(sender => sender.apiEnabled || sender.qrConnected)
+  const whatsappApiConnected = senders.some(sender => sender.apiEnabled)
+  const whatsappQrConnected = senders.some(sender => sender.qrConnected)
+  const whatsappConnected = whatsappApiConnected || whatsappQrConnected
+  const channelState = {
+    emailConnected: false,
+    messengerConnected: false,
+    instagramConnected: false
+  }
+
+  try {
+    const status = await getEmailStatus()
+    channelState.emailConnected = Boolean(status?.connected)
+  } catch (error) {
+    logger.warn(`[Recordatorios] No se pudo cargar estado de correo (no crítico): ${error.message}`)
+  }
+
+  try {
+    channelState.messengerConnected = await isMetaSocialMessagingEnabled('messenger')
+  } catch (error) {
+    logger.warn(`[Recordatorios] No se pudo cargar estado de Messenger (no crítico): ${error.message}`)
+  }
+
+  try {
+    channelState.instagramConnected = await isMetaSocialMessagingEnabled('instagram')
+  } catch (error) {
+    logger.warn(`[Recordatorios] No se pudo cargar estado de Instagram (no crítico): ${error.message}`)
+  }
 
   // (NOTI-008) Adjuntamos los fallos recientes a cada recordatorio para que la UI los exponga.
   let failuresByReminder = new Map()
@@ -453,14 +579,18 @@ export async function getAppointmentRemindersOverview() {
 
   const reminders = baseReminders.map(reminder => ({
     ...reminder,
-    deliveryHealth: buildReminderDeliveryHealth(reminder, templatesByReminder.get(reminder.id) || null, senders),
+    deliveryHealth: buildReminderDeliveryHealth(reminder, templatesByReminder.get(reminder.id) || null, senders, channelState),
     failures: failuresByReminder.get(reminder.id) || { errorCount: 0, lastErrorAt: null, lastErrorMessage: null }
   }))
   return {
     reminders,
     senders,
     channels: [
-      { id: 'whatsapp', label: 'WhatsApp', connected: whatsappConnected }
+      { id: 'whatsapp', label: 'WhatsApp', connected: whatsappConnected },
+      { id: 'whatsapp_qr', label: 'WhatsApp QR solo', connected: whatsappQrConnected },
+      { id: 'email', label: 'Correo electrónico', connected: channelState.emailConnected },
+      { id: 'messenger', label: 'Messenger', connected: channelState.messengerConnected },
+      { id: 'instagram', label: 'Instagram DM', connected: channelState.instagramConnected }
     ]
   }
 }
@@ -478,23 +608,34 @@ function sanitizeReminderInput(input = {}, base = {}) {
   const smartStart = parseHHMM(merged.smartStart, null) ? cleanString(merged.smartStart) : '09:00'
   const smartEnd = parseHHMM(merged.smartEnd, null) ? cleanString(merged.smartEnd) : '21:00'
   const templateLanguage = cleanString(merged.templateLanguage) || 'es_MX'
+  const rawChannel = cleanString(merged.channel).toLowerCase()
+  const channel = REMINDER_CHANNELS.has(rawChannel) ? rawChannel : 'whatsapp'
+  const rawContentMode = cleanString(merged.contentMode).toLowerCase()
+  const whatsappChannel = isWhatsAppReminderChannel(channel)
+  const contentMode = whatsappChannel && CONTENT_MODES.has(rawContentMode)
+    ? rawContentMode
+    : whatsappChannel
+      ? 'template'
+      : 'direct'
+  const messageText = cleanString(merged.messageText) ||
+    (messageType === 'confirmation' ? DEFAULT_CONFIRMATION_TEXT : DEFAULT_REMINDER_TEXT)
 
   return {
     name: cleanString(merged.name) || formatOffsetLabel(offsetValue, offsetUnit, timingAnchor),
     enabled: merged.enabled === false ? 0 : 1,
     messageType,
     aiEnabled: merged.aiEnabled === false ? 0 : 1,
-    channel: 'whatsapp',
-    senderMode: SENDER_MODES.has(cleanString(merged.senderMode)) ? cleanString(merged.senderMode) : 'contact',
-    senderPhoneNumberId: cleanString(merged.senderPhoneNumberId) || null,
-    templateId: cleanString(merged.templateId) || null,
-    templateName: cleanString(merged.templateName),
+    channel,
+    senderMode: whatsappChannel && SENDER_MODES.has(cleanString(merged.senderMode)) ? cleanString(merged.senderMode) : 'contact',
+    senderPhoneNumberId: whatsappChannel ? cleanString(merged.senderPhoneNumberId) || null : null,
+    templateId: contentMode === 'template' ? cleanString(merged.templateId) || null : null,
+    templateName: contentMode === 'template' ? cleanString(merged.templateName) : '',
     templateLanguage,
+    contentMode,
     timingAnchor,
     offsetValue,
     offsetUnit,
-    messageText: cleanString(merged.messageText) ||
-      (messageType === 'confirmation' ? DEFAULT_CONFIRMATION_TEXT : DEFAULT_REMINDER_TEXT),
+    messageText,
     smartEnabled: merged.smartEnabled === false ? 0 : 1,
     smartStart,
     smartEnd,
@@ -502,7 +643,7 @@ function sanitizeReminderInput(input = {}, base = {}) {
     noConfirmAction: NO_CONFIRM_ACTIONS.has(cleanString(merged.noConfirmAction)) ? cleanString(merged.noConfirmAction) : 'no_action',
     confirmationSuccessAction: CONFIRMATION_SUCCESS_ACTIONS.has(cleanString(merged.confirmationSuccessAction)) ? cleanString(merged.confirmationSuccessAction) : 'chat_card',
     bypassAutomations: merged.bypassAutomations === true ? 1 : 0,
-    qrFallbackEnabled: merged.qrFallbackEnabled === true ? 1 : 0
+    qrFallbackEnabled: channel === 'whatsapp' && merged.qrFallbackEnabled === true ? 1 : 0
   }
 }
 
@@ -516,14 +657,14 @@ export async function createAppointmentReminder(input = {}) {
     INSERT INTO appointment_reminders (
       id, name, enabled, message_type, ai_enabled, channel, sender_mode,
       sender_phone_number_id, template_id, template_name, template_language,
-      qr_fallback_enabled, timing_anchor, offset_value, offset_unit, message_text,
+      content_mode, qr_fallback_enabled, timing_anchor, offset_value, offset_unit, message_text,
       smart_enabled, smart_start, smart_end, smart_overflow, no_confirm_action,
       confirmation_success_action, bypass_automations, position
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     id, data.name, data.enabled, data.messageType, data.aiEnabled, data.channel,
     data.senderMode, data.senderPhoneNumberId, data.templateId, data.templateName,
-    data.templateLanguage, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit,
+    data.templateLanguage, data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit,
     data.messageText, data.smartEnabled, data.smartStart, data.smartEnd,
     data.smartOverflow, data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations,
     Number(positionRow?.next || 0)
@@ -548,16 +689,16 @@ export async function updateAppointmentReminder(reminderId, input = {}) {
 
   await db.run(`
     UPDATE appointment_reminders
-    SET name = ?, enabled = ?, message_type = ?, ai_enabled = ?, sender_mode = ?,
+    SET name = ?, enabled = ?, message_type = ?, ai_enabled = ?, channel = ?, sender_mode = ?,
       sender_phone_number_id = ?, template_id = ?, template_name = ?, template_language = ?,
-      qr_fallback_enabled = ?, timing_anchor = ?, offset_value = ?, offset_unit = ?, message_text = ?,
+      content_mode = ?, qr_fallback_enabled = ?, timing_anchor = ?, offset_value = ?, offset_unit = ?, message_text = ?,
       smart_enabled = ?, smart_start = ?, smart_end = ?, smart_overflow = ?,
       no_confirm_action = ?, confirmation_success_action = ?, bypass_automations = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [
-    name, data.enabled, data.messageType, data.aiEnabled, data.senderMode,
+    name, data.enabled, data.messageType, data.aiEnabled, data.channel, data.senderMode,
     data.senderPhoneNumberId, data.templateId, data.templateName, data.templateLanguage,
-    data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit, data.messageText,
+    data.contentMode, data.qrFallbackEnabled, data.timingAnchor, data.offsetValue, data.offsetUnit, data.messageText,
     data.smartEnabled, data.smartStart, data.smartEnd, data.smartOverflow,
     data.noConfirmAction, data.confirmationSuccessAction, data.bypassAutomations, id
   ])
@@ -743,7 +884,9 @@ async function sendReminderViaQr({ reminder, appointment, sender, template, time
 
   const qrSender = await resolveQrFallbackSender(sender)
   if (!qrSender?.qrReady) {
-    throw new Error('El respaldo por QR está activado, pero no hay un número conectado por QR.')
+    throw new Error(primary
+      ? 'Conecta un número de WhatsApp QR para enviar este recordatorio.'
+      : 'El respaldo por QR está activado, pero no hay un número conectado por QR.')
   }
 
   const text = template
@@ -764,6 +907,237 @@ function shouldFallbackToQrAfterTemplateError(error) {
   const text = cleanString(error?.message)
   if (!text) return false
   return /WhatsApp[_\s-]*API no está conectado|WhatsApp Business no está conectado|Falta el número emisor|restricción|límite|limit|quality|sender|from|phone number|business account/i.test(text)
+}
+
+function reminderUsesWhatsAppTemplate(reminder = {}) {
+  return isWhatsAppReminderChannel(reminder.channel) && reminder.contentMode !== 'direct'
+}
+
+function getReminderDirectText(reminder, appointment, timezone) {
+  return renderMessageText(reminder.messageText, { contact: appointment, appointment, timezone })
+}
+
+function getAppointmentReminderSubject(reminder = {}) {
+  const name = cleanString(reminder.name)
+  if (reminder.messageType === 'confirmation') return name || 'Confirma tu cita'
+  if (reminder.timingAnchor === 'after_booking') return name || 'Cita agendada'
+  return name || 'Recordatorio de cita'
+}
+
+function getSentMessageId(response = {}) {
+  return cleanString(
+    response?.id ||
+      response?.localMessageId ||
+      response?.messageId ||
+      response?.remoteMessageId
+  )
+}
+
+function getReminderChannelLabel(reminder = {}) {
+  return CHANNEL_LABELS[cleanString(reminder.channel)] || cleanString(reminder.channel) || 'canal'
+}
+
+function getMissingReminderTarget(reminder = {}, appointment = {}) {
+  const channel = cleanString(reminder.channel) || 'whatsapp'
+  if (isWhatsAppReminderChannel(channel) && !cleanString(appointment.phone)) {
+    return 'El contacto no tiene teléfono para WhatsApp.'
+  }
+  if (channel === 'email' && !cleanString(appointment.email)) {
+    return 'El contacto no tiene correo electrónico.'
+  }
+  if ((channel === 'messenger' || channel === 'instagram') && !cleanString(appointment.contact_id)) {
+    return 'La cita no tiene contacto enlazado para enviar por Meta.'
+  }
+  return ''
+}
+
+async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone }) {
+  const text = getReminderDirectText(reminder, appointment, timezone)
+  if (!text) throw new Error('Escribe el mensaje directo que se enviará en este recordatorio.')
+
+  if (!sender.apiEnabled && sender.qrReady) {
+    return sendWhatsAppApiTextMessage({
+      to: appointment.phone,
+      text,
+      from: sender.fromPhone || undefined,
+      contactId: appointment.contact_id,
+      phoneNumberId: sender.phoneNumberId || undefined,
+      transport: 'qr',
+      allowQrFallback: false
+    })
+  }
+
+  if (!sender.apiEnabled && reminder.qrFallbackEnabled) {
+    return sendReminderViaQr({
+      reminder,
+      appointment,
+      sender,
+      template: null,
+      timezone,
+      reason: 'WhatsApp API no está disponible para este remitente.'
+    })
+  }
+
+  if (!sender.apiEnabled) {
+    throw new Error('Conecta un número de WhatsApp API o QR para enviar este recordatorio.')
+  }
+
+  return sendWhatsAppApiTextMessage({
+    to: appointment.phone,
+    text,
+    from: sender.fromPhone || undefined,
+    contactId: appointment.contact_id,
+    phoneNumberId: sender.phoneNumberId || undefined,
+    allowQrFallback: reminder.qrFallbackEnabled === true
+  })
+}
+
+async function sendReminderViaEmail({ reminder, appointment, timezone }) {
+  const text = getReminderDirectText(reminder, appointment, timezone)
+  if (!text) throw new Error('Escribe el mensaje directo que se enviará por correo.')
+
+  return sendEmailToContact({
+    contactId: appointment.contact_id,
+    to: appointment.email,
+    subject: getAppointmentReminderSubject(reminder),
+    text,
+    externalId: `appointment-reminder:${reminder.id}:${appointment.id}`,
+    includeSignature: true
+  })
+}
+
+async function sendReminderViaMetaSocial({ reminder, appointment, timezone }) {
+  const channel = cleanString(reminder.channel) === 'instagram' ? 'instagram' : 'messenger'
+  const text = getReminderDirectText(reminder, appointment, timezone)
+  if (!text) throw new Error(`Escribe el mensaje directo que se enviará por ${CHANNEL_LABELS[channel]}.`)
+
+  return sendMetaSocialTextMessage({
+    contactId: appointment.contact_id,
+    platform: channel,
+    message: text,
+    externalId: `appointment-reminder:${reminder.id}:${appointment.id}`
+  })
+}
+
+async function sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone }) {
+  const sender = await resolveSenderPhone(reminder, appointment)
+  const template = await getReminderTemplateById(reminder.templateId)
+  if (!template) {
+    throw new Error('Selecciona una plantilla de WhatsApp para este recordatorio.')
+  }
+
+  const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
+  const useQrPrimary = !sender.apiEnabled && sender.qrReady
+  if (useQrPrimary) {
+    return sendReminderViaQr({
+      reminder,
+      appointment,
+      sender,
+      template,
+      timezone,
+      primary: true,
+      reason: 'WhatsApp API no está disponible; se enviará por QR.'
+    })
+  }
+
+  if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus)) {
+    const statusLabel = templateStatus || 'sin enviar a revisión'
+    if (!reminder.qrFallbackEnabled || !FALLBACK_TEMPLATE_STATUSES.has(templateStatus)) {
+      throw new Error(`La plantilla ${template.name} está ${statusLabel}; solo se pueden enviar plantillas APPROVED por WhatsApp API.`)
+    }
+    return sendReminderViaQr({
+      reminder,
+      appointment,
+      sender,
+      template,
+      timezone,
+      reason: `La plantilla ${template.name} está ${statusLabel}; se usará QR como respaldo.`
+    })
+  }
+
+  if (!sender.apiEnabled && reminder.qrFallbackEnabled) {
+    return sendReminderViaQr({
+      reminder,
+      appointment,
+      sender,
+      template,
+      timezone,
+      reason: 'WhatsApp API no está disponible para este remitente.'
+    })
+  }
+
+  const components = buildReminderTemplateComponents(template, { appointment, timezone })
+  try {
+    return await sendWhatsAppApiTemplateMessage({
+      to: appointment.phone,
+      from: sender.fromPhone || undefined,
+      templateName: template.ycloudTemplateName || template.name,
+      language: template.language,
+      ...(components.length ? { components } : {}),
+      contactId: appointment.contact_id,
+      phoneNumberId: sender.phoneNumberId || undefined,
+      allowQrFallback: reminder.qrFallbackEnabled === true
+    })
+  } catch (error) {
+    if (reminder.qrFallbackEnabled && shouldFallbackToQrAfterTemplateError(error)) {
+      return sendReminderViaQr({
+        reminder,
+        appointment,
+        sender,
+        template,
+        timezone,
+        reason: error.message
+      })
+    }
+    throw error
+  }
+}
+
+async function sendReminderViaWhatsAppQrOnly({ reminder, appointment, timezone }) {
+  const sender = await resolveSenderPhone(reminder, appointment)
+  const selectedSenderId = cleanString(reminder.senderPhoneNumberId)
+  if (
+    reminder.senderMode === 'specific' &&
+    (!sender.phoneNumberId || sender.phoneNumberId !== selectedSenderId || !sender.qrReady)
+  ) {
+    throw new Error('El remitente elegido no está conectado por WhatsApp QR.')
+  }
+
+  const template = reminder.contentMode === 'direct'
+    ? null
+    : await getReminderTemplateById(reminder.templateId)
+  if (reminder.contentMode !== 'direct' && !template) {
+    throw new Error('Selecciona un mensaje de WhatsApp para renderizarlo por QR.')
+  }
+
+  return sendReminderViaQr({
+    reminder,
+    appointment,
+    sender,
+    template,
+    timezone,
+    primary: true,
+    reason: 'WhatsApp QR elegido como canal.'
+  })
+}
+
+async function sendAppointmentReminderByChannel({ reminder, appointment, timezone }) {
+  const channel = cleanString(reminder.channel) || 'whatsapp'
+  if (channel === 'email') {
+    return sendReminderViaEmail({ reminder, appointment, timezone })
+  }
+  if (channel === 'messenger' || channel === 'instagram') {
+    return sendReminderViaMetaSocial({ reminder, appointment, timezone })
+  }
+  if (channel === 'whatsapp_qr') {
+    return sendReminderViaWhatsAppQrOnly({ reminder, appointment, timezone })
+  }
+  if (reminderUsesWhatsAppTemplate(reminder)) {
+    return sendReminderViaWhatsAppTemplate({ reminder, appointment, timezone })
+  }
+
+  const sender = await resolveSenderPhone(reminder, appointment)
+  return sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone })
 }
 
 // (APT-003) Al reprogramar una cita (cambia start_time) hay que olvidar los envíos ya
@@ -913,11 +1287,10 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
 
   const appointments = await db.all(`
     SELECT a.id, a.title, a.start_time, a.date_added, a.source, a.appointment_status, a.status, a.contact_id,
-      c.phone, c.first_name, c.last_name, c.full_name, c.preferred_whatsapp_phone_number_id
+      c.phone, c.email, c.first_name, c.last_name, c.full_name, c.preferred_whatsapp_phone_number_id
     FROM appointments a
     JOIN contacts c ON c.id = a.contact_id
     WHERE a.deleted_at IS NULL
-      AND COALESCE(c.phone, '') != ''
       AND LOWER(COALESCE(a.appointment_status, a.status, '')) NOT IN ('cancelled', 'canceled', 'noshow', 'invalid')
       AND (${clauses.join(' OR ')})
   `, params)
@@ -988,80 +1361,22 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
       }
 
       try {
-        const sender = await resolveSenderPhone(reminder, appointment)
-        const template = await getReminderTemplateById(reminder.templateId)
-        if (!template) {
-          throw new Error('Selecciona una plantilla de WhatsApp para este recordatorio.')
+        const missingTarget = getMissingReminderTarget(reminder, appointment)
+        if (missingTarget) {
+          await finalizeSend({ reminder, appointment, status: 'skipped', errorMessage: missingTarget })
+          skipped += 1
+          continue
         }
 
-        const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
-        const useQrPrimary = !sender.apiEnabled && sender.qrReady
-        let response
-        if (useQrPrimary) {
-          response = await sendReminderViaQr({
-            reminder,
-            appointment,
-            sender,
-            template,
-            timezone,
-            primary: true,
-            reason: 'WhatsApp API no está disponible; se enviará por QR.'
-          })
-        } else if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus)) {
-          const statusLabel = templateStatus || 'sin enviar a revisión'
-          if (!reminder.qrFallbackEnabled || !FALLBACK_TEMPLATE_STATUSES.has(templateStatus)) {
-            throw new Error(`La plantilla ${template.name} está ${statusLabel}; solo se pueden enviar plantillas APPROVED por WhatsApp API.`)
-          }
-          response = await sendReminderViaQr({
-            reminder,
-            appointment,
-            sender,
-            template,
-            timezone,
-            reason: `La plantilla ${template.name} está ${statusLabel}; se usará QR como respaldo.`
-          })
-        } else if (!sender.apiEnabled && reminder.qrFallbackEnabled) {
-          response = await sendReminderViaQr({
-            reminder,
-            appointment,
-            sender,
-            template,
-            timezone,
-            reason: 'WhatsApp API no está disponible para este remitente.'
-          })
-        } else {
-          const components = buildReminderTemplateComponents(template, { appointment, timezone })
-          try {
-            response = await sendWhatsAppApiTemplateMessage({
-              to: appointment.phone,
-              from: sender.fromPhone || undefined,
-              templateName: template.ycloudTemplateName || template.name,
-              language: template.language,
-              ...(components.length ? { components } : {}),
-              contactId: appointment.contact_id,
-              phoneNumberId: sender.phoneNumberId || undefined,
-              allowQrFallback: reminder.qrFallbackEnabled === true
-            })
-          } catch (error) {
-            if (reminder.qrFallbackEnabled && shouldFallbackToQrAfterTemplateError(error)) {
-              response = await sendReminderViaQr({
-                reminder,
-                appointment,
-                sender,
-                template,
-                timezone,
-                reason: error.message
-              })
-            } else {
-              throw error
-            }
-          }
-        }
+        const response = await sendAppointmentReminderByChannel({ reminder, appointment, timezone })
 
-        await finalizeSend({ reminder, appointment, status: 'sent', sentMessageId: response?.id || '' })
+        await finalizeSend({ reminder, appointment, status: 'sent', sentMessageId: getSentMessageId(response) })
         sent += 1
-        const transport = response?.transport === 'qr' ? 'QR' : 'WhatsApp API'
-        logger.info(`[Citas] Mensaje automático "${reminder.name}" enviado por ${transport} a ${appointment.phone} (cita ${appointment.id})`)
+        const transport = response?.transport === 'qr'
+          ? 'WhatsApp QR'
+          : response?.transport || response?.channel || getReminderChannelLabel(reminder)
+        const target = appointment.phone || appointment.email || appointment.contact_id
+        logger.info(`[Citas] Mensaje automático "${reminder.name}" enviado por ${transport} a ${target} (cita ${appointment.id})`)
       } catch (error) {
         await finalizeSend({ reminder, appointment, status: 'error', errorMessage: error.message })
         errors += 1

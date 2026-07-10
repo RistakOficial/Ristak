@@ -212,8 +212,9 @@ async function withYCloudCapture(callback) {
   })
 }
 
-async function withOnlyQrPaymentSender(callback) {
+async function withOnlyQrPaymentSender(callback, { includeApiSender = false } = {}) {
   const phoneNumberId = `phone_payment_qr_primary_${randomUUID()}`
+  const apiPhoneNumberId = `phone_payment_api_primary_${randomUUID()}`
   const businessPhone = '+526561234567'
   const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
   const sentMessages = []
@@ -226,13 +227,27 @@ async function withOnlyQrPaymentSender(callback) {
 
   try {
     await db.run('UPDATE whatsapp_api_phone_numbers SET api_send_enabled = 0, qr_send_enabled = 0')
-    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id IN (?, ?)', [phoneNumberId, apiPhoneNumberId])
+    if (includeApiSender) {
+      await db.run(`
+        INSERT INTO whatsapp_api_phone_numbers (
+          id, provider, waba_id, phone_number, display_phone_number, verified_name,
+          is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+        ) VALUES (?, 'ycloud', ?, ?, ?, 'API Payment Automation Test', 1, 1, 0, 'disconnected', 'CONNECTED')
+      `, [apiPhoneNumberId, `waba_payment_api_primary_${randomUUID()}`, businessPhone, businessPhone])
+    }
     await db.run(`
       INSERT INTO whatsapp_api_phone_numbers (
         id, provider, waba_id, phone_number, display_phone_number, verified_name,
         is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
-      ) VALUES (?, 'qr', ?, ?, ?, 'QR Payment Automation Test', 1, 0, 1, 'connected', 'CONNECTED')
-    `, [phoneNumberId, `waba_payment_qr_primary_${randomUUID()}`, businessPhone, businessPhone])
+      ) VALUES (?, 'qr', ?, ?, ?, 'QR Payment Automation Test', ?, 0, 1, 'connected', 'CONNECTED')
+    `, [
+      phoneNumberId,
+      `waba_payment_qr_primary_${randomUUID()}`,
+      businessPhone,
+      businessPhone,
+      includeApiSender ? 0 : 1
+    ])
 
     await db.run(`
       INSERT INTO whatsapp_qr_sessions (
@@ -266,6 +281,7 @@ async function withOnlyQrPaymentSender(callback) {
     await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [apiPhoneNumberId]).catch(() => undefined)
     for (const row of existingPhones) {
       await db.run(`
         UPDATE whatsapp_api_phone_numbers
@@ -450,6 +466,125 @@ test('envia comprobante de pago por WhatsApp solo cuando el switch esta activo',
       assert.equal(captures.length, 1)
     } finally {
       await cleanupFixtures([sentFixture.paymentId, disabledFixture.paymentId])
+    }
+  })
+})
+
+test('envia recordatorio de pago como mensaje directo por WhatsApp API', async () => {
+  await withYCloudCapture(async (captures) => {
+    const fixture = await createPaymentFixture({ status: 'pending', suffix: 'directwa1' })
+
+    try {
+      const contact = await db.get('SELECT phone FROM contacts WHERE id = ?', [fixture.contactId])
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, origin, business_phone_number_id, contact_id, phone,
+          from_phone, to_phone, business_phone, transport, direction,
+          message_type, message_text, status, message_timestamp,
+          created_at, updated_at
+        ) VALUES (?, 'ycloud', 'test_open_window', 'phone_payment_automations_test', ?, ?, ?, '+526561234567',
+          '+526561234567', 'api', 'inbound', 'text', 'Hola', 'received', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `wa_in_${fixture.paymentId}`,
+        fixture.contactId,
+        contact.phone,
+        contact.phone,
+        new Date().toISOString()
+      ])
+
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: {
+          remindersEnabled: true,
+          reminderChannel: 'whatsapp',
+          reminderContentMode: 'direct',
+          reminderMessageText: 'Hola {{contact.first_name}}, paga {{payment.amount}} aquí: {{payment.url}}'
+        }
+      })
+
+      const result = await sendPaymentAutomationMessage('reminder', fixture.paymentId)
+      assert.equal(result.sent, true)
+      assert.deepEqual(result.channels, ['whatsapp'])
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].type, 'text')
+      assert.equal(captures[0].externalId, `payment:reminder:${fixture.paymentId}:direct`)
+      assert.match(captures[0].text.body, /Hola Maria, paga \$1,499\.00/)
+      assert.match(captures[0].text.body, /https:\/\/pagos\.example\.test\/pay\/pay_auto_directwa1/)
+    } finally {
+      await cleanupFixtures([fixture.paymentId])
+    }
+  })
+})
+
+test('envia recordatorio de pago por WhatsApp QR solo aunque exista API', async () => {
+  await withYCloudCapture(async (captures) => {
+    await withOnlyQrPaymentSender(async ({ sentMessages }) => {
+      const fixture = await createPaymentFixture({ status: 'pending', suffix: 'directqr1' })
+
+      try {
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: {
+            remindersEnabled: true,
+            reminderChannel: 'whatsapp_qr',
+            reminderContentMode: 'direct',
+            reminderMessageText: 'QR pago para {{contact.first_name}}: {{payment.url}}'
+          }
+        })
+
+        const result = await sendPaymentAutomationMessage('reminder', fixture.paymentId)
+        assert.equal(result.sent, true)
+        assert.deepEqual(result.channels, ['whatsapp_qr'])
+        assert.equal(captures.length, 0)
+        assert.equal(sentMessages.length, 1)
+        assert.match(sentMessages[0].payload.text, /QR pago para Maria/)
+        assert.match(sentMessages[0].payload.text, /https:\/\/pagos\.example\.test\/pay\/pay_auto_directqr1/)
+
+        const storedMessage = await db.get(`
+          SELECT transport, message_type, message_text
+          FROM whatsapp_api_messages
+          WHERE contact_id = ? AND direction = 'outbound'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [fixture.contactId])
+        assert.equal(storedMessage.transport, 'qr')
+        assert.equal(storedMessage.message_type, 'text')
+
+        const dispatch = await db.get(
+          'SELECT channel, status FROM payment_automation_dispatches WHERE payment_id = ? AND automation_type = ?',
+          [fixture.paymentId, 'reminder']
+        )
+        assert.equal(dispatch.channel, 'whatsapp_qr')
+        assert.equal(dispatch.status, 'sent')
+      } finally {
+        await cleanupFixtures([fixture.paymentId])
+      }
+    }, { includeApiSender: true })
+  })
+})
+
+test('envia recordatorio de pago como mensaje directo por correo', async () => {
+  await withEmailCapture(async (captures) => {
+    const fixture = await createPaymentFixture({ status: 'pending', suffix: 'directem1' })
+
+    try {
+      await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+        automations: {
+          remindersEnabled: true,
+          reminderChannel: 'email',
+          reminderContentMode: 'direct',
+          reminderMessageText: 'Correo directo para {{contact.first_name}}: {{payment.url}}'
+        }
+      })
+
+      const result = await sendPaymentAutomationMessage('reminder', fixture.paymentId)
+      assert.equal(result.sent, true)
+      assert.deepEqual(result.channels, ['email'])
+      assert.equal(captures.length, 1)
+      assert.equal(captures[0].subject, 'Recordatorio de pago - Plan mensual')
+      assert.match(captures[0].text, /Correo directo para Maria/)
+      assert.match(captures[0].text, /https:\/\/pagos\.example\.test\/pay\/pay_auto_directem1/)
+    } finally {
+      await db.run('DELETE FROM email_messages WHERE contact_id = ?', [fixture.contactId])
+      await cleanupFixtures([fixture.paymentId])
     }
   })
 })

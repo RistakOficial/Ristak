@@ -197,6 +197,24 @@
   font-size: 0.85rem;
 }
 
+.messageTextarea {
+  min-height: 132px;
+  resize: vertical;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-ctl);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  outline: none;
+}
+
+.messageTextarea:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ristak-focus-ring);
+}
+
 .switchRow {
   display: flex;
   align-items: flex-start;

@@ -42,30 +42,39 @@ const PAYMENT_AUTOMATION_TEMPLATES = {
     enabledKey: 'remindersEnabled',
     channelKey: 'reminderChannel',
     qrKey: 'reminderQrFallbackEnabled',
+    contentModeKey: 'reminderContentMode',
+    messageTextKey: 'reminderMessageText',
     templateIdKey: 'reminderTemplateId',
     templateNameKey: 'reminderTemplateName',
     templateLanguageKey: 'reminderTemplateLanguage',
     defaultTemplateName: 'recordatorio_pago_pendiente',
+    defaultMessageText: 'Hola {{contact.first_name}}, tienes un pago pendiente de {{payment.amount}} por {{payment.product}}. Puedes completarlo aquí: {{payment.url}}',
     label: 'recordatorio antes del pago'
   },
   receipt: {
     enabledKey: 'receiptDeliveryEnabled',
     channelKey: 'receiptDeliveryChannel',
     qrKey: 'receiptQrFallbackEnabled',
+    contentModeKey: 'receiptContentMode',
+    messageTextKey: 'receiptMessageText',
     templateIdKey: 'receiptTemplateId',
     templateNameKey: 'receiptTemplateName',
     templateLanguageKey: 'receiptTemplateLanguage',
     defaultTemplateName: 'comprobante_pago_recibido',
+    defaultMessageText: 'Hola {{contact.first_name}}, recibimos tu pago de {{payment.amount}} por {{payment.product}}. Puedes descargar tu comprobante aquí: {{payment.receipt_url}}',
     label: 'comprobante despues del pago'
   },
   failed: {
     enabledKey: 'failedPaymentEnabled',
     channelKey: 'failedPaymentChannel',
     qrKey: 'failedPaymentQrFallbackEnabled',
+    contentModeKey: 'failedPaymentContentMode',
+    messageTextKey: 'failedPaymentMessageText',
     templateIdKey: 'failedPaymentTemplateId',
     templateNameKey: 'failedPaymentTemplateName',
     templateLanguageKey: 'failedPaymentTemplateLanguage',
     defaultTemplateName: 'pago_fallido_reintento',
+    defaultMessageText: 'Hola {{contact.first_name}}, no pudimos procesar tu pago de {{payment.amount}} por {{payment.product}}. Puedes intentarlo de nuevo aquí: {{payment.url}}',
     label: 'cobro fallido'
   }
 }
@@ -76,12 +85,16 @@ function cleanString(value, maxLength = 1000) {
 
 function channelUsesWhatsApp(channel = '') {
   const normalized = cleanString(channel, 40).toLowerCase()
-  return normalized === 'whatsapp' || normalized === 'both'
+  return normalized === 'whatsapp' || normalized === 'whatsapp_qr' || normalized === 'both'
 }
 
 function channelUsesEmail(channel = '') {
   const normalized = cleanString(channel, 40).toLowerCase()
   return normalized === 'email' || normalized === 'both'
+}
+
+function channelUsesWhatsappQrOnly(channel = '') {
+  return cleanString(channel, 40).toLowerCase() === 'whatsapp_qr'
 }
 
 function safeJson(value) {
@@ -358,15 +371,34 @@ function getAutomationDefinition(type, settings = {}) {
   if (!definition) return null
 
   const automations = settings.automations || {}
+  const contentMode = cleanString(automations[definition.contentModeKey], 20).toLowerCase() === 'direct'
+    ? 'direct'
+    : 'template'
   return {
     ...definition,
     enabled: automations[definition.enabledKey] !== false,
     channel: cleanString(automations[definition.channelKey] || ''),
     allowQrFallback: automations[definition.qrKey] === true,
+    contentMode,
+    messageText: cleanString(automations[definition.messageTextKey], 3000) || definition.defaultMessageText,
     templateId: cleanString(automations[definition.templateIdKey], 180),
     templateName: cleanString(automations[definition.templateNameKey], 180) || definition.defaultTemplateName,
     language: cleanString(automations[definition.templateLanguageKey], 20) || DEFAULT_LANGUAGE
   }
+}
+
+function renderPaymentAutomationText(template = '', variables = {}) {
+  return cleanString(template, 3000).replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, key) => {
+    const value = variables[key]
+    return value === undefined || value === null || value === '' ? match : cleanString(value, 1000)
+  })
+}
+
+function getPaymentAutomationSubject(type, payment = {}, variables = {}) {
+  const product = variables['payment.product'] || cleanString(payment.title || payment.description || 'Pago', 160)
+  if (type === 'receipt') return `Comprobante de pago - ${product}`
+  if (type === 'failed') return `No pudimos procesar tu pago - ${product}`
+  return `Recordatorio de pago - ${product}`
 }
 
 function paymentQrSenderPhone(row = {}) {
@@ -382,6 +414,10 @@ async function getPaymentQrPrimarySender() {
   `).catch(() => null)
   if (apiSender?.id) return null
 
+  return getPaymentQrSender()
+}
+
+async function getPaymentQrSender() {
   return db.get(`
     SELECT id, phone_number, display_phone_number
     FROM whatsapp_api_phone_numbers
@@ -648,19 +684,63 @@ function buildPaymentAutomationEmail(type, payment = {}, variables = {}, setting
 async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, { publicBaseUrl, extraVariables }) {
   const paymentId = cleanString(payment.id, 200)
   const contact = contactFromPaymentRow(payment)
-  if (!contact.phone) return { sent: false, skipped: true, type, channel: 'whatsapp', reason: 'missing_phone' }
+  const qrOnly = channelUsesWhatsappQrOnly(definition.channel)
+  const dispatchChannel = qrOnly ? 'whatsapp_qr' : 'whatsapp'
+  if (!contact.phone) return { sent: false, skipped: true, type, channel: dispatchChannel, reason: 'missing_phone' }
 
   const claim = await claimDispatch({
     paymentId,
     automationType: type,
-    channel: 'whatsapp',
-    templateId: definition.templateId,
-    templateName: definition.templateName
+    channel: dispatchChannel,
+    templateId: definition.contentMode === 'direct' ? '' : definition.templateId,
+    templateName: definition.contentMode === 'direct' ? `${type}:direct` : definition.templateName
   })
-  if (!claim.claimed) return { sent: false, skipped: true, type, channel: 'whatsapp', reason: claim.reason, dispatchId: claim.id }
+  if (!claim.claimed) return { sent: false, skipped: true, type, channel: dispatchChannel, reason: claim.reason, dispatchId: claim.id }
 
   try {
-    const qrPrimarySender = await getPaymentQrPrimarySender()
+    if (definition.contentMode === 'direct') {
+      const text = renderPaymentAutomationText(definition.messageText, extraVariables)
+      if (!text) throw new Error(`El mensaje directo para ${definition.label} está vacío.`)
+
+      const qrPrimarySender = qrOnly ? await getPaymentQrSender() : await getPaymentQrPrimarySender()
+      if (qrOnly && !qrPrimarySender?.id) {
+        throw new Error('Conecta un número de WhatsApp QR para enviar esta automatización.')
+      }
+      const response = await sendWhatsAppApiTextMessage({
+        to: contact.phone,
+        ...(qrPrimarySender?.id
+          ? {
+              from: paymentQrSenderPhone(qrPrimarySender) || undefined,
+              phoneNumberId: qrPrimarySender.id,
+              transport: 'qr',
+              allowQrFallback: false
+            }
+          : {
+              allowQrFallback: definition.allowQrFallback
+            }),
+        text,
+        contactId: contact.id,
+        publicBaseUrl,
+        extraVariables,
+        externalId: `payment:${type}:${paymentId}:direct`
+      })
+
+      await markDispatchSent(claim.id, response)
+      return {
+        sent: true,
+        type,
+        channel: dispatchChannel,
+        dispatchId: claim.id,
+        contentMode: 'direct',
+        fallback: qrPrimarySender?.id ? 'qr_text' : undefined,
+        response
+      }
+    }
+
+    const qrPrimarySender = qrOnly ? await getPaymentQrSender() : await getPaymentQrPrimarySender()
+    if (qrOnly && !qrPrimarySender?.id) {
+      throw new Error('Conecta un número de WhatsApp QR para enviar esta automatización.')
+    }
     if (qrPrimarySender?.id) {
       const fallbackText = await buildDefaultMessageTemplateFallbackText({
         templateId: definition.templateId,
@@ -695,13 +775,13 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
         ...response,
         templateFallback: {
           templateName: definition.templateName,
-          reason: 'Sólo hay WhatsApp QR conectado.'
+          reason: qrOnly ? 'WhatsApp QR elegido como canal.' : 'Sólo hay WhatsApp QR conectado.'
         }
       })
       return {
         sent: true,
         type,
-        channel: 'whatsapp',
+        channel: dispatchChannel,
         dispatchId: claim.id,
         templateName: definition.templateName,
         fallback: 'qr_text',
@@ -738,13 +818,13 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
     return {
       sent: true,
       type,
-      channel: 'whatsapp',
+      channel: dispatchChannel,
       dispatchId: claim.id,
       templateName: definition.templateName,
       response
     }
   } catch (error) {
-    if (shouldSendPaymentTemplateAsTextFallback(error)) {
+    if (!qrOnly && shouldSendPaymentTemplateAsTextFallback(error)) {
       try {
         const fallbackText = await buildDefaultMessageTemplateFallbackText({
           templateId: definition.templateId,
@@ -779,7 +859,7 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
           return {
             sent: true,
             type,
-            channel: 'whatsapp',
+            channel: dispatchChannel,
             dispatchId: claim.id,
             templateName: definition.templateName,
             fallback: 'text',
@@ -796,7 +876,7 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
     return {
       sent: false,
       type,
-      channel: 'whatsapp',
+      channel: dispatchChannel,
       dispatchId: claim.id,
       templateName: definition.templateName,
       error: error.message
@@ -813,18 +893,30 @@ async function sendPaymentEmailAutomationMessage(type, payment, definition, { se
     paymentId,
     automationType: type,
     channel: 'email',
-    templateName: `${definition.templateName}:email`
+    templateName: definition.contentMode === 'direct' ? `${type}:email:direct` : `${definition.templateName}:email`
   })
   if (!claim.claimed) return { sent: false, skipped: true, type, channel: 'email', reason: claim.reason, dispatchId: claim.id }
 
   try {
-    const message = buildPaymentAutomationEmail(type, payment, extraVariables, settings)
+    const directText = definition.contentMode === 'direct'
+      ? renderPaymentAutomationText(definition.messageText, extraVariables)
+      : ''
+    if (definition.contentMode === 'direct' && !directText) {
+      throw new Error(`El mensaje directo para ${definition.label} está vacío.`)
+    }
+    const message = definition.contentMode === 'direct'
+      ? {
+          subject: getPaymentAutomationSubject(type, payment, extraVariables),
+          text: directText,
+          html: ''
+        }
+      : buildPaymentAutomationEmail(type, payment, extraVariables, settings)
     const response = await sendEmailToContact({
       contactId: contact.id,
       to: contact.email,
       subject: message.subject,
       text: message.text,
-      html: message.html,
+      html: message.html || undefined,
       externalId: claim.id,
       includeSignature: true
     })

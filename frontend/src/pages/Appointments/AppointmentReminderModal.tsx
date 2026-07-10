@@ -159,6 +159,8 @@ const buildTemplatePreview = (template?: MessageTemplate | null) => {
   ].filter(Boolean).join('\n\n')
 }
 
+const isWhatsAppChannelId = (channelId: string) => channelId === 'whatsapp' || channelId === 'whatsapp_qr'
+
 export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> = ({
   isOpen,
   reminder,
@@ -186,6 +188,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       templateId: reminder.templateId,
       templateName: reminder.templateName || '',
       templateLanguage: reminder.templateLanguage || 'es_MX',
+      contentMode: reminder.contentMode || 'template',
+      channel: reminder.channel || 'whatsapp',
       qrFallbackEnabled: reminder.qrFallbackEnabled,
       timingAnchor: reminder.timingAnchor || 'before_appointment',
       offsetValue: reminder.offsetValue,
@@ -224,14 +228,20 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     )
   }
 
-  const channel = channels[0]
+  const selectedChannelId = String(draft.channel || reminder?.channel || 'whatsapp')
+  const channel = channels.find(item => item.id === selectedChannelId) || channels[0]
+  const isWhatsAppApiChannel = selectedChannelId === 'whatsapp'
+  const isWhatsAppQrOnly = selectedChannelId === 'whatsapp_qr'
+  const usesWhatsApp = isWhatsAppChannelId(selectedChannelId)
+  const contentMode = usesWhatsApp ? (draft.contentMode || 'template') : 'direct'
+  const isDirectMessage = contentMode === 'direct'
   const isConfirmation = draft.messageType === 'confirmation'
   const timingAnchor: ReminderTimingAnchor = draft.timingAnchor || 'before_appointment'
   const isAfterBooking = timingAnchor === 'after_booking'
   const whatsappAvailability = getWhatsAppSenderConnectionAvailability(senders)
   const hasQrConnected = whatsappAvailability.hasQrConnected
   const hasApiConnected = whatsappAvailability.hasApiConnected
-  const qrOnlyConnected = hasQrConnected && !hasApiConnected
+  const qrOnlyConnected = isWhatsAppApiChannel && hasQrConnected && !hasApiConnected
 
   const visibleTemplates = useMemo(() => (
     templates
@@ -257,14 +267,14 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   }, [draft.messageType, timingAnchor, visibleTemplates])
 
   useEffect(() => {
-    if (!isOpen || !reminder || draft.templateId || !defaultTemplateForType) return
+    if (!isOpen || !reminder || isDirectMessage || draft.templateId || !defaultTemplateForType) return
     setDraft(prev => ({
       ...prev,
       templateId: defaultTemplateForType.id,
       templateName: defaultTemplateForType.name,
       templateLanguage: defaultTemplateForType.language
     }))
-  }, [defaultTemplateForType, draft.templateId, isOpen, reminder])
+  }, [defaultTemplateForType, draft.templateId, isDirectMessage, isOpen, reminder])
 
   const templateOptions = useMemo(() => visibleTemplates.map(template => ({
     value: template.id,
@@ -280,10 +290,12 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     option => option.value === (draft.noConfirmAction || 'no_action')
   ) || NO_CONFIRM_ACTION_OPTIONS[0]
 
-  const senderOptions = useMemo(() => senders.map(sender => ({
-    value: sender.id,
-    label: sender.name ? `${sender.phone} · ${sender.name}` : sender.phone
-  })), [senders])
+  const senderOptions = useMemo(() => senders
+    .filter(sender => !isWhatsAppQrOnly || sender.qrConnected)
+    .map(sender => ({
+      value: sender.id,
+      label: sender.name ? `${sender.phone} · ${sender.name}` : sender.phone
+    })), [isWhatsAppQrOnly, senders])
 
   const isImmediate = isAfterBooking && (Number(draft.offsetValue) || 0) <= 0
   const offsetLabel = formatReminderOffsetLabel(
@@ -352,6 +364,33 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
     }))
   }
 
+  const changeChannel = (nextChannel: string) => {
+    const nextUsesWhatsApp = isWhatsAppChannelId(nextChannel)
+    setDraft(prev => ({
+      ...prev,
+      channel: nextChannel,
+      contentMode: nextUsesWhatsApp ? (prev.contentMode || 'template') : 'direct',
+      qrFallbackEnabled: nextChannel === 'whatsapp' ? prev.qrFallbackEnabled : false,
+      senderMode: nextUsesWhatsApp ? prev.senderMode : 'contact',
+      senderPhoneNumberId: nextUsesWhatsApp ? prev.senderPhoneNumberId : null
+    }))
+  }
+
+  const changeContentMode = (nextMode: 'template' | 'direct') => {
+    if (!usesWhatsApp && nextMode === 'template') return
+    setDraft(prev => ({
+      ...prev,
+      contentMode: nextMode,
+      ...(nextMode === 'direct'
+        ? {
+            templateId: null,
+            templateName: '',
+            qrFallbackEnabled: isWhatsAppApiChannel ? prev.qrFallbackEnabled : false
+          }
+        : {})
+    }))
+  }
+
   const changeConfirmationMode = (enabled: boolean) => {
     const messageType: AppointmentReminderInput['messageType'] = enabled ? 'confirmation' : 'reminder'
     const previousName = getDefaultTemplateName(
@@ -378,10 +417,16 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   }
 
   const handleSave = async () => {
-    if (!draft.templateId) return
+    if (contentMode === 'template' && !draft.templateId) return
+    if (contentMode === 'direct' && !String(draft.messageText || '').trim()) return
     setSaving(true)
     try {
-      await onSave(reminder.id, draft)
+      await onSave(reminder.id, {
+        ...draft,
+        channel: selectedChannelId,
+        contentMode,
+        qrFallbackEnabled: isWhatsAppApiChannel ? draft.qrFallbackEnabled : false
+      })
       onClose()
     } finally {
       setSaving(false)
@@ -397,6 +442,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       setDeleting(false)
     }
   }
+
+  const saveDisabled = saving || deleting ||
+    (contentMode === 'template' ? !draft.templateId : !String(draft.messageText || '').trim())
 
   return (
     <>
@@ -544,30 +592,32 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               <div className={styles.field}>
                 <label className={styles.fieldLabel}>Canal</label>
                 <CustomSelect
-                  value={channel?.id || 'whatsapp'}
+                  value={channel?.id || selectedChannelId}
                   options={channels.map(c => ({
                     value: c.id,
                     label: c.connected ? `${c.label} (conectado)` : c.label
                   }))}
-                  onValueChange={() => {}}
+                  onValueChange={changeChannel}
                   aria-label="Canal de mensajes"
                 />
               </div>
-              <div className={styles.field}>
-                <label className={styles.fieldLabel}>Enviar desde</label>
-                <CustomSelect
-                  value={draft.senderMode || 'contact'}
-                  options={[
-                    { value: 'contact', label: 'El número por el que te escribió el contacto' },
-                    { value: 'default', label: 'El número predeterminado de la aplicación' },
-                    { value: 'specific', label: 'Un número específico' }
-                  ]}
-                  onValueChange={(value) => set('senderMode', value as AppointmentReminderInput['senderMode'])}
-                  aria-label="Número remitente"
-                />
-              </div>
+              {usesWhatsApp && (
+                <div className={styles.field}>
+                  <label className={styles.fieldLabel}>Enviar desde</label>
+                  <CustomSelect
+                    value={draft.senderMode || 'contact'}
+                    options={[
+                      { value: 'contact', label: 'El número por el que te escribió el contacto' },
+                      { value: 'default', label: 'El número predeterminado de la aplicación' },
+                      { value: 'specific', label: 'Un número específico' }
+                    ]}
+                    onValueChange={(value) => set('senderMode', value as AppointmentReminderInput['senderMode'])}
+                    aria-label="Número remitente"
+                  />
+                </div>
+              )}
             </div>
-            {draft.senderMode === 'specific' && (
+            {usesWhatsApp && draft.senderMode === 'specific' && (
               <div className={styles.field}>
                 <label className={styles.fieldLabel}>Número</label>
                 {senderOptions.length ? (
@@ -582,6 +632,11 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                   <p className={styles.helpText}>No hay números de WhatsApp conectados todavía.</p>
                 )}
               </div>
+            )}
+            {!usesWhatsApp && (
+              <p className={styles.helpText}>
+                Este canal usa mensaje directo. Ristak lo enviará si el contacto tiene ese canal enlazado y la integración está conectada.
+              </p>
             )}
           </section>
 
@@ -724,8 +779,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
           {/* Mensaje */}
           <section className={styles.section}>
             <div className={styles.sectionHeader}>
-              <h4 className={styles.sectionTitle}>Plantilla de WhatsApp</h4>
-              {selectedTemplate && (
+              <h4 className={styles.sectionTitle}>Contenido del mensaje</h4>
+              {contentMode === 'template' && selectedTemplate && (
                 <Badge variant={getTemplateStatusVariant(selectedTemplate)}>
                   {getTemplateStatusLabel(selectedTemplate)}
                 </Badge>
@@ -733,40 +788,84 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
             </div>
 
             <div className={styles.field}>
-              <label className={styles.fieldLabel}>Mensaje seleccionado</label>
+              <label className={styles.fieldLabel}>Tipo de contenido</label>
               <CustomSelect
-                value={draft.templateId || ''}
-                options={templateOptions}
-                placeholder={templateOptions.length ? 'Elige una plantilla' : 'Sin plantillas disponibles'}
-                disabled={!templateOptions.length}
-                onValueChange={selectTemplate}
-                aria-label="Plantilla del mensaje automático"
-                portal
+                value={contentMode}
+                options={usesWhatsApp
+                  ? [
+                      { value: 'template', label: isWhatsAppQrOnly ? 'Plantilla como texto QR' : 'Plantilla de WhatsApp' },
+                      { value: 'direct', label: 'Mensaje directo' }
+                    ]
+                  : [
+                      { value: 'direct', label: 'Mensaje directo' }
+                    ]}
+                onValueChange={(value) => changeContentMode(value as 'template' | 'direct')}
+                aria-label="Tipo de contenido del mensaje"
               />
               <span className={styles.helpText}>
-                {qrOnlyConnected
-                  ? 'Con WhatsApp QR, Ristak manda el texto del mensaje seleccionado. No necesita aprobación de Meta porque no sale como plantilla API.'
-                  : whatsappAvailability.canShowQrFallbackSwitch
-                  ? 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido salvo que actives el respaldo por QR.'
-                  : 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido hasta que Meta la apruebe y WhatsApp API esté disponible.'}
+                {contentMode === 'direct'
+                  ? usesWhatsApp
+                    ? isWhatsAppQrOnly
+                      ? 'Ristak enviará este texto por WhatsApp QR como canal principal. No requiere aprobación de Meta ni ventana de 24 horas.'
+                      : 'Ristak enviará este texto si WhatsApp permite mensaje libre: por API requiere conversación abierta de 24 horas; por QR se manda como texto normal.'
+                    : 'Ristak enviará este texto tal cual, renderizando variables como {{contact.first_name}}, {{cita.fecha}} y {{cita.hora}}.'
+                  : isWhatsAppQrOnly
+                    ? 'Ristak tomará el texto del mensaje seleccionado y lo enviará por WhatsApp QR. No necesita aprobación de Meta porque no sale como plantilla API.'
+                    : qrOnlyConnected
+                    ? 'Con WhatsApp QR, Ristak manda el texto del mensaje seleccionado. No necesita aprobación de Meta porque no sale como plantilla API.'
+                    : whatsappAvailability.canShowQrFallbackSwitch
+                      ? 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido salvo que actives el respaldo por QR.'
+                      : 'Los mensajes por WhatsApp API salen con plantillas aprobadas. Si la plantilla no está aprobada, el envío queda detenido hasta que Meta la apruebe y WhatsApp API esté disponible.'}
               </span>
             </div>
 
-            {selectedTemplate ? (
-              <div className={styles.templatePreview}>
-                <div className={styles.templatePreviewHeader}>
-                  <span>{selectedTemplate.name}</span>
-                  <small>{selectedTemplate.language}</small>
+            {contentMode === 'template' ? (
+              <>
+                <div className={styles.field}>
+                  <label className={styles.fieldLabel}>Mensaje seleccionado</label>
+                  <CustomSelect
+                    value={draft.templateId || ''}
+                    options={templateOptions}
+                    placeholder={templateOptions.length ? 'Elige una plantilla' : 'Sin plantillas disponibles'}
+                    disabled={!templateOptions.length}
+                    onValueChange={selectTemplate}
+                    aria-label="Plantilla del mensaje automático"
+                    portal
+                  />
                 </div>
-                <p>{selectedTemplatePreview || 'Esta plantilla no tiene texto para previsualizar.'}</p>
-              </div>
+
+                {selectedTemplate ? (
+                  <div className={styles.templatePreview}>
+                    <div className={styles.templatePreviewHeader}>
+                      <span>{selectedTemplate.name}</span>
+                      <small>{selectedTemplate.language}</small>
+                    </div>
+                    <p>{selectedTemplatePreview || 'Esta plantilla no tiene texto para previsualizar.'}</p>
+                  </div>
+                ) : (
+                  <p className={styles.templateEmpty}>
+                    {isWhatsAppQrOnly
+                      ? 'Elige un mensaje guardado o cambia a mensaje directo para escribir el texto aquí.'
+                      : 'Cuando conectes WhatsApp API, Ristak crea las plantillas de recordatorios y las manda a revisión.'}
+                  </p>
+                )}
+              </>
             ) : (
-              <p className={styles.templateEmpty}>
-                Cuando conectes WhatsApp API, Ristak crea las plantillas de recordatorios y las manda a revisión.
-              </p>
+              <div className={styles.field}>
+                <label className={styles.fieldLabel}>Mensaje directo</label>
+                <textarea
+                  className={styles.messageTextarea}
+                  value={draft.messageText || ''}
+                  onChange={(event) => set('messageText', event.target.value)}
+                  placeholder="Escribe el mensaje que recibirá el contacto."
+                />
+                <span className={styles.helpText}>
+                  Variables disponibles: {'{{contact.first_name}}'}, {'{{contact.name}}'}, {'{{cita.titulo}}'}, {'{{cita.fecha}}'}, {'{{cita.hora}}'}.
+                </span>
+              </div>
             )}
 
-            {selectedTemplate && !selectedTemplateApproved && !draft.qrFallbackEnabled && !qrOnlyConnected && (
+            {contentMode === 'template' && selectedTemplate && !selectedTemplateApproved && !draft.qrFallbackEnabled && !qrOnlyConnected && !isWhatsAppQrOnly && (
               <div className={styles.templateNotice}>
                 {whatsappAvailability.canShowQrFallbackSwitch
                   ? 'Esta plantilla todavía no está aprobada por WhatsApp API. No se enviará hasta que Meta la apruebe o actives el respaldo por QR.'
@@ -774,13 +873,32 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               </div>
             )}
 
-            {!hasApiConnected && !hasQrConnected && selectedTemplateApproved && !draft.qrFallbackEnabled && (
+            {isWhatsAppApiChannel && !hasApiConnected && !hasQrConnected && (contentMode === 'direct' || selectedTemplateApproved) && !draft.qrFallbackEnabled && (
               <div className={styles.templateNotice}>
-                La plantilla está lista, pero WhatsApp API no está disponible ahora. Con QR apagado, este recordatorio esperará a que la API vuelva.
+                WhatsApp no está disponible ahora. Con QR apagado, este recordatorio esperará a que la API vuelva.
               </div>
             )}
 
-            {qrOnlyConnected && (
+            {isWhatsAppQrOnly && (
+              <div className={`${styles.qrFallbackBox} ${styles.qrFallbackNotice}`}>
+                <div className={styles.qrFallbackCopy}>
+                  <div className={styles.qrFallbackTitle}>
+                    WhatsApp QR solo
+                  </div>
+                  <span className={styles.helpText}>
+                    Este mensaje se enviará por QR como canal elegido. No es respaldo de WhatsApp API, aunque la API también esté conectada.
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {isWhatsAppQrOnly && !hasQrConnected && (
+              <div className={styles.templateNotice}>
+                Conecta un número de WhatsApp QR para enviar este mensaje por QR solo.
+              </div>
+            )}
+
+            {isWhatsAppApiChannel && qrOnlyConnected && (
               <div className={`${styles.qrFallbackBox} ${styles.qrFallbackNotice}`}>
                 <div className={styles.qrFallbackCopy}>
                   <div className={styles.qrFallbackTitle}>
@@ -793,7 +911,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               </div>
             )}
 
-            {whatsappAvailability.canShowQrFallbackSwitch && (
+            {isWhatsAppApiChannel && whatsappAvailability.canShowQrFallbackSwitch && (
               <div className={styles.qrFallbackBox}>
                 <div className={styles.qrFallbackCopy}>
                   <div className={styles.qrFallbackTitle}>
@@ -806,8 +924,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                     Usar QR como respaldo riesgoso
                   </div>
                   <span className={styles.helpText}>
-                    Si WhatsApp API no está disponible o la plantilla sigue en revisión, rechazada o pausada,
-                    Ristak intentará mandar el texto de esta plantilla por QR. {WHATSAPP_QR_PRECAUTION_MESSAGE}
+                    Si WhatsApp API no está disponible{contentMode === 'template' ? ' o la plantilla sigue en revisión, rechazada o pausada' : ''},
+                    Ristak intentará mandar el texto por QR. {WHATSAPP_QR_PRECAUTION_MESSAGE}
                   </span>
                 </div>
                 <Switch
@@ -832,7 +950,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               <Button variant="secondary" onClick={onClose} disabled={saving || deleting}>
                 Cancelar
               </Button>
-              <Button variant="primary" onClick={handleSave} disabled={saving || deleting || !draft.templateId}>
+              <Button variant="primary" onClick={handleSave} disabled={saveDisabled}>
                 {saving ? 'Guardando…' : 'Guardar'}
               </Button>
             </div>

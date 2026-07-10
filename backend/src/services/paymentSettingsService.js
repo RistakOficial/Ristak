@@ -10,6 +10,14 @@ const PAYMENT_SETTINGS_CONFIG_KEY = 'payments_settings'
 const PAYMENT_MODE_TEST = 'test'
 const PAYMENT_MODE_LIVE = 'live'
 const PAYMENT_MODES = [PAYMENT_MODE_TEST, PAYMENT_MODE_LIVE]
+const PAYMENT_AUTOMATION_CHANNELS = ['whatsapp', 'whatsapp_qr', 'email', 'both']
+const PAYMENT_AUTOMATION_CONTENT_MODES = ['template', 'direct']
+
+const DEFAULT_PAYMENT_AUTOMATION_MESSAGES = {
+  reminder: 'Hola {{contact.first_name}}, tienes un pago pendiente de {{payment.amount}} por {{payment.product}}. Puedes completarlo aquí: {{payment.url}}',
+  receipt: 'Hola {{contact.first_name}}, recibimos tu pago de {{payment.amount}} por {{payment.product}}. Puedes descargar tu comprobante aquí: {{payment.receipt_url}}',
+  failed: 'Hola {{contact.first_name}}, no pudimos procesar tu pago de {{payment.amount}} por {{payment.product}}. Puedes intentarlo de nuevo aquí: {{payment.url}}'
+}
 
 const DEFAULT_PAYMENT_SETTINGS = {
   paymentMode: PAYMENT_MODE_LIVE,
@@ -49,12 +57,16 @@ const DEFAULT_PAYMENT_SETTINGS = {
     reminderDaysBefore: 3,
     reminderChannel: 'whatsapp',
     reminderQrFallbackEnabled: false,
+    reminderContentMode: 'template',
+    reminderMessageText: DEFAULT_PAYMENT_AUTOMATION_MESSAGES.reminder,
     reminderTemplateId: '',
     reminderTemplateName: 'recordatorio_pago_pendiente',
     reminderTemplateLanguage: 'es_MX',
     receiptDeliveryEnabled: true,
     receiptDeliveryChannel: 'email',
     receiptQrFallbackEnabled: false,
+    receiptContentMode: 'template',
+    receiptMessageText: DEFAULT_PAYMENT_AUTOMATION_MESSAGES.receipt,
     receiptTemplateId: '',
     receiptTemplateName: 'comprobante_pago_recibido',
     receiptTemplateLanguage: 'es_MX',
@@ -63,6 +75,8 @@ const DEFAULT_PAYMENT_SETTINGS = {
     failedPaymentEnabled: true,
     failedPaymentChannel: 'whatsapp',
     failedPaymentQrFallbackEnabled: false,
+    failedPaymentContentMode: 'template',
+    failedPaymentMessageText: DEFAULT_PAYMENT_AUTOMATION_MESSAGES.failed,
     failedPaymentTemplateId: '',
     failedPaymentTemplateName: 'pago_fallido_reintento',
     failedPaymentTemplateLanguage: 'es_MX',
@@ -374,22 +388,28 @@ export function normalizePaymentSettings(input = {}, options = {}) {
     automations: {
       remindersEnabled: cleanBoolean(automations.remindersEnabled, DEFAULT_PAYMENT_SETTINGS.automations.remindersEnabled),
       reminderDaysBefore: cleanNumber(automations.reminderDaysBefore, DEFAULT_PAYMENT_SETTINGS.automations.reminderDaysBefore, { min: 1, max: 60 }),
-      reminderChannel: cleanEnum(automations.reminderChannel, ['whatsapp', 'email', 'both'], DEFAULT_PAYMENT_SETTINGS.automations.reminderChannel),
+      reminderChannel: cleanEnum(automations.reminderChannel, PAYMENT_AUTOMATION_CHANNELS, DEFAULT_PAYMENT_SETTINGS.automations.reminderChannel),
       reminderQrFallbackEnabled: cleanBoolean(automations.reminderQrFallbackEnabled, DEFAULT_PAYMENT_SETTINGS.automations.reminderQrFallbackEnabled),
+      reminderContentMode: cleanEnum(automations.reminderContentMode, PAYMENT_AUTOMATION_CONTENT_MODES, DEFAULT_PAYMENT_SETTINGS.automations.reminderContentMode),
+      reminderMessageText: cleanLongString(automations.reminderMessageText, 3000) || DEFAULT_PAYMENT_SETTINGS.automations.reminderMessageText,
       reminderTemplateId: cleanString(automations.reminderTemplateId, 180),
       reminderTemplateName: cleanString(automations.reminderTemplateName, 180) || DEFAULT_PAYMENT_SETTINGS.automations.reminderTemplateName,
       reminderTemplateLanguage: cleanString(automations.reminderTemplateLanguage, 20) || DEFAULT_PAYMENT_SETTINGS.automations.reminderTemplateLanguage,
       receiptDeliveryEnabled: cleanBoolean(automations.receiptDeliveryEnabled, DEFAULT_PAYMENT_SETTINGS.automations.receiptDeliveryEnabled),
-      receiptDeliveryChannel: cleanEnum(automations.receiptDeliveryChannel, ['whatsapp', 'email', 'both'], DEFAULT_PAYMENT_SETTINGS.automations.receiptDeliveryChannel),
+      receiptDeliveryChannel: cleanEnum(automations.receiptDeliveryChannel, PAYMENT_AUTOMATION_CHANNELS, DEFAULT_PAYMENT_SETTINGS.automations.receiptDeliveryChannel),
       receiptQrFallbackEnabled: cleanBoolean(automations.receiptQrFallbackEnabled, DEFAULT_PAYMENT_SETTINGS.automations.receiptQrFallbackEnabled),
+      receiptContentMode: cleanEnum(automations.receiptContentMode, PAYMENT_AUTOMATION_CONTENT_MODES, DEFAULT_PAYMENT_SETTINGS.automations.receiptContentMode),
+      receiptMessageText: cleanLongString(automations.receiptMessageText, 3000) || DEFAULT_PAYMENT_SETTINGS.automations.receiptMessageText,
       receiptTemplateId: cleanString(automations.receiptTemplateId, 180),
       receiptTemplateName: cleanString(automations.receiptTemplateName, 180) || DEFAULT_PAYMENT_SETTINGS.automations.receiptTemplateName,
       receiptTemplateLanguage: cleanString(automations.receiptTemplateLanguage, 20) || DEFAULT_PAYMENT_SETTINGS.automations.receiptTemplateLanguage,
       afterPaymentAction: cleanEnum(automations.afterPaymentAction, ['none', 'send_receipt', 'start_automation', 'tag_contact'], DEFAULT_PAYMENT_SETTINGS.automations.afterPaymentAction),
       afterPaymentMessage: cleanLongString(automations.afterPaymentMessage, 1000) || DEFAULT_PAYMENT_SETTINGS.automations.afterPaymentMessage,
       failedPaymentEnabled: cleanBoolean(automations.failedPaymentEnabled, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentEnabled),
-      failedPaymentChannel: cleanEnum(automations.failedPaymentChannel, ['whatsapp', 'email', 'both'], DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentChannel),
+      failedPaymentChannel: cleanEnum(automations.failedPaymentChannel, PAYMENT_AUTOMATION_CHANNELS, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentChannel),
       failedPaymentQrFallbackEnabled: cleanBoolean(automations.failedPaymentQrFallbackEnabled, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentQrFallbackEnabled),
+      failedPaymentContentMode: cleanEnum(automations.failedPaymentContentMode, PAYMENT_AUTOMATION_CONTENT_MODES, DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentContentMode),
+      failedPaymentMessageText: cleanLongString(automations.failedPaymentMessageText, 3000) || DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentMessageText,
       failedPaymentTemplateId: cleanString(automations.failedPaymentTemplateId, 180),
       failedPaymentTemplateName: cleanString(automations.failedPaymentTemplateName, 180) || DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentTemplateName,
       failedPaymentTemplateLanguage: cleanString(automations.failedPaymentTemplateLanguage, 20) || DEFAULT_PAYMENT_SETTINGS.automations.failedPaymentTemplateLanguage,

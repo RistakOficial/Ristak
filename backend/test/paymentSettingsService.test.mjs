@@ -24,12 +24,16 @@ describe('payment settings automations', () => {
         reminderDaysBefore: 5,
         reminderChannel: 'both',
         reminderQrFallbackEnabled: true,
+        reminderContentMode: 'direct',
+        reminderMessageText: 'Texto recordatorio {{payment.url}}',
         reminderTemplateId: 'tpl_reminder',
         reminderTemplateName: 'mi_recordatorio',
         reminderTemplateLanguage: 'es_MX',
         receiptDeliveryEnabled: true,
         receiptDeliveryChannel: 'whatsapp',
         receiptQrFallbackEnabled: true,
+        receiptContentMode: 'template',
+        receiptMessageText: 'Texto comprobante {{payment.receipt_url}}',
         receiptTemplateId: 'tpl_receipt',
         receiptTemplateName: 'mi_comprobante',
         receiptTemplateLanguage: 'es_MX',
@@ -38,6 +42,8 @@ describe('payment settings automations', () => {
         failedPaymentEnabled: true,
         failedPaymentChannel: 'email',
         failedPaymentQrFallbackEnabled: true,
+        failedPaymentContentMode: 'direct',
+        failedPaymentMessageText: 'Texto fallido {{payment.url}}',
         failedPaymentTemplateId: 'tpl_failed',
         failedPaymentTemplateName: 'mi_cobro_fallido',
         failedPaymentTemplateLanguage: 'es_MX',
@@ -50,12 +56,16 @@ describe('payment settings automations', () => {
       reminderDaysBefore: 5,
       reminderChannel: 'both',
       reminderQrFallbackEnabled: true,
+      reminderContentMode: 'direct',
+      reminderMessageText: 'Texto recordatorio {{payment.url}}',
       reminderTemplateId: 'tpl_reminder',
       reminderTemplateName: 'mi_recordatorio',
       reminderTemplateLanguage: 'es_MX',
       receiptDeliveryEnabled: true,
       receiptDeliveryChannel: 'whatsapp',
       receiptQrFallbackEnabled: true,
+      receiptContentMode: 'template',
+      receiptMessageText: 'Texto comprobante {{payment.receipt_url}}',
       receiptTemplateId: 'tpl_receipt',
       receiptTemplateName: 'mi_comprobante',
       receiptTemplateLanguage: 'es_MX',
@@ -64,6 +74,8 @@ describe('payment settings automations', () => {
       failedPaymentEnabled: true,
       failedPaymentChannel: 'email',
       failedPaymentQrFallbackEnabled: true,
+      failedPaymentContentMode: 'direct',
+      failedPaymentMessageText: 'Texto fallido {{payment.url}}',
       failedPaymentTemplateId: 'tpl_failed',
       failedPaymentTemplateName: 'mi_cobro_fallido',
       failedPaymentTemplateLanguage: 'es_MX',
@@ -86,6 +98,20 @@ describe('payment settings automations', () => {
     assert.equal(settings.automations.reminderTemplateName, 'recordatorio_pago_pendiente')
     assert.equal(settings.automations.receiptTemplateName, 'comprobante_pago_recibido')
     assert.equal(settings.automations.failedPaymentTemplateName, 'pago_fallido_reintento')
+  })
+
+  it('keeps WhatsApp QR as an explicit payment automation channel', () => {
+    const settings = normalizePaymentSettings({
+      automations: {
+        reminderChannel: 'whatsapp_qr',
+        receiptDeliveryChannel: 'whatsapp_qr',
+        failedPaymentChannel: 'whatsapp_qr'
+      }
+    })
+
+    assert.equal(settings.automations.reminderChannel, 'whatsapp_qr')
+    assert.equal(settings.automations.receiptDeliveryChannel, 'whatsapp_qr')
+    assert.equal(settings.automations.failedPaymentChannel, 'whatsapp_qr')
   })
 })
 
