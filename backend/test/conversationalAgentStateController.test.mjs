@@ -607,8 +607,8 @@ test('un mensaje nuevo reabre una conversación completada con acción concreta 
   }
 })
 
-test('un handoff completado no se reabre solo con mensajes nuevos', async () => {
-  const contactId = `conversation_agent_no_reopen_handoff_${randomUUID()}`
+test('[Fase 1] un handoff completado SÍ se reabre con mensajes nuevos para seguir contestando', async () => {
+  const contactId = `conversation_agent_reopen_handoff_${randomUUID()}`
   const answeredMessageId = `waapi_msg_answered_${randomUUID()}`
   const newMessageId = `waapi_msg_new_${randomUUID()}`
   let agentId = ''
@@ -648,14 +648,18 @@ test('un handoff completado no se reabre solo con mensajes nuevos', async () => 
       latestMessageId: newMessageId
     })
 
-    assert.equal(resolved.agentConfig, null)
+    // Fase 1: el objetivo cumplido (ready_for_human) ya no muta al bot para siempre;
+    // reabre para contestar el follow-up de la persona. El mute real solo lo impone un
+    // humano que toma el chat (status 'human'), que no entra a esta ruta.
+    assert.equal(resolved.agentConfig?.id, agentId)
+    assert.equal(resolved.assigned, false)
 
     const state = await getConversationState(contactId, { agentId })
-    assert.equal(state?.status, 'completed')
-    assert.equal(state?.signal, 'ready_for_human')
+    assert.equal(state?.status, 'active')
+    assert.equal(state?.signal, null)
 
     const events = await listConversationalAgentEvents({ contactId })
-    assert.equal(events.some((event) => event.eventType === 'agent_reopened'), false)
+    assert.equal(events.some((event) => event.eventType === 'agent_reopened'), true)
   } finally {
     await cleanup(contactId, agentId)
   }

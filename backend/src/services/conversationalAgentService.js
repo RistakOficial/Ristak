@@ -3747,8 +3747,30 @@ export async function applyAgentCompletionAction(agent, contactId) {
   return { mode: 'assign_user', userId: assignedUserId, userName: assignedUserName || null }
 }
 
+const COMPLETION_NOTIFICATION_DEDUP_MS = 10 * 60 * 1000
+
 async function notifyConversationalCompletion({ contactId, reason = '', summary = '', signal = 'ready_for_human' } = {}) {
   if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
+  // [Fase 1 — nunca fantasma] Idempotencia: como ahora una conversación cumplida se reabre
+  // para seguir contestando (ver shouldReopenCompletedConversationState), el modelo podría
+  // volver a marcar el objetivo en un follow-up. No re-avisamos a un humano si ya le avisamos
+  // de este contacto hace poco. Cutoff en JS + comparación de string para que sirva igual en
+  // SQLite (dev) y Postgres (clientes).
+  const since = new Date(Date.now() - COMPLETION_NOTIFICATION_DEDUP_MS).toISOString().slice(0, 19).replace('T', ' ')
+  const recentNotification = await db.get(
+    `SELECT id FROM conversational_agent_events
+     WHERE contact_id = ? AND event_type = 'priority_push_notification' AND created_at > ?
+     ORDER BY created_at DESC LIMIT 1`,
+    [contactId, since]
+  ).catch(() => null)
+  if (recentNotification) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'priority_push_notification_deduped',
+      detail: { signal, reason: 'recent_notification_within_window', windowMs: COMPLETION_NOTIFICATION_DEDUP_MS }
+    })
+    return { sent: 0, skipped: true, reason: 'deduped_recent_notification' }
+  }
   try {
     const { sendConversationalAgentPriorityNotification } = await import('./pushNotificationsService.js')
     const result = await sendConversationalAgentPriorityNotification({ contactId, reason, summary, signal })
@@ -4228,9 +4250,17 @@ export async function setConversationSignal(contactId, signal, {
 export async function clearConversationSignal(contactId, { updatedBy = 'user', agentId = null } = {}) {
   const state = await ensureConversationState(contactId, { agentId })
   if (!state?.id) return null
+  // [Fase 0 — anti-ghosting] Al limpiar la señal, REACTIVAMOS el bot si había quedado
+  // congelado por un cierre/pase automático (status 'completed' o 'human'). Antes se borraba
+  // la señal pero el status seguía en terminal, así que el gate de arranque
+  // (status !== 'active') mantenía al bot mudo para siempre aunque el staff limpiara la señal
+  // (caso oQ9XMb9R: ~10 mensajes del paciente al vacío). No tocamos estados deliberados como
+  // 'discarded', 'paused' o 'skipped'.
+  const reactivated = state.status === 'completed' || state.status === 'human'
   await db.run(`
     UPDATE conversational_agent_state
     SET signal = NULL, signal_reason = NULL, signal_summary = NULL, signal_at = NULL,
+        status = CASE WHEN status IN ('completed', 'human') THEN 'active' ELSE status END,
         updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [updatedBy, state.id])
@@ -4238,7 +4268,7 @@ export async function clearConversationSignal(contactId, { updatedBy = 'user', a
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'signal_cleared',
-    detail: { updatedBy, agentId: state.agentId || agentId || null }
+    detail: { updatedBy, agentId: state.agentId || agentId || null, reactivated }
   })
 
   return getConversationState(contactId, { agentId: state.agentId || agentId || null })

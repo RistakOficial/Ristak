@@ -410,50 +410,25 @@ export function applyConversationalRuntimeReplyGuard({
   let nextReply = String(reply || '').trim()
   let nextSuppressReply = Boolean(suppressReply)
   const events = []
-  let forceHumanHandoff = null
-
-  if (readiness?.ready && !hasActionType(actions, HUMAN_HANDOFF_ACTION_TYPES)) {
-    nextReply = buildRuntimeReadyToAdvanceReply()
-    nextSuppressReply = false
-    forceHumanHandoff = {
-      reason: readiness.reason || 'El contacto ya dio contexto suficiente y acepto avanzar.',
-      summary: readiness.summary || String(latestText || '').trim().slice(0, 500),
-      source: 'objective_sufficiency_ready',
-      completeObjective: true
-    }
-    events.push({ type: 'runtime_objective_sufficiency_forced' })
-  }
-
-  if (shouldEscalateSilentSchedulingQuestion(latestText, actions)) {
-    nextReply = 'Te paso con el equipo para que te confirmen eso.'
-    nextSuppressReply = false
-    forceHumanHandoff = {
-      reason: 'El contacto hizo una pregunta de agenda o proceso que requiere confirmacion humana.',
-      summary: String(latestText || '').trim().slice(0, 500),
-      source: 'silent_scheduling_question'
-    }
-    events.push({ type: 'runtime_silence_escalated_to_human' })
-  }
-
+  // [Fase 0 — anti-ghosting] Se retiraron los traspasos a humano FORZADOS por heurística:
+  //  1) readiness "suficiente" (marcaba objetivo cumplido + silencio antes de tiempo),
+  //  2) pregunta de agenda con stay_silent (mandaba "te paso con el equipo" + mute),
+  //  3) la regex replySuggestsHumanHandoff (frases normales como "te ayudan a agendar" o
+  //     "te confirman" forzaban un pase que dejaba al bot MUDO para siempre).
+  // Todos disparaban falsos positivos y ghosting en el momento de convertir. El traspaso
+  // ahora SOLO lo decide el modelo con sus tools explícitas (send_to_human /
+  // mark_ready_to_advance). La señal de readiness sigue llegando al modelo como HINT
+  // (buildConversationDecisionContextMessage), no como acción terminal.
   const priceGuardReply = rewritePrematurePriceDisclosure(nextReply, config)
   if (priceGuardReply !== nextReply) {
     nextReply = priceGuardReply
     events.push({ type: 'runtime_price_guard_rewrite' })
   }
 
-  if (replySuggestsHumanHandoff(nextReply) && !hasActionType(actions, HUMAN_HANDOFF_ACTION_TYPES) && !forceHumanHandoff?.completeObjective) {
-    forceHumanHandoff = forceHumanHandoff || {
-      reason: 'La respuesta prometio intervencion humana sin ejecutar una herramienta de traspaso.',
-      summary: nextReply.slice(0, 500),
-      source: 'human_handoff_promise_without_action'
-    }
-    events.push({ type: 'runtime_handoff_promise_forced' })
-  }
-
   return {
     reply: nextReply,
     suppressReply: nextSuppressReply,
-    forceHumanHandoff,
+    forceHumanHandoff: null,
     events
   }
 }
@@ -1319,9 +1294,30 @@ async function schedulePendingContactRerun(contactId, phone, reason, channel = '
   scheduleConversationalAgentRerun({ contactId, phone, latestMessage: latest, reason, channel: normalizedChannel })
 }
 
+// [Fase 0] Tipos de entrante que NO deben abortar ni reiniciar una respuesta en curso:
+// una reacción o un sticker son ruido (un 🙏🏽 o una carita no cambian el hilo) y hoy
+// disparaban reply_suppressed dejando al paciente sin respuesta (casos viWyCup1 / j3GRLcmg).
+const NON_SUBSTANTIVE_INBOUND_TYPES = new Set(['reaction', 'sticker'])
+
+function isSubstantiveInboundMessage(message) {
+  if (!message) return false
+  const type = String(message.message_type || '').toLowerCase()
+  return !NON_SUBSTANTIVE_INBOUND_TYPES.has(type)
+}
+
 async function loadNewerInboundMessage(contactId, handledMessageId, channel = 'whatsapp') {
-  const latest = await loadLatestInboundMessage(contactId, channel)
-  return latest && latest.id !== handledMessageId ? latest : null
+  // Cargamos una ventana corta de entrantes (viejo -> nuevo) y devolvemos el más reciente
+  // que sea SUSTANTIVO (texto, imagen, audio, documento...). Así una reacción/sticker que
+  // llega mientras el bot responde ya no cancela el envío.
+  const rows = await loadConversationRows(contactId, channel, { inboundOnly: true, limit: 8 })
+  const handledIdx = rows.findIndex((row) => row.id === handledMessageId)
+  const newerRows = handledIdx >= 0
+    ? rows.slice(handledIdx + 1)
+    : rows.filter((row) => row.id !== handledMessageId)
+  for (let i = newerRows.length - 1; i >= 0; i--) {
+    if (isSubstantiveInboundMessage(newerRows[i])) return newerRows[i]
+  }
+  return null
 }
 
 function clearFollowUpTimer(contactId) {
@@ -1822,15 +1818,14 @@ function getStateLastAnsweredInboundMessageId(state) {
   return state?.lastAnsweredInboundMessageId || state?.last_answered_inbound_message_id || null
 }
 
-const TERMINAL_HUMAN_HANDOFF_SIGNALS = new Set([
-  'ready_for_human',
-  'ready_to_schedule',
-  'ready_to_buy'
-])
-
 function shouldReopenCompletedConversationState(state, latestMessageId) {
   if (!state?.agentId || state.status !== 'completed') return false
-  if (TERMINAL_HUMAN_HANDOFF_SIGNALS.has(String(state.signal || '').trim())) return false
+  // [Fase 1 — nunca fantasma] Una conversación con objetivo cumplido (status 'completed',
+  // incluido el handoff ready_for_human/ready_to_buy) SÍ se reabre cuando llega un mensaje
+  // nuevo sin contestar: la persona sigue preguntando (dirección, costo, "ya quedó?") y el
+  // bot debe seguir ayudando en vez de dejarla en visto. El silencio real solo lo impone un
+  // humano que toma el chat (status 'human': send_to_human o takeover manual), que por
+  // requerir status==='completed' NO entra a esta función y se queda mudo, como debe.
   const cleanLatestMessageId = String(latestMessageId || '').trim()
   if (!cleanLatestMessageId) return false
   return getStateLastAnsweredInboundMessageId(state) !== cleanLatestMessageId
@@ -2140,94 +2135,12 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       const messagesForAgent = decisionContextMessage ? [...baseMessagesForAgent, decisionContextMessage] : baseMessagesForAgent
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
 
-      if (conversationDecision.ready) {
-        await recordConversationalAgentEvent({
-          contactId,
-          eventType: 'conversation_decision_ready',
-          detail: {
-            messageId: latest.id,
-            agentId: agentConfig.id || null,
-            channel: normalizedChannel,
-            action: conversationDecision.recommendedAction,
-            reason: conversationDecision.reason,
-            facts: conversationDecision.facts || {}
-          }
-        }).catch(() => {})
-
-        const latestBeforeDecisionSend = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
-        if (latestBeforeDecisionSend) {
-          await recordConversationalAgentEvent({
-            contactId,
-            eventType: 'reply_suppressed',
-            detail: {
-              messageId: latest.id,
-              agentId: agentConfig.id || null,
-              channel: normalizedChannel,
-              reason: 'newer_inbound_before_decision_reply',
-              newerMessageId: latestBeforeDecisionSend.id
-            }
-          })
-          scheduleConversationalAgentRerun({
-            contactId,
-            phone,
-            latestMessage: latestBeforeDecisionSend,
-            channel: normalizedChannel,
-            reason: 'mensaje nuevo antes de cierre por suficiencia'
-          })
-          return
-        }
-
-        const reply = buildRuntimeReadyToAdvanceReply()
-        const delivery = await sendReplyParts({
-          contactId,
-          phone,
-          latest,
-          agentConfig: {
-            ...agentConfig,
-            replyDelivery: { ...agentConfig.replyDelivery, mode: 'normal', splitMessagesEnabled: false }
-          },
-          reply,
-          apiKey: runtime.apiKey,
-          model: agentConfig.model || config.model,
-          channel: normalizedChannel,
-          dependencies: {
-            splitter: splitMessageIntoBubblesFallback
-          }
-        })
-
-        const runtimeCtx = { actions: [] }
-        await forceRuntimeHumanHandoff({
-          contactId,
-          agentConfig,
-          latest,
-          channel: normalizedChannel,
-          ctx: runtimeCtx,
-          handoff: {
-            reason: conversationDecision.reason,
-            summary: conversationDecision.summary,
-            source: 'objective_sufficiency_ready',
-            completeObjective: true
-          }
-        })
-
-        await recordConversationalAgentEvent({
-          contactId,
-          eventType: 'reply_sent',
-          detail: {
-            messageId: latest.id,
-            agentId: agentConfig.id || null,
-            channel: normalizedChannel,
-            replyPreview: reply.slice(0, 280),
-            partCount: delivery.parts.length,
-            pendingInboundCount: pendingMessages.length,
-            aiProvider,
-            actions: runtimeCtx.actions,
-            decisionState: conversationDecision.state
-          }
-        })
-        await resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone, channel: normalizedChannel })
-        return
-      }
+      // [Fase 0 — anti-ghosting] Se retiró el auto-cierre por "suficiencia de contexto":
+      // forzaba una respuesta enlatada ("te paso con el equipo") + objetivo cumplido +
+      // silencio ANTES de correr el modelo, dejando al paciente en visto justo cuando iba
+      // a agendar (caso viWyCup1). La señal de readiness YA se inyectó como hint en
+      // messagesForAgent (decisionContextMessage) para que el modelo decida por sí mismo;
+      // el runtime ya no fuerza el cierre.
 
       const { agent, ctx, model } = await buildAgentForRun({
         config: agentConfig,
