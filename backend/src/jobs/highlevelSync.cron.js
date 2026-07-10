@@ -7,6 +7,7 @@ import { syncHighLevelData, setSyncTriggerSource } from '../services/highlevelSy
 import { syncHighLevelConversationHistory } from '../services/highlevelConversationsSyncService.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 // (GHL-005) TTLs de los locks distribuidos = el intervalo de cada cron, así un lock
 // que quede colgado por un crash se libera solo en el siguiente ciclo.
@@ -105,6 +106,12 @@ export function startHighLevelSyncCron() {
   // Ejecutar cada hora (minuto 17) para no competir con el cron de Meta Ads
   highLevelSyncTask = cron.schedule('17 * * * *', async () => {
     if (isDeployShutdownStarted()) return
+    try {
+      if (!(await canRunBackgroundJob('integrations'))) return
+    } catch (error) {
+      logger.warn(`No se pudo validar el plan antes de sincronizar HighLevel: ${error.message}`)
+      return
+    }
     // (CRON-008) Claim intra-proceso antes de actuar.
     if (highLevelSyncRunning) {
       logger.warn('Sincronización automática de HighLevel saltada: ya hay un tick en curso')
@@ -171,6 +178,12 @@ export function startHighLevelSyncCron() {
   // aunque el workflow de webhook no esté configurado en GHL.
   highLevelConversationsTask = cron.schedule('*/10 * * * *', async () => {
     if (isDeployShutdownStarted()) return
+    try {
+      if (!(await canRunBackgroundJob('integrations')) || !(await canRunBackgroundJob('chat'))) return
+    } catch (error) {
+      logger.warn(`No se pudo validar el plan antes de sincronizar conversaciones HighLevel: ${error.message}`)
+      return
+    }
     // (CRON-008) Claim intra-proceso antes de actuar.
     if (highLevelConversationsSyncRunning) {
       logger.warn('Sincronización de conversaciones de HighLevel saltada: ya hay un tick en curso')

@@ -3,6 +3,7 @@ import { updateRecentAds } from '../services/metaAdsService.js'
 import { refreshConnectedSocialProfileBlocks } from '../services/metaSocialProfilesService.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 /**
  * Cron job para actualizar ads recientes cada hora
@@ -24,6 +25,12 @@ export function startMetaSyncCron() {
   // Ejecutar cada hora en punto.
   metaAdsSyncTask = cron.schedule('0 * * * *', async () => {
     if (isDeployShutdownStarted()) return
+    try {
+      if (!(await canRunBackgroundJob('meta_ads'))) return
+    } catch (error) {
+      logger.warn(`No se pudo validar el plan antes de sincronizar Meta Ads: ${error.message}`)
+      return
+    }
     // (META-006) Claim intra-proceso antes de actuar.
     if (metaAdsSyncRunning) {
       logger.warn('Actualización automática de Meta Ads saltada: ya hay un tick en curso')
@@ -50,6 +57,12 @@ export function startMetaSyncCron() {
   // Refresca una vez al dia los seguidores usados por perfiles sociales publicados.
   metaSocialRefreshTask = cron.schedule('17 5 * * *', async () => {
     if (isDeployShutdownStarted()) return
+    try {
+      if (!(await canRunBackgroundJob('meta_ads'))) return
+    } catch (error) {
+      logger.warn(`No se pudo validar el plan antes de refrescar perfiles Meta: ${error.message}`)
+      return
+    }
     // (META-006) Claim intra-proceso antes de actuar.
     if (metaSocialRefreshRunning) {
       logger.warn('Actualización de perfiles sociales saltada: ya hay un tick en curso')

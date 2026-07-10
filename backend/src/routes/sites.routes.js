@@ -56,12 +56,49 @@ import {
 
 const router = express.Router()
 
+function containsSitePaymentFeature(value, depth = 0) {
+  if (!value || depth > 8) return false
+  if (typeof value === 'string') {
+    const normalized = value.toLowerCase()
+    return normalized.includes('data-rstk-native-element="payment"') ||
+      normalized.includes("data-rstk-native-element='payment'") ||
+      normalized.includes('data-rstk-payment-gate') ||
+      normalized.includes('site-payment-checkout')
+  }
+  if (Array.isArray(value)) return value.some((item) => containsSitePaymentFeature(item, depth + 1))
+  if (typeof value !== 'object') return false
+
+  const type = String(value.type || value.blockType || value.elementType || value.nativeElement || value.kind || '').trim().toLowerCase()
+  if (type === 'payment' || type === 'checkout' || type === 'payment-gate' || type === 'payment_gate') return true
+
+  const paymentGate = value.paymentGate || value.payment_gate || value.checkout || value.paymentCheckout
+  if (paymentGate && typeof paymentGate === 'object' && (
+    paymentGate.enabled === true ||
+    paymentGate.required === true ||
+    paymentGate.collectPayment === true ||
+    paymentGate.collect_payment === true
+  )) {
+    return true
+  }
+
+  return Object.entries(value).some(([key, entryValue]) => {
+    const normalizedKey = key.toLowerCase()
+    if ((normalizedKey.includes('payment') || normalizedKey.includes('checkout')) && entryValue === true) return true
+    return containsSitePaymentFeature(entryValue, depth + 1)
+  })
+}
+
+function requirePaymentsForSitePaymentFeature(req, res, next) {
+  if (!containsSitePaymentFeature(req.body)) return next()
+  return requireFeature('payments')(req, res, next)
+}
+
 router.post('/public/submit', submitPublicSiteHandler)
 router.get('/public/contact-prefill', publicSiteContactPrefillHandler)
-router.get('/public/payments/:publicPaymentId/status', publicSitePaymentStatusHandler)
-router.post('/public/checkout/init', sitePaymentCheckoutInitHandler)
-router.post('/public/checkout/pay', sitePaymentCheckoutPayHandler)
-router.post('/public/checkout/prepare-installments', sitePaymentCheckoutPrepareHandler)
+router.get('/public/payments/:publicPaymentId/status', requireFeature('payments'), publicSitePaymentStatusHandler)
+router.post('/public/checkout/init', requireFeature('payments'), sitePaymentCheckoutInitHandler)
+router.post('/public/checkout/pay', requireFeature('payments'), sitePaymentCheckoutPayHandler)
+router.post('/public/checkout/prepare-installments', requireFeature('payments'), requireFeature('payment_plans'), sitePaymentCheckoutPrepareHandler)
 router.post('/public/meta-event', metaPageEventPublicHandler)
 router.get('/public/fonts.css', sitesFontCssHandler)
 router.get('/public/font-file', sitesFontFileHandler)
@@ -73,9 +110,9 @@ router.use(requireAuth)
 router.use(requireModuleAccess('sites'))
 
 router.get('/', getSitesHandler)
-router.post('/', createSiteHandler)
-router.post('/ai-create-html', createSiteWithAIHtmlHandler)
-router.post('/import-html', importSiteHtmlHandler)
+router.post('/', requirePaymentsForSitePaymentFeature, createSiteHandler)
+router.post('/ai-create-html', requirePaymentsForSitePaymentFeature, createSiteWithAIHtmlHandler)
+router.post('/import-html', requirePaymentsForSitePaymentFeature, importSiteHtmlHandler)
 router.get('/domain', getSitesDomainHandler)
 router.post('/domain/verify', verifySitesDomainHandler)
 router.post('/domain/default-route', setSitesDefaultRouteHandler)
@@ -95,20 +132,20 @@ router.post('/folders', createSiteFolderHandler)
 router.put('/folders/:folderId', updateSiteFolderHandler)
 router.get('/:siteId/import-mapping', getImportedSiteMappingHandler)
 router.get('/:siteId', getSiteHandler)
-router.put('/:siteId', updateSiteHandler)
+router.put('/:siteId', requirePaymentsForSitePaymentFeature, updateSiteHandler)
 router.delete('/:siteId', deleteSiteHandler)
 router.get('/:siteId/preview', previewSiteHandler)
 router.post('/:siteId/preview', previewSiteHandler)
 router.post('/:siteId/preview-session', createPreviewSessionHandler)
 router.post('/:siteId/ai-edit-html', updateImportedSiteHtmlWithAIHandler)
-router.patch('/:siteId/import-content', updateImportedSiteEditableContentHandler)
-router.patch('/:siteId/import-code', updateImportedSiteCodeFilesHandler)
-router.put('/:siteId/import-mapping', updateImportedSiteMappingHandler)
+router.patch('/:siteId/import-content', requirePaymentsForSitePaymentFeature, updateImportedSiteEditableContentHandler)
+router.patch('/:siteId/import-code', requirePaymentsForSitePaymentFeature, updateImportedSiteCodeFilesHandler)
+router.put('/:siteId/import-mapping', requirePaymentsForSitePaymentFeature, updateImportedSiteMappingHandler)
 router.post('/:siteId/verify-domain', verifySiteDomainHandler)
-router.post('/:siteId/blocks', createBlockHandler)
+router.post('/:siteId/blocks', requirePaymentsForSitePaymentFeature, createBlockHandler)
 router.post('/:siteId/blocks/restore', restoreBlocksHandler)
 router.put('/:siteId/blocks/reorder', reorderBlocksHandler)
-router.put('/:siteId/blocks/:blockId', updateBlockHandler)
+router.put('/:siteId/blocks/:blockId', requirePaymentsForSitePaymentFeature, updateBlockHandler)
 router.delete('/:siteId/blocks/:blockId', deleteBlockHandler)
 
 export default router

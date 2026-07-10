@@ -71,6 +71,7 @@ interface PhoneSectionConfig {
   id: PhoneSectionId
   label: string
   Icon: LucideIcon
+  featureKeys?: readonly string[]
 }
 
 interface PhoneAppData {
@@ -95,14 +96,14 @@ interface PhoneAppData {
 }
 
 const PHONE_SECTIONS: PhoneSectionConfig[] = [
-  { id: 'chat', label: 'Chat', Icon: MessageCircle },
-  { id: 'dashboard', label: 'Dashboard', Icon: Gauge },
-  { id: 'appointments', label: 'Citas', Icon: CalendarDays },
-  { id: 'transactions', label: 'Pagos', Icon: CreditCard },
-  { id: 'contacts', label: 'Contactos', Icon: Users },
-  { id: 'campaigns', label: 'Publicidad', Icon: Megaphone },
-  { id: 'reports', label: 'Reportes', Icon: BarChart3 },
-  { id: 'analytics', label: 'Analíticas', Icon: TrendingUp },
+  { id: 'chat', label: 'Chat', Icon: MessageCircle, featureKeys: ['chat', 'whatsapp'] },
+  { id: 'dashboard', label: 'Dashboard', Icon: Gauge, featureKeys: ['dashboard'] },
+  { id: 'appointments', label: 'Citas', Icon: CalendarDays, featureKeys: ['appointments', 'google_calendar'] },
+  { id: 'transactions', label: 'Pagos', Icon: CreditCard, featureKeys: ['payments'] },
+  { id: 'contacts', label: 'Contactos', Icon: Users, featureKeys: ['contacts'] },
+  { id: 'campaigns', label: 'Publicidad', Icon: Megaphone, featureKeys: ['campaigns', 'meta_ads'] },
+  { id: 'reports', label: 'Reportes', Icon: BarChart3, featureKeys: ['reports', 'advanced_reports'] },
+  { id: 'analytics', label: 'Analíticas', Icon: TrendingUp, featureKeys: ['analytics'] },
   { id: 'settings', label: 'Configuración', Icon: Cog }
 ]
 
@@ -369,6 +370,13 @@ export const PhoneApp: React.FC = () => {
   const params = useParams<{ section?: string }>()
   const { user, locationId, accessToken } = useAuth()
   const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
+  const canUseDashboard = hasLicenseFeature(user, ['dashboard'])
+  const canUseAppointments = hasLicenseFeature(user, ['appointments', 'google_calendar'])
+  const canUsePayments = hasLicenseFeature(user, ['payments'])
+  const canUseContacts = hasLicenseFeature(user, ['contacts'])
+  const canUseCampaigns = hasLicenseFeature(user, ['campaigns', 'meta_ads'])
+  const canUseReports = hasLicenseFeature(user, ['reports', 'advanced_reports'])
+  const canUseAnalytics = hasLicenseFeature(user, ['analytics'])
   const { dateRange, setPreset } = useDateRange()
   const { timezone } = useTimezone() // (MOB-007) zona del negocio
   const [accessState, setAccessState] = useState<AccessState>(getAccessState)
@@ -382,7 +390,22 @@ export const PhoneApp: React.FC = () => {
 
   const sectionParam = params.section as string | undefined
   const activeSectionId = isPhoneSectionId(sectionParam) ? sectionParam : null
-  const activeSection = activeSectionId ? SECTION_BY_ID[activeSectionId] : SECTION_BY_ID.dashboard
+  const visibleSections = useMemo(
+    () => PHONE_SECTIONS.filter((section) => !section.featureKeys || hasLicenseFeature(user, section.featureKeys)),
+    [user]
+  )
+  const firstVisibleSectionId = visibleSections[0]?.id || 'settings'
+  const activeSection = activeSectionId ? SECTION_BY_ID[activeSectionId] : SECTION_BY_ID[firstVisibleSectionId]
+  const featureAccessKey = [
+    canUseDashboard,
+    canUseAppointments,
+    canUsePayments,
+    canUseContacts,
+    canUseCampaigns,
+    canUseReports,
+    canUseAnalytics,
+    hasWebAnalyticsAccess
+  ].map(Boolean).join('')
   const startDate = useMemo(() => normalizeDateInputToLocalDate(dateRange.start, { timezone }), [dateRange.start, timezone])
   const endDate = useMemo(() => normalizeDateInputToLocalDate(dateRange.end, { timezone }), [dateRange.end, timezone])
   const { startTime: rangeStartTime, endTime: rangeEndTime } = useMemo(
@@ -541,7 +564,7 @@ export const PhoneApp: React.FC = () => {
 
     const loadPhoneData = async () => {
       setLoadError(null)
-      const cacheKey = getPhoneDailyCacheKey('phone-app', 'data', locationId || 'default', startIso, endIso)
+      const cacheKey = getPhoneDailyCacheKey('phone-app', `data-${featureAccessKey}`, locationId || 'default', startIso, endIso)
       const cachedPhoneData = readPhoneDailyCache<PhoneAppData>(cacheKey, timezone) // (MOB-007) bucket por día del negocio
       const showedCachedData = Boolean(cachedPhoneData)
 
@@ -577,39 +600,74 @@ export const PhoneApp: React.FC = () => {
           reportsMetricsResponse,
           reportsSummary
         ] = await Promise.all([
-          safe(dashboardService.getDashboardMetrics({ start: startDate, end: endDate }), createEmptyDashboardMetrics()),
-          safe(dashboardService.getFinancialChart({ start: startDate, end: endDate, scope: 'all' }), [] as ChartData[]),
-          safe(dashboardService.getFunnelData({ start: startDate, end: endDate, scope: 'all', includeWeb: hasWebAnalyticsAccess }), [] as Array<{ stage: string; value: number }>),
-          safe(dashboardService.getTrafficSources({ start: startDate, end: endDate, includeWeb: hasWebAnalyticsAccess }), [] as Array<{ name: string; value: number; color?: string }>),
-          hasWebAnalyticsAccess
+          canUseDashboard
+            ? safe(dashboardService.getDashboardMetrics({ start: startDate, end: endDate }), createEmptyDashboardMetrics())
+            : Promise.resolve(createEmptyDashboardMetrics()),
+          canUseDashboard && canUsePayments
+            ? safe(dashboardService.getFinancialChart({ start: startDate, end: endDate, scope: 'all' }), [] as ChartData[])
+            : Promise.resolve([] as ChartData[]),
+          canUseDashboard
+            ? safe(dashboardService.getFunnelData({ start: startDate, end: endDate, scope: 'all', includeWeb: hasWebAnalyticsAccess }), [] as Array<{ stage: string; value: number }>)
+            : Promise.resolve([] as Array<{ stage: string; value: number }>),
+          canUseDashboard
+            ? safe(dashboardService.getTrafficSources({ start: startDate, end: endDate, includeWeb: hasWebAnalyticsAccess }), [] as Array<{ name: string; value: number; color?: string }>)
+            : Promise.resolve([] as Array<{ name: string; value: number; color?: string }>),
+          canUseAnalytics && hasWebAnalyticsAccess
             ? safe(dashboardService.getVisitorsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
             : Promise.resolve([] as Array<{ label: string; value: number }>),
-          safe(dashboardService.getLeadsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>),
-          safe(dashboardService.getAppointmentsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>),
-          safe(dashboardService.getSalesData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>),
-          safe(transactionsService.getSummary(startIso, endIso), createEmptyTransactionSummary()),
-          safe(transactionsService.getTransactions(startIso, endIso), [] as Transaction[]),
-          safe(contactsService.getStats(startIso, endIso), createEmptyContactStats()),
-          safe(
-            reportsService.getContactsList({ from: startIso, to: endIso, scope: 'all' }),
-            { contacts: [], range: { start: startIso, end: endIso, timezone: '', filtered: true } }
-          ),
-          safe(campaignsService.getCampaigns(startIso, endIso), [] as Campaign[]),
-          safe(reportsService.getMetrics({ from: startIso, to: endIso, groupBy, scope: 'all' }), {
-            metrics: [],
-            range: { start: startIso, end: endIso, timezone: '', filtered: true }
-          }),
-          safe(reportsService.getSummary({ from: startIso, to: endIso, scope: 'all' }), null)
+          canUseContacts
+            ? safe(dashboardService.getLeadsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
+            : Promise.resolve([] as Array<{ label: string; value: number }>),
+          canUseAppointments
+            ? safe(dashboardService.getAppointmentsData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
+            : Promise.resolve([] as Array<{ label: string; value: number }>),
+          canUsePayments
+            ? safe(dashboardService.getSalesData({ start: startDate, end: endDate, groupBy }), [] as Array<{ label: string; value: number }>)
+            : Promise.resolve([] as Array<{ label: string; value: number }>),
+          canUsePayments
+            ? safe(transactionsService.getSummary(startIso, endIso), createEmptyTransactionSummary())
+            : Promise.resolve(createEmptyTransactionSummary()),
+          canUsePayments
+            ? safe(transactionsService.getTransactions(startIso, endIso), [] as Transaction[])
+            : Promise.resolve([] as Transaction[]),
+          canUseContacts
+            ? safe(contactsService.getStats(startIso, endIso), createEmptyContactStats())
+            : Promise.resolve(createEmptyContactStats()),
+          canUseContacts && canUseReports
+            ? safe(
+                reportsService.getContactsList({ from: startIso, to: endIso, scope: 'all' }),
+                { contacts: [], range: { start: startIso, end: endIso, timezone: '', filtered: true } }
+              )
+            : Promise.resolve({ contacts: [], range: { start: startIso, end: endIso, timezone: '', filtered: true } }),
+          canUseCampaigns
+            ? safe(campaignsService.getCampaigns(startIso, endIso), [] as Campaign[])
+            : Promise.resolve([] as Campaign[]),
+          canUseReports
+            ? safe(reportsService.getMetrics({ from: startIso, to: endIso, groupBy, scope: 'all' }), {
+                metrics: [],
+                range: { start: startIso, end: endIso, timezone: '', filtered: true }
+              })
+            : Promise.resolve({
+                metrics: [],
+                range: { start: startIso, end: endIso, timezone: '', filtered: true }
+              }),
+          canUseReports
+            ? safe(reportsService.getSummary({ from: startIso, to: endIso, scope: 'all' }), null)
+            : Promise.resolve(null)
         ])
 
         // No requiere HighLevel: el backend usa su config guardada y sirve
         // las citas locales aunque no haya GHL.
         const [calendars, rawEvents] = await Promise.all([
-          safe(calendarsService.getCalendars(locationId, accessToken), [] as Calendar[]),
-          safe(
-            calendarsService.getEvents(locationId || '', rangeStartTime, rangeEndTime, accessToken || undefined),
-            [] as CalendarEvent[]
-          )
+          canUseAppointments
+            ? safe(calendarsService.getCalendars(locationId, accessToken), [] as Calendar[])
+            : Promise.resolve([] as Calendar[]),
+          canUseAppointments
+            ? safe(
+                calendarsService.getEvents(locationId || '', rangeStartTime, rangeEndTime, accessToken || undefined),
+                [] as CalendarEvent[]
+              )
+            : Promise.resolve([] as CalendarEvent[])
         ])
         const appointmentEvents = rawEvents.map((event, index) => normalizeCalendarEvent(event, `event-${index}`))
 
@@ -657,7 +715,29 @@ export const PhoneApp: React.FC = () => {
     return () => {
       cancelled = true
     }
-  }, [accessState, accessToken, activeSectionId, endDate, endIso, hasWebAnalyticsAccess, locationId, rangeEndTime, rangeStartTime, refreshKey, startDate, startIso, timezone]) // (MOB-007) recarga si cambia la zona del negocio
+  }, [
+    accessState,
+    accessToken,
+    activeSectionId,
+    canUseAnalytics,
+    canUseAppointments,
+    canUseCampaigns,
+    canUseContacts,
+    canUseDashboard,
+    canUsePayments,
+    canUseReports,
+    endDate,
+    endIso,
+    featureAccessKey,
+    hasWebAnalyticsAccess,
+    locationId,
+    rangeEndTime,
+    rangeStartTime,
+    refreshKey,
+    startDate,
+    startIso,
+    timezone
+  ]) // (MOB-007) recarga si cambia la zona del negocio
 
   const dashboardTiles = useMemo(() => {
     const metrics = phoneData.dashboardMetrics
@@ -767,8 +847,16 @@ export const PhoneApp: React.FC = () => {
     ]
   }, [appointmentsTrend, hasWebAnalyticsAccess, leadsTrend, salesTrend, visitorsTrend])
 
+  const firstVisibleSectionPath = firstVisibleSectionId === 'chat'
+    ? PHONE_APP_PREFIX
+    : `${PHONE_APP_PREFIX}/${firstVisibleSectionId}`
+
   if (!activeSectionId) {
-    return <Navigate to={`${PHONE_APP_PREFIX}/dashboard`} replace />
+    return <Navigate to={firstVisibleSectionPath} replace />
+  }
+
+  if (!visibleSections.some((section) => section.id === activeSectionId)) {
+    return <Navigate to={firstVisibleSectionPath} replace />
   }
 
   if (accessState === 'checking') {
@@ -846,7 +934,7 @@ export const PhoneApp: React.FC = () => {
         )}
 
         <nav className={styles.sectionTabs} aria-label="Mobile sections" data-phone-nav-scrollable="true">
-          {PHONE_SECTIONS.map((section) => {
+          {visibleSections.map((section) => {
             const Icon = section.Icon
             const isActive = section.id === activeSectionId
             const sectionPath = section.id === 'chat' ? PHONE_APP_PREFIX : `${PHONE_APP_PREFIX}/${section.id}`

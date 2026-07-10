@@ -2,6 +2,7 @@ import { dispatchDueScheduledChatMessages } from '../services/scheduledChatMessa
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 const SCHEDULED_CHAT_INTERVAL_MS = 30 * 1000
 const SCHEDULED_CHAT_LOCK_TTL_MS = 2 * 60 * 1000
@@ -11,6 +12,7 @@ let running = false
 
 async function runScheduledChatDispatch(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
+  if (!(await canRunBackgroundJob('whatsapp'))) return
   running = true
 
   try {

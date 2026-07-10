@@ -2,10 +2,12 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LayoutTemplate, Plus, Sparkles } from 'lucide-react'
 import { useNotification } from '@/contexts/NotificationContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import automationsService from '@/services/automationsService'
 import { createRistakId } from '@/utils/idGenerator'
 import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
+import { hasLicenseFeature } from '@/utils/accessControl'
 import { AutomationLibrary } from './AutomationLibrary'
 import styles from './editor/AutomationEditor.module.css'
 
@@ -77,8 +79,10 @@ function welcomeTemplateFlow() {
 export const AutomationsHome: React.FC = () => {
   const navigate = useNavigate()
   const { showToast } = useNotification()
+  const { user } = useAuth()
   const { labels } = useLabels()
   const customerLowerLabel = formatCrmLabelLower(labels.customer, DEFAULT_CRM_LABELS.customer)
+  const canUseWhatsApp = hasLicenseFeature(user, ['whatsapp'])
   const [creating, setCreating] = useState<'blank' | 'template' | null>(null)
 
   const createBlank = async () => {
@@ -93,6 +97,10 @@ export const AutomationsHome: React.FC = () => {
   }
 
   const createFromTemplate = async () => {
+    if (!canUseWhatsApp) {
+      showToast('error', 'WhatsApp no está incluido en tu plan')
+      return
+    }
     setCreating('template')
     try {
       const automation = await automationsService.createAutomation({ name: 'Bienvenida automática' })
@@ -136,7 +144,7 @@ export const AutomationsHome: React.FC = () => {
             <button
               type="button"
               className={styles.homeCard}
-              disabled={creating !== null}
+              disabled={creating !== null || !canUseWhatsApp}
               onClick={() => void createFromTemplate()}
             >
               <span className={styles.homeCardIcon} data-accent="green">

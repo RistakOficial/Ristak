@@ -2,6 +2,7 @@ import { processDueRebillPaymentPlanCharges } from '../services/rebillPaymentSer
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 const REBILL_PAYMENT_PLANS_INTERVAL_MS = 60 * 1000
 
@@ -11,6 +12,7 @@ let intervalId = null
 
 async function runRebillPaymentPlans(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
+  if (!(await canRunBackgroundJob('payments')) || !(await canRunBackgroundJob('payment_plans'))) return
   running = true
 
   try {

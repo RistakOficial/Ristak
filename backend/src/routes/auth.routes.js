@@ -25,7 +25,7 @@ import {
   updateUser
 } from '../controllers/userAccessController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
-import { requireAdmin } from '../middleware/userAccessMiddleware.js'
+import { requireAdmin, requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 
 const router = express.Router()
@@ -124,12 +124,12 @@ router.patch('/users/:userId', requireAuth, requireAdmin, updateUser)
 router.delete('/users/:userId', requireAuth, requireAdmin, deleteUser)
 
 // GET /api/auth/api-token - Obtener metadatos del API token autenticado
-router.get('/api-token', requireAuth, getApiToken)
+router.get('/api-token', requireAuth, requireModuleAccess('settings_api_access'), getApiToken)
 
 // POST /api/auth/api-token/rotate - Rotar/generar API token del usuario autenticado
-router.post('/api-token/rotate', requireAuth, rotateApiToken)
+router.post('/api-token/rotate', requireAuth, requireModuleAccess('settings_api_access'), rotateApiToken)
 
 // DELETE /api/auth/api-token - Revocar API token del usuario autenticado
-router.delete('/api-token', requireAuth, revokeApiToken)
+router.delete('/api-token', requireAuth, requireModuleAccess('settings_api_access'), revokeApiToken)
 
 export default router

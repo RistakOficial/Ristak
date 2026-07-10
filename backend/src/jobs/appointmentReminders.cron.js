@@ -6,6 +6,7 @@ import { processExpiredConfirmationWindows } from '../services/appointmentConfir
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 const APPOINTMENT_REMINDERS_INTERVAL_MS = 60 * 1000
 // Las ventanas se verifican más frecuentemente para no agregar latencia innecesaria
@@ -18,6 +19,7 @@ let windowsRunning = false
 
 async function runAppointmentRemindersDispatch(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
+  if (!(await canRunBackgroundJob('appointments')) || !(await canRunBackgroundJob('whatsapp'))) return
   running = true
 
   try {
@@ -43,6 +45,7 @@ async function runAppointmentRemindersDispatch(source = 'interval') {
 
 async function runConfirmationWindowsDispatch() {
   if (windowsRunning || isDeployShutdownStarted()) return
+  if (!(await canRunBackgroundJob('appointments'))) return
   windowsRunning = true
   try {
     await trackDeployDrainWork('cron:appointment-confirmations', async () => {

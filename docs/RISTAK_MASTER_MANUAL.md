@@ -1,6 +1,6 @@
 # Manual maestro de Ristak
 
-Ultima consolidacion: 2026-07-01.
+Ultima consolidacion: 2026-07-09.
 
 Este manual junta el funcionamiento general de Ristak en una sola ruta legible.
 Los documentos especializados siguen existiendo cuando tienen reglas obligatorias
@@ -238,6 +238,12 @@ Hay tres capas distintas:
 3. Permisos de usuario: `requireModuleAccess(moduleKey)` valida lectura/escritura
    por modulo.
 
+`requireModuleAccess(moduleKey)` tambien valida la feature comercial del modulo
+con `hasModuleFeature(...)`. Un admin local con permiso `write` no puede abrir
+Pagos, Sites, Developers, Integraciones, Usuarios u otros modulos comerciales si
+el plan de la cuenta no los incluye. Las pantallas y botones solo anticipan la
+restriccion; el backend es la barrera real.
+
 El modulo `ai_agent` aparece como la pestaña principal `Chatbot` en el menu
 lateral. Puede dividirse por feature de licencia: `conversational_ai` habilita
 la seccion Chatbot y `app_assistant_ai` habilita la configuracion general de
@@ -248,6 +254,13 @@ El plan basico puede abrir solo `conversational_ai` y limitar la creacion a
 No basta con esconder botones en frontend. Cualquier endpoint que escriba o lea
 datos sensibles debe tener validacion de backend.
 
+Las superficies que no pasan por navegacion normal tambien deben validar plan:
+API tokens legacy y nuevos requieren `developers`; `/api/external` y `/api/mcp`
+requieren `developers` y feature del recurso; la busqueda global filtra
+categorias por permiso y plan; `/movil` filtra secciones/cargas y cache por
+feature; automatizaciones validan nodos premium al guardar, publicar, probar y
+ejecutar.
+
 Las subfeatures premium no deben colarse por herencia visual. `appointments`
 habilita citas y calendarios locales; `google_calendar` habilita solo la
 integracion/sincronizacion con Google. El cobro antes de agendar en calendarios
@@ -255,6 +268,8 @@ se controla con `calendar_payments` (`calendar_payment` /
 `calendar_booking_payments` como aliases legacy) y, por compatibilidad temporal,
 con plan `pro`/`professional` cuando el portal aun no manda esa llave. Si el
 portal manda `calendar_payments=false`, ese false gana aunque el plan sea Pro.
+Cuando el portal mande un objeto `features` parcial, cualquier feature premium no
+incluida se considera apagada; no se deben rellenar defaults premium en `true`.
 
 Modulos de acceso principales:
 
@@ -2213,6 +2228,14 @@ Regla: un cron de integracion externa no arranca solo porque el backend arranco.
 Debe activarse por estado local de conexion y sincronizarse al conectar,
 desconectar o cambiar modo relevante.
 
+Ademas, cada tick que pueda enviar mensajes, sincronizar datos premium o cobrar
+debe validar `canRunBackgroundJob(feature)`. Ejemplos: mensajes programados y
+watchdog QR requieren `whatsapp`; recordatorios de citas requieren
+`appointments` y para envio `whatsapp`; automatizaciones de pago y crons de
+parcialidades requieren `payments`/`payment_plans`; Meta requiere `meta_ads`;
+Google Calendar requiere `google_calendar`; email inbound requiere `email`;
+HighLevel requiere `integrations` y sus conversaciones tambien `chat`.
+
 ## Media y Bunny
 
 Media centraliza uploads, cuotas, storage provider, Bunny Storage y Bunny Stream.
@@ -2375,6 +2398,13 @@ El soporte interno para revisar clientes instalados no usa este MCP externo. Los
 agentes deben entrar por el MCP/CLI de soporte de Ristak Installer, documentado
 en `docs/support-mcp-operations.md`, para resolver la instalacion, leer logs,
 inspeccionar schema y consultar filas read-only de la DB del cliente.
+
+La API externa y MCP no son bypass de plan. Para generar/rotar/revocar tokens y
+usar `/api/external` o `/api/mcp` se requiere `developers`; cada endpoint/tool
+vuelve a revisar la feature del recurso (`payments`, `payment_plans`,
+`subscriptions`, `reports`, `campaigns`, `appointments`, `sites`, `contacts`,
+`integrations`, etc.). Un token generado antes de un downgrade no conserva
+acceso a modulos que el plan actual ya no incluye.
 
 ## App movil
 

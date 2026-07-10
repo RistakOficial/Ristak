@@ -7,6 +7,7 @@ import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
 import { retryGoogleCalendarSync } from '../services/googleCalendarService.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 // (GCAL-002) TTL del lock = intervalo del cron (cada hora). Si un tick crashea sin liberar
 // el lock, se libera solo en el siguiente ciclo. Mismo criterio que los demás crons (GHL-005).
@@ -20,6 +21,7 @@ let googleCalendarSyncTask = null
 
 async function runGoogleCalendarSyncRetry(source = 'interval') {
   if (isDeployShutdownStarted()) return
+  if (!(await canRunBackgroundJob('google_calendar'))) return
   if (googleCalendarSyncRunning) {
     logger.warn('Reintento de sincronización de Google Calendar saltado: ya hay un tick en curso')
     return

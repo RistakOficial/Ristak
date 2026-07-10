@@ -2,6 +2,7 @@ import { processDuePaymentAutomations } from '../services/paymentAutomationsServ
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 const PAYMENT_AUTOMATIONS_INTERVAL_MS = 30 * 60 * 1000
 const PAYMENT_AUTOMATIONS_LOCK_TTL_MS = 10 * 60 * 1000
@@ -11,6 +12,7 @@ let running = false
 
 async function runPaymentAutomations(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
+  if (!(await canRunBackgroundJob('payments'))) return
   running = true
 
   try {

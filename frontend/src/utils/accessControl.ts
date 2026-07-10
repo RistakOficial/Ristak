@@ -392,7 +392,7 @@ export function hasLicenseFeatureAccess(
     return rule.legacy.some((featureKey) => features[featureKey] === true)
   }
 
-  return true
+  return false
 }
 
 export function getLicenseFeatureLabel(feature: unknown) {

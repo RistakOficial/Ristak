@@ -8,6 +8,8 @@ import {
 } from '../utils/searchText.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone, normalizeDateOnlyInTimezone } from '../utils/dateUtils.js'
 import { timestampSortExpression } from '../utils/sqlTimestampSort.js'
+import { hasFeature, hasModuleFeature, isLicenseEnforced } from '../services/licenseService.js'
+import { hasUserAccess } from '../utils/userAccess.js'
 // (ACL-002) Excluir contactos ocultos también en la búsqueda global.
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 
@@ -71,6 +73,17 @@ const runCategoryQuery = async (label, queryFn) => {
   }
 }
 
+const canSearchModule = async (req, moduleKey) => {
+  if (!hasUserAccess(req.user, moduleKey, 'read')) return false
+  if (!isLicenseEnforced()) return true
+  return hasModuleFeature(moduleKey)
+}
+
+const canSearchFeature = async (featureKey) => {
+  if (!isLicenseEnforced()) return true
+  return hasFeature(featureKey)
+}
+
 export const globalSearch = async (req, res) => {
   try {
     const rawQuery = safeText(req.query.q).trim()
@@ -115,6 +128,27 @@ export const globalSearch = async (req, res) => {
     const userUpdatedSort = timestampSortExpression('u.updated_at')
 
     const [
+      canSearchContacts,
+      canSearchAppointments,
+      canSearchPayments,
+      canSearchPaymentPlans,
+      canSearchAutomations,
+      canSearchUsers,
+      canSearchCampaigns
+    ] = await Promise.all([
+      canSearchModule(req, 'contacts'),
+      canSearchModule(req, 'appointments'),
+      canSearchModule(req, 'payments'),
+      Promise.all([
+        canSearchModule(req, 'payments'),
+        canSearchFeature('payment_plans')
+      ]).then(([moduleAllowed, featureAllowed]) => moduleAllowed && featureAllowed),
+      canSearchModule(req, 'automations'),
+      canSearchModule(req, 'settings_users'),
+      canSearchModule(req, 'campaigns')
+    ])
+
+    const [
       contacts,
       appointments,
       payments,
@@ -126,7 +160,7 @@ export const globalSearch = async (req, res) => {
       adsets,
       ads
     ] = await Promise.all([
-      runCategoryQuery('contactos', () => db.all(
+      canSearchContacts ? runCategoryQuery('contactos', () => db.all(
         `SELECT
           c.id,
           c.full_name,
@@ -149,8 +183,8 @@ export const globalSearch = async (req, res) => {
         ORDER BY ${contactSearchRank.expression} DESC, ${contactCreatedSort} DESC, c.id DESC
         LIMIT ?`,
         [...contactSearchClause.params, ...contactSearchRank.params, CATEGORY_LIMIT]
-      )),
-      runCategoryQuery('citas', () => db.all(
+      )) : [],
+      canSearchAppointments ? runCategoryQuery('citas', () => db.all(
         `SELECT
           a.id,
           a.calendar_id,
@@ -176,8 +210,8 @@ export const globalSearch = async (req, res) => {
         ORDER BY ${appointmentStartSort} DESC, a.id DESC
         LIMIT ?`,
         [foldedLike, foldedLike, foldedLike, ...basicContactSearchClause.params, like, CATEGORY_LIMIT]
-      )),
-      runCategoryQuery('pagos', () => db.all(
+      )) : [],
+      canSearchPayments ? runCategoryQuery('pagos', () => db.all(
         `SELECT
           p.id,
           p.contact_id,
@@ -229,8 +263,8 @@ export const globalSearch = async (req, res) => {
           like,
           CATEGORY_LIMIT
         ]
-      )),
-      runCategoryQuery('planes de pago', () => db.all(
+      )) : [],
+      canSearchPaymentPlans ? runCategoryQuery('planes de pago', () => db.all(
         `SELECT
           pp.id,
           pp.contact_id,
@@ -282,8 +316,8 @@ export const globalSearch = async (req, res) => {
           like,
           CATEGORY_LIMIT
         ]
-      )),
-      runCategoryQuery('automatizaciones', () => db.all(
+      )) : [],
+      canSearchAutomations ? runCategoryQuery('automatizaciones', () => db.all(
         `SELECT
           aut.id,
           aut.name,
@@ -300,8 +334,8 @@ export const globalSearch = async (req, res) => {
         ORDER BY ${automationUpdatedSort} DESC, aut.id DESC
         LIMIT ?`,
         [foldedLike, foldedLike, foldedLike, foldedLike, CATEGORY_LIMIT]
-      )),
-      runCategoryQuery('calendarios', () => db.all(
+      )) : [],
+      canSearchAppointments ? runCategoryQuery('calendarios', () => db.all(
         `SELECT
           cal.id,
           cal.ghl_calendar_id,
@@ -323,8 +357,8 @@ export const globalSearch = async (req, res) => {
         ORDER BY cal.is_active DESC, ${calendarUpdatedSort} DESC, cal.name ASC
         LIMIT ?`,
         [foldedLike, foldedLike, foldedLike, foldedLike, foldedLike, foldedLike, CATEGORY_LIMIT]
-      )),
-      runCategoryQuery('usuarios', () => db.all(
+      )) : [],
+      canSearchUsers ? runCategoryQuery('usuarios', () => db.all(
         `SELECT
           u.id,
           u.username,
@@ -345,8 +379,8 @@ export const globalSearch = async (req, res) => {
         ORDER BY ${userUpdatedSort} DESC, u.full_name ASC, u.username ASC
         LIMIT ?`,
         [foldedLike, foldedLike, foldedLike, foldedLike, foldedLike, CATEGORY_LIMIT]
-      )),
-      runCategoryQuery('campañas', () => db.all(
+      )) : [],
+      canSearchCampaigns ? runCategoryQuery('campañas', () => db.all(
         `SELECT
           campaign_id AS id,
           MAX(campaign_name) AS name,
@@ -361,8 +395,8 @@ export const globalSearch = async (req, res) => {
         ORDER BY MAX(date) DESC
         LIMIT ?`,
         [foldedLike, foldedLike, CATEGORY_LIMIT]
-      )),
-      runCategoryQuery('conjuntos', () => db.all(
+      )) : [],
+      canSearchCampaigns ? runCategoryQuery('conjuntos', () => db.all(
         `SELECT
           adset_id AS id,
           MAX(adset_name) AS name,
@@ -379,8 +413,8 @@ export const globalSearch = async (req, res) => {
         ORDER BY MAX(date) DESC
         LIMIT ?`,
         [foldedLike, foldedLike, CATEGORY_LIMIT]
-      )),
-      runCategoryQuery('anuncios', () => db.all(
+      )) : [],
+      canSearchCampaigns ? runCategoryQuery('anuncios', () => db.all(
         `SELECT
           ad_id AS id,
           MAX(ad_name) AS name,
@@ -399,7 +433,7 @@ export const globalSearch = async (req, res) => {
         ORDER BY MAX(date) DESC
         LIMIT ?`,
         [foldedLike, foldedLike, CATEGORY_LIMIT]
-      ))
+      )) : []
     ])
 
     const categories = [

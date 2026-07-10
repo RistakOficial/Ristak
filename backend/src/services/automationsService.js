@@ -1,6 +1,12 @@
 import { db } from '../config/database.js'
-import { normalizeFlow, validateFlowForPublish, START_NODE_TYPE } from './automationFlowValidation.js'
+import {
+  collectAutomationFlowRequiredFeatures,
+  normalizeFlow,
+  validateFlowForPublish,
+  START_NODE_TYPE
+} from './automationFlowValidation.js'
 import { controlAutomationEnrollment as controlEngineEnrollment, enrollContactManually, testWebhookAction } from './automationEngine.js'
+import { hasFeature, isLicenseEnforced } from './licenseService.js'
 import { findContactByPhoneCandidates, recordContactPhoneNumber } from './contactIdentityService.js'
 import { getWhatsAppApiTemplates } from './whatsappApiService.js'
 import { syncLocalMessageTemplateSnapshots } from './messageTemplatesService.js'
@@ -38,6 +44,14 @@ function badRequest(message) {
 function conflict(message) {
   const error = new Error(message)
   error.status = 409
+  return error
+}
+
+function featureNotAvailable(message, feature) {
+  const error = new Error(message)
+  error.status = 403
+  error.code = 'feature_not_available'
+  error.feature = feature
   return error
 }
 
@@ -137,6 +151,16 @@ function defaultFlow() {
     ],
     edges: [],
     viewport: { x: 0, y: 0, zoom: 1 }
+  }
+}
+
+async function assertAutomationFlowFeatureAccess(flow) {
+  if (!isLicenseEnforced()) return
+  const requiredFeatures = collectAutomationFlowRequiredFeatures(flow)
+  for (const featureKey of requiredFeatures) {
+    if (!(await hasFeature(featureKey))) {
+      throw featureNotAvailable('La automatización usa pasos que no están incluidos en tu plan actual.', featureKey)
+    }
   }
 }
 
@@ -386,6 +410,7 @@ export async function createAutomation(input = {}) {
 
   const id = makeId('auto')
   const flow = normalizeFlow(input.flow ? input.flow : defaultFlow())
+  await assertAutomationFlowFeatureAccess(flow)
 
   await db.run(
     `INSERT INTO automations (id, folder_id, name, description, status, flow, created_at, updated_at)
@@ -412,6 +437,7 @@ export async function updateAutomation(automationId, input = {}) {
   }
 
   const flow = input.flow !== undefined ? normalizeFlow(input.flow) : current.flow
+  await assertAutomationFlowFeatureAccess(flow)
 
   let status = current.status
   let publishedAt = current.publishedAt
@@ -695,6 +721,7 @@ async function getSavedAutomationForTestRun(automationId) {
   }
 
   const flow = normalizeFlow(parseFlow(automation.flow))
+  await assertAutomationFlowFeatureAccess(flow)
   const validationErrors = validateFlowForPublish(flow)
   if (validationErrors.length > 0) {
     const error = badRequest(validationErrors.join('. '))

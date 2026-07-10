@@ -2,6 +2,7 @@ import { processDueMercadoPagoPaymentPlanCharges } from '../services/mercadoPago
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 // Mercado Pago no cobra tarjetas guardadas off-session aquí; genera links vencidos.
 const MERCADOPAGO_PAYMENT_PLANS_INTERVAL_MS = 30 * 60 * 1000
@@ -12,6 +13,7 @@ let intervalId = null
 
 async function runMercadoPagoPaymentPlans(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
+  if (!(await canRunBackgroundJob('payments')) || !(await canRunBackgroundJob('payment_plans'))) return
   running = true
 
   try {

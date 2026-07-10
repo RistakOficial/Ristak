@@ -108,6 +108,37 @@ const COMMENT_REPLY_TARGETS = {
   }
 }
 
+const AUTOMATION_NODE_REQUIRED_FEATURES = {
+  'channel-whatsapp': ['whatsapp'],
+  'channel-email': ['email'],
+  'channel-messenger': ['campaigns'],
+  'channel-instagram': ['campaigns'],
+  'channel-comment-public-reply': ['campaigns'],
+  'channel-comment-dm-reply': ['campaigns'],
+  'action-change-whatsapp-number': ['whatsapp'],
+  'action-webhook': ['developers'],
+  'ai-step': ['ai_agent'],
+  'ai-gpt-openai': ['ai_agent']
+}
+
+const AUTOMATION_TRIGGER_REQUIRED_FEATURES = {
+  'trigger-whatsapp-message': ['whatsapp'],
+  'trigger-click-to-whatsapp': ['whatsapp', 'campaigns'],
+  'trigger-instagram-message': ['campaigns'],
+  'trigger-messenger-message': ['campaigns'],
+  'trigger-facebook-comment': ['campaigns'],
+  'trigger-instagram-comment': ['campaigns'],
+  'trigger-email-message': ['email'],
+  'trigger-form-submitted': ['forms'],
+  'trigger-appointment-booked': ['appointments'],
+  'trigger-appointment-status': ['appointments'],
+  'trigger-payment-received': ['payments'],
+  'trigger-refund': ['payments'],
+  'trigger-incoming-webhook': ['developers'],
+  'trigger-activation-link': ['forms'],
+  'trigger-link-clicked': ['forms']
+}
+
 function asArray(value) {
   return Array.isArray(value) ? value : []
 }
@@ -119,6 +150,33 @@ function isPlainObject(value) {
 function hasSampleResponse(value) {
   if (Array.isArray(value)) return value.length > 0
   return isPlainObject(value) && Object.keys(value).length > 0
+}
+
+function uniqueFeatures(features = []) {
+  return features
+    .filter(Boolean)
+    .filter((feature, index, all) => all.indexOf(feature) === index)
+}
+
+export function getAutomationTriggerRequiredFeatures(trigger = {}) {
+  return uniqueFeatures(AUTOMATION_TRIGGER_REQUIRED_FEATURES[String(trigger?.type || '')] || [])
+}
+
+export function getAutomationNodeRequiredFeatures(node = {}) {
+  const features = [...(AUTOMATION_NODE_REQUIRED_FEATURES[String(node?.type || '')] || [])]
+  const triggers = asArray(node?.config?.triggers)
+  for (const trigger of triggers) {
+    features.push(...getAutomationTriggerRequiredFeatures(trigger))
+  }
+  return uniqueFeatures(features)
+}
+
+export function collectAutomationFlowRequiredFeatures(flow = {}) {
+  const features = []
+  for (const node of asArray(flow?.nodes)) {
+    features.push(...getAutomationNodeRequiredFeatures(node))
+  }
+  return uniqueFeatures(features)
 }
 
 /**

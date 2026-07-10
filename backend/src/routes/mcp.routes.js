@@ -11,6 +11,7 @@ import {
   createOfflineContactPayment,
   createSinglePaymentLink
 } from '../services/paymentFlowService.js'
+import { hasFeature, isLicenseEnforced } from '../services/licenseService.js'
 import { getGHLClient } from '../services/ghlClient.js'
 import { getHighLevelConfig } from '../config/database.js'
 import { verifyOAuthAccessToken } from '../utils/oauthTokens.js'
@@ -28,6 +29,59 @@ const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|acc
 const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
+const MCP_TOOL_FEATURES = {
+  get_summary: ['dashboard'],
+  search_contacts: ['contacts'],
+  get_contact: ['contacts'],
+  list_transactions: ['payments'],
+  list_data_tables: ['developers'],
+  query_data_table: ['developers'],
+  get_meta_ads_summary: ['campaigns'],
+  ghl_search_contacts: ['integrations', 'contacts'],
+  ghl_create_contact: ['integrations', 'contacts'],
+  ghl_list_calendars: ['integrations', 'appointments'],
+  ghl_get_free_slots: ['integrations', 'appointments'],
+  ghl_create_appointment: ['integrations', 'appointments'],
+  ghl_create_payment_link: ['integrations', 'payments'],
+  ghl_record_offline_payment: ['integrations', 'payments'],
+  ghl_create_installment_plan: ['integrations', 'payments', 'payment_plans'],
+  ghl_api_request: ['integrations'],
+  ghl_mcp_call_tool: ['integrations']
+}
+
+function getMcpTableFeatureKeys(table) {
+  const name = String(table || '').trim().toLowerCase()
+  if (!name) return []
+  if (/^(payment_plans|payment_plan_|installment_|installments)/.test(name)) return ['payments', 'payment_plans']
+  if (/^(subscriptions|subscription_)/.test(name)) return ['payments', 'subscriptions']
+  if (/^(payments|payment_|transactions|transaction_|products|product_|prices|price_|invoices|invoice_)/.test(name)) return ['payments']
+  if (/^(appointments|appointment_|calendars|calendar_|blocked_slots|booking_)/.test(name)) return ['appointments']
+  if (/^(meta_|campaigns|campaign_|adsets|adset_|ads|ad_)/.test(name)) return ['campaigns']
+  if (/^(automations|automation_)/.test(name)) return ['automations']
+  if (/^(sites|site_|pages|page_|domains|domain_|forms|form_|media|tracking_|visitors|visitor_|sessions|session_|conversions|conversion_)/.test(name)) return ['sites']
+  if (/^(email_|emails|smtp_|mail_)/.test(name)) return ['email']
+  if (/^(whatsapp_|message_templates|phone_numbers|phone_number_)/.test(name)) return ['whatsapp']
+  if (/^(highlevel_|ghl_|integrations|integration_)/.test(name)) return ['integrations']
+  if (/^(contacts|contact_|tags|tag_|custom_fields|custom_field_|variable_fields|variable_field_)/.test(name)) return ['contacts']
+  return []
+}
+
+async function hasEveryMcpFeature(featureKeys = []) {
+  if (!isLicenseEnforced()) return true
+  for (const featureKey of featureKeys.filter(Boolean)) {
+    if (!(await hasFeature(featureKey))) return false
+  }
+  return true
+}
+
+async function assertMcpFeatures(featureKeys = []) {
+  if (await hasEveryMcpFeature(featureKeys)) return
+  const error = new Error('Esta herramienta no está incluida en tu plan actual.')
+  error.code = 'feature_not_available'
+  error.feature = featureKeys.find(Boolean) || 'developers'
+  throw error
+}
+
 function originFor(req) {
   const proto = req.get('x-forwarded-proto') || req.protocol || 'https'
   const host = req.get('x-forwarded-host') || req.get('host')
@@ -42,25 +96,40 @@ function metadataUrlFor(req) {
   return `${originFor(req)}/.well-known/oauth-protected-resource`
 }
 
-function requireMcpAuth(req, res, next) {
-  const authHeader = req.headers.authorization || ''
-  const token = authHeader.replace(/^Bearer\s+/i, '').trim()
-  const payload = verifyOAuthAccessToken(token, resourceFor(req))
+async function requireMcpAuth(req, res, next) {
+  try {
+    const authHeader = req.headers.authorization || ''
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim()
+    const payload = verifyOAuthAccessToken(token, resourceFor(req))
 
-  if (!payload) {
-    res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrlFor(req)}"`)
-    return res.status(401).json({
-      error: 'unauthorized',
-      error_description: 'OAuth access token requerido'
+    if (!payload) {
+      res.set('WWW-Authenticate', `Bearer resource_metadata="${metadataUrlFor(req)}"`)
+      return res.status(401).json({
+        error: 'unauthorized',
+        error_description: 'OAuth access token requerido'
+      })
+    }
+
+    if (isLicenseEnforced() && !(await hasFeature('developers'))) {
+      return res.status(403).json({
+        error: 'feature_not_available',
+        error_description: 'MCP y Developers no están incluidos en tu plan actual.'
+      })
+    }
+
+    req.mcpUser = {
+      id: payload.userId,
+      clientId: payload.clientId,
+      scope: payload.scope
+    }
+    next()
+  } catch (error) {
+    logger.error(`[MCP] Error validando acceso: ${error.message}`)
+    return res.status(403).json({
+      error: 'feature_not_available',
+      error_description: 'No se pudo validar tu plan para MCP.'
     })
   }
-
-  req.mcpUser = {
-    id: payload.userId,
-    clientId: payload.clientId,
-    scope: payload.scope
-  }
-  next()
 }
 
 function jsonRpcResult(id, result) {
@@ -377,22 +446,27 @@ const toolDefinitions = [
 
 async function getSummary(args = {}) {
   const { from, to, scope = 'all' } = args
+  const [canContacts, canPayments, canCampaigns] = await Promise.all([
+    hasEveryMcpFeature(['contacts']),
+    hasEveryMcpFeature(['payments']),
+    hasEveryMcpFeature(['campaigns'])
+  ])
   const [contactsResult, paymentsResult, campaignsResult] = await Promise.all([
-    buildContactStats({ startDate: from, endDate: to, scope }),
-    buildTransactionSummary({ startDate: from, endDate: to, scope }),
-    buildCampaignSummary({ startDate: from, endDate: to })
+    canContacts ? buildContactStats({ startDate: from, endDate: to, scope }) : null,
+    canPayments ? buildTransactionSummary({ startDate: from, endDate: to, scope }) : null,
+    canCampaigns ? buildCampaignSummary({ startDate: from, endDate: to }) : null
   ])
 
   return {
     range: {
-      start: contactsResult.range.startUtc,
-      end: contactsResult.range.endUtc,
-      timezone: contactsResult.range.appliedTimezone,
-      filtered: contactsResult.range.isFiltered
+      start: contactsResult?.range?.startUtc || paymentsResult?.range?.startUtc || campaignsResult?.range?.startUtc || from || null,
+      end: contactsResult?.range?.endUtc || paymentsResult?.range?.endUtc || campaignsResult?.range?.endUtc || to || null,
+      timezone: contactsResult?.range?.appliedTimezone || paymentsResult?.range?.appliedTimezone || campaignsResult?.range?.appliedTimezone || null,
+      filtered: Boolean(contactsResult?.range?.isFiltered || paymentsResult?.range?.isFiltered || campaignsResult?.range?.isFiltered)
     },
-    contacts: contactsResult.metrics,
-    payments: paymentsResult.summary,
-    campaigns: campaignsResult.summary
+    contacts: canContacts ? contactsResult?.metrics : null,
+    payments: canPayments ? paymentsResult?.summary : null,
+    campaigns: canCampaigns ? campaignsResult?.summary : null
   }
 }
 
@@ -452,23 +526,28 @@ async function getContact(args = {}) {
     return { contact: null }
   }
 
+  const [canPayments, canAppointments] = await Promise.all([
+    hasEveryMcpFeature(['payments']),
+    hasEveryMcpFeature(['appointments'])
+  ])
+
   const [payments, appointments] = await Promise.all([
-    db.all(
+    canPayments ? db.all(
       `SELECT id, amount, currency, status, payment_method, description, date
        FROM payments
        WHERE contact_id = ?
        ORDER BY ${timestampSortExpression('date')} DESC, ${timestampSortExpression('created_at')} DESC, id DESC
        LIMIT 10`,
       [id]
-    ),
-    db.all(
+    ) : [],
+    canAppointments ? db.all(
       `SELECT id, title, status, appointment_status, start_time, end_time
        FROM appointments
        WHERE contact_id = ?
        ORDER BY ${timestampSortExpression('start_time')} DESC, id DESC
        LIMIT 10`,
       [id]
-    )
+    ) : []
   ])
 
   return {
@@ -627,6 +706,7 @@ async function getAccessibleDatabaseSchema() {
 
   for (const tableName of tableNames) {
     if (!isSafeIdentifier(tableName) || isSensitiveTable(tableName)) continue
+    if (!(await hasEveryMcpFeature(getMcpTableFeatureKeys(tableName)))) continue
 
     const columns = await getDatabaseColumns(tableName)
     if (!columns.length) continue
@@ -649,6 +729,7 @@ async function resolveAccessibleTable(table) {
   if (!isSafeIdentifier(tableName) || isSensitiveTable(tableName)) {
     throw new Error('Tabla no permitida')
   }
+  await assertMcpFeatures(getMcpTableFeatureKeys(tableName))
 
   const schema = await getAccessibleDatabaseSchema()
   const config = schema.find(item => item.name === tableName)
@@ -1249,12 +1330,38 @@ async function callHighLevelMcpTool(toolName, args = {}) {
   return normalizeToolResult(result)
 }
 
+function getMcpToolFeatureKeys(name, args = {}) {
+  const toolName = String(name || '').trim()
+  if (toolName.startsWith(GHL_MCP_TOOL_PREFIX)) return ['integrations']
+
+  const baseFeatures = MCP_TOOL_FEATURES[toolName] || []
+  const tableFeatures = toolName === 'query_data_table'
+    ? getMcpTableFeatureKeys(args?.table)
+    : []
+
+  return [...baseFeatures, ...tableFeatures]
+    .filter(Boolean)
+    .filter((featureKey, index, all) => all.indexOf(featureKey) === index)
+}
+
 async function getCombinedToolDefinitions() {
-  const highLevelTools = await listHighLevelMcpTools()
-  return [...toolDefinitions, ...highLevelTools]
+  const baseTools = []
+  for (const tool of toolDefinitions) {
+    if (await hasEveryMcpFeature(getMcpToolFeatureKeys(tool.name))) {
+      baseTools.push(tool)
+    }
+  }
+
+  const highLevelTools = await hasEveryMcpFeature(['integrations'])
+    ? await listHighLevelMcpTools()
+    : []
+
+  return [...baseTools, ...highLevelTools]
 }
 
 async function callTool(name, args) {
+  await assertMcpFeatures(getMcpToolFeatureKeys(name, args))
+
   if (String(name || '').startsWith(GHL_MCP_TOOL_PREFIX)) {
     return callHighLevelMcpTool(name, args)
   }

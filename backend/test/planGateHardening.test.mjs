@@ -1,0 +1,117 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const repoRoot = join(__dirname, '..', '..')
+const backendRoot = join(repoRoot, 'backend')
+const frontendRoot = join(repoRoot, 'frontend')
+
+const backendFile = (path) => readFile(join(backendRoot, path), 'utf8')
+const frontendFile = (path) => readFile(join(frontendRoot, path), 'utf8')
+
+test('module access checks the commercial plan before exposing a module', async () => {
+  const licenseService = await backendFile('src/services/licenseService.js')
+  const userAccessMiddleware = await backendFile('src/middleware/userAccessMiddleware.js')
+
+  assert.match(licenseService, /const LICENSE_FEATURES_BY_MODULE = \{/)
+  assert.match(licenseService, /settings_api_access: \{ primary: 'developers'/)
+  assert.match(licenseService, /export async function hasModuleFeature\(moduleKey\)/)
+  assert.match(licenseService, /'payments', 'reports', 'campaigns', 'sites', 'forms'/)
+
+  assert.match(userAccessMiddleware, /hasModuleFeature\(moduleKey\)/)
+  assert.match(userAccessMiddleware, /code: 'feature_not_available'/)
+  assert.match(userAccessMiddleware, /module: moduleKey/)
+})
+
+test('developer surfaces are gated by Developers and by resource features', async () => {
+  const authRoutes = await backendFile('src/routes/auth.routes.js')
+  const externalRoutes = await backendFile('src/routes/external.routes.js')
+  const mcpRoutes = await backendFile('src/routes/mcp.routes.js')
+
+  assert.match(authRoutes, /router\.get\('\/api-token', requireAuth, requireModuleAccess\('settings_api_access'\), getApiToken\)/)
+  assert.match(authRoutes, /router\.post\('\/api-token\/rotate', requireAuth, requireModuleAccess\('settings_api_access'\), rotateApiToken\)/)
+  assert.match(authRoutes, /router\.delete\('\/api-token', requireAuth, requireModuleAccess\('settings_api_access'\), revokeApiToken\)/)
+
+  assert.match(externalRoutes, /router\.use\(requireFeature\('developers'\)\)/)
+  assert.match(externalRoutes, /function getExternalTableFeatureKeys\(table\)/)
+  assert.match(externalRoutes, /router\.get\('\/data\/:table', requireExternalTableFeature, queryDataTable\)/)
+  assert.match(externalRoutes, /router\.post\('\/highlevel\/request', requireExternalFeatures\('integrations'\), proxyHighLevelRequest\)/)
+  assert.match(externalRoutes, /router\.get\('\/transactions', requireExternalFeatures\('payments'\), getTransactions\)/)
+
+  assert.match(mcpRoutes, /hasFeature\('developers'\)/)
+  assert.match(mcpRoutes, /ghl_create_payment_link: \['integrations', 'payments'\]/)
+  assert.match(mcpRoutes, /ghl_create_installment_plan: \['integrations', 'payments', 'payment_plans'\]/)
+  assert.match(mcpRoutes, /await assertMcpFeatures\(getMcpToolFeatureKeys\(name, args\)\)/)
+  assert.match(mcpRoutes, /getMcpTableFeatureKeys\(args\?\.table\)/)
+})
+
+test('Sites and HighLevel cannot bypass payments, plans, or integrations', async () => {
+  const sitesRoutes = await backendFile('src/routes/sites.routes.js')
+  const highlevelRoutes = await backendFile('src/routes/highlevel.routes.js')
+
+  assert.match(sitesRoutes, /function requirePaymentsForSitePaymentFeature\(req, res, next\)/)
+  assert.match(sitesRoutes, /router\.post\('\/public\/checkout\/init', requireFeature\('payments'\), sitePaymentCheckoutInitHandler\)/)
+  assert.match(sitesRoutes, /router\.post\('\/public\/checkout\/prepare-installments', requireFeature\('payments'\), requireFeature\('payment_plans'\), sitePaymentCheckoutPrepareHandler\)/)
+  assert.match(sitesRoutes, /router\.post\('\/:siteId\/blocks', requirePaymentsForSitePaymentFeature, createBlockHandler\)/)
+
+  assert.match(highlevelRoutes, /router\.use\(requireFeature\('integrations'\)\)/)
+  assert.match(highlevelRoutes, /router\.post\('\/contacts\/search', requireModuleAccess\('contacts'\), searchContacts\)/)
+  assert.match(highlevelRoutes, /router\.post\('\/conversations\/messages', requireModuleAccess\('chat'\), sendConversationMessage\)/)
+  assert.match(highlevelRoutes, /router\.post\('\/payment-flows\/installments', requireModuleAccess\('payments'\), requireFeature\('payment_plans'\), createInstallmentFlow\)/)
+})
+
+test('automation builder and runtime reject premium nodes outside the plan', async () => {
+  const flowValidation = await backendFile('src/services/automationFlowValidation.js')
+  const automationsService = await backendFile('src/services/automationsService.js')
+  const automationEngine = await backendFile('src/services/automationEngine.js')
+  const nodeRegistry = await frontendFile('src/pages/Automations/editor/nodeRegistry.tsx')
+  const automationsHome = await frontendFile('src/pages/Automations/AutomationsHome.tsx')
+
+  assert.match(flowValidation, /'channel-whatsapp': \['whatsapp'\]/)
+  assert.match(flowValidation, /'trigger-payment-received': \['payments'\]/)
+  assert.match(flowValidation, /'trigger-incoming-webhook': \['developers'\]/)
+  assert.match(flowValidation, /export function collectAutomationFlowRequiredFeatures\(flow = \{\}\)/)
+
+  assert.match(automationsService, /await assertAutomationFlowFeatureAccess\(flow\)/)
+  assert.match(automationEngine, /async function canRunAutomationFlow\(flow = \{\}\)/)
+  assert.match(automationEngine, /await assertAutomationNodeFeatureAccess\(node\)/)
+  assert.match(automationEngine, /if \(!\(await canRunBackgroundJob\('automations'\)\)\) return/)
+
+  assert.match(nodeRegistry, /type: 'trigger-whatsapp-message'[\s\S]*requiredFeature: 'whatsapp'/)
+  assert.match(nodeRegistry, /type: 'channel-whatsapp'[\s\S]*requiredFeature: 'whatsapp'/)
+  assert.match(nodeRegistry, /type: 'trigger-payment-received'[\s\S]*requiredFeature: 'payments'/)
+  assert.match(nodeRegistry, /type: 'action-webhook'[\s\S]*requiredFeature: 'developers'/)
+  assert.match(automationsHome, /const canUseWhatsApp = hasLicenseFeature\(user, \['whatsapp'\]\)/)
+})
+
+test('mobile phone view and background jobs respect plan features', async () => {
+  const phoneApp = await frontendFile('src/pages/PhoneApp/PhoneApp.tsx')
+
+  assert.match(phoneApp, /featureKeys\?: readonly string\[\]/)
+  assert.match(phoneApp, /id: 'transactions', label: 'Pagos'[\s\S]*featureKeys: \['payments'\]/)
+  assert.match(phoneApp, /const visibleSections = useMemo/)
+  assert.match(phoneApp, /featureAccessKey/)
+  assert.match(phoneApp, /canUsePayments\s+\?\s+safe\(transactionsService\.getTransactions/)
+
+  for (const cronPath of [
+    'src/jobs/scheduledChatMessages.cron.js',
+    'src/jobs/appointmentReminders.cron.js',
+    'src/jobs/paymentAutomations.cron.js',
+    'src/jobs/contactBulkActions.cron.js',
+    'src/jobs/stripePaymentPlans.cron.js',
+    'src/jobs/conektaPaymentPlans.cron.js',
+    'src/jobs/mercadoPagoPaymentPlans.cron.js',
+    'src/jobs/rebillPaymentPlans.cron.js',
+    'src/jobs/googleCalendarSync.cron.js',
+    'src/jobs/metaSync.cron.js',
+    'src/jobs/emailInboundSync.cron.js',
+    'src/jobs/whatsappQrWatchdog.cron.js',
+    'src/jobs/highlevelSync.cron.js'
+  ]) {
+    const source = await backendFile(cronPath)
+    assert.match(source, /canRunBackgroundJob\(/, `${cronPath} must validate license before background work`)
+  }
+})

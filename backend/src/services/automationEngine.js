@@ -7,6 +7,11 @@ import { DEFAULT_TIMEZONE, getAccountTimezone, isValidTimezone } from '../utils/
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { createInternalNotification } from './notificationsService.js'
 import {
+  collectAutomationFlowRequiredFeatures,
+  getAutomationNodeRequiredFeatures
+} from './automationFlowValidation.js'
+import { canRunBackgroundJob, hasFeature, isLicenseEnforced } from './licenseService.js'
+import {
   findContactByPhoneCandidates,
   finalizePreparedPhoneUpsert,
   generateContactId,
@@ -52,6 +57,25 @@ const MESSAGE_TRIGGER_CHANNELS = {
   'trigger-instagram-message': 'instagram',
   'trigger-messenger-message': 'messenger',
   'trigger-email-message': 'email'
+}
+
+async function canRunAutomationFlow(flow = {}) {
+  if (!(await canRunBackgroundJob('automations'))) return false
+  if (!isLicenseEnforced()) return true
+
+  for (const featureKey of collectAutomationFlowRequiredFeatures(flow)) {
+    if (!(await hasFeature(featureKey))) return false
+  }
+  return true
+}
+
+async function assertAutomationNodeFeatureAccess(node = {}) {
+  if (!isLicenseEnforced()) return
+  for (const featureKey of getAutomationNodeRequiredFeatures(node)) {
+    if (!(await hasFeature(featureKey))) {
+      throw engineError(403, `El paso "${nodeLabel(node)}" necesita una función que no está incluida en tu plan actual.`)
+    }
+  }
 }
 
 function makeId(prefix) {
@@ -4160,6 +4184,8 @@ async function sendCommentReplyFromNode(node, ctx, fallbackReplyType = 'public')
  *  { skipped: true, handle }     → paso no soportado, se registra y continúa
  */
 async function executeNode(node, ctx, enrollment) {
+  await assertAutomationNodeFeatureAccess(node)
+
   switch (node.type) {
     case 'channel-whatsapp': {
       const sendResult = await sendWhatsAppBlocks(node, ctx)
@@ -4679,7 +4705,14 @@ async function loadWhatsAppPhoneSnapshot(phoneNumberId) {
 
 async function listPublishedAutomations() {
   const rows = await db.all(`SELECT id, name, COALESCE(published_flow, flow) AS flow FROM automations WHERE status = 'published'`)
-  return rows.map((row) => ({ id: row.id, name: row.name, flow: parseJson(row.flow, { nodes: [], edges: [] }) }))
+  const automations = []
+  for (const row of rows) {
+    const flow = parseJson(row.flow, { nodes: [], edges: [] })
+    if (await canRunAutomationFlow(flow)) {
+      automations.push({ id: row.id, name: row.name, flow })
+    }
+  }
+  return automations
 }
 
 async function getPublishedAutomation(automationId) {
@@ -4688,7 +4721,11 @@ async function getPublishedAutomation(automationId) {
 
   const row = await getAutomationEnrollmentRow(id)
   if (!row || row.status !== 'published') throw engineError(404, 'Automatización publicada no encontrada')
-  return { id: row.id, name: row.name, flow: parseJson(row.published_flow || row.flow, { nodes: [], edges: [] }) }
+  const flow = parseJson(row.published_flow || row.flow, { nodes: [], edges: [] })
+  if (!(await canRunAutomationFlow(flow))) {
+    throw engineError(403, 'Esta automatización usa funciones que no están incluidas en tu plan actual')
+  }
+  return { id: row.id, name: row.name, flow }
 }
 
 async function getSavedAutomationForTestRun(automationId) {
@@ -4698,7 +4735,11 @@ async function getSavedAutomationForTestRun(automationId) {
   const row = await getAutomationEnrollmentRow(id)
   if (!row) throw engineError(404, 'Automatización guardada no encontrada')
   if (row.status === 'archived') throw engineError(400, 'No puedes probar una automatización archivada')
-  return { id: row.id, name: row.name, flow: parseJson(row.flow, { nodes: [], edges: [] }) }
+  const flow = parseJson(row.flow, { nodes: [], edges: [] })
+  if (!(await canRunAutomationFlow(flow))) {
+    throw engineError(403, 'Esta automatización usa funciones que no están incluidas en tu plan actual')
+  }
+  return { id: row.id, name: row.name, flow }
 }
 
 async function getAutomationEnrollmentRow(id) {
@@ -4772,11 +4813,16 @@ async function getAutomationForEnrollmentControl(automationId, { requirePublishe
     throw engineError(400, 'La automatización debe estar publicada para mover, avanzar o reintentar contactos')
   }
 
+  const flow = parseJson(automation.published_flow || automation.flow, { nodes: [], edges: [] })
+  if (!(await canRunAutomationFlow(flow))) {
+    throw engineError(403, 'Esta automatización usa funciones que no están incluidas en tu plan actual')
+  }
+
   return {
     id: automation.id,
     name: automation.name,
     status: automation.status,
-    flow: parseJson(automation.published_flow || automation.flow, { nodes: [], edges: [] })
+    flow
   }
 }
 
@@ -5115,6 +5161,7 @@ export async function handleIncomingMessage({
   businessPhoneNumberId = null
 }) {
   try {
+    if (!(await canRunBackgroundJob('automations'))) return
     const contact = await loadContact(contactId, { phone, name: contactName })
     const baseCtx = {
       contact,
@@ -5319,6 +5366,7 @@ async function enrollMatching(automations, eventType, baseCtx) {
  */
 export async function handleAutomationEvent(eventType, data = {}) {
   try {
+    if (!(await canRunBackgroundJob('automations'))) return
     const eventData = data
     // (AUTO-008) Corte de cascada: si este evento proviene de acciones encadenadas de
     // otras automatizaciones (etiqueta → dispara otra → etiqueta → …) y ya superamos la
@@ -5452,6 +5500,7 @@ async function claimScheduleRun({ automationId, triggerKey, runKey, scheduledFor
 /** Dispara automatizaciones cuyo disparador programado ya llegó. */
 export async function processScheduledTriggers(referenceDate = new Date()) {
   try {
+    if (!(await canRunBackgroundJob('automations'))) return
     const nowUtc = referenceDate instanceof Date
       ? DateTime.fromJSDate(referenceDate, { zone: 'utc' })
       : DateTime.fromISO(String(referenceDate), { zone: 'utc' })
@@ -5498,6 +5547,7 @@ export async function processScheduledTriggers(referenceDate = new Date()) {
 
 /** Inscribe contactos que se dejaron programados manualmente desde su ficha. */
 export async function processScheduledContactEnrollments(referenceDate = new Date()) {
+  if (!(await canRunBackgroundJob('automations'))) return
   const dueDate = referenceDate instanceof Date ? referenceDate : new Date(referenceDate)
   if (Number.isNaN(dueDate.getTime())) return
   const dueAt = dueDate.toISOString()
@@ -5553,6 +5603,7 @@ export async function processScheduledContactEnrollments(referenceDate = new Dat
 /** Tick del programador: reanuda esperas vencidas (duración o timeout) */
 export async function processDueResumes() {
   try {
+    if (!(await canRunBackgroundJob('automations'))) return
     const rows = await db.all(
       `SELECT * FROM automation_enrollments
        WHERE status = 'waiting' AND resume_at IS NOT NULL AND resume_at <= ?

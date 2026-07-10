@@ -71,16 +71,64 @@ Implementación: `backend/src/services/licenseService.js`,
 
 ## Feature flags
 
-Features: `whatsapp`, `meta_ads`, `google_calendar`, `app_assistant_ai`,
-`conversational_ai`, `automations`, `advanced_reports`, `premium_modules`. Los mounts
-premium se protegen en `server.js` con `requireFeature(...)` (WhatsApp API, Meta,
-Calendarios, Ristak AI, Agente conversacional, Reportes). El frontend puede leer
-`GET /api/license/status` para conocer plan, features y límites.
+Features principales: `dashboard`, `contacts`, `chat`, `appointments`, `payments`,
+`reports`, `analytics`, `campaigns`, `sites`, `forms`, `ai_agent`, `automations`,
+`whatsapp`, `email`, `integrations`, `team_access`, `mobile_app`, `developers`,
+`meta_ads`, `google_calendar`, `advanced_reports`, `payment_plans`,
+`subscriptions`, `web_analytics` y las variantes de cobro de calendarios
+(`calendar_payments`, `calendar_payment`, `calendar_booking_payments`).
+
+El backend valida el plan en varias capas:
+
+- `requireActiveLicense` bloquea instalaciones sin licencia activa.
+- `requireFeature(...)` bloquea features puntuales como `payment_plans`,
+  `subscriptions`, `calendar_payments`, `web_analytics` o `developers`.
+- `requireModuleAccess(...)` valida permiso del usuario **y** feature comercial
+  del módulo mediante `hasModuleFeature(...)`. Esto evita que un admin entre a
+  Pagos, Sites, Developers, Integraciones o Usuarios si el plan de la cuenta no
+  los incluye.
+- Superficies que no pasan por navegación normal (`/api/external`, `/api/mcp`,
+  búsqueda global, crons y automatizaciones publicadas) tienen gates propios por
+  recurso para no depender de botones ocultos en frontend.
+
+Si el portal central responde `allowed=true` pero sin un objeto `features` válido,
+o responde un objeto parcial, las features premium no incluidas fallan cerradas
+hasta recibir flags explícitos. La base del CRM puede seguir abierta, pero módulos
+comerciales como Pagos, Sites, Developers, Integraciones, WhatsApp, Email, Meta,
+Google Calendar, Automatizaciones, IA, Reportes avanzados, planes de pago,
+suscripciones y analíticas web quedan apagados.
+
+El frontend puede leer `GET /api/license/status` para conocer plan, features y límites.
 
 El plan `basic` puede tener `conversational_ai=true` y `app_assistant_ai=false`. En ese caso
 la app permite entrar al Agente conversacional, oculta Ristak AI general y aplica
 `limits.conversational_agents.max_agents=1` al crear agentes. El límite se valida en backend
 en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el bloqueo.
+
+### Gates por superficie
+
+- API tokens legacy (`/api/auth/api-token`) y la pantalla nueva de Developers
+  requieren `settings_api_access`/`developers`.
+- `/api/external` requiere `developers` y además valida cada endpoint o tabla:
+  pagos requieren `payments`, planes `payment_plans`, reportes `reports`,
+  campañas `campaigns`, contactos `contacts`, HighLevel `integrations`, etc.
+- `/api/mcp` requiere `developers`; las tools se listan/ejecutan solo si las
+  features necesarias están activas. Las tools genéricas de tablas aplican el
+  mismo mapeo por recurso.
+- `/api/sites` requiere `sites`; el checkout público y cualquier bloque/gate de
+  cobro en Sites requiere `payments`, y la preparación de parcialidades requiere
+  `payment_plans`.
+- `/api/highlevel` requiere `integrations`; sus endpoints operativos además piden
+  el módulo real (`contacts`, `chat`, `payments`, `settings_users`) y las
+  parcialidades piden `payment_plans`.
+- Automatizaciones validan features al guardar, publicar, probar y ejecutar:
+  nodos WhatsApp requieren `whatsapp`, Email requiere `email`, Meta/Messenger/
+  Instagram requiere `campaigns`, formularios `forms`, pagos `payments`,
+  webhooks `developers` e IA `ai_agent`.
+- `/movil` filtra secciones y cargas de datos por feature; la caché móvil incluye
+  la matriz de features para no mostrar datos viejos tras un downgrade.
+- Crons de sistema e integraciones llaman `canRunBackgroundJob(...)` antes de
+  enviar mensajes, sincronizar integraciones o cobrar parcialidades.
 
 ## Setup inicial del dueño (automático, mismas credenciales del portal)
 

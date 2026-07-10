@@ -66,15 +66,16 @@ const PROFESSIONAL_PLAN_KEYS = new Set([
   'profesional'
 ])
 
-// (LIC-003) Features de pago que el backend candaduea con requireFeature(...). Si el
+// (LIC-003) Features de pago que el backend bloquea con requireFeature(...). Si el
 // portal responde enforced 'allowed' pero SIN un objeto features válido, NO se abren
 // éstas (fail-closed): la base del CRM sigue, el premium queda apagado hasta que el
 // servidor envíe features explícitas.
 const PREMIUM_GATED_FEATURES = [
-  'whatsapp', 'email', 'meta_ads', 'google_calendar', 'automations',
-  'advanced_reports', 'app_assistant_ai', 'conversational_ai', 'ai',
-  'ai_agent', 'premium_modules', 'calendar_payments', 'calendar_payment',
-  'calendar_booking_payments', 'payment_plans', 'subscriptions', 'web_analytics'
+  'payments', 'reports', 'campaigns', 'sites', 'forms', 'whatsapp',
+  'email', 'integrations', 'team_access', 'mobile_app', 'developers',
+  'meta_ads', 'google_calendar', 'automations', 'advanced_reports',
+  'app_assistant_ai', 'conversational_ai', 'ai', 'ai_agent',
+  'premium_modules', 'payment_plans', 'subscriptions', 'web_analytics'
 ]
 
 function closedRemoteFeatures() {
@@ -97,6 +98,34 @@ const FEATURE_DEPENDENCIES = {
   team_access: ['settings_users'],
   mobile_app: ['settings_mobile'],
   developers: ['settings_api_access']
+}
+
+const LICENSE_FEATURES_BY_MODULE = {
+  dashboard: { primary: 'dashboard' },
+  contacts: { primary: 'contacts' },
+  chat: { primary: 'chat', legacy: ['whatsapp'] },
+  appointments: { primary: 'appointments', legacy: ['google_calendar'] },
+  payments: { primary: 'payments' },
+  reports: { primary: 'reports', legacy: ['advanced_reports'] },
+  analytics: { primary: 'analytics' },
+  campaigns: { primary: 'campaigns', legacy: ['meta_ads'] },
+  automations: { primary: 'automations' },
+  sites: { primary: 'sites' },
+  ai_agent: { primary: 'ai_agent', legacy: ['app_assistant_ai', 'conversational_ai', 'ai'] },
+  settings_account: { primary: 'dashboard' },
+  settings_mobile: { primary: 'mobile_app', legacy: ['settings_mobile'] },
+  settings_calendars: { primary: 'appointments', legacy: ['google_calendar', 'settings_calendars'] },
+  settings_payments: { primary: 'payments', legacy: ['settings_payments'] },
+  settings_integrations: { primary: 'integrations', legacy: ['settings_integrations'] },
+  settings_whatsapp: { primary: 'whatsapp', legacy: ['settings_whatsapp'] },
+  settings_email: { primary: 'email', legacy: ['settings_email'] },
+  settings_tracking: { primary: 'sites', legacy: ['settings_tracking'] },
+  settings_domains: { primary: 'sites', legacy: ['settings_domains'] },
+  settings_costs: { primary: 'reports', legacy: ['advanced_reports', 'settings_costs'] },
+  settings_media: { primary: 'sites', legacy: ['settings_media'] },
+  settings_custom_fields: { primary: 'forms', legacy: ['settings_custom_fields'] },
+  settings_api_access: { primary: 'developers', legacy: ['settings_api_access'] },
+  settings_users: { primary: 'team_access', legacy: ['settings_users'] }
 }
 
 const LEGACY_FEATURE_ALIASES = {
@@ -146,6 +175,28 @@ function readExplicitAnyFeatureValue(features = {}, featureKeys = []) {
   }
 
   return sawExplicitFeature ? false : null
+}
+
+function readModuleFeatureValue(features = {}, moduleKey) {
+  const key = String(moduleKey || '').trim()
+  if (!key) return false
+
+  const rule = LICENSE_FEATURES_BY_MODULE[key]
+  if (!rule) return true
+
+  if (hasOwn.call(features, key)) return features[key] === true
+  if (hasOwn.call(features, rule.primary)) return features[rule.primary] === true
+
+  return (rule.legacy || []).some((featureKey) => features[featureKey] === true)
+}
+
+export function getModuleFeatureKeys(moduleKey) {
+  const key = String(moduleKey || '').trim()
+  const rule = LICENSE_FEATURES_BY_MODULE[key]
+  if (!rule) return []
+  return [key, rule.primary, ...(rule.legacy || [])]
+    .filter(Boolean)
+    .filter((featureKey, index, all) => all.indexOf(featureKey) === index)
 }
 
 export function hasProfessionalPlan(plan = '') {
@@ -437,7 +488,7 @@ function normalizeLicenseLimits(limits = {}) {
 function normalizeLicenseFeatures(features = {}) {
   const source = features && typeof features === 'object' ? features : {}
   const normalized = {
-    ...DEFAULT_FEATURES,
+    ...closedRemoteFeatures(),
     ...source
   }
 
@@ -647,6 +698,13 @@ export async function hasFeature(featureKey) {
   if (!state.allowed) return false
   if (!state.enforced) return true
   return readFeatureValue(state.features, featureKey)
+}
+
+export async function hasModuleFeature(moduleKey) {
+  const state = await getLicenseState()
+  if (!state.allowed) return false
+  if (!state.enforced) return true
+  return readModuleFeatureValue(state.features, moduleKey)
 }
 
 export async function hasCalendarPaymentsFeature() {

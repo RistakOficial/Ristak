@@ -40,67 +40,69 @@ import {
   getUsersByIds
 } from '../controllers/highlevelController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
-import { requireAdmin } from '../middleware/userAccessMiddleware.js'
+import { requireAdmin, requireModuleAccess } from '../middleware/userAccessMiddleware.js'
+import { requireFeature } from '../middleware/licenseMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
+router.use(requireFeature('integrations'))
 // (GHL-007) Decisión del dueño: restringir a solo admin las rutas de ADMINISTRACIÓN de
 // HighLevel (conectar/guardar/borrar config, disparar sincronizaciones, revelar token,
 // etiquetas/config de facturación). NO se gatean a admin las rutas OPERATIVAS que usan
 // los empleados desde chat/pagos/citas (getConfig, integration-status, enviar mensaje,
 // buscar/ver contactos, productos/facturas/cobros), para no romper su trabajo diario.
 
-router.post('/test-connection', requireAdmin, testConnection)
-router.post('/test', requireAdmin, testConnection) // Alias para compatibilidad
-router.post('/config', requireAdmin, saveConfig)
-router.get('/config', getConfig)
-router.delete('/config', requireAdmin, deleteConfig)
+router.post('/test-connection', requireAdmin, requireModuleAccess('settings_integrations'), testConnection)
+router.post('/test', requireAdmin, requireModuleAccess('settings_integrations'), testConnection) // Alias para compatibilidad
+router.post('/config', requireAdmin, requireModuleAccess('settings_integrations'), saveConfig)
+router.get('/config', requireModuleAccess('settings_integrations'), getConfig)
+router.delete('/config', requireAdmin, requireModuleAccess('settings_integrations'), deleteConfig)
 // (GHL-001) Revelar el token maestro de HighLevel queda restringido a admin
 // (antes cualquier usuario autenticado podía obtenerlo) y se audita en el controlador.
-router.get('/config/reveal/api_token', requireAdmin, revealToken)
-router.get('/integration-status', getIntegrationStatus)
-router.post('/refresh-location', requireAdmin, refreshLocationData)
-router.post('/sync', requireAdmin, syncData)
-router.get('/sync/progress', getSyncProgressEndpoint)
-router.post('/sync-custom-values', requireAdmin, syncCustomValues)
-router.post('/sync-contacts', requireAdmin, syncContacts)
-router.get('/custom-labels', getCustomLabels)
-router.post('/custom-labels', requireAdmin, updateCustomLabels)
+router.get('/config/reveal/api_token', requireAdmin, requireModuleAccess('settings_integrations'), revealToken)
+router.get('/integration-status', requireModuleAccess('settings_integrations'), getIntegrationStatus)
+router.post('/refresh-location', requireAdmin, requireModuleAccess('settings_integrations'), refreshLocationData)
+router.post('/sync', requireAdmin, requireModuleAccess('settings_integrations'), syncData)
+router.get('/sync/progress', requireModuleAccess('settings_integrations'), getSyncProgressEndpoint)
+router.post('/sync-custom-values', requireAdmin, requireModuleAccess('settings_integrations'), syncCustomValues)
+router.post('/sync-contacts', requireAdmin, requireModuleAccess('settings_integrations'), syncContacts)
+router.get('/custom-labels', requireModuleAccess('settings_integrations'), getCustomLabels)
+router.post('/custom-labels', requireAdmin, requireModuleAccess('settings_integrations'), updateCustomLabels)
 
 // Contacts
-router.post('/contacts/search', searchContacts)
-router.get('/contacts/:id', getContactById)
+router.post('/contacts/search', requireModuleAccess('contacts'), searchContacts)
+router.get('/contacts/:id', requireModuleAccess('contacts'), getContactById)
 
 // Conversations
-router.post('/conversations/messages', sendConversationMessage)
-router.post('/conversations/sync', requireAdmin, syncConversations)
+router.post('/conversations/messages', requireModuleAccess('chat'), sendConversationMessage)
+router.post('/conversations/sync', requireAdmin, requireModuleAccess('chat'), syncConversations)
 
 // Users
-router.get('/users', getLocationUsers)
-router.post('/users/by-ids', getUsersByIds)
+router.get('/users', requireModuleAccess('settings_users'), getLocationUsers)
+router.post('/users/by-ids', requireModuleAccess('settings_users'), getUsersByIds)
 
 // Invoice/Payment Configuration (administración)
-router.post('/invoice-config', requireAdmin, saveInvoiceConfig)
+router.post('/invoice-config', requireAdmin, requireModuleAccess('settings_payments'), saveInvoiceConfig)
 
 // Products and Payments
-router.get('/products', listProducts)
-router.post('/products', createProduct)
-router.post('/products/sync', syncProducts)
-router.put('/products/:productId', updateProduct)
-router.delete('/products/:productId', deleteProduct)
-router.get('/products/:productId/prices', listPrices)
-router.post('/products/:productId/prices', createPrice)
-router.post('/invoices', createInvoice)
-router.get('/invoices/schedules', listInvoiceSchedules)
-router.post('/invoices/schedules', createInvoiceSchedule)
-router.get('/invoices/schedules/:scheduleId', getInvoiceSchedule)
-router.put('/invoices/schedules/:scheduleId', updateInvoiceSchedule)
-router.post('/invoices/schedules/:scheduleId/action', actionInvoiceSchedule)
-router.post('/payment-flows/installments', createInstallmentFlow)
-router.post('/invoices/:invoiceId/send', sendInvoice)
-router.post('/invoices/:invoiceId/record-payment', recordPayment)
-router.post('/invoices/:invoiceId/sync', syncInvoice)
-router.post('/text2pay', text2Pay)
+router.get('/products', requireModuleAccess('payments'), listProducts)
+router.post('/products', requireModuleAccess('payments'), createProduct)
+router.post('/products/sync', requireModuleAccess('payments'), syncProducts)
+router.put('/products/:productId', requireModuleAccess('payments'), updateProduct)
+router.delete('/products/:productId', requireModuleAccess('payments'), deleteProduct)
+router.get('/products/:productId/prices', requireModuleAccess('payments'), listPrices)
+router.post('/products/:productId/prices', requireModuleAccess('payments'), createPrice)
+router.post('/invoices', requireModuleAccess('payments'), createInvoice)
+router.get('/invoices/schedules', requireModuleAccess('payments'), requireFeature('payment_plans'), listInvoiceSchedules)
+router.post('/invoices/schedules', requireModuleAccess('payments'), requireFeature('payment_plans'), createInvoiceSchedule)
+router.get('/invoices/schedules/:scheduleId', requireModuleAccess('payments'), requireFeature('payment_plans'), getInvoiceSchedule)
+router.put('/invoices/schedules/:scheduleId', requireModuleAccess('payments'), requireFeature('payment_plans'), updateInvoiceSchedule)
+router.post('/invoices/schedules/:scheduleId/action', requireModuleAccess('payments'), requireFeature('payment_plans'), actionInvoiceSchedule)
+router.post('/payment-flows/installments', requireModuleAccess('payments'), requireFeature('payment_plans'), createInstallmentFlow)
+router.post('/invoices/:invoiceId/send', requireModuleAccess('payments'), sendInvoice)
+router.post('/invoices/:invoiceId/record-payment', requireModuleAccess('payments'), recordPayment)
+router.post('/invoices/:invoiceId/sync', requireModuleAccess('payments'), syncInvoice)
+router.post('/text2pay', requireModuleAccess('payments'), text2Pay)
 
 export default router

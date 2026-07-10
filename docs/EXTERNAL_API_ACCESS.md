@@ -12,6 +12,8 @@ customer account, logs, chats, database rows, or production errors.
 - `App ID` identifies this Ristak instance and is safe to share with integration partners.
 - `API token` is the secret credential and must be handled like a password.
 - Each authenticated Ristak user can have one active API token.
+- Creating, rotating, revoking and using API tokens requires the `developers`
+  feature (`settings_api_access` in legacy permission names).
 - Tokens are opaque secrets generated with `crypto.randomBytes(32)`.
 - The database stores only the SHA-256 hash, prefix, last four characters, creation time, last-used time, and revocation time.
 - Rotation immediately invalidates the previous token.
@@ -41,6 +43,24 @@ customer account, logs, chats, database rows, or production errors.
    ```
 
    MCP clients that require OAuth should use the built-in OAuth discovery endpoints. The authorization screen asks for a Ristak API token and exchanges it for OAuth access credentials.
+
+## License gates
+
+The external API and MCP are backend-gated. Hiding buttons in the UI is not the
+security boundary.
+
+- `/api/external` requires a valid API token and the `developers` feature.
+- Individual endpoints also require the feature of the resource being accessed:
+  `payments` for transactions/payment tables, `payment_plans` for installment
+  plans, `subscriptions` for subscription resources, `reports` for reports,
+  `campaigns`/`meta_ads` for Meta data, `appointments`/`google_calendar` for
+  calendars and appointments, `sites` for Sites/tracking/form tables,
+  `contacts` for CRM contact data and `integrations` for HighLevel proxy calls.
+- `/api/mcp` requires OAuth access plus `developers`. The tools list is filtered
+  by plan, and tool execution re-checks the same feature gates. Generic table
+  tools apply the same table-to-feature mapping as `/api/external/data/:table`.
+- A token minted before a downgrade does not bypass the current plan; feature
+  checks run on every request.
 
 ## Available endpoints
 

@@ -2,6 +2,7 @@ import { processDueContactBulkActions } from '../services/contactBulkActionsServ
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 const CONTACT_BULK_ACTIONS_INTERVAL_MS = 20 * 1000
 const CONTACT_BULK_ACTIONS_LOCK_TTL_MS = 2 * 60 * 1000
@@ -11,6 +12,7 @@ let running = false
 
 async function runContactBulkActions(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
+  if (!(await canRunBackgroundJob('contacts'))) return
   running = true
 
   try {

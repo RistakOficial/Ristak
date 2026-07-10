@@ -6,7 +6,7 @@ import http from 'node:http'
 let server
 let baseUrl
 let requestCount = 0
-let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | allow_basic_calendar | allow_calendar_payment_false | allow_without_features | block | down
+let serverMode = 'allow' // allow | allow_without_whatsapp | allow_split_ai | allow_split_sites | allow_split_calendar | allow_basic_calendar | allow_calendar_payment_false | allow_partial_features | allow_without_features | block | down
 let lastRequestBody = null
 
 let licenseService
@@ -49,6 +49,7 @@ function startMockServer() {
             serverMode === 'allow_split_calendar' ||
             serverMode === 'allow_basic_calendar' ||
             serverMode === 'allow_calendar_payment_false' ||
+            serverMode === 'allow_partial_features' ||
             serverMode === 'allow_without_features'
           ) {
             const payload = {
@@ -64,8 +65,10 @@ function startMockServer() {
                     ? { appointments: true, google_calendar: false }
                     : serverMode === 'allow_basic_calendar'
                       ? { appointments: true, google_calendar: false }
-                      : serverMode === 'allow_calendar_payment_false'
+                  : serverMode === 'allow_calendar_payment_false'
                         ? { appointments: true, google_calendar: true, calendar_payments: false }
+                    : serverMode === 'allow_partial_features'
+                      ? { contacts: true }
                     : serverMode === 'allow_without_whatsapp'
                       ? { meta_ads: true, ai: false }
                       : { whatsapp: true, meta_ads: true, ai: false }
@@ -246,6 +249,21 @@ test('licencia activa permite el acceso y entrega features', async () => {
   assert.equal(lastRequestBody.version, '1.2.3')
 })
 
+test('features premium faltantes en una respuesta parcial quedan apagadas', async () => {
+  serverMode = 'allow_partial_features'
+
+  const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
+
+  assert.equal(state.allowed, true)
+  assert.equal(state.features.contacts, true)
+  assert.equal(state.features.payments, false)
+  assert.equal(state.features.sites, false)
+  assert.equal(state.features.developers, false)
+  assert.equal(await licenseService.hasModuleFeature('contacts'), true)
+  assert.equal(await licenseService.hasModuleFeature('payments'), false)
+  assert.equal(await licenseService.hasFeature('developers'), false)
+})
+
 test('instalación central también funciona con aliases RISTAK_*', async () => {
   clearManagedEnv()
   process.env.RISTAK_LICENSE_SERVER_URL = `${baseUrl}/`
@@ -356,13 +374,15 @@ test('hasFeature respeta los feature flags del plan', async () => {
   assert.equal(await licenseService.hasFeature('feature_inexistente'), false)
 })
 
-test('features omitidos por el portal central usan defaults locales', async () => {
+test('features premium omitidos por el portal central quedan apagados', async () => {
   serverMode = 'allow_without_whatsapp'
 
   const state = await licenseService.verifyLicenseWithServer('dueno@clinica.com')
 
-  assert.equal(state.features.whatsapp, true)
+  assert.equal(state.features.whatsapp, false)
   assert.equal(state.features.meta_ads, true)
+  assert.equal(state.features.payments, false)
+  assert.equal(state.features.sites, false)
   assert.equal(state.features.ai, false)
   assert.equal(state.features.app_assistant_ai, false)
   assert.equal(state.features.conversational_ai, false)

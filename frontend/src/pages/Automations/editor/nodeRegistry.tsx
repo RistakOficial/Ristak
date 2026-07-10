@@ -889,6 +889,7 @@ const TRIGGERS: NodeDefinition[] = [
       accent: 'green',
       summaryBase: 'Cuando haya mensaje de WhatsApp'
     }),
+    requiredFeature: 'whatsapp',
     allowedChannels: ['whatsapp']
   },
   {
@@ -901,6 +902,7 @@ const TRIGGERS: NodeDefinition[] = [
       accent: 'pink',
       summaryBase: 'Cuando haya Instagram DM'
     }),
+    requiredFeature: 'campaigns',
     allowedChannels: ['instagram']
   },
   {
@@ -913,6 +915,7 @@ const TRIGGERS: NodeDefinition[] = [
       accent: 'blue',
       summaryBase: 'Cuando haya mensaje de Messenger'
     }),
+    requiredFeature: 'campaigns',
     allowedChannels: ['messenger']
   },
   {
@@ -978,6 +981,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa cuando otra app manda datos a esta URL',
     icon: Rss,
     accent: 'green',
+    requiredFeature: 'developers',
     addButtonLabel: 'Configurar webhook',
     defaultConfig: () => ({ endpointId: '', method: 'POST', sampleStatus: 'none' }),
     fields: [
@@ -1213,6 +1217,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa por pagos exitosos, errores, reembolsos o pagos incompletos',
     icon: Receipt,
     accent: 'green',
+    requiredFeature: 'payments',
     addButtonLabel: 'Configurar pago',
     defaultConfig: () => ({ paymentAction: 'any' }),
     fields: [
@@ -1247,6 +1252,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa con comentarios en tus publicaciones de Facebook',
     icon: Facebook,
     accent: 'blue',
+    requiredFeature: 'campaigns',
     addButtonLabel: 'Responder comentario',
     allowedChannels: ['messenger'],
     defaultConfig: () => ({
@@ -1288,6 +1294,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa con comentarios en tus publicaciones o reels',
     icon: Instagram,
     accent: 'pink',
+    requiredFeature: 'campaigns',
     addButtonLabel: 'Responder comentario',
     allowedChannels: ['instagram'],
     defaultConfig: () => ({
@@ -1355,6 +1362,7 @@ const TRIGGERS: NodeDefinition[] = [
     description: 'Se activa cuando se procesa un reembolso',
     icon: RotateCcw,
     accent: 'green',
+    requiredFeature: 'payments',
     addButtonLabel: 'Configurar reembolso',
     hiddenFromPicker: true,
     defaultConfig: () => ({ product: '', amount: '' }),
@@ -1406,6 +1414,7 @@ interface ChannelNodeOptions {
   brand: string
   icon: React.ComponentType<{ size?: number | string; color?: string }>
   accent: NodeAccent
+  requiredFeature?: string
   description: string
   addButtonLabel: string
   channel: 'whatsapp' | 'messenger' | 'instagram'
@@ -1478,6 +1487,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     description: 'Envía mensajes de WhatsApp',
     icon: WhatsAppIcon,
     accent: 'teal',
+    requiredFeature: 'whatsapp',
     addButtonLabel: 'Agregar mensaje',
     allowedChannels: ['whatsapp'],
     configComponent: 'whatsapp',
@@ -1599,6 +1609,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     brand: 'Messenger',
     icon: MessengerIcon,
     accent: 'blue',
+    requiredFeature: 'campaigns',
     description: 'Envía mensajes por Messenger',
     addButtonLabel: 'Agregar mensaje',
     channel: 'messenger',
@@ -1612,6 +1623,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     brand: 'Instagram',
     icon: InstagramIcon,
     accent: 'pink',
+    requiredFeature: 'campaigns',
     description: 'Envía DMs por Instagram',
     addButtonLabel: 'Agregar DM',
     channel: 'instagram',
@@ -1630,6 +1642,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     description: 'Elige si respondes público en Facebook/Instagram o privado por Messenger/Instagram DM.',
     icon: MessageCircleReply,
     accent: 'green',
+    requiredFeature: 'campaigns',
     addButtonLabel: 'Responder comentario',
     allowedChannels: ['messenger', 'instagram'],
     configComponent: 'message',
@@ -1671,6 +1684,7 @@ const CHANNEL_NODES: NodeDefinition[] = [
     description: 'Mensaje privado al comentarista. Se conserva para automatizaciones antiguas.',
     icon: MessageSquareText,
     accent: 'blue',
+    requiredFeature: 'campaigns',
     addButtonLabel: 'Agregar mensaje',
     hiddenFromPicker: true,
     allowedChannels: ['messenger', 'instagram'],
@@ -2300,6 +2314,7 @@ const OTHER_ACTIONS: NodeDefinition[] = [
     description: 'Envía datos a un sistema externo',
     icon: Webhook,
     accent: 'teal',
+    requiredFeature: 'developers',
     addButtonLabel: 'Configurar webhook',
     defaultConfig: () => ({
       url: '',

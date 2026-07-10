@@ -29,8 +29,10 @@ import {
   getTransactions
 } from '../controllers/transactionsController.js'
 import { requireApiToken } from '../middleware/apiTokenMiddleware.js'
+import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { getExternalApiAppId } from '../utils/apiTokens.js'
 import { getGHLClient } from '../services/ghlClient.js'
+import { hasFeature, isLicenseEnforced } from '../services/licenseService.js'
 import {
   finalizePreparedPhoneUpsert,
   generateContactId,
@@ -48,6 +50,7 @@ import {
 } from '../utils/contactCustomFields.js'
 import { normalizePhoneForStorage } from '../utils/phoneUtils.js'
 import { normalizeContactNameFields, splitContactName } from '../utils/contactNameFormatter.js'
+import { logger } from '../utils/logger.js'
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit'
 
 const router = express.Router()
@@ -83,6 +86,72 @@ const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|acc
 const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
 const WRITE_BLOCKED_TABLE_PATTERN = /^(users|payment_methods)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function featureNotAvailableResponse(res, feature) {
+  return res.status(403).json({
+    success: false,
+    code: 'feature_not_available',
+    feature,
+    error: 'Esta función no está incluida en tu plan actual.'
+  })
+}
+
+async function hasEveryExternalFeature(featureKeys = []) {
+  if (!isLicenseEnforced()) return true
+  for (const featureKey of featureKeys.filter(Boolean)) {
+    if (!(await hasFeature(featureKey))) return false
+  }
+  return true
+}
+
+function requireExternalFeatures(...featureKeys) {
+  return async (req, res, next) => {
+    try {
+      if (await hasEveryExternalFeature(featureKeys)) return next()
+      return featureNotAvailableResponse(res, featureKeys.find(Boolean) || 'developers')
+    } catch (error) {
+      logger.error(`Error validando features de API externa (${featureKeys.join(', ')}):`, error.message)
+      return featureNotAvailableResponse(res, featureKeys.find(Boolean) || 'developers')
+    }
+  }
+}
+
+function getExternalTableFeatureKeys(table) {
+  const name = String(table || '').trim().toLowerCase()
+  if (!name) return []
+  if (/^(payment_plans|payment_plan_|installment_|installments)/.test(name)) return ['payments', 'payment_plans']
+  if (/^(subscriptions|subscription_)/.test(name)) return ['payments', 'subscriptions']
+  if (/^(payments|payment_|transactions|transaction_|products|product_|prices|price_|invoices|invoice_)/.test(name)) return ['payments']
+  if (/^(appointments|appointment_|calendars|calendar_|blocked_slots|booking_)/.test(name)) return ['appointments']
+  if (/^(meta_|campaigns|campaign_|adsets|adset_|ads|ad_)/.test(name)) return ['campaigns']
+  if (/^(automations|automation_)/.test(name)) return ['automations']
+  if (/^(sites|site_|pages|page_|domains|domain_|forms|form_|media|tracking_|visitors|visitor_|sessions|session_|conversions|conversion_)/.test(name)) return ['sites']
+  if (/^(email_|emails|smtp_|mail_)/.test(name)) return ['email']
+  if (/^(whatsapp_|message_templates|phone_numbers|phone_number_)/.test(name)) return ['whatsapp']
+  if (/^(highlevel_|ghl_|integrations|integration_)/.test(name)) return ['integrations']
+  if (/^(contacts|contact_|tags|tag_|custom_fields|custom_field_|variable_fields|variable_field_)/.test(name)) return ['contacts']
+  return []
+}
+
+async function assertExternalTableFeatureAccess(table) {
+  const featureKeys = getExternalTableFeatureKeys(table)
+  if (!featureKeys.length || await hasEveryExternalFeature(featureKeys)) return
+  const error = new Error('Esta tabla pertenece a una función que no está incluida en tu plan actual.')
+  error.code = 'feature_not_available'
+  error.feature = featureKeys[0]
+  throw error
+}
+
+function requireExternalTableFeature(req, res, next) {
+  assertExternalTableFeatureAccess(req.params.table)
+    .then(() => next())
+    .catch((error) => {
+      if (error?.code === 'feature_not_available') {
+        return featureNotAvailableResponse(res, error.feature)
+      }
+      return res.status(400).json({ success: false, error: error.message })
+    })
+}
 
 function getRequestOrigin(req) {
   const proto = req.get('x-forwarded-proto') || req.protocol || 'https'
@@ -188,6 +257,7 @@ async function getAccessibleDatabaseSchema() {
 
   for (const tableName of tableNames) {
     if (!isSafeIdentifier(tableName) || isSensitiveTable(tableName)) continue
+    if (!(await hasEveryExternalFeature(getExternalTableFeatureKeys(tableName)))) continue
     const columns = await getDatabaseColumns(tableName)
     if (!columns.length) continue
 
@@ -841,6 +911,7 @@ router.get('/openapi.json', getOpenApiSpec)
 router.use(requireApiToken)
 // (AUTH-001 / SEC-004) limitar tasa por usuario del token tras autenticar
 router.use(externalApiRateLimiter)
+router.use(requireFeature('developers'))
 
 async function listDataTables(req, res) {
   try {
@@ -1339,40 +1410,40 @@ router.get('/me', async (req, res) => {
 })
 
 router.get('/data/tables', listDataTables)
-router.get('/data/:table', queryDataTable)
-router.post('/data/:table', createDataRow)
-router.get('/data/:table/:id', getDataRow)
-router.put('/data/:table/:id', updateDataRow)
-router.patch('/data/:table/:id', updateDataRow)
-router.delete('/data/:table/:id', deleteDataRow)
+router.get('/data/:table', requireExternalTableFeature, queryDataTable)
+router.post('/data/:table', requireExternalTableFeature, createDataRow)
+router.get('/data/:table/:id', requireExternalTableFeature, getDataRow)
+router.put('/data/:table/:id', requireExternalTableFeature, updateDataRow)
+router.patch('/data/:table/:id', requireExternalTableFeature, updateDataRow)
+router.delete('/data/:table/:id', requireExternalTableFeature, deleteDataRow)
 
-router.post('/highlevel/request', proxyHighLevelRequest)
+router.post('/highlevel/request', requireExternalFeatures('integrations'), proxyHighLevelRequest)
 
-router.get('/dashboard/metrics', getDashboardMetrics)
-router.get('/dashboard/funnel', getFunnelData)
-router.get('/dashboard/traffic-sources', getTrafficSources)
+router.get('/dashboard/metrics', requireExternalFeatures('dashboard'), getDashboardMetrics)
+router.get('/dashboard/funnel', requireExternalFeatures('dashboard', 'web_analytics'), getFunnelData)
+router.get('/dashboard/traffic-sources', requireExternalFeatures('dashboard', 'web_analytics'), getTrafficSources)
 
-router.get('/reports/summary', getReportsSummary)
-router.get('/reports/metrics', getReportMetrics)
-router.get('/reports/contacts', getContactsReport)
-router.get('/reports/payments', getPaymentsReport)
-router.get('/reports/campaigns', getCampaignsReport)
-router.get('/reports/contacts/list', getContactsList)
-router.get('/reports/transactions', getTransactionsList)
+router.get('/reports/summary', requireExternalFeatures('reports'), getReportsSummary)
+router.get('/reports/metrics', requireExternalFeatures('reports'), getReportMetrics)
+router.get('/reports/contacts', requireExternalFeatures('reports', 'contacts'), getContactsReport)
+router.get('/reports/payments', requireExternalFeatures('reports', 'payments'), getPaymentsReport)
+router.get('/reports/campaigns', requireExternalFeatures('reports', 'campaigns'), getCampaignsReport)
+router.get('/reports/contacts/list', requireExternalFeatures('reports', 'contacts'), getContactsList)
+router.get('/reports/transactions', requireExternalFeatures('reports', 'payments'), getTransactionsList)
 
-router.get('/contacts/search', searchContacts)
-router.post('/contacts', createExternalContact)
-router.put('/contacts/:id', updateExternalContact)
-router.patch('/contacts/:id', updateExternalContact)
-router.delete('/contacts/:id', deleteExternalContact)
-router.get('/contacts/:id/conversation', getContactConversation)
-router.get('/contacts/:id/journey', getContactJourney)
-router.get('/contacts/:id', getContactById)
-router.get('/contacts', getContacts)
+router.get('/contacts/search', requireExternalFeatures('contacts'), searchContacts)
+router.post('/contacts', requireExternalFeatures('contacts'), createExternalContact)
+router.put('/contacts/:id', requireExternalFeatures('contacts'), updateExternalContact)
+router.patch('/contacts/:id', requireExternalFeatures('contacts'), updateExternalContact)
+router.delete('/contacts/:id', requireExternalFeatures('contacts'), deleteExternalContact)
+router.get('/contacts/:id/conversation', requireExternalFeatures('contacts', 'chat'), getContactConversation)
+router.get('/contacts/:id/journey', requireExternalFeatures('contacts'), getContactJourney)
+router.get('/contacts/:id', requireExternalFeatures('contacts'), getContactById)
+router.get('/contacts', requireExternalFeatures('contacts'), getContacts)
 
-router.get('/transactions/stats', getTransactionStats)
-router.get('/transactions/summary', getTransactionSummary)
-router.get('/transactions/:id', getTransactionById)
-router.get('/transactions', getTransactions)
+router.get('/transactions/stats', requireExternalFeatures('payments'), getTransactionStats)
+router.get('/transactions/summary', requireExternalFeatures('payments'), getTransactionSummary)
+router.get('/transactions/:id', requireExternalFeatures('payments'), getTransactionById)
+router.get('/transactions', requireExternalFeatures('payments'), getTransactions)
 
 export default router

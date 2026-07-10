@@ -2,6 +2,7 @@ import { resumeWhatsAppQrSessions } from '../services/whatsappQrService.js'
 import { logger } from '../utils/logger.js'
 import { isDeployShutdownStarted, trackDeployDrainWork } from '../utils/deployDrainTracker.js'
 import { withCronLock } from '../utils/cronLock.js'
+import { canRunBackgroundJob } from '../services/licenseService.js'
 
 // Cada cuanto revisa el watchdog que las sesiones de WhatsApp Web con
 // credenciales guardadas tengan un socket vivo.
@@ -30,8 +31,14 @@ export function startWhatsAppQrWatchdogCron() {
   }
   started = true
 
-  bootTimeoutId = setTimeout(() => {
+  bootTimeoutId = setTimeout(async () => {
     if (isDeployShutdownStarted()) return
+    try {
+      if (!(await canRunBackgroundJob('whatsapp'))) return
+    } catch (error) {
+      logger.warn(`[WhatsApp QR] No se pudo validar el plan antes del boot watchdog: ${error.message}`)
+      return
+    }
     trackDeployDrainWork(
       'cron:whatsapp-qr-watchdog',
       () => withCronLock('whatsapp-qr-watchdog', WATCHDOG_INTERVAL_MS, () => resumeWhatsAppQrSessions({ source: 'boot' })),
@@ -45,8 +52,14 @@ export function startWhatsAppQrWatchdogCron() {
       })
   }, BOOT_DELAY_MS)
 
-  watchdogIntervalId = setInterval(() => {
+  watchdogIntervalId = setInterval(async () => {
     if (isDeployShutdownStarted()) return
+    try {
+      if (!(await canRunBackgroundJob('whatsapp'))) return
+    } catch (error) {
+      logger.warn(`[WhatsApp QR] No se pudo validar el plan antes del watchdog: ${error.message}`)
+      return
+    }
     // (WA-003) Lock distribuido: con varias instancias solo una corre el watchdog por tick,
     // evitando que reabran/reemplacen los mismos sockets Baileys en bucle. TTL = el intervalo
     // del propio watchdog. Defensivo: con 1 instancia es inofensivo (fail-open en cronLock).
