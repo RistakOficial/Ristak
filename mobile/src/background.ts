@@ -6,13 +6,9 @@ import * as TaskManager from 'expo-task-manager';
 import { readApiBaseUrl, readAuthToken } from './storage';
 import { RistakApiClient } from './api';
 import { setCacheNamespace, writeCacheNow } from './cache';
+import { CHAT_LIST_PAGE_SIZE, NATIVE_INBOX_CACHE_KEY, NATIVE_INBOX_CACHE_LIMIT } from './cacheKeys';
 
 export const INBOX_BACKGROUND_TASK = 'ristak-inbox-refresh';
-
-// Must match the inbox cache contract in App.tsx.
-const NATIVE_INBOX_CACHE_KEY = 'chats';
-const NATIVE_INBOX_CACHE_LIMIT = 200;
-const CHAT_LIST_PAGE_SIZE = 50;
 
 // Defined at module scope so the task can run headlessly on a cold background
 // launch (this file is imported from index.ts before the app renders).

@@ -132,6 +132,17 @@ rafaga. El polling sigue existiendo como reconciliacion de respaldo: bandeja cad
 12 s e hilo abierto cada 4 s, sin spinner, sin borrar cache visible y sin mover
 el scroll si no hubo cambios reales.
 
+Arranque offline-first de Android: antes de pedir datos frescos al servidor,
+`mobile/` debe hidratar desde la copia local en disco la configuracion del shell,
+labels visibles, bandeja de chats y conversaciones ya abiertas. Esa copia vive en
+`expo-file-system` bajo el namespace del servidor/cuenta conectada; `SecureStore`
+queda solo para token/base URL y preferencias chicas. El primer render no debe
+mostrar un spinner circular ni vaciar la pantalla si ya hay datos guardados: se
+pinta la ultima sesion conocida y luego se revalida en segundo plano. El task
+`ristak-inbox-refresh` puede refrescar la bandeja cacheada cuando Android le da
+ventana de background, pero es best-effort; la fuente de verdad sigue siendo el
+backend al reconectar.
+
 Regla de dueño unico del teclado: en cada ruta visible solo puede haber UN
 keyboard avoider habilitado. Dos `KeyboardAvoidingView` apilados (p. ej. el
 `AppFrame` de una pantalla host mas el `AppFrame` de una ruta overlay montada

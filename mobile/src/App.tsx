@@ -133,6 +133,13 @@ import {
   writeJsonValue,
 } from './storage';
 import { readCache, writeCache, clearAllCache, setCacheNamespace } from './cache';
+import {
+  CHAT_LIST_PAGE_SIZE,
+  CONVERSATION_MESSAGE_CACHE_LIMIT,
+  NATIVE_INBOX_CACHE_KEY,
+  NATIVE_INBOX_CACHE_LIMIT,
+  conversationCacheKey,
+} from './cacheKeys';
 import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveMessageEvent } from './api';
@@ -265,6 +272,7 @@ const DARK_COLORS: NativeColorPalette = {
   black: '#000000',
 };
 
+const RISTAK_LIGHT_MODE_LOGO: ImageSourcePropType = require('../assets/ristak-light-mode-sin-fondo.webp');
 const RISTAK_NIGHT_MODE_LOGO: ImageSourcePropType = require('../assets/ristak-night-mode-sin-fondo.webp');
 
 const LIGHT_COLORS: NativeColorPalette = {
@@ -288,6 +296,10 @@ const LIGHT_COLORS: NativeColorPalette = {
 const INITIAL_NATIVE_THEME_TONE: NativeThemeTone = Appearance.getColorScheme() === 'dark' ? 'dark' : 'light';
 const COLORS: NativeColorPalette = { ...(INITIAL_NATIVE_THEME_TONE === 'light' ? LIGHT_COLORS : DARK_COLORS) };
 let activeNativeThemeTone: NativeThemeTone = INITIAL_NATIVE_THEME_TONE;
+
+function getRistakLogoSource(): ImageSourcePropType {
+  return activeNativeThemeTone === 'light' ? RISTAK_LIGHT_MODE_LOGO : RISTAK_NIGHT_MODE_LOGO;
+}
 
 type RgbColor = { r: number; g: number; b: number };
 
@@ -745,6 +757,8 @@ class PhoneSectionErrorBoundary extends React.Component<PhoneSectionErrorBoundar
 const DEFAULT_CHAT_FILTER_IDS = ['all', 'unread', 'appointments', 'customers', 'leads', 'comments'];
 const CHAT_FILTERS_MORE_VALUE = '__filters_more__';
 const CHAT_FILTERS_STORAGE_KEY = 'ristak.native.chat.visibleFilterIds.v1';
+const SHELL_APP_CONFIG_CACHE_KEY = 'shell:app-config';
+const SHELL_CUSTOM_LABELS_CACHE_KEY = 'shell:custom-labels';
 const PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY = 'mobile_chat_custom_filter_presets';
 const PHONE_CHAT_PHONE_FILTER_PREFIX = 'phone:';
 const PHONE_CHAT_ADVANCED_FILTER_PREFIX = 'advanced:';
@@ -752,7 +766,6 @@ const PHONE_CHAT_CUSTOM_FILTER_PREFIX = 'custom:';
 const PHONE_CHAT_DEFAULT_CUSTOM_FILTER_FIELD = 'chat_segment';
 const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
 const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
-const CHAT_LIST_PAGE_SIZE = 50;
 const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000;
 const CHAT_REALTIME_REFRESH_DEBOUNCE_MS = 80;
 // Última bandeja cargada por cliente API (WeakMap: una sesión nueva crea otro
@@ -761,11 +774,7 @@ const CHAT_REALTIME_REFRESH_DEBOUNCE_MS = 80;
 const nativeInboxCache = new WeakMap<RistakApiClient, ChatContact[]>();
 // Copia en disco de la bandeja + conversaciones (offline-first tipo WhatsApp):
 // sobrevive al cierre de la app y se pinta al instante en el arranque en frío.
-const NATIVE_INBOX_CACHE_KEY = 'chats';
-const NATIVE_INBOX_CACHE_LIMIT = 200;
-const CONVERSATION_MESSAGE_CACHE_LIMIT = 150;
 const conversationMessageMemCache = new Map<string, ChatMessage[]>();
-const conversationCacheKey = (contactId: string) => `conv:${contactId}`;
 const CONVERSATION_REFRESH_INTERVAL_MS = 4000;
 // Emitted when a push notification is received while the app is in the
 // foreground, so the inbox and open conversation can refresh instantly.
@@ -1371,6 +1380,8 @@ function PhoneShell({
   const dockTouchRef = useRef({ x: 0, y: 0, lastX: 0, lastY: 0 });
   const dockCompactRef = useRef(false);
   const autoRegisteredPushKeyRef = useRef('');
+  const shellConfigFreshLoadedRef = useRef(false);
+  const customLabelsFreshLoadedRef = useRef(false);
   const clearNotificationContactId = useCallback(() => setNotificationContactId(''), []);
   const handleDockHiddenChange = useCallback((hidden: boolean) => setDockHidden(hidden), []);
   const navigateSection = useCallback((section: PhoneSection) => {
@@ -1415,19 +1426,28 @@ function PhoneShell({
   }, [dockHidden]);
   const mobileChatSettings = useMemo(() => normalizeMobileChatSettings(mobileAppConfig), [mobileAppConfig]);
   const patchMobileAppConfig = useCallback((patch: Record<string, ConfigValue>) => {
-    setMobileAppConfig((current) => ({ ...current, ...patch }));
+    setMobileAppConfig((current) => {
+      const next = { ...current, ...patch };
+      writeCache(SHELL_APP_CONFIG_CACHE_KEY, next);
+      return next;
+    });
   }, []);
   const setMobileChatSelectedWhatsAppPhoneId = useCallback((phoneId: string) => {
     const nextValue = phoneId.trim() || 'all';
     const previousValue = mobileAppConfig.mobile_chat_selected_whatsapp_phone_id ?? 'all';
-    setMobileAppConfig((current) => ({ ...current, mobile_chat_selected_whatsapp_phone_id: nextValue }));
+    setMobileAppConfig((current) => {
+      const next = { ...current, mobile_chat_selected_whatsapp_phone_id: nextValue };
+      writeCache(SHELL_APP_CONFIG_CACHE_KEY, next);
+      return next;
+    });
     api.setConfig('mobile_chat_selected_whatsapp_phone_id', nextValue)
       .catch((err) => {
-        setMobileAppConfig((current) => (
-          current.mobile_chat_selected_whatsapp_phone_id === nextValue
-            ? { ...current, mobile_chat_selected_whatsapp_phone_id: previousValue }
-            : current
-        ));
+        setMobileAppConfig((current) => {
+          if (current.mobile_chat_selected_whatsapp_phone_id !== nextValue) return current;
+          const reverted = { ...current, mobile_chat_selected_whatsapp_phone_id: previousValue };
+          writeCache(SHELL_APP_CONFIG_CACHE_KEY, reverted);
+          return reverted;
+        });
         Alert.alert('No se guardó el filtro', err instanceof Error ? err.message : 'Intenta otra vez.');
       });
   }, [api, mobileAppConfig.mobile_chat_selected_whatsapp_phone_id]);
@@ -1443,12 +1463,38 @@ function PhoneShell({
 
   useEffect(() => {
     let cancelled = false;
+    void Promise.all([
+      readCache<Record<string, ConfigValue>>(SHELL_APP_CONFIG_CACHE_KEY, {}),
+      readCache<CustomLabels>(SHELL_CUSTOM_LABELS_CACHE_KEY, DEFAULT_CUSTOM_LABELS),
+    ]).then(([cachedConfig, cachedLabels]) => {
+      if (cancelled) return;
+      if (!shellConfigFreshLoadedRef.current && cachedConfig && Object.keys(cachedConfig).length) {
+        setMobileAppConfig((current) => (Object.keys(current).length ? current : cachedConfig));
+      }
+      if (!customLabelsFreshLoadedRef.current) {
+        setCustomLabels(cleanAnalyticsLabels(cachedLabels));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  useEffect(() => {
+    let cancelled = false;
     api.getConfig(SETTINGS_APP_CONFIG_KEYS)
       .then((response) => {
-        if (!cancelled) setMobileAppConfig(unwrapConfigResponse(response));
+        if (!cancelled) {
+          const next = unwrapConfigResponse(response);
+          shellConfigFreshLoadedRef.current = true;
+          setMobileAppConfig(next);
+          writeCache(SHELL_APP_CONFIG_CACHE_KEY, next);
+        }
       })
       .catch(() => {
-        if (!cancelled) setMobileAppConfig({});
+        if (!cancelled) {
+          setMobileAppConfig((current) => (Object.keys(current).length ? current : {}));
+        }
       });
     return () => {
       cancelled = true;
@@ -1459,10 +1505,17 @@ function PhoneShell({
     let cancelled = false;
     api.getCustomLabels()
       .then((labels) => {
-        if (!cancelled) setCustomLabels(cleanAnalyticsLabels(labels));
+        if (!cancelled) {
+          const next = cleanAnalyticsLabels(labels);
+          customLabelsFreshLoadedRef.current = true;
+          setCustomLabels(next);
+          writeCache(SHELL_CUSTOM_LABELS_CACHE_KEY, next);
+        }
       })
       .catch(() => {
-        if (!cancelled) setCustomLabels(DEFAULT_CUSTOM_LABELS);
+        if (!cancelled) {
+          setCustomLabels((current) => (current ? current : DEFAULT_CUSTOM_LABELS));
+        }
       });
     return () => {
       cancelled = true;
@@ -2171,12 +2224,11 @@ function BootScreen() {
     <AppFrame>
       <View style={styles.centerScreen}>
         <Image
-          source={RISTAK_NIGHT_MODE_LOGO}
+          source={getRistakLogoSource()}
           style={styles.bootLogo}
           resizeMode="contain"
           accessibilityLabel="Ristak"
         />
-        <ActivityIndicator color={COLORS.accent} accessibilityLabel="Cargando" />
       </View>
     </AppFrame>
   );
@@ -2221,7 +2273,7 @@ function LoginScreen({
         <ScrollView contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
           <View style={styles.authPanel}>
             <Image
-              source={RISTAK_NIGHT_MODE_LOGO}
+              source={getRistakLogoSource()}
               style={styles.authLogo}
               resizeMode="contain"
               accessibilityLabel="Ristak"
@@ -2250,7 +2302,7 @@ function LoginScreen({
               style={styles.input}
             />
             {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            <PrimaryButton label="Entrar" busy={busy} onPress={submit} />
+            <PrimaryButton label="Entrar" busy={busy} busyLabel="Entrando..." onPress={submit} />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -2333,6 +2385,7 @@ function ChatScreen({
   // Hidratar desde la caché en memoria: ChatScreen se desmonta al cambiar de
   // sección y sin esto cada regreso pinta vacío -> spinner -> lista (flash).
   const [chats, setChats] = useState<ChatContact[]>(() => nativeInboxCache.get(api) || []);
+  const [inboxCacheHydrated, setInboxCacheHydrated] = useState(() => Boolean(nativeInboxCache.get(api)?.length));
   const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
   const [accountCurrency, setAccountCurrency] = useState(DEFAULT_ACCOUNT_CURRENCY);
   const [refreshing, setRefreshing] = useState(false);
@@ -2370,13 +2423,18 @@ function ChatScreen({
   // Hidratar la bandeja desde disco en frío: la caché en memoria se pierde al
   // cerrar la app, así que si arrancamos vacíos leemos la copia local guardada.
   useEffect(() => {
-    if (nativeInboxCache.get(api)?.length) return;
+    if (nativeInboxCache.get(api)?.length) {
+      setInboxCacheHydrated(true);
+      return undefined;
+    }
     let alive = true;
     void readCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, []).then((cached) => {
       if (!alive || !cached.length) return;
       nativeInboxCache.set(api, cached);
       setChats((current) => (current.length ? current : cached));
       setLoading(false);
+    }).finally(() => {
+      if (alive) setInboxCacheHydrated(true);
     });
     return () => {
       alive = false;
@@ -2595,11 +2653,12 @@ function ChatScreen({
   }, [api, chatListOffset, chatListPhoneFilterParams, chatsHasMore, chatsLoadingMore, loading, query, refreshing]);
 
   useEffect(() => {
+    if (!inboxCacheHydrated) return undefined;
     const timer = setTimeout(() => {
       void loadChats();
     }, query.trim() ? 240 : 0);
     return () => clearTimeout(timer);
-  }, [loadChats, query]);
+  }, [inboxCacheHydrated, loadChats, query]);
 
  useEffect(() => {
     let cancelled = false;
@@ -3724,8 +3783,7 @@ function ChatScreen({
       </View>
       {loading ? (
         <View style={styles.centerState}>
-          <ActivityIndicator color={COLORS.accent} />
-          <Text style={styles.caption}>Cargando chats...</Text>
+          <Text style={styles.caption}>Preparando chats...</Text>
         </View>
       ) : error ? (
         <View style={styles.centerState}>
@@ -19363,6 +19421,7 @@ function NativeConversationScreen({
   pendingDraft?: PendingChatDraft | null;
 }) {
   const [messages, setMessages] = useState<ChatMessage[]>(() => conversationMessageMemCache.get(contact.id) || []);
+  const [conversationCacheHydrated, setConversationCacheHydrated] = useState(() => Boolean(conversationMessageMemCache.get(contact.id)?.length));
   const [journeyEvents, setJourneyEvents] = useState<JourneyEvent[]>([]);
   const [localActivityMarkers, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
   const [completionNotice, setCompletionNotice] = useState<NativeConversationSuccessNotice | null>(null);
@@ -19521,6 +19580,7 @@ function NativeConversationScreen({
     conversationHistoryExhaustedContactIdRef.current = null;
     setOlderMessagesLoading(false);
     setPaymentLinkDraftPreview(null);
+    setConversationCacheHydrated(Boolean(conversationMessageMemCache.get(contact.id)?.length));
   }, [contact.id]);
 
   const loadConversation = useCallback(async (silent = false, background = false) => {
@@ -19622,13 +19682,18 @@ function NativeConversationScreen({
   // en frío) leemos la última conversación guardada y la pintamos al instante
   // mientras loadConversation trae los mensajes nuevos.
   useEffect(() => {
-    if (conversationMessageMemCache.get(contact.id)?.length) return;
+    if (conversationMessageMemCache.get(contact.id)?.length) {
+      setConversationCacheHydrated(true);
+      return undefined;
+    }
     let alive = true;
     void readCache<ChatMessage[]>(conversationCacheKey(contact.id), []).then((cached) => {
       if (!alive || !cached.length) return;
       conversationMessageMemCache.set(contact.id, cached);
       setMessages((current) => (current.length ? current : cached));
       setLoading(false);
+    }).finally(() => {
+      if (alive) setConversationCacheHydrated(true);
     });
     return () => {
       alive = false;
@@ -19636,8 +19701,9 @@ function NativeConversationScreen({
   }, [contact.id]);
 
   useEffect(() => {
+    if (!conversationCacheHydrated) return;
     void loadConversation();
-  }, [loadConversation]);
+  }, [conversationCacheHydrated, loadConversation]);
 
   const requestSilentConversationRefresh = useCallback((event?: Partial<ChatLiveMessageEvent>) => {
     const eventContactId = String(event?.contactId || '').trim();
@@ -21122,7 +21188,7 @@ function NativeConversationScreen({
         <ChatWallpaper parallaxX={conversationParallaxX} parallaxY={conversationParallaxY} />
         {loading ? (
           <View style={styles.centerState}>
-            <ActivityIndicator color={COLORS.accent} />
+            <Text style={styles.caption}>Preparando conversación...</Text>
           </View>
         ) : (
           <FlatList
@@ -24418,17 +24484,19 @@ function createDefaultAppointmentDraft(timezone: string) {
 function PrimaryButton({
   label,
   busy,
+  busyLabel,
   disabled = false,
   onPress,
 }: {
   label: string;
   busy?: boolean;
+  busyLabel?: string;
   disabled?: boolean;
   onPress: () => void;
 }) {
   return (
     <Pressable disabled={busy || disabled} onPress={onPress} style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed, (busy || disabled) && styles.disabledButton]}>
-      {busy ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.primaryButtonLabel}>{label}</Text>}
+      <Text style={styles.primaryButtonLabel}>{busy ? (busyLabel || label) : label}</Text>
     </Pressable>
   );
 }

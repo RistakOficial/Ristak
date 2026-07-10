@@ -7,9 +7,9 @@
     "scheme": "ristak-native",
     "orientation": "portrait",
     "icon": "./assets/ristak-light-mode-icon.png",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#07111f",
-    "primaryColor": "#3278ff",
+    "userInterfaceStyle": "automatic",
+    "backgroundColor": "#050506",
+    "primaryColor": "#1d1d1f",
     "platforms": [
       "android"
     ],
@@ -45,6 +45,29 @@
       "expo-location",
       "expo-video",
       "expo-background-task",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#ffffff",
+          "image": "./assets/ristak-light-mode-icon.png",
+          "imageWidth": 160,
+          "resizeMode": "contain",
+          "dark": {
+            "backgroundColor": "#050506",
+            "image": "./assets/ristak-night-mode-icon.png"
+          },
+          "android": {
+            "backgroundColor": "#ffffff",
+            "image": "./assets/ristak-light-mode-icon.png",
+            "imageWidth": 160,
+            "resizeMode": "contain",
+            "dark": {
+              "backgroundColor": "#050506",
+              "image": "./assets/ristak-night-mode-icon.png"
+            }
+          }
+        }
+      ],
       "expo-web-browser"
     ]
   }
