@@ -2357,7 +2357,8 @@ Ristak tiene tres rutas moviles activas:
    debe contener configuracion, scripts, entitlements, APNs, targets,
    extensiones ni codigo nativo Apple.
 3. `ios/app`: app nativa Apple en SwiftUI para iPhone y iPad. Es la unica ruta
-   propietaria de la experiencia nativa Apple.
+   propietaria de la experiencia nativa Apple y usa el bundle oficial de App
+   Store `com.ristak.app`.
 
 Regla obligatoria para futuros cambios: si una feature, label, permiso, push,
 agenda, pago, filtro, login o contrato de API cambia la experiencia movil, la IA
@@ -2405,14 +2406,14 @@ ignoradas por Git. La fuente recomendada para produccion sigue siendo Ristak
 Installer; el archivo local guarda defaults operativos, rutas y fallback local.
 Antes de publicar, se valida con `npm run mobile:release:check` para detectar
 credenciales o archivos faltantes sin imprimir valores sensibles.
-En iOS hay dos bundles que se firman para App Store: la app
-`com.ristak.app` y la extension de notificaciones
-`com.ristak.app.NotificationService`. Cada uno necesita su propio provisioning
-profile App Store, ambos ligados al mismo certificado Apple Distribution. El
-perfil de la app principal debe incluir Push Notifications y Communication
-Notifications (`com.apple.developer.usernotifications.communication`) para que
-las push puedan mostrar el avatar del contacto como remitente; la extension
-mantiene su propio perfil para modificar el payload antes de mostrarlo.
+En iOS, la app SwiftUI de `ios/app` es la app oficial de App Store con bundle
+`com.ristak.app`. El Installer mantiene tambien el perfil reservado para
+`com.ristak.app.NotificationService` para la extension de notificaciones. Cada
+bundle necesita su propio provisioning profile App Store, ambos ligados al mismo
+certificado Apple Distribution. El perfil de la app principal debe incluir Push
+Notifications y Communication Notifications
+(`com.apple.developer.usernotifications.communication`) para que las push puedan
+mostrar el avatar del contacto como remitente cuando la extension este integrada.
 En Android, el binario necesita `frontend/android/app/google-services.json` fuera
 de Git y el envio puede resolverse por FCM local o por Ristak Installer central.
 Si el portal central reporta Android configurado, la instalacion cliente debe

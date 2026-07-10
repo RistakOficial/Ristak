@@ -66,15 +66,15 @@ const HELP = {
   },
   IOS_EXPORT_OPTIONS_PLIST: {
     get: 'This repo already provides the App Store export plist.',
-    put: 'Keep IOS_EXPORT_OPTIONS_PLIST pointing to frontend/ios/App/ExportOptions-AppStore.plist unless the repo changes.'
+    put: 'Keep IOS_EXPORT_OPTIONS_PLIST pointing to ios/app/ExportOptions-AppStore.plist unless the repo changes.'
   },
   ANDROID_KEYSTORE_PROPERTIES_PATH: {
     get: 'Create it locally for Gradle release signing; this repo already ignores it.',
-    put: 'Put it at frontend/android/app/keystore.properties with storeFile, storePassword, keyAlias and keyPassword.'
+    put: 'Put it at mobile/android/app/keystore.properties with storeFile, storePassword, keyAlias and keyPassword.'
   },
   ANDROID_KEYSTORE_PATH: {
     get: 'Use the existing Play upload keystore, or create/download the upload key for this app.',
-    put: 'Put it at frontend/android/app/ristak-play-upload.jks or update ANDROID_KEYSTORE_PATH.'
+    put: 'Put it at mobile/android/app/ristak-play-upload.jks or update ANDROID_KEYSTORE_PATH.'
   },
   GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_PATH: {
     get: 'Google Play Console > Setup > API access > service account with release permissions.',

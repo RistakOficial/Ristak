@@ -15,24 +15,23 @@ Ristak tiene tres rutas moviles activas y no deben mezclarse:
 
 ## Identificadores `com.ristak.*`
 
-La auditoria del 2026-07-09 encontro siete valores unicos `com.ristak.*` en el
+La auditoria del 2026-07-09 encontro cinco valores unicos `com.ristak.*` en el
 repo (excluyendo dependencias y builds generados). El numero de menciones puede
 cambiar cuando se edita documentacion; la fuente de verdad es esta tabla de
 proposito:
 
 | Identificador | Uso correcto | Estado |
 | --- | --- | --- |
-| `com.ristak.app` | App legacy/de tienda basada en `frontend/` Capacitor y topic APNs default historico. | Activo legacy |
-| `com.ristak.app.NotificationService` | Extension legacy de notificaciones para la app Apple de tienda. | Activo legacy |
-| `com.ristak.ios` | App nativa Apple nueva en `ios/app` para iPhone/iPad. | Activo nativo Apple |
-| `com.ristak.ios.NotificationService` | Topic/extension esperada si la app SwiftUI conserva `com.ristak.ios` y agrega Notification Service Extension. | Reservado/documentado |
+| `com.ristak.app` | App nativa Apple oficial de App Store en `ios/app` y topic APNs default historico. | Activo iOS oficial |
+| `com.ristak.app.NotificationService` | Extension/perfil de notificaciones reservado para la app Apple oficial. | Reservado Apple |
 | `com.ristak.android` | Paquete Android de `mobile/` React Native/Expo. | Activo Android |
 | `com.ristak.native` | Nombre viejo invalido para Android; no debe usarse porque `native` es palabra reservada de Java y rompe Gradle. | Prohibido |
 | `com.ristak.chats` | Identificador interno de UI/navegacion, no bundle id ni package id de app. | Interno |
 
 Regla practica: para builds nuevos usa `com.ristak.android` en Android,
-`com.ristak.ios` en la app SwiftUI y solo toca `com.ristak.app` cuando estes
-manteniendo la app Capacitor legacy o sus perfiles de tienda existentes.
+`com.ristak.app` en la app SwiftUI Apple de `ios/app`. No regreses la app Apple
+oficial al bundle temporal anterior; ese namespace ya no es el objetivo de
+tienda.
 
 Regla obligatoria de mantenimiento: cualquier cambio de producto movil, chat,
 login, permisos, push, pagos, agenda, filtros, labels visibles o contrato de API
@@ -453,7 +452,7 @@ Los assets nativos y PWA deben mantenerse sincronizados para que el icono sea
 consistente en App Store, Play Store, Android launcher y "Agregar a pantalla de
 inicio":
 
-- iOS: `frontend/ios/App/App/Assets.xcassets/AppIcon.appiconset/`.
+- iOS: `ios/app/Ristak/Assets.xcassets/AppIcon.appiconset/`.
 - Android: `frontend/android/app/src/main/res/mipmap-*/ic_launcher*.png`,
   `frontend/android/app/src/main/res/mipmap-night-*/ic_launcher*.png` y los
   fondos adaptive en `frontend/android/app/src/main/res/values*/ic_launcher_background.xml`.
@@ -523,7 +522,7 @@ revisada. El botón `+ > Ubicación` comparte la ubicación actual del dispositi
 por WhatsApp API oficial o QR se manda como mensaje nativo de ubicación; por
 Messenger, Instagram o HighLevel se manda como texto con link de mapa cuando no
 exista soporte nativo verificado. iOS requiere
-`NSLocationWhenInUseUsageDescription` en `frontend/ios/App/App/Info.plist`.
+`NSLocationWhenInUseUsageDescription` en `ios/app/Support/Info.plist`.
 
 En Android el small icon del sistema sigue siendo `ic_stat_ristak` porque
 Android exige un icono monocromatico de la app. El payload FCM de Android debe
@@ -1229,7 +1228,7 @@ APNs localmente:
 ```bash
 APNS_KEY_ID=
 APNS_TEAM_ID=
-APNS_BUNDLE_ID=com.ristak.ios
+APNS_BUNDLE_ID=com.ristak.app
 APNS_PRIVATE_KEY=
 APNS_ENV=production
 ```

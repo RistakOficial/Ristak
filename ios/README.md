@@ -9,9 +9,8 @@ reservada para React Native/Expo Android y no debe recibir scripts, APNs,
 entitlements, targets ni codigo nativo Apple.
 
 - Proyecto: `ios/app/Ristak.xcodeproj` (target único `Ristak`)
-- Bundle id: `com.ristak.ios` (los ids `com.ristak.app` y `com.ristak.android`
-  están reservados para la app de tienda Capacitor y la app React Native
-  Android)
+- Bundle id: `com.ristak.app` (identidad oficial Apple/App Store; reemplaza el
+  shell Capacitor legacy de tienda)
 - Mínimo: iOS 26.0 · Xcode 26+ · Swift 5 mode · **cero dependencias externas**
 - Universal: iPhone (tab bar compacta) + iPad (sidebar adaptable, split views,
   popovers), vertical y horizontal, claro/oscuro, Dynamic Type.
@@ -32,7 +31,7 @@ xcodebuild -project ios/app/Ristak.xcodeproj -scheme Ristak \
   -destination 'platform=iOS,id=<UDID>' -allowProvisioningUpdates build
 xcrun devicectl device install app --device <UDID> \
   <DerivedData>/Build/Products/Debug-iphoneos/Ristak.app
-xcrun devicectl device process launch --device <UDID> com.ristak.ios
+xcrun devicectl device process launch --device <UDID> com.ristak.app
 ```
 
 ### Login
@@ -120,17 +119,20 @@ solo en capa flotante; copy en español.
 ## Pendientes / brechas conocidas
 
 Configuración (no es código de la app):
-- **Push**: el topic APNs del backend (`APNS_BUNDLE_ID`, o el broker del
-  Installer) apunta hoy a `com.ristak.app`; debe configurarse a
-  `com.ristak.ios` para que lleguen notificaciones a esta app.
+- **Push**: la app nativa Apple ya usa el topic oficial `com.ristak.app`. El
+  backend o el broker del Installer debe mantener `APNS_BUNDLE_ID` /
+  `mobile_apns_bundle_id` en `com.ristak.app` para que las notificaciones
+  lleguen a esta app.
 
 Backend/product (documentadas en `docs/research/*` como OPEN QUESTION):
 - Notas de voz **entrantes** OGG/Opus: AVPlayer no las decodifica; hoy se
   muestra un aviso. Solución real: transcodificar a m4a en backend.
 - Archivados/silenciados son locales por dispositivo (no existe endpoint de
   sincronización; misma limitación que la app RN).
-- Extensión de notificaciones (Communication Notifications con avatar)
-  requiere un target adicional de Xcode — siguiente iteración.
+- Extensión de notificaciones (Communication Notifications con avatar completo)
+  requiere un target adicional de Xcode — siguiente iteración. El target
+  principal ya declara el entitlement de Communication Notifications para el
+  perfil App Store de `com.ristak.app`.
 - Sin UI todavía: cobro con tarjeta guardada, envío del link de pago por
   canal (WhatsApp/email), ruta de invoices HighLevel para pago único,
   respuesta pública a comentarios FB/IG, recordatorios de cita (solo lectura

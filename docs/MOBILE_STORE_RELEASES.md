@@ -34,7 +34,8 @@ or print their contents in logs.
 
 The workflow supports:
 
-- `ios`: builds the Capacitor iOS shell and uploads to App Store Connect.
+- `ios`: builds the native SwiftUI Apple app from `ios/app` and uploads it to
+  App Store Connect as `com.ristak.app`.
 - `android`: generates the React Native/Expo Android project from `mobile/`,
   builds the Android App Bundle for `com.ristak.android`, and uploads it to
   Google Play.
@@ -149,7 +150,8 @@ iOS:
   `.mobileprovision` for `com.ristak.app.NotificationService`.
 - `IOS_CI_KEYCHAIN_PASSWORD`: optional password for a temporary CI/local
   keychain.
-- `IOS_EXPORT_OPTIONS_PLIST`: App Store export plist path.
+- `IOS_EXPORT_OPTIONS_PLIST`: App Store export plist path, normally
+  `ios/app/ExportOptions-AppStore.plist`.
 
 Get the App Store Connect API key from App Store Connect > Users and Access >
 Integrations > App Store Connect API. Get the distribution certificate and App

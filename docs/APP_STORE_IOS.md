@@ -1,28 +1,25 @@
 # Ristak Mobile iOS App Store Release
 
-This is the release path for the Capacitor iOS shell at `frontend/ios/App`. The App Store build is for the mobile `/movil` experience, not the full desktop dashboard.
+This is the release path for the native SwiftUI Apple app at `ios/app`. The
+App Store build replaces the legacy Capacitor iOS shell and is the official
+iPhone/iPad app for Ristak.
 
-The native iOS shell keeps users inside the mobile `/movil` flow:
-
-- `/movil`
-- `/movil/login`
-- `/movil/tenant`
-- required setup, SSO, and license-blocked routes
-
-Any other route opened inside the native iOS shell is redirected back to `/movil` or the required login/tenant step. Legacy `/phone/*` links are redirected to the matching `/movil/*` route.
+The native iOS app uses the same backend contracts, auth, permissions, push
+registration and business rules as `/movil`, but renders the experience with
+native SwiftUI screens under `ios/app/Ristak`.
 
 ## Current app identity
 
 - App name: `Ristak`
-- App Store scope: mobile chat shell for `/movil`
+- App Store scope: native Apple CRM app for iPhone and iPad
 - Bundle ID: `com.ristak.app`
 - Apple team: `Y2L8669JNL`
 - Category: Business
 - Version: `1.0`
 - Build: `2`
-- Minimum iOS: `15.0`
+- Minimum iOS: `26.0`
 - Device family: iPhone and iPad
-- Orientation: iPhone portrait; iPad landscape
+- Orientation: iPhone portrait and landscape; iPad portrait and landscape
 
 ## One-time Apple setup
 
@@ -30,7 +27,9 @@ Any other route opened inside the native iOS shell is redirected back to `/movil
 2. Make sure the team has a valid Apple Distribution certificate or lets Xcode create one with automatic signing.
 3. In App Store Connect, create the app record with bundle ID `com.ristak.app`.
 4. Accept any pending Apple Developer agreements before uploading a build.
-5. Complete App Privacy in App Store Connect. The native privacy manifest in this repo covers the required file timestamp API reason used by the Capacitor Filesystem plugin; the App Store privacy questionnaire still needs the product-level data practices.
+5. Complete App Privacy in App Store Connect. The App Store privacy
+   questionnaire still needs the product-level data practices for the native
+   CRM app.
 6. Add the Privacy Policy URL in App Store Connect.
 7. Enable Push Notifications for the explicit App ID and configure APNs production credentials in the backend:
 
@@ -51,16 +50,18 @@ repo root:
 npm run mobile:release:check -- --platform ios
 ```
 
-Run from `frontend/`:
+Run from `frontend/` if you need the local fallback commands:
 
 ```bash
 npm run mobile:ios:archive
 npm run mobile:ios:upload
 ```
 
-`mobile:ios:archive` builds the web app, syncs Capacitor using Node 22, and creates `ios/build/RistakChat.xcarchive`.
+`mobile:ios:archive` archives `../ios/app/Ristak.xcodeproj` and creates
+`../ios/app/build/Ristak.xcarchive`.
 
-`mobile:ios:upload` uploads that archive to App Store Connect using `ios/App/ExportOptions-AppStore.plist`.
+`mobile:ios:upload` exports/uploads that archive using
+`../ios/app/ExportOptions-AppStore.plist`.
 
 GitHub Actions releases use the Apple Distribution `.p12` and App Store
 `.mobileprovision` stored in Ristak Installer under `Configuración > Tiendas
@@ -81,11 +82,12 @@ copy Apple credentials into this repo, GitHub Secrets, or public docs. Use
 metadata, reviewer access, screenshots, privacy answers, and release notes are
 ready for Apple review.
 
-If local signing fails, open `frontend/ios/App/App.xcodeproj` in Xcode and check:
+If local signing fails, open `ios/app/Ristak.xcodeproj` in Xcode and check:
 
-- Target `App` uses team `Y2L8669JNL`.
+- Target `Ristak` uses team `Y2L8669JNL`.
 - Release signing uses an App Store provisioning profile for `com.ristak.app`.
 - Push Notifications capability is enabled.
+- Communication Notifications capability is enabled on the app profile.
 - Bundle ID is still `com.ristak.app`.
 
 ## App Store Connect submission checklist

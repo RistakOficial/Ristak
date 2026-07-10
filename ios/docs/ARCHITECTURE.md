@@ -1,7 +1,7 @@
 # Ristak iOS — Arquitectura
 
 App universal nativa (iPhone + iPad), SwiftUI, iOS 26, Liquid Glass. Vive en
-`ios/app/Ristak.xcodeproj` (target único `Ristak`, bundle `com.ristak.ios`).
+`ios/app/Ristak.xcodeproj` (target único `Ristak`, bundle `com.ristak.app`).
 El proyecto usa **grupos sincronizados por sistema de archivos**: agregar un
 `.swift` bajo `ios/app/Ristak/` lo incluye automáticamente — **nunca edites
 `project.pbxproj`** para añadir archivos.
@@ -96,7 +96,7 @@ carpeta asignada + lee (sin modificar) el resto.
 ## Sesión (doc 02)
 
 - `KeychainStore`: `baseURL`, `token`, snapshot de `user` (JSON). Servicio
-  `com.ristak.ios`.
+  `com.ristak.app`.
 - `SessionStore` (@Observable, en Environment):
   `phase: .booting | .loggedOut | .active(RistakUser?)`.
   - Arranque: si hay token → entrar al shell optimista + `POST /api/auth/verify`
@@ -143,9 +143,9 @@ carpeta asignada + lee (sin modificar) el resto.
 - `NotificationRouter`: tap → deep link por `contactId`/`url`/`category`
   (chat, cita, pago). Badge: solo local desde unread de bandeja (el backend no
   manda badge).
-- NOTA CONFIG: el topic APNs del backend (`APNS_BUNDLE_ID`, default
-  `com.ristak.app`) debe configurarse a `com.ristak.ios` para que lleguen
-  pushes — documentado en README.
+- Topic APNs: el backend (`APNS_BUNDLE_ID`, default `com.ristak.app`) y el
+  broker del Installer deben mantenerse en `com.ristak.app`, que ahora es la
+  identidad oficial de la app SwiftUI Apple.
 
 ## Media (doc 12)
 

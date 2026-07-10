@@ -889,9 +889,9 @@ inferior). Para iPad/universal habría que diseñar desde cero:
    pendiente reconocida en `docs/MOBILE_APP.md` (§Página de Citas nativa).
 5. **Sin realtime**: todo es polling + push foreground. OPEN QUESTION: ¿el
    backend expone algún canal de eventos utilizable por iOS?
-6. **Identidad de bundle**: RN Android usa `com.ristak.android` side-by-side; el
-   store Apple legacy es `com.ristak.app`. La app SwiftUI debe decidir identidad y topic APNs
-   (ver `mobile/README.md:5-8, 49-52`).
+6. **Identidad de bundle**: RN Android usa `com.ristak.android` side-by-side; la
+   app SwiftUI Apple de `ios/app` usa la identidad oficial de tienda
+   `com.ristak.app`, alineada con el topic APNs default.
 7. **Filtros custom**: la evaluación de presets (`custom:*`) corre
    client-side sobre la página cargada (excepto el filtro por número, que sí
    va al backend). Con paginación de 50, un filtro custom puede verse vacío

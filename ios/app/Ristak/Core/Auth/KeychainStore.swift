@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 /// Persistencia segura de la sesión (equivalente a `expo-secure-store` en RN).
-/// Servicio `com.ristak.ios`, `kSecClassGenericPassword`, accesible tras el
+/// Servicio `com.ristak.app`, `kSecClassGenericPassword`, accesible tras el
 /// primer desbloqueo (los pushes/refetches en background necesitan el token).
 struct KeychainStore: Sendable {
     enum Key: String, CaseIterable, Sendable {
@@ -14,7 +14,7 @@ struct KeychainStore: Sendable {
         case cachedUser = "ristak.native.cachedUser.v1"
     }
 
-    static let service = "com.ristak.ios"
+    static let service = "com.ristak.app"
 
     init() {}
 

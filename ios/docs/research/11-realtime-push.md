@@ -552,13 +552,11 @@ Resultado del dispatcher: `{ sent, webSent, nativeSent, skipped, reason }` con
   `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_BUNDLE_ID` (default `com.ristak.app`),
   `APNS_PRIVATE_KEY` o `APNS_PRIVATE_KEY_FILE`, `APNS_ENV`
   (`production` default; `development`/`sandbox` → host sandbox).
-- **Implicación clave para la app nueva `ios/app`**: el `apns-topic` que usa el
-  broker/backend debe coincidir con el bundle id de la app instalada. Hoy los
-  envíos van al topic `com.ristak.app` (tienda). La app RN Android usa
-  `com.ristak.android` y el NSE reservado es `com.ristak.app.NotificationService`
-  (`docs/MOBILE_APP.md:5-15`, parity checklist 44-57). **OPEN QUESTION:** qué
-  bundle id usará la app SwiftUI final; si no es `com.ristak.app`, hay que
-  actualizar `APNS_BUNDLE_ID`/config central o los push nunca llegarán.
+- **Implicación clave para `ios/app`**: el `apns-topic` que usa el
+  broker/backend debe coincidir con el bundle id de la app instalada. La app
+  SwiftUI Apple usa `com.ristak.app`, la app RN Android usa
+  `com.ristak.android` y el NSE reservado es
+  `com.ristak.app.NotificationService` (`docs/MOBILE_APP.md`, parity checklist).
 - FCM (Android, referencia): `FCM_PROJECT_ID` + `FCM_SERVICE_ACCOUNT_JSON`.
 - Web Push: llaves VAPID por env o autogeneradas y persistidas en DB (con
   warning NOTI-009 de no usarlas autogeneradas en producción).
@@ -804,9 +802,8 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
    push ni auto-marcar leído. **OPEN QUESTION:** ¿bug o intencional?
 5. **Bundle id / topic APNs**: los envíos usan `APNS_BUNDLE_ID`
    (`com.ristak.app` default) o el bundle configurado en Installer. La app
-   SwiftUI nueva debe alinear su bundle id (y el del NSE) o coordinar el cambio
-   en el broker. **OPEN QUESTION:** identidad final de `ios/app`
-   (¿`com.ristak.app` reemplazando la de tienda, o nueva?).
+   SwiftUI de `ios/app` ya tomó la identidad oficial `com.ristak.app`; el broker
+   e Installer deben mantener ese topic para iOS.
 6. **Sin unregister en logout**: ningún cliente llama
    `DELETE /api/push/mobile-devices`; tras cerrar sesión el device sigue
    recibiendo push del último usuario. Recomendado: llamarlo en logout desde
@@ -853,14 +850,12 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
    intencional sigue siendo pregunta de producto, pero la app iOS DEBE tratar el
    `reportViewing` como best-effort silencioso (tragarse el 403) para no romper la UX de
    usuarios read-only.
-3. **RESUELTO (estado actual) — OPEN QUESTION §12.5 (bundle id):** el proyecto nuevo
-   `ios/app/Ristak.xcodeproj` define `PRODUCT_BUNDLE_IDENTIFIER = com.ristak.ios`
-   (project.pbxproj:278,313), que NO coincide con el topic APNs por defecto
-  (`APNS_BUNDLE_ID` default `com.ristak.app`) ni con el RN Android
-  (`com.ristak.android`). **Acción requerida antes de probar push:** actualizar
-   `APNS_BUNDLE_ID`/config del Installer central al bundle final (o cambiar el bundle a
-   `com.ristak.app`); con el mismatch actual ningún push llegará. El NSE debería ser
-   `com.ristak.ios.NotificationService` si se conserva `com.ristak.ios`.
+3. **RESUELTO — §12.5 (bundle id):** `ios/app/Ristak.xcodeproj` usa
+   `PRODUCT_BUNDLE_IDENTIFIER = com.ristak.app`, alineado con el topic APNs por
+   defecto (`APNS_BUNDLE_ID=com.ristak.app`) y con la identidad de App Store. El
+   perfil App Store de la app principal debe conservar Push Notifications y
+   Communication Notifications; `com.ristak.app.NotificationService` queda como
+   bundle reservado para la futura extension de notificaciones.
 4. **CONFIRMADO — §6.2:** `aps.sound` solo se incluye si el destinatario tiene sonido ON
    (`pushNotificationsService.js:1905-1907`) y `aps.badge` nunca se manda hoy (ningún
    emisor setea `payload.badge`), tal como documenta §12.1.

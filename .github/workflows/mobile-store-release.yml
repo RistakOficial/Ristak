@@ -67,15 +67,6 @@ jobs:
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: mobile/package-lock.json
-
-      - name: Install Android mobile dependencies
-        run: npm ci --prefix mobile
-
       - name: Fetch iOS store credentials
         env:
           INSTALLER_URL: ${{ github.event.inputs.installer_url }}
@@ -274,28 +265,21 @@ jobs:
 
       - name: Set iOS version and build number
         run: |
-          cd frontend/ios/App
-          xcrun agvtool new-marketing-version "${{ github.event.inputs.ios_version }}"
-          xcrun agvtool new-version -all "${{ github.run_number }}"
-
-      - name: Build and sync Capacitor iOS
-        run: npm run mobile:sync:ios --prefix frontend
+          {
+            echo "IOS_MARKETING_VERSION=${{ github.event.inputs.ios_version }}"
+            echo "IOS_BUILD_NUMBER=${{ github.run_number }}"
+          } >> "$GITHUB_ENV"
 
       - name: Archive iOS app
         run: |
-          cd frontend
           ruby - <<'RUBY'
           require "xcodeproj"
 
-          project = Xcodeproj::Project.open("ios/App/App.xcodeproj")
+          project = Xcodeproj::Project.open("ios/app/Ristak.xcodeproj")
           signing_targets = {
-            "App" => {
+            "Ristak" => {
               profile_uuid: "IOS_PROFILE_UUID",
               profile_name: "IOS_PROFILE_NAME"
-            },
-            "RistakNotificationService" => {
-              profile_uuid: "IOS_NOTIFICATION_SERVICE_PROFILE_UUID",
-              profile_name: "IOS_NOTIFICATION_SERVICE_PROFILE_NAME"
             }
           }
 
@@ -308,6 +292,8 @@ jobs:
 
             settings = release.build_settings
             settings["DEVELOPMENT_TEAM"] = ENV.fetch("APPLE_TEAM_ID")
+            settings["PRODUCT_BUNDLE_IDENTIFIER"] = ENV.fetch("APP_BUNDLE_ID")
+            settings["APS_ENVIRONMENT"] = "production"
 
             case ENV.fetch("IOS_SIGNING_STYLE")
             when "automatic"
@@ -329,12 +315,14 @@ jobs:
           RUBY
 
           archive_args=(
-            -project ios/App/App.xcodeproj
-            -scheme App
+            -project ios/app/Ristak.xcodeproj
+            -scheme Ristak
             -configuration Release
             -sdk iphoneos
             -destination 'generic/platform=iOS'
-            -archivePath ios/build/RistakChat.xcarchive
+            -archivePath ios/app/build/Ristak.xcarchive
+            "MARKETING_VERSION=$IOS_MARKETING_VERSION"
+            "CURRENT_PROJECT_VERSION=$IOS_BUILD_NUMBER"
             "OTHER_CODE_SIGN_FLAGS=--keychain $KEYCHAIN_PATH"
           )
           if [ "$IOS_SIGNING_STYLE" = "automatic" ]; then
@@ -366,17 +354,15 @@ jobs:
           if signing_style == "manual":
               options["provisioningProfiles"] = {
                   os.environ["APP_BUNDLE_ID"]: os.environ["IOS_PROFILE_NAME"],
-                  os.environ["NOTIFICATION_SERVICE_BUNDLE_ID"]: os.environ["IOS_NOTIFICATION_SERVICE_PROFILE_NAME"],
               }
               options["signingCertificate"] = os.environ["IOS_SIGNING_IDENTITY"]
           with open(os.path.join(os.environ["RUNNER_TEMP"], "ExportOptions-AppStore-CI.plist"), "wb") as file:
               plistlib.dump(options, file)
           PY
-          cd frontend
           export_args=(
             -exportArchive
-            -archivePath ios/build/RistakChat.xcarchive
-            -exportPath ios/build/AppStore-CI
+            -archivePath ios/app/build/Ristak.xcarchive
+            -exportPath ios/app/build/AppStore-CI
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions-AppStore-CI.plist"
           )
           if [ "$IOS_SIGNING_STYLE" = "automatic" ]; then
@@ -393,7 +379,8 @@ jobs:
         env:
           SUBMIT_FOR_REVIEW: ${{ github.event.inputs.submit_for_review }}
         run: |
-          IPA_PATH="frontend/ios/build/AppStore-CI/App.ipa"
+          IPA_PATH="$(find ios/app/build/AppStore-CI -maxdepth 1 -name '*.ipa' -print -quit)"
+          test -n "$IPA_PATH"
           if [ "$SUBMIT_FOR_REVIEW" = "true" ]; then
             fastlane deliver \
               --api_key_path "$RUNNER_TEMP/appstore/api_key.json" \
