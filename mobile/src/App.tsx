@@ -20391,7 +20391,7 @@ function NativeConversationScreen({
         JSON.stringify(current) === JSON.stringify(scheduledItems) ? current : scheduledItems
       ));
       setMessages((current) => {
-        if (!silent && !background) return nextMessages;
+        if (!silent && !background && !current.length) return nextMessages;
         // El fetch de programados es autoritativo: retirar fantasmas
         // `scheduled-*` que ya se enviaron o cancelaron en el servidor.
         const scheduledIds = new Set(scheduledItems.map((item) => item.id));
@@ -20905,7 +20905,8 @@ function NativeConversationScreen({
         message.id === optimisticId
           ? {
             ...message,
-            id: localMessageId || message.id,
+            optimisticId: message.optimisticId || message.id,
+            serverMessageId: localMessageId || message.serverMessageId,
             providerMessageId: providerMessageId || message.providerMessageId,
             pending: false,
             status: response.status || 'sent',
@@ -21142,7 +21143,8 @@ function NativeConversationScreen({
           const responseAudioDurationMs = Number(response?.audio?.durationMs || 0) || message.attachment?.durationMs;
           return {
             ...message,
-            id: localMessageId || message.id,
+            optimisticId: message.optimisticId || message.id,
+            serverMessageId: localMessageId || message.serverMessageId,
             providerMessageId: providerMessageId || message.providerMessageId,
             pending: false,
             status: response?.status || 'sent',
@@ -21181,7 +21183,8 @@ function NativeConversationScreen({
           message.id === optimisticId
             ? {
               ...message,
-              id: localMessageId || message.id,
+              optimisticId: message.optimisticId || message.id,
+              serverMessageId: localMessageId || message.serverMessageId,
               providerMessageId: providerMessageId || message.providerMessageId,
               pending: false,
               status: response.status || 'sent',
@@ -24784,15 +24787,44 @@ function getNativeMessageChannelFamily(message: ChatMessage) {
   return 'other';
 }
 
-// Un envío optimista conserva su id `local-*` para siempre, pero el poll trae
-// la copia persistida con id de proveedor: sin esta reconciliación ambas filas
-// conviven (burbuja duplicada) y el crecimiento de contenido dispara saltos.
+function mergeNativeServerMessageIntoOptimistic(localRow: ChatMessage, serverRow: ChatMessage): ChatMessage {
+  const localAttachment = localRow.attachment;
+  const serverAttachment = serverRow.attachment;
+  const attachment: ChatAttachment | undefined = serverAttachment
+    ? {
+      ...localAttachment,
+      ...serverAttachment,
+      // El preview local ya está pintado. Mantenerlo evita una segunda carga y
+      // conserva exactamente las dimensiones del globo durante el refresh.
+      ...(localAttachment?.dataUrl ? { dataUrl: localAttachment.dataUrl } : {}),
+      ...(localAttachment?.url && !serverAttachment?.url ? { url: localAttachment.url } : {}),
+    }
+    : localAttachment;
+
+  return {
+    ...localRow,
+    ...serverRow,
+    id: localRow.id,
+    optimisticId: localRow.optimisticId || localRow.id,
+    serverMessageId: serverRow.serverMessageId || localRow.serverMessageId || serverRow.id,
+    providerMessageId: serverRow.providerMessageId || localRow.providerMessageId,
+    date: localRow.date || serverRow.date,
+    text: serverRow.text || localRow.text,
+    pending: false,
+    failed: false,
+    ...(attachment ? { attachment } : {}),
+  };
+}
+
+// El poll trae la copia persistida con otra identidad. La fusionamos DENTRO del
+// globo local y retiramos la fila remota duplicada; borrar el local provocaba un
+// unmount/remount, otra descarga de la foto y saltos de scroll.
 function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>) {
   const localRows: ChatMessage[] = [];
   const serverRows: ChatMessage[] = [];
   byId.forEach((message) => {
     if (message.direction !== 'outbound' || message.reactionEmoji || isScheduledMessage(message)) return;
-    if (isNativeLocalMessageId(message.id)) {
+    if (message.optimisticId || isNativeLocalMessageId(message.id)) {
       // Las filas pending siguen esperando el ack de send(): quitarlas antes
       // de tiempo rompería el marcado de error si el envío falla.
       if (!message.failed && !message.pending) localRows.push(message);
@@ -24813,6 +24845,14 @@ function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>) {
       let matchDistance = Number.POSITIVE_INFINITY;
       serverRows.forEach((serverRow) => {
         if (consumedServerIds.has(serverRow.id)) return;
+        const exactServerId = Boolean(localRow.serverMessageId) && serverRow.id === localRow.serverMessageId;
+        const exactProviderId = Boolean(localRow.providerMessageId) && serverRow.providerMessageId === localRow.providerMessageId;
+        if (exactServerId || exactProviderId) {
+          match = serverRow;
+          matchDistance = -1;
+          return;
+        }
+        if (matchDistance < 0) return;
         const serverTime = getNativeMessageSortTime(serverRow.date);
         if (serverTime < localTime - NATIVE_OPTIMISTIC_RECONCILE_BACKWARD_MS) return;
         const distance = Math.abs(serverTime - localTime);
@@ -24830,8 +24870,10 @@ function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>) {
         matchDistance = distance;
       });
       if (match) {
-        consumedServerIds.add((match as ChatMessage).id);
-        byId.delete(localRow.id);
+        const serverMatch = match as ChatMessage;
+        consumedServerIds.add(serverMatch.id);
+        byId.delete(serverMatch.id);
+        byId.set(localRow.id, mergeNativeServerMessageIntoOptimistic(localRow, serverMatch));
       }
     });
 }

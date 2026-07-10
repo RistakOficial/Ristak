@@ -94,6 +94,9 @@ final class ConversationViewModel {
 
     private(set) var serverMessages: [ChatMessage] = []
     private(set) var optimisticMessages: [ChatMessage] = []
+    /// Filas del servidor ya absorbidas por un globo optimista estable. Se
+    /// excluyen del combinado para no pintar dos veces el mismo envío.
+    private var reconciledServerMessageIDs: Set<String> = []
     private(set) var scheduledItems: [ScheduledChatMessage] = []
     private(set) var activityMarkers: [ConversationActivityMarker] = []
     private(set) var commentContexts: [String: CommentPostContext] = [:]
@@ -452,18 +455,26 @@ final class ConversationViewModel {
     }
 
     private func reconcileOptimisticMessages() {
-        guard !optimisticMessages.isEmpty else { return }
+        guard !optimisticMessages.isEmpty else {
+            reconciledServerMessageIDs.removeAll()
+            return
+        }
         let window: TimeInterval = 4 * 60
         let outboundServer = serverMessages.filter { $0.direction == .outbound }
+        var consumedServerIDs: Set<String> = []
 
-        optimisticMessages.removeAll { optimistic in
-            guard !optimistic.failed else { return false }
+        for index in optimisticMessages.indices {
+            let optimistic = optimisticMessages[index]
+            guard !optimistic.failed else { continue }
             // Nunca reconciliar una burbuja cuyo POST sigue en vuelo: su eco
             // real aún no existe; casarla con un mensaje previo la borraría.
-            guard !inFlightExternalIds.contains(optimistic.id) else { return false }
-            guard let optimisticDate = optimistic.parsedDate else { return false }
-            return outboundServer.contains { server in
-                guard let serverDate = server.parsedDate else { return false }
+            guard !inFlightExternalIds.contains(optimistic.id) else { continue }
+            guard let optimisticDate = optimistic.parsedDate else { continue }
+
+            var bestMatch: ChatMessage?
+            var bestDistance = TimeInterval.greatestFiniteMagnitude
+
+            for server in outboundServer where !consumedServerIDs.contains(server.id) {
                 // 1) Identidad DEFINITIVA por id de proveedor: gana SIEMPRE, sin
                 //    ventana temporal. Dos mensajes distintos jamás comparten
                 //    providerMessageId, así que no hay falsos positivos; y así un
@@ -471,27 +482,68 @@ final class ConversationViewModel {
                 //    optimista duplicado para siempre pese a tener el mismo id.
                 if let provider = optimistic.providerMessageId, !provider.isEmpty,
                    server.providerMessageId == provider {
-                    return true
+                    bestMatch = server
+                    bestDistance = -1
+                    break
                 }
                 // 2) Respaldo por texto/adjunto/ubicación: AQUÍ sí se exige la
                 //    ventana de ±4 min y que el eco NO sea anterior al envío
                 //    optimista (con pequeña tolerancia de reloj). Así un "ok" que
                 //    ya existía antes de mandar el nuestro no puede reclamar el
                 //    globo optimista.
-                guard abs(serverDate.timeIntervalSince(optimisticDate)) <= window else { return false }
-                guard serverDate.timeIntervalSince(optimisticDate) >= -5 else { return false }
+                guard let serverDate = server.parsedDate else { continue }
+                let distance = abs(serverDate.timeIntervalSince(optimisticDate))
+                guard distance <= window, distance < bestDistance else { continue }
+                guard serverDate.timeIntervalSince(optimisticDate) >= -5 else { continue }
                 let sameText = !optimistic.text.isEmpty
                     && optimistic.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         == server.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                let bothAttachments = optimistic.attachment != nil && server.attachment != nil
+                let bothAttachments = optimistic.attachment?.type == server.attachment?.type
+                    && optimistic.attachment != nil
                 let bothLocations = optimistic.location != nil && server.location != nil
-                return sameText || bothAttachments || bothLocations
+                guard sameText || bothAttachments || bothLocations else { continue }
+                bestMatch = server
+                bestDistance = distance
             }
+
+            guard let server = bestMatch else { continue }
+            consumedServerIDs.insert(server.id)
+
+            // La fila remota trae status/ACK/URL autoritativos, pero la identidad,
+            // fecha y data URL local permanecen. SwiftUI conserva la misma fila y
+            // la foto no desaparece para volver a descargarse.
+            var stable = server
+            stable.id = optimistic.id
+            stable.date = optimistic.date
+            stable.text = server.text.isEmpty ? optimistic.text : server.text
+            stable.pending = false
+            stable.failed = false
+            if stable.providerMessageId?.isEmpty != false {
+                stable.providerMessageId = optimistic.providerMessageId
+            }
+            if var serverAttachment = server.attachment {
+                if let localAttachment = optimistic.attachment {
+                    if let dataUrl = localAttachment.dataUrl, !dataUrl.isEmpty {
+                        serverAttachment.dataUrl = dataUrl
+                    }
+                    if serverAttachment.name?.isEmpty != false { serverAttachment.name = localAttachment.name }
+                    if serverAttachment.mimeType?.isEmpty != false { serverAttachment.mimeType = localAttachment.mimeType }
+                    if serverAttachment.durationMs == nil { serverAttachment.durationMs = localAttachment.durationMs }
+                    if serverAttachment.size == nil { serverAttachment.size = localAttachment.size }
+                }
+                stable.attachment = serverAttachment
+            } else {
+                stable.attachment = optimistic.attachment
+            }
+            optimisticMessages[index] = stable
         }
+
+        reconciledServerMessageIDs = consumedServerIDs
     }
 
     private func rebuildCombined() {
-        var all = ChatJourneyParser.mergeById(serverMessages + optimisticMessages)
+        let visibleServerMessages = serverMessages.filter { !reconciledServerMessageIDs.contains($0.id) }
+        var all = ChatJourneyParser.mergeById(visibleServerMessages + optimisticMessages)
         all.append(contentsOf: ChatJourneyParser.buildScheduledMessages(contactId: contactID, items: scheduledItems))
         all.sort { ($0.parsedDate ?? .distantPast) < ($1.parsedDate ?? .distantPast) }
         if all != combinedMessages {
@@ -1522,7 +1574,6 @@ final class ConversationViewModel {
                 let echo = result.image ?? result.video ?? result.audio ?? result.document ?? result.localMedia
                 if let url = echo?.bestUrl {
                     attachment.url = url
-                    attachment.dataUrl = nil
                     message.attachment = attachment
                 }
             }
@@ -1564,6 +1615,7 @@ final class ConversationViewModel {
         optimisticMessages.removeAll { $0.id == id }
         failedPayloads.removeValue(forKey: id)
         inFlightExternalIds.remove(id)
+        reconcileOptimisticMessages()
         rebuildCombined()
     }
 

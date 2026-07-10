@@ -88,6 +88,10 @@ import {
 } from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
+import {
+  getChatSendResponseIds,
+  reconcileServerMessageIntoOptimistic
+} from '@/utils/chatMessageReconciliation'
 import apiClient from '@/services/apiClient'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
@@ -238,6 +242,7 @@ interface ChatListCacheSnapshot {
 interface DesktopChatMessage {
   id: string
   optimisticId?: string
+  serverMessageId?: string
   providerMessageId?: string
   text: string
   subject?: string
@@ -1288,6 +1293,7 @@ function getDesktopMessageSignature(message: DesktopChatMessage) {
   return [
     message.id,
     message.optimisticId,
+    message.serverMessageId,
     message.providerMessageId,
     message.text,
     message.subject,
@@ -1362,6 +1368,9 @@ function isOptimisticDesktopMessage(message: DesktopChatMessage) {
 
 function isRecentOptimisticDesktopMessage(message: DesktopChatMessage) {
   if (!isOptimisticDesktopMessage(message)) return false
+  // Una vez reconciliado con la fila persistida, esta identidad local vive
+  // mientras el chat siga abierto. Caducarla remontaría el globo minutos después.
+  if (message.serverMessageId) return true
   const timestamp = getMessageTimeValue(message.date)
   if (!timestamp) return true
   return Date.now() - timestamp < OPTIMISTIC_MESSAGE_MAX_AGE_MS
@@ -1383,7 +1392,13 @@ function getMessageAttachmentMatchKey(message: DesktopChatMessage) {
 
 function messagesLookLikeSameOptimisticSend(loaded: DesktopChatMessage, optimistic: DesktopChatMessage) {
   const optimisticKey = getOptimisticMessageKey(optimistic)
-  if (loaded.id === optimistic.id || loaded.id === optimisticKey || loaded.optimisticId === optimisticKey) return true
+  if (
+    loaded.id === optimistic.id ||
+    loaded.id === optimisticKey ||
+    loaded.id === optimistic.serverMessageId ||
+    loaded.optimisticId === optimisticKey ||
+    Boolean(loaded.providerMessageId && loaded.providerMessageId === optimistic.providerMessageId)
+  ) return true
   if (loaded.direction !== optimistic.direction || optimistic.direction !== 'outbound') return false
 
   const loadedTime = getMessageTimeValue(loaded.date)
@@ -1418,6 +1433,7 @@ function mergeDesktopMessagesWithOptimistic(loadedMessages: DesktopChatMessage[]
     ))
     if (matchIndex >= 0) {
       matchedLoadedIndexes.add(matchIndex)
+      merged[matchIndex] = reconcileServerMessageIntoOptimistic(loadedMessages[matchIndex], message)
       return
     }
 
@@ -2357,7 +2373,9 @@ function cleanAttachmentMessageText(text = '', attachment?: DesktopChatMessage['
 }
 
 function getAttachmentSource(attachment: DesktopChatMessage['attachment']) {
-  return attachment?.url || attachment?.dataUrl || ''
+  // El preview local ya está decodificado y tiene dimensiones estables. Mantenerlo
+  // primero evita cerrar/reabrir el globo al aparecer la URL remota.
+  return attachment?.dataUrl || attachment?.url || ''
 }
 
 function getAttachmentExtension(name = '', mimeType = '') {
@@ -5326,11 +5344,13 @@ export const DesktopChat: React.FC = () => {
         externalId: optimisticId,
         phoneNumberId: selectedBusinessPhone?.id || undefined
       })
+      const responseIds = getChatSendResponseIds(result)
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
           ? {
               ...message,
-              id: result.localMessageId || result.data?.localMessageId || message.id,
+              serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+              providerMessageId: responseIds.providerMessageId || message.providerMessageId,
               status: 'sent',
               errorReason: '',
               transport: result.transport || message.transport,
@@ -5345,8 +5365,8 @@ export const DesktopChat: React.FC = () => {
           ? `${template.name} se mandó como texto por el respaldo QR.`
           : `${template.name} se mandó por WhatsApp.`
       )
-      await Promise.all([
-        loadConversation(activeContact.id),
+      void Promise.all([
+        loadConversation(activeContact.id, { silent: true, useCache: false }),
         loadChats({ silent: true })
       ])
       await loadTemplates()
@@ -6424,10 +6444,12 @@ export const DesktopChat: React.FC = () => {
 	            externalId: optimisticId
 	          })
 	          const data = result.data || result
+	          const responseIds = getChatSendResponseIds(result)
 	          setMessages((current) => current.map((message) => message.id === optimisticId
 	            ? {
 	                ...message,
-	                id: data.localMessageId || message.id,
+	                serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+	                providerMessageId: responseIds.providerMessageId || message.providerMessageId,
 	                status: data.status || 'sent',
 	                transport: data.transport || 'ghl_email'
 	              }
@@ -6443,18 +6465,20 @@ export const DesktopChat: React.FC = () => {
 		            includeSignature: emailIncludeSignature,
 		            externalId: optimisticId
 		          })
+	          const responseIds = getChatSendResponseIds(result)
 	          setMessages((current) => current.map((message) => message.id === optimisticId
 	            ? {
 	                ...message,
-	                id: result.localMessageId || message.id,
+	                serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+	                providerMessageId: responseIds.providerMessageId || message.providerMessageId,
 	                status: result.status || 'sent',
 	                transport: 'email'
 	              }
 	            : message
 	          ))
 	        }
-	        await Promise.all([
-	          loadConversation(activeContact.id),
+	        void Promise.all([
+	          loadConversation(activeContact.id, { silent: true, useCache: false }),
 	          loadChats({ silent: true })
 	        ])
 	      } catch (error: any) {
@@ -6613,10 +6637,12 @@ export const DesktopChat: React.FC = () => {
         const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
         const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(result.audio?.durationMs || 0) || voiceToSend.durationMs
+        const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => message.id === `${optimisticId}-audio`
           ? {
               ...message,
-              id: result.localMessageId || result.data?.localMessageId || message.id,
+              serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+              providerMessageId: responseIds.providerMessageId || message.providerMessageId,
               status: result.status || 'sent',
               transport: result.transport || message.transport,
               routingReason: result.routingReason || result.fallbackReason || message.routingReason,
@@ -6648,11 +6674,17 @@ export const DesktopChat: React.FC = () => {
             externalId: optimisticId
           })
           const data = result.data || result
+          const responseIds = getChatSendResponseIds(result)
           setMessages((current) => current.map((message) => (
             message.id.startsWith(`${optimisticId}-attachment-`)
               ? {
                   ...message,
-                  id: message.id === `${optimisticId}-attachment-0` && data.localMessageId ? data.localMessageId : message.id,
+                  serverMessageId: message.id === `${optimisticId}-attachment-0`
+                    ? responseIds.serverMessageId || message.serverMessageId
+                    : message.serverMessageId,
+                  providerMessageId: message.id === `${optimisticId}-attachment-0`
+                    ? responseIds.providerMessageId || message.providerMessageId
+                    : message.providerMessageId,
                   status: data.status || 'pending',
                   transport: data.transport || activeConversationChannel
                 }
@@ -6725,9 +6757,11 @@ export const DesktopChat: React.FC = () => {
                   const mediaUrl = resultMedia?.link || resultMedia?.url || result?.localMedia?.publicUrl || ''
                   const mediaMimeType = resultMedia?.mimeType || resultMedia?.mimetype || result?.localMedia?.mimeType || ''
                   const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.video?.filename || result?.localMedia?.filename || ''
+                  const responseIds = getChatSendResponseIds(result)
                   return {
                     ...message,
-                    id: result?.localMessageId || result?.data?.localMessageId || message.id,
+                    serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+                    providerMessageId: responseIds.providerMessageId || message.providerMessageId,
                     status: result?.status || 'sent',
                     transport: result?.transport || message.transport,
                     routingReason: result?.routingReason || result?.fallbackReason || message.routingReason,
@@ -6755,9 +6789,11 @@ export const DesktopChat: React.FC = () => {
           phoneNumberId: selectedBusinessPhone?.id || undefined,
           messageOrigin: 'manual_chat'
         })
+        const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => message.id === optimisticId ? {
           ...message,
-          id: result.localMessageId || result.data?.localMessageId || message.id,
+          serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+          providerMessageId: responseIds.providerMessageId || message.providerMessageId,
           status: result.status || 'sent',
           transport: result.transport || message.transport,
           routingReason: result.routingReason || result.fallbackReason || message.routingReason
@@ -6770,9 +6806,10 @@ export const DesktopChat: React.FC = () => {
           externalId: optimisticId
         })
         const data = result.data || result
+        const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
-            ? { ...message, id: data.localMessageId || message.id, status: data.status || 'sent', transport: data.transport || 'messenger' }
+            ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: data.status || 'sent', transport: data.transport || 'messenger' }
             : message
         )))
       } else if (activeConversationChannel === 'instagram' && metaInstagramConnected) {
@@ -6783,9 +6820,10 @@ export const DesktopChat: React.FC = () => {
           externalId: optimisticId
         })
         const data = result.data || result
+        const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
-            ? { ...message, id: data.localMessageId || message.id, status: data.status || 'sent', transport: data.transport || 'instagram' }
+            ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: data.status || 'sent', transport: data.transport || 'instagram' }
             : message
         )))
       } else if (highLevelConnected) {
@@ -6798,16 +6836,17 @@ export const DesktopChat: React.FC = () => {
           externalId: optimisticId
         })
         const data = result.data || result
+        const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
-            ? { ...message, id: data.localMessageId || message.id, status: data.status || 'pending', transport: data.transport || activeConversationChannel }
+            ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: data.status || 'pending', transport: data.transport || activeConversationChannel }
             : message
         )))
       } else {
         throw new Error('Conecta el canal nativo correspondiente para enviar mensajes desde esta pantalla.')
       }
-      await Promise.all([
-        loadConversation(activeContact.id),
+      void Promise.all([
+        loadConversation(activeContact.id, { silent: true, useCache: false }),
         loadChats({ silent: true })
       ])
     } catch (error: any) {

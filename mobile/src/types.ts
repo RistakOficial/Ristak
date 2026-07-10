@@ -235,6 +235,10 @@ export type ChatReaction = {
 
 export type ChatMessage = {
   id: string;
+  /** Identidad estable del globo creado antes de que termine el POST. */
+  optimisticId?: string;
+  /** Id de la fila persistida; nunca reemplaza `id` mientras el globo está visible. */
+  serverMessageId?: string;
   contactId: string;
   date: string;
   direction: 'inbound' | 'outbound' | 'system';

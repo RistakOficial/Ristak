@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite",
     "design:audit": "node scripts/audit-design-system.mjs",
+    "test:chat-reconciliation": "node scripts/test-chat-message-reconciliation.mjs",
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",

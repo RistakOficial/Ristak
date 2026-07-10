@@ -878,6 +878,12 @@ como red de seguridad, reutiliza el mismo buffer preparado para WhatsApp y el
 preview, y ejecuta en paralelo la subida al proveedor y a
 `mediaStorageService`. No debe enviar la foto original de varios megapixeles a
 WhatsApp para despues volver a comprimirla y subirla otra vez.
+En `/chat`, `/movil` y las apps nativas, el globo optimista conserva su identidad
+y preview local durante toda la sesion abierta. `localMessageId`, WAMID, URL CDN
+y ACK se guardan como identidad/estado autoritativo separado y se fusionan en
+background dentro de ese mismo globo. El final del POST no debe cambiar la key
+visible, recargar toda la conversacion, desmontar la imagen ni mover el scroll;
+el siguiente SSE/poll silencioso solo completa los datos remotos.
 Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el eco saliente
 que WhatsApp Web emite para esa foto no debe crear una segunda burbuja `QR` con
 el texto generico `Foto`. El backend debe marcar los envios API originados por

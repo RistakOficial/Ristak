@@ -161,6 +161,10 @@ carpeta asignada + lee (sin modificar) el resto.
   la foto completa de cámara para que el backend la reduzca después. El
   backend conserva un preview M4A reproducible para API y QR y normaliza el
   alias detectado `audio/x-m4a` a `audio/mp4` antes de guardarlo.
+- Reconciliación visible: `ConversationViewModel` conserva el `id`, fecha y data
+  URL del globo optimista; al llegar la fila del servidor absorbe status, WAMID y
+  URL remota dentro de esa misma burbuja y oculta la fila duplicada. Los polls no
+  deben cerrar/reabrir el preview ni provocar saltos del `ScrollView`.
 - Render: URLs de media públicas (CDN) — `ImageLoader` con caché en memoria y
   disco. Visor pantalla completa con zoom, player audio con velocidades y
   scrubber alineado a los extremos sin parecer recortado, QuickLook para

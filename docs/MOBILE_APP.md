@@ -120,7 +120,11 @@ deben ser estables entre polls y paginas (ids de proveedor o huella de
 contenido, nunca el indice), los merges deben preservar identidad de objetos
 cuando nada cambio (un poll sin novedades debe ser un no-op de React), los
 mensajes optimistas `local-*` se reconcilian con la copia del servidor al
-llegar, y las filas (`NativeMessageBubble`, `ChatRow`) van en `React.memo` con
+llegar sin reemplazar su `id`: la identidad persistida vive en
+`serverMessageId`, el estado remoto se fusiona dentro del mismo objeto y el
+preview local (`dataUrl`/archivo) se conserva mientras el hilo siga montado.
+Así el poll no desmonta la fila, no vuelve a descargar la foto ni altera su
+altura. Las filas (`NativeMessageBubble`, `ChatRow`) van en `React.memo` con
 callbacks de identidad estable.
 
 Recepcion viva del chat nativo: `mobile/` debe suscribirse a
@@ -248,9 +252,10 @@ extra alrededor.
 Los envios manuales desde la conversacion nativa deben tener un candado
 sincronico antes de cualquier validacion async del agente o del canal: un doble
 tap no puede crear dos requests API. Cuando el backend responde con
-`localMessageId`, el globo optimista debe adoptar ese ID real antes de refrescar
-el historial; si conserva el ID local temporal, el merge de conversacion puede
-mostrar el optimista y el mensaje persistido como dos burbujas.
+`localMessageId`, el globo optimista debe conservar su ID visible y guardar el
+ID real en `serverMessageId`. El refresh silencioso empareja ambos IDs y absorbe
+la copia persistida dentro del globo existente; nunca debe borrar el optimista
+para insertar otra fila.
 
 Los comentarios de Facebook e Instagram en la conversacion nativa deben mantener
 la misma paridad que escritorio y `/movil`: el globo muestra si fue comentario,
@@ -1073,7 +1078,9 @@ convertirla a data URL; el backend normaliza otra vez como respaldo. El globo
 optimista usa la copia local de inmediato y no debe
 esperar la subida ni el ACK QR. Cuando Baileys acepta el mensaje con `key.id`, la
 UI recibe `sent`; `delivered`/`read` se reconcilian despues en background sobre
-el mismo globo.
+el mismo globo. La URL CDN puede guardarse para reaperturas futuras, pero no
+reemplaza el preview local en una conversacion ya abierta ni dispara un refetch
+bloqueante al terminar el POST.
 Las previews nativas deben diferenciar cada
 tipo como `/movil`: fotos con proporcion real y `contain` sin marco fijo,
 video reproducible, waveform de nota de voz con avatar/microfono/progreso,

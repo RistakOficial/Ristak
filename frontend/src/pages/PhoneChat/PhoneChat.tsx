@@ -87,6 +87,10 @@ import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
+import {
+  getChatSendResponseIds,
+  reconcileServerMessageIntoOptimistic
+} from '@/utils/chatMessageReconciliation'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -1373,6 +1377,8 @@ type ContactChannelBadge = {
 
 interface ChatMessage {
   id: string
+  optimisticId?: string
+  serverMessageId?: string
   text: string
   date: string
   direction: 'inbound' | 'outbound' | 'system'
@@ -2893,6 +2899,9 @@ function getMessageSignature(message: ChatMessage) {
   const location = message.location
   return [
     message.id,
+    message.optimisticId,
+    message.serverMessageId,
+    message.providerMessageId,
     message.text,
     message.date,
     message.direction,
@@ -2943,11 +2952,12 @@ function getMessageTimeValue(value?: string) {
 }
 
 function isOptimisticMessage(message: ChatMessage) {
-  return OPTIMISTIC_MESSAGE_ID_PREFIXES.some((prefix) => message.id.startsWith(prefix))
+  return Boolean(message.optimisticId) || OPTIMISTIC_MESSAGE_ID_PREFIXES.some((prefix) => message.id.startsWith(prefix))
 }
 
 function isRecentOptimisticMessage(message: ChatMessage) {
   if (!isOptimisticMessage(message)) return false
+  if (message.serverMessageId) return true
   const timestamp = getMessageTimeValue(message.date)
   if (!timestamp) return true
   return Date.now() - timestamp < OPTIMISTIC_MESSAGE_MAX_AGE_MS
@@ -2986,7 +2996,11 @@ function getMessageLocationMatchKey(message: ChatMessage) {
 }
 
 function messagesLookLikeSameOptimisticSend(loaded: ChatMessage, optimistic: ChatMessage) {
-  if (loaded.id === optimistic.id) return true
+  if (
+    loaded.id === optimistic.id ||
+    loaded.id === optimistic.serverMessageId ||
+    Boolean(loaded.providerMessageId && loaded.providerMessageId === optimistic.providerMessageId)
+  ) return true
   if (loaded.direction !== optimistic.direction || optimistic.direction !== 'outbound') return false
 
   const loadedTime = getMessageTimeValue(loaded.date)
@@ -3039,6 +3053,7 @@ function mergeMessagesWithOptimistic(loadedMessages: ChatMessage[], currentMessa
     ))
     if (matchIndex >= 0) {
       matchedLoadedIndexes.add(matchIndex)
+      merged[matchIndex] = reconcileServerMessageIntoOptimistic(loadedMessages[matchIndex], message)
       return
     }
 
@@ -12297,9 +12312,10 @@ export const PhoneChat: React.FC = () => {
         externalId: optimisticId,
         phoneNumberId: selectedBusinessPhone?.id || undefined
       })
+      const responseIds = getChatSendResponseIds(result)
       setMessages((current) => current.map((message) => (
         message.id === optimisticId
-          ? { ...message, status: 'sent', errorReason: '', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
+          ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: 'sent', errorReason: '', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
           : message
       )))
       showToast(
@@ -12309,8 +12325,10 @@ export const PhoneChat: React.FC = () => {
           ? `${template.name} se mandó como texto por el respaldo QR.`
           : `${template.name} se mandó por WhatsApp.`
       )
-      await loadConversation(activeContact.id, { silent: true, useCache: false })
-      await loadChats({ silent: true, useCache: false })
+      void Promise.all([
+        loadConversation(activeContact.id, { silent: true, useCache: false }),
+        loadChats({ silent: true, useCache: false })
+      ])
       await loadTemplates()
     } catch (error) {
       const errorMessage = getErrorMessage(error, 'Intenta enviar la plantilla otra vez.')
@@ -12868,20 +12886,25 @@ export const PhoneChat: React.FC = () => {
       )))
 
       try {
-        await whatsappApiService.sendMetaSocialCommentReply({
+        const result = await whatsappApiService.sendMetaSocialCommentReply({
           contactId: activeContact.id,
           platform: commentPlatform,
           message: text,
           replyType,
           commentId: selectedCommentReplyTarget?.commentId
         })
+        const responseIds = getChatSendResponseIds(result)
         setCommentReplyTarget(null)
         setMessages((current) => current.map((message) => (
-          message.id === optimisticId ? { ...message, status: 'sent' } : message
+          message.id === optimisticId
+            ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: 'sent' }
+            : message
         )))
         showToast('success', 'Respuesta enviada', replyType === 'private' ? 'Se envió por privado.' : 'Se publicó en el comentario.')
-        await loadConversation(activeContact.id, { silent: true, useCache: false })
-        await loadChats({ silent: true, useCache: false })
+        void Promise.all([
+          loadConversation(activeContact.id, { silent: true, useCache: false }),
+          loadChats({ silent: true, useCache: false })
+        ])
       } catch (error: any) {
         const errorMessage = getErrorMessage(error, 'Intenta responder otra vez.')
         setMessages((current) => current.map((message) => (
@@ -13007,12 +13030,14 @@ export const PhoneChat: React.FC = () => {
         const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
         const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(result.audio?.durationMs || 0) || nativeMetaAudioDurationMs
+        const responseIds = getChatSendResponseIds(result)
 
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
             ? {
                 ...message,
-                id: resultData.localMessageId || message.id,
+                serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+                providerMessageId: responseIds.providerMessageId || message.providerMessageId,
                 status: resultStatus,
                 transport: resultData.transport || activeMetaSocialChannel,
                 attachment: message.attachment?.type === 'audio'
@@ -13026,8 +13051,10 @@ export const PhoneChat: React.FC = () => {
               }
             : message
         )))
-        await loadConversation(activeContact.id, { silent: true, useCache: false })
-        await loadChats({ silent: true, useCache: false })
+        void Promise.all([
+          loadConversation(activeContact.id, { silent: true, useCache: false }),
+          loadChats({ silent: true, useCache: false })
+        ])
       } catch (error: any) {
         const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
         setMessages((current) => current.map((message) => (
@@ -13180,13 +13207,17 @@ export const PhoneChat: React.FC = () => {
         const responseAudioMimeType = resultData.audio?.mimeType || resultData.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(resultData.audio?.durationMs || 0) || voiceToSend?.durationMs
         const routingData = resultData as { routingReason?: string; fallbackReason?: string }
+        const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => (
           message.id === optimisticId || message.id.startsWith(`${optimisticId}-attachment-`)
             ? {
                 ...message,
-                id: message.id === optimisticId || message.id === `${optimisticId}-attachment-0`
-                  ? resultData.localMessageId || message.id
-                  : message.id,
+                serverMessageId: message.id === optimisticId || message.id === `${optimisticId}-attachment-0`
+                  ? responseIds.serverMessageId || message.serverMessageId
+                  : message.serverMessageId,
+                providerMessageId: message.id === optimisticId || message.id === `${optimisticId}-attachment-0`
+                  ? responseIds.providerMessageId || message.providerMessageId
+                  : message.providerMessageId,
                 status: resultStatus,
                 transport: resultData.transport || message.transport,
                 routingReason: routingData.routingReason || routingData.fallbackReason || message.routingReason,
@@ -13201,8 +13232,10 @@ export const PhoneChat: React.FC = () => {
               }
             : message
         )))
-        await loadConversation(activeContact.id, { silent: true, useCache: false })
-        await loadChats({ silent: true, useCache: false })
+        void Promise.all([
+          loadConversation(activeContact.id, { silent: true, useCache: false }),
+          loadChats({ silent: true, useCache: false })
+        ])
       } catch (error: any) {
         const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
         setMessages((current) => current.map((message) => (
@@ -13403,10 +13436,13 @@ export const PhoneChat: React.FC = () => {
         const responseAudioUrl = result.audio?.link || result.audio?.url || result.localMedia?.publicUrl || ''
         const responseAudioMimeType = result.audio?.mimeType || result.audio?.mimetype || result.localMedia?.mimeType || ''
         const responseAudioDurationMs = Number(result.audio?.durationMs || 0) || voiceToSend.durationMs
+        const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => (
           message.id === `${optimisticId}-audio`
             ? {
-                ...message,
+              ...message,
+              serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+              providerMessageId: responseIds.providerMessageId || message.providerMessageId,
                 status: result.status || 'sent',
                 transport: result.transport || message.transport,
                 routingReason: result.routingReason || result.fallbackReason || message.routingReason,
@@ -13488,8 +13524,11 @@ export const PhoneChat: React.FC = () => {
                 const mediaUrl = resultMedia?.link || resultMedia?.url || result?.localMedia?.publicUrl || ''
                 const mediaMimeType = resultMedia?.mimeType || resultMedia?.mimetype || result?.localMedia?.mimeType || ''
                 const mediaFilename = result?.document?.filename || result?.document?.fileName || result?.video?.filename || result?.localMedia?.filename || ''
+                const responseIds = getChatSendResponseIds(result)
                 return {
                   ...message,
+                  serverMessageId: responseIds.serverMessageId || message.serverMessageId,
+                  providerMessageId: responseIds.providerMessageId || message.providerMessageId,
                   status: result?.status || 'sent',
                   transport: result?.transport || message.transport,
                   routingReason: result?.routingReason || result?.fallbackReason || message.routingReason,
@@ -13516,14 +13555,17 @@ export const PhoneChat: React.FC = () => {
           phoneNumberId: selectedBusinessPhone?.id || undefined,
           messageOrigin: 'manual_chat'
         })
+        const responseIds = getChatSendResponseIds(result)
         setMessages((current) => current.map((message) => (
           message.id === optimisticId
-            ? { ...message, status: result.status || 'sent', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
+            ? { ...message, serverMessageId: responseIds.serverMessageId || message.serverMessageId, providerMessageId: responseIds.providerMessageId || message.providerMessageId, status: result.status || 'sent', transport: result.transport || message.transport, routingReason: result.routingReason || result.fallbackReason || message.routingReason }
             : message
         )))
       }
-      await loadConversation(activeContact.id, { silent: true, useCache: false })
-      await loadChats({ silent: true, useCache: false })
+      void Promise.all([
+        loadConversation(activeContact.id, { silent: true, useCache: false }),
+        loadChats({ silent: true, useCache: false })
+      ])
     } catch (error: any) {
       const errorMessage = getErrorMessage(error, 'Intenta enviar el mensaje otra vez.')
       setMessages((current) => current.map((message) => (
