@@ -312,13 +312,8 @@ class CampaignsService {
     adset_id?: string
     ad_id?: string
   }): Promise<CampaignContact[]> {
-    try {
-      const data = await apiClient.get<CampaignContact[]>('/meta/contacts', { params })
-      const contacts = Array.isArray(data) ? data : []
-      return contacts
-    } catch (error) {
-      return []
-    }
+    const data = await apiClient.get<CampaignContact[]>('/meta/contacts', { params })
+    return Array.isArray(data) ? data : []
   }
 
   async verifyToken(): Promise<{

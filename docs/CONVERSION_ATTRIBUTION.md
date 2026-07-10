@@ -58,6 +58,13 @@ exista en `meta_ads` el mismo dia local en que se creo el contacto. Por eso
 `contacts.attribution_ad_id` debe permanecer estable: representa de que anuncio
 nacio el registro, no el ultimo anuncio que reabrio la conversacion.
 
+En Publicidad, cada cifra de interesados, citas, asistencias o ventas y su modal
+de contactos forman un solo contrato: deben usar el mismo rango, nivel de Meta
+(campana, conjunto o anuncio), validacion de atribucion, calendarios y
+deduplicacion por persona. El detalle debe listar exactamente a las personas que
+forman el conteo. Un error de consulta no se convierte en una lista vacia; la UI
+debe distinguir entre "cero contactos" y "no se pudo cargar".
+
 Para datos historicos afectados por imports o retouches anteriores, el backend
 agenda una vez el backfill
 `repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })` en segundo plano,

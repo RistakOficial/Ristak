@@ -294,6 +294,7 @@ export const Campaigns: React.FC = () => {
   const [modalType, setModalType] = useState<'interesados' | 'sales' | 'appointments' | 'attendances'>('interesados')
   const [modalContacts, setModalContacts] = useState<CampaignContact[]>([])
   const [modalLoading, setModalLoading] = useState(false)
+  const [modalError, setModalError] = useState<string | null>(null)
   const [modalTitle, setModalTitle] = useState('')
   const [selectedModalItem, setSelectedModalItem] = useState<any>(null)
 
@@ -879,6 +880,7 @@ export const Campaigns: React.FC = () => {
     setModalType(type)
     setModalTitle(`${typeLabel} - ${item.name}`)
     setModalContacts([])
+    setModalError(null)
     setSelectedModalItem(item)
 
     try {
@@ -901,8 +903,9 @@ export const Campaigns: React.FC = () => {
 
       const contacts = await campaignsService.getContactsByType(params)
       setModalContacts(contacts)
-    } catch (error) {
+    } catch {
       setModalContacts([])
+      setModalError('No se pudieron cargar los contactos. Intenta de nuevo.')
     } finally {
       setModalLoading(false)
     }
@@ -912,6 +915,7 @@ export const Campaigns: React.FC = () => {
   useEffect(() => {
     if (isModalOpen) {
       setModalContacts([]) // Limpiar datos anteriores
+      setModalError(null)
       // Si el modal está abierto, recargar los datos con las nuevas fechas
       if (selectedModalItem) {
         const loadModalData = async () => {
@@ -936,8 +940,9 @@ export const Campaigns: React.FC = () => {
 
             const contacts = await campaignsService.getContactsByType(params)
             setModalContacts(contacts)
-          } catch (error) {
+          } catch {
             setModalContacts([])
+            setModalError('No se pudieron cargar los contactos. Intenta de nuevo.')
           } finally {
             setModalLoading(false)
           }
@@ -2543,9 +2548,10 @@ export const Campaigns: React.FC = () => {
         onClose={() => {
           setIsModalOpen(false)
           setSelectedModalItem(null)
+          setModalError(null)
         }}
         title={modalTitle}
-        subtitle={modalContacts.length === 0
+        subtitle={modalError || (modalContacts.length === 0
           ? 'Sin datos para este periodo'
           : `${modalContacts.length} ${modalType === 'interesados'
             ? labels.leads.toLowerCase()
@@ -2553,7 +2559,7 @@ export const Campaigns: React.FC = () => {
               ? labels.customers.toLowerCase()
               : modalType === 'attendances'
                 ? 'asistencias'
-                : 'citas'}`}
+                : 'citas'}`)}
         data={modalContacts}
         loading={modalLoading}
         type={modalType}

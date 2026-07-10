@@ -441,7 +441,12 @@ Capacidades:
 - Reportes en vista `Identificados de anuncios` y Publicidad miden registros por
   `contacts.created_at` + `contacts.attribution_ad_id`, validando que el anuncio
   exista en `meta_ads` el mismo dia local de creacion del contacto. Por eso ese
-  `ad_id` debe quedarse congelado como origen de registro.
+  `ad_id` debe quedarse congelado como origen de registro. En Publicidad, los
+  conteos de interesados, citas, asistencias y ventas y el modal que abre cada
+  cifra deben reutilizar el mismo rango, nivel (campana, conjunto o anuncio),
+  atribucion, calendarios y deduplicacion por persona. Un fallo al cargar el
+  detalle debe mostrarse como error; nunca debe degradarse a una lista vacia que
+  parezca un resultado valido.
 - El backend agenda un backfill automatico versionado para datos historicos de
   WhatsApp API sin bloquear el arranque: `repairWhatsAppApiContactIdentityFromMessages({ limit: 0 })`
   corre en segundo plano cuando falta

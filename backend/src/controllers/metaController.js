@@ -2313,7 +2313,7 @@ export const getContactsByType = async (req, res) => {
 
     const placeholders = adIdsList.map(() => '?').join(',');
     let contactsQuery = `
-      SELECT DISTINCT
+      SELECT
         c.id,
         c.full_name,
         c.email,
