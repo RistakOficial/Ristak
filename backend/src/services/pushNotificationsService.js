@@ -662,7 +662,15 @@ function getNotificationContactAvatarUrl(payload = {}) {
 }
 
 function shouldUseNotificationServiceExtension(payload = {}) {
-  return Boolean(getNotificationContactAvatarUrl(payload) || getNotificationImageUrl(payload))
+  if (getNotificationContactAvatarUrl(payload) || getNotificationImageUrl(payload)) {
+    return true
+  }
+  // Chat: siempre corre la extensión de notificaciones (mutable-content) para que
+  // iOS pinte el avatar circular del remitente aunque el mensaje sea solo texto y sin
+  // URL de imagen. Si no hay foto real, la extensión dibuja las iniciales en el propio
+  // dispositivo, así que ya no dependemos de que exista una base URL pública para
+  // servir el PNG de iniciales.
+  return getNotificationCategory(payload).toLowerCase() === 'chat'
 }
 
 function getNotificationContactName(payload = {}) {
