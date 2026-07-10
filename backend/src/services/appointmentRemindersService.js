@@ -47,7 +47,9 @@ const MAX_AFTER_BOOKING_MS = 24 * 60 * 60 * 1000
 const SENDER_MODES = new Set(['contact', 'default', 'specific'])
 const SMART_OVERFLOWS = new Set(['before', 'next_day'])
 const CONTENT_MODES = new Set(['template', 'direct'])
-const REMINDER_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'email', 'messenger', 'instagram'])
+const AUTOMATIC_REMINDER_CHANNELS = new Set(['booking_channel', 'available_channel'])
+const REMINDER_CHANNELS = new Set(['booking_channel', 'available_channel', 'whatsapp', 'whatsapp_qr', 'email', 'messenger', 'instagram'])
+const REAL_REMINDER_CHANNELS = ['whatsapp', 'whatsapp_qr', 'instagram', 'messenger', 'email']
 const NO_CONFIRM_ACTIONS = new Set(['no_action', 'cancel_appointment', 'notify_push'])
 const CONFIRMATION_SUCCESS_ACTIONS = new Set(['mark_confirmed', 'chat_card', 'notify_push', 'chat_badge'])
 const DEFAULT_TEMPLATE_NAME_BY_PURPOSE = {
@@ -71,6 +73,8 @@ const FALLBACK_TEMPLATE_STATUSES = new Set([
   'DELETED'
 ])
 const CHANNEL_LABELS = {
+  booking_channel: 'Por el canal que agendó',
+  available_channel: 'Por canal disponible',
   whatsapp: 'WhatsApp API',
   whatsapp_qr: 'WhatsApp QR',
   email: 'correo electrónico',
@@ -86,6 +90,21 @@ function cleanString(value) {
 function isWhatsAppReminderChannel(channel = '') {
   const normalized = cleanString(channel).toLowerCase()
   return normalized === 'whatsapp' || normalized === 'whatsapp_qr'
+}
+
+function isAutomaticReminderChannel(channel = '') {
+  return AUTOMATIC_REMINDER_CHANNELS.has(cleanString(channel).toLowerCase())
+}
+
+function normalizeRealReminderChannel(channel = '') {
+  const normalized = cleanString(channel).toLowerCase().replace(/[\s-]+/g, '_')
+  if (!normalized) return ''
+  if (normalized.includes('whatsapp_qr') || normalized.includes('sms_qr') || normalized === 'qr' || normalized.includes('baileys') || normalized.includes('bailey')) return 'whatsapp_qr'
+  if (normalized.includes('whatsapp') || normalized === 'wa' || normalized.includes('waba') || normalized.includes('ycloud')) return 'whatsapp'
+  if (normalized.includes('instagram') || normalized === 'ig' || normalized.includes('instagram_dm')) return 'instagram'
+  if (normalized.includes('messenger') || normalized.includes('facebook') || normalized === 'fb') return 'messenger'
+  if (normalized.includes('email') || normalized.includes('correo') || normalized === 'mail') return 'email'
+  return REAL_REMINDER_CHANNELS.includes(normalized) ? normalized : ''
 }
 
 function parseJson(value, fallback) {
@@ -409,6 +428,31 @@ function buildReminderDeliveryHealth(reminder, template, senders = [], channelSt
     errors.push('Escribe el mensaje directo que se enviará en este recordatorio.')
   }
 
+  const apiSenders = senders.filter(sender => sender.apiEnabled)
+  const qrSenders = senders.filter(sender => sender.qrConnected)
+
+  if (isAutomaticReminderChannel(channel)) {
+    const hasAnyChannel = Boolean(
+      apiSenders.length ||
+      qrSenders.length ||
+      channelState.instagramConnected ||
+      channelState.messengerConnected ||
+      channelState.emailConnected
+    )
+    if (!hasAnyChannel) {
+      errors.push('Conecta al menos un canal de envío para usar el ruteo automático.')
+    }
+    const details = errors.length ? errors : warnings
+    const readyMessage = channel === 'booking_channel'
+      ? 'Listo para enviar por el canal que agendó, con respaldo por canal disponible.'
+      : 'Listo para enviar por el primer canal disponible.'
+    return {
+      status: errors.length ? 'error' : warnings.length ? 'warning' : 'ready',
+      message: details[0] || readyMessage,
+      details
+    }
+  }
+
   if (channel === 'email') {
     if (!channelState.emailConnected) {
       errors.push('Conecta el correo en Configuración > Correos para enviar este recordatorio.')
@@ -436,8 +480,6 @@ function buildReminderDeliveryHealth(reminder, template, senders = [], channelSt
     }
   }
 
-  const apiSenders = senders.filter(sender => sender.apiEnabled)
-  const qrSenders = senders.filter(sender => sender.qrConnected)
   const selectedSender = reminder.senderMode === 'specific'
     ? senders.find(sender => sender.id === reminder.senderPhoneNumberId)
     : null
@@ -585,6 +627,8 @@ export async function getAppointmentRemindersOverview() {
     reminders,
     senders,
     channels: [
+      { id: 'booking_channel', label: 'Por el canal que agendó', connected: whatsappApiConnected || whatsappQrConnected || channelState.instagramConnected || channelState.messengerConnected || channelState.emailConnected },
+      { id: 'available_channel', label: 'Por canal disponible', connected: whatsappApiConnected || whatsappQrConnected || channelState.instagramConnected || channelState.messengerConnected || channelState.emailConnected },
       { id: 'whatsapp', label: 'WhatsApp API', connected: whatsappApiConnected },
       { id: 'whatsapp_qr', label: 'WhatsApp QR solo', connected: whatsappQrConnected },
       { id: 'email', label: 'Correo electrónico', connected: channelState.emailConnected },
@@ -936,6 +980,15 @@ function getReminderChannelLabel(reminder = {}) {
   return CHANNEL_LABELS[cleanString(reminder.channel)] || cleanString(reminder.channel) || 'canal'
 }
 
+async function getReminderPlainText(reminder, appointment, timezone) {
+  if (reminder.contentMode === 'template') {
+    const template = await getReminderTemplateById(reminder.templateId)
+    if (!template) throw new Error('Selecciona un mensaje para renderizar el texto de este recordatorio.')
+    return renderReminderTemplateText(template, { appointment, timezone })
+  }
+  return getReminderDirectText(reminder, appointment, timezone)
+}
+
 function getMissingReminderTarget(reminder = {}, appointment = {}) {
   const channel = cleanString(reminder.channel) || 'whatsapp'
   if (isWhatsAppReminderChannel(channel) && !cleanString(appointment.phone)) {
@@ -948,6 +1001,136 @@ function getMissingReminderTarget(reminder = {}, appointment = {}) {
     return 'La cita no tiene contacto enlazado para enviar por Meta.'
   }
   return ''
+}
+
+function normalizeAppointmentSourceChannel(appointment = {}) {
+  for (const source of [
+    appointment.booking_channel,
+    appointment.source_channel,
+    appointment.channel,
+    appointment.origin_channel,
+    appointment.source,
+    appointment.origin
+  ]) {
+    const channel = normalizeRealReminderChannel(source)
+    if (channel) return channel
+  }
+  return ''
+}
+
+async function resolvePreferredWhatsAppSenderChannel(appointment = {}) {
+  const preferredId = cleanString(appointment.preferred_whatsapp_phone_number_id)
+  if (!preferredId) return ''
+  const row = await db.get(`
+    SELECT api_send_enabled, qr_send_enabled, qr_status
+    FROM whatsapp_api_phone_numbers
+    WHERE id = ?
+  `, [preferredId])
+  if (!row) return ''
+  if (Number(row.api_send_enabled || 0) === 1) return 'whatsapp'
+  if (Number(row.qr_send_enabled || 0) === 1 && cleanString(row.qr_status).toLowerCase() === 'connected') return 'whatsapp_qr'
+  return ''
+}
+
+async function resolveLatestContactMessageChannel(contactId) {
+  const id = cleanString(contactId)
+  if (!id) return ''
+  const row = await db.get(`
+    SELECT channel
+    FROM (
+      SELECT
+        CASE
+          WHEN LOWER(COALESCE(transport, 'api')) IN ('qr', 'whatsapp_qr', 'baileys', 'bailey') THEN 'whatsapp_qr'
+          ELSE 'whatsapp'
+        END AS channel,
+        COALESCE(message_timestamp, created_at) AS message_at,
+        created_at
+      FROM whatsapp_api_messages
+      WHERE contact_id = ?
+      UNION ALL
+      SELECT
+        CASE
+          WHEN LOWER(COALESCE(platform, '')) = 'instagram' THEN 'instagram'
+          ELSE 'messenger'
+        END AS channel,
+        COALESCE(message_timestamp, created_at) AS message_at,
+        created_at
+      FROM meta_social_messages
+      WHERE contact_id = ?
+        AND LOWER(COALESCE(platform, '')) IN ('instagram', 'messenger', 'facebook')
+      UNION ALL
+      SELECT
+        'email' AS channel,
+        COALESCE(message_timestamp, created_at) AS message_at,
+        created_at
+      FROM email_messages
+      WHERE contact_id = ?
+    ) latest_channels
+    ORDER BY message_at DESC, created_at DESC
+    LIMIT 1
+  `, [id, id, id])
+  return normalizeRealReminderChannel(row?.channel)
+}
+
+async function resolveAppointmentBookedChannel(appointment = {}) {
+  const sourceChannel = normalizeAppointmentSourceChannel(appointment)
+  if (sourceChannel === 'whatsapp') {
+    const preferredWhatsAppChannel = await resolvePreferredWhatsAppSenderChannel(appointment)
+    if (preferredWhatsAppChannel) return preferredWhatsAppChannel
+  }
+  if (sourceChannel) return sourceChannel
+
+  return await resolveLatestContactMessageChannel(appointment.contact_id) ||
+    await resolvePreferredWhatsAppSenderChannel(appointment) ||
+    ''
+}
+
+function buildAutomaticChannelOrder(mode, preferredChannel = '') {
+  const priority = [...REAL_REMINDER_CHANNELS]
+  const preferred = normalizeRealReminderChannel(preferredChannel)
+  const ordered = mode === 'booking_channel' && preferred
+    ? [preferred, ...priority]
+    : priority
+  return [...new Set(ordered)]
+}
+
+async function sendReminderByResolvedChannel({ reminder, appointment, timezone, channel }) {
+  const resolvedChannel = normalizeRealReminderChannel(channel)
+  if (!resolvedChannel) throw new Error('Canal de envío inválido.')
+  const resolvedReminder = {
+    ...reminder,
+    channel: resolvedChannel,
+    qrFallbackEnabled: false,
+    senderMode: isWhatsAppReminderChannel(resolvedChannel) ? reminder.senderMode : 'contact'
+  }
+  const missingTarget = getMissingReminderTarget(resolvedReminder, appointment)
+  if (missingTarget) throw new Error(missingTarget)
+  const response = await sendAppointmentReminderByChannel({ reminder: resolvedReminder, appointment, timezone })
+  return {
+    ...response,
+    resolvedChannel
+  }
+}
+
+async function sendAppointmentReminderByAutomaticChannel({ reminder, appointment, timezone }) {
+  const mode = cleanString(reminder.channel)
+  const preferredChannel = mode === 'booking_channel'
+    ? await resolveAppointmentBookedChannel(appointment)
+    : ''
+  const channels = buildAutomaticChannelOrder(mode, preferredChannel)
+  const failures = []
+
+  for (const channel of channels) {
+    try {
+      return await sendReminderByResolvedChannel({ reminder, appointment, timezone, channel })
+    } catch (error) {
+      failures.push(`${CHANNEL_LABELS[channel] || channel}: ${error.message}`)
+    }
+  }
+
+  throw new Error(failures.length
+    ? `No se pudo enviar por ningún canal disponible. ${failures.join(' | ')}`
+    : 'No hay ningún canal disponible para este contacto.')
 }
 
 async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, timezone }) {
@@ -992,8 +1175,8 @@ async function sendReminderViaWhatsAppDirect({ reminder, appointment, sender, ti
 }
 
 async function sendReminderViaEmail({ reminder, appointment, timezone }) {
-  const text = getReminderDirectText(reminder, appointment, timezone)
-  if (!text) throw new Error('Escribe el mensaje directo que se enviará por correo.')
+  const text = await getReminderPlainText(reminder, appointment, timezone)
+  if (!text) throw new Error('Escribe el mensaje que se enviará por correo.')
 
   return sendEmailToContact({
     contactId: appointment.contact_id,
@@ -1007,8 +1190,8 @@ async function sendReminderViaEmail({ reminder, appointment, timezone }) {
 
 async function sendReminderViaMetaSocial({ reminder, appointment, timezone }) {
   const channel = cleanString(reminder.channel) === 'instagram' ? 'instagram' : 'messenger'
-  const text = getReminderDirectText(reminder, appointment, timezone)
-  if (!text) throw new Error(`Escribe el mensaje directo que se enviará por ${CHANNEL_LABELS[channel]}.`)
+  const text = await getReminderPlainText(reminder, appointment, timezone)
+  if (!text) throw new Error(`Escribe el mensaje que se enviará por ${CHANNEL_LABELS[channel]}.`)
 
   return sendMetaSocialTextMessage({
     contactId: appointment.contact_id,
@@ -1122,6 +1305,9 @@ async function sendReminderViaWhatsAppQrOnly({ reminder, appointment, timezone }
 
 async function sendAppointmentReminderByChannel({ reminder, appointment, timezone }) {
   const channel = cleanString(reminder.channel) || 'whatsapp'
+  if (isAutomaticReminderChannel(channel)) {
+    return sendAppointmentReminderByAutomaticChannel({ reminder, appointment, timezone })
+  }
   if (channel === 'email') {
     return sendReminderViaEmail({ reminder, appointment, timezone })
   }
@@ -1373,7 +1559,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
         sent += 1
         const transport = response?.transport === 'qr'
           ? 'WhatsApp QR'
-          : response?.transport || response?.channel || getReminderChannelLabel(reminder)
+          : response?.transport || response?.channel || CHANNEL_LABELS[response?.resolvedChannel] || getReminderChannelLabel(reminder)
         const target = appointment.phone || appointment.email || appointment.contact_id
         logger.info(`[Citas] Mensaje automático "${reminder.name}" enviado por ${transport} a ${target} (cita ${appointment.id})`)
       } catch (error) {

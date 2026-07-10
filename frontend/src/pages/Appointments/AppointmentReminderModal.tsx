@@ -160,6 +160,7 @@ const buildTemplatePreview = (template?: MessageTemplate | null) => {
 }
 
 const isWhatsAppChannelId = (channelId: string) => channelId === 'whatsapp' || channelId === 'whatsapp_qr'
+const isAutomaticChannelId = (channelId: string) => channelId === 'booking_channel' || channelId === 'available_channel'
 
 export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> = ({
   isOpen,
@@ -232,6 +233,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   const channel = channels.find(item => item.id === selectedChannelId) || channels[0]
   const isWhatsAppApiChannel = selectedChannelId === 'whatsapp'
   const isWhatsAppQrOnly = selectedChannelId === 'whatsapp_qr'
+  const isBookingChannel = selectedChannelId === 'booking_channel'
+  const isAvailableChannel = selectedChannelId === 'available_channel'
+  const isAutomaticChannel = isAutomaticChannelId(selectedChannelId)
   const usesWhatsApp = isWhatsAppChannelId(selectedChannelId)
   const contentMode = usesWhatsApp ? (draft.contentMode || 'template') : 'direct'
   const isDirectMessage = contentMode === 'direct'
@@ -366,6 +370,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const changeChannel = (nextChannel: string) => {
     const nextUsesWhatsApp = isWhatsAppChannelId(nextChannel)
+    const nextAutomatic = isAutomaticChannelId(nextChannel)
     const nextContentMode = nextChannel === 'whatsapp_qr'
       ? 'direct'
       : nextUsesWhatsApp
@@ -376,8 +381,8 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
       channel: nextChannel,
       contentMode: prev.contentMode === 'direct' ? 'direct' : nextContentMode,
       qrFallbackEnabled: nextChannel === 'whatsapp' ? prev.qrFallbackEnabled : false,
-      senderMode: nextUsesWhatsApp ? prev.senderMode : 'contact',
-      senderPhoneNumberId: nextUsesWhatsApp ? prev.senderPhoneNumberId : null
+      senderMode: nextUsesWhatsApp && !nextAutomatic ? prev.senderMode : 'contact',
+      senderPhoneNumberId: nextUsesWhatsApp && !nextAutomatic ? prev.senderPhoneNumberId : null
     }))
   }
 
@@ -638,7 +643,19 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                 )}
               </div>
             )}
-            {!usesWhatsApp && (
+            {isBookingChannel && (
+              <p className={styles.helpText}>
+                Ristak intentará enviar por el mismo canal donde nació la cita. Si ese canal falla o no está disponible,
+                usará el siguiente canal conectado como respaldo.
+              </p>
+            )}
+            {isAvailableChannel && (
+              <p className={styles.helpText}>
+                Ristak elegirá automáticamente el primer canal conectado en este orden: WhatsApp API, WhatsApp QR,
+                Instagram, Messenger y correo electrónico.
+              </p>
+            )}
+            {!usesWhatsApp && !isAutomaticChannel && (
               <p className={styles.helpText}>
                 Este canal usa mensaje directo. Ristak lo enviará si el contacto tiene ese canal enlazado y la integración está conectada.
               </p>
@@ -809,7 +826,9 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               />
               <span className={styles.helpText}>
                 {contentMode === 'direct'
-                  ? usesWhatsApp
+                  ? isAutomaticChannel
+                    ? 'Ristak enviará este texto por el canal automático elegido, renderizando variables como {{contact.first_name}}, {{cita.fecha}} y {{cita.hora}}.'
+                    : usesWhatsApp
                     ? isWhatsAppQrOnly
                       ? 'Ristak enviará este texto por WhatsApp QR como canal principal. No requiere aprobación de Meta ni ventana de 24 horas.'
                       : 'Ristak enviará este texto si WhatsApp permite mensaje libre: por API requiere conversación abierta de 24 horas; por QR se manda como texto normal.'

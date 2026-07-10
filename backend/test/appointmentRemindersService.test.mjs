@@ -552,6 +552,105 @@ test('recordatorios de citas con canal WhatsApp QR solo usan QR aunque exista AP
   })
 })
 
+test('recordatorios por canal disponible caen de WhatsApp API a QR si API falla', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const sentMessages = []
+    await withReminderFixture({
+      ycloudStatus: 'APPROVED',
+      apiSendEnabled: true,
+      qrSendEnabled: true,
+      qrStatus: 'connected'
+    }, async ({ reminder, appointmentId, contactId, phone, phoneNumberId }) => {
+      await attachQrSessionForReminder(phoneNumberId, '+526561234567', sentMessages)
+      await db.run(`
+        INSERT INTO whatsapp_api_messages (
+          id, provider, origin, business_phone_number_id, contact_id, phone,
+          from_phone, to_phone, business_phone, transport, direction,
+          message_type, message_text, status, message_timestamp,
+          created_at, updated_at
+        ) VALUES (?, 'ycloud', 'test_open_window', 'phone_appointment_reminder_test', ?, ?, ?, '+526561234567',
+          '+526561234567', 'api', 'inbound', 'text', 'Hola', 'received', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `, [
+        `wa_available_in_${appointmentId}`,
+        contactId,
+        phone,
+        phone,
+        new Date().toISOString()
+      ])
+      await db.run(`
+        UPDATE appointment_reminders
+        SET channel = 'available_channel',
+            content_mode = 'direct',
+            template_id = NULL,
+            template_name = '',
+            message_text = 'Canal disponible para {{contact.first_name}}.'
+        WHERE id = ?
+      `, [reminder.id])
+
+      const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.equal(result.sent, 1)
+      assert.equal(result.errors, 0)
+      assert.equal(captures.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.match(sentMessages[0].payload.text, /Canal disponible para Ana/)
+
+      const send = await db.get(
+        'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
+        [appointmentId]
+      )
+      assert.equal(send.status, 'sent')
+      assert.equal(send.error_message, null)
+      assert.equal(send.sent_message_id, 'qr_appointment_msg_1')
+    })
+  }, {
+    onMessage: async () => ycloudJsonResponse(
+      { error: { message: 'WhatsApp Business no está conectado' } },
+      { status: 409, statusText: 'Conflict' }
+    )
+  })
+})
+
+test('recordatorios por canal que agendó respetan WhatsApp QR aunque API exista', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const sentMessages = []
+    await withReminderFixture({
+      ycloudStatus: 'APPROVED',
+      apiSendEnabled: true,
+      qrSendEnabled: true,
+      qrStatus: 'connected'
+    }, async ({ reminder, appointmentId, phoneNumberId }) => {
+      await attachQrSessionForReminder(phoneNumberId, '+526561234567', sentMessages)
+      await db.run("UPDATE appointments SET source = 'whatsapp_qr' WHERE id = ?", [appointmentId])
+      await db.run(`
+        UPDATE appointment_reminders
+        SET channel = 'booking_channel',
+            content_mode = 'direct',
+            template_id = NULL,
+            template_name = '',
+            message_text = 'Canal donde agendó para {{contact.first_name}}.'
+        WHERE id = ?
+      `, [reminder.id])
+
+      const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.equal(result.sent, 1)
+      assert.equal(result.errors, 0)
+      assert.equal(captures.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.match(sentMessages[0].payload.text, /Canal donde agendó para Ana/)
+
+      const send = await db.get(
+        'SELECT status, sent_message_id, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
+        [appointmentId]
+      )
+      assert.equal(send.status, 'sent')
+      assert.equal(send.error_message, null)
+      assert.equal(send.sent_message_id, 'qr_appointment_msg_1')
+    })
+  })
+})
+
 test('recordatorios de citas reintentan errores después del enfriamiento sin spamear', async () => {
   let failProvider = true
 

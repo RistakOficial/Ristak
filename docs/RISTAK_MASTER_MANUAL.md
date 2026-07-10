@@ -1292,6 +1292,11 @@ reserva como si el cliente hubiera agendado por Ristak.
 Cada recordatorio/aviso guarda canal y contenido por separado. En la UI, el canal
 visible `WhatsApp API` guarda `channel='whatsapp'`; `WhatsApp QR solo` guarda
 `channel='whatsapp_qr'`. Tambien puede ser `email`, `messenger` o `instagram`.
+Los modos automaticos guardan `channel='booking_channel'` para "Por el canal que
+agendo" y `channel='available_channel'` para "Por canal disponible". El primero
+intenta respetar el canal detectado de la cita/contacto y luego cae al siguiente
+canal disponible si falla; el segundo usa prioridad fija: WhatsApp API, WhatsApp
+QR, Instagram, Messenger y correo electronico.
 `channel='whatsapp'` usa WhatsApp API como ruta principal y QR solo como
 respaldo opcional. `channel='whatsapp_qr'` usa WhatsApp QR como ruta principal
 aunque tambien exista API conectada. En los dos canales de WhatsApp, el contenido
@@ -1299,6 +1304,8 @@ puede ser `content_mode='template'` para seleccionar un mensaje guardado o
 `content_mode='direct'` para texto editable; en QR el mensaje guardado se renderiza
 como texto y no depende de aprobacion de Meta. En correo, Messenger e Instagram,
 Ristak fuerza mensaje directo porque esos canales no usan plantillas de WhatsApp.
+Los modos automaticos tambien usan mensaje directo editable por default para que
+puedan caer correctamente en canales no WhatsApp.
 El texto directo usa variables como `{{contact.first_name}}`, `{{cita.fecha}}` y
 `{{cita.hora}}`.
 
