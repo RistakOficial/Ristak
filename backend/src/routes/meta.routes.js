@@ -3,7 +3,6 @@ import {
   saveConfig,
   getConfig,
   revealMetaToken,
-  saveInstagramTokenConfig,
   getMetaWebhookInfo,
   syncAds,
   getSyncProgressEndpoint,
@@ -55,7 +54,6 @@ router.post('/config', saveConfig)
 router.get('/config', getConfig)
 router.delete('/config', deleteMetaConfig)
 router.get('/config/reveal/access_token', revealMetaToken)
-router.post('/config/instagram-token', saveInstagramTokenConfig)
 router.get('/webhook-info', getMetaWebhookInfo)
 router.get('/verify-token', verifyToken)
 // Suscribir la Página al webhook de mensajería (Messenger/Instagram DM)

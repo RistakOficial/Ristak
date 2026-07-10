@@ -370,40 +370,6 @@
   flex-shrink: 0;
 }
 
-.instagramTokenBlock {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  min-width: 0;
-}
-
-.instagramTokenInput {
-  width: 100%;
-  min-height: 86px;
-  resize: vertical;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-ctl);
-  background: var(--surface-2);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.instagramTokenInput:focus {
-  border-color: var(--accent);
-  outline: none;
-  box-shadow: var(--ristak-focus-ring);
-}
-
-.instagramTokenActions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .webhookFields {
   display: flex;
   flex-direction: column;
@@ -1855,8 +1821,7 @@
   }
 
   .socialSettingRow,
-  .socialSettingControl,
-  .instagramTokenActions {
+  .socialSettingControl {
     align-items: stretch;
     flex-direction: column;
   }
@@ -1866,8 +1831,7 @@
   .metaTestActions button,
   .metaTestSecondaryActions button,
   .metaTestPrimaryActions button,
-  .connectedActions button,
-  .instagramTokenActions button {
+  .connectedActions button {
     width: 100%;
   }
 }

@@ -597,7 +597,8 @@ async function saveOutboundCommentEcho(comment) {
 
 // El webhook de comentarios trae from.{id,name} pero NO siempre trae foto. Para
 // FB hacemos best-effort desde el comment_id. Para IG, si Meta entrega el IGSID,
-// lo consultamos igual que un DM por Instagram Graph (name, username, profile_pic).
+// lo consultamos igual que un DM con las credenciales Graph resueltas
+// (name, username, profile_pic).
 async function fetchMetaCommentAuthorProfile({ platform, commentId, authorId, accessToken, baseUrl = getMetaSocialGraphBaseUrl(platform) }) {
   if (!accessToken) return {}
   try {
@@ -661,7 +662,7 @@ async function cacheDeletedSocialPost(comment, error = null) {
   })
 }
 
-async function fetchAndCacheSocialPost(comment, accessToken) {
+async function fetchAndCacheSocialPost(comment, accessToken, baseUrl = '') {
   const platform = comment.platform
   const postId = platform === 'instagram' ? cleanString(comment.mediaId) : cleanString(comment.postId)
   if (!postId || !accessToken) return
@@ -669,11 +670,11 @@ async function fetchAndCacheSocialPost(comment, accessToken) {
   if (existing) return
 
   try {
-    const baseUrl = getMetaSocialGraphBaseUrl(platform)
+    const graphBaseUrl = cleanString(baseUrl) || getMetaSocialGraphBaseUrl(platform)
     const fields = platform === 'instagram'
       ? 'caption,media_type,media_url,thumbnail_url,permalink,timestamp'
       : 'message,permalink_url,created_time,full_picture'
-    const data = await metaSocialGraphRequest(`/${encodeURIComponent(postId)}`, { token: accessToken, baseUrl, query: { fields } })
+    const data = await metaSocialGraphRequest(`/${encodeURIComponent(postId)}`, { token: accessToken, baseUrl: graphBaseUrl, query: { fields } })
     const message = platform === 'instagram' ? cleanString(data?.caption) : cleanString(data?.message)
     const imageUrl = platform === 'instagram'
       ? cleanString(data?.thumbnail_url || data?.media_url)
@@ -701,7 +702,8 @@ async function fetchAndCacheSocialPost(comment, accessToken) {
 
 // Nombre del participante vía el endpoint de conversaciones cuando el perfil
 // directo viene restringido. La llamada conserva el contrato por plataforma:
-// Messenger usa Page/Facebook Graph; Instagram usa IG account/Instagram Graph.
+// Messenger e Instagram usan Page/Facebook Graph; Instagram se opera desde la
+// Página enlazada con el Page token derivado.
 // La foto no sale por este fallback, solo el nombre.
 async function fetchMetaConversationParticipantName({ platform, senderId, businessId, pageId, accessToken, baseUrl = getMetaSocialGraphBaseUrl(platform) }) {
   const conversationOwnerId = cleanString(businessId || pageId)
@@ -829,7 +831,7 @@ function isMetaPermissionError(error) {
 
 function createMetaSocialCapabilityMessage(platform) {
   if (platform === 'instagram') {
-    return 'Meta bloqueó Instagram DM: falta aprobar Instagram API con Instagram Login para mensajes (instagram_business_basic e instagram_business_manage_messages) en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y guarda el Instagram API token en Configuración > Meta Ads > Redes sociales. Detalle: (#3).'
+    return 'Meta bloqueó Instagram DM: falta capacidad de mensajería de Instagram en la app de Meta o la cuenta profesional no está habilitada para ese endpoint. Revisa instagram_manage_messages, app Live/Advanced Access y que Instagram esté enlazado a la Página. Detalle: (#3).'
   }
 
   return 'Meta bloqueó Messenger: falta aprobar pages_messaging en la app de Meta. Apruébalo, pon la app en Live si respondes a clientes reales y reconecta Meta en Ristak para regenerar el token. Detalle: (#3).'
@@ -837,7 +839,7 @@ function createMetaSocialCapabilityMessage(platform) {
 
 function createMetaSocialPermissionMessage(platform) {
   if (platform === 'instagram') {
-    return 'Meta rechazó Instagram DM por permisos insuficientes. Revisa que el token sea un Instagram User access token con instagram_business_basic e instagram_business_manage_messages, generado por una persona que pueda responder desde esa cuenta profesional.'
+    return 'Meta rechazó Instagram DM por permisos insuficientes. Revisa que el token base pueda derivar el token de la Página y que incluya instagram_manage_messages; si usas Instagram Login directo, revisa instagram_business_manage_messages.'
   }
 
   return 'Meta rechazó Messenger por permisos insuficientes. Revisa que el token de la Página incluya pages_messaging y que la persona/cuenta tenga acceso de mensajería sobre la Página conectada.'
@@ -968,33 +970,52 @@ function isInstagramPlatform(platform = '') {
   return cleanString(platform).toLowerCase() === 'instagram'
 }
 
-function looksLikeInstagramAccessToken(token = '') {
-  return cleanString(token).toUpperCase().startsWith('IG')
+function getMetaSocialGraphBaseUrl() {
+  return API_URLS.META_GRAPH
 }
 
-function resolveInstagramAccessToken(config = {}) {
-  const instagramToken = cleanString(config?.instagram_access_token)
-  if (instagramToken) return instagramToken
+function hasMetaSocialGraphTokenSource(platform, config = {}) {
+  if (isInstagramPlatform(platform)) {
+    return Boolean(
+      cleanString(config?.access_token) &&
+      cleanString(config?.page_id) &&
+      cleanString(config?.instagram_account_id)
+    )
+  }
 
-  const legacyToken = cleanString(config?.access_token)
-  return looksLikeInstagramAccessToken(legacyToken) ? legacyToken : ''
+  return Boolean(cleanString(config?.access_token))
 }
 
-function getMetaSocialGraphBaseUrl(platform = '') {
-  return isInstagramPlatform(platform) ? API_URLS.INSTAGRAM_GRAPH : API_URLS.META_GRAPH
+async function resolveMetaSocialGraphCredentials(platform, config, { forceRefresh = false, safe = false } = {}) {
+  if (isInstagramPlatform(platform)) {
+    let token = ''
+    try {
+      token = await resolveMetaPageAccessToken({ config, forceRefresh })
+    } catch (error) {
+      if (!safe) throw error
+      logger.warn(`No se pudo derivar token de Página para Instagram: ${error.message}`)
+    }
+    return { token, baseUrl: API_URLS.META_GRAPH, tokenSource: 'page' }
+  }
+
+  const token = safe
+    ? await resolveMetaPageTokenSafe(config)
+    : await resolveMetaPageAccessToken({ config, forceRefresh })
+  return { token, baseUrl: API_URLS.META_GRAPH, tokenSource: 'page' }
 }
 
 async function resolveMetaSocialGraphToken(platform, config, { forceRefresh = false, safe = false } = {}) {
-  if (isInstagramPlatform(platform)) {
-    const token = resolveInstagramAccessToken(config)
-    if (!token && !safe) {
-      throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para operar Instagram.', 409)
-    }
-    return token
+  const credentials = await resolveMetaSocialGraphCredentials(platform, config, { forceRefresh, safe })
+  if (!credentials.token && !safe) {
+    throw createMetaSocialMessageError(
+      isInstagramPlatform(platform)
+        ? 'Conecta Meta Ads y selecciona la Página enlazada a Instagram para operar Instagram.'
+        : 'Conecta Meta Ads para operar Messenger.',
+      409
+    )
   }
 
-  if (safe) return resolveMetaPageTokenSafe(config)
-  return resolveMetaPageAccessToken({ config, forceRefresh })
+  return credentials.token
 }
 
 function normalizeMetaSocialHistoryPlatform(platform = '') {
@@ -1338,8 +1359,9 @@ export async function syncMetaSocialConversationHistory({
     }
   }
 
-  const graphToken = await resolveMetaSocialGraphToken(cleanPlatform, cfg)
-  const baseUrl = getMetaSocialGraphBaseUrl(cleanPlatform)
+  const graphCredentials = await resolveMetaSocialGraphCredentials(cleanPlatform, cfg)
+  const graphToken = graphCredentials.token
+  const baseUrl = graphCredentials.baseUrl
   const conversationLimit = clampPositiveInteger(maxConversations, META_SOCIAL_HISTORY_MAX_CONVERSATIONS, META_SOCIAL_HISTORY_MAX_CONVERSATIONS)
   const messageLimit = clampPositiveInteger(maxMessagesPerConversation, META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION, META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION)
   const totalMessageLimit = clampPositiveInteger(maxTotalMessages, META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES, META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES)
@@ -1445,12 +1467,12 @@ function normalizeSocialPostPlatform(platform) {
   return String(platform || '').toLowerCase() === 'instagram' ? 'instagram' : 'facebook'
 }
 
-async function syncMetaSocialPostsFromGraph(platform, config, graphToken, { maxPages = Infinity } = {}) {
+async function syncMetaSocialPostsFromGraph(platform, config, graphToken, { maxPages = Infinity, baseUrl = '' } = {}) {
   const isIg = platform === 'instagram'
   const businessId = isIg ? cleanString(config?.instagram_account_id) : cleanString(config?.page_id)
   if (!businessId) return 0
   const edge = isIg ? 'media' : 'published_posts'
-  const baseUrl = getMetaSocialGraphBaseUrl(platform)
+  const graphBaseUrl = cleanString(baseUrl) || getMetaSocialGraphBaseUrl(platform)
   const fields = isIg
     ? 'id,caption,media_type,media_url,thumbnail_url,permalink,timestamp'
     : 'id,message,story,full_picture,permalink_url,created_time'
@@ -1464,7 +1486,7 @@ async function syncMetaSocialPostsFromGraph(platform, config, graphToken, { maxP
     if (after) query.after = after
     let data
     try {
-      data = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/${edge}`, { token: graphToken, baseUrl, query })
+      data = await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/${edge}`, { token: graphToken, baseUrl: graphBaseUrl, query })
     } catch (error) {
       if (!rows.length) throw error // primer batch falla (permiso/token) → propaga
       logger.warn(`[Meta posts] paginación cortada en ${platform}: ${error.message}`)
@@ -1523,8 +1545,8 @@ async function syncPostsOnce(platform, config, { maxPages = Infinity } = {}) {
   if (postsSyncing.has(platform)) return 0
   postsSyncing.add(platform)
   try {
-    const graphToken = await resolveMetaSocialGraphToken(platform, config)
-    const n = await syncMetaSocialPostsFromGraph(platform, config, graphToken, { maxPages })
+    const graphCredentials = await resolveMetaSocialGraphCredentials(platform, config)
+    const n = await syncMetaSocialPostsFromGraph(platform, config, graphCredentials.token, { maxPages, baseUrl: graphCredentials.baseUrl })
     if (maxPages === Infinity) postsSyncState.set(platform, Date.now())
     logger.info(`[Meta posts] ${platform}: ${n} publicaciones sincronizadas`)
     return n
@@ -1562,8 +1584,8 @@ export async function listMetaSocialPosts({ platform = 'facebook', search = '', 
   if (cachedCount === 0) {
     // Sin caché: trae SOLO la primera página de forma síncrona para responder ya,
     // y completa el resto en segundo plano (el dropdown ya muestra publicaciones).
-    const graphToken = await resolveMetaSocialGraphToken(cleanPlatform, config)
-    await syncMetaSocialPostsFromGraph(cleanPlatform, config, graphToken, { maxPages: POSTS_QUICK_PAGES })
+    const graphCredentials = await resolveMetaSocialGraphCredentials(cleanPlatform, config)
+    await syncMetaSocialPostsFromGraph(cleanPlatform, config, graphCredentials.token, { maxPages: POSTS_QUICK_PAGES, baseUrl: graphCredentials.baseUrl })
     void syncPostsOnce(cleanPlatform, config).catch(() => {})
   } else if (refresh) {
     // Refresco manual: el usuario lo pidió, esperamos la pasada completa.
@@ -1655,6 +1677,14 @@ function getMetaSocialBusinessId(platform, config = {}, profile = {}) {
   return cleanString(profile.page_id) || cleanString(config.page_id)
 }
 
+function getMetaInstagramMessagesPath({ config = {} } = {}) {
+  const pageId = cleanString(config?.page_id)
+  if (!pageId) {
+    throw createMetaSocialMessageError('Falta seleccionar la Página enlazada a Instagram en Meta Ads.', 409)
+  }
+  return `/${encodeURIComponent(pageId)}/messages`
+}
+
 async function resolveMetaSocialMessageReference({ contactId, platform, messageId, providerMessageId } = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
@@ -1733,15 +1763,12 @@ async function sendMetaMessengerTextRequest({ businessId, recipientId, body, con
 }
 
 async function sendMetaInstagramTextRequest({ businessId, recipientId, body, config, replyToProviderMessageId = '' }) {
-  const instagramUserToken = resolveInstagramAccessToken(config)
-  if (!instagramUserToken) {
-    throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
-  }
+  const graphCredentials = await resolveMetaSocialGraphCredentials('instagram', config)
 
-  return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+  return await metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
     method: 'POST',
-    token: instagramUserToken,
-    baseUrl: API_URLS.INSTAGRAM_GRAPH,
+    token: graphCredentials.token,
+    baseUrl: graphCredentials.baseUrl,
     body: {
       recipient: { id: recipientId },
       message: {
@@ -1786,15 +1813,12 @@ async function sendMetaMessengerAttachmentRequest({ businessId, recipientId, att
 }
 
 async function sendMetaInstagramAttachmentRequest({ businessId, recipientId, attachmentType, attachmentUrl, config, replyToProviderMessageId = '' }) {
-  const instagramUserToken = resolveInstagramAccessToken(config)
-  if (!instagramUserToken) {
-    throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
-  }
+  const graphCredentials = await resolveMetaSocialGraphCredentials('instagram', config)
 
-  return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+  return await metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
     method: 'POST',
-    token: instagramUserToken,
-    baseUrl: API_URLS.INSTAGRAM_GRAPH,
+    token: graphCredentials.token,
+    baseUrl: graphCredentials.baseUrl,
     body: {
       recipient: { id: recipientId },
       message: {
@@ -1839,15 +1863,12 @@ async function sendMetaMessengerReactionRequest({ businessId, recipientId, react
 }
 
 async function sendMetaInstagramReactionRequest({ businessId, recipientId, reaction, targetProviderMessageId, config }) {
-  const instagramUserToken = resolveInstagramAccessToken(config)
-  if (!instagramUserToken) {
-    throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
-  }
+  const graphCredentials = await resolveMetaSocialGraphCredentials('instagram', config)
 
-  return await metaSocialGraphRequest(`/${encodeURIComponent(businessId)}/messages`, {
+  return await metaSocialGraphRequest(getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials }), {
     method: 'POST',
-    token: instagramUserToken,
-    baseUrl: API_URLS.INSTAGRAM_GRAPH,
+    token: graphCredentials.token,
+    baseUrl: graphCredentials.baseUrl,
     body: {
       recipient: { id: recipientId },
       sender_action: 'react',
@@ -1883,15 +1904,12 @@ async function sendMetaMessengerMarkSeenRequest({ businessId, recipientId, confi
 }
 
 async function sendMetaInstagramMarkSeenRequest({ recipientId, config }) {
-  const instagramUserToken = resolveInstagramAccessToken(config)
-  if (!instagramUserToken) {
-    throw createMetaSocialMessageError('Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.', 409)
-  }
+  const graphCredentials = await resolveMetaSocialGraphCredentials('instagram', config)
 
-  return await metaSocialGraphRequest('/me/messages', {
+  return await metaSocialGraphRequest(getMetaInstagramMessagesPath({ config, credentials: graphCredentials }), {
     method: 'POST',
-    token: instagramUserToken,
-    baseUrl: API_URLS.INSTAGRAM_GRAPH,
+    token: graphCredentials.token,
+    baseUrl: graphCredentials.baseUrl,
     body: {
       recipient: { id: recipientId },
       sender_action: 'mark_seen'
@@ -2018,13 +2036,11 @@ export async function sendMetaSocialTextMessage({ contactId, platform, message, 
     logger.warn(`No se pudo leer Meta para enviar DM: ${error.message}`)
     return null
   })
-  const hasRequiredToken = cleanPlatform === 'instagram'
-    ? Boolean(resolveInstagramAccessToken(config || {}))
-    : Boolean(cleanString(config?.access_token))
+  const hasRequiredToken = hasMetaSocialGraphTokenSource(cleanPlatform, config || {})
   if (!hasRequiredToken) {
     throw createMetaSocialMessageError(
       cleanPlatform === 'instagram'
-        ? 'Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.'
+        ? 'Conecta Meta Ads con un token que pueda operar la Página enlazada a Instagram.'
         : 'Conecta Meta Ads para responder por Messenger.',
       409
     )
@@ -2114,13 +2130,11 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
     logger.warn(`No se pudo leer Meta para enviar audio DM: ${error.message}`)
     return null
   })
-  const hasRequiredToken = cleanPlatform === 'instagram'
-    ? Boolean(resolveInstagramAccessToken(config || {}))
-    : Boolean(cleanString(config?.access_token))
+  const hasRequiredToken = hasMetaSocialGraphTokenSource(cleanPlatform, config || {})
   if (!hasRequiredToken) {
     throw createMetaSocialMessageError(
       cleanPlatform === 'instagram'
-        ? 'Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.'
+        ? 'Conecta Meta Ads con un token que pueda operar la Página enlazada a Instagram.'
         : 'Conecta Meta Ads para responder por Messenger.',
       409
     )
@@ -2247,13 +2261,11 @@ export async function sendMetaSocialReactionMessage({ contactId, platform, emoji
     logger.warn(`No se pudo leer Meta para reaccionar DM: ${error.message}`)
     return null
   })
-  const hasRequiredToken = cleanPlatform === 'instagram'
-    ? Boolean(resolveInstagramAccessToken(config || {}))
-    : Boolean(cleanString(config?.access_token))
+  const hasRequiredToken = hasMetaSocialGraphTokenSource(cleanPlatform, config || {})
   if (!hasRequiredToken) {
     throw createMetaSocialMessageError(
       cleanPlatform === 'instagram'
-        ? 'Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder por Instagram.'
+        ? 'Conecta Meta Ads con un token que pueda operar la Página enlazada a Instagram.'
         : 'Conecta Meta Ads para responder por Messenger.',
       409
     )
@@ -2448,13 +2460,11 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     logger.warn(`No se pudo leer Meta para responder comentario: ${error.message}`)
     return null
   })
-  const hasRequiredToken = cleanPlatform === 'instagram'
-    ? Boolean(resolveInstagramAccessToken(config || {}))
-    : Boolean(cleanString(config?.access_token))
+  const hasRequiredToken = hasMetaSocialGraphTokenSource(cleanPlatform, config || {})
   if (!hasRequiredToken) {
     throw createMetaSocialMessageError(
       cleanPlatform === 'instagram'
-        ? 'Agrega el Instagram API token en Configuración > Meta Ads > Redes sociales para responder comentarios de Instagram.'
+        ? 'Conecta Meta Ads con un token que pueda operar la Página enlazada a Instagram.'
         : 'Conecta Meta Ads para responder comentarios de Facebook.',
       409
     )
@@ -2506,6 +2516,7 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
 
   let path
   let payload
+  let graphCredentials = null
   if (mode === 'public') {
     path = cleanPlatform === 'instagram'
       ? `/${encodeURIComponent(targetCommentId)}/replies`
@@ -2524,36 +2535,48 @@ export async function sendMetaSocialCommentReply({ contactId, platform, message,
     }
   } else {
     const businessId = getMetaSocialBusinessId(cleanPlatform, config, profile || {})
-    if (!businessId) {
+    const canUseInstagramPageNode = cleanPlatform === 'instagram' && cleanString(config?.page_id)
+    if (!businessId && !canUseInstagramPageNode) {
       throw createMetaSocialMessageError(
         cleanPlatform === 'instagram' ? 'Falta la cuenta de Instagram en Meta Ads.' : 'Falta la página de Facebook en Meta Ads.',
         409
       )
     }
-    path = `/${encodeURIComponent(businessId)}/messages`
+    graphCredentials = await resolveMetaSocialGraphCredentials(cleanPlatform, config)
+    path = cleanPlatform === 'instagram'
+      ? getMetaInstagramMessagesPath({ businessId, config, credentials: graphCredentials })
+      : `/${encodeURIComponent(businessId)}/messages`
     // DM: un envío es texto O adjunto (imagen/video/audio/archivo).
     payload = att
       ? { recipient: { comment_id: targetCommentId }, message: { attachment: { type: att.type, payload: { url: att.url, is_reusable: false } } } }
       : { recipient: { comment_id: targetCommentId }, message: { text: body } }
   }
 
-  const graphBaseUrl = getMetaSocialGraphBaseUrl(cleanPlatform)
+  graphCredentials ||= await resolveMetaSocialGraphCredentials(cleanPlatform, config)
   let response
   try {
     response = await metaSocialGraphRequest(path, {
       method: 'POST',
-      token: await resolveMetaSocialGraphToken(cleanPlatform, config),
-      baseUrl: graphBaseUrl,
+      token: graphCredentials.token,
+      baseUrl: graphCredentials.baseUrl,
       body: payload
     })
   } catch (error) {
     const looksLikeTokenIssue = error?.statusCode === 401 || /oauth|access token|\b190\b/i.test(error?.message || '')
     if (!looksLikeTokenIssue) throw normalizeMetaSocialSendError(error, cleanPlatform)
     try {
-      response = await metaSocialGraphRequest(path, {
+      const retryCredentials = await resolveMetaSocialGraphCredentials(cleanPlatform, config, { forceRefresh: true })
+      const retryPath = mode === 'private' && cleanPlatform === 'instagram'
+        ? getMetaInstagramMessagesPath({
+            businessId: getMetaSocialBusinessId(cleanPlatform, config, profile || {}),
+            config,
+            credentials: retryCredentials
+          })
+        : path
+      response = await metaSocialGraphRequest(retryPath, {
         method: 'POST',
-        token: await resolveMetaSocialGraphToken(cleanPlatform, config, { forceRefresh: true }),
-        baseUrl: graphBaseUrl,
+        token: retryCredentials.token,
+        baseUrl: retryCredentials.baseUrl,
         body: payload
       })
     } catch (retryError) {
@@ -3134,7 +3157,7 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           continue
         }
 
-        const profileAccessToken = await resolveMetaSocialGraphToken(socialMessage.platform, config, { safe: true })
+        const profileCredentials = await resolveMetaSocialGraphCredentials(socialMessage.platform, config, { safe: true })
         const profileBusinessId = getMetaSocialBusinessId(socialMessage.platform, config, {
           page_id: socialMessage.pageId,
           instagram_account_id: socialMessage.instagramAccountId
@@ -3143,8 +3166,8 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           platform: socialMessage.platform,
           senderId: socialMessage.senderId,
           businessId: profileBusinessId,
-          accessToken: profileAccessToken,
-          baseUrl: getMetaSocialGraphBaseUrl(socialMessage.platform)
+          accessToken: profileCredentials.token,
+          baseUrl: profileCredentials.baseUrl
         })
         const localContact = await upsertLocalSocialContact({ socialMessage, profile })
         const socialContactId = await upsertMetaSocialContact({
@@ -3299,13 +3322,13 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
             continue
           }
 
-          const commentAccessToken = await resolveMetaSocialGraphToken(comment.platform, config, { safe: true })
+          const commentCredentials = await resolveMetaSocialGraphCredentials(comment.platform, config, { safe: true })
           const commentAuthor = await fetchMetaCommentAuthorProfile({
             platform: comment.platform,
             commentId: comment.commentId,
             authorId: comment.authorId,
-            accessToken: commentAccessToken,
-            baseUrl: getMetaSocialGraphBaseUrl(comment.platform)
+            accessToken: commentCredentials.token,
+            baseUrl: commentCredentials.baseUrl
           })
           const profile = {
             name: commentAuthor.name || comment.authorName,
@@ -3350,8 +3373,8 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
               })
 
             // Cachear el contenido de la publicación comentada (no bloquea el flujo).
-            resolveMetaSocialGraphToken(comment.platform, config, { safe: true })
-              .then(token => fetchAndCacheSocialPost(comment, token))
+            resolveMetaSocialGraphCredentials(comment.platform, config, { safe: true })
+              .then(credentials => fetchAndCacheSocialPost(comment, credentials.token, credentials.baseUrl))
               .catch(error => logger.warn(`[Comentario] publicación no cacheada: ${error.message}`))
 
             // Automatizaciones de comentarios: evento AISLADO 'comment-received'.

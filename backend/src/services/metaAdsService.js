@@ -54,16 +54,13 @@ async function syncMetaSocialChannelDefaults({
   previousPageId = '',
   nextPageId = '',
   previousInstagramAccountId = '',
-  nextInstagramAccountId = '',
-  previousInstagramAccessToken = '',
-  nextInstagramAccessToken = ''
+  nextInstagramAccountId = ''
 } = {}) {
   const oldPageId = normalizeMetaProfileId(previousPageId)
   const newPageId = normalizeMetaProfileId(nextPageId)
   const oldInstagramAccountId = normalizeMetaProfileId(previousInstagramAccountId)
   const newInstagramAccountId = normalizeMetaProfileId(nextInstagramAccountId)
-  const oldInstagramAccessToken = normalizeMetaProfileId(previousInstagramAccessToken)
-  const newInstagramAccessToken = normalizeMetaProfileId(nextInstagramAccessToken)
+  const instagramTransportConfigured = Boolean(newPageId && newInstagramAccountId)
   const updates = new Map()
 
   if (newPageId && newPageId !== oldPageId) {
@@ -72,7 +69,13 @@ async function syncMetaSocialChannelDefaults({
     META_SOCIAL_CHANNEL_CONFIG_KEYS.page.forEach(key => updates.set(key, '0'))
   }
 
-  if (newInstagramAccountId && newInstagramAccessToken && (newInstagramAccountId !== oldInstagramAccountId || !oldInstagramAccessToken)) {
+  if (
+    instagramTransportConfigured &&
+    (
+      newInstagramAccountId !== oldInstagramAccountId ||
+      newPageId !== oldPageId
+    )
+  ) {
     updates.set('meta_instagram_messaging_enabled', '1')
   } else if (!newInstagramAccountId && oldInstagramAccountId) {
     META_SOCIAL_CHANNEL_CONFIG_KEYS.instagram.forEach(key => updates.set(key, '0'))
@@ -513,7 +516,6 @@ export async function getMetaConfig() {
     }
 
     await decryptMetaConfigSecret(config, 'access_token', 'token principal')
-    await decryptMetaConfigSecret(config, 'instagram_access_token', 'token de Instagram')
 
     // También desencriptar app_secret si existe
     if (config.app_secret && isEncrypted(config.app_secret)) {
@@ -565,23 +567,6 @@ export async function saveMetaAccessToken(accessToken) {
       [encryptedToken]
     )
   }
-
-  return await getMetaConfig()
-}
-
-export async function saveMetaInstagramAccessToken(instagramAccessToken) {
-  const normalizedToken = normalizeId(instagramAccessToken)
-  const existing = await db.get('SELECT id FROM meta_config ORDER BY id LIMIT 1')
-
-  if (!existing?.id) {
-    throw new Error('Conecta Meta Ads antes de guardar el token de Instagram.')
-  }
-
-  const encryptedToken = normalizedToken ? encrypt(normalizedToken) : null
-  await db.run(
-    'UPDATE meta_config SET instagram_access_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?',
-    [encryptedToken, existing.id]
-  )
 
   return await getMetaConfig()
 }
@@ -740,7 +725,7 @@ async function syncMetaCustomValues(adAccountId, accessToken, pixelId, pageId = 
  * CAPI usa siempre System User Token.
  * CREA/ACTUALIZA custom values en HighLevel automáticamente
  */
-export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pageId = null, instagramAccountId = null, instagramAccessToken = undefined) {
+export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, pageId = null, instagramAccountId = null) {
   try {
     // Encriptar el access_token
     const encryptedToken = encrypt(accessToken)
@@ -757,13 +742,7 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
     // IMPORTANTE: Solo permitir 1 configuración de Meta en la base de datos
     // Eliminar cualquier configuración existente antes de insertar la nueva
     const existingCount = await db.get('SELECT COUNT(*) as count FROM meta_config')
-    const existingMetaConfig = await db.get('SELECT page_id, instagram_account_id, instagram_access_token FROM meta_config LIMIT 1')
-    const cleanInstagramAccessToken = normalizeId(instagramAccessToken)
-    const encryptedInstagramAccessToken = instagramAccessToken === undefined
-      ? existingMetaConfig?.instagram_access_token || null
-      : cleanInstagramAccessToken
-        ? encrypt(cleanInstagramAccessToken)
-        : null
+    const existingMetaConfig = await db.get('SELECT page_id, instagram_account_id FROM meta_config LIMIT 1')
 
     if (existingCount && existingCount.count > 0) {
       logger.info('Eliminando configuración de Meta existente (solo se permite 1)')
@@ -772,15 +751,14 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
 
     // Insertar la nueva configuración (System User - solo necesita access_token + ad_account_id)
     await db.run(`
-      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, page_id, instagram_account_id, instagram_access_token, timezone_id, timezone_name, timezone_offset_hours_utc)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO meta_config (ad_account_id, access_token, pixel_id, page_id, instagram_account_id, timezone_id, timezone_name, timezone_offset_hours_utc)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       adAccountId,
       encryptedToken,
       pixelId,
       pageId,
       instagramAccountId,
-      encryptedInstagramAccessToken,
       timezoneData?.timezone_id,
       timezoneData?.timezone_name,
       timezoneData?.timezone_offset_hours_utc
@@ -792,9 +770,7 @@ export async function saveMetaConfig(adAccountId, accessToken, pixelId = null, p
       previousPageId: existingMetaConfig?.page_id,
       nextPageId: pageId,
       previousInstagramAccountId: existingMetaConfig?.instagram_account_id,
-      nextInstagramAccountId: instagramAccountId,
-      previousInstagramAccessToken: existingMetaConfig?.instagram_access_token,
-      nextInstagramAccessToken: encryptedInstagramAccessToken
+      nextInstagramAccountId: instagramAccountId
     })
 
     const conversionEventsResult = await ensureMetaConversionEventsEnabledForConnectedPixel({

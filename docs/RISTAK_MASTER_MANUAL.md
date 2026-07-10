@@ -1622,10 +1622,12 @@ Ristak usa Meta en varias areas:
   terminar el wizard. Al terminarlo, Ristak arranca automaticamente la
   sincronizacion de anuncios de Meta en segundo plano y lleva al usuario a
   `Configuracion > Meta Ads > Redes sociales`. Las Page nuevas dejan encendidos
-  por default Messenger y comentarios de Facebook; Instagram DM requiere ademas
-  `meta_config.instagram_access_token` y queda encendido si la conexion nueva ya
-  trae cuenta de Instagram + token directo. Los comentarios de Instagram se
-  controlan aparte desde la columna de Instagram.
+  por default Messenger y comentarios de Facebook. Instagram DM y comentarios se
+  operan con el token de Pagina derivado de `meta_config.access_token` cuando la
+  cuenta profesional de Instagram esta enlazada a esa Page y el token base tiene
+  permisos de Instagram. Ristak no pide, guarda ni acepta un token separado de
+  Instagram. Los comentarios de Instagram se controlan aparte desde la columna de
+  Instagram.
 - El bloque **Perfil de red social** del editor de Sites lee los perfiles desde
   la configuracion Meta guardada (`meta_config.page_id`,
   `meta_config.instagram_account_id` y `meta_config.access_token`) cuando el
@@ -1658,37 +1660,36 @@ Ristak usa Meta en varias areas:
   es adquisicion inicial. Detalle completo en `docs/CONVERSION_ATTRIBUTION.md`.
 - Social messaging nativo separa los contratos de envio: Messenger envia por
   `graph.facebook.com/{PAGE_ID}/messages` con token de Pagina derivado de
-  `meta_config.access_token`; Instagram DM envia por
-  `graph.instagram.com/{IG_ID}/messages` con el Instagram User access token
-  guardado en `meta_config.instagram_access_token`, usando el IGSID recibido por
-  webhook. Ese token se captura visible/editable en
-  `Configuracion > Meta Ads > Redes sociales > Instagram` para pruebas, pero se
-  guarda encriptado en base de datos. El valor esperado es el Instagram API /
-  Instagram User access token generado en Meta Developers desde
-  `Configuracion de la API con inicio de sesion de empresa de Instagram` >
-  `Generar tokens de acceso` (normalmente prefijo `IGA...`). No usar el System
-  User Access Token ni el Page/Messenger token aqui: esos tokens no sirven para
-  leer perfiles de Instagram ni responder Instagram DM por la API de Instagram
-  Login. Para perfil requiere `instagram_business_basic`; para DMs requiere
-  `instagram_business_manage_messages`; para comentarios/mentions requiere
-  `instagram_business_manage_comments`.
+  `meta_config.access_token`; Instagram DM tambien envia por el nodo
+  `graph.facebook.com/{PAGE_ID}/messages` cuando la cuenta profesional esta
+  enlazada a la Page. Ristak resuelve credenciales por plataforma derivando
+  siempre el token de Pagina desde `meta_config.access_token` y usando Facebook
+  Graph para DMs, comentarios, media y conversaciones de Instagram. No hay
+  token alterno ni fallback para Instagram; si no se puede derivar el Page token,
+  la integracion falla con un error accionable para revisar permisos/asignaciones
+  de Meta. El recipient sigue siendo el IGSID recibido por webhook.
+  Para perfil/DM/comentarios el System User token debe tener los permisos
+  Meta correspondientes (`instagram_manage_messages`,
+  `instagram_manage_comments`, `pages_messaging`/`pages_show_list` segun el
+  endpoint y acceso a la Page); no se debe pedir otra credencial en Redes
+  sociales.
   Los switches son `meta_messenger_messaging_enabled` /
   `meta_instagram_messaging_enabled` para DMs y
   `meta_facebook_comments_enabled` / `meta_instagram_comments_enabled` para
   comentarios. Si Meta responde `(#3) Application does
   not have the capability...`, Ristak debe tratarlo como bloqueo de
   capability/App Review, no como fallo generico: Messenger requiere
-  `pages_messaging`; Instagram DM con Instagram Login requiere
-  `instagram_business_basic` e `instagram_business_manage_messages`, app en Live
-  para clientes reales, Advanced Access cuando aplique y token regenerado despues
-  de aprobar los permisos.
-- Al conectar Meta con una Facebook Page, al guardar el Instagram API token o al
-  prender `meta_messenger_messaging_enabled` / `meta_instagram_messaging_enabled`,
+  `pages_messaging`; Instagram DM requiere capacidad/permisos de mensajeria de
+  Instagram en la app (`instagram_manage_messages` o el permiso equivalente del
+  flujo Instagram Login), app en Live para clientes reales y Advanced Access
+  cuando aplique.
+- Al conectar Meta con una Facebook Page o al prender
+  `meta_messenger_messaging_enabled` / `meta_instagram_messaging_enabled`,
   Ristak inicia en segundo plano un backfill de conversaciones disponibles por
   Graph Conversations API: Messenger usa `/{PAGE_ID}/conversations` con Page
-  token; Instagram usa `/me/conversations` por Instagram Graph con
-  `meta_config.instagram_access_token`. El backfill pagina conversaciones y
-  mensajes, deduplica por `meta_message_id`, guarda inbound/outbound en
+  token; Instagram usa `/me/conversations?platform=instagram` con ese mismo Page
+  token por Facebook Graph. El backfill pagina conversaciones y mensajes,
+  deduplica por `meta_message_id`, guarda inbound/outbound en
   `meta_social_messages` y fusiona el contacto por PSID/IGSID igual que los
   webhooks. Es historial: no incrementa no leidos, no dispara push,
   automatizaciones, confirmaciones ni agente conversacional. Meta puede no
@@ -1709,13 +1710,13 @@ Ristak usa Meta en varias areas:
   `Comentario eliminado`. El contexto de la publicacion comentada se cachea en
   `meta_social_posts`; si Graph ya no expone el post/media, el chip del globo
   queda como `Publicacion eliminada` sin borrar el hilo.
-- El enriquecimiento de contactos Meta usa el mismo contrato separado:
+- El enriquecimiento de contactos Meta usa el mismo contrato de Page token:
   Messenger lee perfil/conversaciones por Facebook Graph con Page token;
-  Instagram lee perfiles de DMs y autores de comentarios por Instagram Graph con
-  `meta_config.instagram_access_token` (`name,username,profile_pic`). Si el
+  Instagram lee perfiles de DMs y autores de comentarios con las mismas
+  credenciales resueltas para Instagram (`name,username,profile_pic`). Si el
   perfil directo no trae nombre, Instagram cae a
-  `graph.instagram.com/me/conversations`, nunca al Page ID ni al System User
-  token. Las fotos recibidas se rehospedan best-effort antes de guardarse en
+  `/me/conversations?platform=instagram` usando el token/baseUrl resuelto. Las
+  fotos recibidas se rehospedan best-effort antes de guardarse en
   `meta_social_contacts.profile_picture_url`; si Meta no entrega foto o permisos,
   Ristak conserva el mejor nombre disponible y no inventa avatar.
 - Business Messaging events.

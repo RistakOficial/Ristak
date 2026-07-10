@@ -17,7 +17,6 @@ import styles from './MetaAdsIntegration.module.css'
 interface MetaCredentials {
   adAccountId: string
   accessToken: string
-  instagramAccessToken: string
   pixelId: string
   pageId: string
   instagramAccountId: string
@@ -438,7 +437,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const [credentials, setCredentials] = useState<MetaCredentials>({
     adAccountId: '',
     accessToken: '',
-    instagramAccessToken: '',
     pixelId: '',
     pageId: '',
     instagramAccountId: ''
@@ -463,7 +461,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const [isLoadingInstagramAccounts, setIsLoadingInstagramAccounts] = useState(false)
   const [realAccessToken, setRealAccessToken] = useState('')
   const [isSavingToken, setIsSavingToken] = useState(false)
-  const [isSavingInstagramToken, setIsSavingInstagramToken] = useState(false)
   const [isRevealingAccessToken, setIsRevealingAccessToken] = useState(false)
   const [isSavingWizardConfig, setIsSavingWizardConfig] = useState(false)
   const [savedPageId, setSavedPageId] = useState('')
@@ -639,7 +636,6 @@ export const MetaAdsIntegration: React.FC = () => {
         setCredentials({
           adAccountId: data.data.adAccountId || '',
           accessToken: data.data.accessToken || '',
-          instagramAccessToken: data.data.instagramAccessToken || '',
           pixelId: data.data.pixelId || '',
           pageId: data.data.pageId || '',
           instagramAccountId: data.data.instagramAccountId || ''
@@ -1023,7 +1019,6 @@ export const MetaAdsIntegration: React.FC = () => {
       setCredentials({
         adAccountId: '',
         accessToken: '',
-        instagramAccessToken: '',
         pixelId: '',
         pageId: '',
         instagramAccountId: ''
@@ -1120,7 +1115,6 @@ export const MetaAdsIntegration: React.FC = () => {
     setCredentials({
       adAccountId: '',
       accessToken: '',
-      instagramAccessToken: '',
       pixelId: '',
       pageId: '',
       instagramAccountId: ''
@@ -1195,7 +1189,6 @@ export const MetaAdsIntegration: React.FC = () => {
         body: JSON.stringify({
           adAccountId: credentials.adAccountId,
           accessToken,
-          instagramAccessToken: credentials.instagramAccessToken || '',
           pixelId: credentials.pixelId || '',
           pageId: credentials.pageId || '',
           instagramAccountId: credentials.instagramAccountId || ''
@@ -1606,76 +1599,14 @@ export const MetaAdsIntegration: React.FC = () => {
     }
   }
 
-  const handleSaveInstagramAccessToken = async () => {
-    const token = credentials.instagramAccessToken.trim()
-    if (!token) {
-      showToast('warning', 'Token requerido', 'Pega el API token de Instagram para guardar esta conexión')
-      return
-    }
-
-    setIsSavingInstagramToken(true)
-    try {
-      const response = await fetch('/api/meta/config/instagram-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instagramAccessToken: token })
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'No se pudo guardar el token de Instagram')
-      }
-
-      setCredentials(prev => ({
-        ...prev,
-        instagramAccessToken: data.instagramAccessToken || token
-      }))
-      showToast('success', 'Instagram guardado', 'Ristak usará este token para nombres, fotos, DMs y comentarios de Instagram.')
-    } catch (error) {
-      showToast('error', 'No se pudo guardar', error instanceof Error ? error.message : 'No se pudo guardar el token de Instagram')
-    } finally {
-      setIsSavingInstagramToken(false)
-    }
-  }
-
-  const handleClearInstagramAccessToken = async () => {
-    setIsSavingInstagramToken(true)
-    try {
-      const response = await fetch('/api/meta/config/instagram-token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instagramAccessToken: '' })
-      })
-      const data = await response.json().catch(() => ({}))
-      if (!response.ok || !data.success) {
-        throw new Error(data.error || 'No se pudo limpiar el token de Instagram')
-      }
-
-      setCredentials(prev => ({ ...prev, instagramAccessToken: '' }))
-      await Promise.all([
-        setInstagramMessagingEnabled(false),
-        setInstagramCommentsEnabled(false)
-      ])
-      showToast('success', 'Token limpiado', 'Instagram quedó sin API token directo.')
-    } catch (error) {
-      showToast('error', 'No se pudo limpiar', error instanceof Error ? error.message : 'No se pudo limpiar el token de Instagram')
-    } finally {
-      setIsSavingInstagramToken(false)
-    }
-  }
-
   const handleToggleMetaComments = async (platform: 'facebook' | 'instagram', newValue: boolean) => {
     const label = platform === 'instagram' ? 'Comentarios de Instagram' : 'Comentarios de Facebook'
-    const instagramTokenReady = Boolean(credentials.instagramAccessToken.trim())
     if (newValue && !hasAccessToken) {
       showToast('warning', 'Sesión de Meta requerida', 'Inicia sesión en Meta Developers antes de activar comentarios.')
       return
     }
     if (newValue && platform === 'instagram' && !hasInstagramAccount) {
       showToast('warning', 'Instagram requerido', 'Primero selecciona la cuenta de Instagram en el wizard')
-      return
-    }
-    if (newValue && platform === 'instagram' && !instagramTokenReady) {
-      showToast('warning', 'Token de Instagram requerido', 'Pega y guarda el API token de Instagram antes de activar comentarios.')
       return
     }
     if (newValue && platform === 'facebook' && !hasPageId) {
@@ -1704,7 +1635,6 @@ export const MetaAdsIntegration: React.FC = () => {
   const handleToggleMetaMessaging = async (platform: MetaMessagingPlatform, newValue: boolean) => {
     const isInstagram = platform === 'instagram'
     const platformLabel = isInstagram ? 'Instagram DM' : 'Messenger'
-    const instagramTokenReady = Boolean(credentials.instagramAccessToken.trim())
     if (newValue && !hasAccessToken) {
       showToast('warning', 'Sesión de Meta requerida', 'Inicia sesión en Meta Developers antes de activar mensajes.')
       return
@@ -1728,15 +1658,6 @@ export const MetaAdsIntegration: React.FC = () => {
       return
     }
 
-    if (newValue && isInstagram && !instagramTokenReady) {
-      showToast(
-        'warning',
-        'Token de Instagram requerido',
-        'Pega y guarda el API token de Instagram antes de activar Instagram DM.'
-      )
-      return
-    }
-
     try {
       if (isInstagram) {
         await setInstagramMessagingEnabled(newValue)
@@ -1753,7 +1674,7 @@ export const MetaAdsIntegration: React.FC = () => {
         showToast(
           'success',
           `${platformLabel} activado`,
-          'Ristak usará el token directo de Instagram para recibir nombres, fotos y responder DMs.'
+          'Ristak usará el System User token y la Página enlazada para recibir nombres, fotos y responder DMs.'
         )
         return
       }
@@ -1836,11 +1757,10 @@ export const MetaAdsIntegration: React.FC = () => {
   const hasPixel = Boolean(credentials.pixelId)
   const hasPageId = Boolean(credentials.pageId)
   const hasInstagramAccount = Boolean(credentials.instagramAccountId)
-  const hasInstagramApiToken = Boolean(credentials.instagramAccessToken.trim())
   const canEnableMessengerMessaging = hasAccessToken && hasPageId
   const canEnableMessengerComments = hasAccessToken && hasPageId
-  const canEnableInstagramMessaging = hasAccessToken && hasInstagramAccount && hasInstagramApiToken
-  const canEnableInstagramComments = hasAccessToken && hasInstagramAccount && hasInstagramApiToken
+  const canEnableInstagramMessaging = hasAccessToken && hasPageId && hasInstagramAccount
+  const canEnableInstagramComments = hasAccessToken && hasPageId && hasInstagramAccount
   const isMetaConfigured = Boolean(hasAccessToken && hasAdAccount)
   const normalizedMetaTestEventName = normalizeMetaTestEventName(metaTestEventName)
   const normalizedMetaTestEventParameters = withMetaTestDefaultsForEvent(metaTestEventParameters, normalizedMetaTestEventName)
@@ -2481,8 +2401,7 @@ export const MetaAdsIntegration: React.FC = () => {
                 <div className={styles.connectedPagesHeader}>
                   <h4 className={styles.connectedPagesTitle}>Redes sociales</h4>
                   <p className={styles.connectedPagesDescription}>
-                    Configura Messenger e Instagram por separado para activar mensajes y comentarios.
-                    Instagram usa su propio Instagram API token para nombres, fotos, mensajes y comentarios; no uses aqui el System User token ni el Page token de Messenger.
+                    Configura Messenger e Instagram por separado para activar mensajes y comentarios. Ambos usan el System User token guardado y el token de la Página enlazada.
                   </p>
                 </div>
 
@@ -2552,7 +2471,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialChannelTitleBlock}>
                         <h4 className={styles.connectedPagesTitle}>Instagram</h4>
                         <p className={styles.connectedPagesDescription}>
-                          Usa el Instagram User access token generado desde Instagram Login para perfilar contactos, DMs y comentarios.
+                          Usa la cuenta profesional enlazada a la Facebook Page. Todo se autoriza con el System User token.
                         </p>
                       </div>
                     </div>
@@ -2562,51 +2481,15 @@ export const MetaAdsIntegration: React.FC = () => {
                       <strong>{hasInstagramAccount ? getSelectedInstagramLabel() : 'Selecciona una cuenta de Instagram'}</strong>
                     </div>
 
-                    <label className={styles.instagramTokenBlock}>
-                      <span className={styles.webhookFieldLabel}>Instagram API token</span>
-                      <textarea
-                        className={styles.instagramTokenInput}
-                        value={credentials.instagramAccessToken}
-                        onChange={(event) => handleInputChange('instagramAccessToken', event.target.value)}
-                        placeholder="IGAAM..."
-                        autoComplete="off"
-                        spellCheck={false}
-                        rows={3}
-                      />
-                    </label>
                     <p className={styles.connectedPagesDescription}>
-                      Pega aqui el token que genera Meta Developers en <strong>Configuracion de la API con inicio de sesion de empresa de Instagram</strong> → <strong>Generar tokens de acceso</strong>. Normalmente empieza con <strong>IGA...</strong>. Los tokens de System User o Page sirven para Meta Ads/Messenger, pero Instagram no los acepta para leer perfiles ni responder DMs. Para este flujo pide <strong>instagram_business_basic</strong>, <strong>instagram_business_manage_messages</strong> y, si usaras comentarios, <strong>instagram_business_manage_comments</strong>.
+                      Ristak deriva el token de la Página desde el System User token de Meta Ads. Ese mismo flujo opera DMs, perfiles, media y comentarios de Instagram cuando la app tiene permisos de mensajería/comentarios y la cuenta está enlazada a la Page.
                     </p>
-
-                    <div className={styles.instagramTokenActions}>
-                      <Badge variant={hasInstagramApiToken ? 'success' : 'warning'}>
-                        {hasInstagramApiToken ? 'Token guardable' : 'Token pendiente'}
-                      </Badge>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => void handleSaveInstagramAccessToken()}
-                        disabled={isSavingInstagramToken || !credentials.instagramAccessToken.trim()}
-                      >
-                        {isSavingInstagramToken ? <RefreshCw size={16} className={styles.spinning} /> : <Save size={16} />}
-                        Guardar token
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        onClick={() => void handleClearInstagramAccessToken()}
-                        disabled={isSavingInstagramToken || !hasInstagramApiToken}
-                      >
-                        <Trash2 size={16} />
-                        Limpiar
-                      </Button>
-                    </div>
 
                     <div className={styles.socialSettingRows}>
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Instagram DM</strong>
-                          <span>Nombres, fotos y respuestas usan el token directo.</span>
+                          <span>Nombres, fotos y respuestas usan la Página enlazada.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge
@@ -2626,7 +2509,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       <div className={styles.socialSettingRow}>
                         <div className={styles.socialSettingCopy}>
                           <strong>Comentarios de Instagram</strong>
-                          <span>Guardar autores, fotos y comentarios nuevos. Necesita token de Instagram válido.</span>
+                          <span>Guardar autores, fotos y comentarios nuevos usando la misma conexión de Meta.</span>
                         </div>
                         <div className={styles.socialSettingControl}>
                           <Badge variant={getMetaMessagingStatusVariant(instagramCommentsEnabled, canEnableInstagramComments)}>
@@ -2715,9 +2598,9 @@ export const MetaAdsIntegration: React.FC = () => {
                       />
                     </figure>
                     <figure className={styles.webhookTutorialItem}>
-                      <p className={styles.webhookTutorialTitle}>Conexión de Instagram (Login + Webhooks)</p>
+                      <p className={styles.webhookTutorialTitle}>Conexión de Instagram enlazado a la Page</p>
                       <p className={styles.webhookTutorialDescription}>
-                        Agrega una cuenta de Instagram para generar tokens de acceso y configurar suscripciones a webhooks.
+                        Verifica que la cuenta profesional esté conectada a la misma Facebook Page y que la app tenga permisos de mensajería/comentarios.
                       </p>
                       <img
                         src="/meta-tutorial-instagram.png"
@@ -2730,12 +2613,10 @@ export const MetaAdsIntegration: React.FC = () => {
 
                   <ol className={styles.webhookSteps}>
                     <li><strong>Facebook / Messenger:</strong> en Meta Developers entra a <strong>Configuración de la API con Facebook</strong> → <strong>Webhooks</strong>, pega la <strong>URL de devolución de llamada</strong> y el <strong>token de verificación</strong> de arriba, da <strong>Verificar y guardar</strong> y suscríbete a los campos.</li>
-                    <li><strong>Instagram va en otro lugar:</strong> entra a <strong>Configuración de la API con inicio de sesión de empresa de Instagram</strong>.</li>
-                    <li><strong>2. Generar tokens de acceso:</strong> Conecta las páginas de Facebook para generar tokens de acceso y configurar suscripciones a webhooks.</li>
-                    <li><strong>2. Generar tokens de acceso:</strong> Agrega una cuenta de Instagram para generar tokens de acceso y configurar suscripciones a webhooks.</li>
-                    <li>No pegues ahi el <strong>System User Access Token</strong> ni el <strong>Page token</strong>: esos son para Meta Ads/Messenger. Para Instagram necesitas el token de Instagram Login con <strong>instagram_business_basic</strong>, <strong>instagram_business_manage_messages</strong> y, si usaras comentarios, <strong>instagram_business_manage_comments</strong>.</li>
-                    <li>Ya con el token, en <strong>Configurar webhooks</strong> pega la <strong>misma URL</strong> y el <strong>mismo token de verificación</strong> de arriba, y suscríbete a los campos.</li>
-                    <li>Si iniciaste sesión con Facebook, la suscripción de la Página suele quedar automática; en Instagram hazla manual si no aparece.</li>
+                    <li><strong>Facebook / Messenger:</strong> conecta la Page desde el wizard de Meta Ads. Ristak deriva el Page token desde el System User token guardado.</li>
+                    <li><strong>Instagram:</strong> enlaza la cuenta profesional a esa misma Page dentro de Meta Business y selecciónala en el wizard de Ristak.</li>
+                    <li><strong>Permisos:</strong> el System User/App debe tener acceso a la Page y permisos como <strong>pages_messaging</strong>, <strong>instagram_manage_messages</strong> e <strong>instagram_manage_comments</strong> cuando uses comentarios.</li>
+                    <li><strong>Webhooks:</strong> usa la misma URL y el mismo token de verificación de arriba. Para Messenger se suscribe la Page; para comentarios de Instagram suscribe los campos del objeto Instagram si Meta no lo entrega por la Page.</li>
                   </ol>
 
                   <div className={styles.webhookComments}>
@@ -2774,7 +2655,7 @@ export const MetaAdsIntegration: React.FC = () => {
                       </div>
                     </div>
                     <p className={styles.connectedPagesDescription}>
-                      Para leerlos y responderlos, Facebook usa permisos de Página; Instagram usa el API token directo del recuadro de Instagram.
+                      Para leerlos y responderlos, Facebook e Instagram usan el System User token guardado y el Page token derivado.
                     </p>
                   </div>
                 </div>
