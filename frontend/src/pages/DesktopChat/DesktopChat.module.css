@@ -1134,7 +1134,7 @@
 
 .messageBubbleWrap {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 7px;
   max-width: 100%;
   min-width: 0;
@@ -1142,6 +1142,24 @@
 
 .messageRowOutbound .messageBubbleWrap {
   justify-content: flex-end;
+}
+
+.messageAgentSideMarker {
+  display: inline-grid;
+  flex: 0 0 25px;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--accent);
+  box-shadow: var(--shadow-xs);
+}
+
+.messageAgentSideMarker svg {
+  width: 15px;
+  height: 15px;
 }
 
 .dayDivider {
@@ -1954,19 +1972,6 @@
   font-weight: 700;
   line-height: 1;
   opacity: 0.78;
-}
-
-.messageAgentMarker {
-  display: inline-flex;
-  align-items: center;
-  color: currentColor;
-  line-height: 1;
-  opacity: 0.74;
-}
-
-.messageAgentMarker svg {
-  width: 11px;
-  height: 11px;
 }
 
 .messageRoutingNote {

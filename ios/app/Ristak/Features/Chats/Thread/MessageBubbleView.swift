@@ -203,6 +203,10 @@ struct MessageRowView: View, Equatable {
                 }
             }
 
+            if message.sentByAgent && !isOutbound {
+                agentSideMarker
+            }
+
             // La flecha vive FIJA en el hueco que revela el arrastre (entrante
             // pegada a .leading, saliente a .trailing) y la burbuja se desliza
             // POR ENCIMA con `.offset(x:)`, dejándola a la vista. Antes la flecha
@@ -216,6 +220,10 @@ struct MessageRowView: View, Equatable {
             .simultaneousGesture(swipeToReplyGesture)
             .sensoryFeedback(.impact(weight: .light), trigger: replyTriggered)
             .sensoryFeedback(.impact(weight: .light, intensity: 0.5), trigger: replyThresholdHaptic)
+
+            if message.sentByAgent && isOutbound {
+                agentSideMarker
+            }
 
             if !isOutbound {
                 Spacer(minLength: 44)
@@ -444,12 +452,6 @@ struct MessageRowView: View, Equatable {
                     .foregroundStyle(RistakTheme.bubbleMeta)
             }
 
-            if message.sentByAgent {
-                AgentBotGlyph(color: RistakTheme.bubbleMeta, size: 10)
-                    .frame(width: 11, height: 11)
-                    .accessibilityLabel("Respondido por agente conversacional")
-            }
-
             if message.isScheduled {
                 Image(systemName: "clock")
                     .font(.system(size: 10))
@@ -474,6 +476,16 @@ struct MessageRowView: View, Equatable {
         if message.pending { label += " · enviando" }
         if message.failed { label += " · error" }
         return label
+    }
+
+    private var agentSideMarker: some View {
+        AgentBotGlyph(color: RistakTheme.accent, size: 15)
+            .frame(width: 26, height: 26)
+            .background(Circle().fill(RistakTheme.surface))
+            .overlay(Circle().stroke(RistakTheme.border, lineWidth: 0.5))
+            .shadow(color: RistakTheme.bubbleShadow, radius: 2, x: 0, y: 1)
+            .padding(.bottom, 5)
+            .accessibilityLabel("Respondido por agente conversacional")
     }
 
     // MARK: Reacciones

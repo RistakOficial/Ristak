@@ -7913,16 +7913,20 @@ export const DesktopChat: React.FC = () => {
     return (
       <span className={styles.messageMeta}>
         {transportLabel ? <em className={styles.messageTransport}>{transportLabel}</em> : null}
-        {message.sentByAgent ? (
-          <span className={styles.messageAgentMarker} title="Respondido por agente conversacional" aria-label="Respondido por agente conversacional">
-            <Bot size={11} strokeWidth={2.35} aria-hidden="true" />
-          </span>
-        ) : null}
         {formatMessageTime(message.date)}
         {message.direction === 'outbound' && !failed && !pending ? <CheckCheck size={13} /> : null}
         {scheduled ? <Clock size={13} /> : null}
         {sending ? <Loader2 size={13} className={styles.spin} aria-label="Enviando" /> : null}
         {failed ? <CircleAlert size={13} /> : null}
+      </span>
+    )
+  }
+
+  const renderAgentSideMarker = (message: DesktopChatMessage) => {
+    if (!message.sentByAgent || message.direction === 'system') return null
+    return (
+      <span className={styles.messageAgentSideMarker} title="Respondido por agente conversacional" aria-label="Respondido por agente conversacional">
+        <Bot size={15} strokeWidth={2.45} aria-hidden="true" />
       </span>
     )
   }
@@ -8573,6 +8577,7 @@ export const DesktopChat: React.FC = () => {
                             {renderMessageErrorBadge(message)}
                             <div className={styles.messageStack}>
                               <div className={styles.messageBubbleWrap}>
+                                {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                                 <article
                                   className={`${styles.messageBubble} ${directionClass} ${isMessageScheduled(message) ? styles.messageScheduled : ''} ${message.isComment ? styles.messageComment : ''} ${message.email ? styles.messageEmail : ''} ${bubbleMediaClass}`}
                                   onContextMenu={(event) => handleMessageReactionContextMenu(message, event)}
@@ -8664,6 +8669,7 @@ export const DesktopChat: React.FC = () => {
                                   {message.scheduledAt ? <small className={styles.scheduledText}>Programado para {formatLocalDateTime(message.scheduledAt)}</small> : null}
                                   {renderScheduledMessageActions(message)}
                                 </article>
+                                {message.direction === 'outbound' ? renderAgentSideMarker(message) : null}
                               </div>
                               {renderMessageReactions(message)}
                               {routingDetails.reason ? <small className={styles.messageRoutingNote}>{routingDetails.reason}</small> : null}

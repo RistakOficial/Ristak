@@ -14851,11 +14851,6 @@ export const PhoneChat: React.FC = () => {
     return (
       <span className={className}>
         {transportBadge && <em className={styles.messageTransport}>{transportBadge}</em>}
-        {message.sentByAgent ? (
-          <span className={styles.messageAgentMarker} title="Respondido por agente conversacional" aria-label="Respondido por agente conversacional">
-            <Bot size={10} strokeWidth={2.4} aria-hidden="true" />
-          </span>
-        ) : null}
         {scheduled
           ? `Programado para ${formatMessageTime(message.scheduledAt || message.date)}`
           : formatMessageTime(message.date)}
@@ -14883,6 +14878,15 @@ export const PhoneChat: React.FC = () => {
             <Check size={15} />
           </span>
         ))}
+      </span>
+    )
+  }
+
+  const renderAgentSideMarker = (message: ChatMessage) => {
+    if (!message.sentByAgent || message.direction === 'system') return null
+    return (
+      <span className={styles.messageAgentSideMarker} title="Respondido por agente conversacional" aria-label="Respondido por agente conversacional">
+        <Bot size={15} strokeWidth={2.45} aria-hidden="true" />
       </span>
     )
   }
@@ -16073,7 +16077,7 @@ export const PhoneChat: React.FC = () => {
                   key={message.id}
                   className={`${styles.messageRow} ${styles[`messageRow_${message.direction}`]}`}
                 >
-                  <div className={`${styles.messageSwipeWrap} ${isEmailMessage ? styles.messageSwipeWrapEmail : ''} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''} ${messageSwipeAction !== 'info' ? styles.messageSwipeWrapActiveReply : ''}`}>
+                  <div className={`${styles.messageSwipeWrap} ${isEmailMessage ? styles.messageSwipeWrapEmail : ''} ${scheduled ? styles.messageSwipeWrapScheduled : ''} ${message.sentByAgent ? styles.messageSwipeWrapAgent : ''} ${messageSwipeOffset > 0 ? styles.messageSwipeWrapActive : ''} ${messageSwipeAction !== 'info' ? styles.messageSwipeWrapActiveReply : ''}`}>
                     {scheduled && (
                       <span
                         className={styles.messageScheduleTimer}
@@ -16086,6 +16090,7 @@ export const PhoneChat: React.FC = () => {
                     <span className={`${styles.messageInfoSwipeCue} ${messageSwipeAction !== 'info' ? styles.messageInfoSwipeCueReply : ''}`} aria-hidden="true">
                       {messageSwipeAction !== 'info' ? <Reply size={17} /> : <ReceiptText size={17} />}
                     </span>
+                    {message.direction !== 'outbound' ? renderAgentSideMarker(message) : null}
                     <div
                       className={`${styles.messageBubble} ${styles.messageBubbleActionTarget} ${scheduled ? styles.messageBubbleScheduled : ''} ${isImageMessage ? styles.messageImageBubble : ''} ${isAudioMessage ? styles.messageAudioBubble : ''} ${isFileMessage ? styles.messageFileBubble : ''} ${isLocationMessage ? styles.messageLocationBubble : ''} ${isEmailMessage ? styles.messageEmailBubble : ''} ${messageSwipeOffset > 0 ? styles.messageBubbleSwipeDragging : ''} ${isSearchMatch ? styles.messageBubbleSearchMatch : ''} ${isActiveSearchMatch ? styles.messageBubbleSearchActive : ''} ${message.isComment ? styles.messageComment : ''}`}
                       data-chat-message-id={message.id}
@@ -16223,6 +16228,7 @@ export const PhoneChat: React.FC = () => {
                       </button>
                     ) : null}
                     </div>
+                    {message.direction === 'outbound' ? renderAgentSideMarker(message) : null}
                   </div>
                 </div>
               )

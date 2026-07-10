@@ -4235,6 +4235,12 @@
   max-width: min(82%, 620px);
 }
 
+.messageSwipeWrapAgent {
+  align-items: flex-end;
+  gap: 6px;
+  max-width: min(82%, 620px);
+}
+
 .messageSwipeWrapEmail {
   max-width: min(86%, 620px);
 }
@@ -4252,6 +4258,29 @@
 
 .messageSwipeWrapScheduled .messageBubble {
   max-width: calc(100% - 41px);
+}
+
+.messageAgentSideMarker {
+  display: inline-grid;
+  flex: 0 0 26px;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--phone-chat-border);
+  border-radius: 999px;
+  background: var(--phone-chat-surface);
+  color: var(--phone-chat-accent);
+  box-shadow: var(--shadow-xs);
+  z-index: 2;
+}
+
+.messageAgentSideMarker svg {
+  width: 15px;
+  height: 15px;
+}
+
+.messageSwipeWrapScheduled.messageSwipeWrapAgent .messageBubble {
+  max-width: calc(100% - 74px);
 }
 
 .messageScheduleTimer {
@@ -5624,19 +5653,6 @@
 
 .messageRow_outbound .messageTransport {
   color: currentColor;
-}
-
-.messageAgentMarker {
-  display: inline-flex;
-  align-items: center;
-  color: currentColor;
-  line-height: 1;
-  opacity: 0.7;
-}
-
-.messageAgentMarker svg {
-  width: 10px;
-  height: 10px;
 }
 
 .messageActionOverlay {
