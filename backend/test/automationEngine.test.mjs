@@ -2347,7 +2347,7 @@ test('notificación interna puede enviarse por correo interno sin campanita ni p
   })
 })
 
-test('trigger fecha programada inscribe una sola vez por horario', async () => {
+test('trigger fecha programada recupera un deploy tardío y se inscribe una sola vez', async () => {
   const suffix = randomUUID()
   const automationId = `automation_schedule_trigger_${suffix}`
   const now = DateTime.now().setZone('America/Mexico_City').startOf('minute')
@@ -2393,8 +2393,9 @@ test('trigger fecha programada inscribe una sola vez por horario', async () => {
       [automationId, 'Test fecha programada', JSON.stringify(flow), JSON.stringify(flow)]
     )
 
-    await processScheduledTriggers(now.plus({ seconds: 30 }).toUTC().toJSDate())
-    await processScheduledTriggers(now.plus({ seconds: 40 }).toUTC().toJSDate())
+    // Simula un deploy/reinicio que terminó cinco minutos después de la hora.
+    await processScheduledTriggers(now.plus({ minutes: 5 }).toUTC().toJSDate())
+    await processScheduledTriggers(now.plus({ minutes: 6 }).toUTC().toJSDate())
 
     const enrollments = await db.all('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
     assert.equal(enrollments.length, 1)
@@ -2403,6 +2404,49 @@ test('trigger fecha programada inscribe una sola vez por horario', async () => {
 
     const runs = await db.all('SELECT * FROM automation_schedule_runs WHERE automation_id = ?', [automationId])
     assert.equal(runs.length, 1)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automation_schedule_runs WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+  }
+})
+
+test('trigger fecha programada no revive campañas que llevan más de un día vencidas', async () => {
+  const suffix = randomUUID()
+  const automationId = `automation_schedule_expired_${suffix}`
+  const now = DateTime.now().setZone('America/Mexico_City').startOf('minute')
+  const scheduledAt = now.minus({ hours: 24, minutes: 1 }).toFormat("yyyy-LL-dd'T'HH:mm")
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        config: {
+          triggers: [{
+            id: `trigger-schedule-expired-${suffix}`,
+            type: 'trigger-scheduler',
+            config: { scheduleMode: 'once', datetime: scheduledAt, recurrence: 'none', weekdays: [] }
+          }]
+        }
+      },
+      { id: 'done', type: 'action-update-contact', config: {} }
+    ],
+    edges: [{ source: 'start', target: 'done' }]
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test fecha programada expirada', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await processScheduledTriggers(now.toUTC().toJSDate())
+
+    const enrollments = await db.all('SELECT * FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    const runs = await db.all('SELECT * FROM automation_schedule_runs WHERE automation_id = ?', [automationId])
+    assert.equal(enrollments.length, 0)
+    assert.equal(runs.length, 0)
   } finally {
     await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
     await db.run('DELETE FROM automation_schedule_runs WHERE automation_id = ?', [automationId])

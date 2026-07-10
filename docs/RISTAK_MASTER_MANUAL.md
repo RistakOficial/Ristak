@@ -1291,13 +1291,15 @@ Esta sección y todo su despacho en segundo plano requieren
   agrega env var nueva para arrancar el servicio.
 - Cada canal tiene su propio despacho idempotente por pago, tipo de automatizacion
   y canal. Un envio por WhatsApp no bloquea el envio por correo, y viceversa.
-- `reminderDaysBefore` es un dia exacto, no una ventana acumulada: si esta en 3,
-  el recordatorio solo se evalua para pagos que vencen exactamente tres dias
-  despues del dia de negocio actual.
-- En planes de pago locales, ese dia exacto no debe disparar varias parcialidades
-  del mismo flujo en el mismo barrido. Si dos o mas cuotas del mismo
-  `payment_flow` caen en el dia objetivo, Ristak solo envia el recordatorio de la
-  siguiente parcialidad abierta; los pagos unicos y pagos de otros flujos siguen
+- `reminderDaysBefore` define el primer dia objetivo: si esta en 3, el
+  recordatorio se prepara a tres dias del vencimiento. Si un reinicio o despliegue
+  pierde ese tick, el sistema lo recupera solo mientras el pago siga venciendo hoy
+  o en el futuro; nunca revive recordatorios de pagos ya vencidos. El despacho
+  persistente mantiene la idempotencia aunque el barrido vuelva a pasar.
+- En planes de pago locales, esa ventana no debe disparar varias parcialidades del
+  mismo flujo en el mismo barrido. Si dos o mas cuotas del mismo `payment_flow`
+  estan dentro de la ventana, Ristak solo envia el recordatorio de la siguiente
+  parcialidad abierta; los pagos unicos y pagos de otros flujos siguen
   evaluandose de forma independiente.
 - Los avisos de cobro fallido solo se disparan para fallos recientes: despues del
   `failedPaymentDelayHours` configurado y dentro de una tolerancia maxima de 24h
@@ -1322,10 +1324,15 @@ Cada recordatorio/aviso guarda canal y contenido por separado. En la UI, el cana
 visible `WhatsApp API` guarda `channel='whatsapp'`; `WhatsApp QR solo` guarda
 `channel='whatsapp_qr'`. Tambien puede ser `email`, `messenger` o `instagram`.
 Los modos automaticos guardan `channel='booking_channel'` para "Por el canal que
-agendo" y `channel='available_channel'` para "Por canal disponible". El primero
-intenta respetar el canal detectado de la cita/contacto y luego cae al siguiente
-canal disponible si falla; el segundo usa prioridad fija: WhatsApp API, WhatsApp
-QR, Instagram, Messenger y correo electronico.
+agendo" y `channel='available_channel'` para "Por canal disponible". Al crear
+una cita, Ristak guarda `appointments.booking_channel` solo cuando el flujo
+conoce el canal real (por ejemplo, un agente de WhatsApp, Instagram, Messenger o
+correo, o una solicitud que lo declara). "Por el canal que agendo" usa ese dato
+guardado y, si falla, prueba los demas canales disponibles. No deduce el canal
+desde el ultimo mensaje del contacto: eso podria pertenecer a otra conversacion.
+Las citas antiguas o formularios que no informan canal usan directamente la
+prioridad configurada. "Por canal disponible" siempre usa esa prioridad fija:
+WhatsApp API, WhatsApp QR, Instagram, Messenger y correo electronico.
 `channel='whatsapp'` usa WhatsApp API como ruta principal y QR solo como
 respaldo opcional. `channel='whatsapp_qr'` usa WhatsApp QR como ruta principal
 aunque tambien exista API conectada. En los dos canales de WhatsApp, el contenido
@@ -2244,6 +2251,14 @@ El motor principal vive en `backend/src/services/automationEngine.js`.
 Los cambios de fechas/delays deben obedecer `DATE_TIME_GUIDELINES.md`.
 Los crons de integraciones externas deben obedecer `INTEGRATION_CRON_RULES.md`.
 
+Los disparadores programados de una automatizacion tienen recuperacion acotada:
+si un reinicio o despliegue cruza su hora, el scheduler ejecuta la instancia
+perdida solo durante las siguientes 24 horas. `automation_schedule_runs` reclama
+una clave unica por instancia para no duplicarla. Despues de esa ventana no se
+reproducen campañas viejas al volver a levantar el backend. Las inscripciones
+que vencen durante una espera se retoman en orden de `resume_at`, de la mas vieja
+a la mas nueva.
+
 En el editor visual, la libreria lateral de automatizaciones es responsiva y
 estatica: en pantallas muy amplias usa el ancho grande fijo, y en ventanas
 normales o chicas se compacta por breakpoint. No se expande ni se contrae al
@@ -2318,12 +2333,13 @@ desconectar o cambiar modo relevante.
 
 Ademas, cada tick que pueda enviar mensajes, sincronizar datos premium o cobrar
 debe validar `canRunBackgroundJob(feature)`. Ejemplos: mensajes programados y
-watchdog QR requieren `whatsapp`; recordatorios de citas requieren
-`appointments` y para envio `whatsapp`; automatizaciones de pago requieren
-`payment_automations` y crons de parcialidades requieren
-`payments`/`payment_plans`; Meta requiere `meta_ads`;
-Google Calendar requiere `google_calendar`; email inbound requiere `email`;
-HighLevel requiere `highlevel_integration` y sus conversaciones tambien `chat`.
+watchdog QR requieren `whatsapp`; recordatorios y confirmaciones de citas
+requieren `appointments`, y cada canal valida su propia conexion/permiso al
+momento de enviar; automatizaciones de pago requieren `payment_automations` y
+crons de parcialidades requieren `payments`/`payment_plans`; Meta requiere
+`meta_ads`; Google Calendar requiere `google_calendar`; email inbound requiere
+`email`; HighLevel requiere `highlevel_integration` y sus conversaciones tambien
+`chat`.
 
 ## Media y Bunny
 

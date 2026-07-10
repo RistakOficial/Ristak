@@ -33,7 +33,10 @@ import { normalizeContactNameFields } from '../utils/contactNameFormatter.js'
 
 const MAX_STEPS = 60
 const MAX_INLINE_DELAY_SECONDS = 120
-const SCHEDULE_TRIGGER_WINDOW_MINUTES = 2
+// Si un deploy o reinicio cruza la hora exacta de un disparador, el trabajo no
+// debe desaparecer. Recuperamos una ejecución reciente, pero no revivimos
+// campañas viejas al volver a levantar el backend.
+const SCHEDULE_TRIGGER_CATCHUP_MINUTES = 24 * 60
 const WAIT_KIND_REPLY = 'reply'
 const WAIT_KIND_BUTTON_REPLY = 'button_reply'
 const WAIT_KIND_TRIGGER_LINK_CLICK = 'trigger-link-click'
@@ -5418,6 +5421,48 @@ function resolveScheduleZone(config = {}, flow = {}, accountTimezone = DEFAULT_T
   return isValidTimezone(accountTimezone) ? accountTimezone : DEFAULT_TIMEZONE
 }
 
+function isScheduleWithinCatchupWindow(scheduledAt, localNow) {
+  const minutesLate = localNow.diff(scheduledAt, 'minutes').minutes
+  return minutesLate >= 0 && minutesLate <= SCHEDULE_TRIGGER_CATCHUP_MINUTES
+}
+
+function scheduledAtForDate(date, base) {
+  return date.set({
+    hour: base.hour,
+    minute: base.minute,
+    second: 0,
+    millisecond: 0
+  })
+}
+
+function mostRecentWeeklySchedule(localNow, base, allowedWeekdays) {
+  const candidates = allowedWeekdays
+    .map((weekday) => WEEKDAY_KEYS.indexOf(weekday) + 1)
+    .filter((weekday) => weekday > 0)
+    .map((weekday) => {
+      const daysSinceWeekday = (localNow.weekday - weekday + 7) % 7
+      let candidate = scheduledAtForDate(localNow.minus({ days: daysSinceWeekday }), base)
+      if (candidate > localNow) candidate = candidate.minus({ days: 7 })
+      return candidate
+    })
+    .filter((candidate) => candidate.isValid)
+    .sort((left, right) => right.toMillis() - left.toMillis())
+
+  return candidates[0] || null
+}
+
+function mostRecentMonthlySchedule(localNow, base) {
+  let month = localNow.startOf('month')
+  for (let index = 0; index < 2; index += 1) {
+    if (base.day <= month.daysInMonth) {
+      const candidate = scheduledAtForDate(month.set({ day: base.day }), base)
+      if (candidate <= localNow) return candidate
+    }
+    month = month.minus({ months: 1 }).startOf('month')
+  }
+  return null
+}
+
 function computeDueSchedule(config = {}, flow = {}, nowUtc = DateTime.utc(), accountTimezone = DEFAULT_TIMEZONE) {
   const zone = resolveScheduleZone(config, flow, accountTimezone)
   const datetime = cleanString(config.datetime)
@@ -5428,17 +5473,8 @@ function computeDueSchedule(config = {}, flow = {}, nowUtc = DateTime.utc(), acc
 
   const recurrence = normalizeScheduleRecurrence(config)
   const localNow = nowUtc.setZone(zone)
-  const scheduledToday = localNow.set({
-    hour: base.hour,
-    minute: base.minute,
-    second: 0,
-    millisecond: 0
-  })
-  const minutesAfterScheduled = localNow.diff(scheduledToday, 'minutes').minutes
-  if (minutesAfterScheduled < 0 || minutesAfterScheduled > SCHEDULE_TRIGGER_WINDOW_MINUTES) return null
-
   if (recurrence === 'none') {
-    if (scheduledToday.toFormat('yyyyLLddHHmm') !== base.toFormat('yyyyLLddHHmm')) return null
+    if (!isScheduleWithinCatchupWindow(base, localNow)) return null
     return {
       recurrence,
       timezone: zone,
@@ -5452,6 +5488,8 @@ function computeDueSchedule(config = {}, flow = {}, nowUtc = DateTime.utc(), acc
   if (recurrence === 'daily') {
     const allowedWeekdays = Array.isArray(config.weekdays) ? config.weekdays.filter(Boolean) : []
     if (allowedWeekdays.length > 0 && !allowedWeekdays.includes(weekdayKey(localNow))) return null
+    const scheduledToday = scheduledAtForDate(localNow, base)
+    if (!isScheduleWithinCatchupWindow(scheduledToday, localNow)) return null
     return {
       recurrence,
       timezone: zone,
@@ -5464,22 +5502,24 @@ function computeDueSchedule(config = {}, flow = {}, nowUtc = DateTime.utc(), acc
     const allowedWeekdays = Array.isArray(config.weekdays) && config.weekdays.length > 0
       ? config.weekdays
       : [weekdayKey(base)]
-    if (!allowedWeekdays.includes(weekdayKey(localNow))) return null
+    const scheduledAt = mostRecentWeeklySchedule(localNow, base, allowedWeekdays)
+    if (!scheduledAt || !isScheduleWithinCatchupWindow(scheduledAt, localNow)) return null
     return {
       recurrence,
       timezone: zone,
-      runKey: `weekly:${scheduledToday.toFormat('kkkk-WW')}:${weekdayKey(localNow)}:${base.toFormat('HHmm')}`,
-      scheduledFor: scheduledToday.toUTC().toISO()
+      runKey: `weekly:${scheduledAt.toFormat('kkkk-WW')}:${weekdayKey(scheduledAt)}:${base.toFormat('HHmm')}`,
+      scheduledFor: scheduledAt.toUTC().toISO()
     }
   }
 
   if (recurrence === 'monthly') {
-    if (localNow.day !== base.day) return null
+    const scheduledAt = mostRecentMonthlySchedule(localNow, base)
+    if (!scheduledAt || !isScheduleWithinCatchupWindow(scheduledAt, localNow)) return null
     return {
       recurrence,
       timezone: zone,
-      runKey: `monthly:${scheduledToday.toFormat('yyyyLL')}:${String(base.day).padStart(2, '0')}:${base.toFormat('HHmm')}`,
-      scheduledFor: scheduledToday.toUTC().toISO()
+      runKey: `monthly:${scheduledAt.toFormat('yyyyLL')}:${String(base.day).padStart(2, '0')}:${base.toFormat('HHmm')}`,
+      scheduledFor: scheduledAt.toUTC().toISO()
     }
   }
 
@@ -5607,6 +5647,7 @@ export async function processDueResumes() {
     const rows = await db.all(
       `SELECT * FROM automation_enrollments
        WHERE status = 'waiting' AND resume_at IS NOT NULL AND resume_at <= ?
+       ORDER BY resume_at ASC, entered_at ASC, id ASC
        LIMIT 50`,
       [nowIso()]
     )

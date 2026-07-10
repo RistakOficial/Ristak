@@ -3240,6 +3240,7 @@ async function initTables() {
         address TEXT,
         start_time DATETIME,
         end_time DATETIME,
+        booking_channel TEXT,
         confirmation_badge_until DATETIME,
         date_added DATETIME,
         date_updated DATETIME,
@@ -3339,7 +3340,8 @@ async function initTables() {
       ['google_event_id', 'TEXT'],
       ['google_sync_status', 'TEXT'],
       ['google_sync_error', 'TEXT'],
-      ['google_synced_at', 'DATETIME']
+      ['google_synced_at', 'DATETIME'],
+      ['booking_channel', 'TEXT']
     ]) {
       try {
         await db.run(`ALTER TABLE appointments ADD COLUMN ${columnName} ${columnType}`)

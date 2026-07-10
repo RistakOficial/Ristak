@@ -9142,9 +9142,23 @@ function normalizeAgentAppointmentRecord(rawAppointment = {}, fallback = {}) {
     address: cleanText(appointment.address || fallback.address || '', 500) || null,
     startTime: appointment.startTime || appointment.start_time || fallback.startTime || fallback.start_time || null,
     endTime: appointment.endTime || appointment.end_time || fallback.endTime || fallback.end_time || appointment.startTime || fallback.startTime || null,
+    bookingChannel: normalizeAgentAppointmentBookingChannel(
+      appointment.bookingChannel || appointment.booking_channel || fallback.bookingChannel || fallback.booking_channel
+    ),
     dateAdded: appointment.dateAdded || appointment.date_added || fallback.dateAdded || fallback.date_added || new Date().toISOString(),
     dateUpdated: appointment.dateUpdated || appointment.date_updated || fallback.dateUpdated || fallback.date_updated || new Date().toISOString()
   }
+}
+
+function normalizeAgentAppointmentBookingChannel(value) {
+  const channel = cleanText(value, 80).toLowerCase().replace(/[\s-]+/g, '_')
+  if (!channel) return null
+  if (channel.includes('whatsapp_qr') || channel === 'qr' || channel.includes('baileys') || channel.includes('bailey')) return 'whatsapp_qr'
+  if (channel.includes('whatsapp') || channel === 'wa' || channel.includes('waba') || channel.includes('ycloud')) return 'whatsapp'
+  if (channel.includes('instagram') || channel === 'ig' || channel === 'instagram_dm') return 'instagram'
+  if (channel.includes('messenger') || channel.includes('facebook') || channel === 'fb') return 'messenger'
+  if (channel.includes('email') || channel.includes('correo') || channel === 'mail') return 'email'
+  return null
 }
 
 async function upsertAgentAppointmentMirror(rawAppointment = {}, fallback = {}) {
@@ -9155,8 +9169,8 @@ async function upsertAgentAppointmentMirror(rawAppointment = {}, fallback = {}) 
     `INSERT INTO appointments (
        id, calendar_id, contact_id, location_id, title, status,
        appointment_status, assigned_user_id, notes, address,
-       start_time, end_time, date_added, date_updated
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       start_time, end_time, booking_channel, date_added, date_updated
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (id) DO UPDATE SET
        calendar_id = COALESCE(excluded.calendar_id, appointments.calendar_id),
        contact_id = COALESCE(excluded.contact_id, appointments.contact_id),
@@ -9169,6 +9183,7 @@ async function upsertAgentAppointmentMirror(rawAppointment = {}, fallback = {}) 
        address = COALESCE(excluded.address, appointments.address),
        start_time = COALESCE(excluded.start_time, appointments.start_time),
        end_time = COALESCE(excluded.end_time, appointments.end_time),
+       booking_channel = COALESCE(excluded.booking_channel, appointments.booking_channel),
        date_added = COALESCE(appointments.date_added, excluded.date_added),
        date_updated = excluded.date_updated`,
     [
@@ -9184,6 +9199,7 @@ async function upsertAgentAppointmentMirror(rawAppointment = {}, fallback = {}) 
       appointment.address,
       appointment.startTime,
       appointment.endTime,
+      appointment.bookingChannel,
       appointment.dateAdded,
       appointment.dateUpdated
     ]
@@ -9655,7 +9671,8 @@ async function executeCreateHighLevelAppointment(args = {}, highLevelConnection 
   const appointment = await upsertAgentAppointmentMirror(response, {
     ...payload,
     locationId: highLevelConnection.locationId,
-    appointmentStatus
+    appointmentStatus,
+    bookingChannel: context.runtimeContext?.channel || context.agentRoute?.channel
   })
 
   await triggerWhatsappAppointmentBookedEvent(resolvedContact.contact.id, {

@@ -1032,46 +1032,6 @@ async function resolvePreferredWhatsAppSenderChannel(appointment = {}) {
   return ''
 }
 
-async function resolveLatestContactMessageChannel(contactId) {
-  const id = cleanString(contactId)
-  if (!id) return ''
-  const row = await db.get(`
-    SELECT channel
-    FROM (
-      SELECT
-        CASE
-          WHEN LOWER(COALESCE(transport, 'api')) IN ('qr', 'whatsapp_qr', 'baileys', 'bailey') THEN 'whatsapp_qr'
-          ELSE 'whatsapp'
-        END AS channel,
-        COALESCE(message_timestamp, created_at) AS message_at,
-        created_at
-      FROM whatsapp_api_messages
-      WHERE contact_id = ?
-      UNION ALL
-      SELECT
-        CASE
-          WHEN LOWER(COALESCE(platform, '')) = 'instagram' THEN 'instagram'
-          ELSE 'messenger'
-        END AS channel,
-        COALESCE(message_timestamp, created_at) AS message_at,
-        created_at
-      FROM meta_social_messages
-      WHERE contact_id = ?
-        AND LOWER(COALESCE(platform, '')) IN ('instagram', 'messenger', 'facebook')
-      UNION ALL
-      SELECT
-        'email' AS channel,
-        COALESCE(message_timestamp, created_at) AS message_at,
-        created_at
-      FROM email_messages
-      WHERE contact_id = ?
-    ) latest_channels
-    ORDER BY message_at DESC, created_at DESC
-    LIMIT 1
-  `, [id, id, id])
-  return normalizeRealReminderChannel(row?.channel)
-}
-
 async function resolveAppointmentBookedChannel(appointment = {}) {
   const sourceChannel = normalizeAppointmentSourceChannel(appointment)
   if (sourceChannel === 'whatsapp') {
@@ -1080,9 +1040,10 @@ async function resolveAppointmentBookedChannel(appointment = {}) {
   }
   if (sourceChannel) return sourceChannel
 
-  return await resolveLatestContactMessageChannel(appointment.contact_id) ||
-    await resolvePreferredWhatsAppSenderChannel(appointment) ||
-    ''
+  // No usamos el último chat como si fuera evidencia de dónde se agendó: puede
+  // pertenecer a otra conversación. Si una cita vieja no guardó el canal, la
+  // política correcta es caer al orden de canales disponibles.
+  return ''
 }
 
 function buildAutomaticChannelOrder(mode, preferredChannel = '') {
@@ -1471,7 +1432,7 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
   if (!clauses.length) return { sent: 0, errors: 0, skipped: 0 }
 
   const appointments = await db.all(`
-    SELECT a.id, a.title, a.start_time, a.date_added, a.source, a.appointment_status, a.status, a.contact_id,
+    SELECT a.id, a.title, a.start_time, a.date_added, a.source, a.booking_channel, a.appointment_status, a.status, a.contact_id,
       c.phone, c.email, c.first_name, c.last_name, c.full_name, c.preferred_whatsapp_phone_number_id
     FROM appointments a
     JOIN contacts c ON c.id = a.contact_id

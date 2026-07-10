@@ -989,18 +989,28 @@ test('recordatorios de pago usan el dia del negocio, no el dia UTC del servidor'
   })
 })
 
-test('recordatorios de pago respetan exactamente los dias antes configurados', async () => {
+test('recordatorios de pago recuperan pendientes no enviados sin adelantar pagos fuera de la ventana', async () => {
   await withYCloudCapture(async (captures) => {
     const now = new Date('2026-07-05T09:16:00.000Z')
-    const tooSoonPayment = await createPaymentFixture({
+    const missedPayment = await createPaymentFixture({
       status: 'scheduled',
-      dueDate: '2026-07-06T12:00:00.000Z',
-      suffix: 'toosoon3days'
+      dueDate: '2026-07-07T12:00:00.000Z',
+      suffix: 'missed2days'
     })
     const exactPayment = await createPaymentFixture({
       status: 'scheduled',
       dueDate: '2026-07-08T12:00:00.000Z',
       suffix: 'exact3days'
+    })
+    const tooSoonPayment = await createPaymentFixture({
+      status: 'scheduled',
+      dueDate: '2026-07-09T12:00:00.000Z',
+      suffix: 'toosoon4days'
+    })
+    const pastDuePayment = await createPaymentFixture({
+      status: 'scheduled',
+      dueDate: '2026-07-04T12:00:00.000Z',
+      suffix: 'pastdue'
     })
 
     try {
@@ -1019,15 +1029,23 @@ test('recordatorios de pago respetan exactamente los dias antes configurados', a
       const results = await processDuePaymentAutomations({
         now,
         limit: 10,
-        paymentIds: [tooSoonPayment.paymentId, exactPayment.paymentId]
-      })
+          paymentIds: [missedPayment.paymentId, exactPayment.paymentId, tooSoonPayment.paymentId, pastDuePayment.paymentId]
+        })
 
-      assert.equal(results.filter((result) => result.sent).length, 1)
-      assert.equal(captures.length, 1)
-      assert.equal(captures[0].externalId, `payment:reminder:${exactPayment.paymentId}`)
-    } finally {
-      await cleanupFixtures([tooSoonPayment.paymentId, exactPayment.paymentId])
-    }
+        assert.equal(results.filter((result) => result.sent).length, 2)
+        assert.equal(captures.length, 2)
+        assert.deepEqual(
+          captures.map((capture) => capture.externalId).sort(),
+          [`payment:reminder:${missedPayment.paymentId}`, `payment:reminder:${exactPayment.paymentId}`].sort()
+        )
+      } finally {
+        await cleanupFixtures([
+          missedPayment.paymentId,
+          exactPayment.paymentId,
+          tooSoonPayment.paymentId,
+          pastDuePayment.paymentId
+        ])
+      }
   })
 })
 

@@ -177,6 +177,7 @@ test('public booking keeps a mirrored HighLevel calendar working from local DB w
         name: 'Agenda Local',
         phone,
         email,
+        bookingChannel: 'whatsapp_qr',
         sourceUrl: `http://localhost:3001/calendar/${calendarSlug}`
       },
       headers: {
@@ -197,10 +198,11 @@ test('public booking keeps a mirrored HighLevel calendar working from local DB w
     assert.equal(res.body?.data?.appointment?.syncStatus, 'pending')
 
     const storedAppointment = await db.get(
-      'SELECT id, calendar_id, sync_status FROM appointments WHERE calendar_id = ? AND sync_status = ?',
+      'SELECT id, calendar_id, booking_channel, sync_status FROM appointments WHERE calendar_id = ? AND sync_status = ?',
       [calendarId, 'pending']
     )
     assert.equal(storedAppointment?.calendar_id, calendarId)
+    assert.equal(storedAppointment?.booking_channel, 'whatsapp_qr')
   } finally {
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)

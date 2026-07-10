@@ -19,7 +19,9 @@ let windowsRunning = false
 
 async function runAppointmentRemindersDispatch(source = 'interval') {
   if (running || isDeployShutdownStarted()) return
-  if (!(await canRunBackgroundJob('appointments')) || !(await canRunBackgroundJob('whatsapp'))) return
+  // El recordatorio puede salir por correo, Messenger o Instagram; exigir WhatsApp
+  // aquí apagaba todos esos canales en cuentas que no tienen esa feature.
+  if (!(await canRunBackgroundJob('appointments'))) return
   running = true
 
   try {

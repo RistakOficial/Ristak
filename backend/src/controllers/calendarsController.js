@@ -49,6 +49,27 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CALENDAR_EVENTS_MAX_RANGE_DAYS = 370;
 const CALENDAR_AVAILABILITY_MAX_RANGE_DAYS = 45;
 const CALENDAR_BLOCKED_SLOTS_MAX_RANGE_DAYS = 45;
+const APPOINTMENT_BOOKING_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'messenger', 'instagram', 'email']);
+
+function normalizeAppointmentBookingChannel(value) {
+  const channel = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_');
+  if (!channel) return null;
+  if (channel.includes('whatsapp_qr') || channel === 'qr' || channel.includes('baileys') || channel.includes('bailey')) return 'whatsapp_qr';
+  if (channel.includes('whatsapp') || channel === 'wa' || channel.includes('waba') || channel.includes('ycloud')) return 'whatsapp';
+  if (channel.includes('instagram') || channel === 'ig' || channel === 'instagram_dm') return 'instagram';
+  if (channel.includes('messenger') || channel.includes('facebook') || channel === 'fb') return 'messenger';
+  if (channel.includes('email') || channel.includes('correo') || channel === 'mail') return 'email';
+  return APPOINTMENT_BOOKING_CHANNELS.has(channel) ? channel : null;
+}
+
+function getAppointmentBookingChannel(payload = {}) {
+  return normalizeAppointmentBookingChannel(
+    payload.bookingChannel || payload.booking_channel || payload.sourceChannel || payload.source_channel ||
+    payload.channel || payload.source || payload.origin || payload?.meta?.bookingChannel ||
+    payload?.meta?.booking_channel || payload?.meta?.sourceChannel || payload?.meta?.source_channel ||
+    payload?.meta?.channel || payload?.meta?.source || payload?.meta?.origin
+  );
+}
 
 function calendarRangeError(message) {
   const error = new Error(message);
@@ -1546,6 +1567,7 @@ export async function createPublicAppointment(req, res) {
     const publicAppointmentData = {
       contactId,
       calendarId: calendar.id,
+      bookingChannel: getAppointmentBookingChannel(body),
       appointmentStatus: calendar.autoConfirm ? 'confirmed' : 'pending',
       status: calendar.autoConfirm ? 'confirmed' : 'pending',
       startTime: start.toISOString(),

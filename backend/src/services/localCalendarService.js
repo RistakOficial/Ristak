@@ -37,6 +37,7 @@ const DEFAULT_BOOKING_COMPLETION_MESSAGE = 'Listo. Tu cita quedo agendada.'
 const DEFAULT_CALENDAR_META_EVENT_NAME = 'Schedule'
 const DEFAULT_CALENDAR_WHATSAPP_EVENT_NAME = 'LeadSubmitted'
 const CALENDAR_CUSTOM_EVENT_CHANNELS = new Set(['site', 'whatsapp', 'messenger', 'instagram', 'smart'])
+const APPOINTMENT_BOOKING_CHANNELS = new Set(['whatsapp', 'whatsapp_qr', 'messenger', 'instagram', 'email'])
 const CALENDAR_BOOKING_LAYOUTS = new Set(['classic', 'compact', 'stacked'])
 const CALENDAR_BOOKING_FONT_FAMILIES = new Set(['system', 'modern', 'serif', 'mono'])
 const CALENDAR_BOOKING_WIDGET_THEMES = new Set(['ristak', 'night', 'agenda', 'minimal'])
@@ -106,6 +107,17 @@ function makeId(prefix) {
 
 function cleanString(value) {
   return String(value ?? '').trim()
+}
+
+function normalizeAppointmentBookingChannel(value) {
+  const channel = cleanString(value).toLowerCase().replace(/[\s-]+/g, '_')
+  if (!channel) return null
+  if (channel.includes('whatsapp_qr') || channel === 'qr' || channel.includes('baileys') || channel.includes('bailey')) return 'whatsapp_qr'
+  if (channel.includes('whatsapp') || channel === 'wa' || channel.includes('waba') || channel.includes('ycloud')) return 'whatsapp'
+  if (channel.includes('instagram') || channel === 'ig' || channel === 'instagram_dm') return 'instagram'
+  if (channel.includes('messenger') || channel.includes('facebook') || channel === 'fb') return 'messenger'
+  if (channel.includes('email') || channel.includes('correo') || channel === 'mail') return 'email'
+  return APPOINTMENT_BOOKING_CHANNELS.has(channel) ? channel : null
 }
 
 function normalizePhoneDialCode(value) {
@@ -4038,6 +4050,7 @@ function appointmentRowToApi(row = {}) {
     dateAdded: row.date_added || row.created_at || row.start_time,
     dateUpdated: row.date_updated || undefined,
     source: row.source || 'ristak',
+    bookingChannel: normalizeAppointmentBookingChannel(row.booking_channel),
     syncStatus: row.sync_status || 'pending',
     syncError: row.sync_error || null,
     syncedAt: row.synced_at || null,
@@ -4076,6 +4089,12 @@ function normalizeAppointmentRecord(raw = {}, options = {}) {
     dateAdded: appointment.dateAdded || appointment.date_added || appointment.createdAt || appointment.created_at || new Date().toISOString(),
     dateUpdated: appointment.dateUpdated || appointment.date_updated || appointment.updatedAt || appointment.updated_at || new Date().toISOString(),
     source,
+    bookingChannel: normalizeAppointmentBookingChannel(
+      options.bookingChannel || options.booking_channel || options.sourceChannel || options.source_channel ||
+      options.channel || options.origin || appointment.bookingChannel || appointment.booking_channel ||
+      appointment.sourceChannel || appointment.source_channel || appointment.channel || appointment.origin ||
+      options.source || appointment.source
+    ),
     syncStatus: options.syncStatus || appointment.syncStatus || appointment.sync_status || (source === 'ghl' ? 'synced' : 'pending'),
     syncError: options.syncError || appointment.syncError || appointment.sync_error || null,
     googleSyncStatus: options.googleSyncStatus || appointment.googleSyncStatus || appointment.google_sync_status || (source === 'google' ? 'synced' : null),
@@ -4123,9 +4142,9 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     INSERT INTO appointments (
       id, ghl_appointment_id, google_event_id, calendar_id, contact_id, location_id, title, status,
       appointment_status, assigned_user_id, notes, address, start_time, end_time,
-      date_added, date_updated, source, sync_status, sync_error, synced_at,
+      date_added, date_updated, source, booking_channel, sync_status, sync_error, synced_at,
       google_sync_status, google_sync_error, google_synced_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (id) DO UPDATE SET
       ghl_appointment_id = COALESCE(excluded.ghl_appointment_id, appointments.ghl_appointment_id),
       google_event_id = COALESCE(excluded.google_event_id, appointments.google_event_id),
@@ -4143,6 +4162,7 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
       date_added = COALESCE(appointments.date_added, excluded.date_added),
       date_updated = CASE WHEN ${lastWriteWins} = 1 AND (appointments.sync_status IN ('pending','pending_delete') OR appointments.date_updated >= excluded.date_updated) THEN appointments.date_updated ELSE excluded.date_updated END,
       source = COALESCE(excluded.source, appointments.source),
+      booking_channel = COALESCE(excluded.booking_channel, appointments.booking_channel),
       sync_status = CASE WHEN ${lastWriteWins} = 1 AND appointments.sync_status IN ('pending','pending_delete') THEN appointments.sync_status ELSE excluded.sync_status END,
       sync_error = excluded.sync_error,
       synced_at = CASE WHEN excluded.sync_status = 'synced' THEN CURRENT_TIMESTAMP ELSE appointments.synced_at END,
@@ -4168,6 +4188,7 @@ export async function upsertLocalAppointment(raw = {}, options = {}) {
     normalized.dateAdded,
     normalized.dateUpdated,
     normalized.source,
+    normalized.bookingChannel,
     normalized.syncStatus,
     normalized.syncError,
     normalized.syncStatus === 'synced' ? new Date().toISOString() : null,

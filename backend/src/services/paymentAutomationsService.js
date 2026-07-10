@@ -1039,7 +1039,10 @@ async function getReminderCandidates(settings, now, limit, paymentIds = [], time
   const dueRows = rows.filter((row) => {
     // PAY2-007: fechas invalidas/vacias se excluyen; no se inventa vencimiento.
     const dueDate = businessDateOnlyFromValue(row.due_date, timezone)
-    return dueDate !== null && dueDate === targetDate
+    // Si el backend se reinició o estuvo temporalmente fuera, recuperamos el
+    // recordatorio mientras el pago siga sin vencer. Los despachos persistentes
+    // mantienen la idempotencia y evitan reenviar los que ya salieron.
+    return dueDate !== null && dueDate >= todayDate && dueDate <= targetDate
   })
 
   return selectNextReminderPerPaymentPlan(dueRows).slice(0, limit)

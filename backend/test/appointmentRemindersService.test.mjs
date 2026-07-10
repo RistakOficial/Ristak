@@ -621,7 +621,7 @@ test('recordatorios por canal que agendó respetan WhatsApp QR aunque API exista
       qrStatus: 'connected'
     }, async ({ reminder, appointmentId, phoneNumberId }) => {
       await attachQrSessionForReminder(phoneNumberId, '+526561234567', sentMessages)
-      await db.run("UPDATE appointments SET source = 'whatsapp_qr' WHERE id = ?", [appointmentId])
+      await db.run("UPDATE appointments SET source = 'ristak', booking_channel = 'whatsapp_qr' WHERE id = ?", [appointmentId])
       await db.run(`
         UPDATE appointment_reminders
         SET channel = 'booking_channel',
