@@ -9,7 +9,7 @@ export type ConversationSignal = 'ready_for_human' | 'ready_to_schedule' | 'read
 export type ClosingStrategyMode = 'system' | 'custom'
 export type ConversationalPersuasionLevel = 'low' | 'medium' | 'high'
 export type ConversationalLanguageLevel = 'professional' | 'intermediate' | 'colloquial'
-export type ConversationalContactScope = 'all' | 'new_only'
+export type ConversationalContactScope = 'all' | 'new_only' | 'existing_only'
 export type AgentResponseDelayMode = 'none' | 'fixed' | 'random'
 export type AgentResponseDelayUnit = 'seconds' | 'minutes'
 export type AgentReplyDeliveryMode = 'single' | 'split'
@@ -698,6 +698,11 @@ function normalizeConversationalLanguageLevel(value?: unknown): ConversationalLa
   return level === 'professional' || level === 'intermediate' || level === 'colloquial' ? level : 'intermediate'
 }
 
+function normalizeContactScope(value?: unknown): ConversationalContactScope {
+  const scope = String(value || '').trim().toLowerCase()
+  return scope === 'new_only' || scope === 'existing_only' ? scope : 'all'
+}
+
 function normalizeAgentConfig<T extends ConversationalAgentConfig | null | undefined>(config: T): T {
   if (!config) return config
   return {
@@ -733,7 +738,7 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
     successAction: normalizeConversationalSuccessAction(agent.successAction),
     persuasionLevel: normalizeConversationalPersuasionLevel(agent.persuasionLevel),
     languageLevel: normalizeConversationalLanguageLevel(agent.languageLevel),
-    contactScope: agent.contactScope === 'new_only' ? 'new_only' : 'all',
+    contactScope: normalizeContactScope(agent.contactScope),
     contactScopeCutoffAt: agent.contactScopeCutoffAt ?? null,
     followUp: {
       ...DEFAULT_AGENT_FOLLOW_UP,

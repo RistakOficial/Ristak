@@ -72,11 +72,18 @@ export function normalizeConversationalLanguageLevel(value, fallback = DEFAULT_L
   return VALID_LANGUAGE_LEVELS.has(fallback) ? fallback : DEFAULT_LANGUAGE_LEVEL
 }
 
-// Alcance de contactos: 'all' = atiende a todos (comportamiento histórico); 'new_only' =
-// solo contactos creados a partir del corte (medida de seguridad para no mezclar a los
-// clientes que ya existían cuando se creó/configuró el agente).
+// Alcance de contactos ("¿A quién puede atender?"):
+// - 'all' = todos los mensajes nuevos desde ahora, sin importar cuándo nació el
+//   contacto (comportamiento histórico).
+// - 'new_only' = solo contactos CREADOS a partir del corte (leads nuevos).
+// - 'existing_only' = solo contactos que YA existían antes del corte (la base
+//   actual; útil para agentes de reactivación/recuperación).
+// El corte se sella al configurar el alcance y se re-sella al cambiar de alcance.
+const SCOPED_CONTACT_SCOPES = new Set(['new_only', 'existing_only'])
+
 export function normalizeContactScope(value) {
-  return String(value || '').trim().toLowerCase() === 'new_only' ? 'new_only' : 'all'
+  const scope = String(value || '').trim().toLowerCase()
+  return SCOPED_CONTACT_SCOPES.has(scope) ? scope : 'all'
 }
 
 export function buildNewContactScopeCutoffAt({ referenceDate = new Date() } = {}) {
@@ -3590,14 +3597,16 @@ function agentInputToRowValues(input, base) {
     contactScope: input.contactScope === undefined
       ? normalizeContactScope(base.contactScope)
       : normalizeContactScope(input.contactScope),
-    // El corte se SELLA en el instante exacto en que el agente queda configurado como
-    // 'new_only'; al volver a 'all' se limpia y al editar/reactivar se conserva.
+    // El corte se SELLA en el instante exacto en que el agente queda configurado con
+    // un alcance acotado ('new_only' o 'existing_only'); al volver a 'all' se limpia,
+    // al editar/reactivar con el MISMO alcance se conserva, y al cambiar de un alcance
+    // acotado a otro se re-sella (el "ahora" del nuevo alcance es el del cambio).
     contactScopeCutoffAt: (() => {
       const nextScope = input.contactScope === undefined
         ? normalizeContactScope(base.contactScope)
         : normalizeContactScope(input.contactScope)
-      if (nextScope !== 'new_only') return null
-      if (normalizeContactScope(base.contactScope) === 'new_only' && base.contactScopeCutoffAt) {
+      if (!SCOPED_CONTACT_SCOPES.has(nextScope)) return null
+      if (normalizeContactScope(base.contactScope) === nextScope && base.contactScopeCutoffAt) {
         return base.contactScopeCutoffAt
       }
       return buildNewContactScopeCutoffAt()
@@ -3893,6 +3902,24 @@ function findEntryScopeCollision(candidateScope, existingScope) {
   return null
 }
 
+// Dos alcances acotados pueden ser universos DISJUNTOS de contactos: un agente
+// 'new_only' (creados desde su corte) y uno 'existing_only' (creados antes del
+// suyo) no compiten por el mismo chat cuando el corte de existentes es anterior
+// o igual al corte de nuevos. En ese caso no hay conflicto de entrada aunque
+// sus condiciones se traslapen.
+function contactScopesAreDisjoint(left = {}, right = {}) {
+  const leftScope = normalizeContactScope(left.contactScope)
+  const rightScope = normalizeContactScope(right.contactScope)
+  if (leftScope === rightScope || leftScope === 'all' || rightScope === 'all') return false
+  const newOnlyAgent = leftScope === 'new_only' ? left : right
+  const existingOnlyAgent = leftScope === 'existing_only' ? left : right
+  const newCut = parseTimestampMsUtc(newOnlyAgent.contactScopeCutoffAt)
+  const existingCut = parseTimestampMsUtc(existingOnlyAgent.contactScopeCutoffAt)
+  if (!Number.isFinite(newCut) || !Number.isFinite(existingCut)) return false
+  // 'new_only' atiende creados >= newCut; 'existing_only' atiende creados < existingCut.
+  return existingCut <= newCut
+}
+
 export function findConversationalAgentEntryConflicts(candidateAgent = {}, activeAgents = []) {
   if (!candidateAgent?.enabled) return []
 
@@ -3903,6 +3930,7 @@ export function findConversationalAgentEntryConflicts(candidateAgent = {}, activ
   for (const agent of activeAgents || []) {
     if (!agent?.enabled) continue
     if (candidateId && String(agent.id || '').trim() === candidateId) continue
+    if (contactScopesAreDisjoint(candidateAgent, agent)) continue
 
     const existingScopes = buildEntryScopes(agent)
     for (const candidateScope of candidateScopes) {
@@ -4699,18 +4727,24 @@ function parseTimestampMsUtc(value) {
   return Date.parse(s)
 }
 
-// Medida de seguridad: un agente con contactScope 'new_only' NO debe tomar contactos
-// que ya existían cuando se selló su corte. Fail-open: si falta el corte o la fecha del
-// contacto, NO bloquea (preferimos atender de más que silenciar al agente por un dato faltante).
+// Medida de seguridad del alcance: un agente 'new_only' NO debe tomar contactos que ya
+// existían cuando se selló su corte, y un agente 'existing_only' NO debe tomar contactos
+// nacidos DESPUÉS de su corte (su universo es la base que ya existía). Fail-open: si
+// falta el corte o la fecha del contacto, NO bloquea (preferimos atender de más que
+// silenciar al agente por un dato faltante).
 export function contactIsOutOfScopeForAgent(agent, ctx) {
-  if (normalizeContactScope(agent?.contactScope) !== 'new_only') return false
+  const scope = normalizeContactScope(agent?.contactScope)
+  if (!SCOPED_CONTACT_SCOPES.has(scope)) return false
   const cutoff = agent?.contactScopeCutoffAt
   const createdAt = ctx?.contactInfo?.createdAt
   if (!cutoff || !createdAt) return false
   const created = parseTimestampMsUtc(createdAt)
   const cut = parseTimestampMsUtc(cutoff)
   if (!Number.isFinite(created) || !Number.isFinite(cut)) return false
-  return created < cut // el contacto nació ANTES del corte → este agente lo ignora
+  if (scope === 'new_only') {
+    return created < cut // el contacto nació ANTES del corte → este agente lo ignora
+  }
+  return created >= cut // 'existing_only': el contacto nació DESPUÉS del corte → lo ignora
 }
 
 export function isUnverifiedConversationAssignment(state) {

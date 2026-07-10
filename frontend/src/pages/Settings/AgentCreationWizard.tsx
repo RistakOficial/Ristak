@@ -901,21 +901,28 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'scope' && (
             <>
               <h2 className={styles.title}>¿Y con los contactos que ya tienes?</h2>
-              <p className={styles.help}>Esto es por seguridad: muchos de tus contactos ya son {customersLowerLabel}. Decide si este asistente también puede escribirles, o si solo atiende a los nuevos para no mezclarse.</p>
+              <p className={styles.help}>Esto es por seguridad: muchos de tus contactos ya son {customersLowerLabel}. Decide si este asistente atiende solo a los nuevos, a cualquier mensaje nuevo, o solo a tu base existente.</p>
               <div className={styles.options}>
                 <OptionCard
                   active={draft.contactScope === 'new_only'}
                   Icon={ShieldCheck}
-                  label="Solo los nuevos desde hoy"
-                  example="Ignora a tus contactos de antes. Solo atiende a quien te escriba de ahora en adelante. (Lo más seguro.)"
+                  label="Nuevos contactos"
+                  example="A todos los nuevos contactos desde ahora. Ignora a tus contactos de antes; solo atiende a quien llegue de ahora en adelante. (Lo más seguro.)"
                   onClick={() => patch({ contactScope: 'new_only' })}
                 />
                 <OptionCard
                   active={draft.contactScope === 'all'}
                   Icon={Users}
-                  label="Atender a todos"
-                  example="Puede tomar tanto a tus contactos actuales como a los nuevos. Útil si quieres que se haga cargo de todo."
+                  label="Nuevos mensajes"
+                  example="A todos los nuevos mensajes desde ahora. Toma cualquier chat donde llegue un mensaje nuevo, sea contacto nuevo o de tu base."
                   onClick={() => patch({ contactScope: 'all' })}
+                />
+                <OptionCard
+                  active={draft.contactScope === 'existing_only'}
+                  Icon={UserCheck}
+                  label="Contactos existentes"
+                  example="A todos los contactos existentes. Solo atiende a quienes ya estaban en tu base; los leads nuevos no entran. (Útil para reactivar tu base.)"
+                  onClick={() => patch({ contactScope: 'existing_only' })}
                 />
               </div>
             </>
@@ -958,7 +965,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 {draft.goalUrl.trim() && <RecapRow label="Enlace" value={draft.goalUrl.trim()} />}
                 {cobroRecap && <RecapRow label="Cobro" value={cobroRecap} />}
                 {showCompletionStep && <RecapRow label="Al cumplir" value={draft.completionMode === 'assign_user' ? (draft.completionUserName || 'Asignar usuario') : 'Notificar al equipo'} />}
-                <RecapRow label="Atiende a" value={draft.contactScope === 'new_only' ? 'Solo contactos nuevos' : 'Todos (nuevos y actuales)'} />
+                <RecapRow label="Atiende a" value={draft.contactScope === 'new_only' ? 'Solo contactos nuevos desde ahora' : draft.contactScope === 'existing_only' ? 'Solo contactos existentes' : 'Todos los mensajes nuevos'} />
                 <RecapRow label="Pide datos" value={draft.requiredData.trim() ? 'Sí' : 'No por ahora'} />
                 <RecapRow label="Pasa al equipo" value={draft.handoffRules.trim() ? 'Con reglas propias' : 'Sin reglas extra'} />
                 <RecapRow label="Clientes existentes" value={draft.pastClientsToHuman ? 'Van con tu equipo' : 'Los atiende la IA'} />

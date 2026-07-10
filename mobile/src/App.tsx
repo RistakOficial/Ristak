@@ -14204,8 +14204,9 @@ const AGENT_SUCCESS_OPTIONS = [
   { id: 'send_trigger_link', label: 'Enviar enlace disparador' },
 ];
 const AGENT_SCOPE_OPTIONS = [
-  { id: 'all', label: 'Cualquier chat' },
-  { id: 'new_only', label: 'Solo contactos nuevos' },
+  { id: 'new_only', label: 'Nuevos contactos' },
+  { id: 'all', label: 'Nuevos mensajes' },
+  { id: 'existing_only', label: 'Contactos existentes' },
 ];
 
 function asAgentWorkflowRecord(value: unknown): Record<string, unknown> {

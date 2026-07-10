@@ -1440,12 +1440,13 @@ enum AgentLanguageOption: String, CaseIterable, Sendable {
 }
 
 enum AgentContactScopeOption: String, CaseIterable, Sendable {
-    case all, new_only
+    case new_only, all, existing_only
 
     var label: String {
         switch self {
-        case .all: return "Cualquier chat"
-        case .new_only: return "Solo contactos nuevos"
+        case .new_only: return "A todos los nuevos contactos desde ahora"
+        case .all: return "A todos los nuevos mensajes desde ahora"
+        case .existing_only: return "A todos los contactos existentes"
         }
     }
 

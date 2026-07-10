@@ -3351,13 +3351,16 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
                 onChange={(event) => onChange({ contactScope: (event.target.value || 'all') as ConversationalContactScope })}
                 portal
               >
-                <option value="all">Cualquier chat (incluye contactos que ya tenías)</option>
-                <option value="new_only">Solo contactos nuevos desde ahora</option>
+                <option value="new_only">A todos los nuevos contactos desde ahora</option>
+                <option value="all">A todos los nuevos mensajes desde ahora</option>
+                <option value="existing_only">A todos los contactos existentes</option>
               </CustomSelect>
               <p className={styles.helper}>
                 {agent.contactScope === 'new_only'
-                  ? 'Medida de seguridad: ignora a tus contactos de antes; solo atiende a quien llegue desde ahora.'
-                  : 'Puede tomar tanto a tus contactos actuales como a los nuevos.'}
+                  ? 'Solo tomará chats de contactos creados a partir de ahora; tu base actual no se toca.'
+                  : agent.contactScope === 'existing_only'
+                    ? 'Solo tomará chats de contactos que ya existían hasta ahora; los leads nuevos no entran (útil para reactivar tu base).'
+                    : 'Tomará cualquier chat donde llegue un mensaje nuevo, sea contacto nuevo o de tu base.'}
               </p>
             </div>
             <ConditionBuilder
@@ -3906,7 +3909,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   }
 
   // Modo avanzado: antes del formulario largo preguntamos SOLO el alcance de contactos.
-  const confirmScopeAndCreate = (contactScope: 'all' | 'new_only') => {
+  const confirmScopeAndCreate = (contactScope: ConversationalContactScope) => {
     setScopePrompt(false)
     void handleCreateAgent({ contactScope })
   }
@@ -4388,15 +4391,19 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
       >
         <div className={styles.scopePromptModal}>
           <p className={styles.scopePromptText}>
-            Una cosa rápida de seguridad: ¿este asistente también puede escribirles a los
-            contactos que <strong>ya tienes</strong>, o solo a los nuevos de ahora en adelante?
+            Una cosa rápida de seguridad: ¿a quién puede atender este asistente? Solo a los
+            contactos <strong>nuevos</strong> desde ahora, a cualquier chat con <strong>mensajes
+            nuevos</strong> (incluye tu base), o solo a los contactos que <strong>ya tienes</strong>.
           </p>
           <div className={styles.scopePromptActions}>
             <Button variant="secondary" onClick={() => confirmScopeAndCreate('new_only')} disabled={creating}>
-              <ShieldCheck size={16} /> Solo los nuevos
+              <ShieldCheck size={16} /> A todos los nuevos contactos desde ahora
             </Button>
             <Button variant="primary" onClick={() => confirmScopeAndCreate('all')} loading={creating} disabled={creating}>
-              <Users size={16} /> Todos, incluidos los de antes
+              <Users size={16} /> A todos los nuevos mensajes desde ahora
+            </Button>
+            <Button variant="secondary" onClick={() => confirmScopeAndCreate('existing_only')} disabled={creating}>
+              <UserCheck size={16} /> A todos los contactos existentes
             </Button>
           </div>
           <p className={styles.scopePromptHint}>Lo puedes cambiar después en la configuración del asistente.</p>

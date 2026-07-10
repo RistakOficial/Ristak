@@ -19,7 +19,8 @@ import {
   resetConversationalAgentSkippedContacts,
   runWithConversationStateChannel,
   setConversationStatus,
-  setConversationSignal
+  setConversationSignal,
+  updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
 import { resolveInboundAgentForContact } from '../src/agents/conversational/runner.js'
 
@@ -644,6 +645,139 @@ test('un agente solo para contactos nuevos respeta su corte al hacer matching re
   } finally {
     await cleanup(oldContactId, agentId)
     await cleanup(newContactId)
+  }
+})
+
+test('un agente solo para contactos existentes respeta su corte al hacer matching real', async () => {
+  const oldContactId = `conversation_agent_scope_exist_old_${randomUUID()}`
+  const newContactId = `conversation_agent_scope_exist_new_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
+      name: 'Agente solo existentes',
+      enabled: true,
+      objective: 'citas',
+      contactScope: 'existing_only'
+    })
+    agentId = agent.id
+    assert.equal(agent.contactScope, 'existing_only')
+    const cutoffMs = Date.parse(agent.contactScopeCutoffAt)
+    assert.equal(Number.isFinite(cutoffMs), true)
+
+    await seedContact(oldContactId, { createdAt: new Date(cutoffMs - 1000).toISOString() })
+    await seedContact(newContactId, { createdAt: new Date(cutoffMs + 1000).toISOString() })
+
+    const oldMatch = await matchAgentForMessage({ contactId: oldContactId, messageText: 'Hola', channel: 'whatsapp' })
+    const newMatch = await matchAgentForMessage({ contactId: newContactId, messageText: 'Hola', channel: 'whatsapp' })
+
+    assert.equal(oldMatch?.id, agentId)
+    assert.equal(newMatch, null)
+  } finally {
+    await cleanup(oldContactId, agentId)
+    await cleanup(newContactId)
+  }
+})
+
+test('el alcance de contactos y los filtros de condiciones filtran JUNTOS en el matching', async () => {
+  const oldContactId = `conversation_agent_scope_filter_old_${randomUUID()}`
+  const newContactId = `conversation_agent_scope_filter_new_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
+      name: 'Agente existentes con filtro',
+      enabled: true,
+      objective: 'citas',
+      contactScope: 'existing_only',
+      filters: {
+        entry: {
+          groups: [{
+            conditions: [{
+              category: 'message',
+              params: [{ field: 'text', operator: 'contains', value: 'promo' }]
+            }]
+          }]
+        },
+        exit: { groups: [] }
+      }
+    })
+    agentId = agent.id
+    const cutoffMs = Date.parse(agent.contactScopeCutoffAt)
+    await seedContact(oldContactId, { createdAt: new Date(cutoffMs - 1000).toISOString() })
+    await seedContact(newContactId, { createdAt: new Date(cutoffMs + 1000).toISOString() })
+
+    // Contacto existente + mensaje que cumple la condición → entra.
+    const matching = await matchAgentForMessage({ contactId: oldContactId, messageText: 'Vi su promo de julio', channel: 'whatsapp' })
+    assert.equal(matching?.id, agentId)
+
+    // Contacto existente pero el mensaje NO cumple la condición → el filtro manda.
+    const wrongMessage = await matchAgentForMessage({ contactId: oldContactId, messageText: 'Hola, info', channel: 'whatsapp' })
+    assert.equal(wrongMessage, null)
+
+    // Mensaje cumple pero el contacto es nuevo → el alcance manda.
+    const wrongScope = await matchAgentForMessage({ contactId: newContactId, messageText: 'Vi su promo de julio', channel: 'whatsapp' })
+    assert.equal(wrongScope, null)
+  } finally {
+    await cleanup(oldContactId, agentId)
+    await cleanup(newContactId)
+  }
+})
+
+test('alcances disjuntos (nuevos vs existentes) conviven sin conflicto de entrada', async () => {
+  let newOnlyId = ''
+  let existingOnlyId = ''
+  let duplicateId = ''
+
+  try {
+    const existingOnly = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
+      name: 'Base existente',
+      enabled: true,
+      objective: 'citas',
+      contactScope: 'existing_only'
+    })
+    existingOnlyId = existingOnly.id
+
+    // Catch-all para NUEVOS contactos: universo disjunto → debe poder publicarse.
+    const newOnly = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
+      name: 'Leads nuevos',
+      enabled: true,
+      objective: 'citas',
+      contactScope: 'new_only'
+    })
+    newOnlyId = newOnly.id
+    assert.ok(newOnlyId)
+
+    // Mismo alcance catch-all otra vez → ese SÍ es conflicto real.
+    await assert.rejects(
+      createConversationalAgent({
+        defaultCalendarId: 'cal_state_test',
+        name: 'Base existente duplicada',
+        enabled: true,
+        objective: 'citas',
+        contactScope: 'existing_only'
+      }).then((created) => {
+        duplicateId = created?.id || ''
+        return created
+      }),
+      (error) => error.code === 'CONVERSATIONAL_AGENT_ENTRY_CONFLICT'
+    )
+
+    // Cambiar el alcance re-sella el corte y volver a 'all' lo limpia.
+    const switched = await updateConversationalAgent(existingOnlyId, { contactScope: 'new_only', enabled: false })
+    assert.equal(switched.contactScope, 'new_only')
+    assert.ok(switched.contactScopeCutoffAt)
+    const cleared = await updateConversationalAgent(existingOnlyId, { contactScope: 'all' })
+    assert.equal(cleared.contactScope, 'all')
+    assert.equal(cleared.contactScopeCutoffAt, null)
+  } finally {
+    for (const id of [newOnlyId, existingOnlyId, duplicateId]) {
+      if (id) await db.run('DELETE FROM conversational_agents WHERE id = ?', [id]).catch(() => undefined)
+    }
   }
 })
 

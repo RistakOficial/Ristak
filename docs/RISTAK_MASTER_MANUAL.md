@@ -2559,11 +2559,30 @@ wizard/editor web):
 
 Un borrador apagado puede guardarse incompleto; publicarlo exige lo anterior.
 
-El alcance `new_only` sella `contact_scope_cutoff_at`; no adopta contactos
-anteriores al corte. Los estados legacy no se heredan como bloqueos de un agente
-nuevo, pero una pausa, omision o asignacion manual real conserva su procedencia.
-Las superficies de control manejan agentes individuales, nunca un pseudoagente
-global "Todos".
+Alcance de contactos ("¿A quien puede atender?"), tres opciones funcionales
+(`contactScope`, enforcement en `contactIsOutOfScopeForAgent` sobre matching y
+runner):
+
+- `new_only` ("A todos los nuevos contactos desde ahora"): solo contactos
+  CREADOS despues del corte.
+- `all` ("A todos los nuevos mensajes desde ahora"): cualquier chat con inbound
+  nuevo, sin importar cuando nacio el contacto (historico).
+- `existing_only` ("A todos los contactos existentes"): solo contactos que YA
+  existian antes del corte; los leads nuevos no entran (agentes de
+  reactivacion/recuperacion de base).
+
+Los alcances acotados sellan `contact_scope_cutoff_at` al configurarse; cambiar
+de alcance re-sella y volver a `all` lo limpia. Un par `new_only` +
+`existing_only` con cortes compatibles (corte de existentes <= corte de nuevos)
+son universos disjuntos y NO generan conflicto de entrada entre si
+(`contactScopesAreDisjoint`); el mismo alcance catch-all duplicado si conflictua.
+El alcance se evalua JUNTO con los filtros de condiciones de entrada/salida
+(`entryRulesMatch`/`exitRulesMatch`: OR de grupos, AND por grupo; categorias
+canal, mensaje, tags, contacto, citas, pagos, anuncios y horario): ambos deben
+cumplirse para que el agente tome el chat. Los estados legacy no se heredan como
+bloqueos de un agente nuevo, pero una pausa, omision o asignacion manual real
+conserva su procedencia. Las superficies de control manejan agentes
+individuales, nunca un pseudoagente global "Todos".
 
 ### Runtime modular de inteligencia
 

@@ -691,7 +691,7 @@ struct AgentEditorSheet: View {
             VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
                 menuField(
                     "¿A quién puede atender?",
-                    selected: AgentContactScopeOption(rawValue: contactScope)?.label ?? "Cualquier chat",
+                    selected: AgentContactScopeOption(rawValue: contactScope)?.label ?? AgentContactScopeOption.all.label,
                     options: AgentContactScopeOption.allCases.map { PickerChoice(id: $0.rawValue, title: $0.label) }
                 ) { contactScope = $0 }
 

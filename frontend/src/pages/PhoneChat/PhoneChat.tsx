@@ -893,8 +893,9 @@ const PHONE_AGENT_LANGUAGE_OPTIONS: Array<{ value: ConversationalLanguageLevel; 
 ]
 
 const PHONE_AGENT_CONTACT_SCOPE_OPTIONS: Array<{ value: ConversationalContactScope; label: string }> = [
-  { value: 'all', label: 'Cualquier chat' },
-  { value: 'new_only', label: 'Sólo contactos nuevos' }
+  { value: 'new_only', label: 'Nuevos contactos desde ahora' },
+  { value: 'all', label: 'Nuevos mensajes desde ahora' },
+  { value: 'existing_only', label: 'Contactos existentes' }
 ]
 
 const PHONE_AGENT_DEPOSIT_MODE_OPTIONS: Array<{ value: AgentGoalWorkflowConfig['deposit']['mode']; label: string }> = [
