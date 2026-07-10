@@ -946,6 +946,7 @@ const SETTINGS_USER_CONFIG_KEYS = [
   'push_notification_vibration_enabled',
   'calendar_push_notification_calendar_ids',
 ];
+const NATIVE_THEME_PREFERENCE_STORAGE_KEY = 'ristak.native.themePreference.v1';
 const TEMPLATE_BLOCKED_STATUSES = new Set(['REJECTED', 'PAUSED', 'DISABLED']);
 const PHONE_CHAT_THEME_OPTIONS: Array<{
   id: PhoneThemePreference;
@@ -1191,8 +1192,10 @@ const PHONE_DOCK_RESERVED_SPACE = 118;
 
 export default function RistakNativeApp() {
   const [screen, setScreen] = useState<Screen>('boot');
+  const [themeRenderVersion, setThemeRenderVersion] = useState(0);
   const [session, setSession] = useState<SessionState>({ baseUrl: '', token: '', user: null });
   const licenseAlertShownRef = useRef(false);
+  const rootThemePreferenceRef = useRef<PhoneThemePreference>('system');
   const handleLicenseBlocked = useCallback(() => {
     void clearAuthToken();
     setSession((current) => ({ ...current, token: '', user: null }));
@@ -1224,6 +1227,19 @@ export default function RistakNativeApp() {
     [session.baseUrl, session.token, handleLicenseBlocked, handleFeatureBlocked],
   );
 
+  const applyRootThemePreference = useCallback((preference: PhoneThemePreference, systemTone?: string | null) => {
+    const nextPreference = coercePhoneThemePreference(preference);
+    rootThemePreferenceRef.current = nextPreference;
+    const result = applyNativePhoneThemePreference(nextPreference, systemTone);
+    setThemeRenderVersion((current) => current + 1);
+    return result;
+  }, []);
+
+  const applyStoredThemePreference = useCallback(async () => {
+    const storedThemePreference = await readJsonValue<PhoneThemePreference>(NATIVE_THEME_PREFERENCE_STORAGE_KEY, 'system');
+    applyRootThemePreference(coercePhoneThemePreference(storedThemePreference));
+  }, [applyRootThemePreference]);
+
   // Programa el refresco en segundo plano cuando hay sesión: Android puede dar
   // una ventana para actualizar la bandeja en caché y abrir con datos más frescos.
   useEffect(() => {
@@ -1239,6 +1255,7 @@ export default function RistakNativeApp() {
       readApiBaseUrl(),
       readAuthToken(),
     ]);
+    await applyStoredThemePreference();
 
     if (!storedBaseUrl) {
       setSession({ baseUrl: '', token: '', user: null });
@@ -1282,12 +1299,29 @@ export default function RistakNativeApp() {
       setScreen('shell');
       return;
     }
-  }, []);
+  }, [applyStoredThemePreference]);
 
   useEffect(() => {
-    applyNativePhoneThemePreference('system');
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    if (screen === 'shell') return undefined;
+    const preference = rootThemePreferenceRef.current;
+    if (preference === 'system') {
+      const subscription = Appearance.addChangeListener(({ colorScheme }) => {
+        applyRootThemePreference(preference, colorScheme);
+      });
+      return () => subscription.remove();
+    }
+    if (preference === 'auto') {
+      const interval = setInterval(() => {
+        applyRootThemePreference(preference);
+      }, 60 * 1000);
+      return () => clearInterval(interval);
+    }
+    return undefined;
+  }, [applyRootThemePreference, screen, themeRenderVersion]);
 
   const handleLogin = async (email: string, password: string) => {
     const response = await loginWithResolvedTenant(email, password);
@@ -1302,6 +1336,7 @@ export default function RistakNativeApp() {
     await clearAuthToken();
     // Limpiar la copia local: evita que la siguiente sesión vea datos ajenos.
     void clearAllCache();
+    await applyStoredThemePreference();
     setSession((current) => ({ ...current, token: '', user: null }));
     setScreen('login');
   };
@@ -1309,17 +1344,19 @@ export default function RistakNativeApp() {
   const resetServer = async () => {
     await clearRuntimeState();
     void clearAllCache();
+    await applyStoredThemePreference();
     setSession({ baseUrl: '', token: '', user: null });
     setScreen('login');
   };
 
   if (screen === 'boot') {
-    return <BootScreen />;
+    return <BootScreen key={`boot-${themeRenderVersion}`} />;
   }
 
   if (screen === 'login') {
     return (
       <LoginScreen
+        key={`login-${themeRenderVersion}`}
         onLogin={handleLogin}
       />
     );
@@ -1426,6 +1463,9 @@ function PhoneShell({
   }, [dockHidden]);
   const mobileChatSettings = useMemo(() => normalizeMobileChatSettings(mobileAppConfig), [mobileAppConfig]);
   const patchMobileAppConfig = useCallback((patch: Record<string, ConfigValue>) => {
+    if (Object.prototype.hasOwnProperty.call(patch, 'mobile_chat_theme_preference')) {
+      persistNativeThemePreference(patch.mobile_chat_theme_preference);
+    }
     setMobileAppConfig((current) => {
       const next = { ...current, ...patch };
       writeCache(SHELL_APP_CONFIG_CACHE_KEY, next);
@@ -1486,6 +1526,9 @@ function PhoneShell({
       .then((response) => {
         if (!cancelled) {
           const next = unwrapConfigResponse(response);
+          if (Object.prototype.hasOwnProperty.call(next, 'mobile_chat_theme_preference')) {
+            persistNativeThemePreference(next.mobile_chat_theme_preference);
+          }
           shellConfigFreshLoadedRef.current = true;
           setMobileAppConfig(next);
           writeCache(SHELL_APP_CONFIG_CACHE_KEY, next);
@@ -2262,37 +2305,43 @@ function LoginScreen({
       <KeyboardAvoidingView style={styles.authWrap}>
         <ScrollView contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
           <View style={styles.authPanel}>
-            <Image
-              source={getRistakLogoSource()}
-              style={styles.authLogo}
-              resizeMode="contain"
-              accessibilityLabel="Ristak"
-            />
-            <Text style={styles.kicker}>Ristak</Text>
-            <Text style={styles.title}>Iniciar sesion</Text>
-            <Text style={styles.bodyText}>
-              Entra con el correo y la contrasena de tu cuenta.
-            </Text>
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="email-address"
-              placeholder="correo@negocio.com"
-              placeholderTextColor={COLORS.muted}
-              style={styles.input}
-            />
-            <TextInput
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              placeholder="Contrasena"
-              placeholderTextColor={COLORS.muted}
-              style={styles.input}
-            />
-            {error ? <Text style={styles.errorText}>{error}</Text> : null}
-            <PrimaryButton label="Entrar" busy={busy} busyLabel="Entrando..." onPress={submit} />
+            <View style={styles.authBrandBlock}>
+              <Image
+                source={getRistakLogoSource()}
+                style={styles.authLogo}
+                resizeMode="contain"
+                accessibilityLabel="Ristak"
+              />
+              <Text style={styles.authBrandName}>Ristak</Text>
+            </View>
+
+            <View style={styles.authCopyBlock}>
+              <Text style={styles.title}>Iniciar sesión</Text>
+              <Text style={styles.bodyText}>Entra a tu cuenta para atender tus chats.</Text>
+            </View>
+
+            <View style={styles.authFormBlock}>
+              <TextInput
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="email-address"
+                placeholder="correo@negocio.com"
+                placeholderTextColor={COLORS.muted}
+                style={styles.input}
+              />
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                placeholder="Contraseña"
+                placeholderTextColor={COLORS.muted}
+                style={styles.input}
+              />
+              {error ? <Text style={styles.errorText}>{error}</Text> : null}
+              <PrimaryButton label="Entrar" busy={busy} busyLabel="Entrando..." onPress={submit} />
+            </View>
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
@@ -11489,6 +11538,10 @@ function coerceConfigStringArray(value: unknown, fallback: string[] = []) {
 
 function coercePhoneThemePreference(value: unknown): PhoneThemePreference {
   return value === 'light' || value === 'dark' || value === 'auto' || value === 'system' ? value : 'system';
+}
+
+function persistNativeThemePreference(value: unknown): void {
+  void writeJsonValue(NATIVE_THEME_PREFERENCE_STORAGE_KEY, coercePhoneThemePreference(value)).catch(() => undefined);
 }
 
 function coerceChatSortMode(value: unknown): MobileChatSettings['sortMode'] {
@@ -28002,9 +28055,9 @@ function createAppStyles() {
     height: 132,
   },
   authLogo: {
-    width: 82,
-    height: 82,
-    alignSelf: 'flex-start',
+    width: 118,
+    height: 118,
+    alignSelf: 'center',
   },
   authWrap: {
     flex: 1,
@@ -28012,15 +28065,33 @@ function createAppStyles() {
   authScroller: {
     flexGrow: 1,
     justifyContent: 'center',
-    padding: 20,
+    paddingHorizontal: 24,
+    paddingVertical: 30,
   },
   authPanel: {
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.panel,
-    borderRadius: 24,
-    padding: 22,
-    gap: 14,
+    width: '100%',
+    maxWidth: 430,
+    alignSelf: 'center',
+    gap: 24,
+  },
+  authBrandBlock: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  authBrandName: {
+    color: COLORS.text,
+    fontSize: 21,
+    fontWeight: '800',
+  },
+  authCopyBlock: {
+    alignItems: 'flex-start',
+    gap: 7,
+  },
+  authFormBlock: {
+    alignSelf: 'stretch',
+    gap: 12,
   },
   kicker: {
     color: COLORS.accent,
@@ -28030,13 +28101,15 @@ function createAppStyles() {
   },
   title: {
     color: COLORS.text,
-    fontSize: 30,
-    fontWeight: '900',
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: '800',
   },
   bodyText: {
     color: COLORS.muted,
     fontSize: 15,
     lineHeight: 22,
+    fontWeight: '500',
   },
   caption: {
     color: COLORS.muted,

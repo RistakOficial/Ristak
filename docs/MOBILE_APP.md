@@ -197,6 +197,10 @@ agente con `expo-audio` y `/api/ai-agent/transcribe`, activacion de push nativo
 con `expo-notifications`, y Ajustes reales de apariencia/chat. La preferencia
 `mobile_chat_theme_preference` soporta sistema, claro, noche y horario; el shell
 nativo debe aplicarla como paleta global, no solo como fondo de `StatusBar`.
+La preferencia tambien se persiste localmente en el dispositivo para que
+`BootScreen` y el login arranquen con el mismo claro/noche/sistema/horario antes
+de que exista sesion o antes de que llegue `app_config`; no deben volver al tema
+del sistema por defecto si el usuario ya eligio otro modo desde Ajustes.
 Los botones flotantes, dock inferior, burbujas de chat, composer e iconos de
 Ajustes deben tomar colores desde la paleta activa (`COLORS`) y no desde azules
 nocturnos hardcodeados. La pantalla de Ajustes debe forzar un render del shell
