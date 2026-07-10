@@ -1241,7 +1241,7 @@ async function loadInboundMessagesForRecoveryWindow(channel, {
   return rows
 }
 
-async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '' }) {
+async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '', executionId = '' }) {
   const [aiConfig, timezone, businessProfile, accountLocale, approvedLearning] = await Promise.all([
     getAIAgentConfig({}),
     getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
@@ -1264,7 +1264,7 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     businessName = userRow?.business_name || null
   }
 
-  const ctx = { contactId, config, dryRun, channel: normalizeConversationalChannel(channel), followUpMode: Boolean(followUpContext), accountLocale, actions: [], suppressReply: false }
+  const ctx = { contactId, config, dryRun, channel: normalizeConversationalChannel(channel), followUpMode: Boolean(followUpContext), executionId: String(executionId || '').trim(), accountLocale, actions: [], suppressReply: false }
   const tools = createConversationalTools(ctx)
   const knowledge = retrieveRelevantBusinessKnowledge({
     businessProfile,
@@ -2394,9 +2394,10 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         contactId,
         contactName: contact?.full_name || null,
         dryRun: false,
-        channel: normalizedChannel,
-        ruleContext,
-        knowledgeQuery: traceMessage
+      channel: normalizedChannel,
+      ruleContext,
+      executionId: latest.id,
+      knowledgeQuery: traceMessage
       })
       const previousIntelligence = await loadConversationIntelligenceState({
         stateId: agentState.id,

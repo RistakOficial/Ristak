@@ -50,6 +50,16 @@ test('agent database SQL guard rejects sensitive tables and columns', () => {
     () => validateReadOnlyBusinessSql('SELECT api_token FROM contacts', []),
     /columna no está disponible/i
   )
+
+  assert.throws(
+    () => validateReadOnlyBusinessSql('SELECT * FROM conversational_agent_goal_links', []),
+    /tabla no está disponible/i
+  )
+
+  assert.throws(
+    () => validateReadOnlyBusinessSql('SELECT * FROM conversational_agent_goal_evidence_claims', []),
+    /tabla no está disponible/i
+  )
 })
 
 test('agent database SQL guard appends row limit when missing', () => {

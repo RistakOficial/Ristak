@@ -121,7 +121,7 @@ const successActionLabels: Record<ConversationalSuccessAction, { label: string; 
   book_appointment: { label: 'Que la cita quede agendada', description: 'El agendamiento se confirma sólo cuando ya hay día, hora y calendario reales.' },
   ready_for_human: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' },
   ready_to_buy: { label: 'Que se confirme el pago', description: 'La venta se confirma cuando el pago real queda validado.' },
-  send_goal_url: { label: 'Mandar enlace confirmado', description: 'Manda un enlace y espera confirmación. Ejemplo: link de agenda o de compra.' },
+  send_goal_url: { label: 'Mandar enlace verificable', description: 'Manda un enlace conectado a Ristak y espera la confirmación real de la cita o el pago.' },
   send_trigger_link: { label: 'Mandar enlace y detenerse', description: 'Manda un enlace y se detiene cuando lo tocan. Ejemplo: link de WhatsApp, formulario o página.' },
   internal_signal: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' },
   none: { label: 'Que un humano lo confirme', description: 'La IA detecta intención real y pasa el chat al equipo para confirmar el objetivo.' }
@@ -137,12 +137,12 @@ const goalExecutionOptionsByObjective: Record<ConversationalObjective, GoalExecu
   citas: [
     { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta intención real, detiene el bot y avisa para que el equipo agende.' },
     { value: 'book_appointment', label: 'El agente IA', description: 'La IA confirma un horario real y agenda la cita en el calendario.' },
-    { value: 'send_goal_url', label: 'La IA mandando un enlace', description: 'La IA manda el enlace del calendario y la meta se completa cuando la cita queda confirmada.' }
+    { value: 'send_goal_url', label: 'La IA mandando un enlace', description: 'La IA manda un enlace conectado a Ristak y la meta se completa sólo cuando la cita queda confirmada.' }
   ],
   ventas: [
     { value: 'ready_for_human', label: 'Un humano', description: 'La IA detecta intención de compra, detiene el bot y avisa para que el equipo cierre.' },
     { value: 'ready_to_buy', label: 'El agente IA', description: 'La IA guía el pago y la venta se completa cuando el pago queda confirmado.' },
-    { value: 'send_goal_url', label: 'La IA mandando un enlace', description: 'La IA manda el enlace de compra y la meta se completa cuando el pago queda confirmado.' }
+    { value: 'send_goal_url', label: 'La IA mandando un enlace', description: 'La IA manda un enlace conectado a Ristak y la meta se completa sólo cuando el pago queda confirmado.' }
   ],
   datos: [
     { value: 'ready_for_human', label: 'Un humano', description: 'La IA junta los datos y avisa para que el equipo continúe.' }
@@ -2517,8 +2517,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         />
         <p className={styles.helper}>
           {agent.objective === 'ventas'
-            ? 'Ejemplo: manda este link para que la persona compre el producto.'
-            : 'Ejemplo: manda este link para que la persona elija día y hora.'}
+            ? 'Debe ser una página conectada a Ristak que confirme el pago real. Si no puede confirmarlo, el agente pasará el chat a una persona.'
+            : 'Debe ser una página conectada a Ristak que confirme la cita real. Si no puede confirmarla, el agente pasará el chat a una persona.'}
         </p>
       </div>
 
@@ -2534,7 +2534,7 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           }}
         />
         <p className={styles.helper}>
-          Ejemplo: ayuda a saber quién tocó el link.
+          Permite relacionar el resultado real con esta conversación.
         </p>
       </div>
 
@@ -2542,8 +2542,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
         <label className={styles.label}>Cómo sabe que ya pasó</label>
         <p className={styles.helper}>
           {agent.objective === 'ventas'
-            ? 'Ejemplo: marca la meta como lista cuando se confirma la compra.'
-            : 'Ejemplo: marca la meta como lista cuando se confirma la cita.'}
+            ? 'Ristak sólo marca la meta cuando la página conectada confirma el pago con su ID real.'
+            : 'Ristak sólo marca la meta cuando la página conectada confirma la cita con su ID real.'}
         </p>
       </div>
     </>

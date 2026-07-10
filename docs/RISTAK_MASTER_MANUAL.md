@@ -2570,10 +2570,35 @@ la base de datos, nunca un booleano escrito por el modelo.
   completa. Un supuesto comprobante del modelo no sirve como evidencia.
 - Handoff: `send_to_human` registra transferencia, pero no infla la meta como
   conversion. El resumen estructurado evita que la persona repita su historia.
-- Meta por URL: el enlace visible contiene solo el ID de seguimiento. El
-  `callbackUrl` interno lleva un token aleatorio; la base guarda unicamente su
-  SHA-256. El webhook exige token vigente de un solo uso, ID externo, status
-  exitoso y coincidencia estricta de calendario/producto/precio/monto/moneda.
+- Meta por URL: el enlace visible contiene solo un ID de seguimiento y se puede
+  entregar aunque apunte a una pagina externa generica. La meta queda `pending`:
+  abrir el enlace no prueba una cita ni un pago. El sistema externo debe estar
+  conectado a Ristak y confirmar el resultado por la API autenticada
+  `POST /api/external/conversational-agent/goals/:goalId/complete`, con API token
+  e `Idempotency-Key`. La confirmacion exige `externalSource`, ID externo, status exitoso y
+  coincidencia estricta de calendario/producto/precio/monto/moneda. El mismo
+  request es idempotente; uno distinto no puede apropiarse de una meta ya
+  completada y una misma evidencia externa no puede cerrar dos metas. Los IDs
+  opacos se comparan exactamente, sin normalizar mayusculas. La creacion tambien
+  usa la identidad del inbound para no generar dos links por el mismo turno.
+  Evidencia y `Idempotency-Key` quedan reclamados en una tombstone sin cascade,
+  dentro de la misma transaccion que completa la meta; borrar contacto o link no
+  permite reutilizarlos. Un trigger instalado junto con el backfill bloquea a
+  binarios legacy durante un rolling deploy si intentan completar sin claim.
+  Señal, asignacion, extras, notificacion y evento final tienen checkpoints
+  separados, fencing por lease y recovery al arrancar y periodico. La asignacion
+  y los extras se congelan en un plan versionado con hash al aceptar la
+  confirmacion, así que editar el agente despues no cambia el resultado del
+  recovery. El push usa
+  entrega `at-most-once`: un ACK incierto queda como `unknown` y no se duplica.
+  Los ledgers de metas y claims quedan bloqueados en CRUD generico, MCP y SQL del
+  agente; solo la ruta dedicada puede confirmar metas. El resto de las tablas del
+  agente son de solo lectura
+  para el CRUD externo, de modo que una integracion no pueda falsificar estados,
+  eventos, aprendizaje ni metricas.
+  Los tokens de callback por URL se conservan solo para compatibilidad legacy,
+  se aceptan unicamente por header y nunca se generan ni se agregan a enlaces
+  nuevos.
 
 El precio se bloquea unicamente cuando el negocio escribio una condicion literal
 en sus reglas (por ejemplo, "no dar precio hasta confirmar X"). El nivel de
@@ -2617,6 +2642,8 @@ Incluye:
 - OpenAPI.
 - OAuth clients/codes/refresh tokens.
 - Rutas para lectura y mutacion controlada.
+- Confirmacion idempotente de metas conversacionales por integraciones
+  autenticadas; una URL sin integracion permanece pendiente.
 - MCP para clientes compatibles.
 
 Los tokens se tratan como secretos. La documentacion solo debe indicar nombres,

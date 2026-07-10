@@ -95,6 +95,10 @@ import { requireFeature } from './middleware/licenseMiddleware.js'
 // para que el tráfico no autenticado reciba 401 sin tocar el license server.
 import { requireAuth } from './middleware/authMiddleware.js'
 import { recoverPendingConversationalAgentConversations } from './agents/conversational/runner.js'
+import {
+  recoverPendingConversationGoalCompletionEffects,
+  startConversationGoalEffectsRecoveryScheduler
+} from './services/conversationalAgentService.js'
 import { repairStoredYCloudHistoryMessageDirections } from './services/whatsappApiService.js'
 import {
   classifyDeployDrainRequest,
@@ -228,6 +232,63 @@ app.use(cors({
   },
   credentials: true
 }))
+
+const conversationalGoalCallbackJsonParser = express.json({
+  limit: '64kb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf.toString('utf8')
+  }
+})
+const conversationalGoalCallbackFormParser = express.urlencoded({
+  extended: true,
+  limit: '64kb',
+  verify: (req, _res, buf) => {
+    req.rawBody = buf.toString('utf8')
+  }
+})
+
+function runConversationalGoalCallbackParser(parser, req, res, next) {
+  return parser(req, res, (error) => {
+    if (!error) return next()
+
+    if (error.type === 'entity.too.large' || error.status === 413 || error.statusCode === 413) {
+      return res.status(413).json({
+        success: false,
+        code: 'CONVERSATIONAL_GOAL_CALLBACK_BODY_TOO_LARGE',
+        error: 'El callback del agente conversacional supera el límite permitido de 64 KB.'
+      })
+    }
+
+    return next(error)
+  })
+}
+
+app.use((req, res, next) => {
+  const isConversationalGoalCallback = /^\/webhooks?\/conversational-agent\/goal(?:\/|$)/i.test(req.path)
+  const isExternalGoalCompletion = /^\/api\/external\/conversational-agent\/goals\/[^/]+\/complete\/?$/i.test(req.path)
+  if (!isConversationalGoalCallback && !isExternalGoalCompletion) return next()
+  if (isExternalGoalCompletion && !req.is('application/json')) {
+    return res.status(415).json({
+      success: false,
+      code: 'CONVERSATIONAL_GOAL_JSON_REQUIRED',
+      error: 'La confirmación de la meta requiere Content-Type: application/json.'
+    })
+  }
+  if (req.is('application/json')) {
+    return runConversationalGoalCallbackParser(conversationalGoalCallbackJsonParser, req, res, next)
+  }
+  if (isConversationalGoalCallback && req.is('application/x-www-form-urlencoded')) {
+    return runConversationalGoalCallbackParser(conversationalGoalCallbackFormParser, req, res, next)
+  }
+  const contentLength = Number(req.get('content-length') || 0)
+  if (isConversationalGoalCallback && !contentLength) return next()
+  return res.status(415).json({
+    success: false,
+    code: 'CONVERSATIONAL_GOAL_CONTENT_TYPE_UNSUPPORTED',
+    error: 'El callback debe usar JSON o application/x-www-form-urlencoded.'
+  })
+})
+
 app.use(express.json({
   limit: '35mb',
   verify: (req, _res, buf) => {
@@ -474,6 +535,12 @@ async function startRuntimeServices() {
     'No se pudo recuperar conversaciones pendientes del agente'
   )
 
+  runStartupDrainTask(
+    'startup:conversational-goal-effects-recovery',
+    recoverPendingConversationGoalCompletionEffects,
+    'No se pudieron recuperar efectos pendientes de metas conversacionales'
+  )
+
   // Iniciar cron jobs (desactivables en entornos de dev/prueba con RISTAK_DISABLE_CRONS=true
   // para no disparar mensajes/automatizaciones reales al levantar la app localmente).
   if (process.env.RISTAK_DISABLE_CRONS === 'true') {
@@ -486,6 +553,7 @@ async function startRuntimeServices() {
     startContactBulkActionsCron()    // Ejecuta lotes masivos de contactos programados o en goteo
     startAppointmentRemindersCron()  // Envía recordatorios y confirmaciones de citas
     startPaymentAutomationsCron()    // Envía recordatorios, comprobantes y cobros fallidos de pagos
+    startConversationGoalEffectsRecoveryScheduler() // Recupera leases/fallos de metas sin depender de un reinicio
     await syncRegisteredIntegrationCrons({ reason: 'startup' }) // Integraciones: sólo si están conectadas
   }
   startupState.ready = true

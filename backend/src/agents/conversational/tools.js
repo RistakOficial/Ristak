@@ -1038,7 +1038,7 @@ export function createConversationalTools(ctx) {
 
   const sendGoalUrlTool = tool({
     name: 'send_goal_url',
-    description: 'Genera el enlace configurado para que la persona agende o compre fuera de Ristak. Úsala sólo cuando la persona ya esté lista para avanzar. El objetivo NO queda cumplido hasta que llegue la confirmación automática con el ID real de cita, compra, orden o pago.',
+    description: 'Genera el enlace configurado para que la persona agende o compre fuera de Ristak. Úsala sólo cuando la persona ya esté lista para avanzar. El objetivo queda pendiente hasta que una integración autenticada confirme el ID real de cita, compra, orden o pago.',
     parameters: z.object({
       intencionDetectada: z.string().describe('Qué quiere lograr la persona, por ejemplo agendar valoración o completar compra'),
       resumen: z.string().describe('Resumen breve del contexto útil para auditoría interna'),
@@ -1071,6 +1071,7 @@ export function createConversationalTools(ctx) {
         settleAction(action, 'simulated', {
           actionCompleted: false,
           linkPrepared: false,
+          confirmationMode: 'trusted_integration',
           deliveryConfirmed: false,
           objectiveCompleted: false
         })
@@ -1080,7 +1081,8 @@ export function createConversationalTools(ctx) {
           sentUrl: buildGoalLinkPreview(targetUrl, trackingParam, 'goal_simulado', linkContext.linkParams),
           trackingParam,
           linkParams: linkContext.linkParams,
-          note: 'Manda este enlace visible en el chat. El objetivo se confirma hasta que llegue el ID real.'
+          confirmationMode: 'trusted_integration',
+          note: 'Vista previa solamente: en vivo se manda el enlace y la meta queda pendiente hasta que una integración autenticada confirme el resultado real.'
         }
       }
 
@@ -1093,6 +1095,9 @@ export function createConversationalTools(ctx) {
           targetUrl,
           trackingParam,
           linkParams: linkContext.linkParams,
+          idempotencyKey: ctx.executionId
+            ? `send_goal_url:${ctx.contactId}:${config.id || ctx.agentId || ''}:${ctx.channel || ''}:${ctx.executionId}`
+            : '',
           metadata: {
             expected: linkContext.expected,
             intencionDetectada,
@@ -1110,15 +1115,37 @@ export function createConversationalTools(ctx) {
         settleAction(action, 'error', {
           error: errorResult.error,
           linkPrepared: false,
+          confirmationMode: 'trusted_integration',
           deliveryConfirmed: false,
           transferRequired: true
         })
         return errorResult
       }
 
+      if (link.status === 'completed') {
+        settleAction(action, 'ok', {
+          goalId: link.id,
+          linkPrepared: false,
+          confirmationMode: 'trusted_integration',
+          deliveryConfirmed: true,
+          objectiveCompleted: true,
+          idempotent: true
+        })
+        return {
+          ok: true,
+          actionCompleted: false,
+          objectiveCompleted: true,
+          alreadyCompleted: true,
+          goalId: link.id,
+          confirmationMode: 'trusted_integration',
+          note: 'Esta misma meta ya fue confirmada. No vuelvas a mandar el enlace.'
+        }
+      }
+
       settleAction(action, 'ok', {
         goalId: link.id,
         linkPrepared: true,
+        confirmationMode: 'trusted_integration',
         deliveryConfirmed: false,
         objectiveCompleted: false
       })
@@ -1130,7 +1157,9 @@ export function createConversationalTools(ctx) {
         sentUrl: link.sentUrl,
         trackingParam: link.trackingParam,
         linkParams: link.linkParams,
-        note: 'Manda sentUrl visible en el chat. No digas que el objetivo ya quedó cumplido; se confirma cuando llegue el ID real.'
+        confirmationMode: 'trusted_integration',
+        idempotent: link.idempotent === true,
+        note: 'Manda sentUrl visible en el chat. No digas que el objetivo ya quedó cumplido; sólo una integración autenticada puede confirmar el ID real.'
       }
     }
   })

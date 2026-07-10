@@ -26,7 +26,7 @@ const GHL_MCP_TOOL_PREFIX = 'ghl_mcp__'
 const MCP_PROTOCOL_VERSION = '2025-06-18'
 const HIGHLEVEL_MCP_TIMEOUT_MS = 15000
 const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|database[_-]?url|encrypted|hash)/i
-const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
+const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 const MCP_TOOL_FEATURES = {
@@ -62,6 +62,7 @@ function getMcpTableFeatureKeys(table) {
   if (/^(email_|emails|smtp_|mail_)/.test(name)) return ['email']
   if (/^(whatsapp_|message_templates|phone_numbers|phone_number_)/.test(name)) return ['whatsapp']
   if (/^(highlevel_|ghl_|integrations|integration_)/.test(name)) return ['integrations']
+  if (name === 'conversational_agents' || /^conversational_agent_/.test(name)) return ['conversational_ai']
   if (/^(contacts|contact_|tags|tag_|custom_fields|custom_field_|variable_fields|variable_field_)/.test(name)) return ['contacts']
   return []
 }
@@ -751,7 +752,7 @@ async function listDataTables() {
       queryableColumns: table.queryableColumns,
       redactedColumns: table.redactedColumns
     })),
-    blockedTables: ['highlevel_config', 'meta_config', 'meta_campaign_templates', 'meta_campaign_drafts', 'meta_campaign_execution_logs', 'ai_agent_config', 'agent_runs', 'agent_steps', 'agent_pending_actions', 'agent_tool_idempotency', 'app_config', 'oauth_clients', 'oauth_authorization_codes', 'oauth_refresh_tokens'],
+    blockedTables: ['highlevel_config', 'meta_config', 'meta_campaign_templates', 'meta_campaign_drafts', 'meta_campaign_execution_logs', 'ai_agent_config', 'agent_runs', 'agent_steps', 'agent_pending_actions', 'agent_tool_idempotency', 'app_config', 'oauth_clients', 'oauth_authorization_codes', 'oauth_refresh_tokens', 'conversational_agent_goal_links', 'conversational_agent_goal_evidence_claims'],
     note: 'Se exponen todas las tablas de datos detectadas; las tablas de configuración sensible se bloquean y las columnas tipo token/password/secret/hash se redactan.'
   }
 }
@@ -795,7 +796,7 @@ async function queryDataTable(args = {}) {
   const orderBy = sortableColumns.includes(args.orderBy) ? args.orderBy : fallbackOrder
   const orderDirection = String(args.orderDirection || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC'
   const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
-  const selectedColumns = config.queryableColumns
+  const selectedColumns = config.exposedColumns
 
   const [rows, countRow] = await Promise.all([
     db.all(

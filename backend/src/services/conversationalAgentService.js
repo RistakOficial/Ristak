@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
+import { createHash, randomUUID, timingSafeEqual } from 'crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db } from '../config/database.js'
@@ -1118,8 +1118,11 @@ const GOAL_WORKFLOW_COMPLETION_MODES = new Set(['notify_only', 'assign_user'])
 export const CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH = '/webhook/conversational-agent/goal'
 export const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
 export const CONVERSATIONAL_GOAL_TOKEN_QUERY_PARAM = 'ristak_goal_token'
-const CONVERSATIONAL_GOAL_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
-const CONVERSATIONAL_GOAL_TOKEN_BYTES = 32
+const SUCCESSFUL_GOAL_STATUSES = {
+  citas: new Set(['scheduled', 'confirmed', 'booked', 'completed', 'complete']),
+  ventas: new Set(['paid', 'approved', 'succeeded', 'successful', 'settled', 'completed', 'complete']),
+  custom: new Set(['approved', 'confirmed', 'succeeded', 'successful', 'completed', 'complete'])
+}
 
 const DEFAULT_GOAL_WORKFLOW_CONFIG = {
   appointments: {
@@ -1177,11 +1180,84 @@ function normalizeSuccessExtras(input) {
     .map((extra) => ({
       type: extra.type,
       tag: String(extra.tag || '').trim().slice(0, 120),
+      tagId: String(extra.tagId || '').trim().slice(0, 180),
+      tagName: String(extra.tagName || '').trim().slice(0, 120),
       field: String(extra.field || '').trim().slice(0, 120),
       value: String(extra.value || '').trim().slice(0, 400)
     }))
-    .filter((extra) => (extra.type === 'set_custom_field' ? Boolean(extra.field) : Boolean(extra.tag)))
+    .filter((extra) => (extra.type === 'set_custom_field' ? Boolean(extra.field) : Boolean(extra.tag || extra.tagId)))
     .slice(0, 12)
+}
+
+function normalizeConversationGoalCompletionEffectPlanPayload(input = {}) {
+  const workflow = normalizeAgentGoalWorkflow({ completion: input.completion })
+  const completion = workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion
+  return {
+    version: 1,
+    agentId: String(input.agentId || '').trim().slice(0, 180),
+    agentUpdatedAt: String(input.agentUpdatedAt || '').trim().slice(0, 80),
+    completion: {
+      mode: completion.mode,
+      userId: String(completion.userId || '').trim().slice(0, 160),
+      userName: String(completion.userName || '').trim().slice(0, 160)
+    },
+    successExtras: normalizeSuccessExtras(input.successExtras)
+  }
+}
+
+function hashConversationGoalCompletionEffectPlan(payload) {
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex')
+}
+
+async function buildConversationGoalCompletionEffectPlan(agent) {
+  const workflow = normalizeAgentGoalWorkflow(agent?.goalWorkflow)
+  const completion = workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion
+  const extras = normalizeSuccessExtras(agent?.successExtras)
+  const canonicalExtras = []
+  for (const extra of extras) {
+    if (extra.type !== 'add_tag' && extra.type !== 'remove_tag') {
+      canonicalExtras.push(extra)
+      continue
+    }
+    const [tagId] = await resolveTagIds([extra.tag], { createMissing: false })
+    const [tagName] = tagId ? await tagNamesForIds([tagId]) : [extra.tag]
+    canonicalExtras.push({
+      ...extra,
+      tag: tagId || extra.tag,
+      tagId: tagId || '',
+      tagName: tagName || extra.tag
+    })
+  }
+  const payload = normalizeConversationGoalCompletionEffectPlanPayload({
+    agentId: String(agent?.id || '').trim().slice(0, 180),
+    agentUpdatedAt: agent?.updatedAt,
+    completion: {
+      mode: completion.mode,
+      userId: String(completion.userId || '').trim().slice(0, 160),
+      userName: String(completion.userName || '').trim().slice(0, 160)
+    },
+    successExtras: canonicalExtras
+  })
+  return { ...payload, planHash: hashConversationGoalCompletionEffectPlan(payload) }
+}
+
+function conversationGoalEffectAgentFromMetadata(metadata) {
+  const plan = metadata?.completionEffectPlan
+  if (!plan || Number(plan.version) !== 1) {
+    throw new Error('La meta no tiene un plan inmutable de efectos para recuperarse de forma segura')
+  }
+  const payload = normalizeConversationGoalCompletionEffectPlanPayload(plan)
+  const expectedHash = hashConversationGoalCompletionEffectPlan(payload)
+  if (!/^[a-f0-9]{64}$/.test(String(plan.planHash || '')) || plan.planHash !== expectedHash) {
+    throw new Error('El plan inmutable de efectos de la meta no pasó su verificación de integridad')
+  }
+  return {
+    id: payload.agentId || null,
+    goalWorkflow: {
+      completion: payload.completion
+    },
+    successExtras: payload.successExtras
+  }
 }
 
 function normalizeAgentIdentityMode(value, fallback = 'business') {
@@ -1333,7 +1409,7 @@ function getPublicWebhookBaseUrl() {
   return String(process.env.RENDER_EXTERNAL_URL || PUBLIC_URL || 'http://localhost:3002').replace(/\/+$/, '')
 }
 
-export function getConversationalGoalWebhookUrl(goalId = '', confirmationToken = '') {
+export function getConversationalGoalWebhookUrl(goalId = '') {
   const cleanGoalId = String(goalId || '').trim()
   const url = new URL(
     cleanGoalId
@@ -1341,24 +1417,11 @@ export function getConversationalGoalWebhookUrl(goalId = '', confirmationToken =
       : CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH,
     `${getPublicWebhookBaseUrl()}/`
   )
-  const cleanConfirmationToken = String(confirmationToken || '').trim()
-  if (cleanGoalId && cleanConfirmationToken) {
-    url.searchParams.set(CONVERSATIONAL_GOAL_TOKEN_QUERY_PARAM, cleanConfirmationToken)
-  }
   return url.toString()
 }
 
 function hashConversationGoalToken(token) {
   return createHash('sha256').update(String(token || ''), 'utf8').digest('hex')
-}
-
-function createConversationGoalToken() {
-  const token = randomBytes(CONVERSATIONAL_GOAL_TOKEN_BYTES).toString('base64url')
-  return {
-    token,
-    hash: hashConversationGoalToken(token),
-    expiresAt: new Date(Date.now() + CONVERSATIONAL_GOAL_TOKEN_TTL_MS).toISOString()
-  }
 }
 
 function conversationGoalTokenMatches(storedHash, suppliedToken) {
@@ -1422,7 +1485,9 @@ async function resolveGoalLinkMetadata({ agentId, objective, metadata }) {
   let configuredExpected = {}
 
   if (agentId) {
-    const agent = await getConversationalAgent(String(agentId)).catch(() => null)
+    // Una falla de DB no puede degradar silenciosamente la validación de la
+    // evidencia. Si la lectura falla, crear el enlace también falla cerrado.
+    const agent = await getConversationalAgent(String(agentId))
     if (agent?.goalWorkflow) {
       if (objective === 'citas') {
         configuredExpected = {
@@ -1470,6 +1535,9 @@ function mapGoalLinkRow(row) {
     trackingParam: row.tracking_param || DEFAULT_GOAL_TRACKING_PARAM,
     confirmationExpiresAt: row.confirmation_expires_at || null,
     confirmationUsedAt: row.confirmation_used_at || null,
+    completionAuthMethod: row.completion_auth_method || null,
+    completionEffectsStatus: row.completion_effects_status || null,
+    externalSource: row.external_source || null,
     externalObjectId: row.external_object_id || null,
     externalStatus: row.external_status || null,
     metadata: parseJsonField(row.metadata_json, {}),
@@ -1479,6 +1547,36 @@ function mapGoalLinkRow(row) {
   }
 }
 
+function normalizeGoalLinkIdempotencyKey(value) {
+  const clean = String(value || '').trim()
+  if (!clean) return null
+  return createHash('sha256').update(clean.slice(0, 1000)).digest('hex')
+}
+
+function mapReusableGoalLink(row, linkParams = {}) {
+  return {
+    ...mapGoalLinkRow(row),
+    linkParams,
+    confirmationMode: 'trusted_integration',
+    idempotent: true
+  }
+}
+
+function assertReusableGoalLink(row, { contactId, agentId, objective, targetUrl, trackingParam, linkParams }) {
+  const sameAgent = String(row.agent_id || '') === String(agentId || '')
+  const expectedSentUrl = buildTrackedGoalUrl(targetUrl, trackingParam, row.id, linkParams)
+  const matches = String(row.contact_id || '') === String(contactId || '') &&
+    sameAgent &&
+    String(row.objective || '') === String(objective || '') &&
+    String(row.target_url || '') === String(targetUrl || '') &&
+    String(row.tracking_param || DEFAULT_GOAL_TRACKING_PARAM) === String(trackingParam || DEFAULT_GOAL_TRACKING_PARAM) &&
+    String(row.sent_url || '') === expectedSentUrl
+  if (!matches) {
+    throw Object.assign(new Error('La llave idempotente ya pertenece a otro enlace de objetivo'), { statusCode: 409 })
+  }
+  return row
+}
+
 export async function createConversationGoalLink({
   contactId,
   agentId = null,
@@ -1486,44 +1584,85 @@ export async function createConversationGoalLink({
   targetUrl,
   trackingParam = DEFAULT_GOAL_TRACKING_PARAM,
   linkParams = {},
-  metadata = {}
+  metadata = {},
+  idempotencyKey = ''
 } = {}) {
   const cleanContactId = String(contactId || '').trim()
   if (!cleanContactId) {
     throw Object.assign(new Error('Falta el contacto para crear el enlace de objetivo'), { statusCode: 400 })
   }
 
-  const id = `goal_${randomUUID()}`
   const cleanObjective = normalizeGoalLinkObjective(objective)
   const cleanTrackingParam = normalizeTrackingParam(trackingParam)
   const cleanTargetUrl = normalizeGoalUrl(targetUrl)
   const cleanLinkParams = normalizeGoalLinkParams(linkParams)
-  const sentUrl = buildTrackedGoalUrl(cleanTargetUrl, cleanTrackingParam, id, cleanLinkParams)
   const cleanAgentId = agentId ? String(agentId).trim() : null
+  const cleanIdempotencyKey = normalizeGoalLinkIdempotencyKey(idempotencyKey)
+  if (cleanIdempotencyKey) {
+    const existing = await db.get(
+      'SELECT * FROM conversational_agent_goal_links WHERE idempotency_key = ?',
+      [cleanIdempotencyKey]
+    ).catch(() => null)
+    if (existing) {
+      assertReusableGoalLink(existing, {
+        contactId: cleanContactId,
+        agentId: cleanAgentId,
+        objective: cleanObjective,
+        targetUrl: cleanTargetUrl,
+        trackingParam: cleanTrackingParam,
+        linkParams: cleanLinkParams
+      })
+      return mapReusableGoalLink(existing, cleanLinkParams)
+    }
+  }
+
+  const id = `goal_${randomUUID()}`
+  const sentUrl = buildTrackedGoalUrl(cleanTargetUrl, cleanTrackingParam, id, cleanLinkParams)
   const cleanMetadata = await resolveGoalLinkMetadata({
     agentId: cleanAgentId,
     objective: cleanObjective,
     metadata
   })
-  const confirmation = createConversationGoalToken()
-
-  await db.run(`
-    INSERT INTO conversational_agent_goal_links (
-      id, contact_id, agent_id, objective, status, target_url, sent_url, tracking_param,
-      confirmation_token_hash, confirmation_expires_at, metadata_json
-    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
-  `, [
-    id,
-    cleanContactId,
-    cleanAgentId,
-    cleanObjective,
-    cleanTargetUrl,
-    sentUrl,
-    cleanTrackingParam,
-    confirmation.hash,
-    confirmation.expiresAt,
-    JSON.stringify(cleanMetadata)
-  ])
+  try {
+    const registered = await db.run(`
+      INSERT INTO conversational_agent_goal_links (
+        id, contact_id, agent_id, objective, status, target_url, sent_url,
+        tracking_param, idempotency_key, completion_auth_method, metadata_json
+      ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, 'trusted_integration', ?)
+    `, [
+      id,
+      cleanContactId,
+      cleanAgentId,
+      cleanObjective,
+      cleanTargetUrl,
+      sentUrl,
+      cleanTrackingParam,
+      cleanIdempotencyKey,
+      JSON.stringify(cleanMetadata)
+    ])
+    if (Number(registered?.changes || registered?.rowCount || 0) !== 1) {
+      throw new Error('No se pudo guardar el enlace del objetivo')
+    }
+  } catch (error) {
+    if (cleanIdempotencyKey) {
+      const existing = await db.get(
+        'SELECT * FROM conversational_agent_goal_links WHERE idempotency_key = ?',
+        [cleanIdempotencyKey]
+      ).catch(() => null)
+      if (existing) {
+        assertReusableGoalLink(existing, {
+          contactId: cleanContactId,
+          agentId: cleanAgentId,
+          objective: cleanObjective,
+          targetUrl: cleanTargetUrl,
+          trackingParam: cleanTrackingParam,
+          linkParams: cleanLinkParams
+        })
+        return mapReusableGoalLink(existing, cleanLinkParams)
+      }
+    }
+    throw error
+  }
 
   await recordConversationalAgentEvent({
     contactId: cleanContactId,
@@ -1534,7 +1673,8 @@ export async function createConversationGoalLink({
       objective: cleanObjective,
       trackingParam: cleanTrackingParam,
       targetUrl: cleanTargetUrl,
-      linkParams: cleanLinkParams
+      linkParams: cleanLinkParams,
+      confirmationMode: 'trusted_integration'
     }
   })
 
@@ -1548,8 +1688,8 @@ export async function createConversationGoalLink({
     sentUrl,
     trackingParam: cleanTrackingParam,
     linkParams: cleanLinkParams,
-    callbackUrl: getConversationalGoalWebhookUrl(id, confirmation.token),
-    confirmationExpiresAt: confirmation.expiresAt
+    confirmationMode: 'trusted_integration',
+    idempotent: false
   }
 }
 
@@ -1581,14 +1721,8 @@ function conversationSignalForGoalObjective(objective) {
   }
 }
 
-function normalizeComparableId(value) {
-  return String(value || '').trim().toLowerCase()
-}
-
-const SUCCESSFUL_GOAL_STATUSES = {
-  citas: new Set(['scheduled', 'confirmed', 'booked', 'completed', 'complete']),
-  ventas: new Set(['paid', 'approved', 'succeeded', 'successful', 'settled', 'completed', 'complete']),
-  custom: new Set(['approved', 'confirmed', 'succeeded', 'successful', 'completed', 'complete'])
+function normalizeExactGoalReference(value) {
+  return String(value || '').trim()
 }
 
 function assertSuccessfulGoalStatus(objective, externalStatus) {
@@ -1621,8 +1755,8 @@ function validateExpectedGoalReference(expected = {}, received = {}) {
     ['priceId', 'precio']
   ]
   for (const [key, label] of checks) {
-    const expectedValue = normalizeComparableId(expected[key])
-    const receivedValue = normalizeComparableId(received[key])
+    const expectedValue = normalizeExactGoalReference(expected[key])
+    const receivedValue = normalizeExactGoalReference(received[key])
     if (!expectedValue) continue
     if (!receivedValue) throwExpectedGoalReferenceError(label, true)
     if (expectedValue !== receivedValue) throwExpectedGoalReferenceError(label)
@@ -1645,8 +1779,590 @@ function validateExpectedGoalReference(expected = {}, received = {}) {
   }
 }
 
+const CONVERSATION_GOAL_EFFECTS_LEASE_MS = 2 * 60 * 1000
+
+function normalizeCompletionRequestId(value) {
+  const clean = String(value || '').trim()
+  if (clean.length > 1000) {
+    throw Object.assign(new Error('Idempotency-Key excede el máximo de 1000 caracteres'), { statusCode: 400 })
+  }
+  return clean ? createHash('sha256').update(clean).digest('hex') : ''
+}
+
+function authorizeConversationGoalCompletion(row, confirmationToken, authorization = {}) {
+  const type = String(authorization?.type || '').trim()
+  if (type === 'external_api') {
+    const actorId = String(authorization.actorId || '').trim().slice(0, 160)
+    const requestId = normalizeCompletionRequestId(authorization.requestId)
+    if (!actorId || !requestId) {
+      throw Object.assign(new Error('La integración debe enviar actor e Idempotency-Key'), { statusCode: 400 })
+    }
+    return { method: 'external_api', actorId, requestId }
+  }
+
+  if (!row.confirmation_token_hash || !conversationGoalTokenMatches(row.confirmation_token_hash, confirmationToken)) {
+    throw Object.assign(new Error('La confirmación del objetivo no está autorizada'), { statusCode: 401 })
+  }
+  const expirationMs = new Date(row.confirmation_expires_at).getTime()
+  if (!Number.isFinite(expirationMs) || Date.now() >= expirationMs) {
+    throw Object.assign(new Error('La confirmación del objetivo expiró; genera y envía un enlace nuevo'), { statusCode: 410 })
+  }
+  return {
+    method: 'legacy_token',
+    actorId: '',
+    requestId: row.confirmation_token_hash
+  }
+}
+
+function normalizeBoundedGoalReference(value, label, maxLength) {
+  const clean = String(value || '').trim()
+  if (clean.length > maxLength) {
+    throw Object.assign(new Error(`${label} excede el máximo de ${maxLength} caracteres`), { statusCode: 400 })
+  }
+  return clean
+}
+
+function normalizeReceivedGoalAmount(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null
+  const numeric = Number(value)
+  const rounded = Math.round(numeric * 100) / 100
+  if (!Number.isFinite(numeric) || numeric <= 0 || !Number.isFinite(rounded)) {
+    throw Object.assign(new Error('amount debe ser un número finito mayor que cero'), { statusCode: 400 })
+  }
+  return rounded
+}
+
+function normalizeReceivedGoalReference({ calendarId, productId, priceId, amount, currency } = {}) {
+  return {
+    calendarId: normalizeBoundedGoalReference(calendarId, 'calendarId', 160),
+    productId: normalizeBoundedGoalReference(productId, 'productId', 160),
+    priceId: normalizeBoundedGoalReference(priceId, 'priceId', 160),
+    amount: normalizeReceivedGoalAmount(amount),
+    currency: normalizeBoundedGoalReference(currency, 'currency', 12).toUpperCase()
+  }
+}
+
+function normalizeExternalEvidenceSource(value, objective, { required = false } = {}) {
+  const fallback = required ? '' : `legacy:${String(objective || 'custom').trim().toLowerCase() || 'custom'}`
+  const clean = String(value || fallback).trim().toLowerCase()
+  if (!clean) {
+    throw Object.assign(new Error('La confirmación requiere externalSource para identificar el sistema de origen'), { statusCode: 400 })
+  }
+  if (!/^[a-z0-9][a-z0-9._:-]{0,79}$/.test(clean)) {
+    throw Object.assign(new Error('externalSource debe ser un identificador estable de hasta 80 caracteres'), { statusCode: 400 })
+  }
+  return clean
+}
+
+function buildExternalEvidenceKey(externalSource, externalObjectId) {
+  return createHash('sha256')
+    .update(`${String(externalSource || '')}\0${normalizeExactGoalReference(externalObjectId)}`)
+    .digest('hex')
+}
+
+function buildConversationGoalConfirmationFingerprint({
+  externalSource,
+  externalObjectId,
+  externalStatus,
+  receivedReference
+}) {
+  return createHash('sha256').update(JSON.stringify({
+    externalSource: String(externalSource || ''),
+    externalObjectId: normalizeExactGoalReference(externalObjectId),
+    externalStatus: String(externalStatus || '').trim().toLowerCase(),
+    receivedReference: normalizeReceivedGoalReference(receivedReference)
+  })).digest('hex')
+}
+
+function conversationGoalEvidenceClaimMatches(claim, expected) {
+  return String(claim?.goal_id || '') === String(expected.goalId || '') &&
+    String(claim?.external_evidence_key || '') === String(expected.externalEvidenceKey || '') &&
+    String(claim?.external_source || '') === String(expected.externalSource || '') &&
+    String(claim?.confirmation_fingerprint || '') === String(expected.confirmationFingerprint || '') &&
+    String(claim?.completion_auth_method || '') === String(expected.authorization?.method || '') &&
+    String(claim?.completion_actor_id || '') === String(expected.authorization?.actorId || '') &&
+    String(claim?.completion_request_id || '') === String(expected.authorization?.requestId || '')
+}
+
+async function claimConversationGoalEvidence(tx, expected) {
+  const legacyWildcard = await tx.get(`
+    SELECT goal_id
+    FROM conversational_agent_goal_evidence_claims
+    WHERE external_source = 'legacy:wildcard'
+      AND legacy_external_object_id = ?
+    LIMIT 1
+  `, [expected.externalObjectId])
+  if (legacyWildcard && String(legacyWildcard.goal_id || '') !== String(expected.goalId || '')) {
+    throw Object.assign(new Error('Esa evidencia coincide con una confirmación legacy y no puede reutilizarse'), { statusCode: 409 })
+  }
+
+  const inserted = await tx.run(`
+    INSERT INTO conversational_agent_goal_evidence_claims (
+      external_evidence_key, external_source, confirmation_fingerprint,
+      goal_id, completion_auth_method, completion_actor_id, completion_request_id
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT DO NOTHING
+  `, [
+    expected.externalEvidenceKey,
+    expected.externalSource,
+    expected.confirmationFingerprint,
+    expected.goalId,
+    expected.authorization.method,
+    expected.authorization.actorId || '',
+    expected.authorization.requestId
+  ])
+  if (databaseChangeCount(inserted) === 1) return { created: true }
+
+  const evidenceOwner = await tx.get(
+    'SELECT * FROM conversational_agent_goal_evidence_claims WHERE external_evidence_key = ?',
+    [expected.externalEvidenceKey]
+  )
+  if (evidenceOwner) {
+    if (conversationGoalEvidenceClaimMatches(evidenceOwner, expected)) return { created: false, idempotent: true }
+    if (String(evidenceOwner.goal_id || '') === String(expected.goalId || '')) {
+      throw Object.assign(new Error('Esa evidencia externa ya fue usada con datos o autorización distintos'), { statusCode: 409 })
+    }
+    throw Object.assign(new Error('Esa evidencia externa ya confirmó otra meta'), { statusCode: 409 })
+  }
+
+  const requestOwner = await tx.get(`
+    SELECT *
+    FROM conversational_agent_goal_evidence_claims
+    WHERE completion_auth_method = ?
+      AND completion_actor_id = ?
+      AND completion_request_id = ?
+  `, [
+    expected.authorization.method,
+    expected.authorization.actorId || '',
+    expected.authorization.requestId
+  ])
+  if (requestOwner) {
+    throw Object.assign(new Error('Ese Idempotency-Key ya fue usado para confirmar otra meta o evidencia'), { statusCode: 409 })
+  }
+
+  const goalOwner = await tx.get(
+    'SELECT * FROM conversational_agent_goal_evidence_claims WHERE goal_id = ?',
+    [expected.goalId]
+  )
+  if (goalOwner) {
+    throw Object.assign(new Error('Esta meta ya fue reclamada con otra evidencia o autorización'), { statusCode: 409 })
+  }
+  throw Object.assign(new Error('No se pudo reclamar la evidencia externa de forma exclusiva'), { statusCode: 409 })
+}
+
+function goalReferencesMatch(left = {}, right = {}) {
+  return normalizeExactGoalReference(left.calendarId) === normalizeExactGoalReference(right.calendarId) &&
+    normalizeExactGoalReference(left.productId) === normalizeExactGoalReference(right.productId) &&
+    normalizeExactGoalReference(left.priceId) === normalizeExactGoalReference(right.priceId) &&
+    normalizeNullableAmount(left.amount) === normalizeNullableAmount(right.amount) &&
+    String(left.currency || '').trim().toUpperCase() === String(right.currency || '').trim().toUpperCase()
+}
+
+function completedGoalRequestMatches(row, authorization, externalSource, externalObjectId, externalStatus, receivedReference) {
+  const storedMetadata = parseJsonField(row.metadata_json, {})
+  const storedReference = storedMetadata.receivedReference && typeof storedMetadata.receivedReference === 'object'
+    ? storedMetadata.receivedReference
+    : {}
+  const sameRequest = String(row.completion_request_id || '') === String(authorization.requestId || '')
+  const sameMethod = String(row.completion_auth_method || '') === String(authorization.method || '')
+  const sameActor = String(row.completion_actor_id || '') === String(authorization.actorId || '')
+  return sameRequest && sameMethod && sameActor &&
+    String(row.external_source || '') === String(externalSource || '') &&
+    normalizeExactGoalReference(row.external_object_id) === normalizeExactGoalReference(externalObjectId) &&
+    String(row.external_status || '').trim().toLowerCase() === String(externalStatus || '').trim().toLowerCase() &&
+    goalReferencesMatch(storedReference, receivedReference)
+}
+
+const GOAL_EFFECT_CHECKPOINT_COLUMNS = new Set([
+  'completion_signal_applied_at',
+  'completion_action_applied_at',
+  'completion_extras_applied_at',
+  'completion_event_recorded_at'
+])
+
+function databaseChangeCount(result) {
+  return Number(result?.changes || result?.rowCount || 0)
+}
+
+function lostConversationGoalEffectsClaimError() {
+  const error = new Error('Otro worker tomó la recuperación de esta meta')
+  error.code = 'CONVERSATIONAL_GOAL_EFFECTS_CLAIM_LOST'
+  return error
+}
+
+function goalEffectEventId(goalId, effect) {
+  const fingerprint = createHash('sha256').update(String(goalId || '')).digest('hex').slice(0, 40)
+  return `cae_goal_${fingerprint}_${String(effect || 'effect').slice(0, 32)}`
+}
+
+async function renewConversationGoalEffectsLease(goalId, claimToken) {
+  const now = new Date()
+  const leaseUntil = new Date(now.getTime() + CONVERSATION_GOAL_EFFECTS_LEASE_MS).toISOString()
+  const renewed = await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET completion_effects_lease_until_at = ?,
+        completion_effects_updated_at = ?
+    WHERE id = ?
+      AND completion_effects_status = 'processing'
+      AND completion_effects_claim_token = ?
+  `, [leaseUntil, now.toISOString(), goalId, claimToken])
+  if (databaseChangeCount(renewed) !== 1) throw lostConversationGoalEffectsClaimError()
+  return leaseUntil
+}
+
+async function markConversationGoalEffectApplied(goalId, claimToken, column) {
+  if (!GOAL_EFFECT_CHECKPOINT_COLUMNS.has(column)) {
+    throw new Error(`Checkpoint de meta no permitido: ${column}`)
+  }
+  const appliedAt = new Date().toISOString()
+  const result = await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET ${column} = COALESCE(${column}, ?),
+        completion_effects_updated_at = ?
+    WHERE id = ?
+      AND completion_effects_status = 'processing'
+      AND completion_effects_claim_token = ?
+  `, [appliedAt, appliedAt, goalId, claimToken])
+  if (databaseChangeCount(result) !== 1) throw lostConversationGoalEffectsClaimError()
+  return appliedAt
+}
+
+async function claimConversationGoalNotification(goalId, claimToken) {
+  const claimedAt = new Date().toISOString()
+  const result = await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET completion_notification_status = 'claimed',
+        completion_notification_claim_token = ?,
+        completion_notification_claimed_at = COALESCE(completion_notification_claimed_at, ?),
+        completion_notification_last_error = NULL,
+        completion_effects_updated_at = ?
+    WHERE id = ?
+      AND completion_effects_status = 'processing'
+      AND completion_effects_claim_token = ?
+      AND completion_notification_claimed_at IS NULL
+      AND (completion_notification_status IS NULL OR completion_notification_status = 'pending')
+  `, [claimToken, claimedAt, claimedAt, goalId, claimToken])
+  if (databaseChangeCount(result) !== 1) throw lostConversationGoalEffectsClaimError()
+  return claimedAt
+}
+
+async function finishConversationGoalNotification(goalId, claimToken, status, errorMessage = '') {
+  const finishedAt = new Date().toISOString()
+  const result = await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET completion_notification_status = ?,
+        completion_notification_claim_token = NULL,
+        completion_notification_sent_at = COALESCE(completion_notification_sent_at, ?),
+        completion_notification_last_error = ?,
+        completion_effects_updated_at = ?
+    WHERE id = ?
+      AND completion_effects_status = 'processing'
+      AND completion_effects_claim_token = ?
+      AND completion_notification_status = 'claimed'
+      AND completion_notification_claim_token = ?
+  `, [status, finishedAt, errorMessage || null, finishedAt, goalId, claimToken, claimToken])
+  if (databaseChangeCount(result) !== 1) throw lostConversationGoalEffectsClaimError()
+  return finishedAt
+}
+
+async function resetConversationGoalNotificationClaim(goalId, claimToken, errorMessage = '') {
+  const updatedAt = new Date().toISOString()
+  const result = await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET completion_notification_status = 'pending',
+        completion_notification_claim_token = NULL,
+        completion_notification_claimed_at = NULL,
+        completion_notification_last_error = ?,
+        completion_effects_updated_at = ?
+    WHERE id = ?
+      AND completion_effects_status = 'processing'
+      AND completion_effects_claim_token = ?
+      AND completion_notification_status = 'claimed'
+      AND completion_notification_claim_token = ?
+  `, [errorMessage || null, updatedAt, goalId, claimToken, claimToken])
+  if (databaseChangeCount(result) !== 1) throw lostConversationGoalEffectsClaimError()
+}
+
+async function finishUnknownConversationGoalNotification(goalId, claimToken, contactId, signal) {
+  const finishedAt = new Date().toISOString()
+  await recordConversationalAgentEvent({
+    eventId: goalEffectEventId(goalId, 'notification_unknown'),
+    contactId,
+    eventType: 'priority_push_notification_unknown',
+    detail: {
+      signal,
+      reason: 'dispatcher_claim_recovered_without_durable_ack',
+      deliveryPolicy: 'at_most_once'
+    },
+    throwOnError: true
+  })
+  const result = await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET completion_notification_status = 'unknown',
+        completion_notification_claim_token = NULL,
+        completion_notification_sent_at = COALESCE(completion_notification_sent_at, completion_notification_claimed_at, ?),
+        completion_notification_last_error = COALESCE(completion_notification_last_error, 'El proceso terminó sin ACK durable; no se reenvió para evitar duplicados'),
+        completion_effects_updated_at = ?
+    WHERE id = ?
+      AND completion_effects_status = 'processing'
+      AND completion_effects_claim_token = ?
+      AND completion_notification_status IN ('claimed', 'unknown')
+  `, [finishedAt, finishedAt, goalId, claimToken])
+  if (databaseChangeCount(result) !== 1) throw lostConversationGoalEffectsClaimError()
+  return finishedAt
+}
+
+async function finalizeConversationGoalCompletionEffects(goalId) {
+  const cleanGoalId = String(goalId || '').trim()
+  const claimToken = randomUUID()
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const leaseUntil = new Date(now.getTime() + CONVERSATION_GOAL_EFFECTS_LEASE_MS).toISOString()
+  const claim = await db.run(`
+    UPDATE conversational_agent_goal_links
+    SET completion_effects_status = 'processing',
+        completion_effects_attempts = COALESCE(completion_effects_attempts, 0) + 1,
+        completion_effects_claim_token = ?,
+        completion_effects_lease_until_at = ?,
+        completion_effects_updated_at = ?,
+        completion_effects_last_error = NULL,
+        completion_effects_next_retry_at = NULL
+    WHERE id = ?
+      AND status = 'completed'
+      AND (
+        completion_effects_status = 'pending' OR
+        (completion_effects_status = 'failed' AND (completion_effects_next_retry_at IS NULL OR completion_effects_next_retry_at <= ?)) OR
+        (completion_effects_status = 'processing' AND (completion_effects_lease_until_at IS NULL OR completion_effects_lease_until_at <= ?))
+      )
+  `, [claimToken, leaseUntil, nowIso, cleanGoalId, nowIso, nowIso])
+
+  if (databaseChangeCount(claim) !== 1) {
+    const current = await db.get(
+      'SELECT completion_effects_status FROM conversational_agent_goal_links WHERE id = ?',
+      [cleanGoalId]
+    ).catch(() => null)
+    return { completed: current?.completion_effects_status === 'completed', pending: current?.completion_effects_status === 'processing' }
+  }
+
+  try {
+    const row = await db.get('SELECT * FROM conversational_agent_goal_links WHERE id = ?', [cleanGoalId])
+    if (!row) throw new Error('No se encontró la meta al finalizar sus efectos')
+    const mapped = conversationSignalForGoalObjective(row.objective)
+    const storedMetadata = parseJsonField(row.metadata_json, {})
+    const receivedReference = storedMetadata.receivedReference || {}
+    // La asignación y los extras se fijan cuando se acepta la confirmación.
+    // Recovery nunca vuelve a leer la configuración viva del agente: editarlo
+    // después no puede cambiar los efectos de una meta ya confirmada.
+    const effectAgent = conversationGoalEffectAgentFromMetadata(storedMetadata)
+    const technicalSummary = row.external_object_id
+      ? `ID de ${mapped.objectLabel}: ${row.external_object_id}`
+      : `Confirmación recibida para ${mapped.objectLabel}`
+    const conversationSummary = cleanCompletionDisplayText(storedMetadata.resumen || storedMetadata.summary || '')
+
+    if (!row.completion_signal_applied_at) {
+      await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
+      await setConversationSignal(row.contact_id, mapped.signal, {
+        reason: mapped.reason,
+        summary: conversationSummary,
+        actionSummarySource: technicalSummary,
+        originalSummary: technicalSummary,
+        status: 'completed',
+        agentId: row.agent_id || '',
+        eventId: goalEffectEventId(cleanGoalId, 'signal'),
+        strictEvent: true
+      })
+      row.completion_signal_applied_at = await markConversationGoalEffectApplied(
+        cleanGoalId,
+        claimToken,
+        'completion_signal_applied_at'
+      )
+    }
+
+    if (!row.completion_action_applied_at) {
+      await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
+      await applyAgentCompletionAction(effectAgent, row.contact_id, {
+        eventId: goalEffectEventId(cleanGoalId, 'assignment'),
+        strict: true
+      })
+      row.completion_action_applied_at = await markConversationGoalEffectApplied(
+        cleanGoalId,
+        claimToken,
+        'completion_action_applied_at'
+      )
+    }
+
+    if (!row.completion_extras_applied_at) {
+      await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
+      await applyAgentSuccessExtras(effectAgent, row.contact_id, {
+        eventId: goalEffectEventId(cleanGoalId, 'extras'),
+        strict: true
+      })
+      row.completion_extras_applied_at = await markConversationGoalEffectApplied(
+        cleanGoalId,
+        claimToken,
+        'completion_extras_applied_at'
+      )
+    }
+
+    if (!row.completion_notification_sent_at) {
+      await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
+      const notificationStatus = String(row.completion_notification_status || '').trim()
+      if (row.completion_notification_claimed_at || notificationStatus === 'claimed' || notificationStatus === 'unknown') {
+        row.completion_notification_sent_at = await finishUnknownConversationGoalNotification(
+          cleanGoalId,
+          claimToken,
+          row.contact_id,
+          mapped.signal
+        )
+      } else {
+        row.completion_notification_claimed_at = await claimConversationGoalNotification(cleanGoalId, claimToken)
+        try {
+          const notificationResult = await notifyConversationalCompletion({
+            contactId: row.contact_id,
+            reason: mapped.reason,
+            summary: conversationSummary || technicalSummary,
+            signal: mapped.signal,
+            eventId: goalEffectEventId(cleanGoalId, 'notification'),
+            throwOnFailure: true
+          })
+          row.completion_notification_sent_at = await finishConversationGoalNotification(
+            cleanGoalId,
+            claimToken,
+            notificationResult?.skipped ? 'skipped' : 'dispatched'
+          )
+        } catch (error) {
+          if (error?.notificationDeliveryAttempted === false) {
+            await resetConversationGoalNotificationClaim(cleanGoalId, claimToken, error.message)
+          } else {
+            await finishConversationGoalNotification(cleanGoalId, claimToken, 'unknown', error.message)
+          }
+          throw error
+        }
+      }
+    }
+
+    if (!row.completion_event_recorded_at) {
+      await renewConversationGoalEffectsLease(cleanGoalId, claimToken)
+      await recordConversationalAgentEvent({
+        eventId: goalEffectEventId(cleanGoalId, 'completed'),
+        contactId: row.contact_id,
+        eventType: 'goal_url_completed',
+        detail: {
+          goalId: cleanGoalId,
+          agentId: row.agent_id || null,
+          objective: row.objective,
+          signal: mapped.signal,
+          externalSource: row.external_source || null,
+          externalObjectId: row.external_object_id || null,
+          externalStatus: row.external_status || null,
+          receivedReference
+        },
+        throwOnError: true
+      })
+      row.completion_event_recorded_at = await markConversationGoalEffectApplied(
+        cleanGoalId,
+        claimToken,
+        'completion_event_recorded_at'
+      )
+    }
+
+    const completedAt = new Date().toISOString()
+    const finalized = await db.run(`
+      UPDATE conversational_agent_goal_links
+      SET completion_effects_status = 'completed',
+          completion_effects_claim_token = NULL,
+          completion_effects_lease_until_at = NULL,
+          completion_effects_next_retry_at = NULL,
+          completion_effects_updated_at = ?,
+          completion_effects_last_error = NULL
+      WHERE id = ?
+        AND completion_effects_status = 'processing'
+        AND completion_effects_claim_token = ?
+    `, [completedAt, cleanGoalId, claimToken])
+    if (databaseChangeCount(finalized) !== 1) throw lostConversationGoalEffectsClaimError()
+    return { completed: true, pending: false }
+  } catch (error) {
+    const failedAt = new Date().toISOString()
+    const nextRetryAt = new Date(Date.now() + 30_000).toISOString()
+    await db.run(`
+      UPDATE conversational_agent_goal_links
+      SET completion_effects_status = 'failed',
+          completion_effects_claim_token = NULL,
+          completion_effects_lease_until_at = NULL,
+          completion_effects_next_retry_at = ?,
+          completion_effects_updated_at = ?,
+          completion_effects_last_error = ?
+      WHERE id = ?
+        AND completion_effects_status = 'processing'
+        AND completion_effects_claim_token = ?
+    `, [nextRetryAt, failedAt, String(error?.message || error).slice(0, 1000), cleanGoalId, claimToken]).catch(() => undefined)
+    throw Object.assign(new Error('La meta se confirmó, pero sus efectos internos quedaron pendientes de reintento'), {
+      statusCode: 503,
+      retryable: true,
+      cause: error
+    })
+  }
+}
+
+export async function recoverPendingConversationGoalCompletionEffects({ limit = 5000, batchSize = 100 } = {}) {
+  const cleanLimit = Math.max(1, Math.min(20_000, Number(limit) || 5000))
+  const cleanBatchSize = Math.max(1, Math.min(500, Number(batchSize) || 100))
+  const recoveryCutoff = new Date().toISOString()
+  let scanned = 0
+  let completed = 0
+  let failed = 0
+  while (scanned < cleanLimit) {
+    const nowIso = new Date().toISOString()
+    const rows = await db.all(`
+      SELECT id
+      FROM conversational_agent_goal_links
+      WHERE status = 'completed'
+        AND COALESCE(completion_effects_updated_at, completed_at, updated_at, created_at) <= ?
+        AND (
+          completion_effects_status = 'pending' OR
+          (completion_effects_status = 'failed' AND (completion_effects_next_retry_at IS NULL OR completion_effects_next_retry_at <= ?)) OR
+          (completion_effects_status = 'processing' AND (completion_effects_lease_until_at IS NULL OR completion_effects_lease_until_at <= ?))
+        )
+      ORDER BY COALESCE(completion_effects_updated_at, completed_at, updated_at, created_at) ASC
+      LIMIT ?
+    `, [recoveryCutoff, nowIso, nowIso, Math.min(cleanBatchSize, cleanLimit - scanned)])
+    if (!rows.length) break
+
+    scanned += rows.length
+    for (const row of rows) {
+      try {
+        const result = await finalizeConversationGoalCompletionEffects(row.id)
+        if (result.completed) completed += 1
+      } catch {
+        failed += 1
+      }
+    }
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  return { scanned, completed, failed }
+}
+
+let conversationGoalEffectsRecoveryTimer = null
+let conversationGoalEffectsRecoveryRunning = false
+
+export function startConversationGoalEffectsRecoveryScheduler(intervalMs = 60_000) {
+  if (conversationGoalEffectsRecoveryTimer) return conversationGoalEffectsRecoveryTimer
+  const cleanInterval = Math.max(15_000, Number(intervalMs) || 60_000)
+  conversationGoalEffectsRecoveryTimer = setInterval(() => {
+    if (conversationGoalEffectsRecoveryRunning) return
+    conversationGoalEffectsRecoveryRunning = true
+    recoverPendingConversationGoalCompletionEffects()
+      .catch((error) => logger.error(`[Agente conversacional] Falló recovery periódico de metas: ${error.message}`))
+      .finally(() => { conversationGoalEffectsRecoveryRunning = false })
+  }, cleanInterval)
+  conversationGoalEffectsRecoveryTimer.unref?.()
+  logger.info(`[Agente conversacional] Recovery de metas activo cada ${Math.round(cleanInterval / 1000)}s`)
+  return conversationGoalEffectsRecoveryTimer
+}
+
 export async function completeConversationGoalLink(goalId, {
   confirmationToken = '',
+  externalSource = '',
   externalObjectId = '',
   externalStatus = '',
   calendarId = '',
@@ -1655,7 +2371,7 @@ export async function completeConversationGoalLink(goalId, {
   amount = null,
   currency = '',
   metadata = {}
-} = {}) {
+} = {}, authorization = {}) {
   const cleanGoalId = String(goalId || '').trim()
   if (!cleanGoalId) {
     throw Object.assign(new Error('Falta el ID de seguimiento del objetivo'), { statusCode: 400 })
@@ -1666,125 +2382,181 @@ export async function completeConversationGoalLink(goalId, {
     throw Object.assign(new Error('No encontramos ese objetivo pendiente'), { statusCode: 404 })
   }
 
-  if (!row.confirmation_token_hash) {
-    throw Object.assign(
-      new Error('Este enlace anterior no admite confirmación segura; genera y envía uno nuevo'),
-      { statusCode: 409 }
-    )
-  }
-  if (!conversationGoalTokenMatches(row.confirmation_token_hash, confirmationToken)) {
-    throw Object.assign(new Error('La confirmación del objetivo no está autorizada'), { statusCode: 401 })
-  }
-  if (row.confirmation_used_at || row.status !== 'pending') {
-    throw Object.assign(new Error('Esta confirmación ya fue utilizada'), { statusCode: 409 })
-  }
-
-  const expirationMs = new Date(row.confirmation_expires_at).getTime()
-  if (!Number.isFinite(expirationMs) || Date.now() >= expirationMs) {
-    throw Object.assign(new Error('La confirmación del objetivo expiró; genera y envía un enlace nuevo'), { statusCode: 410 })
-  }
-
-  const mapped = conversationSignalForGoalObjective(row.objective)
-  const cleanExternalObjectId = String(externalObjectId || '').trim().slice(0, 240)
+  const approvedAuthorization = authorizeConversationGoalCompletion(row, confirmationToken, authorization)
+  const cleanExternalSource = normalizeExternalEvidenceSource(externalSource, row.objective, {
+    required: approvedAuthorization.method === 'external_api'
+  })
+  const cleanExternalObjectId = String(externalObjectId || '').trim()
   if (!cleanExternalObjectId) {
     throw Object.assign(new Error('La confirmación requiere un ID externo real'), { statusCode: 400 })
   }
+  if (cleanExternalObjectId.length > 240) {
+    throw Object.assign(new Error('externalObjectId excede el máximo de 240 caracteres'), { statusCode: 400 })
+  }
   const cleanExternalStatus = assertSuccessfulGoalStatus(row.objective, externalStatus).slice(0, 120)
+  const externalEvidenceKey = buildExternalEvidenceKey(cleanExternalSource, cleanExternalObjectId)
   const cleanMetadata = metadata && typeof metadata === 'object' ? metadata : {}
   const previousMetadata = parseJsonField(row.metadata_json, {})
   const expected = previousMetadata.expected && typeof previousMetadata.expected === 'object'
     ? previousMetadata.expected
     : {}
-  const receivedReference = {
-    calendarId: String(calendarId || '').trim().slice(0, 160),
-    productId: String(productId || '').trim().slice(0, 160),
-    priceId: String(priceId || '').trim().slice(0, 160),
-    amount: normalizeNullableAmount(amount),
-    currency: String(currency || '').trim().slice(0, 12).toUpperCase()
-  }
+  const receivedReference = normalizeReceivedGoalReference({ calendarId, productId, priceId, amount, currency })
   validateExpectedGoalReference(expected, receivedReference)
-  const nextMetadata = {
-    ...previousMetadata,
-    confirmation: cleanMetadata,
-    receivedReference
-  }
 
-  const completedAt = new Date().toISOString()
-  const update = await db.run(`
-    UPDATE conversational_agent_goal_links
-    SET status = 'completed',
-        external_object_id = ?,
-        external_status = ?,
-        metadata_json = ?,
-        confirmation_used_at = ?,
-        completed_at = ?,
-        updated_at = ?
-    WHERE id = ?
-      AND status = 'pending'
-      AND confirmation_used_at IS NULL
-      AND confirmation_token_hash = ?
-      AND confirmation_expires_at > ?
-  `, [
-    cleanExternalObjectId,
-    cleanExternalStatus,
-    JSON.stringify(nextMetadata),
-    completedAt,
-    completedAt,
-    completedAt,
-    cleanGoalId,
-    row.confirmation_token_hash,
-    completedAt
-  ])
-  if (Number(update?.changes || update?.rowCount || 0) !== 1) {
+  if (row.status === 'completed') {
+    if (!completedGoalRequestMatches(row, approvedAuthorization, cleanExternalSource, cleanExternalObjectId, cleanExternalStatus, receivedReference)) {
+      throw Object.assign(new Error('Esta meta ya fue confirmada por otra solicitud o con datos distintos'), { statusCode: 409 })
+    }
+    const effects = await finalizeConversationGoalCompletionEffects(cleanGoalId)
+    return {
+      ...(await getConversationGoalLink(cleanGoalId)),
+      signal: conversationSignalForGoalObjective(row.objective).signal,
+      alreadyCompleted: true,
+      effectsPending: !effects.completed
+    }
+  }
+  if (row.status !== 'pending') {
     throw Object.assign(new Error('Esta confirmación ya no está disponible'), { statusCode: 409 })
   }
 
-  const technicalSummary = cleanExternalObjectId
-    ? `ID de ${mapped.objectLabel}: ${cleanExternalObjectId}`
-    : `Confirmación recibida para ${mapped.objectLabel}`
-  const conversationSummary = cleanCompletionDisplayText(previousMetadata.resumen || previousMetadata.summary || '')
-
-  await setConversationSignal(row.contact_id, mapped.signal, {
-    reason: mapped.reason,
-    summary: conversationSummary,
-    actionSummarySource: technicalSummary,
-    originalSummary: technicalSummary,
-    status: 'completed',
-    agentId: row.agent_id || ''
-  })
-
-  if (row.agent_id) {
-    const agent = await getConversationalAgent(row.agent_id).catch(() => null)
-    if (agent) {
-      await applyAgentCompletionAction(agent, row.contact_id)
-      await applyAgentSuccessExtras(agent, row.contact_id)
-    }
+  const completionAgent = row.agent_id ? await getConversationalAgent(row.agent_id) : null
+  const completionEffectPlan = await buildConversationGoalCompletionEffectPlan(completionAgent)
+  const nextMetadata = {
+    ...previousMetadata,
+    confirmation: cleanMetadata,
+    receivedReference,
+    completionEffectPlan
   }
-
-  await notifyConversationalCompletion({
-    contactId: row.contact_id,
-    reason: mapped.reason,
-    summary: conversationSummary || technicalSummary,
-    signal: mapped.signal
+  const confirmationFingerprint = buildConversationGoalConfirmationFingerprint({
+    externalSource: cleanExternalSource,
+    externalObjectId: cleanExternalObjectId,
+    externalStatus: cleanExternalStatus,
+    receivedReference
   })
 
-  await recordConversationalAgentEvent({
-    contactId: row.contact_id,
-    eventType: 'goal_url_completed',
-    detail: {
-      goalId: cleanGoalId,
-      agentId: row.agent_id || null,
-      objective: row.objective,
-      signal: mapped.signal,
-      externalObjectId: cleanExternalObjectId || null,
-      externalStatus: cleanExternalStatus || null,
-      receivedReference
+  const completedAt = new Date().toISOString()
+  let alreadyCompleted = false
+  try {
+    alreadyCompleted = await db.transaction(async (tx) => {
+      const current = await tx.get('SELECT * FROM conversational_agent_goal_links WHERE id = ?', [cleanGoalId])
+      if (!current) {
+        throw Object.assign(new Error('No encontramos ese objetivo pendiente'), { statusCode: 404 })
+      }
+      const currentAuthorization = authorizeConversationGoalCompletion(current, confirmationToken, authorization)
+      if (
+        currentAuthorization.method !== approvedAuthorization.method ||
+        currentAuthorization.actorId !== approvedAuthorization.actorId ||
+        currentAuthorization.requestId !== approvedAuthorization.requestId
+      ) {
+        throw Object.assign(new Error('La autorización de la confirmación cambió antes de completarse'), { statusCode: 409 })
+      }
+      const currentMetadata = parseJsonField(current.metadata_json, {})
+      validateExpectedGoalReference(
+        currentMetadata.expected && typeof currentMetadata.expected === 'object' ? currentMetadata.expected : {},
+        receivedReference
+      )
+
+      const evidenceClaim = await claimConversationGoalEvidence(tx, {
+        goalId: cleanGoalId,
+        externalEvidenceKey,
+        externalSource: cleanExternalSource,
+        externalObjectId: cleanExternalObjectId,
+        confirmationFingerprint,
+        authorization: approvedAuthorization
+      })
+      if (evidenceClaim.idempotent) {
+        // En PostgreSQL el INSERT ... ON CONFLICT puede esperar a que otro
+        // callback confirme la misma evidencia. `current` fue leído antes de
+        // esa espera; se relee bajo READ COMMITTED para no decidir con un
+        // snapshot stale ni devolver 409 a un retry realmente idempotente.
+        const claimedCurrent = await tx.get('SELECT * FROM conversational_agent_goal_links WHERE id = ?', [cleanGoalId])
+        if (claimedCurrent?.status === 'completed' && completedGoalRequestMatches(
+          claimedCurrent,
+          approvedAuthorization,
+          cleanExternalSource,
+          cleanExternalObjectId,
+          cleanExternalStatus,
+          receivedReference
+        )) {
+          return true
+        }
+        throw Object.assign(new Error('La evidencia ya quedó reclamada y la meta no está en un estado idempotente válido'), { statusCode: 409 })
+      }
+
+      const update = await tx.run(`
+        UPDATE conversational_agent_goal_links
+        SET status = 'completed',
+          external_source = ?,
+          external_evidence_key = ?,
+          external_object_id = ?,
+          external_status = ?,
+          metadata_json = ?,
+          confirmation_used_at = ?,
+          completion_auth_method = ?,
+          completion_actor_id = ?,
+          completion_request_id = ?,
+          completion_effects_status = 'pending',
+          completion_effects_attempts = 0,
+          completion_effects_last_error = NULL,
+          completion_effects_next_retry_at = NULL,
+          completion_effects_updated_at = ?,
+          completion_effects_claim_token = NULL,
+          completion_effects_lease_until_at = NULL,
+          completion_signal_applied_at = NULL,
+          completion_action_applied_at = NULL,
+          completion_extras_applied_at = NULL,
+          completion_notification_claimed_at = NULL,
+          completion_notification_sent_at = NULL,
+          completion_notification_status = 'pending',
+          completion_notification_claim_token = NULL,
+          completion_notification_last_error = NULL,
+          completion_event_recorded_at = NULL,
+          completed_at = ?,
+          updated_at = ?
+        WHERE id = ?
+          AND status = 'pending'
+      `, [
+        cleanExternalSource,
+        externalEvidenceKey,
+        cleanExternalObjectId,
+        cleanExternalStatus,
+        JSON.stringify(nextMetadata),
+        approvedAuthorization.method === 'legacy_token' ? completedAt : null,
+        approvedAuthorization.method,
+        approvedAuthorization.actorId || null,
+        approvedAuthorization.requestId,
+        completedAt,
+        completedAt,
+        completedAt,
+        cleanGoalId
+      ])
+      if (databaseChangeCount(update) === 1) return false
+
+      const latest = await tx.get('SELECT * FROM conversational_agent_goal_links WHERE id = ?', [cleanGoalId])
+      if (!latest || latest.status !== 'completed' || !completedGoalRequestMatches(
+        latest,
+        approvedAuthorization,
+        cleanExternalSource,
+        cleanExternalObjectId,
+        cleanExternalStatus,
+        receivedReference
+      )) {
+        throw Object.assign(new Error('Esta confirmación ya no está disponible'), { statusCode: 409 })
+      }
+      return true
+    })
+  } catch (error) {
+    if (/unique|duplicate/i.test(String(error?.message || ''))) {
+      throw Object.assign(new Error('Ese Idempotency-Key ya fue usado para confirmar otra meta'), { statusCode: 409 })
     }
-  })
-
+    throw error
+  }
+  const effects = await finalizeConversationGoalCompletionEffects(cleanGoalId)
   return {
     ...(await getConversationGoalLink(cleanGoalId)),
-    signal: mapped.signal
+    signal: conversationSignalForGoalObjective(row.objective).signal,
+    alreadyCompleted,
+    effectsPending: !effects.completed
   }
 }
 
@@ -1852,6 +2624,7 @@ const EXTERNAL_OBJECT_WEBHOOK_KEYS = [
 ]
 
 const EXTERNAL_STATUS_WEBHOOK_KEYS = ['status', 'state', 'eventStatus', 'event_status', 'paymentStatus', 'payment_status']
+const EXTERNAL_SOURCE_WEBHOOK_KEYS = ['externalSource', 'external_source', 'source', 'provider', 'integration']
 
 const CALENDAR_WEBHOOK_KEYS = ['calendarId', 'calendar_id', 'calendar', 'calendarRef', 'calendar_ref']
 const PRODUCT_WEBHOOK_KEYS = ['productId', 'product_id', 'product', 'productRef', 'product_ref', 'itemId', 'item_id', 'sku']
@@ -1868,12 +2641,43 @@ const GOAL_TOKEN_WEBHOOK_KEYS = [
 ]
 const GOAL_TOKEN_WEBHOOK_KEY_SET = new Set(GOAL_TOKEN_WEBHOOK_KEYS.map((key) => key.toLowerCase()))
 
-function extractTopLevelGoalToken(source = {}) {
-  for (const key of GOAL_TOKEN_WEBHOOK_KEYS) {
-    const value = source[key]
-    if (typeof value === 'string' && value.trim()) return value.trim()
+function extractTopLevelGoalWebhookValue(payload, keys) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return ''
+  for (const key of keys) {
+    const value = payload[key]
+    if (value !== undefined && value !== null && String(value).trim()) return String(value).trim()
   }
   return ''
+}
+
+function extractCanonicalExternalGoalValue(payload, canonicalKey, aliases = []) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return ''
+  const canonical = payload[canonicalKey]
+  const cleanCanonical = canonical === undefined || canonical === null ? '' : String(canonical).trim()
+  for (const alias of aliases) {
+    const candidate = payload[alias]
+    const cleanCandidate = candidate === undefined || candidate === null ? '' : String(candidate).trim()
+    if (cleanCandidate && cleanCandidate !== cleanCanonical) {
+      throw Object.assign(
+        new Error(`El body trae valores conflictivos para ${canonicalKey}; usa únicamente el campo canónico ${canonicalKey}`),
+        { statusCode: 400 }
+      )
+    }
+  }
+  return cleanCanonical
+}
+
+function extractStrictExternalGoalPayload(payload) {
+  return {
+    externalSource: extractCanonicalExternalGoalValue(payload, 'externalSource', EXTERNAL_SOURCE_WEBHOOK_KEYS.filter((key) => key !== 'externalSource')),
+    externalObjectId: extractCanonicalExternalGoalValue(payload, 'externalObjectId', EXTERNAL_OBJECT_WEBHOOK_KEYS.filter((key) => key !== 'externalObjectId')),
+    externalStatus: extractCanonicalExternalGoalValue(payload, 'status', EXTERNAL_STATUS_WEBHOOK_KEYS.filter((key) => key !== 'status')),
+    calendarId: extractCanonicalExternalGoalValue(payload, 'calendarId', CALENDAR_WEBHOOK_KEYS.filter((key) => key !== 'calendarId')),
+    productId: extractCanonicalExternalGoalValue(payload, 'productId', PRODUCT_WEBHOOK_KEYS.filter((key) => key !== 'productId')),
+    priceId: extractCanonicalExternalGoalValue(payload, 'priceId', PRICE_WEBHOOK_KEYS.filter((key) => key !== 'priceId')),
+    amount: extractCanonicalExternalGoalValue(payload, 'amount', AMOUNT_WEBHOOK_KEYS.filter((key) => key !== 'amount')),
+    currency: extractCanonicalExternalGoalValue(payload, 'currency', CURRENCY_WEBHOOK_KEYS.filter((key) => key !== 'currency'))
+  }
 }
 
 function sanitizeGoalWebhookMetadata(value, seen = new Set(), depth = 0) {
@@ -1899,24 +2703,34 @@ function sanitizeGoalWebhookMetadata(value, seen = new Set(), depth = 0) {
   return clean
 }
 
-export async function completeConversationGoalLinkFromWebhook(payload = {}, { confirmationToken = '' } = {}) {
+export async function completeConversationGoalLinkFromWebhook(payload = {}, { confirmationToken = '', authorization = {} } = {}) {
   const source = payload && typeof payload === 'object' ? payload : {}
-  const goalId = extractPayloadValue(source, GOAL_ID_WEBHOOK_KEYS) || extractGoalIdValue(source)
+  const strictExternalPayload = String(authorization?.type || '').trim() === 'external_api'
+  const goalId = strictExternalPayload
+    ? extractTopLevelGoalWebhookValue(source, ['goalId'])
+    : (extractPayloadValue(source, GOAL_ID_WEBHOOK_KEYS) || extractGoalIdValue(source))
   if (!goalId) {
     throw Object.assign(new Error(`Falta ${DEFAULT_GOAL_TRACKING_PARAM} en la confirmación automática`), { statusCode: 400 })
   }
 
+  const extracted = strictExternalPayload
+    ? extractStrictExternalGoalPayload(source)
+    : {
+        externalSource: extractTopLevelGoalWebhookValue(source, EXTERNAL_SOURCE_WEBHOOK_KEYS),
+        externalObjectId: extractPayloadValue(source, EXTERNAL_OBJECT_WEBHOOK_KEYS),
+        externalStatus: extractPayloadValue(source, EXTERNAL_STATUS_WEBHOOK_KEYS),
+        calendarId: extractPayloadValue(source, CALENDAR_WEBHOOK_KEYS),
+        productId: extractPayloadValue(source, PRODUCT_WEBHOOK_KEYS),
+        priceId: extractPayloadValue(source, PRICE_WEBHOOK_KEYS),
+        amount: extractPayloadValue(source, AMOUNT_WEBHOOK_KEYS),
+        currency: extractPayloadValue(source, CURRENCY_WEBHOOK_KEYS)
+      }
+
   return completeConversationGoalLink(goalId, {
-    confirmationToken: String(confirmationToken || '').trim() || extractTopLevelGoalToken(source),
-    externalObjectId: extractPayloadValue(source, EXTERNAL_OBJECT_WEBHOOK_KEYS),
-    externalStatus: extractPayloadValue(source, EXTERNAL_STATUS_WEBHOOK_KEYS),
-    calendarId: extractPayloadValue(source, CALENDAR_WEBHOOK_KEYS),
-    productId: extractPayloadValue(source, PRODUCT_WEBHOOK_KEYS),
-    priceId: extractPayloadValue(source, PRICE_WEBHOOK_KEYS),
-    amount: extractPayloadValue(source, AMOUNT_WEBHOOK_KEYS),
-    currency: extractPayloadValue(source, CURRENCY_WEBHOOK_KEYS),
+    confirmationToken: String(confirmationToken || '').trim(),
+    ...extracted,
     metadata: sanitizeGoalWebhookMetadata(source)
-  })
+  }, authorization)
 }
 
 export async function completeConversationalAgentSalePaymentFromInvoice({
@@ -3928,17 +4742,35 @@ export async function listAgentFilterOptions() {
  * Aplica las acciones extra configuradas al cumplir el objetivo:
  * agregar/quitar etiqueta y cambiar campos personalizados del contacto.
  */
-export async function applyAgentSuccessExtras(agent, contactId) {
+export async function applyAgentSuccessExtras(agent, contactId, {
+  eventId = '',
+  strict = false
+} = {}) {
   const extras = normalizeSuccessExtras(agent?.successExtras)
   if (!extras.length || !contactId) return []
 
   const applied = []
+  const failures = []
   for (const extra of extras) {
     try {
       if (extra.type === 'add_tag' || extra.type === 'remove_tag') {
         // extra.tag puede ser un ID del catálogo (configs nuevas) o un nombre
         // (configs viejas); se resuelve a ID y se guarda siempre el ID.
-        const [tagId] = await resolveTagIds([extra.tag], { createMissing: extra.type === 'add_tag' })
+        let tagId = ''
+        if (extra.tagId) {
+          const storedTag = await db.get('SELECT id FROM contact_tags WHERE id = ?', [extra.tagId])
+          if (storedTag?.id) {
+            tagId = storedTag.id
+          } else if (extra.type === 'add_tag') {
+            [tagId] = await resolveTagIds([extra.tagName || extra.tag], { createMissing: true })
+          } else {
+            // Una etiqueta borrada puede seguir en datos legacy del contacto;
+            // quitar por el ID capturado mantiene el efecto original.
+            tagId = extra.tagId
+          }
+        } else {
+          [tagId] = await resolveTagIds([extra.tag], { createMissing: extra.type === 'add_tag' })
+        }
         const row = await db.get('SELECT tags FROM contacts WHERE id = ?', [contactId])
         const tags = parseJsonField(row?.tags, [])
         const list = Array.isArray(tags) ? tags : []
@@ -3946,8 +4778,8 @@ export async function applyAgentSuccessExtras(agent, contactId) {
           ? list.filter((candidate) => candidate !== tagId && normalizeMatchText(candidate) !== normalizeMatchText(extra.tag))
           : [...new Set([...list, tagId].filter(Boolean))]
         await db.run('UPDATE contacts SET tags = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [JSON.stringify(next), contactId])
-        const [tagName] = tagId ? await tagNamesForIds([tagId]) : [extra.tag]
-        applied.push({ type: extra.type, tag: tagName || extra.tag })
+        const [resolvedTagName] = tagId ? await tagNamesForIds([tagId]) : [extra.tagName || extra.tag]
+        applied.push({ type: extra.type, tag: resolvedTagName || extra.tagName || extra.tag })
       } else if (extra.type === 'set_custom_field') {
         const row = await db.get('SELECT custom_fields FROM contacts WHERE id = ?', [contactId])
         const fields = parseJsonField(row?.custom_fields, {})
@@ -3958,20 +4790,30 @@ export async function applyAgentSuccessExtras(agent, contactId) {
       }
     } catch (error) {
       logger.warn(`[Agente conversacional] No se pudo aplicar acción extra ${extra.type}: ${error.message}`)
+      failures.push(error)
     }
+  }
+
+  if (strict && failures.length) {
+    throw failures[0]
   }
 
   if (applied.length) {
     await recordConversationalAgentEvent({
+      eventId,
       contactId,
       eventType: 'success_extras_applied',
-      detail: { agentId: agent?.id || null, applied }
+      detail: { agentId: agent?.id || null, applied },
+      throwOnError: strict
     })
   }
   return applied
 }
 
-export async function applyAgentCompletionAction(agent, contactId) {
+export async function applyAgentCompletionAction(agent, contactId, {
+  eventId = '',
+  strict = false
+} = {}) {
   if (!agent || !contactId) return null
   const workflow = normalizeAgentGoalWorkflow(agent.goalWorkflow)
   const completion = workflow.completion || DEFAULT_GOAL_WORKFLOW_CONFIG.completion
@@ -3980,12 +4822,17 @@ export async function applyAgentCompletionAction(agent, contactId) {
   const configuredUserId = String(completion.userId || '').trim()
   if (!configuredUserId) return { mode: 'assign_user', skipped: true, reason: 'missing_user' }
 
-  const user = await db.get(
-    `SELECT id, username, email, full_name, first_name, last_name, phone
-     FROM users
-     WHERE id = ? AND is_active = 1`,
-    [configuredUserId]
-  ).catch(() => null)
+  let user = null
+  try {
+    user = await db.get(
+      `SELECT id, username, email, full_name, first_name, last_name, phone
+       FROM users
+       WHERE id = ? AND is_active = 1`,
+      [configuredUserId]
+    )
+  } catch (error) {
+    if (strict) throw error
+  }
 
   const assignedUserId = String(user?.id || configuredUserId)
   const assignedUserName = String(
@@ -4010,13 +4857,15 @@ export async function applyAgentCompletionAction(agent, contactId) {
   ])
 
   await recordConversationalAgentEvent({
+    eventId,
     contactId,
     eventType: 'completion_user_assigned',
     detail: {
       agentId: agent.id || null,
       assignedUserId,
       assignedUserName: assignedUserName || null
-    }
+    },
+    throwOnError: strict
   })
 
   return { mode: 'assign_user', userId: assignedUserId, userName: assignedUserName || null }
@@ -4024,7 +4873,14 @@ export async function applyAgentCompletionAction(agent, contactId) {
 
 const COMPLETION_NOTIFICATION_DEDUP_MS = 10 * 60 * 1000
 
-async function notifyConversationalCompletion({ contactId, reason = '', summary = '', signal = 'ready_for_human' } = {}) {
+async function notifyConversationalCompletion({
+  contactId,
+  reason = '',
+  summary = '',
+  signal = 'ready_for_human',
+  eventId = '',
+  throwOnFailure = false
+} = {}) {
   if (!contactId) return { sent: 0, skipped: true, reason: 'missing_contact' }
   // [Fase 1 — nunca fantasma] Idempotencia: como ahora una conversación cumplida se reabre
   // para seguir contestando (ver shouldReopenCompletedConversationState), el modelo podría
@@ -4032,35 +4888,59 @@ async function notifyConversationalCompletion({ contactId, reason = '', summary 
   // de este contacto hace poco. Cutoff en JS + comparación de string para que sirva igual en
   // SQLite (dev) y Postgres (clientes).
   const since = new Date(Date.now() - COMPLETION_NOTIFICATION_DEDUP_MS).toISOString().slice(0, 19).replace('T', ' ')
-  const recentNotification = await db.get(
-    `SELECT id FROM conversational_agent_events
-     WHERE contact_id = ? AND event_type = 'priority_push_notification' AND created_at > ?
-     ORDER BY created_at DESC LIMIT 1`,
-    [contactId, since]
-  ).catch(() => null)
+  let recentNotification = null
+  try {
+    recentNotification = await db.get(
+      `SELECT id FROM conversational_agent_events
+       WHERE contact_id = ? AND event_type = 'priority_push_notification' AND created_at > ?
+       ORDER BY created_at DESC LIMIT 1`,
+      [contactId, since]
+    )
+  } catch (error) {
+    if (throwOnFailure) {
+      error.notificationDeliveryAttempted = false
+      throw error
+    }
+  }
   if (recentNotification) {
-    await recordConversationalAgentEvent({
-      contactId,
-      eventType: 'priority_push_notification_deduped',
-      detail: { signal, reason: 'recent_notification_within_window', windowMs: COMPLETION_NOTIFICATION_DEDUP_MS }
-    })
+    try {
+      await recordConversationalAgentEvent({
+        eventId: eventId ? `${eventId}_deduped` : '',
+        contactId,
+        eventType: 'priority_push_notification_deduped',
+        detail: { signal, reason: 'recent_notification_within_window', windowMs: COMPLETION_NOTIFICATION_DEDUP_MS },
+        throwOnError: throwOnFailure
+      })
+    } catch (error) {
+      error.notificationDeliveryAttempted = false
+      throw error
+    }
     return { sent: 0, skipped: true, reason: 'deduped_recent_notification' }
   }
+  let deliveryAttempted = false
   try {
     const { sendConversationalAgentPriorityNotification } = await import('./pushNotificationsService.js')
+    deliveryAttempted = true
     const result = await sendConversationalAgentPriorityNotification({ contactId, reason, summary, signal })
     await recordConversationalAgentEvent({
+      eventId,
       contactId,
       eventType: 'priority_push_notification',
-      detail: { signal, sent: result?.sent || 0, skipped: Boolean(result?.skipped), reason: result?.reason || null }
+      detail: { signal, sent: result?.sent || 0, skipped: Boolean(result?.skipped), reason: result?.reason || null },
+      throwOnError: throwOnFailure
     })
     return result
   } catch (error) {
     await recordConversationalAgentEvent({
+      eventId: eventId ? `${eventId}_failed` : '',
       contactId,
       eventType: 'priority_push_notification_failed',
       detail: { signal, error: error.message }
     })
+    if (throwOnFailure) {
+      error.notificationDeliveryAttempted = deliveryAttempted
+      throw error
+    }
     return { sent: 0, skipped: true, reason: error.message }
   }
 }
@@ -4761,7 +5641,9 @@ export async function setConversationSignal(contactId, signal, {
   actionSummarySource = '',
   originalSummary = '',
   agentId = '',
-  channel = null
+  channel = null,
+  eventId = '',
+  strictEvent = false
 } = {}) {
   const cleanChannel = normalizeOptionalConversationStateChannel(channel)
   const state = await ensureConversationState(contactId, { agentId, channel: cleanChannel })
@@ -4815,9 +5697,11 @@ export async function setConversationSignal(contactId, signal, {
   }
 
   await recordConversationalAgentEvent({
+    eventId,
     contactId,
     eventType: 'signal_set',
-    detail
+    detail,
+    throwOnError: strictEvent
   })
 
   return getConversationState(contactId, { agentId: effectiveAgentId, channel: cleanChannel })
@@ -5043,17 +5927,26 @@ export async function hasRecentConversationalAgentEvent({ contactId = null, even
   }
 }
 
-export async function recordConversationalAgentEvent({ contactId = null, eventType, detail = null }) {
+export async function recordConversationalAgentEvent({
+  eventId = '',
+  contactId = null,
+  eventType,
+  detail = null,
+  throwOnError = false
+}) {
   try {
     const detailJson = detail ? JSON.stringify(detail) : null
     const storedDetailJson = eventType === 'signal_set' ? detailJson : detailJson?.slice(0, 4000)
     const agentId = String(detail?.agentId || detail?.agent_id || '').trim() || null
+    const cleanEventId = String(eventId || '').trim().slice(0, 180) || `cae_${randomUUID()}`
     await db.run(`
       INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
       VALUES (?, ?, ?, ?, ?)
-    `, [`cae_${randomUUID()}`, contactId, agentId, eventType, storedDetailJson || null])
+      ON CONFLICT(id) DO NOTHING
+    `, [cleanEventId, contactId, agentId, eventType, storedDetailJson || null])
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo registrar evento ${eventType}: ${error.message}`)
+    if (throwOnError) throw error
   }
 }
 

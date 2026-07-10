@@ -28,6 +28,7 @@ import {
   getTransactionSummary,
   getTransactions
 } from '../controllers/transactionsController.js'
+import { completeExternalConversationGoal } from '../controllers/conversationalAgentController.js'
 import { requireApiToken } from '../middleware/apiTokenMiddleware.js'
 import { requireFeature } from '../middleware/licenseMiddleware.js'
 import { getExternalApiAppId } from '../utils/apiTokens.js'
@@ -83,8 +84,8 @@ const SECRET_KEY_PATTERN = /(token|secret|password|authorization|api[_-]?key|acc
 // por la API externa. Se agregan a la lista de tablas sensibles (bloqueo total de
 // lectura/escritura), no solo a WRITE_BLOCKED, para no filtrar el directorio de
 // empleados ni el mapa de permisos (access_config).
-const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens)$/i
-const WRITE_BLOCKED_TABLE_PATTERN = /^(users|payment_methods)$/i
+const SENSITIVE_TABLE_PATTERN = /^(users|payment_methods|highlevel_config|meta_config|ai_agent_config|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
+const WRITE_BLOCKED_TABLE_PATTERN = /^(users|payment_methods|conversational_agents|conversational_agent_.*)$/i
 const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 function featureNotAvailableResponse(res, feature) {
@@ -129,6 +130,7 @@ function getExternalTableFeatureKeys(table) {
   if (/^(email_|emails|smtp_|mail_)/.test(name)) return ['email']
   if (/^(whatsapp_|message_templates|phone_numbers|phone_number_)/.test(name)) return ['whatsapp']
   if (/^(highlevel_|ghl_|integrations|integration_)/.test(name)) return ['integrations']
+  if (name === 'conversational_agents' || /^conversational_agent_/.test(name)) return ['conversational_ai']
   if (/^(contacts|contact_|tags|tag_|custom_fields|custom_field_|variable_fields|variable_field_)/.test(name)) return ['contacts']
   return []
 }
@@ -895,6 +897,43 @@ async function getOpenApiSpec(req, res) {
           ],
           responses: { 200: { description: 'Transacción' }, 404: { description: 'Transacción no encontrada' } }
         }
+      },
+      '/api/external/conversational-agent/goals/{goalId}/complete': {
+        post: {
+          operationId: 'completeRistakConversationalGoal',
+          summary: 'Confirma con evidencia real una meta pendiente del agente conversacional',
+          parameters: [
+            { name: 'goalId', in: 'path', required: true, schema: { type: 'string' } },
+            { name: 'Idempotency-Key', in: 'header', required: true, schema: { type: 'string' } }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['externalSource', 'externalObjectId', 'status'],
+                  properties: {
+                    externalSource: { type: 'string', description: 'Identificador estable del proveedor o integración de origen' },
+                    externalObjectId: { type: 'string' },
+                    status: { type: 'string' },
+                    calendarId: { type: 'string' },
+                    productId: { type: 'string' },
+                    priceId: { type: 'string' },
+                    amount: { type: 'number' },
+                    currency: { type: 'string' }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Meta confirmada o reintento idempotente' },
+            400: { description: 'Evidencia incompleta' },
+            401: { description: 'API token inválido' },
+            409: { description: 'Meta ya confirmada por otra solicitud o datos distintos' }
+          }
+        }
       }
     }
     })
@@ -1440,6 +1479,12 @@ router.get('/contacts/:id/conversation', requireExternalFeatures('contacts', 'ch
 router.get('/contacts/:id/journey', requireExternalFeatures('contacts'), getContactJourney)
 router.get('/contacts/:id', requireExternalFeatures('contacts'), getContactById)
 router.get('/contacts', requireExternalFeatures('contacts'), getContacts)
+
+router.post(
+  '/conversational-agent/goals/:goalId/complete',
+  requireExternalFeatures('conversational_ai'),
+  completeExternalConversationGoal
+)
 
 router.get('/transactions/stats', requireExternalFeatures('payments'), getTransactionStats)
 router.get('/transactions/summary', requireExternalFeatures('payments'), getTransactionSummary)

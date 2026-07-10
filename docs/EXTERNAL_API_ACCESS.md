@@ -103,6 +103,65 @@ security boundary.
 - `GET /api/external/transactions/stats`
 - `GET /api/external/transactions/summary`
 - `GET /api/external/transactions/{id}`
+- `POST /api/external/conversational-agent/goals/{goalId}/complete`
+
+### Confirmacion de metas conversacionales
+
+Cuando un agente manda un enlace externo, Ristak agrega el `goalId` usando el
+parametro configurado y mantiene la meta pendiente. La pagina externa no recibe
+ningun token de callback y abrir el enlace no cuenta como cita ni pago.
+
+Una integracion autorizada confirma el resultado con:
+
+```http
+POST /api/external/conversational-agent/goals/{goalId}/complete
+Authorization: Bearer <API token de Ristak>
+Idempotency-Key: <ID estable del evento externo>
+Content-Type: application/json
+```
+
+El body requiere `externalSource`, `externalObjectId` y un `status` exitoso.
+En esta ruta autenticada esos nombres canonicos deben venir en el nivel superior;
+aliases de webhooks legacy o valores duplicados conflictivos se rechazan.
+`externalSource` identifica de forma estable al proveedor y tipo de evidencia,
+por ejemplo `highlevel:appointment` o `stripe:payment`; no debe cambiar entre
+reintentos. Tambien debe mandar
+las referencias configuradas que apliquen: `calendarId`, `productId`, `priceId`,
+`amount` y `currency`. Ristak compara esos valores contra la configuracion real
+del agente antes de completar la meta. Los IDs son opacos y se comparan de forma
+exacta, incluyendo mayusculas y minusculas.
+
+Reintentar el mismo evento con el mismo `Idempotency-Key` y los mismos datos
+devuelve exito sin repetir efectos. Otra llave o evidencia distinta recibe
+conflicto. La misma combinacion `externalSource` + `externalObjectId` no puede
+confirmar dos metas, aunque se usen llaves distintas o lleguen en paralelo. El
+claim de evidencia y la transicion de la meta se guardan en una sola transaccion.
+La tombstone independiente conserva tanto la evidencia como el
+`Idempotency-Key` aunque despues se borren el contacto o la meta. Si la
+actualizacion principal se confirma pero una accion interna se interrumpe, cada
+efecto conserva su propio checkpoint y se recupera por retry, al arrancar y en el
+sweep periodico. Asignacion y extras usan un plan inmutable con hash capturado al
+aceptar la confirmacion; editar el agente despues no cambia un recovery. Las
+notificaciones push usan politica `at-most-once`: si el
+proceso cae despues de entregar al proveedor pero antes de guardar su ACK, se
+marcan como resultado desconocido y no se reenvian para evitar duplicados. La
+ruta requiere `developers` y `conversational_ai`.
+
+Durante el despliegue, las filas legacy completadas con estado de efectos nulo
+se consideran ya ejecutadas. Solo `pending`, `failed` o un lease `processing`
+vencido entran al recovery; así una instancia vieja no provoca efectos dobles
+durante un rollout con solapamiento. La instalacion atomica del backfill y del
+trigger de base bloquea tambien una completion del binario legacy que intente
+entrar sin claim durante ese overlap.
+
+`conversational_agent_goal_links` y
+`conversational_agent_goal_evidence_claims` son ledgers internos y no se exponen
+mediante el CRUD generico, MCP ni las herramientas SQL del agente. Las
+integraciones deben usar exclusivamente el endpoint dedicado de confirmacion.
+Las demas tablas `conversational_agent_*`
+pueden consultarse con la licencia correspondiente, pero el CRUD generico no
+puede escribirlas: estado, eventos, metricas y aprendizaje solo cambian mediante
+los servicios y endpoints dedicados.
 
 ## Render notes
 

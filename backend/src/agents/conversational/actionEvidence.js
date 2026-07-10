@@ -14,6 +14,14 @@ const SUCCESS_PAYMENT_STATUSES = new Set([
 
 const NON_LIVE_PAYMENT_MODES = new Set(['test', 'sandbox', 'demo', 'preview', 'simulation', 'simulated'])
 
+// Una confirmacion puede llegar de forma asincrona en WhatsApp/correo, pero no
+// puede convertirse en una autorizacion permanente. Siete dias conserva chats
+// reales que tardan en responder y, al mismo tiempo, impide reciclar decisiones
+// de conversaciones antiguas para una cita nueva.
+const APPOINTMENT_CONFIRMATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+const APPOINTMENT_OFFER_CONFIRMATION_MAX_GAP_MS = 7 * 24 * 60 * 60 * 1000
+const MESSAGE_TIMESTAMP_CLOCK_SKEW_MS = 5 * 60 * 1000
+
 const GENERIC_CONCEPT_WORDS = new Set([
   'abono', 'anticipo', 'cobro', 'compra', 'de', 'del', 'el', 'la', 'liquidacion',
   'para', 'pago', 'por', 'primer', 'primero', 'reserva', 'servicio', 'un', 'una'
@@ -76,10 +84,13 @@ function conceptMatchesCandidate(concept, candidate) {
 function timestampToMs(value) {
   const raw = String(value || '').trim()
   if (!raw) return 0
-  const direct = Date.parse(raw)
-  if (Number.isFinite(direct)) return direct
-  const sqliteUtc = Date.parse(`${raw.replace(' ', 'T')}Z`)
-  return Number.isFinite(sqliteUtc) ? sqliteUtc : 0
+  // SQLite guarda UTC sin sufijo; no permitimos que la zona local del proceso
+  // cambie la edad de la evidencia al interpretarlo.
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(raw) && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)
+    ? `${raw.replace(' ', 'T')}Z`
+    : raw
+  const parsed = Date.parse(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
 async function readMessageRows(database, sql, params, source) {
@@ -133,7 +144,7 @@ function isExplicitAffirmative(value) {
   const text = normalizeText(value)
   if (!text) return false
   if (/\b(no|negativo|cancelar|cancela|otro horario|otra hora|no puedo|no me queda|mejor no)\b/.test(text)) return false
-  return /(^|\b)(si|confirmo|confirmado|de acuerdo|esta bien|me queda bien|perfecto|va|adelante|agendalo|agenda la|reservalo|reserva la|quiero ese|ese horario|esa hora|ahi esta bien|puedes agendar)(\b|$)/.test(text)
+  return /(^|\b)(si|confirmo|confirmado|acepto|de acuerdo|esta bien|me queda bien|perfecto|va|adelante|agendalo|agendame|agenda la|reservalo|reservame|reserva la|quiero ese|quiero esa|quiero la cita|ese horario|esa hora|ahi esta bien|puedes agendar)(\b|$)/.test(text)
 }
 
 function buildSlotFingerprint(startTime, timezone) {
@@ -149,13 +160,14 @@ function buildSlotFingerprint(startTime, timezone) {
 
   return {
     iso: String(startTime),
-    dateTokens: [
+    exactDateTokens: [
       slot.toFormat('yyyy-MM-dd'),
       slot.toFormat('d/M/yyyy'),
       slot.toFormat('dd/MM/yyyy'),
       localized.toFormat("d 'de' LLLL"),
+      localized.toFormat("d 'de' LLLL 'de' yyyy"),
       localized.toFormat("cccc d 'de' LLLL"),
-      localized.toFormat('cccc')
+      localized.toFormat("cccc d 'de' LLLL 'de' yyyy")
     ].map(normalizeText),
     timeTokens: [
       `${String(hour24).padStart(2, '0')}:${minute}`,
@@ -172,9 +184,9 @@ function buildSlotFingerprint(startTime, timezone) {
   }
 }
 
-function messageHasDate(text, fingerprint) {
+function messageHasExactDate(text, fingerprint) {
   const clean = ` ${normalizeText(text)} `
-  return fingerprint.dateTokens.some((token) => token && clean.includes(` ${token} `))
+  return fingerprint.exactDateTokens.some((token) => token && clean.includes(` ${token} `))
 }
 
 function messageHasTime(text, fingerprint) {
@@ -185,7 +197,21 @@ function messageHasTime(text, fingerprint) {
 
 function messageMentionsSlot(text, fingerprint) {
   if (String(text || '').includes(fingerprint.iso)) return true
-  return messageHasDate(text, fingerprint) && messageHasTime(text, fingerprint)
+  return messageHasExactDate(text, fingerprint) && messageHasTime(text, fingerprint)
+}
+
+function isRecentMessageEvidence(message, nowMs) {
+  const timestampMs = timestampToMs(message?.timestamp)
+  if (!timestampMs) return false
+  if (timestampMs > nowMs + MESSAGE_TIMESTAMP_CLOCK_SKEW_MS) return false
+  return nowMs - timestampMs <= APPOINTMENT_CONFIRMATION_MAX_AGE_MS
+}
+
+function offerAndConfirmationAreLinked(offer, confirmation, nowMs) {
+  if (!isRecentMessageEvidence(offer, nowMs) || !isRecentMessageEvidence(confirmation, nowMs)) return false
+  const offerMs = timestampToMs(offer.timestamp)
+  const confirmationMs = timestampToMs(confirmation.timestamp)
+  return confirmationMs >= offerMs && confirmationMs - offerMs <= APPOINTMENT_OFFER_CONFIRMATION_MAX_GAP_MS
 }
 
 function offersMultipleTimes(text) {
@@ -204,7 +230,8 @@ export async function verifyAppointmentConfirmationEvidence({
   startTime,
   timezone,
   dryRun = false,
-  messages = null
+  messages = null,
+  nowMs = Date.now()
 }) {
   if (dryRun) {
     return {
@@ -220,14 +247,20 @@ export async function verifyAppointmentConfirmationEvidence({
     return { ok: false, actionCompleted: false, invalidSlot: true, error: 'No se pudo interpretar el horario solicitado.' }
   }
 
-  const history = Array.isArray(messages)
+  const history = (Array.isArray(messages)
     ? messages.map((message) => ({ ...message, direction: normalizeText(message.direction) }))
-    : await loadRecentConversationMessages(database, contactId)
+    : await loadRecentConversationMessages(database, contactId))
+    .sort((left, right) => timestampToMs(left.timestamp) - timestampToMs(right.timestamp))
+
+  const verificationNowMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now()
 
   for (let index = history.length - 1; index >= 0; index -= 1) {
     const confirmation = history[index]
     if (confirmation.direction !== 'inbound' || !isExplicitAffirmative(confirmation.text)) continue
+    if (!isRecentMessageEvidence(confirmation, verificationNowMs)) continue
 
+    // La persona puede escribir el slot completo sin una oferta previa. En ese
+    // caso exigimos fecha concreta y hora, no solamente "viernes a las 3".
     if (messageMentionsSlot(confirmation.text, fingerprint)) {
       return {
         ok: true,
@@ -239,6 +272,7 @@ export async function verifyAppointmentConfirmationEvidence({
 
     const previous = history[index - 1]
     if (!previous || previous.direction !== 'outbound' || !messageMentionsSlot(previous.text, fingerprint)) continue
+    if (!offerAndConfirmationAreLinked(previous, confirmation, verificationNowMs)) continue
     if (offersMultipleTimes(previous.text) && !messageHasTime(confirmation.text, fingerprint)) continue
 
     return {

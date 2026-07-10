@@ -196,12 +196,7 @@ export async function deleteAIProvider(req, res) {
 export async function handleGoalWebhook(req, res) {
   try {
     const confirmationToken = String(
-      req.get?.('x-ristak-goal-token') ||
-      req.query?.ristak_goal_token ||
-      req.query?.confirmation_token ||
-      req.body?.ristak_goal_token ||
-      req.body?.confirmation_token ||
-      ''
+      req.get?.('x-ristak-goal-token') || ''
     ).trim()
     const result = await completeConversationGoalLinkFromWebhook({
       ...(req.body || {}),
@@ -217,6 +212,7 @@ export async function handleGoalWebhook(req, res) {
         agentId: result.agentId,
         objective: result.objective,
         signal: result.signal,
+        externalSource: result.externalSource,
         externalObjectId: result.externalObjectId,
         alreadyCompleted: Boolean(result.alreadyCompleted)
       }
@@ -226,6 +222,55 @@ export async function handleGoalWebhook(req, res) {
     res.status(error.statusCode || 400).json({
       success: false,
       error: error.message || 'No se pudo procesar el webhook del objetivo'
+    })
+  }
+}
+
+export async function completeExternalConversationGoal(req, res) {
+  try {
+    const requestId = String(req.get?.('idempotency-key') || '').trim()
+    if (!requestId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Falta el header Idempotency-Key para confirmar la meta'
+      })
+    }
+    const actorId = String(req.apiUser?.id || req.user?.userId || '').trim()
+    if (!actorId) {
+      return res.status(401).json({ success: false, error: 'Integración no autenticada' })
+    }
+
+    const result = await completeConversationGoalLinkFromWebhook({
+      ...(req.body || {}),
+      goalId: req.params?.goalId
+    }, {
+      authorization: {
+        type: 'external_api',
+        actorId,
+        requestId
+      }
+    })
+
+    return res.json({
+      success: true,
+      data: {
+        goalId: result.id,
+        contactId: result.contactId,
+        agentId: result.agentId,
+        objective: result.objective,
+        signal: result.signal,
+        externalSource: result.externalSource,
+        externalObjectId: result.externalObjectId,
+        alreadyCompleted: Boolean(result.alreadyCompleted),
+        effectsPending: Boolean(result.effectsPending)
+      }
+    })
+  } catch (error) {
+    logger.warn(`Confirmación externa de meta conversacional rechazada: ${error.message}`)
+    return res.status(error.statusCode || 400).json({
+      success: false,
+      retryable: Boolean(error.retryable),
+      error: error.message || 'No se pudo confirmar la meta conversacional'
     })
   }
 }

@@ -7,8 +7,8 @@ const MAX_CATALOG_TABLES = 120
 const MAX_COLUMNS_PER_TABLE = 80
 const isPostgres = Boolean(process.env.DATABASE_URL)
 
-const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|ai_agent_user_preferences|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|users|payment_methods)$/i
-const SENSITIVE_TABLE_TOKEN_PATTERN = /\b(highlevel_config|meta_config|ai_agent_config|ai_agent_user_preferences|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|users|payment_methods)\b/i
+const SENSITIVE_TABLE_PATTERN = /^(highlevel_config|meta_config|meta_campaign_templates|meta_campaign_drafts|meta_campaign_execution_logs|ai_agent_config|ai_agent_user_preferences|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|users|payment_methods|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)$/i
+const SENSITIVE_TABLE_TOKEN_PATTERN = /\b(highlevel_config|meta_config|ai_agent_config|ai_agent_user_preferences|agent_runs|agent_steps|agent_pending_actions|agent_tool_idempotency|app_config|oauth_clients|oauth_authorization_codes|oauth_refresh_tokens|users|payment_methods|conversational_agent_goal_links|conversational_agent_goal_evidence_claims)\b/i
 const SENSITIVE_COLUMN_PATTERN = /\b(api_token|access_token|refresh_token|client_secret|password|secret|authorization|openai_api_key_encrypted|encrypted|subscription_json)\b/i
 const BLOCKED_SQL_PATTERN = /\b(insert|update|delete|drop|alter|truncate|create|replace|merge|grant|revoke|copy|call|do|execute|vacuum|set|reset)\b/i
 const UNRESOLVED_PARAM_PATTERN = /\b(start_date|end_date|start_ts|end_ts|from_date|to_date|fecha_inicio|fecha_fin|date_from|date_to)\b/i

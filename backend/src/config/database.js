@@ -1,4 +1,5 @@
 import crypto from 'crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { DateTime } from 'luxon'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
@@ -19,6 +20,7 @@ const DATABASE_URL = process.env.DATABASE_URL
 const usePostgres = !!DATABASE_URL
 
 let db
+const databaseTransactionContext = new AsyncLocalStorage()
 
 const DEFAULT_REPORT_TABLE_COLUMN_CONFIG = [
   ['date', true],
@@ -447,12 +449,16 @@ if (usePostgres) {
 
   db = {
     run: async (sql, params = []) => {
+      const activeTransaction = databaseTransactionContext.getStore()
+      if (activeTransaction) return activeTransaction.run(sql, params)
       return withPostgresClient((clientDb) => clientDb.run(sql, params), {
         label: 'escritura'
       })
     },
 
     get: async (sql, params = []) => {
+      const activeTransaction = databaseTransactionContext.getStore()
+      if (activeTransaction) return activeTransaction.get(sql, params)
       return withPostgresClient((clientDb) => clientDb.get(sql, params), {
         retryTransientRead: true,
         label: 'lectura get'
@@ -460,6 +466,8 @@ if (usePostgres) {
     },
 
     all: async (sql, params = []) => {
+      const activeTransaction = databaseTransactionContext.getStore()
+      if (activeTransaction) return activeTransaction.all(sql, params)
       return withPostgresClient((clientDb) => clientDb.all(sql, params), {
         retryTransientRead: true,
         label: 'lectura all'
@@ -467,18 +475,22 @@ if (usePostgres) {
     },
 
     exec: async (sql) => {
+      const activeTransaction = databaseTransactionContext.getStore()
+      if (activeTransaction) return activeTransaction.exec(sql)
       return withPostgresClient((clientDb) => clientDb.exec(sql), {
         label: 'exec'
       })
     },
 
     transaction: async (callback) => {
+      const activeTransaction = databaseTransactionContext.getStore()
+      if (activeTransaction) return callback(activeTransaction)
       const client = await connectWithRetry()
       const txDb = createPostgresAdapter(client)
       let releaseError = null
       try {
         await client.query('BEGIN')
-        const result = await callback(txDb)
+        const result = await databaseTransactionContext.run(txDb, () => callback(txDb))
         await client.query('COMMIT')
         return result
       } catch (error) {
@@ -507,12 +519,13 @@ if (usePostgres) {
 
   const dbPath = join(__dirname, '../../../ristak.db')
   const sqliteDb = new sqlite3.Database(dbPath)
+  sqliteDb.configure('busyTimeout', 10_000)
   logger.success('Conectado a SQLite:', dbPath)
 
-  db = {
+  const createSqliteAdapter = (connection) => ({
     run: (sql, params = []) => {
       return new Promise((resolve, reject) => {
-        sqliteDb.run(sql, params, function(err) {
+        connection.run(sql, params, function(err) {
           if (err) reject(err)
           else resolve({ lastID: this.lastID, changes: this.changes })
         })
@@ -521,7 +534,7 @@ if (usePostgres) {
 
     get: (sql, params = []) => {
       return new Promise((resolve, reject) => {
-        sqliteDb.get(sql, params, (err, row) => {
+        connection.get(sql, params, (err, row) => {
           if (err) reject(err)
           else resolve(row || null)
         })
@@ -530,7 +543,7 @@ if (usePostgres) {
 
     all: (sql, params = []) => {
       return new Promise((resolve, reject) => {
-        sqliteDb.all(sql, params, (err, rows) => {
+        connection.all(sql, params, (err, rows) => {
           if (err) reject(err)
           else resolve(rows)
         })
@@ -539,22 +552,49 @@ if (usePostgres) {
 
     exec: (sql) => {
       return new Promise((resolve, reject) => {
-        sqliteDb.exec(sql, (err) => {
+        connection.exec(sql, (err) => {
           if (err) reject(err)
           else resolve()
         })
       })
-    },
+    }
+  })
+
+  const sqliteAdapter = createSqliteAdapter(sqliteDb)
+  const routeSqliteOperation = (method) => (...args) => {
+    const activeTransaction = databaseTransactionContext.getStore()
+    return (activeTransaction || sqliteAdapter)[method](...args)
+  }
+  db = {
+    run: routeSqliteOperation('run'),
+    get: routeSqliteOperation('get'),
+    all: routeSqliteOperation('all'),
+    exec: routeSqliteOperation('exec'),
 
     transaction: async (callback) => {
-      await db.run('BEGIN IMMEDIATE')
+      const activeTransaction = databaseTransactionContext.getStore()
+      if (activeTransaction) return callback(activeTransaction)
+      // Una conexión dedicada evita que dos transacciones concurrentes se
+      // aniden en la conexión global o que escrituras ajenas queden incluidas
+      // accidentalmente entre BEGIN y COMMIT.
+      const transactionConnection = new sqlite3.Database(dbPath)
+      transactionConnection.configure('busyTimeout', 10_000)
+      const txDb = createSqliteAdapter(transactionConnection)
       try {
-        const result = await callback(db)
-        await db.run('COMMIT')
+        await txDb.run('BEGIN IMMEDIATE')
+        const result = await databaseTransactionContext.run(txDb, () => callback(txDb))
+        await txDb.run('COMMIT')
         return result
       } catch (error) {
-        await db.run('ROLLBACK')
+        await txDb.run('ROLLBACK').catch(() => undefined)
         throw error
+      } finally {
+        await new Promise((resolve) => {
+          transactionConnection.close((error) => {
+            if (error) logger.warn(`No se pudo cerrar una conexión SQLite transaccional: ${error.message}`)
+            resolve()
+          })
+        })
       }
     }
   }
@@ -5765,6 +5805,28 @@ async function initTables() {
         confirmation_token_hash TEXT,
         confirmation_expires_at DATETIME,
         confirmation_used_at DATETIME,
+        idempotency_key TEXT,
+        completion_auth_method TEXT,
+        completion_actor_id TEXT,
+        completion_request_id TEXT,
+        completion_effects_status TEXT,
+        completion_effects_attempts INTEGER NOT NULL DEFAULT 0,
+        completion_effects_last_error TEXT,
+        completion_effects_updated_at DATETIME,
+        completion_effects_next_retry_at DATETIME,
+        completion_effects_claim_token TEXT,
+        completion_effects_lease_until_at DATETIME,
+        completion_signal_applied_at DATETIME,
+        completion_action_applied_at DATETIME,
+        completion_extras_applied_at DATETIME,
+        completion_notification_claimed_at DATETIME,
+        completion_notification_sent_at DATETIME,
+        completion_notification_status TEXT,
+        completion_notification_claim_token TEXT,
+        completion_notification_last_error TEXT,
+        completion_event_recorded_at DATETIME,
+        external_source TEXT,
+        external_evidence_key TEXT,
         external_object_id TEXT,
         external_status TEXT,
         metadata_json TEXT,
@@ -5778,12 +5840,191 @@ async function initTables() {
     await ensureTableColumns('conversational_agent_goal_links', [
       ['confirmation_token_hash', 'TEXT'],
       ['confirmation_expires_at', 'DATETIME'],
-      ['confirmation_used_at', 'DATETIME']
+      ['confirmation_used_at', 'DATETIME'],
+      ['idempotency_key', 'TEXT'],
+      ['completion_auth_method', 'TEXT'],
+      ['completion_actor_id', 'TEXT'],
+      ['completion_request_id', 'TEXT'],
+      ['completion_effects_status', 'TEXT'],
+      ['completion_effects_attempts', 'INTEGER NOT NULL DEFAULT 0'],
+      ['completion_effects_last_error', 'TEXT'],
+      ['completion_effects_updated_at', 'DATETIME'],
+      ['completion_effects_next_retry_at', 'DATETIME'],
+      ['completion_effects_claim_token', 'TEXT'],
+      ['completion_effects_lease_until_at', 'DATETIME'],
+      ['completion_signal_applied_at', 'DATETIME'],
+      ['completion_action_applied_at', 'DATETIME'],
+      ['completion_extras_applied_at', 'DATETIME'],
+      ['completion_notification_claimed_at', 'DATETIME'],
+      ['completion_notification_sent_at', 'DATETIME'],
+      ['completion_notification_status', 'TEXT'],
+      ['completion_notification_claim_token', 'TEXT'],
+      ['completion_notification_last_error', 'TEXT'],
+      ['completion_event_recorded_at', 'DATETIME'],
+      ['external_source', 'TEXT'],
+      ['external_evidence_key', 'TEXT']
     ])
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_contact ON conversational_agent_goal_links(contact_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_status ON conversational_agent_goal_links(status, created_at)')
+    await db.run(`
+      CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_effects_recovery
+      ON conversational_agent_goal_links(
+        completion_effects_status,
+        completion_effects_next_retry_at,
+        completion_effects_lease_until_at,
+        completion_effects_updated_at
+      )
+    `)
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_external ON conversational_agent_goal_links(external_object_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_goal_links_external_evidence ON conversational_agent_goal_links(external_evidence_key)')
     await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_goal_links_token_hash ON conversational_agent_goal_links(confirmation_token_hash)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_goal_links_idempotency ON conversational_agent_goal_links(idempotency_key)')
+    await db.run(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_goal_links_completion_request
+      ON conversational_agent_goal_links(completion_auth_method, completion_actor_id, completion_request_id)
+    `)
+
+    // Tombstone independiente: conserva para siempre la propiedad de una
+    // evidencia y de su Idempotency-Key aunque el contacto o la meta se borren.
+    // Tabla, backfill y guard de rolling deploy se publican atómicamente: una
+    // instancia vieja no puede completar metas sin crear primero el claim.
+    await db.transaction(async (tx) => {
+      if (usePostgres) {
+        // Toma el lock antes del snapshot del backfill. Sin esto, una instancia
+        // vieja podría commitear pending→completed entre el SELECT y el trigger.
+        await tx.run('LOCK TABLE conversational_agent_goal_links IN SHARE ROW EXCLUSIVE MODE')
+      }
+      await tx.run(`
+        CREATE TABLE IF NOT EXISTS conversational_agent_goal_evidence_claims (
+          external_evidence_key TEXT PRIMARY KEY,
+          external_source TEXT NOT NULL,
+          confirmation_fingerprint TEXT NOT NULL,
+          goal_id TEXT NOT NULL,
+          completion_auth_method TEXT NOT NULL,
+          completion_actor_id TEXT NOT NULL DEFAULT '',
+          completion_request_id TEXT NOT NULL,
+          legacy_external_object_id TEXT,
+          claimed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `)
+      if (usePostgres) {
+        await tx.run(`
+          ALTER TABLE conversational_agent_goal_evidence_claims
+          ADD COLUMN IF NOT EXISTS legacy_external_object_id TEXT
+        `)
+      } else {
+        const columns = await tx.all('PRAGMA table_info(conversational_agent_goal_evidence_claims)')
+        if (!columns.some((column) => column.name === 'legacy_external_object_id')) {
+          await tx.run('ALTER TABLE conversational_agent_goal_evidence_claims ADD COLUMN legacy_external_object_id TEXT')
+        }
+      }
+      await tx.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_goal_evidence_claims_goal
+        ON conversational_agent_goal_evidence_claims(goal_id)
+      `)
+      await tx.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_goal_evidence_claims_request
+        ON conversational_agent_goal_evidence_claims(
+          completion_auth_method,
+          completion_actor_id,
+          completion_request_id
+        )
+      `)
+      await tx.run(`
+        CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_evidence_claims_legacy_object
+        ON conversational_agent_goal_evidence_claims(legacy_external_object_id)
+      `)
+
+      await tx.run(`
+        INSERT INTO conversational_agent_goal_evidence_claims (
+          external_evidence_key, external_source, confirmation_fingerprint,
+          goal_id, completion_auth_method, completion_actor_id,
+          completion_request_id, claimed_at
+        )
+        SELECT
+          external_evidence_key,
+          COALESCE(NULLIF(external_source, ''), 'legacy:unknown'),
+          external_evidence_key,
+          id,
+          COALESCE(NULLIF(completion_auth_method, ''), 'legacy_unknown'),
+          COALESCE(completion_actor_id, ''),
+          COALESCE(NULLIF(completion_request_id, ''), 'legacy:' || id),
+          COALESCE(completed_at, updated_at, created_at, CURRENT_TIMESTAMP)
+        FROM conversational_agent_goal_links
+        WHERE status = 'completed'
+          AND external_evidence_key IS NOT NULL
+          AND external_evidence_key != ''
+        ON CONFLICT DO NOTHING
+      `)
+      // Una completion creada por el binario anterior no conoce source ni key.
+      // Se conserva como wildcard por object ID para que jamás pueda reusarse
+      // durante el overlap, aun si eso exige ser conservadores entre proveedores.
+      await tx.run(`
+        INSERT INTO conversational_agent_goal_evidence_claims (
+          external_evidence_key, external_source, confirmation_fingerprint,
+          goal_id, completion_auth_method, completion_actor_id,
+          completion_request_id, legacy_external_object_id, claimed_at
+        )
+        SELECT
+          'legacy_untrusted:' || id,
+          'legacy:wildcard',
+          'legacy_untrusted:' || id,
+          id,
+          'legacy_untrusted',
+          '',
+          'legacy:' || id,
+          external_object_id,
+          COALESCE(completed_at, updated_at, created_at, CURRENT_TIMESTAMP)
+        FROM conversational_agent_goal_links
+        WHERE status = 'completed'
+          AND (external_evidence_key IS NULL OR external_evidence_key = '')
+          AND external_object_id IS NOT NULL
+          AND external_object_id != ''
+        ON CONFLICT DO NOTHING
+      `)
+
+      if (usePostgres) {
+        await tx.exec(`
+          CREATE OR REPLACE FUNCTION enforce_conversational_goal_evidence_claim()
+          RETURNS trigger AS $$
+          BEGIN
+            IF NEW.status = 'completed'
+              AND COALESCE(OLD.status, '') <> 'completed'
+              AND NOT EXISTS (
+                SELECT 1 FROM conversational_agent_goal_evidence_claims claim
+                WHERE claim.goal_id = NEW.id
+              )
+            THEN
+              RAISE EXCEPTION 'CONVERSATIONAL_GOAL_EVIDENCE_CLAIM_REQUIRED';
+            END IF;
+            RETURN NEW;
+          END;
+          $$ LANGUAGE plpgsql;
+
+          DROP TRIGGER IF EXISTS trg_conversational_goal_evidence_claim
+          ON conversational_agent_goal_links;
+          CREATE TRIGGER trg_conversational_goal_evidence_claim
+          BEFORE UPDATE OF status ON conversational_agent_goal_links
+          FOR EACH ROW EXECUTE FUNCTION enforce_conversational_goal_evidence_claim();
+        `)
+      } else {
+        await tx.exec(`
+          DROP TRIGGER IF EXISTS trg_conversational_goal_evidence_claim;
+          CREATE TRIGGER trg_conversational_goal_evidence_claim
+          BEFORE UPDATE OF status ON conversational_agent_goal_links
+          FOR EACH ROW
+          WHEN NEW.status = 'completed'
+            AND COALESCE(OLD.status, '') <> 'completed'
+            AND NOT EXISTS (
+              SELECT 1 FROM conversational_agent_goal_evidence_claims claim
+              WHERE claim.goal_id = NEW.id
+            )
+          BEGIN
+            SELECT RAISE(ABORT, 'CONVERSATIONAL_GOAL_EVIDENCE_CLAIM_REQUIRED');
+          END;
+        `)
+      }
+    })
 
     // Gobernanza de la inteligencia: cada cambio del formulario produce una política
     // compilada, auditable y reversible. Nunca guarda credenciales ni prompts privados

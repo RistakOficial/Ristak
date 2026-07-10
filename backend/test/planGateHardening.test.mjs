@@ -31,6 +31,7 @@ test('developer surfaces are gated by Developers and by resource features', asyn
   const authRoutes = await backendFile('src/routes/auth.routes.js')
   const externalRoutes = await backendFile('src/routes/external.routes.js')
   const mcpRoutes = await backendFile('src/routes/mcp.routes.js')
+  const goalLedgerMigration = await repoFile('backend/migrations/versioned/019_conversational_goal_effects_ledger.sql')
 
   assert.match(authRoutes, /router\.get\('\/api-token', requireAuth, requireModuleAccess\('settings_api_access'\), getApiToken\)/)
   assert.match(authRoutes, /router\.post\('\/api-token\/rotate', requireAuth, requireModuleAccess\('settings_api_access'\), rotateApiToken\)/)
@@ -41,12 +42,21 @@ test('developer surfaces are gated by Developers and by resource features', asyn
   assert.match(externalRoutes, /router\.get\('\/data\/:table', requireExternalTableFeature, queryDataTable\)/)
   assert.match(externalRoutes, /router\.post\('\/highlevel\/request', requireExternalFeatures\('integrations'\), proxyHighLevelRequest\)/)
   assert.match(externalRoutes, /router\.get\('\/transactions', requireExternalFeatures\('payments'\), getTransactions\)/)
+  assert.match(externalRoutes, /SENSITIVE_TABLE_PATTERN[^\n]*conversational_agent_goal_links/)
+  assert.match(externalRoutes, /WRITE_BLOCKED_TABLE_PATTERN[^\n]*conversational_agents[^\n]*conversational_agent_\.\*/)
+  assert.match(externalRoutes, /name === 'conversational_agents' \|\| \/\^conversational_agent_\/\.test\(name\)/)
 
   assert.match(mcpRoutes, /hasFeature\('developers'\)/)
   assert.match(mcpRoutes, /ghl_create_payment_link: \['integrations', 'payments'\]/)
   assert.match(mcpRoutes, /ghl_create_installment_plan: \['integrations', 'payments', 'payment_plans'\]/)
   assert.match(mcpRoutes, /await assertMcpFeatures\(getMcpToolFeatureKeys\(name, args\)\)/)
   assert.match(mcpRoutes, /getMcpTableFeatureKeys\(args\?\.table\)/)
+  assert.match(mcpRoutes, /SENSITIVE_TABLE_PATTERN[^\n]*conversational_agent_goal_links/)
+  assert.match(mcpRoutes, /blockedTables:[^\n]*conversational_agent_goal_links/)
+  assert.match(mcpRoutes, /const selectedColumns = config\.exposedColumns/)
+  assert.match(mcpRoutes, /name === 'conversational_agents' \|\| \/\^conversational_agent_\/\.test\(name\)/)
+  assert.match(goalLedgerMigration, /WHERE status = 'completed'/)
+  assert.match(goalLedgerMigration, /completion_effects_status IS NULL/)
 })
 
 test('Sites and HighLevel cannot bypass payments, plans, or integrations', async () => {

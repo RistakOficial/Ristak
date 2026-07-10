@@ -82,12 +82,12 @@ const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<Con
   citas: [
     { value: 'ready_for_human', label: 'Un humano', example: 'La IA detecta intención real y avisa para que tu equipo agende.', Icon: UserCheck },
     { value: 'book_appointment', label: 'El agente IA', example: 'La IA confirma un horario real y agenda la cita en el calendario.', Icon: CalendarCheck },
-    { value: 'send_goal_url', label: 'La IA mandando un enlace', example: 'Manda el link del calendario para que la persona elija su horario.', Icon: Link2 }
+    { value: 'send_goal_url', label: 'La IA mandando un enlace', example: 'Manda un link conectado a Ristak y confirma la meta sólo cuando la cita sí se agenda.', Icon: Link2 }
   ],
   ventas: [
     { value: 'ready_for_human', label: 'Un humano', example: 'La IA detecta intención de compra y avisa para que tu equipo cierre.', Icon: UserCheck },
     { value: 'ready_to_buy', label: 'El agente IA', example: 'La IA guía el pago y la venta se completa cuando el pago queda confirmado.', Icon: CreditCard },
-    { value: 'send_goal_url', label: 'La IA mandando un enlace', example: 'Manda el link de compra para que la persona pague.', Icon: Link2 }
+    { value: 'send_goal_url', label: 'La IA mandando un enlace', example: 'Manda un link conectado a Ristak y confirma la meta sólo cuando el pago sí se completa.', Icon: Link2 }
   ],
   datos: [
     { value: 'ready_for_human', label: 'Un humano', example: 'Junta los datos y avisa a tu gente para que continúe.', Icon: UserCheck }

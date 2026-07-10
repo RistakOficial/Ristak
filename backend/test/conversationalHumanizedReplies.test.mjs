@@ -98,6 +98,16 @@ import {
   upsertHighLevelConversationMessage
 } from '../src/services/highlevelConversationsSyncService.js'
 
+async function removeConversationGoalLinksForTest(contactId) {
+  await db.run(`
+    DELETE FROM conversational_agent_goal_evidence_claims
+    WHERE goal_id IN (
+      SELECT id FROM conversational_agent_goal_links WHERE contact_id = ?
+    )
+  `, [contactId]).catch(() => undefined)
+  await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+}
+
 test('flujos IA automaticos de bajo costo usan siempre el modelo mas barato aprobado', () => {
   assert.equal(CHEAPEST_OPENAI_MODEL, 'gpt-5.4-nano')
   assert.equal(MESSAGE_SPLITTER_MODEL, CHEAPEST_OPENAI_MODEL)
@@ -1410,7 +1420,7 @@ test('click del enlace de disparo cumple objetivo personalizado y detiene la IA'
 
 test('confirmacion automatica de enlace de calendario confirma cita con ID real', async () => {
   const contactId = 'test_goal_url_contact'
-  await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await removeConversationGoalLinksForTest(contactId)
   await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -1435,17 +1445,15 @@ test('confirmacion automatica de enlace de calendario confirma cita con ID real'
     assert.match(link.id, /^goal_/)
     assert.equal(new URL(link.sentUrl).searchParams.get('booking_ref'), link.id)
     assert.equal(new URL(link.sentUrl).searchParams.get('calendar_id'), 'cal_demo')
-    const callbackUrl = new URL(link.callbackUrl)
-    const confirmationToken = callbackUrl.searchParams.get('ristak_goal_token')
-    assert.ok(confirmationToken)
     assert.equal(new URL(link.sentUrl).searchParams.has('ristak_goal_token'), false)
 
     const completed = await completeConversationGoalLinkFromWebhook({
-      booking_ref: link.id,
-      calendar_id: 'cal_demo',
-      appointment_id: 'appt_123',
+      goalId: link.id,
+      externalSource: 'calendar:humanized-test',
+      calendarId: 'cal_demo',
+      externalObjectId: 'appt_123',
       status: 'scheduled'
-    }, { confirmationToken })
+    }, { authorization: { type: 'external_api', actorId: 'humanized-test', requestId: 'calendar-goal-request' } })
 
     assert.equal(completed.status, 'completed')
     assert.equal(completed.externalObjectId, 'appt_123')
@@ -1469,7 +1477,7 @@ test('confirmacion automatica de enlace de calendario confirma cita con ID real'
     assert.equal(completionDetail.actionSummary, 'Agendó una cita')
     assert.equal(completionDetail.originalSummary, 'ID de cita: appt_123')
   } finally {
-    await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await removeConversationGoalLinksForTest(contactId)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -1478,7 +1486,7 @@ test('confirmacion automatica de enlace de calendario confirma cita con ID real'
 
 test('confirmacion automatica de pedido valida producto antes de cerrar venta', async () => {
   const contactId = 'test_goal_order_contact'
-  await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+  await removeConversationGoalLinksForTest(contactId)
   await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -1509,21 +1517,20 @@ test('confirmacion automatica de pedido valida producto antes de cerrar venta', 
     })
 
     const sentUrl = new URL(link.sentUrl)
-    const confirmationToken = new URL(link.callbackUrl).searchParams.get('ristak_goal_token')
     assert.equal(sentUrl.searchParams.get('pedido_ref'), link.id)
     assert.equal(sentUrl.searchParams.get('product_id'), 'prod_x')
     assert.equal(sentUrl.searchParams.get('price_id'), 'price_mensual')
-    assert.ok(confirmationToken)
     assert.equal(sentUrl.searchParams.has('ristak_goal_token'), false)
 
     await assert.rejects(
       () => completeConversationGoalLinkFromWebhook({
-        pedido_ref: link.id,
-        product_id: 'prod_y',
-        price_id: 'price_mensual',
-        purchase_id: 'purchase_wrong',
+        goalId: link.id,
+        externalSource: 'payments:humanized-test',
+        productId: 'prod_y',
+        priceId: 'price_mensual',
+        externalObjectId: 'purchase_wrong',
         status: 'paid'
-      }, { confirmationToken }),
+      }, { authorization: { type: 'external_api', actorId: 'humanized-test', requestId: 'order-goal-request' } }),
       /producto esperado/
     )
 
@@ -1531,12 +1538,13 @@ test('confirmacion automatica de pedido valida producto antes de cerrar venta', 
     assert.equal(pending.status, 'pending')
 
     const completed = await completeConversationGoalLinkFromWebhook({
-      pedido_ref: link.id,
-      product_id: 'prod_x',
-      price_id: 'price_mensual',
-      purchase_id: 'purchase_123',
+      goalId: link.id,
+      externalSource: 'payments:humanized-test',
+      productId: 'prod_x',
+      priceId: 'price_mensual',
+      externalObjectId: 'purchase_123',
       status: 'paid'
-    }, { confirmationToken })
+    }, { authorization: { type: 'external_api', actorId: 'humanized-test', requestId: 'order-goal-request' } })
 
     assert.equal(completed.status, 'completed')
     assert.equal(completed.externalObjectId, 'purchase_123')
@@ -1556,7 +1564,7 @@ test('confirmacion automatica de pedido valida producto antes de cerrar venta', 
     assert.equal(completionDetail.actionSummary, 'Pago completado')
     assert.equal(completionDetail.originalSummary, 'ID de compra: purchase_123')
   } finally {
-    await db.run('DELETE FROM conversational_agent_goal_links WHERE contact_id = ?', [contactId]).catch(() => undefined)
+    await removeConversationGoalLinksForTest(contactId)
     await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM conversational_agent_state WHERE contact_id = ?', [contactId]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)

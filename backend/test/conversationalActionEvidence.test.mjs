@@ -5,7 +5,10 @@ import { DateTime } from 'luxon'
 
 import { db } from '../src/config/database.js'
 import { createConversationalTools } from '../src/agents/conversational/tools.js'
-import { revalidateAppointmentSlot } from '../src/agents/conversational/actionEvidence.js'
+import {
+  revalidateAppointmentSlot,
+  verifyAppointmentConfirmationEvidence
+} from '../src/agents/conversational/actionEvidence.js'
 import { getAccountTimezone } from '../src/utils/dateUtils.js'
 import { upsertLocalCalendar } from '../src/services/localCalendarService.js'
 
@@ -75,6 +78,99 @@ test('book_appointment bloquea una acción real si la confirmación sólo existe
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
   }
+})
+
+test('una confirmación vieja por día de semana no autoriza una cita nueva', async () => {
+  const timezone = 'America/Ciudad_Juarez'
+  const now = DateTime.fromISO('2026-07-10T10:00:00', { zone: timezone })
+  const slot = DateTime.fromISO('2026-07-17T15:00:00', { zone: timezone })
+  const result = await verifyAppointmentConfirmationEvidence({
+    startTime: slot.toISO(),
+    timezone,
+    nowMs: now.toMillis(),
+    messages: [{
+      id: 'confirmation_2025',
+      direction: 'inbound',
+      text: 'Sí, el viernes a las 3 pm',
+      timestamp: '2025-01-03T21:00:00.000Z'
+    }]
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.confirmationRequired, true)
+  assert.equal(result.actionCompleted, false)
+})
+
+test('una respuesta breve reciente queda ligada a la oferta exacta anterior', async () => {
+  const timezone = 'America/Ciudad_Juarez'
+  const now = DateTime.fromISO('2026-07-10T10:10:00', { zone: timezone })
+  const slot = DateTime.fromISO('2026-07-17T15:00:00', { zone: timezone })
+  const result = await verifyAppointmentConfirmationEvidence({
+    startTime: slot.toISO(),
+    timezone,
+    nowMs: now.toMillis(),
+    messages: [
+      {
+        id: 'offer_recent',
+        direction: 'outbound',
+        text: '¿Confirmas la cita del 17/07/2026 a las 15:00?',
+        timestamp: now.minus({ minutes: 5 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
+      },
+      {
+        id: 'confirmation_recent',
+        direction: 'inbound',
+        text: 'Sí, perfecto',
+        timestamp: now.minus({ minutes: 2 }).toUTC().toFormat('yyyy-MM-dd HH:mm:ss')
+      }
+    ]
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.evidenceVerified, true)
+  assert.equal(result.offerMessageId, 'offer_recent')
+  assert.equal(result.confirmationMessageId, 'confirmation_recent')
+})
+
+test('una confirmación reciente que escribe fecha y hora exactas no requiere repetir la oferta', async () => {
+  const timezone = 'America/Ciudad_Juarez'
+  const now = DateTime.fromISO('2026-07-10T10:10:00', { zone: timezone })
+  const slot = DateTime.fromISO('2026-07-17T15:00:00', { zone: timezone })
+  const result = await verifyAppointmentConfirmationEvidence({
+    startTime: slot.toISO(),
+    timezone,
+    nowMs: now.toMillis(),
+    messages: [{
+      id: 'direct_exact_confirmation',
+      direction: 'inbound',
+      text: 'Sí, agéndame el 17 de julio a las 3 pm',
+      timestamp: now.minus({ minutes: 1 }).toUTC().toISO()
+    }]
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.evidenceVerified, true)
+  assert.equal(result.confirmationMessageId, 'direct_exact_confirmation')
+  assert.equal(result.offerMessageId, undefined)
+})
+
+test('día de semana y hora sin oferta exacta siguen siendo ambiguos aunque sean recientes', async () => {
+  const timezone = 'America/Ciudad_Juarez'
+  const now = DateTime.fromISO('2026-07-10T10:10:00', { zone: timezone })
+  const slot = DateTime.fromISO('2026-07-17T15:00:00', { zone: timezone })
+  const result = await verifyAppointmentConfirmationEvidence({
+    startTime: slot.toISO(),
+    timezone,
+    nowMs: now.toMillis(),
+    messages: [{
+      id: 'ambiguous_weekday_confirmation',
+      direction: 'inbound',
+      text: 'Sí, el viernes a las 3 pm',
+      timestamp: now.minus({ minutes: 1 }).toUTC().toISO()
+    }]
+  })
+
+  assert.equal(result.ok, false)
+  assert.equal(result.confirmationRequired, true)
 })
 
 test('revalidación de slots falla cerrado y pide transferencia si el calendario no responde', async () => {
