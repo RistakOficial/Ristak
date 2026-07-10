@@ -257,8 +257,9 @@ function isTimedPlanFrequency(value) {
 }
 
 function assertPlanDueDateNotInPast(value, frequency, message, timezone = DEFAULT_PAYMENT_TIMEZONE) {
+  const hasExplicitTime = shouldUseExactPlanTime(value, frequency)
   const dueValue = withDefaultPlanTime(value, timezone)
-  if (!shouldUseExactPlanTime(dueValue, frequency)) return assertDateNotInPast(dueValue, message, timezone)
+  if (!hasExplicitTime) return assertDateNotInPast(dueValue, message, timezone)
   return assertLocalDateTimeNotInPast(dueValue, timezone, message)
 }
 
@@ -3623,8 +3624,9 @@ function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT
   const remainingFrequency = normalizePlanFrequency(input.remainingFrequency || 'custom')
   const firstPaymentFrequency = normalizePlanFrequency(firstPayment.frequency || remainingFrequency)
   const planCreatedAt = new Date()
+  const firstPaymentSubmittedDate = firstPayment.date || todayDateOnly(timezone)
   const firstPaymentDate = firstPaymentEnabled
-    ? normalizePlanDueDate(firstPayment.date || todayDateOnly(timezone), firstPaymentFrequency, timezone, planCreatedAt)
+    ? normalizePlanDueDate(firstPaymentSubmittedDate, firstPaymentFrequency, timezone, planCreatedAt)
     : null
   const cardSetupAmount = normalizePositiveAmount(input.cardSetupAmount, 25)
 
@@ -3661,8 +3663,11 @@ function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT
     }
 
     const frequency = normalizePlanFrequency(payment.frequency || input.remainingFrequency || 'custom')
+    // Valida lo que eligió la persona antes de agregar la hora por defecto. Una
+    // fecha de calendario para hoy sigue siendo válida aunque las 10:00 ya hayan
+    // pasado; una hora que sí se capturó explícitamente no.
+    assertPlanDueDateNotInPast(payment.dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.', timezone)
     const dueDate = normalizePlanDueDate(payment.dueDate, frequency, timezone, planCreatedAt)
-    assertPlanDueDateNotInPast(dueDate, frequency, 'Los pagos futuros automáticos no pueden programarse en fechas pasadas.', timezone)
 
     return {
       sequence: Number(payment.sequence || index + 1),
@@ -3674,7 +3679,7 @@ function validateStripePaymentPlanPayload(input = {}, timezone = DEFAULT_PAYMENT
   })
 
   if (firstPaymentEnabled && !MANUAL_PLAN_PAYMENT_METHODS.has(firstPaymentMethod)) {
-    assertPlanDueDateNotInPast(firstPaymentDate, firstPaymentFrequency, 'El primer pago automático no puede programarse en una fecha pasada.', timezone)
+    assertPlanDueDateNotInPast(firstPaymentSubmittedDate, firstPaymentFrequency, 'El primer pago automático no puede programarse en una fecha pasada.', timezone)
   }
 
   assertExactPaymentPlanTotal({ totalAmount, firstPaymentAmount, remainingPayments: normalizedRemaining, currency })
@@ -4140,12 +4145,14 @@ async function updateStripePaymentPlanScheduleLocked(flowId, input = {}, origina
       throw error
     }
 
-    const dueDate = assertPlanDueDateNotInPast(
-      submitted.dueDate || submitted.date || submitted.scheduledAt,
+    const submittedDueDate = submitted.dueDate || submitted.date || submitted.scheduledAt
+    assertPlanDueDateNotInPast(
+      submittedDueDate,
       nextFrequency,
       'Las parcialidades automáticas no pueden programarse en fechas pasadas.',
       accountTimezone
     )
+    const dueDate = normalizePlanDueDate(submittedDueDate, nextFrequency, accountTimezone)
     if (!dueDate) {
       const error = new Error('Cada parcialidad futura necesita fecha de cobro.')
       error.status = 400
@@ -4352,12 +4359,22 @@ async function updateStripePaymentPlanScheduleLocked(flowId, input = {}, origina
       }
     } else {
       firstPaymentAmount = firstPaymentInputAmount
-      firstPaymentDate = normalizeDateOnly(firstPayment.dueDate || firstPayment.date || firstPaymentDate, accountTimezone)
+      const firstPaymentFrequency = normalizePlanFrequency(firstPayment.frequency || nextFrequency)
+      const submittedFirstPaymentDate = firstPayment.dueDate || firstPayment.date || firstPaymentDate
       const firstPaymentMethodInput = cleanString(firstPayment.method || firstPayment.paymentMethod || firstPaymentMethod || 'stripe_auto').toLowerCase()
       const normalizedFirstPaymentMethod = normalizePlanEditableFirstPaymentMethod(
         firstPaymentMethodInput,
         hasSavedCard
       )
+      if (AUTOMATIC_PLAN_PAYMENT_METHODS.has(firstPaymentMethodInput)) {
+        assertPlanDueDateNotInPast(
+          submittedFirstPaymentDate,
+          firstPaymentFrequency,
+          'El primer pago automático no puede programarse en una fecha pasada.',
+          accountTimezone
+        )
+      }
+      firstPaymentDate = normalizePlanDueDate(submittedFirstPaymentDate, firstPaymentFrequency, accountTimezone)
       if (AUTOMATIC_PLAN_PAYMENT_METHODS.has(firstPaymentMethodInput)) {
         assertDateNotInPast(firstPaymentDate, 'El primer pago automático no puede programarse en una fecha pasada.', accountTimezone)
       }

@@ -129,7 +129,7 @@ test('global search returns detail results for contacts, appointments, payments 
     ])
 
     const response = createResponse()
-    await globalSearch({ query: { q: token } }, response)
+    await globalSearch({ query: { q: token }, user: { role: 'admin' } }, response)
 
     assert.equal(response.statusCode, 200)
     assert.equal(response.body?.success, true)
