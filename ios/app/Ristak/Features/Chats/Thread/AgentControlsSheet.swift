@@ -46,8 +46,8 @@ struct AgentControlsSheet: View {
     }
 
     private var statusText: String {
-        if viewModel.agentStates.count > 1 {
-            return "\(viewModel.agentStates.count) agentes asignados a este chat."
+        if viewModel.assignedAgentStates.count > 1 {
+            return "\(viewModel.assignedAgentStates.count) agentes asignados a este chat."
         }
         let status = viewModel.primaryAgentState?.status ?? "active"
         return AgentStatusStyle.chatLabel(status)
@@ -99,7 +99,7 @@ struct AgentControlsSheet: View {
     private var actionsCard: some View {
         SectionCard(title: "Acciones") {
             VStack(spacing: RistakTheme.Spacing.xs) {
-                ForEach(Array(viewModel.agentStates.enumerated()), id: \.offset) { _, state in
+                ForEach(Array(viewModel.assignedAgentStates.enumerated()), id: \.offset) { _, state in
                     agentActionGroup(state)
                 }
             }

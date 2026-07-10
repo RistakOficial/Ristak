@@ -835,8 +835,15 @@ final class ConversationViewModel {
             || voiceRecorder.hasPreview
     }
 
+    /// Solo agentes asignados y que aún existen. TODO lo que muestra, cuenta,
+    /// controla o acciona agentes lee de aquí; `agentStates` crudo es solo store
+    /// (conserva las filas legado como historial sin mostrarlas como asignadas).
+    var assignedAgentStates: [ConversationAgentState] {
+        agentStates.filter { $0.isAssignedExistingAgent }
+    }
+
     var activeAgentStates: [ConversationAgentState] {
-        agentStates.filter { $0.status.lowercased() == "active" }
+        assignedAgentStates.filter { $0.status.lowercased() == "active" }
     }
 
     func sendCurrentDraft(skipAgentConfirm: Bool = false) {
@@ -1982,11 +1989,12 @@ final class ConversationViewModel {
     // MARK: - Agente conversacional (doc 05 §6.4)
 
     var agentBannerText: String? {
-        guard !agentStates.isEmpty else { return nil }
-        if agentStates.count > 1 {
-            return "\(agentStates.count) agentes asignados"
+        let states = assignedAgentStates
+        guard !states.isEmpty else { return nil }
+        if states.count > 1 {
+            return "\(states.count) agentes asignados"
         }
-        switch agentStates[0].status.lowercased() {
+        switch states[0].status.lowercased() {
         case "active": return "El agente atiende este chat."
         case "paused": return "Agente pausado por 24hrs en este chat."
         case "human": return "Conversación tomada por un humano."
@@ -2000,7 +2008,8 @@ final class ConversationViewModel {
     /// Estado primario para el header/banner: activo-con-agente > con-señal >
     /// con-agente > cualquiera (paridad `selectPrimaryAgentState` del /movil).
     var primaryAgentState: ConversationAgentState? {
-        if agentStates.isEmpty { return nil }
+        let states = assignedAgentStates
+        if states.isEmpty { return nil }
         func rank(_ s: ConversationAgentState) -> Int {
             let status = s.status.lowercased()
             if status == "active" && (s.agentId?.isEmpty == false) && (s.signal?.isEmpty ?? true) { return 0 }
@@ -2008,20 +2017,20 @@ final class ConversationViewModel {
             if s.agentId?.isEmpty == false { return 2 }
             return 3
         }
-        return agentStates.min { rank($0) < rank($1) }
+        return states.min { rank($0) < rank($1) }
     }
 
     /// ¿Hay algo del agente que controlar en este chat (mostrar botón robot)?
-    var hasAgentControls: Bool { !agentStates.isEmpty }
+    var hasAgentControls: Bool { !assignedAgentStates.isEmpty }
 
     /// El robot del header se prende cuando algún agente atiende activamente.
     var agentControllerActive: Bool {
-        agentStates.contains { $0.status.lowercased() == "active" }
+        assignedAgentStates.contains { $0.status.lowercased() == "active" }
     }
 
     /// Estado con señal de cierre pendiente (para el banner "objetivo cumplido").
     var agentSignalState: ConversationAgentState? {
-        agentStates.first { $0.hasPendingSignal }
+        assignedAgentStates.first { $0.hasPendingSignal }
     }
 
     /// Reemplaza el estado devuelto por el backend en la lista (autoritativo, sin

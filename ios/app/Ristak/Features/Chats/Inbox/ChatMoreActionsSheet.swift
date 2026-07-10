@@ -41,7 +41,8 @@ struct ChatMoreActionsSheet: View {
             .scrollContentBackground(.hidden)
         }
         .task {
-            agentStates = await viewModel.loadAgentStates(contactID: contact.id)
+            agentStates = (await viewModel.loadAgentStates(contactID: contact.id))
+                .filter { $0.isAssignedExistingAgent }
             agentStatesLoaded = true
         }
         .alert("No se pudo actualizar el agente", isPresented: agentErrorBinding) {

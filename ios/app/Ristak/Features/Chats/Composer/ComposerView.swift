@@ -177,9 +177,9 @@ struct ComposerView: View {
 
     @ViewBuilder
     private var agentBanner: some View {
-        // Solo aparece con agente ASIGNADO: `agentBannerText` devuelve nil si
-        // `agentStates` está vacío, así que en chats sin agente el composer queda
-        // limpio (sin la barra del agente).
+        // Solo aparece con agente ASIGNADO: `agentBannerText` devuelve nil si no
+        // hay agentes asignados existentes (`assignedAgentStates` vacío), así que
+        // en chats sin agente el composer queda limpio (sin la barra del agente).
         if let text = viewModel.agentBannerText {
             HStack(spacing: RistakTheme.Spacing.xs) {
                 AgentBotGlyph(color: RistakTheme.accent, size: 16)
@@ -189,7 +189,7 @@ struct ComposerView: View {
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Menu {
-                    ForEach(Array(viewModel.agentStates.enumerated()), id: \.offset) { _, state in
+                    ForEach(Array(viewModel.assignedAgentStates.enumerated()), id: \.offset) { _, state in
                         agentMenuActions(for: state)
                     }
                 } label: {

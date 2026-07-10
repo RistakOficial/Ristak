@@ -959,4 +959,18 @@ struct ConversationAgentState: Decodable, Sendable, Identifiable {
         guard let signal, !signal.isEmpty else { return false }
         return !["human", "skipped", "discarded"].contains(status.lowercased())
     }
+
+    /// Fila ligada a un agente REALMENTE asignado y que aún existe. Excluye los
+    /// estados legado con `agentId` nulo y los de agentes borrados (el backend
+    /// hace LEFT JOIN, así que deja `agentName`/`agentEnabled` en nil cuando el
+    /// agente ya no existe): eso es historial, no un agente asignado. Todo lo que
+    /// muestra, cuenta, controla o acciona agentes debe filtrarse por aquí.
+    /// Paridad endurecida con el /movil (que solo comprueba `agentId`).
+    var isAssignedExistingAgent: Bool {
+        guard let agentId,
+              !agentId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        if let agentName,
+           !agentName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
+        return agentEnabled != nil
+    }
 }

@@ -715,7 +715,10 @@ final class ContactInfoViewModel {
     // MARK: - Agente conversacional (copy doc 03 §4.4)
 
     var agentPanelVisible: Bool {
-        guard let agentState else { return false }
+        // Solo si el estado corresponde a un agente asignado que aún existe: un
+        // estado legado (agentId nulo) o de un agente borrado es historial, no
+        // un agente controlable — no debe abrir el panel de acciones.
+        guard let agentState, agentState.isAssignedExistingAgent else { return false }
         return !agentState.status.isEmpty
     }
 
