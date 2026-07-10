@@ -359,6 +359,11 @@ test('Stripe live parity: configuración manual live usa customer y tarjeta live
       }, { baseUrl: 'https://app.example.com' })
       assert.equal(plan.currentState, 'installment_plan_active')
 
+      await db.run(
+        `UPDATE installment_payments SET due_date = ?, frequency = 'scheduled_time', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        [new Date(Date.now() - 2 * 60 * 1000).toISOString(), plan.scheduledPayments[0].installmentId]
+      )
+
       const dueRun = await processDueStripePaymentPlanCharges({ limit: 10 })
       assert.equal(dueRun.length, 1)
       assert.equal(dueRun[0].charged, true)

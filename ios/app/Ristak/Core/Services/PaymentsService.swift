@@ -151,8 +151,8 @@ enum PaymentsService {
 
     // MARK: - Parcialidades HighLevel/local (feature `payment_plans`, doc 08 §2.9)
 
-    /// `POST /api/transactions/payment-flows/installments`. Regla dura:
-    /// primer pago + restantes deben cuadrar con el total ±0.50.
+    /// `POST /api/transactions/payment-flows/installments`. La app valida que
+    /// primer pago + restantes cuadren exactamente en unidades mínimas.
     static func createInstallmentsFlow(_ request: PaymentFlowInstallmentsRequest) async throws -> PaymentFlowInstallmentsResult {
         try await APIClient.shared.post(
             "/api/transactions/payment-flows/installments",

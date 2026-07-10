@@ -1107,8 +1107,26 @@ struct PaymentFlowChannels: Encodable, Sendable {
     }
 }
 
+enum PaymentPlanAmountMath {
+    private static let zeroDecimalCurrencies: Set<String> = [
+        "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW",
+        "PYG", "RWF", "UGX", "VND", "VUV", "XAF", "XOF", "XPF",
+    ]
+
+    static func minorUnitFactor(currency: String) -> Int64 {
+        zeroDecimalCurrencies.contains(currency.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()) ? 1 : 100
+    }
+
+    static func minorUnits(_ value: Double, currency: String) -> Int64? {
+        guard value.isFinite else { return nil }
+        let rounded = (value * Double(minorUnitFactor(currency: currency))).rounded()
+        guard rounded >= Double(Int64.min), rounded <= Double(Int64.max) else { return nil }
+        return Int64(rounded)
+    }
+}
+
 /// Body de `POST /api/transactions/payment-flows/installments` (doc 08 §2.9).
-/// Regla: suma primer pago + restantes debe cuadrar con el total ±0.50.
+/// Regla: primer pago + restantes debe coincidir exactamente en unidades mínimas.
 struct PaymentFlowInstallmentsRequest: Encodable, Sendable {
     var contact: PaymentPlanContact
     var totalAmount: Double
@@ -1145,9 +1163,6 @@ struct PaymentFlowInstallmentsRequest: Encodable, Sendable {
         self.remainingPayments = remainingPayments
         self.channels = channels
     }
-
-    /// Tolerancia del backend para cuadrar parcialidades (±$0.50).
-    static let sumTolerance: Double = 0.5
 }
 
 /// Respuesta RAÍZ de installments (`{ success, message, flowId, … }` sin `data`).
@@ -1524,6 +1539,7 @@ struct SavedCardPaymentResult: Decodable, Sendable {
 
 /// Body de `POST /api/<gw>/payment-plans` (stripe/conekta/rebill).
 struct GatewayPaymentPlanRequest: Encodable, Sendable {
+    var idempotencyKey: String
     var contact: PaymentPlanContact
     var totalAmount: Double
     var currency: String?
@@ -1540,6 +1556,7 @@ struct GatewayPaymentPlanRequest: Encodable, Sendable {
     var source: String?
 
     init(
+        idempotencyKey: String = "ristak-ios-plan-\(UUID().uuidString.lowercased())",
         contact: PaymentPlanContact,
         totalAmount: Double,
         currency: String? = nil,
@@ -1553,6 +1570,7 @@ struct GatewayPaymentPlanRequest: Encodable, Sendable {
         cardSetupAmount: Double? = nil,
         source: String? = nil
     ) {
+        self.idempotencyKey = idempotencyKey
         self.contact = contact
         self.totalAmount = totalAmount
         self.currency = currency

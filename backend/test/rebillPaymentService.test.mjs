@@ -940,7 +940,7 @@ test('Rebill crea planes con reloj de Ristak, guarda tarjeta y cobra parcialidad
         firstPayment: {
           enabled: true,
           amount: 500,
-          date: today,
+          date: new Date().toISOString(),
           method: 'card',
           frequency: 'custom'
         },

@@ -22,15 +22,15 @@ async function runMercadoPagoPaymentPlans(source = 'interval') {
       // El servicio ya es idempotente a nivel DB (solo toma parcialidades con
       // mercadopago_preference_id vacío y marca 'sent' al generar), pero el lock evita la
       // carrera SELECT->UPDATE entre réplicas que generaría preferencias MP duplicadas.
-      const { ran } = await withCronLock('mercadopago-payment-plans', MERCADOPAGO_PAYMENT_PLANS_INTERVAL_MS, async () => {
-        const results = await processDueMercadoPagoPaymentPlanCharges()
+      const { ran } = await withCronLock('mercadopago-payment-plans', MERCADOPAGO_PAYMENT_PLANS_INTERVAL_MS, async ({ isLeaseValid }) => {
+        const results = await processDueMercadoPagoPaymentPlanCharges({ isLeaseValid })
         const generated = results.filter((result) => result.generated).length
         const failed = results.filter((result) => result.error).length
 
         if (generated || failed) {
           logger.info(`[Mercado Pago Planes] ${source}: ${generated} links generados, ${failed} con error`)
         }
-      })
+      }, { failOpen: false, leaseTtlMs: 5 * 60 * 1000 })
       if (!ran) logger.info(`[Mercado Pago Planes] ${source}: omitido (otra instancia tiene el lock)`)
     }, source)
   } catch (error) {

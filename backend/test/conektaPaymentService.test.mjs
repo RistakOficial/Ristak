@@ -115,15 +115,9 @@ function secondsOfDay(value, timeZone = 'America/Mexico_City') {
   return Number(parts.hour || 0) * 3600 + Number(parts.minute || 0) * 60 + Number(parts.second || 0)
 }
 
-function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly, createdBefore, createdAfter) {
+function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly) {
   assert.equal(zonedDateOnly(storedValue), expectedDateOnly)
-  const storedSeconds = secondsOfDay(storedValue)
-  const beforeSeconds = Math.max(0, secondsOfDay(createdBefore) - 1)
-  const afterSeconds = Math.min(86399, secondsOfDay(createdAfter) + 1)
-  const inRange = beforeSeconds <= afterSeconds
-    ? storedSeconds >= beforeSeconds && storedSeconds <= afterSeconds
-    : storedSeconds >= beforeSeconds || storedSeconds <= afterSeconds
-  assert.ok(inRange, `expected stored plan time ${storedSeconds} to be between ${beforeSeconds} and ${afterSeconds}`)
+  assert.equal(secondsOfDay(storedValue), 10 * 60 * 60)
 }
 
 test('Conekta manual: el modo global de pasarelas selecciona las credenciales activas', async () => {
@@ -689,6 +683,12 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
     const activeFlow = await db.get('SELECT current_state, conekta_payment_source_id FROM payment_flows WHERE id = ?', [planResult.flowId])
     assert.equal(activeFlow.current_state, 'installment_plan_active')
     assert.equal(activeFlow.conekta_payment_source_id, 'src_test_123')
+
+    await db.run(
+      `UPDATE installment_payments SET due_date = ?, frequency = 'scheduled_time', updated_at = CURRENT_TIMESTAMP
+       WHERE flow_id = ? AND sequence = 1`,
+      [new Date(Date.now() - 2 * 60 * 1000).toISOString(), planResult.flowId]
+    )
 
     const dueRun = await processDueConektaPaymentPlanCharges({ limit: 5 })
     assert.equal(dueRun.succeeded >= 1, true)
@@ -1308,6 +1308,11 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
         frequency: 'custom'
       }]
     }, { baseUrl: 'https://app.example.test' })
+
+    await db.run(
+      `UPDATE installment_payments SET due_date = ?, frequency = 'scheduled_time', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [new Date(Date.now() - 2 * 60 * 1000).toISOString(), firstPlan.scheduledPayments[0].installmentId]
+    )
 
     const secondPlan = await createConektaPaymentPlan({
       contact,

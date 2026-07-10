@@ -15,6 +15,7 @@ import {
 import { getAppConfig } from '../config/database.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { logger } from '../utils/logger.js'
+import { runIdempotentPaymentPlanCreation } from '../services/paymentPlanSafetyService.js'
 
 function cleanString(value) {
   return String(value || '').trim()
@@ -154,8 +155,16 @@ export async function createRebillPaymentLinkView(req, res) {
 
 export async function createRebillPaymentPlanView(req, res) {
   try {
-    const result = await createRebillPaymentPlan(req.body || {}, {
-      baseUrl: getRequestBaseUrl(req)
+    const requestPayload = req.body || {}
+    const idempotencyKey = req.get('Idempotency-Key') || requestPayload.idempotencyKey || requestPayload.clientRequestId
+    const payload = { ...requestPayload, idempotencyKey }
+    const result = await runIdempotentPaymentPlanCreation({
+      provider: 'rebill',
+      idempotencyKey,
+      payload,
+      create: () => createRebillPaymentPlan(payload, {
+        baseUrl: getRequestBaseUrl(req)
+      })
     })
     res.status(201).json({ success: true, data: result })
   } catch (error) {

@@ -117,6 +117,7 @@ export interface RebillPaymentLinkPayload {
 }
 
 export interface RebillPaymentPlanPayload {
+  idempotencyKey?: string
   contact: {
     id: string
     name?: string
@@ -299,7 +300,9 @@ export const rebillPaymentsService = {
     const response = await fetch(apiUrl('/api/rebill/config'), {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify(payload)
     })
     return parseResponse<RebillPaymentConfig>(response)
@@ -317,7 +320,9 @@ export const rebillPaymentsService = {
     const response = await fetch(apiUrl('/api/rebill/config/test'), {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify(payload)
     })
     return parseResponse(response)
@@ -337,7 +342,10 @@ export const rebillPaymentsService = {
     const response = await fetch(apiUrl('/api/rebill/payment-plans'), {
       method: 'POST',
       credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(payload.idempotencyKey ? { 'Idempotency-Key': payload.idempotencyKey } : {})
+      },
       body: JSON.stringify(payload)
     })
     return parseResponse<RebillPaymentPlanResponse>(response)

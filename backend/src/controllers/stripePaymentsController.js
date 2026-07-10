@@ -17,6 +17,7 @@ import {
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
+import { runIdempotentPaymentPlanCreation } from '../services/paymentPlanSafetyService.js'
 
 const STRIPE_WEBHOOK_PATH = '/api/stripe/webhook'
 
@@ -198,8 +199,16 @@ export async function createStripePaymentLinkView(req, res) {
 
 export async function createStripePaymentPlanView(req, res) {
   try {
-    const result = await createStripePaymentPlan(req.body || {}, {
-      baseUrl: getRequestBaseUrl(req)
+    const requestPayload = req.body || {}
+    const idempotencyKey = req.get('Idempotency-Key') || requestPayload.idempotencyKey || requestPayload.clientRequestId
+    const payload = { ...requestPayload, idempotencyKey }
+    const result = await runIdempotentPaymentPlanCreation({
+      provider: 'stripe',
+      idempotencyKey,
+      payload,
+      create: () => createStripePaymentPlan(payload, {
+        baseUrl: getRequestBaseUrl(req)
+      })
     })
     res.status(201).json({ success: true, data: result })
   } catch (error) {

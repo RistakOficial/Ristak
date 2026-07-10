@@ -49,6 +49,7 @@ import {
 } from '../services/localProductService.js';
 import { applyStripePaymentPlanAction, refreshStripePaymentPlanMirrors, updateStripePaymentPlanSchedule } from '../services/stripePaymentService.js';
 import { applyConektaPaymentPlanAction, refreshConektaPaymentPlanMirrors, updateConektaPaymentPlanSchedule } from '../services/conektaPaymentService.js';
+import { applyRebillPaymentPlanAction, refreshRebillPaymentPlanMirrors, updateRebillPaymentPlanSchedule } from '../services/rebillPaymentService.js';
 import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule } from '../services/mercadoPagoPaymentService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { coalescedTimestampSortExpression, parseSortableTimestamp } from '../utils/sqlTimestampSort.js';
@@ -3418,6 +3419,12 @@ function isConektaLocalInvoiceSchedule(schedule) {
     || schedule?.raw?.schedule?.provider === 'conekta';
 }
 
+function isRebillLocalInvoiceSchedule(schedule) {
+  return schedule?.source === 'rebill'
+    || schedule?.raw?.provider === 'rebill'
+    || schedule?.raw?.schedule?.provider === 'rebill';
+}
+
 async function markLocalInvoiceScheduleStatus(scheduleId, status, rawPatch = {}) {
   const now = new Date().toISOString();
   const existing = await getLocalInvoiceSchedule(scheduleId);
@@ -3651,6 +3658,9 @@ export const listInvoiceSchedules = async (req, res) => {
     await refreshConektaPaymentPlanMirrors().catch((error) => {
       logger.warn(`No se pudieron refrescar espejos locales de planes Conekta: ${error.message}`);
     });
+    await refreshRebillPaymentPlanMirrors().catch((error) => {
+      logger.warn(`No se pudieron refrescar espejos locales de planes Rebill: ${error.message}`);
+    });
 
     const localStripePlans = await listLocalInvoiceSchedules({
       activeOnly,
@@ -3659,6 +3669,10 @@ export const listInvoiceSchedules = async (req, res) => {
     const localConektaPlans = await listLocalInvoiceSchedules({
       activeOnly,
       source: 'conekta'
+    });
+    const localRebillPlans = await listLocalInvoiceSchedules({
+      activeOnly,
+      source: 'rebill'
     });
 
     const highLevelConfig = await getHighLevelConfig().catch(() => null);
@@ -3699,6 +3713,11 @@ export const listInvoiceSchedules = async (req, res) => {
         return true;
       }),
       ...localConektaPlans.filter(schedule => {
+        if (!schedule.id || seenIds.has(schedule.id)) return false;
+        seenIds.add(schedule.id);
+        return true;
+      }),
+      ...localRebillPlans.filter(schedule => {
         if (!schedule.id || seenIds.has(schedule.id)) return false;
         seenIds.add(schedule.id);
         return true;
@@ -3767,6 +3786,10 @@ export const getInvoiceSchedule = async (req, res) => {
         data: localSchedule,
         source: 'local_conekta'
       });
+    }
+
+    if (isRebillLocalInvoiceSchedule(localSchedule)) {
+      return res.json({ success: true, data: localSchedule, source: 'local_rebill' });
     }
 
     const ghlClient = await getGHLClient();
@@ -3868,6 +3891,13 @@ export const updateInvoiceSchedule = async (req, res) => {
         data: updatedLocalSchedule,
         source: 'local_conekta'
       });
+    }
+
+
+    if (isRebillLocalInvoiceSchedule(localSchedule)) {
+      await updateRebillPaymentPlanSchedule(scheduleId, payload, { baseUrl: getPublicBaseUrl(req) });
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+      return res.json({ success: true, data: updatedLocalSchedule, source: 'local_rebill' });
     }
 
     const ghlClient = await getGHLClient();
@@ -4035,6 +4065,18 @@ export const actionInvoiceSchedule = async (req, res) => {
         data: updatedLocalSchedule || actionResult,
         source: 'local_conekta'
       });
+    }
+
+
+    if (isRebillLocalInvoiceSchedule(localSchedule)) {
+      const actionMap = { activate: 'activate', pause: 'pause', cancel: 'cancel', delete: 'delete', change_card: 'change_card' };
+      const rebillAction = actionMap[action];
+      if (!rebillAction) {
+        return res.status(409).json({ success: false, error: 'Esta acción no aplica para planes de Rebill.' });
+      }
+      const actionResult = await applyRebillPaymentPlanAction(scheduleId, rebillAction, { baseUrl: getPublicBaseUrl(req) });
+      const updatedLocalSchedule = await getLocalInvoiceSchedule(scheduleId);
+      return res.json({ success: true, data: updatedLocalSchedule || actionResult, source: 'local_rebill' });
     }
 
     const ghlClient = await getGHLClient();

@@ -66,15 +66,9 @@ function secondsOfDay(value, timeZone = 'America/Mexico_City') {
   return Number(parts.hour || 0) * 3600 + Number(parts.minute || 0) * 60 + Number(parts.second || 0)
 }
 
-function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly, createdBefore, createdAfter) {
+function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly) {
   assert.equal(zonedDateOnly(storedValue), expectedDateOnly)
-  const storedSeconds = secondsOfDay(storedValue)
-  const beforeSeconds = Math.max(0, secondsOfDay(createdBefore) - 1)
-  const afterSeconds = Math.min(86399, secondsOfDay(createdAfter) + 1)
-  const inRange = beforeSeconds <= afterSeconds
-    ? storedSeconds >= beforeSeconds && storedSeconds <= afterSeconds
-    : storedSeconds >= beforeSeconds || storedSeconds <= afterSeconds
-  assert.ok(inRange, `expected stored plan time ${storedSeconds} to be between ${beforeSeconds} and ${afterSeconds}`)
+  assert.equal(secondsOfDay(storedValue), 10 * 60 * 60)
 }
 
 async function cleanup(ids) {
@@ -1070,20 +1064,21 @@ test('usa la nueva tarjeta domiciliada en cobros automáticos posteriores', asyn
       `UPDATE installment_payments
        SET status = 'scheduled',
            payment_method = 'stripe_saved_card',
-           due_date = '2000-01-01',
+           due_date = ?,
+           frequency = 'scheduled_time',
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [ids.installmentId]
+      [new Date(Date.now() - 2 * 60 * 1000).toISOString(), ids.installmentId]
     )
 
     await db.run(
       `UPDATE payments
        SET status = 'pending',
            payment_method = 'stripe_scheduled_card',
-           due_date = '2000-01-01',
+           due_date = ?,
            updated_at = CURRENT_TIMESTAMP
        WHERE id = ?`,
-      [ids.installmentPaymentId]
+      [new Date(Date.now() - 2 * 60 * 1000).toISOString(), ids.installmentPaymentId]
     )
 
     const dueRun = await processDueStripePaymentPlanCharges({ limit: 5 })

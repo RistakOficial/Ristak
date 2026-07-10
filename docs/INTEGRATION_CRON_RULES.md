@@ -36,6 +36,23 @@ externo esté conectado. Ejemplos:
 
 Aunque estén siempre activos, cada job debe seguir siendo idempotente y seguro.
 
+## Regla Extra Para Cobros
+
+Un cron que puede cobrar dinero debe usar un lease distribuido con dueño,
+renovación y liberación condicionada al mismo dueño. Debe operar en modo
+`failOpen: false`: si la DB no puede demostrar que esta instancia tiene el lock,
+el cron se omite. Un error de infraestructura nunca autoriza cobrar "de todos
+modos".
+
+El lease debe durar más que el intervalo normal y renovarse mientras el trabajo
+siga activo. Además del lock global, cada pago debe reclamar atómicamente su
+fila a `processing` y volver a comprobar que el flujo continúa activo dentro del
+mismo `UPDATE`. Pausar o cancelar debe fallar con `409` si un cobro ya está en
+proceso, en lugar de confirmar un estado engañoso.
+
+Los crones de planes no hacen catch-up de fechas de negocio anteriores: mueven
+esas cuotas a revisión y esperan una reprogramación explícita.
+
 ## Qué Cuenta Como Cron De Integración
 
 Si el job necesita cualquiera de estos datos, es cron de integración:

@@ -73,6 +73,7 @@ final class InstallmentsPlanModel {
     var successMessage: String?
 
     private let timeZoneProvider: () -> TimeZone
+    private let gatewayPaymentPlanIdempotencyKey = "ristak-ios-plan-\(UUID().uuidString.lowercased())"
 
     init(contact: PickedPaymentContact, timeZoneProvider: @escaping () -> TimeZone) {
         self.contact = contact
@@ -109,29 +110,45 @@ final class InstallmentsPlanModel {
         (totalAmount ?? 0) - assignedTotal
     }
 
-    /// Tolerancia del backend: ±$0.50 (doc 08 §2.9).
-    var isBalanced: Bool {
-        abs(remainder) <= PaymentFlowInstallmentsRequest.sumTolerance
+    func remainderMinorUnits(currency: String) -> Int64? {
+        guard let total = totalAmount,
+              let totalUnits = PaymentPlanAmountMath.minorUnits(total, currency: currency),
+              let firstUnits = PaymentPlanAmountMath.minorUnits(firstPaymentAmount, currency: currency) else {
+            return nil
+        }
+        var assignedUnits = firstUnits
+        for row in rows {
+            guard let rowUnits = PaymentPlanAmountMath.minorUnits(rowAmount(row), currency: currency) else {
+                return nil
+            }
+            assignedUnits += rowUnits
+        }
+        return totalUnits - assignedUnits
+    }
+
+    func isBalanced(currency: String) -> Bool {
+        remainderMinorUnits(currency: currency) == 0
     }
 
     // MARK: Reparto en partes iguales (botón «Distribuir»)
 
-    func distributeEqually() {
+    func distributeEqually(currency: String) {
         guard let total = totalAmount, total > 0 else { return }
         let slots = rows.count + 1 // primer pago + restantes
-        guard slots > 0 else { return }
+        guard slots > 0,
+              let totalUnits = PaymentPlanAmountMath.minorUnits(total, currency: currency) else { return }
+        let factor = Double(PaymentPlanAmountMath.minorUnitFactor(currency: currency))
+        let eachUnits = totalUnits / Int64(slots)
+        firstPaymentAmountText = SinglePaymentModel.plainAmountText(Double(eachUnits) / factor)
 
-        let each = ((total / Double(slots)) * 100).rounded() / 100
-        firstPaymentAmountText = SinglePaymentModel.plainAmountText(each)
-
-        var assigned = each
+        var assignedUnits = eachUnits
         for index in rows.indices {
             if index == rows.count - 1 {
-                let last = max(0, ((total - assigned) * 100).rounded() / 100)
-                rows[index].amountText = SinglePaymentModel.plainAmountText(last)
+                let lastUnits = max(0, totalUnits - assignedUnits)
+                rows[index].amountText = SinglePaymentModel.plainAmountText(Double(lastUnits) / factor)
             } else {
-                rows[index].amountText = SinglePaymentModel.plainAmountText(each)
-                assigned += each
+                rows[index].amountText = SinglePaymentModel.plainAmountText(Double(eachUnits) / factor)
+                assignedUnits += eachUnits
             }
         }
     }
@@ -186,7 +203,7 @@ final class InstallmentsPlanModel {
             validationMessage = "Todos los pagos restantes necesitan monto y fecha"
             return false
         }
-        guard isBalanced else {
+        guard isBalanced(currency: formatters.currencyCode) else {
             let difference = formatters.currency(abs(remainder))
             validationMessage = "Las parcialidades no cuadran: faltan o sobran \(difference)"
             return false
@@ -217,10 +234,9 @@ final class InstallmentsPlanModel {
 
         let timeZone = timeZoneProvider()
         let firstEnabled = firstPaymentAmount > 0
-        let firstDateString = PaymentsDateMath.dateString(
-            firstPaymentImmediate ? Date() : firstPaymentDate,
-            timeZone: timeZone
-        )
+        let firstDateString = firstPaymentImmediate
+            ? ISO8601DateFormatter().string(from: Date())
+            : PaymentsDateMath.dateString(firstPaymentDate, timeZone: timeZone)
 
         let firstPayment = PaymentPlanFirstPayment(
             enabled: firstEnabled,
@@ -255,6 +271,7 @@ final class InstallmentsPlanModel {
             switch destination {
             case .gateway(let gateway):
                 let request = GatewayPaymentPlanRequest(
+                    idempotencyKey: gatewayPaymentPlanIdempotencyKey,
                     contact: planContact,
                     totalAmount: total,
                     currency: accountCurrency,
@@ -550,7 +567,7 @@ struct InstallmentsFlowView: View {
             }
 
             Button {
-                model.distributeEqually()
+                model.distributeEqually(currency: appConfig.displayCurrencyCode)
             } label: {
                 Label("Distribuir en partes iguales", systemImage: "equal.circle")
             }
@@ -561,6 +578,8 @@ struct InstallmentsFlowView: View {
     private var balanceSection: some View {
         let formatters = appConfig.formatters
         let total = model.totalAmount ?? 0
+        let remainderMinorUnits = model.remainderMinorUnits(currency: appConfig.displayCurrencyCode)
+        let isBalanced = remainderMinorUnits == 0
 
         return Section {
             HStack {
@@ -571,18 +590,18 @@ struct InstallmentsFlowView: View {
                 Text("\(formatters.currency(model.assignedTotal)) / \(formatters.currency(total))")
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
-                    .foregroundStyle(model.isBalanced ? RistakTheme.pos : RistakTheme.warn)
+                    .foregroundStyle(isBalanced ? RistakTheme.pos : RistakTheme.warn)
             }
 
-            if model.isBalanced, total > 0 {
+            if isBalanced, total > 0 {
                 Text("El plan cuadra con el total a cobrar.")
                     .font(.caption)
                     .foregroundStyle(RistakTheme.pos)
-            } else if model.remainder > PaymentFlowInstallmentsRequest.sumTolerance {
+            } else if (remainderMinorUnits ?? 0) > 0 {
                 Text("Faltan \(formatters.currency(model.remainder)) por asignar.")
                     .font(.caption)
                     .foregroundStyle(RistakTheme.warn)
-            } else if model.remainder < -PaymentFlowInstallmentsRequest.sumTolerance {
+            } else if (remainderMinorUnits ?? 0) < 0 {
                 Text("Te excediste \(formatters.currency(abs(model.remainder))) del total.")
                     .font(.caption)
                     .foregroundStyle(RistakTheme.neg)

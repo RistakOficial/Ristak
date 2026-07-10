@@ -1,55 +1,40 @@
-import { db } from '../config/database.js'
 import { logger } from './logger.js'
-
-function sqlNow(offsetMs = 0) {
-  // Formato 'YYYY-MM-DD HH:MM:SS' (UTC) para comparar bien en SQLite (texto) y Postgres (timestamp).
-  return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ')
-}
+import {
+  acquireDistributedLock,
+  releaseDistributedLock,
+  renewDistributedLock
+} from './distributedLock.js'
 
 /**
- * (CRON-009) Ejecuta fn solo si se obtiene el lock distribuido `name`. Evita que un cron
- * sensible (p. ej. cobros) corra en dos instancias a la vez. El lock se reclama si está
- * libre o EXPIRADO (ttlMs), y se libera al terminar. Portable SQLite/Postgres.
- *
- * Fail-open a propósito: si la tabla de locks no existe o hay un error de DB, se ejecuta
- * fn igual (no es peor que el comportamiento previo sin lock).
- *
- * @param {string} name
- * @param {number} ttlMs - vida del lock si el proceso muere sin liberar (usa el intervalo del cron)
- * @param {() => Promise<any>} fn
- * @returns {Promise<{ ran: boolean }>}
+ * Ejecuta fn con un lease distribuido con dueño y renovación. Los crones
+ * financieros deben pasar failOpen:false: si la DB no puede demostrar que esta
+ * instancia es la única dueña, no se cobra.
  */
-export async function withCronLock(name, ttlMs, fn) {
-  let acquired = false
-  try {
-    const res = await db.run(
-      `INSERT INTO cron_locks (name, locked_until) VALUES (?, ?)
-       ON CONFLICT(name) DO UPDATE SET locked_until = excluded.locked_until
-       WHERE cron_locks.locked_until <= ?`,
-      [name, sqlNow(Math.max(1000, ttlMs)), sqlNow(0)]
-    )
-    acquired = Number(res?.changes || 0) > 0
-  } catch (error) {
-    logger.warn(`[CronLock] No se pudo evaluar el lock "${name}" (se ejecuta igual): ${error.message}`)
-    return runSafely(fn)
-  }
-
+export async function withCronLock(name, ttlMs, fn, { failOpen = true, leaseTtlMs } = {}) {
+  const leaseDuration = Math.max(Number(leaseTtlMs || 0), Number(ttlMs || 0), 60_000)
+  const { acquired, lock } = await acquireDistributedLock(name, leaseDuration, { failOpen })
   if (!acquired) return { ran: false }
 
-  try {
-    const result = await fn()
-    return { ran: true, result }
-  } finally {
-    try {
-      // Liberar: dejar locked_until en el pasado para que el siguiente tick pueda tomarlo.
-      await db.run('UPDATE cron_locks SET locked_until = ? WHERE name = ?', [sqlNow(0), name])
-    } catch (error) {
-      logger.warn(`[CronLock] No se pudo liberar el lock "${name}": ${error.message}`)
-    }
-  }
-}
+  let leaseLost = false
+  const heartbeatMs = Math.max(5_000, Math.floor(leaseDuration / 3))
+  const heartbeat = setInterval(() => {
+    renewDistributedLock(lock).then((renewed) => {
+      if (!renewed) {
+        leaseLost = true
+        logger.error(`[CronLock] Se perdió el lease "${name}"; el trabajo actual no debe iniciar nuevos efectos externos.`)
+      }
+    }).catch((error) => {
+      leaseLost = true
+      logger.error(`[CronLock] Error renovando "${name}": ${error.message}`)
+    })
+  }, heartbeatMs)
+  heartbeat.unref?.()
 
-async function runSafely(fn) {
-  const result = await fn()
-  return { ran: true, result }
+  try {
+    const result = await fn({ isLeaseValid: () => !leaseLost })
+    return { ran: true, result, leaseLost }
+  } finally {
+    clearInterval(heartbeat)
+    await releaseDistributedLock(lock)
+  }
 }

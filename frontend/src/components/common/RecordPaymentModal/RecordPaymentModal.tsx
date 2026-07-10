@@ -63,6 +63,15 @@ const DEFAULT_INVOICE_TITLE = 'Pago'
 const CONTACT_SEARCH_DELAY_MS = 90
 
 const formatCurrency = (value: number, currency = 'MXN'): string => formatMxCurrency(value, currency)
+const ZERO_DECIMAL_CURRENCIES = new Set(['BIF', 'CLP', 'DJF', 'GNF', 'ISK', 'JPY', 'KMF', 'KRW', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF'])
+const toCurrencyMinorUnits = (value: number, currency: string) => (
+  Math.round(value * (ZERO_DECIMAL_CURRENCIES.has(currency.toUpperCase()) ? 1 : 100))
+)
+
+const createPaymentPlanRequestKey = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
+  return `ristak-plan-${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
+}
 
 const normalizeAmount = (value: string | number): number => {
   if (typeof value === 'number') {
@@ -586,6 +595,13 @@ const buildPlanChargeDateValue = (dateValue: string) => {
   return dateOnly
 }
 
+const buildFirstPaymentChargeDateValue = (dateValue: string, immediate: boolean, timezone: string) => {
+  const dateOnly = getDateOnly(dateValue)
+  if (!dateOnly) return ''
+  if (immediate && dateOnly === todayDateOnlyInTimezone(timezone)) return new Date().toISOString()
+  return dateOnly
+}
+
 const getCollisionReflowFrequency = (frequency: RemainingFrequency): RemainingFrequency => (
   frequency === 'custom' ? 'monthly' : frequency
 )
@@ -712,6 +728,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const customerLowerLabel = formatCrmLabelLower(customerLabel, DEFAULT_CRM_LABELS.customer)
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<RecordPaymentStep>('form')
+  const paymentPlanRequestKeyRef = useRef('')
 
   // Contact search
   const [searchQuery, setSearchQuery] = useState('')
@@ -902,10 +919,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   )
   const partialPlanTotal = normalizeAmount(firstPaymentAmount + remainingTotalAmount)
   const partialPlanDifference = normalizeAmount(totalAmount - partialPlanTotal)
+  const partialPlanMatches = toCurrencyMinorUnits(totalAmount, currency) === toCurrencyMinorUnits(partialPlanTotal, currency)
   const partialAllocatedPct = totalAmount > 0
     ? Math.min(100, Math.max(0, (partialPlanTotal / totalAmount) * 100))
     : 0
-  const partialPlanStatus: 'ok' | 'under' | 'over' = Math.abs(partialPlanDifference) <= 0.5
+  const partialPlanStatus: 'ok' | 'under' | 'over' = partialPlanMatches
     ? 'ok'
     : partialPlanDifference > 0
       ? 'under'
@@ -1663,6 +1681,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) {
+      paymentPlanRequestKeyRef.current = ''
       resetForm()
       return
     }
@@ -2238,7 +2257,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       type: firstPaymentType,
       value: normalizeAmount(firstPaymentValue),
       amount: firstPaymentAmount,
-      date: buildPlanChargeDateValue(firstPaymentDate),
+      date: buildFirstPaymentChargeDateValue(firstPaymentDate, firstPaymentActive, timezone),
       frequency: remainingFrequency,
       method: firstPaymentActive ? firstPaymentMethod : 'none'
     },
@@ -2271,7 +2290,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
     firstPayment: {
       enabled: firstPaymentActive,
       amount: firstPaymentAmount,
-      date: buildPlanChargeDateValue(firstPaymentDate),
+      date: buildFirstPaymentChargeDateValue(firstPaymentDate, firstPaymentActive, timezone),
       frequency: remainingFrequency,
       method: firstPaymentActive ? firstPaymentMethod || 'card' : 'none'
     },
@@ -2464,7 +2483,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
         return
       }
 
-      if (Math.abs(partialPlanDifference) > 0.5) {
+      if (!partialPlanMatches) {
         showToast('error', `Las parcialidades no cuadran: faltan o sobran ${formatCurrency(Math.abs(partialPlanDifference), currency)}`)
         return
       }
@@ -2792,9 +2811,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       try {
-        const result = await stripePaymentsService.createPaymentPlan(
-          buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'stripe')
-        )
+        paymentPlanRequestKeyRef.current ||= createPaymentPlanRequestKey()
+        const result = await stripePaymentsService.createPaymentPlan({
+          ...buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'stripe'),
+          idempotencyKey: paymentPlanRequestKeyRef.current
+        })
 
         if (result.cardSetupLink) {
           const setupAmount = result.cardSetupAmount || cardSetupAmount
@@ -2864,9 +2885,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       try {
-        const result = await conektaPaymentsService.createPaymentPlan(
-          buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'conekta')
-        )
+        paymentPlanRequestKeyRef.current ||= createPaymentPlanRequestKey()
+        const result = await conektaPaymentsService.createPaymentPlan({
+          ...buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'conekta'),
+          idempotencyKey: paymentPlanRequestKeyRef.current
+        })
 
         if (result.cardSetupLink) {
           const setupAmount = result.cardSetupAmount || cardSetupAmount
@@ -2934,9 +2957,11 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       try {
-        const result = await rebillPaymentsService.createPaymentPlan(
-          buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'rebill')
-        )
+        paymentPlanRequestKeyRef.current ||= createPaymentPlanRequestKey()
+        const result = await rebillPaymentsService.createPaymentPlan({
+          ...buildGatewayPaymentPlanPayload(invoicePayload, invoiceSummary, 'rebill'),
+          idempotencyKey: paymentPlanRequestKeyRef.current
+        })
 
         if (result.cardSetupLink) {
           const setupAmount = result.cardSetupAmount || cardSetupAmount

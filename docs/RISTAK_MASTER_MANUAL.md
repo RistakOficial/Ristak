@@ -1375,7 +1375,7 @@ marca como omitido en vez de mandar un WhatsApp tarde.
 
 ### Planes de pago locales
 
-En Stripe, Conekta y Mercado Pago, el calendario editable muestra y guarda cada
+En Stripe, Conekta, Rebill y Mercado Pago, el calendario editable muestra y guarda cada
 pago como `Pago N/M`, donde `N` es la posicion visible del pago y `M` es el total
 actual del plan. Si el calendario se edita, por ejemplo de 3 a 6 pagos, Ristak
 actualiza tambien los `title`/`description` de pagos existentes de `1/3` a `1/6`
@@ -1386,6 +1386,52 @@ la cuota o primer pago a `processing` antes de llamar a la pasarela. Stripe,
 Conekta y Rebill usan este claim atomico mas los locks del cron para evitar doble
 cargo ante solapes de deploy, ticks concurrentes o ejecuciones manuales. Mercado
 Pago no cobra cuotas locales desde el cron; genera/libera links programados.
+Mercado Pago y CLIP no se ofrecen para crear planes nuevos: Mercado Pago queda
+disponible para links únicos y suscripciones, y CLIP para pagos únicos. El cron
+de Mercado Pago sólo conserva compatibilidad con planes legados; reclama cada
+fila antes de generar el link y nunca libera automáticamente un link atrasado.
+
+Blindajes obligatorios del reloj de cobros:
+
+- Cada creación Stripe/Conekta/Rebill usa una llave idempotente generada por el
+  cliente. Durante compatibilidad con apps anteriores, backend deriva una llave
+  conservadora por día de negocio y payload. `payment_plan_creation_requests`
+  guarda huella, estado y respuesta; repetir la misma petición reproduce el
+  resultado y no ejecuta otro cobro.
+- El primer cargo con tarjeta guardada no ocurre dentro de la petición que crea
+  el plan. El flujo permanece en el estado interno no cobrable `creating` hasta
+  que se hayan persistido flujo, pagos y parcialidades; sólo entonces cambia de
+  estado y el cron puede tomarlo en el siguiente tick. Si el alta falla a medias,
+  el flujo queda `creation_failed_review` y todos sus cargos automáticos quedan
+  bloqueados.
+- La suma del primer pago y parcialidades debe coincidir exactamente con el
+  total en unidades mínimas de la moneda. No existe tolerancia de `0.50`.
+- Las fechas programadas sin hora explícita se fijan a las 10:00 en la zona del
+  negocio. Cuando el usuario elige cobro inmediato para hoy, el cliente envía el
+  instante UTC actual para que el próximo tick lo procese sin convertirlo en un
+  cobro diferido de las 10:00.
+- El cron sólo cobra vencimientos del día de negocio actual. Cualquier fecha de
+  un día anterior queda `overdue_review`/`overdue`; reiniciar, reconectar o
+  reanudar nunca dispara una ráfaga de cobros atrasados. El flujo completo se
+  pausa hasta que esas fechas se revisen y reprogramen.
+- Un fallo de proveedor o tarjeta queda visible como `failed` o
+  `requires_action` y no se reintenta automáticamente. Para volver a cobrar se
+  requiere revisión y reprogramación explícita.
+- Pausar, cancelar, eliminar o editar falla con conflicto si una parcialidad ya
+  está `processing`. El claim del cron vuelve a comprobar dentro del mismo
+  `UPDATE` que el plan continúa activo.
+- Mientras se edita, el flujo usa el estado interno `editing`, que impide nuevos
+  claims. Si la mutación falla después de haber comenzado, el plan queda
+  `paused` por seguridad hasta que el usuario revise y vuelva a activarlo.
+- Los crones de Stripe, Conekta, Rebill y compatibilidad legada de Mercado Pago
+  usan lock distribuido con dueño, heartbeat y
+  `failOpen=false`; si la DB no confirma exclusividad, se omite el barrido.
+- Los webhooks Conekta sin llave pública de firma o con `DIGEST` inválido se
+  rechazan y no alteran estados financieros.
+
+Rebill es completamente local para listar, abrir, editar, pausar, reanudar,
+cancelar, eliminar y cambiar tarjeta. Esas acciones nunca deben caer al cliente
+de HighLevel cuando `payment_plans.source='rebill'`.
 
 ### Moneda de cuenta
 
@@ -1526,7 +1572,8 @@ Alcance:
 - Planes de pago administrados por Ristak: `payment_flows.payment_provider='rebill'`
   y `payment_plans.source='rebill'`. Rebill solo procesa cada checkout; Ristak es
   dueno del calendario, vencimientos y estado del plan (`clockOwner='ristak'`).
-  Cuando el plan tiene tarjeta guardada, el cron cobra cada parcialidad vencida
+  Cuando el plan tiene tarjeta guardada, el cron cobra cada parcialidad que vence
+  en el día de negocio actual
   con `cardId`; si falta tarjeta, el primer pago o la domiciliacion guardan la
   tarjeta antes de activar los cobros futuros.
 - Checkout de Sites con redireccion al Checkout Landing hospedado de Rebill
@@ -1610,7 +1657,9 @@ Alcance:
   el resolvedor de pagos existente.
 - Cron `rebill-payment-plans`: corre por el registry de crons de integracion y
   solo se activa si Rebill esta conectado en el modo de pago activo. Revisa
-  primeros pagos y parcialidades vencidas segun la zona horaria de la cuenta. Si
+  primeros pagos y parcialidades que vencen en el día actual segun la zona
+  horaria de la cuenta. Las fechas de días anteriores pasan a revisión y no se
+  cobran por catch-up. Si
   el flujo ya tiene `rebill_card_id`, cobra con `POST /v3/checkout` usando
   el `customer` estructurado del contacto + `cardId`; si el primer pago estaba
   programado y aun no hay tarjeta, libera su Payment Link hospedado de Rebill.

@@ -79,15 +79,19 @@ function secondsOfDay(value, timeZone = 'America/Mexico_City') {
   return Number(parts.hour || 0) * 3600 + Number(parts.minute || 0) * 60 + Number(parts.second || 0)
 }
 
-function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly, createdBefore, createdAfter) {
+function assertPlanTimeMatchesCreation(storedValue, expectedDateOnly) {
   assert.equal(zonedDateOnly(storedValue), expectedDateOnly)
-  const storedSeconds = secondsOfDay(storedValue)
-  const beforeSeconds = Math.max(0, secondsOfDay(createdBefore) - 1)
-  const afterSeconds = Math.min(86399, secondsOfDay(createdAfter) + 1)
-  const inRange = beforeSeconds <= afterSeconds
-    ? storedSeconds >= beforeSeconds && storedSeconds <= afterSeconds
-    : storedSeconds >= beforeSeconds || storedSeconds <= afterSeconds
-  assert.ok(inRange, `expected stored plan time ${storedSeconds} to be between ${beforeSeconds} and ${afterSeconds}`)
+  assert.equal(secondsOfDay(storedValue), 10 * 60 * 60)
+}
+
+async function makeInstallmentsDueNow(installmentIds) {
+  const dueAt = new Date(Date.now() - 2 * 60 * 1000).toISOString()
+  for (const installmentId of installmentIds) {
+    await db.run(
+      `UPDATE installment_payments SET due_date = ?, frequency = 'scheduled_time', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [dueAt, installmentId]
+    )
+  }
 }
 
 function testPhoneFromSuffix(idSuffix) {
@@ -430,6 +434,8 @@ test('planes Stripe: cobra calendario irregular, deja meses sin cobro y no dupli
     assert.equal(plan.scheduledPayments.length, 3)
     assert.equal(calls.paymentIntentsCreate.length, 0)
 
+    await makeInstallmentsDueNow(plan.scheduledPayments.slice(0, 2).map((payment) => payment.installmentId))
+
     const firstRun = await processDueStripePaymentPlanCharges({ limit: 10 })
     assert.equal(firstRun.length, 2)
     assert.equal(calls.paymentIntentsCreate.length, 2)
@@ -588,6 +594,11 @@ test('planes Stripe: conserva varios planes del mismo contacto y cobra solo los 
     assert.equal(offlineFirstPayment.payment_method, 'cash')
     assert.equal(offlineFirstPayment.amount, 100)
 
+    await makeInstallmentsDueNow([
+      firstPlan.scheduledPayments[0].installmentId,
+      otherContactPlan.scheduledPayments[0].installmentId
+    ])
+
     const firstRun = await processDueStripePaymentPlanCharges({ limit: 10 })
     assert.equal(firstRun.length, 2)
     assert.equal(calls.paymentIntentsCreate.length, 2)
@@ -622,7 +633,7 @@ test('planes Stripe: conserva varios planes del mismo contacto y cobra solo los 
   }
 })
 
-test('planes Stripe: cobra primer pago inmediato con tarjeta guardada y deja futuros programados', async () => {
+test('planes Stripe: persiste el plan completo antes de cobrar el primer pago con tarjeta guardada', async () => {
   const { contactId, contact, savedMethodId } = await seedContactWithSavedCard('first')
   const { stripe, calls } = createStripeMock()
   setStripeFactoryForTest(() => stripe)
@@ -649,6 +660,14 @@ test('planes Stripe: cobra primer pago inmediato con tarjeta guardada y deja fut
       ]
     }, { baseUrl: 'https://example.test' })
 
+    assert.equal(calls.paymentIntentsCreate.length, 0)
+
+    await db.run(
+      `UPDATE payment_flows SET first_payment_date = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [new Date(Date.now() - 2 * 60 * 1000).toISOString(), plan.flowId]
+    )
+    const dueRun = await processDueStripePaymentPlanCharges({ limit: 10 })
+    assert.equal(dueRun.length, 1)
     assert.equal(calls.paymentIntentsCreate.length, 1)
     assert.equal(calls.paymentIntentsCreate[0].params.amount, 80000)
 
@@ -667,8 +686,8 @@ test('planes Stripe: cobra primer pago inmediato con tarjeta guardada y deja fut
     assert.equal(firstPayment.stripe_payment_intent_id, 'pi_stress_1')
     assert.equal(installment.status, 'scheduled')
 
-    const dueRun = await processDueStripePaymentPlanCharges({ limit: 10 })
-    assert.equal(dueRun.length, 0)
+    const duplicateRun = await processDueStripePaymentPlanCharges({ limit: 10 })
+    assert.equal(duplicateRun.length, 0)
     assert.equal(calls.paymentIntentsCreate.length, 1)
   } finally {
     setStripeFactoryForTest(null)
@@ -707,6 +726,7 @@ test('planes Stripe: payment ya pagado sincroniza parcialidad sin recobrar tarje
        WHERE id = ?`,
       [paymentId]
     )
+    await makeInstallmentsDueNow([installmentId])
 
     const result = await processDueStripePaymentPlanCharges({ limit: 10 })
     assert.equal(result.length, 1)
@@ -745,6 +765,7 @@ test('planes Stripe: tarjeta con requires_action marca error y evita reintentos 
 
     const paymentId = plan.scheduledPayments[0].paymentId
     const installmentId = plan.scheduledPayments[0].installmentId
+    await makeInstallmentsDueNow([installmentId])
     const firstRun = await processDueStripePaymentPlanCharges({ limit: 10 })
 
     assert.equal(firstRun.length, 1)
@@ -891,7 +912,7 @@ test('planes Stripe: primer pago con hora exacta no se cobra antes de la hora pr
   }
 })
 
-test('planes Stripe: fechas sin hora usan la hora de creación del plan', async () => {
+test('planes Stripe: fechas sin hora usan las 10:00 del negocio', async () => {
   const { contactId, contact, savedMethodId } = await seedContactWithSavedCard('default_plan_time')
   const { stripe, calls } = createStripeMock()
   setStripeFactoryForTest(() => stripe)

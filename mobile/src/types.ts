@@ -687,6 +687,7 @@ export type HighLevelRecordPaymentPayload = {
 };
 
 export type PaymentPlanPayload = {
+  idempotencyKey?: string;
   contact: {
     id: string;
     name?: string;

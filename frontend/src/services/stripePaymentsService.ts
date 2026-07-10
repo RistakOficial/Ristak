@@ -277,6 +277,7 @@ export interface StripeSavedCardPaymentPayload {
 }
 
 export interface StripePaymentPlanPayload {
+  idempotencyKey?: string
   contact: {
     id: string
     name?: string
@@ -408,6 +409,7 @@ export const stripePaymentsService = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(payload.idempotencyKey ? { 'Idempotency-Key': payload.idempotencyKey } : {}),
         ...getAuthHeaders()
       },
       body: JSON.stringify(payload)

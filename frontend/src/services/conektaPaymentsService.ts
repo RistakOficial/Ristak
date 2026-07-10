@@ -205,6 +205,7 @@ export interface ConektaSavedCardPaymentPayload {
 }
 
 export interface ConektaPaymentPlanPayload {
+  idempotencyKey?: string
   contact: {
     id: string
     name?: string
@@ -332,6 +333,7 @@ export const conektaPaymentsService = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        ...(payload.idempotencyKey ? { 'Idempotency-Key': payload.idempotencyKey } : {}),
         ...getAuthHeaders()
       },
       body: JSON.stringify(payload)

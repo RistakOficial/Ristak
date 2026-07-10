@@ -25,6 +25,11 @@ import {
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
+import {
+  assertPlanCanChangeState,
+  markOverduePaymentPlanChargesForReview,
+  withPaymentPlanEditState
+} from './paymentPlanSafetyService.js'
 import { createPublicPaymentId, createRistakPaymentEntityId } from '../utils/idGenerator.js'
 import {
   DEFAULT_TIMEZONE as ACCOUNT_DEFAULT_TIMEZONE,
@@ -1755,7 +1760,20 @@ async function updatePlanPaymentTitle(paymentId, title, description = title) {
   )
 }
 
-export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, { baseUrl = '' } = {}) {
+export async function updateMercadoPagoPaymentPlanSchedule(flowId, input = {}, options = {}) {
+  const cleanFlowId = cleanString(flowId)
+  await assertPlanCanChangeState(cleanFlowId)
+  const result = await withPaymentPlanEditState(cleanFlowId, 'mercadopago', () => (
+    updateMercadoPagoPaymentPlanScheduleLocked(cleanFlowId, input, options)
+  ))
+  await persistMercadoPagoPaymentPlanMirror(cleanFlowId, {
+    localAction: 'update_schedule',
+    actionedAt: new Date().toISOString()
+  })
+  return result
+}
+
+async function updateMercadoPagoPaymentPlanScheduleLocked(flowId, input = {}, { baseUrl = '' } = {}) {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) {
     const error = new Error('Plan Mercado Pago requerido.')
@@ -2184,15 +2202,20 @@ export async function applyMercadoPagoPaymentPlanAction(flowId, action) {
   const now = new Date().toISOString()
   const stateHistory = (nextState) => addPlanState(flow.state_history, nextState)
 
+  if (['activate', 'pause', 'cancel', 'delete'].includes(normalizedAction)) {
+    await assertPlanCanChangeState(cleanFlowId, { activating: normalizedAction === 'activate' })
+  }
+
   if (normalizedAction === 'activate') {
-    await db.run(
+    const activationResult = await db.run(
       `UPDATE payment_flows
        SET current_state = ?,
            installment_plan_created_at = COALESCE(installment_plan_created_at, ?),
            installment_plan_active_at = COALESCE(installment_plan_active_at, ?),
            state_history = ?,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       WHERE id = ?
+         AND NOT EXISTS (SELECT 1 FROM installment_payments i WHERE i.flow_id = payment_flows.id AND i.status = 'processing')`,
       [
         MP_PLAN_STATES.ACTIVE,
         now,
@@ -2201,23 +2224,34 @@ export async function applyMercadoPagoPaymentPlanAction(flowId, action) {
         cleanFlowId
       ]
     )
+    if (Number(activationResult?.changes || 0) !== 1) {
+      const error = new Error('La generación de un enlace comenzó justo antes de activar. Espera a que termine y vuelve a intentarlo.')
+      error.status = 409
+      throw error
+    }
 
     return persistMercadoPagoPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
   }
 
   if (normalizedAction === 'pause') {
-    await db.run(
+    const pauseResult = await db.run(
       `UPDATE payment_flows
        SET current_state = ?,
            state_history = ?,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       WHERE id = ?
+         AND NOT EXISTS (SELECT 1 FROM installment_payments i WHERE i.flow_id = payment_flows.id AND i.status = 'processing')`,
       [
         MP_PLAN_STATES.PAUSED,
         JSON.stringify(stateHistory(MP_PLAN_STATES.PAUSED)),
         cleanFlowId
       ]
     )
+    if (Number(pauseResult?.changes || 0) !== 1) {
+      const error = new Error('La generación de un enlace comenzó justo antes de pausar. Espera a que termine y vuelve a intentarlo.')
+      error.status = 409
+      throw error
+    }
 
     return persistMercadoPagoPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
   }
@@ -2253,18 +2287,24 @@ export async function applyMercadoPagoPaymentPlanAction(flowId, action) {
   const finalPaymentStatus = normalizedAction === 'delete' ? 'deleted' : 'void'
   const finalInstallmentStatus = normalizedAction === 'delete' ? 'deleted' : 'cancelled'
 
-  await db.run(
+  const closeResult = await db.run(
     `UPDATE payment_flows
      SET current_state = ?,
          state_history = ?,
          updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
+     WHERE id = ?
+       AND NOT EXISTS (SELECT 1 FROM installment_payments i WHERE i.flow_id = payment_flows.id AND i.status = 'processing')`,
     [
       finalState,
       JSON.stringify(stateHistory(finalState)),
       cleanFlowId
     ]
   )
+  if (Number(closeResult?.changes || 0) !== 1) {
+    const error = new Error('La generación de un enlace comenzó justo antes de cerrar el plan. Espera a que termine y vuelve a intentarlo.')
+    error.status = 409
+    throw error
+  }
 
   await db.run(
     `UPDATE installment_payments
@@ -2500,7 +2540,8 @@ export async function createMercadoPagoPaymentPlan(input = {}, { baseUrl } = {})
   return response
 }
 
-export async function processDueMercadoPagoPaymentPlanCharges({ limit = 25, baseUrl = '' } = {}) {
+export async function processDueMercadoPagoPaymentPlanCharges({ limit = 25, baseUrl = '', isLeaseValid = () => true } = {}) {
+  await markOverduePaymentPlanChargesForReview('mercadopago')
   await getMercadoPagoClientConfig()
   const accountTimezone = await getAccountTimezone()
   const dueDate = todayDateOnly(accountTimezone)
@@ -2526,7 +2567,7 @@ export async function processDueMercadoPagoPaymentPlanCharges({ limit = 25, base
        AND i.status IN ('scheduled', 'pending')
        AND p.status IN ('scheduled', 'pending')
        AND (p.mercadopago_preference_id IS NULL OR p.mercadopago_preference_id = '')
-       AND ${dueDateSql} <= ${dueDateParam}
+       AND ${dueDateSql} = ${dueDateParam}
      ORDER BY i.due_date ASC, i.sequence ASC
      LIMIT ?`,
     [MP_PLAN_STATES.ACTIVE, dueDate, normalizedLimit]
@@ -2535,8 +2576,26 @@ export async function processDueMercadoPagoPaymentPlanCharges({ limit = 25, base
   const results = []
   const touchedFlowIds = new Set()
   for (const row of rows || []) {
+    if (!isLeaseValid()) break
     touchedFlowIds.add(row.flow_id)
     try {
+      const claim = await db.run(
+        `UPDATE installment_payments
+         SET status = 'processing', updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND status IN ('scheduled', 'pending')
+           AND EXISTS (
+             SELECT 1 FROM payment_flows f
+             WHERE f.id = installment_payments.flow_id AND f.current_state = ?
+           )
+           AND EXISTS (
+             SELECT 1 FROM payments p
+             WHERE p.id = installment_payments.payment_id
+               AND p.status IN ('scheduled', 'pending')
+               AND (p.mercadopago_preference_id IS NULL OR p.mercadopago_preference_id = '')
+           )`,
+        [row.installment_id, MP_PLAN_STATES.ACTIVE]
+      )
+      if (Number(claim?.changes || 0) !== 1) continue
       const payment = await findPaymentById(row.payment_id)
       const preference = await createPreferenceForPayment(payment, { baseUrl: resolvedBaseUrl })
       await db.run(

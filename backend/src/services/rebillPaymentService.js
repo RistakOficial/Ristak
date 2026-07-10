@@ -13,6 +13,13 @@ import { publishSubscriptionChangedEvent } from './paymentLiveEventsService.js'
 import { queuePaymentAutomationMessage } from './paymentAutomationsService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
+  assertExactPaymentPlanTotal,
+  assertPlanCanChangeState,
+  markOverduePaymentPlanChargesForReview,
+  withPaymentPlanEditState
+} from './paymentPlanSafetyService.js'
+import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
+import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
@@ -55,7 +62,7 @@ const REBILL_PLAN_STATES = {
   DELETED: 'deleted'
 }
 const MANUAL_PLAN_PAYMENT_METHODS = new Set(['cash', 'bank_transfer', 'transfer', 'deposit', 'manual', 'offline', 'check', 'other'])
-const REBILL_CHECKOUT_METHODS = new Set(['card', 'payment_link', 'direct_card', 'rebill', 'rebill_checkout', 'checkout'])
+const REBILL_CHECKOUT_METHODS = new Set(['card', 'payment_link', 'direct_card', 'rebill', 'rebill_auto', 'rebill_checkout', 'checkout'])
 const REBILL_STORED_CARD_METHODS = new Set(['saved_card', 'stored_card', 'rebill_saved_card'])
 const REBILL_AUTOMATIC_PLAN_METHODS = new Set([...REBILL_CHECKOUT_METHODS, ...REBILL_STORED_CARD_METHODS])
 const TIMED_PLAN_FREQUENCY = 'scheduled_time'
@@ -198,19 +205,28 @@ function hasExplicitPlanTime(value) {
   return !(match[1] === '00' && match[2] === '00' && (!match[3] || match[3] === '00'))
 }
 
+function withDefaultPlanTime(value, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
+  if (value === null || value === undefined || value === '') return value
+  if (hasExplicitPlanTime(value)) return value
+  const date = normalizeDateOnly(value, timezone)
+  return `${date}T10:00:00`
+}
+
 function shouldUseExactPlanTime(value, frequency) {
   return isTimedPlanFrequency(frequency) || hasExplicitPlanTime(value)
 }
 
 function assertPlanDueDateNotInPast(value, frequency, message, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
-  if (shouldUseExactPlanTime(value, frequency)) return assertLocalDateTimeNotInPast(value, timezone, message)
-  return assertDateNotInPast(value, message, timezone)
+  const dueValue = withDefaultPlanTime(value, timezone)
+  if (shouldUseExactPlanTime(dueValue, frequency)) return assertLocalDateTimeNotInPast(dueValue, timezone, message)
+  return assertDateNotInPast(dueValue, message, timezone)
 }
 
 function normalizePlanDueDate(value, frequency, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (value === null || value === undefined || value === '') return null
-  if (shouldUseExactPlanTime(value, frequency)) return normalizeToUtcIso(value, timezone)
-  return normalizeDateOnly(value, timezone)
+  const dueValue = withDefaultPlanTime(value, timezone)
+  if (shouldUseExactPlanTime(dueValue, frequency)) return normalizeToUtcIso(dueValue, timezone)
+  return normalizeDateOnly(dueValue, timezone)
 }
 
 function isPlanChargeDueNow(value, frequency, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
@@ -2033,13 +2049,7 @@ function validateRebillPaymentPlanPayload(input = {}, timezone = ACCOUNT_DEFAULT
     }
   })
 
-  const remainingTotal = normalizedRemaining.reduce((sum, payment) => sum + payment.amount, 0)
-  const planTotal = Math.round((remainingTotal + firstPaymentAmount) * 100) / 100
-  if (Math.abs(planTotal - totalAmount) > 0.5) {
-    const error = new Error(`Las parcialidades suman ${planTotal.toFixed(2)} ${currency}, pero el total es ${totalAmount.toFixed(2)} ${currency}.`)
-    error.status = 400
-    throw error
-  }
+  assertExactPaymentPlanTotal({ totalAmount, firstPaymentAmount, remainingPayments: normalizedRemaining, currency })
 
   return {
     contact: {
@@ -2538,6 +2548,289 @@ async function persistRebillPaymentPlanMirror(flowId, extra = {}) {
   return db.get('SELECT * FROM payment_plans WHERE id = ?', [cleanFlowId])
 }
 
+export async function refreshRebillPaymentPlanMirrors() {
+  const flows = await db.all(
+    `SELECT id FROM payment_flows WHERE payment_provider = 'rebill' ORDER BY updated_at DESC`
+  )
+  let refreshed = 0
+  for (const flow of flows || []) {
+    if (await persistRebillPaymentPlanMirror(flow.id)) refreshed += 1
+  }
+  return refreshed
+}
+
+export async function updateRebillPaymentPlanSchedule(flowId, input = {}, options = {}) {
+  const cleanFlowId = cleanString(flowId, 180)
+  await assertPlanCanChangeState(cleanFlowId)
+  const editResult = await withPaymentPlanEditState(cleanFlowId, 'rebill', (originalState) => (
+    updateRebillPaymentPlanScheduleLocked(cleanFlowId, input, options, originalState)
+  ))
+  const editRaw = parseJson(editResult?.raw_json, {})
+  await persistRebillPaymentPlanMirror(cleanFlowId, {
+    localAction: 'update_schedule',
+    actionedAt: new Date().toISOString(),
+    ...(editRaw.response ? { response: editRaw.response } : {})
+  })
+  return editResult
+}
+
+async function updateRebillPaymentPlanScheduleLocked(flowId, input = {}, { baseUrl = '' } = {}, originalState = '') {
+  const cleanFlowId = cleanString(flowId, 180)
+  if (!cleanFlowId) {
+    const error = new Error('Plan Rebill requerido.')
+    error.status = 400
+    throw error
+  }
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'rebill') {
+    const error = new Error('Plan Rebill no encontrado.')
+    error.status = 404
+    throw error
+  }
+  flow.current_state = originalState || flow.current_state
+
+  const accountTimezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
+  const metadata = parseJson(flow.metadata, {})
+  const frequency = normalizePlanFrequency(input.remainingFrequency || input.frequency || metadata.remainingFrequency || 'custom')
+  const concept = cleanString(input.name || input.title || input.description || flow.concept || 'Plan de pagos', 500)
+  const submitted = Array.isArray(input.installments)
+    ? input.installments
+    : Array.isArray(input.remainingPayments)
+      ? input.remainingPayments
+      : []
+  if (!submitted.length) {
+    const error = new Error('El plan debe conservar al menos una parcialidad futura.')
+    error.status = 400
+    throw error
+  }
+
+  const existing = await db.all(
+    `SELECT i.*, p.status AS payment_status
+     FROM installment_payments i LEFT JOIN payments p ON p.id = i.payment_id
+     WHERE i.flow_id = ? AND LOWER(COALESCE(i.status, 'pending')) NOT IN ('deleted', 'cancelled', 'canceled', 'void')
+     ORDER BY i.sequence ASC`,
+    [cleanFlowId]
+  )
+  const existingById = new Map((existing || []).map((row) => [row.id, row]))
+  const submittedIds = new Set()
+  const hasSavedCard = Boolean(cleanString(flow.rebill_card_id, 180))
+  const mode = metadata.paymentMode || metadata.rebillMode || 'test'
+  const normalized = []
+
+  for (const [index, item] of submitted.entries()) {
+    const id = cleanString(item?.id, 180)
+    const current = id ? existingById.get(id) : null
+    const currentStatus = cleanString(current?.status || current?.payment_status, 80).toLowerCase()
+    if (current && CLOSED_PAYMENT_STATUSES.has(currentStatus)) {
+      submittedIds.add(current.id)
+      normalized.push({ amount: Number(current.amount || 0), current, locked: true })
+      continue
+    }
+
+    const amount = Number(item?.amount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      const error = new Error('Cada parcialidad futura debe tener un monto mayor a 0.')
+      error.status = 400
+      throw error
+    }
+    const dueDate = assertPlanDueDateNotInPast(
+      item?.dueDate || item?.date || item?.scheduledAt,
+      frequency,
+      'Las parcialidades automáticas no pueden programarse en fechas pasadas.',
+      accountTimezone
+    )
+    const normalizedDueDate = normalizePlanDueDate(dueDate, frequency, accountTimezone)
+    const method = normalizeRebillPlanPaymentMethod(item?.paymentMethod || item?.method, hasSavedCard, flow.rebill_card_label)
+    normalized.push({ item, current, amount, dueDate: normalizedDueDate, method, sequence: index + 1 })
+    if (current) submittedIds.add(current.id)
+  }
+
+  const omittedLocked = (existing || []).filter((row) => !submittedIds.has(row.id) && CLOSED_PAYMENT_STATUSES.has(cleanString(row.status || row.payment_status, 80).toLowerCase()))
+  const totalParts = [
+    ...normalized.map((row) => ({ amount: row.amount })),
+    ...omittedLocked.map((row) => ({ amount: Number(row.amount || 0) }))
+  ]
+  assertExactPaymentPlanTotal({
+    totalAmount: Number(input.total || input.totalAmount || flow.total_amount),
+    firstPaymentAmount: Number(flow.first_payment_amount || 0),
+    remainingPayments: totalParts,
+    currency: flow.currency || DEFAULT_CURRENCY
+  })
+
+  for (const row of normalized) {
+    if (row.locked) continue
+    const installmentId = row.current?.id || createId('rebill_installment')
+    const paymentId = row.current?.payment_id || createId('rebill_plan_payment')
+    const paymentStatus = row.method.paymentStatus
+    if (row.current) {
+      await db.run(
+        `UPDATE installment_payments
+         SET sequence = ?, amount = ?, due_date = ?, frequency = ?, payment_method = ?, automatic = ?, status = ?, notes = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [row.sequence, row.amount, row.dueDate, frequency, row.method.installmentMethod, row.method.automatic, row.method.status, row.method.notes, installmentId]
+      )
+      await db.run(
+        `UPDATE payments
+         SET amount = ?, currency = ?, title = ?, description = ?, date = ?, due_date = ?, payment_method = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`,
+        [row.amount, flow.currency, buildPlanInstallmentPaymentTitle(concept, row.sequence, Number(flow.first_payment_amount || 0) > 0, submitted.length + 1), buildPlanInstallmentPaymentTitle(concept, row.sequence, Number(flow.first_payment_amount || 0) > 0, submitted.length + 1), row.dueDate, row.dueDate, row.method.paymentMethod, paymentStatus, paymentId]
+      )
+    } else {
+      const created = await createRebillPlanPaymentRow({
+        contact: { id: flow.contact_id, name: flow.contact_name, email: flow.contact_email, phone: flow.contact_phone },
+        amount: row.amount,
+        currency: flow.currency,
+        status: paymentStatus,
+        paymentMethod: row.method.paymentMethod,
+        title: buildPlanInstallmentPaymentTitle(concept, row.sequence, Number(flow.first_payment_amount || 0) > 0, submitted.length + 1),
+        description: concept,
+        dueDate: row.dueDate,
+        metadata: buildRebillPlanPaymentMetadata(flow, { id: installmentId }, row.sequence, mode, 'rebill_payment_plan_installment'),
+        baseUrl,
+        mode
+      })
+      await db.run(
+        `INSERT INTO installment_payments (
+          id, flow_id, sequence, amount, percentage, due_date, frequency, payment_method, automatic, status, payment_id, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+        [installmentId, cleanFlowId, row.sequence, row.amount, row.item?.percentage ?? null, row.dueDate, frequency, row.method.installmentMethod, row.method.automatic, row.method.status, created.payment?.id || paymentId, row.method.notes]
+      )
+    }
+  }
+
+  for (const row of existing || []) {
+    if (submittedIds.has(row.id) || CLOSED_PAYMENT_STATUSES.has(cleanString(row.status || row.payment_status, 80).toLowerCase())) continue
+    await db.run(`UPDATE installment_payments SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?`, [row.id])
+    if (row.payment_id) await db.run(`UPDATE payments SET status = 'void', updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status NOT IN ('paid', 'refunded')`, [row.payment_id])
+  }
+
+  await db.run(
+    `UPDATE payment_flows SET concept = ?, total_amount = ?, metadata = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+    [concept, Number(input.total || input.totalAmount || flow.total_amount), JSON.stringify({ ...metadata, remainingFrequency: frequency }), cleanFlowId]
+  )
+  return persistRebillPaymentPlanMirror(cleanFlowId, { localAction: 'update_schedule', actionedAt: new Date().toISOString() })
+}
+
+export async function applyRebillPaymentPlanAction(flowId, action, options = {}) {
+  const cleanFlowId = cleanString(flowId, 180)
+  const normalizedAction = cleanString(action, 80).toLowerCase()
+  const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
+  if (!flow || flow.payment_provider !== 'rebill') {
+    const error = new Error('Plan Rebill no encontrado.')
+    error.status = 404
+    throw error
+  }
+
+  if (['activate', 'pause', 'cancel', 'delete'].includes(normalizedAction)) {
+    await assertPlanCanChangeState(cleanFlowId, { activating: normalizedAction === 'activate' })
+  }
+  const now = new Date().toISOString()
+  const history = (state) => JSON.stringify(addPlanState(parseJson(flow.state_history, []), state))
+
+  if (normalizedAction === 'activate') {
+    const hasSavedCard = Boolean(cleanString(flow.rebill_card_id, 180))
+    const state = hasSavedCard ? REBILL_PLAN_STATES.ACTIVE : REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+    await db.run(
+      `UPDATE payment_flows SET current_state = ?, state_history = ?, installment_plan_active_at = CASE WHEN ? = ? THEN COALESCE(installment_plan_active_at, ?) ELSE installment_plan_active_at END, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [state, history(state), state, REBILL_PLAN_STATES.ACTIVE, now, cleanFlowId]
+    )
+    if (hasSavedCard) {
+      await db.run(
+        `UPDATE installment_payments SET status = 'scheduled', payment_method = 'rebill_saved_card', updated_at = CURRENT_TIMESTAMP
+         WHERE flow_id = ? AND automatic = 1 AND status IN ('waiting_card_authorization', 'pending_card', 'pending')`,
+        [cleanFlowId]
+      )
+    }
+    return persistRebillPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
+  }
+
+  if (normalizedAction === 'pause') {
+    const pauseResult = await db.run(
+      `UPDATE payment_flows SET current_state = ?, state_history = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE id = ? AND COALESCE(first_payment_status, '') <> 'processing'
+         AND NOT EXISTS (SELECT 1 FROM installment_payments i WHERE i.flow_id = payment_flows.id AND i.status = 'processing')`,
+      [REBILL_PLAN_STATES.PAUSED, history(REBILL_PLAN_STATES.PAUSED), cleanFlowId]
+    )
+    if (!(Number(pauseResult?.changes || 0) > 0)) {
+      const error = new Error('Un cobro comenzó justo antes de pausar. Espera a que termine y vuelve a intentarlo.')
+      error.status = 409
+      throw error
+    }
+    return persistRebillPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
+  }
+
+  if (normalizedAction === 'change_card') {
+    const amount = normalizePositiveAmount(options.cardSetupAmount, flow.card_setup_amount || 25)
+    const metadata = parseJson(flow.metadata, {})
+    const setup = await createRebillPlanPaymentRow({
+      contact: { id: flow.contact_id, name: flow.contact_name, email: flow.contact_email, phone: flow.contact_phone },
+      amount,
+      currency: flow.currency,
+      status: 'sent',
+      paymentMethod: 'rebill_checkout',
+      title: `${flow.concept || 'Plan de pagos'} - cambio de tarjeta`,
+      description: 'Autorización segura para reemplazar la tarjeta domiciliada.',
+      dueDate: todayDateOnly(await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)),
+      metadata: { ...metadata, source: 'rebill_payment_plan_card_change', paymentPlan: { flowId: cleanFlowId, trigger: 'card_setup' } },
+      baseUrl: options.baseUrl,
+      mode: metadata.paymentMode || metadata.rebillMode || 'test'
+    })
+    await db.run(
+      `UPDATE payment_flows SET card_setup_required = 1, card_setup_status = 'pending', card_setup_invoice_id = ?, card_setup_payment_link = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+      [setup.payment?.id || null, setup.paymentUrl || null, cleanFlowId]
+    )
+    return persistRebillPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now, response: { cardSetupLink: setup.paymentUrl || null, cardSetupPaymentId: setup.payment?.id || null, cardSetupAmount: amount } })
+  }
+
+  if (!['cancel', 'delete'].includes(normalizedAction)) {
+    const error = new Error('Acción inválida para plan Rebill.')
+    error.status = 400
+    throw error
+  }
+  if (normalizedAction === 'delete') {
+    const audit = await getPaymentPlanAuditSummary(cleanFlowId)
+    if (audit.isTestMode || (audit.isDeletedRecord && !audit.hasLedgerActivity)) {
+      await hardDeleteTestPaymentPlan(cleanFlowId)
+      return { id: cleanFlowId, status: REBILL_PLAN_STATES.DELETED, source: 'rebill', deleted: true }
+    }
+    if (audit.hasLedgerActivity) {
+      const error = new Error('Este plan ya tiene actividad financiera. No se puede eliminar; cancélalo para conservar el historial.')
+      error.status = 422
+      throw error
+    }
+  }
+
+  const finalState = normalizedAction === 'delete' ? REBILL_PLAN_STATES.DELETED : REBILL_PLAN_STATES.CANCELLED
+  const installmentStatus = normalizedAction === 'delete' ? 'deleted' : 'cancelled'
+  const paymentStatus = normalizedAction === 'delete' ? 'deleted' : 'void'
+  const closeResult = await db.run(
+    `UPDATE payment_flows SET current_state = ?, state_history = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND COALESCE(first_payment_status, '') <> 'processing'
+       AND NOT EXISTS (SELECT 1 FROM installment_payments i WHERE i.flow_id = payment_flows.id AND i.status = 'processing')`,
+    [finalState, history(finalState), cleanFlowId]
+  )
+  if (!(Number(closeResult?.changes || 0) > 0)) {
+    const error = new Error('Un cobro comenzó justo antes de cerrar el plan. Espera a que termine y vuelve a intentarlo.')
+    error.status = 409
+    throw error
+  }
+  await db.run(
+    `UPDATE installment_payments SET status = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE flow_id = ? AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'refunded', 'deleted', 'cancelled', 'canceled', 'void')`,
+    [installmentStatus, cleanFlowId]
+  )
+  await db.run(
+    `UPDATE payments SET status = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id IN (
+       SELECT payment_id FROM installment_payments WHERE flow_id = ? AND payment_id IS NOT NULL
+       UNION SELECT first_payment_invoice_id FROM payment_flows WHERE id = ? AND first_payment_invoice_id IS NOT NULL
+       UNION SELECT card_setup_invoice_id FROM payment_flows WHERE id = ? AND card_setup_invoice_id IS NOT NULL
+     ) AND LOWER(COALESCE(status, 'pending')) NOT IN ('paid', 'refunded', 'void', 'deleted')`,
+    [paymentStatus, cleanFlowId, cleanFlowId, cleanFlowId]
+  )
+  return persistRebillPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
+}
+
 function mapPublicPayment(row, config, baseUrl = '', settings = null, timezone = ACCOUNT_DEFAULT_TIMEZONE) {
   if (!row) return null
   const metadata = parseJson(row.metadata_json, {})
@@ -2995,9 +3288,10 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
   const needsSeparateCardSetup = !hasSavedCard && !firstPaymentIsCard
   const cardSetupAmount = needsSeparateCardSetup ? plan.cardSetupAmount : (firstPaymentIsCard ? plan.firstPayment.amount : 0)
   const flowId = createId('rebill_flow')
-  const flowState = hasSavedCard
+  const targetFlowState = hasSavedCard
     ? REBILL_PLAN_STATES.ACTIVE
     : REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+  const flowState = 'creating'
   const stateHistory = addPlanState([], flowState)
   const now = new Date().toISOString()
   const cardLabel = hasSavedCard ? getRebillSavedCardLabelFromRow(savedSource) : ''
@@ -3030,7 +3324,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       plan.firstPayment.amount,
       plan.firstPayment.date,
       plan.firstPayment.method,
-      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && firstPaymentDueNow ? 'processing' : 'pending') : 'not_required',
+      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard ? 'scheduled' : 'pending') : 'not_required',
       hasSavedCard ? 0 : 1,
       cardSetupAmount,
       savedSource?.rebill_customer_id || null,
@@ -3040,9 +3334,10 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       JSON.stringify(stateHistory),
       hasSavedCard ? now : null,
       now,
-      hasSavedCard ? now : null,
+      null,
       JSON.stringify({
         source: plan.source,
+        creationRequestKey: cleanString(input.idempotencyKey, 200),
         rebillMode: config.mode,
         paymentMode: config.mode,
         timezone: accountTimezone,
@@ -3061,7 +3356,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
 
   const response = {
     flowId,
-    currentState: flowState,
+    currentState: targetFlowState,
     paymentMode: config.mode,
     firstPaymentLink: null,
     firstPaymentPaymentId: null,
@@ -3120,7 +3415,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
       contact: plan.contact,
       amount: plan.firstPayment.amount,
       currency: plan.currency,
-      status: firstPaymentDueNow ? 'pending' : 'scheduled',
+      status: 'scheduled',
       paymentMethod: 'rebill_saved_card',
       title: firstPaymentTitle,
       description: firstPaymentDescription,
@@ -3150,32 +3445,7 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
     )
     response.firstPaymentPaymentId = first.payment?.id || null
 
-    if (firstPaymentDueNow) {
-      try {
-        const charged = await chargeRebillPaymentRowWithSavedSource({
-          paymentId: first.payment?.id,
-          savedSource,
-          source: 'rebill_payment_plan_first_saved_card',
-          extraMetadata: { flowId, trigger: 'first_payment_saved_card' }
-        })
-        await db.run(
-          `UPDATE payment_flows
-           SET first_payment_status = ?,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [charged?.status === 'paid' ? 'paid' : charged?.status || 'pending', flowId]
-        )
-      } catch (error) {
-        await db.run(
-          `UPDATE payment_flows
-           SET first_payment_status = ?,
-               updated_at = CURRENT_TIMESTAMP
-           WHERE id = ?`,
-          [Number(error.status) === 417 ? 'requires_action' : 'failed', flowId]
-        )
-        throw error
-      }
-    }
+    // El cron lo cobra al siguiente tick, cuando el plan ya está completo en la DB.
   }
 
   if (plan.firstPayment.enabled && firstPaymentIsCard && !hasSavedCard) {
@@ -3314,11 +3584,23 @@ export async function createRebillPaymentPlan(input = {}, { baseUrl, mode = '' }
     })
   }
 
+  const activationResult = await db.run(
+    `UPDATE payment_flows
+     SET current_state = ?, state_history = ?, installment_plan_active_at = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND current_state = 'creating'`,
+    [targetFlowState, JSON.stringify(addPlanState(stateHistory, targetFlowState)), hasSavedCard ? now : null, flowId]
+  )
+  if (activationResult.changes !== 1) {
+    const error = new Error('El plan cambió mientras se estaba creando. Quedó detenido para revisión y no se realizará ningún cobro.')
+    error.status = 409
+    throw error
+  }
   await persistRebillPaymentPlanMirror(flowId, { response })
   return response
 }
 
-export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl = '' } = {}) {
+export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl = '', isLeaseValid = () => true } = {}) {
+  await markOverduePaymentPlanChargesForReview('rebill')
   await getRebillClientConfig()
   const accountTimezone = await getAccountTimezone().catch(() => ACCOUNT_DEFAULT_TIMEZONE)
   const dueDate = todayDateOnly(accountTimezone)
@@ -3401,6 +3683,7 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
   const touchedFlowIds = new Set()
 
   for (const row of firstPaymentRows || []) {
+    if (!isLeaseValid()) break
     const metadata = parseJson(row.metadata, {})
     const firstPaymentDueValue = row.first_payment_date || row.payment_due_date || row.payment_date
     if (!isPlanChargeDueNow(firstPaymentDueValue, metadata.remainingFrequency, accountTimezone)) continue
@@ -3415,6 +3698,7 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
            SET first_payment_status = 'processing',
                updated_at = CURRENT_TIMESTAMP
            WHERE id = ?
+             AND current_state = '${REBILL_PLAN_STATES.ACTIVE}'
              AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
           [row.flow_id]
         )
@@ -3467,6 +3751,7 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
          SET first_payment_status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND current_state = '${REBILL_PLAN_STATES.WAITING_CARD_AUTHORIZATION}'
            AND (first_payment_status = 'scheduled' OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
         [row.flow_id]
       )
@@ -3501,6 +3786,7 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
   }
 
   for (const row of rows || []) {
+    if (!isLeaseValid()) break
     touchedFlowIds.add(row.flow_id)
     if (row.payment_status === 'paid') {
       await db.run(
@@ -3520,6 +3806,11 @@ export async function processDueRebillPaymentPlanCharges({ limit = 25, baseUrl =
          SET status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND EXISTS (
+             SELECT 1 FROM payment_flows f
+             WHERE f.id = installment_payments.flow_id
+               AND f.current_state = '${REBILL_PLAN_STATES.ACTIVE}'
+           )
            AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentClaimSql}))`,
         [row.installment_id]
       )

@@ -1096,6 +1096,7 @@ export class RistakApiClient {
     };
     return this.request<PaymentLinkResponse>(providerPath[provider], {
       method: 'POST',
+      headers: payload.idempotencyKey ? { 'Idempotency-Key': payload.idempotencyKey } : undefined,
       body: JSON.stringify(payload),
     });
   }

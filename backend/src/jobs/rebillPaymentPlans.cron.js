@@ -17,8 +17,8 @@ async function runRebillPaymentPlans(source = 'interval') {
 
   try {
     await trackDeployDrainWork('cron:rebill-payment-plans', async () => {
-      const { ran } = await withCronLock('rebill-payment-plans', REBILL_PAYMENT_PLANS_INTERVAL_MS, async () => {
-        const results = await processDueRebillPaymentPlanCharges()
+      const { ran } = await withCronLock('rebill-payment-plans', REBILL_PAYMENT_PLANS_INTERVAL_MS, async ({ isLeaseValid }) => {
+        const results = await processDueRebillPaymentPlanCharges({ isLeaseValid })
         const generated = results.filter((result) => result.generated).length
         const charged = results.filter((result) => result.charged).length
         const failed = results.filter((result) => result.error).length
@@ -26,7 +26,7 @@ async function runRebillPaymentPlans(source = 'interval') {
         if (generated || charged || failed) {
           logger.info(`[Rebill Planes] ${source}: ${charged} cargos, ${generated} links de autorizacion liberados, ${failed} con error`)
         }
-      })
+      }, { failOpen: false, leaseTtlMs: 5 * 60 * 1000 })
       if (!ran) logger.info(`[Rebill Planes] ${source}: omitido (otra instancia tiene el lock)`)
     }, source)
   } catch (error) {

@@ -74,8 +74,17 @@ Usa estos formatos de forma intencional:
   diarios con la zona del negocio.
 - Un pago programado para "hoy" en el negocio queda vencido hoy aunque el servidor
   esté en UTC y ya haya cambiado de día.
-- Si un pago automático tiene tarjeta guardada y está vencido, el cron puede
-  cobrarlo en el siguiente tick.
+- Si un pago automático tiene tarjeta guardada y vence en el día actual del
+  negocio, el cron puede cobrarlo al llegar su hora o en el siguiente tick del
+  mismo día.
+- Una parcialidad cuya fecha de negocio ya quedó en un día anterior nunca se
+  cobra como "puesta al corriente" automática. Debe pasar a
+  `overdue_review`/`overdue`, quedar visible para revisión y exigir una nueva
+  fecha antes de reactivar el plan. El flujo completo queda pausado para que las
+  cuotas futuras tampoco avancen sin esa revisión. Esto aplica también al arranque después de
+  downtime, reconexión de pasarela y reanudación de un plan pausado.
+- Una fecha de plan sin hora explícita se normaliza a las 10:00:00 en la zona
+  del negocio. Nunca se hereda silenciosamente la hora en que se creó o editó.
 - Si falta tarjeta guardada/autorizada, el plan debe esperar autorización de
   tarjeta por la pasarela elegida; no inventes cobro automático.
 - Usa locks/idempotencia al agregar nuevos crones o procesos programados.
@@ -136,8 +145,11 @@ Usa `businessTodayDateOnly(timezone)`, `normalizeDateOnlyInTimezone()`,
 
 - Google Calendar / HighLevel Calendar: convierte rangos `YYYY-MM-DD` a inicio y
   fin de día en la zona del negocio antes de pedir slots o eventos.
-- Stripe, Conekta y Mercado Pago: las fechas internas del plan se calculan con la
+- Stripe, Conekta, Rebill y Mercado Pago: las fechas internas del plan se calculan con la
   zona del negocio; los cargos reales se ejecutan como instantes UTC.
+- En planes Stripe, Conekta y Rebill, una fecha programada sin hora usa las 10:00
+  del negocio. La opción explícita de cobro inmediato debe enviar el instante UTC
+  actual; no debe degradarse a una fecha de calendario que pueda cobrarse después.
 - Meta Ads y reportes: las agrupaciones por día deben usar la zona configurada,
   no UTC puro.
 - Links públicos: el backend debe enviar la zona de la cuenta y el frontend debe

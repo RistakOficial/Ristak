@@ -5294,6 +5294,7 @@ function PaymentFormView({
   const [datePickerTarget, setDatePickerTarget] = useState<PaymentDatePickerTarget | null>(null);
   const [datePickerMonth, setDatePickerMonth] = useState(() => todayDateOnlyInTimezone(timezone));
   const paymentFormScrollRef = useRef<ScrollView>(null);
+  const paymentPlanIdempotencyKeyRef = useRef(`ristak-mobile-plan-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   const selectedProduct = useMemo(() => (
     products.find((product) => getProductId(product) === selectedProductId) || null
@@ -5311,8 +5312,13 @@ function PaymentFormView({
   const taxName = paymentTaxes.taxName?.trim() || 'Impuesto';
   const firstPaymentAmount = normalizeAmountInput(firstPayment);
   const remainingPlanTotal = planPayments.reduce((sum, payment) => sum + normalizeAmountInput(payment.amount), 0);
-  const planDraftTotal = Math.round((firstPaymentAmount + remainingPlanTotal) * 100) / 100;
-  const planDifference = Math.round((resolvedAmount - planDraftTotal) * 100) / 100;
+  const planMinorUnitFactor = paymentPlanCurrencyMinorUnitFactor(resolvedCurrency);
+  const planDraftMinorUnits = paymentPlanMoneyToMinorUnits(firstPaymentAmount, resolvedCurrency)
+    + planPayments.reduce((sum, payment) => sum + paymentPlanMoneyToMinorUnits(normalizeAmountInput(payment.amount), resolvedCurrency), 0);
+  const planDifferenceMinorUnits = paymentPlanMoneyToMinorUnits(resolvedAmount, resolvedCurrency) - planDraftMinorUnits;
+  const planDraftTotal = planDraftMinorUnits / planMinorUnitFactor;
+  const planDifference = planDifferenceMinorUnits / planMinorUnitFactor;
+  const planAmountsBalance = planDifferenceMinorUnits === 0;
   const effectivePlanCollectionMode: NativePlanCollectionMode = mode === 'partial' && firstPaymentMethod === 'card'
     ? 'saved_card'
     : planCollectionMode;
@@ -5463,6 +5469,7 @@ function PaymentFormView({
       resolvedAmount,
       0,
       Array.from({ length: planPayments.length + 1 }, (_, index) => createNativePlanPaymentDraft(index === 0 ? firstPaymentDate : '', '')),
+      resolvedCurrency,
     );
     setFirstPayment((current) => {
       const next = schedule[0]?.amount || '';
@@ -5472,7 +5479,7 @@ function PaymentFormView({
       ...payment,
       amount: schedule[index + 1]?.amount || '',
     })));
-  }, [mode, planAutoDistribute, planPayments.length, resolvedAmount]);
+  }, [firstPaymentDate, mode, planAutoDistribute, planPayments.length, resolvedAmount, resolvedCurrency]);
 
   useEffect(() => {
     if (mode !== 'partial' || effectivePlanCollectionMode !== 'saved_card') return;
@@ -5618,7 +5625,7 @@ function PaymentFormView({
         Alert.alert('Faltan pagos restantes', 'Cada pago restante necesita monto y fecha.');
         return;
       }
-      if (Math.abs(planDifference) > 0.5) {
+      if (!planAmountsBalance) {
         Alert.alert('No cuadran las parcialidades', `Ajusta los pagos: ${planDifference > 0 ? 'faltan' : 'sobran'} ${formatCurrency(Math.abs(planDifference), resolvedCurrency)}.`);
         return;
       }
@@ -5695,7 +5702,7 @@ function PaymentFormView({
       const schedule = distributeNativePlanPayments(resolvedAmount, 0, [
         createNativePlanPaymentDraft(firstPaymentDate, firstPayment),
         ...next,
-      ]);
+      ], resolvedCurrency);
       setFirstPayment(schedule[0]?.amount || '');
       return next.map((payment, index) => ({ ...payment, amount: schedule[index + 1]?.amount || '' }));
     });
@@ -5708,7 +5715,7 @@ function PaymentFormView({
       const schedule = distributeNativePlanPayments(resolvedAmount, 0, [
         createNativePlanPaymentDraft(firstPaymentDate, firstPayment),
         ...next,
-      ]);
+      ], resolvedCurrency);
       setFirstPayment(schedule[0]?.amount || '');
       return next.map((payment, index) => ({ ...payment, amount: schedule[index + 1]?.amount || '' }));
     });
@@ -5759,7 +5766,7 @@ function PaymentFormView({
         <Text style={styles.paymentSummaryLabel}>Total armado</Text>
         <Text style={styles.paymentSummaryValue}>{formatCurrency(planDraftTotal, resolvedCurrency)}</Text>
       </View>
-      {Math.abs(planDifference) > 0.5 ? (
+      {!planAmountsBalance ? (
         <Text style={styles.paymentWarningText}>
           {planDifference > 0 ? 'Falta asignar' : 'Te pasaste por'} {formatCurrency(Math.abs(planDifference), resolvedCurrency)}.
         </Text>
@@ -5810,7 +5817,7 @@ function PaymentFormView({
             const schedule = distributeNativePlanPayments(resolvedAmount, 0, [
               createNativePlanPaymentDraft(firstPaymentDate, firstPayment),
               ...current,
-            ]);
+            ], resolvedCurrency);
             setFirstPayment(schedule[0]?.amount || '');
             return current.map((payment, index) => ({ ...payment, amount: schedule[index + 1]?.amount || '' }));
           });
@@ -6038,7 +6045,7 @@ function PaymentFormView({
           Alert.alert('Faltan parcialidades', 'Cada pago restante necesita monto y fecha.');
           return;
         }
-        if (Math.abs(planDifference) > 0.5) {
+        if (!planAmountsBalance) {
           Alert.alert('No cuadran las parcialidades', `Ajusta los pagos: ${planDifference > 0 ? 'faltan' : 'sobran'} ${formatCurrency(Math.abs(planDifference), resolvedCurrency)}.`);
           return;
         }
@@ -6076,7 +6083,15 @@ function PaymentFormView({
             },
           },
           firstPayment: firstAmount > 0
-            ? { enabled: true, type: 'amount', value: firstAmount, amount: firstAmount, date: firstPaymentDate, frequency, method: firstPaymentMethod }
+            ? {
+                enabled: true,
+                type: 'amount',
+                value: firstAmount,
+                amount: firstAmount,
+                date: firstPaymentTiming === 'immediate' ? new Date().toISOString() : firstPaymentDate,
+                frequency,
+                method: firstPaymentMethod,
+              }
             : { enabled: false, amount: 0 },
           remainingAutomatic: false,
           remainingFrequency: frequency,
@@ -6088,6 +6103,7 @@ function PaymentFormView({
           : planGatewayProvider;
         const response = await api.createPaymentPlan(planProvider as PaymentGatewayProvider, {
           ...planPayload,
+          idempotencyKey: paymentPlanIdempotencyKeyRef.current,
           paymentMethodId: effectivePlanCollectionMode === 'saved_card' ? selectedPlanSavedCard?.paymentMethodId : undefined,
         });
         const planUrl = getCreatedPaymentLinkUrl(response);
@@ -13309,17 +13325,38 @@ function createDefaultNativePlanPayments(timezone: string, frequency = 'monthly'
   ));
 }
 
-function distributeNativePlanPayments(totalAmount: number, firstPaymentAmount: number, payments: NativePlanPaymentDraft[]) {
-  const remaining = Math.max(0, Math.round((totalAmount - firstPaymentAmount) * 100) / 100);
-  if (!payments.length || remaining <= 0) {
+const PAYMENT_PLAN_ZERO_DECIMAL_CURRENCIES = new Set([
+  'BIF', 'CLP', 'DJF', 'GNF', 'ISK', 'JPY', 'KMF', 'KRW', 'PYG', 'RWF', 'UGX', 'VND', 'VUV', 'XAF', 'XOF', 'XPF',
+]);
+
+function paymentPlanCurrencyMinorUnitFactor(currency: string) {
+  return PAYMENT_PLAN_ZERO_DECIMAL_CURRENCIES.has(normalizeCurrencyCode(currency)) ? 1 : 100;
+}
+
+function paymentPlanMoneyToMinorUnits(value: number, currency: string) {
+  return Math.round(value * paymentPlanCurrencyMinorUnitFactor(currency));
+}
+
+function distributeNativePlanPayments(
+  totalAmount: number,
+  firstPaymentAmount: number,
+  payments: NativePlanPaymentDraft[],
+  currency: string,
+) {
+  const factor = paymentPlanCurrencyMinorUnitFactor(currency);
+  const remainingMinorUnits = Math.max(
+    0,
+    paymentPlanMoneyToMinorUnits(totalAmount, currency) - paymentPlanMoneyToMinorUnits(firstPaymentAmount, currency),
+  );
+  if (!payments.length || remainingMinorUnits <= 0) {
     return payments.map((payment) => ({ ...payment, amount: '' }));
   }
-  const base = Math.floor((remaining / payments.length) * 100) / 100;
+  const baseMinorUnits = Math.floor(remainingMinorUnits / payments.length);
   return payments.map((payment, index) => ({
     ...payment,
     amount: formatPlainAmount(index === payments.length - 1
-      ? Math.round((remaining - base * (payments.length - 1)) * 100) / 100
-      : base),
+      ? (remainingMinorUnits - baseMinorUnits * (payments.length - 1)) / factor
+      : baseMinorUnits / factor),
   }));
 }
 

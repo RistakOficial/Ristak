@@ -16,6 +16,7 @@ import {
 import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
+import { runIdempotentPaymentPlanCreation } from '../services/paymentPlanSafetyService.js'
 
 const CONEKTA_WEBHOOK_PATH = '/api/conekta/webhook'
 
@@ -139,30 +140,19 @@ function sendConektaError(res, error, fallback = 'No se pudo procesar Conekta') 
   })
 }
 
-// (PAY2-002) Webhook de Conekta para reconciliar pagos pendientes (3DS/OXXO/SPEI) que
-// quedaban "pending" para siempre. Rollout seguro: si hay CONEKTA_WEBHOOK_SECRET, se exige;
-// si no, se acepta + warn para no romper la integración mientras se configura.
-// NOTA (verificar en QA): confirmar contra el payload real de tu cuenta Conekta que el id
-// de la orden viaja en data.object.id (la estructura documentada es { type, data:{ object } }).
+// Los estados financieros sólo se reconcilian con firma criptográfica del proveedor.
+// Si la instalación no tiene llave pública, se rechaza: nunca hacemos fail-open con dinero.
 export async function handleConektaWebhookView(req, res) {
   try {
     const rawBody = typeof req.rawBody === 'string' ? req.rawBody : JSON.stringify(req.body || {})
     const signature = await verifyConektaWebhookSignature(rawBody, req.get('DIGEST') || req.get('digest') || '')
 
-    if (signature.configured) {
-      if (!signature.verified) {
-        return res.status(401).json({ success: false, error: 'Firma de webhook inválida' })
-      }
-    } else {
-      const secret = cleanString(process.env.CONEKTA_WEBHOOK_SECRET)
-      if (secret) {
-        const provided = cleanString(req.get('x-conekta-webhook-secret') || req.query?.secret || '')
-        if (provided !== secret) {
-          return res.status(401).json({ success: false, error: 'Firma de webhook inválida' })
-        }
-      } else {
-        logger.warn('[Conekta webhook] Aceptado SIN verificación: configura las llaves de Conekta para que Ristak cree y verifique el webhook automático.')
-      }
+    if (!signature.configured) {
+      logger.error('[Conekta webhook] Rechazado: no hay llave pública de firma configurada por Conekta.')
+      return res.status(503).json({ success: false, error: 'Webhook no verificable' })
+    }
+    if (!signature.verified) {
+      return res.status(401).json({ success: false, error: 'Firma de webhook inválida' })
     }
 
     const result = await reconcileConektaWebhookEvent(req.body || {})
@@ -232,8 +222,16 @@ export async function createConektaPaymentLinkView(req, res) {
 
 export async function createConektaPaymentPlanView(req, res) {
   try {
-    const result = await createConektaPaymentPlan(req.body || {}, {
-      baseUrl: getRequestBaseUrl(req)
+    const requestPayload = req.body || {}
+    const idempotencyKey = req.get('Idempotency-Key') || requestPayload.idempotencyKey || requestPayload.clientRequestId
+    const payload = { ...requestPayload, idempotencyKey }
+    const result = await runIdempotentPaymentPlanCreation({
+      provider: 'conekta',
+      idempotencyKey,
+      payload,
+      create: () => createConektaPaymentPlan(payload, {
+        baseUrl: getRequestBaseUrl(req)
+      })
     })
     res.status(201).json({ success: true, data: result })
   } catch (error) {

@@ -1,6 +1,5 @@
 import { createVerify } from 'crypto'
 import fetch from 'node-fetch'
-import { DateTime } from 'luxon'
 import { db, getAppConfig, setAppConfig } from '../config/database.js'
 import { decrypt, encrypt, isEncrypted } from '../utils/encryption.js'
 import { logger } from '../utils/logger.js'
@@ -16,6 +15,12 @@ import { publishPaymentChangedEvent, publishSubscriptionChangedEvent } from './p
 import { getPaymentPlanAuditSummary, hardDeleteTestPaymentPlan } from './paymentRecordSafetyService.js'
 import { mapGatewayPaymentStatus } from './paymentGatewayStatusPolicy.js'
 import {
+  assertExactPaymentPlanTotal,
+  assertPlanCanChangeState,
+  markOverduePaymentPlanChargesForReview,
+  withPaymentPlanEditState
+} from './paymentPlanSafetyService.js'
+import {
   buildMetaPublicPurchasePixelEvent,
   triggerMetaPaymentPurchaseEvent
 } from './metaConversionEventsService.js'
@@ -27,8 +32,7 @@ import {
   businessTodayDateOnly,
   getAccountTimezone,
   normalizeDateOnlyInTimezone,
-  normalizeToUtcIso,
-  resolveTimezone
+  normalizeToUtcIso
 } from '../utils/dateUtils.js'
 
 const CONFIG_KEYS = {
@@ -187,19 +191,11 @@ function hasExplicitPlanTime(value) {
   return !(match[1] === '00' && match[2] === '00' && (!match[3] || match[3] === '00'))
 }
 
-function getCurrentBusinessPlanTime(timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date()) {
-  return DateTime.fromJSDate(referenceDate instanceof Date ? referenceDate : new Date(referenceDate), {
-    zone: resolveTimezone(timezone)
-  })
-    .set({ millisecond: 0 })
-    .toFormat('HH:mm:ss')
-}
-
-function withDefaultPlanTime(value, timezone = DEFAULT_PAYMENT_TIMEZONE, referenceDate = new Date()) {
+function withDefaultPlanTime(value, timezone = DEFAULT_PAYMENT_TIMEZONE) {
   if (value === null || value === undefined || value === '') return value
   if (hasExplicitPlanTime(value)) return value
   const date = normalizeDateOnly(value, timezone)
-  return `${date}T${getCurrentBusinessPlanTime(timezone, referenceDate)}`
+  return `${date}T10:00:00`
 }
 
 function shouldUseExactPlanTime(value, frequency) {
@@ -2576,13 +2572,7 @@ function normalizeConektaPaymentPlanPayload(input = {}, timezone = DEFAULT_PAYME
     assertPlanDueDateNotInPast(firstPaymentDate, firstPaymentFrequency, 'El primer pago automático no puede programarse en una fecha pasada.', timezone)
   }
 
-  const remainingTotal = normalizedRemaining.reduce((sum, payment) => sum + payment.amount, 0)
-  const planTotal = Math.round((remainingTotal + firstPaymentAmount) * 100) / 100
-  if (Math.abs(planTotal - totalAmount) > 0.5) {
-    const error = new Error(`Las parcialidades suman ${planTotal.toFixed(2)} ${currency}, pero el total es ${totalAmount.toFixed(2)} ${currency}.`)
-    error.status = 400
-    throw error
-  }
+  assertExactPaymentPlanTotal({ totalAmount, firstPaymentAmount, remainingPayments: normalizedRemaining, currency })
 
   return {
     contact: {
@@ -3093,16 +3083,13 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
   const cardSetupAmount = needsSeparateCardSetup ? plan.cardSetupAmount : (firstPaymentIsCard ? plan.firstPayment.amount : 0)
 
   const flowId = createId('conekta_flow')
-  const flowState = hasSavedCard
+  const targetFlowState = hasSavedCard
     ? CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE
     : CONEKTA_PLAN_STATES.WAITING_CARD_AUTHORIZATION
+  const flowState = 'creating'
   const stateHistory = addPlanState([], flowState)
   const now = new Date().toISOString()
   const cardLabel = hasSavedCard ? getConektaSavedCardLabelFromRow(savedSource) : ''
-  const firstPaymentDueNow = plan.firstPayment.enabled
-    ? isPlanChargeDueNow(plan.firstPayment.date, plan.remainingFrequency, accountTimezone)
-    : false
-
   await db.run(
     `INSERT INTO payment_flows (
       id, contact_id, contact_name, contact_email, contact_phone,
@@ -3128,7 +3115,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       plan.firstPayment.amount,
       plan.firstPayment.date,
       plan.firstPayment.method,
-      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard && firstPaymentDueNow ? 'processing' : 'pending') : 'not_required',
+      plan.firstPayment.enabled ? (hasSavedCard && firstPaymentIsCard ? 'scheduled' : 'pending') : 'not_required',
       hasSavedCard ? 0 : 1,
       cardSetupAmount,
       savedSource?.conekta_customer_id || null,
@@ -3137,10 +3124,11 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       flowState,
       JSON.stringify(stateHistory),
       hasSavedCard ? now : null,
-      hasSavedCard ? now : null,
-      hasSavedCard ? now : null,
+      now,
+      null,
       JSON.stringify({
         source: plan.source,
+        creationRequestKey: cleanString(input.idempotencyKey),
         conektaMode: config.mode,
         timezone: accountTimezone,
         remainingFrequency: plan.remainingFrequency,
@@ -3156,7 +3144,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
 
   const response = {
     flowId,
-    currentState: flowState,
+    currentState: targetFlowState,
     paymentMode: config.mode,
     firstPaymentLink: null,
     firstPaymentPaymentId: null,
@@ -3213,7 +3201,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
       contact: plan.contact,
       amount: plan.firstPayment.amount,
       currency: plan.currency,
-      status: firstPaymentDueNow ? 'pending' : 'scheduled',
+      status: 'scheduled',
       paymentMethod: 'conekta_saved_card',
       title: firstPaymentTitle,
       description: firstPaymentDescription,
@@ -3240,14 +3228,7 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
     )
     response.firstPaymentPaymentId = paymentId
 
-    if (firstPaymentDueNow) {
-      await chargeConektaPaymentRowWithSavedSource({
-        paymentId,
-        savedSource,
-        source: 'conekta_payment_plan_first_saved_card',
-        extraMetadata: { ristak_flow_id: flowId, ristak_plan_trigger: 'first_payment_saved_card' }
-      })
-    }
+    // Se cobra desde el cron después de que todas las parcialidades quedaron persistidas.
   }
 
   if (plan.firstPayment.enabled && firstPaymentIsCard && !hasSavedCard) {
@@ -3385,12 +3366,24 @@ export async function createConektaPaymentPlan(input = {}, { baseUrl } = {}) {
     })
   }
 
+  const activationResult = await db.run(
+    `UPDATE payment_flows
+     SET current_state = ?, state_history = ?, installment_plan_active_at = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND current_state = 'creating'`,
+    [targetFlowState, JSON.stringify(addPlanState(stateHistory, targetFlowState)), hasSavedCard ? now : null, flowId]
+  )
+  if (activationResult.changes !== 1) {
+    const error = new Error('El plan cambió mientras se estaba creando. Quedó detenido para revisión y no se realizará ningún cobro.')
+    error.status = 409
+    throw error
+  }
   await persistConektaPaymentPlanMirror(flowId, { response })
 
   return response
 }
 
-export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
+export async function processDueConektaPaymentPlanCharges({ limit = 25, isLeaseValid = () => true } = {}) {
+  await markOverduePaymentPlanChargesForReview('conekta')
   const config = await getConektaPaymentConfig({ includeSecrets: true })
   if (!config.configured) {
     const error = new Error('Conekta no está configurado todavía. Guarda las llaves primero.')
@@ -3469,6 +3462,7 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
   const results = []
   const touchedFlowIds = new Set()
   for (const row of firstPaymentRows || []) {
+    if (!isLeaseValid()) break
     const rowMetadata = parseJson(row.metadata, {})
     const firstPaymentDueValue = row.first_payment_date || row.payment_due_date || row.payment_date
     if (!isPlanChargeDueNow(firstPaymentDueValue, rowMetadata.remainingFrequency, accountTimezone)) {
@@ -3486,6 +3480,7 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
          SET first_payment_status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND current_state = '${CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE}'
            AND (first_payment_status IN ('pending', 'scheduled') OR (first_payment_status = 'processing' AND ${staleFirstPaymentClaimSql}))`,
         [row.flow_id]
       )
@@ -3531,6 +3526,7 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
   }
 
   for (const row of rows || []) {
+    if (!isLeaseValid()) break
     touchedFlowIds.add(row.flow_id)
     try {
       // (PAY2-001 / CRON-001) Claim atómico ANTES de cobrar: solo procesamos esta
@@ -3542,6 +3538,11 @@ export async function processDueConektaPaymentPlanCharges({ limit = 25 } = {}) {
          SET status = 'processing',
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?
+           AND EXISTS (
+             SELECT 1 FROM payment_flows f
+             WHERE f.id = installment_payments.flow_id
+               AND f.current_state = '${CONEKTA_PLAN_STATES.INSTALLMENT_PLAN_ACTIVE}'
+           )
            AND (status = 'scheduled' OR (status = 'processing' AND ${staleInstallmentClaimSql}))`,
         [row.installment_id]
       )
@@ -3766,20 +3767,37 @@ async function createConektaPaymentPlanCardSetupLink(flow, { baseUrl } = {}) {
   }
 }
 
-export async function updateConektaPaymentPlanSchedule(flowId, input = {}) {
+export async function updateConektaPaymentPlanSchedule(flowId, input = {}, options = {}) {
+  const cleanFlowId = cleanString(flowId)
+  await assertPlanCanChangeState(cleanFlowId)
+  const editResult = await withPaymentPlanEditState(cleanFlowId, 'conekta', (originalState) => (
+    updateConektaPaymentPlanScheduleLocked(cleanFlowId, input, options, originalState)
+  ))
+  const editRaw = parseJson(editResult?.raw_json, {})
+  await persistConektaPaymentPlanMirror(cleanFlowId, {
+    localAction: 'update_schedule',
+    actionedAt: new Date().toISOString(),
+    ...(editRaw.response ? { response: editRaw.response } : {}),
+    ...(Array.isArray(editRaw.addedInstallments) ? { addedInstallments: editRaw.addedInstallments } : {}),
+    ...(editRaw.addedInstallmentCount ? { addedInstallmentCount: editRaw.addedInstallmentCount } : {})
+  })
+  return editResult
+}
+
+async function updateConektaPaymentPlanScheduleLocked(flowId, input = {}, { baseUrl = '' } = {}, originalState = '') {
   const cleanFlowId = cleanString(flowId)
   if (!cleanFlowId) {
     const error = new Error('Plan Conekta requerido.')
     error.status = 400
     throw error
   }
-
   const flow = await db.get('SELECT * FROM payment_flows WHERE id = ?', [cleanFlowId])
   if (!flow || flow.payment_provider !== 'conekta') {
     const error = new Error('Plan Conekta no encontrado.')
     error.status = 404
     throw error
   }
+  flow.current_state = originalState || flow.current_state
 
   const metadata = parseJson(flow.metadata, {})
   const accountTimezone = await getAccountTimezone()
@@ -4206,6 +4224,10 @@ export async function applyConektaPaymentPlanAction(flowId, action, options = {}
   const now = new Date().toISOString()
   const stateHistory = (nextState) => addPlanState(flow.state_history, nextState)
 
+  if (['activate', 'pause', 'cancel', 'delete'].includes(normalizedAction)) {
+    await assertPlanCanChangeState(cleanFlowId, { activating: normalizedAction === 'activate' })
+  }
+
   if (['change_card', 'change-card', 'change_payment_method', 'replace_card'].includes(normalizedAction)) {
     const cardSetup = await createConektaPaymentPlanCardSetupLink(flow, options)
     return persistConektaPaymentPlanMirror(cleanFlowId, {
@@ -4263,18 +4285,25 @@ export async function applyConektaPaymentPlanAction(flowId, action, options = {}
   }
 
   if (normalizedAction === 'pause') {
-    await db.run(
+    const pauseResult = await db.run(
       `UPDATE payment_flows
        SET current_state = ?,
            state_history = ?,
            updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?`,
+       WHERE id = ?
+         AND COALESCE(first_payment_status, '') <> 'processing'
+         AND NOT EXISTS (SELECT 1 FROM installment_payments i WHERE i.flow_id = payment_flows.id AND i.status = 'processing')`,
       [
         CONEKTA_PLAN_STATES.PAUSED,
         JSON.stringify(stateHistory(CONEKTA_PLAN_STATES.PAUSED)),
         cleanFlowId
       ]
     )
+    if (!(Number(pauseResult?.changes || 0) > 0)) {
+      const error = new Error('Un cobro comenzó justo antes de pausar. Espera a que termine y vuelve a intentarlo.')
+      error.status = 409
+      throw error
+    }
 
     return persistConektaPaymentPlanMirror(cleanFlowId, { localAction: normalizedAction, actionedAt: now })
   }
@@ -4310,18 +4339,25 @@ export async function applyConektaPaymentPlanAction(flowId, action, options = {}
   const finalPaymentStatus = normalizedAction === 'delete' ? 'deleted' : 'void'
   const finalInstallmentStatus = normalizedAction === 'delete' ? 'deleted' : 'cancelled'
 
-  await db.run(
+  const closeResult = await db.run(
     `UPDATE payment_flows
      SET current_state = ?,
          state_history = ?,
          updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?`,
+     WHERE id = ?
+       AND COALESCE(first_payment_status, '') <> 'processing'
+       AND NOT EXISTS (SELECT 1 FROM installment_payments i WHERE i.flow_id = payment_flows.id AND i.status = 'processing')`,
     [
       finalState,
       JSON.stringify(stateHistory(finalState)),
       cleanFlowId
     ]
   )
+  if (!(Number(closeResult?.changes || 0) > 0)) {
+    const error = new Error('Un cobro comenzó justo antes de cerrar el plan. Espera a que termine y vuelve a intentarlo.')
+    error.status = 409
+    throw error
+  }
 
   await db.run(
     `UPDATE installment_payments

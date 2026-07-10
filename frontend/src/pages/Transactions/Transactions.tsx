@@ -181,12 +181,14 @@ const getTransactionDateSortValue = (transaction: Transaction) => (
 const isStripePaymentPlan = (plan: PaymentPlan) => plan.source === 'stripe' || plan.raw?.provider === 'stripe'
 const isConektaPaymentPlan = (plan: PaymentPlan) => plan.source === 'conekta' || plan.raw?.provider === 'conekta' || plan.raw?.schedule?.provider === 'conekta'
 const isMercadoPagoPaymentPlan = (plan: PaymentPlan) => plan.source === 'mercadopago' || plan.raw?.provider === 'mercadopago' || plan.raw?.schedule?.provider === 'mercadopago'
-const isLocalCheckoutPaymentPlan = (plan: PaymentPlan) => isStripePaymentPlan(plan) || isConektaPaymentPlan(plan) || isMercadoPagoPaymentPlan(plan)
-type LocalCheckoutPlanProvider = 'stripe' | 'conekta' | 'mercadopago'
+const isRebillPaymentPlan = (plan: PaymentPlan) => plan.source === 'rebill' || plan.raw?.provider === 'rebill' || plan.raw?.schedule?.provider === 'rebill'
+const isLocalCheckoutPaymentPlan = (plan: PaymentPlan) => isStripePaymentPlan(plan) || isConektaPaymentPlan(plan) || isMercadoPagoPaymentPlan(plan) || isRebillPaymentPlan(plan)
+type LocalCheckoutPlanProvider = 'stripe' | 'conekta' | 'mercadopago' | 'rebill'
 const getLocalCheckoutPlanProvider = (plan: PaymentPlan | null): LocalCheckoutPlanProvider => (
-  plan && isMercadoPagoPaymentPlan(plan) ? 'mercadopago' : plan && isConektaPaymentPlan(plan) ? 'conekta' : 'stripe'
+  plan && isRebillPaymentPlan(plan) ? 'rebill' : plan && isMercadoPagoPaymentPlan(plan) ? 'mercadopago' : plan && isConektaPaymentPlan(plan) ? 'conekta' : 'stripe'
 )
 const getPaymentPlanProviderLabel = (plan: PaymentPlan) => {
+  if (isRebillPaymentPlan(plan)) return 'Rebill'
   if (isMercadoPagoPaymentPlan(plan)) return 'Mercado Pago'
   if (isConektaPaymentPlan(plan)) return 'Conekta'
   if (isStripePaymentPlan(plan)) return 'Stripe'
@@ -211,6 +213,14 @@ const MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS = [
 ]
 const CONEKTA_PLAN_PAYMENT_METHOD_OPTIONS = [
   { value: 'conekta_auto', label: 'Tarjeta automática' },
+  { value: 'bank_transfer', label: 'Transferencia' },
+  { value: 'cash', label: 'Efectivo' },
+  { value: 'deposit', label: 'Depósito' },
+  { value: 'check', label: 'Cheque' },
+  { value: 'other', label: 'Otro' }
+]
+const REBILL_PLAN_PAYMENT_METHOD_OPTIONS = [
+  { value: 'rebill_auto', label: 'Tarjeta automática' },
   { value: 'bank_transfer', label: 'Transferencia' },
   { value: 'cash', label: 'Efectivo' },
   { value: 'deposit', label: 'Depósito' },
@@ -282,7 +292,7 @@ const getStripePlanCardSetupPaymentLink = (plan: PaymentPlan | null): string => 
   const schedule = getStripePlanSchedulePayload(plan)
   const paymentFlow = raw.paymentFlow && typeof raw.paymentFlow === 'object' ? raw.paymentFlow : {}
   const response = raw.response && typeof raw.response === 'object' ? raw.response : {}
-  return String(schedule.cardSetupPaymentLink || paymentFlow.cardSetupPaymentLink || response.cardSetupLink || '').trim()
+  return String(schedule.cardSetupPaymentLink || schedule.cardSetup?.paymentLink || paymentFlow.cardSetupPaymentLink || response.cardSetupLink || '').trim()
 }
 
 const getEditableStripeMethod = (method?: string | null) => {
@@ -312,19 +322,31 @@ const getEditableConektaMethod = (method?: string | null) => {
   return normalized
 }
 
+const getEditableRebillMethod = (method?: string | null) => {
+  const normalized = String(method || '').toLowerCase()
+  if (!normalized || normalized.startsWith('rebill') || ['card', 'payment_link', 'direct_card', 'saved_card'].includes(normalized)) {
+    return 'rebill_auto'
+  }
+  if (normalized === 'transfer') return 'bank_transfer'
+  return normalized
+}
+
 const getEditablePlanMethod = (method: string | null | undefined, provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'rebill') return getEditableRebillMethod(method)
   if (provider === 'mercadopago') return getEditableMercadoPagoMethod(method)
   if (provider === 'conekta') return getEditableConektaMethod(method)
   return getEditableStripeMethod(method)
 }
 
 const getPlanMethodOptions = (provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'rebill') return REBILL_PLAN_PAYMENT_METHOD_OPTIONS
   if (provider === 'mercadopago') return MERCADOPAGO_PLAN_PAYMENT_METHOD_OPTIONS
   if (provider === 'conekta') return CONEKTA_PLAN_PAYMENT_METHOD_OPTIONS
   return STRIPE_PLAN_PAYMENT_METHOD_OPTIONS
 }
 
 const getDefaultPlanMethod = (provider: LocalCheckoutPlanProvider) => {
+  if (provider === 'rebill') return 'rebill_auto'
   if (provider === 'mercadopago') return 'mercadopago'
   if (provider === 'conekta') return 'conekta_auto'
   return 'stripe_auto'
@@ -793,7 +815,9 @@ export const Transactions: React.FC = () => {
     const firstAmount = Number(firstPayment?.amount || 0)
     const firstStatus = String(firstPayment?.status || 'pending').toLowerCase()
     const firstMethod = getEditablePlanMethod(firstPayment?.method || firstPayment?.paymentMethod, provider)
-    const firstLocked = isStripePlanPaymentLocked(firstStatus) || (provider === 'mercadopago' && Boolean(firstPayment?.paymentLink || firstPayment?.preferenceId))
+    const firstLocked = isStripePlanPaymentLocked(firstStatus)
+      || provider === 'rebill'
+      || (provider === 'mercadopago' && Boolean(firstPayment?.paymentLink || firstPayment?.preferenceId))
 
     const installments = Array.isArray(schedule.installments) ? schedule.installments : []
     const totalPlanPayments = getPlanPaymentTotal(firstAmount > 0, installments.length)
@@ -3200,6 +3224,7 @@ export const Transactions: React.FC = () => {
         const stripePlan = isStripePaymentPlan(item)
         const conektaPlan = isConektaPaymentPlan(item)
         const mercadoPagoPlan = isMercadoPagoPaymentPlan(item)
+        const rebillPlan = isRebillPaymentPlan(item)
         const activationLabel = status === 'paused' ? 'Continuar plan' : 'Activar plan'
 
         return (
@@ -3217,7 +3242,7 @@ export const Transactions: React.FC = () => {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={actionInProgress} onClick={() => handleOpenPaymentPlan(item)}>
                   <Edit size={16} />
-                  <span style={{ marginLeft: '8px' }}>{stripePlan ? 'Ver plan Stripe' : conektaPlan ? 'Ver plan Conekta' : mercadoPagoPlan ? 'Ver plan Mercado Pago' : 'Editar factura'}</span>
+                  <span style={{ marginLeft: '8px' }}>{stripePlan ? 'Ver plan Stripe' : conektaPlan ? 'Ver plan Conekta' : mercadoPagoPlan ? 'Ver plan Mercado Pago' : rebillPlan ? 'Ver plan Rebill' : 'Editar factura'}</span>
                 </DropdownMenuItem>
 
                 {canActivatePaymentPlan(item) && (
