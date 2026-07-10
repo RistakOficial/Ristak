@@ -678,7 +678,10 @@ como OGG/Opus (`audio/ogg; codecs=opus`) cuando el canal requiere nota de voz.
 Independientemente del formato que exija el proveedor, Ristak debe persistir una
 copia publica reproducible en el historial (`media_url`, MIME y nombre de
 archivo), usando MP4/M4A cuando haga falta para que `/chat`, `/movil`, `mobile/`
-y la app iOS puedan volver a reproducir audios salientes despues de recargar. En
+y la app iOS puedan volver a reproducir audios salientes despues de recargar. El
+M4A nativo de iPhone puede ser detectado por magic bytes como `audio/x-m4a`;
+`mediaStorageService` debe normalizar ese alias a `audio/mp4` antes de validar y
+guardar el preview compartido por los envios WhatsApp API y QR. En
 clientes nativos (`mobile/` e `ios/app`), cualquier `media_url` relativo
 (`/media/...`) debe resolverse contra la URL base del tenant antes de pintar la
 burbuja, visor o archivo compartido; `Image`/`URL(string:)` no deben recibir

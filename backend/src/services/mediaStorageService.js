@@ -125,6 +125,17 @@ const MIME_EXTENSION = {
 
 const ALLOWED_MIME_TYPES = new Set(Object.keys(MIME_EXTENSION))
 
+// `file-type` reconoce el brand `M4A ` que escribe AVAudioRecorder como
+// `audio/x-m4a`. El cliente iOS declara correctamente `audio/mp4`, pero la
+// detección por magic bytes tiene prioridad y antes terminaba rechazando el
+// preview con unsupported_media_type. Guardamos todos los alias M4A bajo el
+// MIME IANA canónico para que chat, Bunny y los navegadores reciban un contrato
+// estable sin debilitar la validación del contenido.
+const MIME_TYPE_ALIASES = new Map([
+  ['audio/x-m4a', 'audio/mp4'],
+  ['audio/m4a', 'audio/mp4']
+])
+
 function nowIso() {
   return new Date().toISOString()
 }
@@ -413,7 +424,8 @@ function buildAppPublicUrl(pathname) {
 }
 
 function mimeBase(mimeType = '') {
-  return cleanString(mimeType).split(';')[0].toLowerCase()
+  const base = cleanString(mimeType).split(';')[0].toLowerCase()
+  return MIME_TYPE_ALIASES.get(base) || base
 }
 
 function mediaTypeFromMime(mimeType = '') {

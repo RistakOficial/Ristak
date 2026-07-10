@@ -348,6 +348,105 @@ test('saveWhatsAppAudioDataUrl convierte grabaciones MP4 a nota de voz Ogg Opus 
   }
 })
 
+test('saveWhatsAppAudioPlaybackPreviewDataUrl acepta el M4A nativo de iPhone', {
+  skip: ffmpegAvailable ? false : 'ffmpeg no está instalado en este entorno'
+}, async () => {
+  const previousEnv = snapshotEnv()
+  let server = null
+  let baseUrl = ''
+  let db = null
+  let mediaAssetId = ''
+  const uploads = []
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-ios-m4a-preview-test-'))
+
+  try {
+    const m4aPath = join(folder, 'nota-voz-iphone.m4a')
+    await runFfmpeg([
+      '-y',
+      '-f', 'lavfi',
+      '-i', 'sine=frequency=440:duration=1.2',
+      '-vn',
+      '-c:a', 'aac',
+      '-b:a', '64k',
+      '-brand', 'M4A ',
+      '-movflags', '+faststart',
+      m4aPath
+    ])
+    const m4aBuffer = await fs.readFile(m4aPath)
+    const audioDataUrl = `data:audio/mp4;base64,${m4aBuffer.toString('base64')}`
+
+    server = http.createServer((req, res) => {
+      if (req.method === 'PUT' && req.url?.startsWith('/storage/voice-preview-zone/')) {
+        let size = 0
+        req.on('data', chunk => { size += chunk.length })
+        req.on('end', () => {
+          uploads.push({
+            url: req.url,
+            contentType: req.headers['content-type'],
+            size
+          })
+          res.statusCode = 201
+          res.end('ok')
+        })
+        return
+      }
+
+      res.statusCode = 404
+      res.end('not found')
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    baseUrl = `http://127.0.0.1:${server.address().port}`
+
+    delete process.env.DATABASE_URL
+    delete process.env.WHATSAPP_LOCAL_MEDIA_FALLBACK
+    process.env.MEDIA_STORAGE_PROVIDER = 'bunny'
+    process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'true'
+    process.env.BUNNY_STORAGE_ZONE = 'voice-preview-zone'
+    process.env.BUNNY_STORAGE_REGION = ''
+    process.env.BUNNY_STORAGE_ENDPOINT = `${baseUrl}/storage`
+    process.env.BUNNY_STORAGE_API_KEY = 'voice-preview-storage-secret'
+    process.env.BUNNY_CDN_BASE_URL = `${baseUrl}/cdn`
+
+    const [whatsappApiService, mediaStorageService, database] = await Promise.all([
+      import('../src/services/whatsappApiService.js'),
+      import('../src/services/mediaStorageService.js'),
+      import('../src/config/database.js')
+    ])
+    mediaStorageService.resetCentralStorageConfigCache()
+    db = database.db
+
+    const savedPreview = await whatsappApiService.saveWhatsAppAudioPlaybackPreviewDataUrl(audioDataUrl, 1200)
+    mediaAssetId = savedPreview.mediaAssetId
+
+    assert.equal(savedPreview.mimeType, 'audio/mp4')
+    assert.equal(savedPreview.originalMimeType, 'audio/mp4')
+    assert.equal(savedPreview.durationMs, 1200)
+    assert.match(savedPreview.publicPath, new RegExp(`^${baseUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/cdn/`))
+    assert.match(savedPreview.filename, /\.m4a$/)
+    const audioUpload = uploads.find(upload => decodeURIComponent(upload.url).endsWith('-whatsapp-audio-preview.m4a'))
+    assert.ok(audioUpload, 'el preview reproducible debe subirse a Bunny como .m4a')
+    assert.equal(audioUpload.contentType, 'audio/mp4')
+
+    const row = await db.get('SELECT mime_type, media_type, extension, stored_filename, metadata_json FROM media_assets WHERE id = ?', [mediaAssetId])
+    assert.equal(row.mime_type, 'audio/mp4')
+    assert.equal(row.media_type, 'audio')
+    assert.equal(row.extension, 'm4a')
+    assert.match(row.stored_filename, /\.m4a$/)
+    const metadata = JSON.parse(row.metadata_json || '{}')
+    assert.equal(metadata.whatsappChatPlaybackPreview, true)
+    assert.equal(metadata.originalMimeType, 'audio/mp4')
+    assert.equal(metadata.durationMs, 1200)
+  } finally {
+    if (db && mediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+    }
+    server?.closeAllConnections?.()
+    server?.close()
+    await fs.rm(folder, { recursive: true, force: true }).catch(() => undefined)
+    restoreEnv(previousEnv)
+  }
+})
+
 test('saveWhatsAppImageDataUrl falla claro cuando Bunny es obligatorio y no está configurado', async () => {
   const previousEnv = snapshotEnv()
   let db = null
