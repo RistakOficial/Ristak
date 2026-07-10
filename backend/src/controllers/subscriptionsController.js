@@ -6,6 +6,7 @@ import {
   listSubscriptions,
   updateSubscription
 } from '../services/subscriptionsService.js'
+import { runIdempotentSubscriptionCreation } from '../services/subscriptionCreationSafetyService.js'
 import { logger } from '../utils/logger.js'
 
 function cleanString(value) {
@@ -38,7 +39,11 @@ function getRequestBaseUrl(req) {
 
 function sendError(res, error, fallback = 'No se pudo procesar la suscripción.') {
   logger.error(fallback, error)
-  res.status(error?.status || 400).json({
+  const requestedStatus = Number(error?.status || error?.statusCode || 400)
+  const status = Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599
+    ? requestedStatus
+    : 500
+  res.status(status).json({
     success: false,
     error: error instanceof Error ? error.message : fallback
   })
@@ -72,9 +77,20 @@ export async function getSubscriptionView(req, res) {
 
 export async function createSubscriptionView(req, res) {
   try {
-    const subscription = await createSubscription({
-      ...(req.body || {}),
-      baseUrl: getRequestBaseUrl(req)
+    const requestPayload = req.body || {}
+    const idempotencyKey = req.get?.('Idempotency-Key')
+      || req.headers?.['idempotency-key']
+      || requestPayload.idempotencyKey
+      || requestPayload.clientRequestId
+    const provider = cleanString(requestPayload.paymentProvider || requestPayload.payment_provider).toLowerCase() || 'stripe'
+    const subscription = await runIdempotentSubscriptionCreation({
+      provider,
+      idempotencyKey,
+      payload: requestPayload,
+      create: () => createSubscription({
+        ...requestPayload,
+        baseUrl: getRequestBaseUrl(req)
+      })
     })
     res.status(201).json({ success: true, data: subscription })
   } catch (error) {

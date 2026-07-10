@@ -14,6 +14,16 @@ export const timestampSortExpression = (valueExpression) => (
     : `COALESCE(${sqliteTimestampEpochExpression(valueExpression)}, 0)`
 )
 
+// Safe for prepared-statement cursors: unlike timestampSortExpression('?'),
+// this expression contains exactly one bind placeholder on both databases.
+// SQLite's julianday() already understands the ISO and UTC SQLite formats used
+// by chat timestamps, so its defensive REPLACE fallback is unnecessary here.
+export const timestampSortParameterExpression = () => (
+  isPostgresDatabase
+    ? `COALESCE(${postgresTimestampEpochExpression('?')}, 0)`
+    : 'COALESCE(julianday(?), 0)'
+)
+
 export const coalescedTimestampSortExpression = (...valueExpressions) => {
   const cleanExpressions = valueExpressions
     .map(value => String(value || '').trim())

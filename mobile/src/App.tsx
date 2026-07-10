@@ -128,6 +128,7 @@ import {
   readApiBaseUrl,
   readAuthToken,
   readJsonValue,
+  removeJsonValue,
   writeApiBaseUrl,
   writeAuthToken,
   writeJsonValue,
@@ -143,7 +144,35 @@ import {
 import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
 import { RistakApiClient, getUserDisplayName, loginWithResolvedTenant, type ChatLiveMessageEvent } from './api';
-import { hasModuleAccess, hasPhoneSectionAccess } from './access';
+import { hasLicenseFeature, hasModuleAccess, hasPhoneSectionAccess } from './access';
+import {
+  createVerifiedUserCacheRecord,
+  getCachedVerifiedUser,
+  getSessionCacheNamespace,
+  getSessionVerifyRejection,
+  type VerifiedUserCacheRecord,
+} from './sessionAccess';
+import {
+  applyChatLiveEvent,
+  mergeChatContact,
+  mergeChatContactPages,
+  mergeFreshChatPage,
+  patchChatContactList,
+  sortChatContactsByRecency,
+} from './chatListState';
+import {
+  getOldestConversationHistoryCursor,
+  hasNewRenderableConversationHistoryMessage,
+  isConversationHistoryCursorOlder,
+  isNativeLocalMessageId,
+  makeUnreconciledNativePendingMessagesRetryable,
+  retainNativeLocalOutboxMessages,
+} from './conversationReliability';
+import {
+  isCurrentCalendarSlotSelection,
+  type CalendarSlotSelection,
+} from './calendarState';
+import { shouldRotatePaymentAttemptAfterError } from './paymentSafety';
 import {
   configureNativePushTokenRefresh,
   configureNativeNotificationListeners,
@@ -186,6 +215,8 @@ import {
   getBusinessMonthRange,
   isoToBusinessDateTimeFields,
   localBusinessDateTimeToUTCISOString,
+  parseSortableDateValue,
+  resolveChatMessageReactions,
   resolveBusinessTimezone,
   todayDateOnlyInBusinessTimezone,
 } from './format';
@@ -202,6 +233,7 @@ import type {
   ContactCustomFieldDefinition,
   ContactTag,
   CustomLabels,
+  ConversationHistoryCursor,
   ConversationAgentState,
   ConversationalAgentConfig,
   ConversationalAgentDefinition,
@@ -305,6 +337,11 @@ function getRistakLogoSource(): ImageSourcePropType {
   return activeNativeThemeTone === 'light' ? RISTAK_LIGHT_MODE_LOGO : RISTAK_NIGHT_MODE_LOGO;
 }
 
+function createNativeMutationId(prefix: string, scope = '') {
+  const safeScope = scope.trim().replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 48);
+  return `${prefix}${safeScope ? `-${safeScope}` : ''}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 type RgbColor = { r: number; g: number; b: number };
 
 function parseHexColor(value: string): RgbColor | null {
@@ -373,6 +410,8 @@ const PHONE_COMPACT_SCALE = 0.78;
 const phoneCompact = (value: number) => Math.max(1, Math.round(value * PHONE_COMPACT_SCALE));
 
 const BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS = 8000;
+const SESSION_REVERIFY_INTERVAL_MS = 30 * 1000;
+const VERIFIED_USER_CACHE_STORAGE_KEY = 'ristak.native.verifiedUserCache.v1';
 
 type SessionState = {
   baseUrl: string;
@@ -548,7 +587,7 @@ type BusinessVoiceState = 'idle' | 'recording' | 'processing';
 type ConversationDraftAttachment = {
   id: string;
   uri: string;
-  dataUrl: string;
+  dataUrl?: string;
   kind: 'image' | 'video' | 'audio' | 'document';
   name: string;
   mimeType: string;
@@ -772,18 +811,44 @@ const ARCHIVED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.archivedIds.v1';
 const MUTED_CHAT_IDS_STORAGE_KEY = 'ristak.native.chat.mutedIds.v1';
 const CHAT_INBOX_REFRESH_INTERVAL_MS = 12000;
 const CHAT_REALTIME_REFRESH_DEBOUNCE_MS = 80;
+const CHAT_INBOX_REQUEST_TIMEOUT_MS = 8000;
 // Última bandeja cargada por cliente API (WeakMap: una sesión nueva crea otro
 // cliente y no hereda la bandeja de la cuenta anterior). Permite pintar la
 // lista al instante cuando ChatScreen se remonta al cambiar de sección.
 const nativeInboxCache = new WeakMap<RistakApiClient, ChatContact[]>();
 // Copia en disco de la bandeja + conversaciones (offline-first tipo WhatsApp):
 // sobrevive al cierre de la app y se pinta al instante en el arranque en frío.
-const conversationMessageMemCache = new Map<string, ChatMessage[]>();
+const conversationMessageMemCache = new WeakMap<RistakApiClient, Map<string, ChatMessage[]>>();
+const CONVERSATION_MESSAGE_MEM_CACHE_CONTACT_LIMIT = 20;
+function getConversationMessageMemCache(api: RistakApiClient, contactId: string) {
+  const accountCache = conversationMessageMemCache.get(api);
+  const cached = accountCache?.get(contactId) || [];
+  if (accountCache?.has(contactId)) {
+    accountCache.delete(contactId);
+    accountCache.set(contactId, cached);
+  }
+  return cached;
+}
+function setConversationMessageMemCache(api: RistakApiClient, contactId: string, messages: ChatMessage[]) {
+  let accountCache = conversationMessageMemCache.get(api);
+  if (!accountCache) {
+    accountCache = new Map<string, ChatMessage[]>();
+    conversationMessageMemCache.set(api, accountCache);
+  }
+  accountCache.delete(contactId);
+  accountCache.set(contactId, messages);
+  while (accountCache.size > CONVERSATION_MESSAGE_MEM_CACHE_CONTACT_LIMIT) {
+    const oldestContactId = accountCache.keys().next().value;
+    if (!oldestContactId) break;
+    accountCache.delete(oldestContactId);
+  }
+}
 const CONVERSATION_REFRESH_INTERVAL_MS = 4000;
 // Emitted when a push notification is received while the app is in the
 // foreground, so the inbox and open conversation can refresh instantly.
 const CHAT_REFRESH_EVENT = 'ristak:chat-refresh';
 const CHAT_CONVERSATION_MESSAGE_LIMIT = 100;
+const CHAT_CONVERSATION_EMPTY_HISTORY_PREFETCH_LIMIT = 5;
 const CHAT_ROW_MIN_HEIGHT = 86;
 const CHAT_AVATAR_SIZE = 58;
 const CHAT_CHANNEL_ICON_BOX_SIZE = 22;
@@ -931,6 +996,8 @@ const RECENT_PAYMENT_PERIODS: Array<{ id: RecentPaymentsPeriod; label: string; d
   { id: 'custom', label: 'Personalizado', days: 0 },
 ];
 const SETTINGS_APP_CONFIG_KEYS = [
+  'account_currency',
+  'account_timezone',
   'mobile_chat_ai_agent_enabled',
   'mobile_chat_ai_reply_suggestions_enabled',
   'mobile_chat_show_archived',
@@ -1198,11 +1265,26 @@ export default function RistakNativeApp() {
   const [screen, setScreen] = useState<Screen>('boot');
   const [themeRenderVersion, setThemeRenderVersion] = useState(0);
   const [session, setSession] = useState<SessionState>({ baseUrl: '', token: '', user: null });
+  const activeSessionRef = useRef(session);
+  activeSessionRef.current = session;
+  const activeSessionTokenRef = useRef('');
+  activeSessionTokenRef.current = session.token;
+  const sessionVerifyInFlightRef = useRef<Promise<void> | null>(null);
+  const commitSession = useCallback((nextSession: SessionState) => {
+    activeSessionRef.current = nextSession;
+    activeSessionTokenRef.current = nextSession.token;
+    setSession(nextSession);
+  }, []);
   const licenseAlertShownRef = useRef(false);
+  const unauthorizedAlertShownRef = useRef(false);
   const rootThemePreferenceRef = useRef<PhoneThemePreference>('system');
-  const handleLicenseBlocked = useCallback(() => {
+  const handleLicenseBlocked = useCallback((requestToken: string) => {
+    if (!requestToken || activeSessionTokenRef.current !== requestToken) return;
     void clearAuthToken();
-    setSession((current) => ({ ...current, token: '', user: null }));
+    void removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY);
+    void clearAllCache();
+    const current = activeSessionRef.current;
+    commitSession({ ...current, token: '', user: null });
     setScreen('login');
     if (!licenseAlertShownRef.current) {
       licenseAlertShownRef.current = true;
@@ -1211,24 +1293,38 @@ export default function RistakNativeApp() {
         'Tu licencia de Ristak ya no está activa. Inicia sesión de nuevo cuando se reactive.',
       );
     }
-  }, []);
+  }, [commitSession]);
   const handleFeatureBlocked = useCallback((message: string) => {
     Alert.alert(
       'Función no disponible',
       message || 'Esta función no está incluida en tu plan. Pídele al administrador que la active.',
     );
   }, []);
+  const handleUnauthorized = useCallback((requestToken: string) => {
+    if (!requestToken || activeSessionTokenRef.current !== requestToken) return;
+    void clearAuthToken();
+    void removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY);
+    void clearAllCache();
+    const current = activeSessionRef.current;
+    commitSession({ ...current, token: '', user: null });
+    setScreen('login');
+    if (!unauthorizedAlertShownRef.current) {
+      unauthorizedAlertShownRef.current = true;
+      Alert.alert('Sesión vencida', 'Vuelve a iniciar sesión para continuar.');
+    }
+  }, [commitSession]);
   const api = useMemo(
     () => {
       // Aísla la caché local por servidor/cuenta conectada, antes de que las
       // pantallas lean o escriban su copia offline.
-      setCacheNamespace(session.baseUrl || 'default');
+      setCacheNamespace(getSessionCacheNamespace(session.baseUrl, session.token) || 'default');
       return new RistakApiClient(session.baseUrl, session.token, {
+        onUnauthorized: handleUnauthorized,
         onLicenseBlocked: handleLicenseBlocked,
         onFeatureBlocked: handleFeatureBlocked,
       });
     },
-    [session.baseUrl, session.token, handleLicenseBlocked, handleFeatureBlocked],
+    [session.baseUrl, session.token, handleLicenseBlocked, handleFeatureBlocked, handleUnauthorized],
   );
 
   const applyRootThemePreference = useCallback((preference: PhoneThemePreference, systemTone?: string | null) => {
@@ -1255,27 +1351,34 @@ export default function RistakNativeApp() {
   }, [session.token]);
 
   const bootstrap = useCallback(async () => {
-    const [storedBaseUrl, storedToken] = await Promise.all([
+    const [storedBaseUrl, storedToken, cachedUserRecord] = await Promise.all([
       readApiBaseUrl(),
       readAuthToken(),
+      readJsonValue<VerifiedUserCacheRecord | null>(VERIFIED_USER_CACHE_STORAGE_KEY, null)
+        .catch(() => null),
     ]);
     await applyStoredThemePreference();
 
     if (!storedBaseUrl) {
-      setSession({ baseUrl: '', token: '', user: null });
+      await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
+      commitSession({ baseUrl: '', token: '', user: null });
       setScreen('login');
       return;
     }
 
     if (!storedToken) {
-      setSession({ baseUrl: storedBaseUrl, token: '', user: null });
+      await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
+      await clearAllCache();
+      commitSession({ baseUrl: storedBaseUrl, token: '', user: null });
       setScreen('login');
       return;
     }
 
+    const cachedUser = getCachedVerifiedUser(cachedUserRecord, storedBaseUrl, storedToken);
+    commitSession({ baseUrl: storedBaseUrl, token: storedToken, user: cachedUser });
+    setScreen('shell');
+
     try {
-      setSession({ baseUrl: storedBaseUrl, token: storedToken, user: null });
-      setScreen('shell');
       const verifier = new RistakApiClient(storedBaseUrl);
       const verified = await withStartupTimeout(
         verifier.verify(storedToken),
@@ -1283,31 +1386,105 @@ export default function RistakNativeApp() {
         'native_session_verify',
       );
       if (verified.success && verified.user) {
-        setSession({ baseUrl: storedBaseUrl, token: storedToken, user: verified.user });
+        const cacheRecord = createVerifiedUserCacheRecord(storedBaseUrl, storedToken, verified.user);
+        if (cacheRecord) {
+          await writeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY, cacheRecord).catch(() => undefined);
+        }
+        if (
+          activeSessionRef.current.baseUrl !== storedBaseUrl
+          || activeSessionRef.current.token !== storedToken
+        ) return;
+        commitSession({ baseUrl: storedBaseUrl, token: storedToken, user: verified.user });
       } else {
         await clearAuthToken();
-        setSession({ baseUrl: storedBaseUrl, token: '', user: null });
+        await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
+        await clearAllCache();
+        commitSession({ baseUrl: storedBaseUrl, token: '', user: null });
         setScreen('login');
       }
       return;
     } catch (error) {
-      const status = Number((error as { status?: unknown })?.status || 0);
-      if (status === 401 || status === 403) {
+      const rejection = getSessionVerifyRejection(error);
+      if (rejection) {
+        if (
+          activeSessionRef.current.baseUrl !== storedBaseUrl
+          || activeSessionRef.current.token !== storedToken
+        ) return;
         await clearAuthToken();
-        setSession({ baseUrl: storedBaseUrl, token: '', user: null });
+        await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
+        await clearAllCache();
+        commitSession({ baseUrl: storedBaseUrl, token: '', user: null });
         setScreen('login');
         return;
       }
       console.warn('[RistakNative] session verify skipped during startup', error);
-      setSession({ baseUrl: storedBaseUrl, token: storedToken, user: null });
-      setScreen('shell');
       return;
     }
-  }, [applyStoredThemePreference]);
+  }, [applyStoredThemePreference, commitSession]);
+
+  const revalidateCurrentSession = useCallback(() => {
+    const snapshot = activeSessionRef.current;
+    if (!snapshot.baseUrl || !snapshot.token) return Promise.resolve();
+    if (sessionVerifyInFlightRef.current) return sessionVerifyInFlightRef.current;
+
+    const { baseUrl, token } = snapshot;
+    const revalidation = (async () => {
+      try {
+        const verifier = new RistakApiClient(baseUrl);
+        const verified = await withStartupTimeout(
+          verifier.verify(token),
+          BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS,
+          'native_session_reverify',
+        );
+        const current = activeSessionRef.current;
+        if (current.baseUrl !== baseUrl || current.token !== token) return;
+        if (!verified.success || !verified.user) {
+          handleUnauthorized(token);
+          return;
+        }
+
+        const cacheRecord = createVerifiedUserCacheRecord(baseUrl, token, verified.user);
+        if (cacheRecord) {
+          await writeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY, cacheRecord).catch(() => undefined);
+        }
+        if (activeSessionRef.current.baseUrl !== baseUrl || activeSessionRef.current.token !== token) return;
+        commitSession({ baseUrl, token, user: verified.user });
+      } catch (error) {
+        const current = activeSessionRef.current;
+        if (current.baseUrl !== baseUrl || current.token !== token) return;
+        const rejection = getSessionVerifyRejection(error);
+        if (rejection === 'unauthorized') handleUnauthorized(token);
+        else if (rejection === 'license_blocked') handleLicenseBlocked(token);
+        // Timeouts, offline errors and 5xx preserve the last verified ACL.
+      }
+    })();
+
+    sessionVerifyInFlightRef.current = revalidation;
+    void revalidation.finally(() => {
+      if (sessionVerifyInFlightRef.current === revalidation) {
+        sessionVerifyInFlightRef.current = null;
+      }
+    });
+    return revalidation;
+  }, [commitSession, handleLicenseBlocked, handleUnauthorized]);
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  useEffect(() => {
+    if (screen !== 'shell' || !session.baseUrl || !session.token) return undefined;
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') void revalidateCurrentSession();
+    });
+    const interval = setInterval(() => {
+      if (AppState.currentState === 'active') void revalidateCurrentSession();
+    }, SESSION_REVERIFY_INTERVAL_MS);
+    return () => {
+      appStateSubscription.remove();
+      clearInterval(interval);
+    };
+  }, [revalidateCurrentSession, screen, session.baseUrl, session.token]);
 
   useEffect(() => {
     if (screen === 'shell') return undefined;
@@ -1329,29 +1506,41 @@ export default function RistakNativeApp() {
 
   const handleLogin = async (email: string, password: string) => {
     const response = await loginWithResolvedTenant(email, password);
+    // A fresh authentication can belong to another operator on the same
+    // server. Never let that session hydrate the previous user's offline data.
+    await clearAllCache();
+    await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
     await writeApiBaseUrl(response.baseUrl);
     await writeAuthToken(response.token);
+    const cacheRecord = createVerifiedUserCacheRecord(response.baseUrl, response.token, response.user);
+    if (cacheRecord) {
+      await writeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY, cacheRecord).catch(() => undefined);
+    }
     licenseAlertShownRef.current = false;
-    setSession({ baseUrl: response.baseUrl, token: response.token, user: response.user });
+    unauthorizedAlertShownRef.current = false;
+    commitSession({ baseUrl: response.baseUrl, token: response.token, user: response.user });
     setScreen('shell');
   };
 
   const logout = async () => {
     await unsubscribeFromNativePushNotifications(api);
     await clearAuthToken();
+    await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
     // Limpiar la copia local: evita que la siguiente sesión vea datos ajenos.
     void clearAllCache();
     await applyStoredThemePreference();
-    setSession((current) => ({ ...current, token: '', user: null }));
+    const current = activeSessionRef.current;
+    commitSession({ ...current, token: '', user: null });
     setScreen('login');
   };
 
   const resetServer = async () => {
     await unsubscribeFromNativePushNotifications(api);
     await clearRuntimeState();
+    await removeJsonValue(VERIFIED_USER_CACHE_STORAGE_KEY).catch(() => undefined);
     void clearAllCache();
     await applyStoredThemePreference();
-    setSession({ baseUrl: '', token: '', user: null });
+    commitSession({ baseUrl: '', token: '', user: null });
     setScreen('login');
   };
 
@@ -1397,12 +1586,12 @@ function PhoneShell({
   onChangeServer: () => Promise<void>;
 }) {
   const [activeSection, setActiveSection] = useState<PhoneSection>('chat');
-  const canUseConversationalAgent = user ? hasModuleAccess(user, 'ai_agent', 'read') : true;
+  const canUseConversationalAgent = user ? hasModuleAccess(user, 'ai_agent', 'read') : false;
   const allowedNavItems = useMemo(() => {
-    const filtered = PHONE_NAV_ITEMS.filter((item) => hasPhoneSectionAccess(user, item.key));
-    return filtered.length ? filtered : PHONE_NAV_ITEMS;
+    return PHONE_NAV_ITEMS.filter((item) => hasPhoneSectionAccess(user, item.key));
   }, [user]);
   useEffect(() => {
+    if (!allowedNavItems.length) return;
     setActiveSection((current) => (
       allowedNavItems.some((item) => item.key === current) ? current : allowedNavItems[0].key
     ));
@@ -1653,9 +1842,11 @@ function PhoneShell({
 	      >
         <PhoneSectionErrorBoundary resetKey={`${section}:${nativeThemeTone}`} section={section}>
 	          {section === 'chat' ? (
-	            <ChatScreen
+            <ChatScreen
               api={api}
               baseUrl={baseUrl}
+              initialAccountCurrency={String(mobileAppConfig.account_currency || '')}
+              initialAccountTimezone={String(mobileAppConfig.account_timezone || '')}
               canUseConversationalAgent={canUseConversationalAgent}
               customLabels={customLabels}
               settings={mobileChatSettings}
@@ -1697,7 +1888,11 @@ function PhoneShell({
           ) : null}
           {section === 'analytics' ? (
             <AppFrame>
-              <AnalyticsSection api={api} customLabels={customLabels} />
+              <AnalyticsSection
+                api={api}
+                customLabels={customLabels}
+                hasWebAnalyticsAccess={hasLicenseFeature(user, ['web_analytics'])}
+              />
             </AppFrame>
           ) : null}
           {section === 'settings' ? (
@@ -1716,6 +1911,32 @@ function PhoneShell({
 	      </AnimatedShellPage>
 	    );
 	  };
+
+  if (!user || !allowedNavItems.length) {
+    return (
+      <View style={styles.phoneShellRoot}>
+        <View style={styles.screenErrorState}>
+          <View style={styles.screenErrorIcon}>
+            <CircleAlert color={COLORS.danger} size={28} strokeWidth={2.2} />
+          </View>
+          <Text style={styles.screenErrorTitle}>
+            {user ? 'Sin acceso móvil' : 'Comprobando tus permisos'}
+          </Text>
+          <Text style={styles.screenErrorCopy}>
+            {user
+              ? 'Tu cuenta no tiene acceso a ninguna sección de la app móvil. Pídele al administrador que revise tus permisos.'
+              : 'Necesitamos una conexión para validar esta cuenta por primera vez. Reintentaremos automáticamente sin cerrar tu sesión.'}
+          </Text>
+          <Pressable
+            onPress={() => { void onLogout(); }}
+            style={({ pressed }) => [styles.screenErrorButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.screenErrorButtonText}>Cerrar sesión</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View
@@ -2340,6 +2561,8 @@ function ChatScreen({
   canUseConversationalAgent = true,
   customLabels = DEFAULT_CUSTOM_LABELS,
   footer,
+  initialAccountCurrency = '',
+  initialAccountTimezone = '',
   notificationContactId,
   pendingDraft,
   settings = DEFAULT_MOBILE_CHAT_SETTINGS,
@@ -2356,6 +2579,8 @@ function ChatScreen({
   canUseConversationalAgent?: boolean;
   customLabels?: CustomLabels;
   footer?: React.ReactNode;
+  initialAccountCurrency?: string;
+  initialAccountTimezone?: string;
   notificationContactId?: string;
   pendingDraft?: PendingChatDraft | null;
   settings?: MobileChatSettings;
@@ -2409,14 +2634,22 @@ function ChatScreen({
   const [cameraRecipients, setCameraRecipients] = useState<ChatContact[]>([]);
   const [cameraCaption, setCameraCaption] = useState('');
   const [cameraSending, setCameraSending] = useState(false);
+  const canUseCanonicalInboxCache = !settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all';
+  const currentChatListScopeKey = `${query.trim()}|phone:${canUseCanonicalInboxCache ? 'all' : settings.selectedWhatsAppPhoneId}`;
+  const canonicalInboxScopeKey = '|phone:all';
+  const cachedCanonicalInbox = canUseCanonicalInboxCache ? nativeInboxCache.get(api) || [] : [];
   // Hidratar desde la caché en memoria: ChatScreen se desmonta al cambiar de
   // sección y sin esto cada regreso pinta vacío -> spinner -> lista (flash).
-  const [chats, setChats] = useState<ChatContact[]>(() => nativeInboxCache.get(api) || []);
-  const [inboxCacheHydrated, setInboxCacheHydrated] = useState(() => Boolean(nativeInboxCache.get(api)?.length));
-  const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
-  const [accountCurrency, setAccountCurrency] = useState(DEFAULT_ACCOUNT_CURRENCY);
+  const [chats, setChats] = useState<ChatContact[]>(() => cachedCanonicalInbox);
+  const [inboxCacheHydrated, setInboxCacheHydrated] = useState(() => Boolean(cachedCanonicalInbox.length));
+  const initialBusinessTimezone = normalizeRequiredBusinessTimezone(initialAccountTimezone);
+  const initialCurrency = normalizeRequiredCurrencyCode(initialAccountCurrency);
+  const [businessTimezone, setBusinessTimezone] = useState(initialBusinessTimezone);
+  const [businessTimezoneReady, setBusinessTimezoneReady] = useState(Boolean(initialBusinessTimezone));
+  const [accountCurrency, setAccountCurrency] = useState(initialCurrency || DEFAULT_ACCOUNT_CURRENCY);
+  const [accountCurrencyReady, setAccountCurrencyReady] = useState(Boolean(initialCurrency));
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(() => !(nativeInboxCache.get(api)?.length));
+  const [loading, setLoading] = useState(() => !cachedCanonicalInbox.length);
   const [chatsLoadingMore, setChatsLoadingMore] = useState(false);
   const [chatsHasMore, setChatsHasMore] = useState(true);
   const [chatListOffset, setChatListOffset] = useState(0);
@@ -2432,24 +2665,34 @@ function ChatScreen({
   const cameraSendLockedRef = useRef(false);
   const chatListGenerationRef = useRef(0);
   const chatListLoadedQueryRef = useRef('');
+  const chatListLoadedScopeRef = useRef(cachedCanonicalInbox.length ? canonicalInboxScopeKey : '');
   const chatMountedRef = useRef(true);
   const chatsRef = useRef(chats);
   const chatRealtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const chatRealtimeRefreshInFlightRef = useRef(false);
   const chatRealtimeRefreshQueuedRef = useRef(false);
+  const chatListRequestAbortRef = useRef<AbortController | null>(null);
+  const scheduleIntentRef = useRef<{ signature: string; scheduledId: string } | null>(null);
   useEffect(() => {
     chatsRef.current = chats;
     // Solo la bandeja sin búsqueda alimenta la caché de remontaje.
-    if (!query.trim()) {
+    if (
+      currentChatListScopeKey === canonicalInboxScopeKey
+      && chatListLoadedScopeRef.current === canonicalInboxScopeKey
+    ) {
       nativeInboxCache.set(api, chats);
       // Espejo en disco para el arranque en frío: la próxima vez que abras la
       // app, la última bandeja aparece de inmediato mientras llega la fresca.
-      if (chats.length) writeCache(NATIVE_INBOX_CACHE_KEY, chats.slice(0, NATIVE_INBOX_CACHE_LIMIT));
+      writeCache(NATIVE_INBOX_CACHE_KEY, chats.slice(0, NATIVE_INBOX_CACHE_LIMIT));
     }
-  }, [api, chats, query]);
+  }, [api, canonicalInboxScopeKey, chats, currentChatListScopeKey]);
   // Hidratar la bandeja desde disco en frío: la caché en memoria se pierde al
   // cerrar la app, así que si arrancamos vacíos leemos la copia local guardada.
   useEffect(() => {
+    if (!canUseCanonicalInboxCache) {
+      setInboxCacheHydrated(true);
+      return undefined;
+    }
     if (nativeInboxCache.get(api)?.length) {
       setInboxCacheHydrated(true);
       return undefined;
@@ -2467,7 +2710,7 @@ function ChatScreen({
       alive = false;
     };
     // Solo al montar/ cambiar de cuenta; no re-hidratar tras cargas frescas.
-  }, [api]);
+  }, [api, canUseCanonicalInboxCache]);
   const conversationRouteProgress = useRef(new Animated.Value(0)).current;
   const businessPhones = useMemo(
     () => Array.isArray(whatsappStatus?.phoneNumbers) ? whatsappStatus.phoneNumbers : [],
@@ -2500,6 +2743,8 @@ function ChatScreen({
       clearTimeout(chatRealtimeRefreshTimeoutRef.current);
       chatRealtimeRefreshTimeoutRef.current = null;
     }
+    chatListRequestAbortRef.current?.abort();
+    chatListRequestAbortRef.current = null;
   }, []);
 
   useEffect(() => {
@@ -2525,32 +2770,67 @@ function ChatScreen({
 
   const loadChats = useCallback(async (silent = false) => {
     const requestQuery = query.trim();
+    const requestScopeKey = currentChatListScopeKey;
     const generation = chatListGenerationRef.current + 1;
     chatListGenerationRef.current = generation;
     // On a silent refresh with the same query, merge the fresh first page over
     // the already-loaded tail instead of collapsing the list back to page 0,
     // so scrolled depth and position survive.
-    const shouldMerge = silent && requestQuery === chatListLoadedQueryRef.current;
+    const shouldMerge = silent && requestScopeKey === chatListLoadedScopeRef.current;
+    const scopeChanged = requestScopeKey !== chatListLoadedScopeRef.current;
     // El spinner de pantalla completa solo cuando no hay nada que mostrar:
     // reemplazar la lista visible por un spinner en cada búsqueda o cambio de
     // filtro es uno de los parpadeos reportados.
-    if (!silent && !chatsRef.current.length) setLoading(true);
+    if (!silent && (!chatsRef.current.length || scopeChanged)) setLoading(true);
     setChatsLoadingMore(false);
     if (!shouldMerge) {
       setChatsHasMore(true);
       setChatListOffset(0);
+      if (scopeChanged) {
+        // Never leave rows from another search/phone scope on screen. Besides
+        // being misleading, a failed filtered request used to look like a
+        // successful result because the previous scope counted as cache.
+        const canonicalCache = requestScopeKey === canonicalInboxScopeKey
+          ? nativeInboxCache.get(api) || []
+          : [];
+        chatsRef.current = canonicalCache;
+        setChats(canonicalCache);
+      }
     }
     setError('');
+    chatListRequestAbortRef.current?.abort();
+    const controller = new AbortController();
+    chatListRequestAbortRef.current = controller;
+    let timedOut = false;
+    const requestTimeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, CHAT_INBOX_REQUEST_TIMEOUT_MS);
     try {
-      const data = await api.getChats(requestQuery, 0, CHAT_LIST_PAGE_SIZE, chatListPhoneFilterParams);
+      const data = await api.getChats(requestQuery, 0, CHAT_LIST_PAGE_SIZE, {
+        ...chatListPhoneFilterParams,
+        // Avatar warming can call external providers. It belongs on explicit
+        // loads, never on the SSE/poll critical path.
+        warmProfilePictures: silent ? false : chatListPhoneFilterParams.warmProfilePictures,
+        signal: controller.signal,
+      });
       if (!chatMountedRef.current) return;
       if (generation !== chatListGenerationRef.current) return;
       chatListLoadedQueryRef.current = requestQuery;
+      chatListLoadedScopeRef.current = requestScopeKey;
       const nextChats = Array.isArray(data) ? data : [];
+      setSelected((current) => {
+        if (!current) return current;
+        const freshContact = nextChats.find((contact) => contact.id === current.id);
+        return freshContact ? mergeChatContact(current, freshContact) : current;
+      });
       if (shouldMerge) {
-        setChats((current) => mergeFreshChatPage(nextChats, current));
+        setChats((current) => mergeFreshChatPage(nextChats, current, CHAT_LIST_PAGE_SIZE));
+        // Page zero is a new pagination snapshot. Keep the already-rendered
+        // tail for scroll continuity, but resume the server cursor at the end
+        // of this fresh page so inserts/reorders cannot leave a permanent gap.
         setChatListOffset((current) => Math.max(current, nextChats.length));
-        setChatsHasMore((current) => current || nextChats.length >= CHAT_LIST_PAGE_SIZE);
+        setChatsHasMore(nextChats.length >= CHAT_LIST_PAGE_SIZE);
       } else {
         // Reemplazo (query/filtro nuevos) pero conservando avatares e
         // identidad de los contactos que no cambiaron.
@@ -2568,20 +2848,29 @@ function ChatScreen({
       console.warn('[RistakNative][chat] loadChats failed', err);
       if (!chatMountedRef.current) return;
       if (generation === chatListGenerationRef.current) {
-        setError(err instanceof Error ? err.message : 'No se pudo cargar la bandeja.');
+        const hasVisibleCache = !scopeChanged && chatsRef.current.length > 0;
+        if (!silent && !hasVisibleCache) {
+          setError(timedOut
+            ? 'El servidor tardó demasiado en responder. Revisa tu conexión e intenta de nuevo.'
+            : err instanceof Error ? err.message : 'No se pudo cargar la bandeja.');
+        }
       }
     } finally {
+      clearTimeout(requestTimeout);
+      if (chatListRequestAbortRef.current === controller) chatListRequestAbortRef.current = null;
       if (chatMountedRef.current && generation === chatListGenerationRef.current) {
         setLoading(false);
         setRefreshing(false);
       }
     }
-  }, [api, chatListPhoneFilterParams, query]);
+  }, [api, canonicalInboxScopeKey, chatListPhoneFilterParams, currentChatListScopeKey, query]);
 
   const requestSilentInboxRefresh = useCallback(() => {
     if (!chatMountedRef.current) return;
     if (chatRealtimeRefreshTimeoutRef.current) {
-      clearTimeout(chatRealtimeRefreshTimeoutRef.current);
+      // Keep the first scheduled refresh. A trailing-only debounce can starve
+      // forever while messages arrive continuously.
+      return;
     }
 
     chatRealtimeRefreshTimeoutRef.current = setTimeout(() => {
@@ -2602,6 +2891,19 @@ function ChatScreen({
     }, CHAT_REALTIME_REFRESH_DEBOUNCE_MS);
   }, [loadChats]);
 
+  const handleInboxRefreshEvent = useCallback((event?: Partial<ChatLiveMessageEvent>) => {
+    // Reorder and update the row from the SSE metadata immediately. The REST
+    // refresh remains canonical, but the user no longer waits for avatar
+    // warming/network latency before the active conversation moves to the top.
+    setChats((current) => applyChatLiveEvent(current, event, selected?.id || ''));
+    setSelected((current) => {
+      if (!current) return current;
+      const next = applyChatLiveEvent([current], event, current.id);
+      return next[0] || current;
+    });
+    requestSilentInboxRefresh();
+  }, [requestSilentInboxRefresh, selected?.id]);
+
   const finishCloseChatConversation = useCallback(() => {
     setSelected(null);
     setConversationClosing(false);
@@ -2615,13 +2917,13 @@ function ChatScreen({
     const appStateSub = AppState.addEventListener('change', (state) => {
       if (state === 'active') requestSilentInboxRefresh();
     });
-    const pushSub = DeviceEventEmitter.addListener(CHAT_REFRESH_EVENT, requestSilentInboxRefresh);
+    const pushSub = DeviceEventEmitter.addListener(CHAT_REFRESH_EVENT, handleInboxRefreshEvent);
     return () => {
       clearInterval(interval);
       appStateSub.remove();
       pushSub.remove();
     };
-  }, [requestSilentInboxRefresh]);
+  }, [handleInboxRefreshEvent, requestSilentInboxRefresh]);
 
   useEffect(() => api.subscribeToChatLiveEvents({
     onMessage: (event: ChatLiveMessageEvent) => {
@@ -2658,12 +2960,28 @@ function ChatScreen({
   const loadMoreChats = useCallback(async () => {
     if (loading || refreshing || chatsLoadingMore || !chatsHasMore) return;
     const requestQuery = query.trim();
-    if (requestQuery !== chatListLoadedQueryRef.current) return;
+    if (
+      requestQuery !== chatListLoadedQueryRef.current
+      || currentChatListScopeKey !== chatListLoadedScopeRef.current
+    ) return;
     const generation = chatListGenerationRef.current;
     const offset = chatListOffset;
+    const boundaryContact = chatsRef.current[chatsRef.current.length - 1];
+    const boundaryMessageDate = String(boundaryContact?.lastMessageDate || '').trim();
+    const boundaryContactId = String(boundaryContact?.id || '').trim();
+    const useCursor = Boolean(boundaryMessageDate && boundaryContactId);
     setChatsLoadingMore(true);
     try {
-      const data = await api.getChats(requestQuery, offset, CHAT_LIST_PAGE_SIZE, chatListPhoneFilterParams);
+      const data = await api.getChats(
+        requestQuery,
+        useCursor ? 0 : offset,
+        CHAT_LIST_PAGE_SIZE,
+        {
+          ...chatListPhoneFilterParams,
+          beforeMessageDate: useCursor ? boundaryMessageDate : undefined,
+          beforeContactId: useCursor ? boundaryContactId : undefined,
+        },
+      );
       if (!chatMountedRef.current) return;
       if (generation !== chatListGenerationRef.current) return;
       const nextChats = Array.isArray(data) ? data : [];
@@ -2677,7 +2995,7 @@ function ChatScreen({
     } finally {
       if (chatMountedRef.current && generation === chatListGenerationRef.current) setChatsLoadingMore(false);
     }
-  }, [api, chatListOffset, chatListPhoneFilterParams, chatsHasMore, chatsLoadingMore, loading, query, refreshing]);
+  }, [api, chatListOffset, chatListPhoneFilterParams, chatsHasMore, chatsLoadingMore, currentChatListScopeKey, loading, query, refreshing]);
 
   useEffect(() => {
     if (!inboxCacheHydrated) return undefined;
@@ -2707,6 +3025,15 @@ function ChatScreen({
   }, []);
 
   useEffect(() => {
+    const cachedTimezone = normalizeRequiredBusinessTimezone(initialAccountTimezone);
+    const cachedCurrency = normalizeRequiredCurrencyCode(initialAccountCurrency);
+    setBusinessTimezone(cachedTimezone);
+    setBusinessTimezoneReady(Boolean(cachedTimezone));
+    setAccountCurrency(cachedCurrency || DEFAULT_ACCOUNT_CURRENCY);
+    setAccountCurrencyReady(Boolean(cachedCurrency));
+  }, [api, initialAccountCurrency, initialAccountTimezone]);
+
+  useEffect(() => {
     let cancelled = false;
     api.getConfig(['account_timezone', 'account_currency'])
       .then((response) => {
@@ -2720,14 +3047,18 @@ function ChatScreen({
         const currency = values && typeof values === 'object' && 'account_currency' in values
           ? values.account_currency
           : '';
-        setBusinessTimezone(resolveBusinessTimezone(typeof timezone === 'string' ? timezone : ''));
-        setAccountCurrency(typeof currency === 'string' ? normalizeCurrencyCode(currency) : DEFAULT_ACCOUNT_CURRENCY);
+        const requiredTimezone = normalizeRequiredBusinessTimezone(timezone);
+        const requiredCurrency = normalizeRequiredCurrencyCode(currency);
+        if (requiredTimezone) {
+          setBusinessTimezone(requiredTimezone);
+          setBusinessTimezoneReady(true);
+        }
+        if (requiredCurrency) setAccountCurrency(requiredCurrency);
+        if (requiredCurrency) setAccountCurrencyReady(true);
       })
       .catch(() => {
-        if (!cancelled && chatMountedRef.current) {
-          setBusinessTimezone(resolveBusinessTimezone());
-          setAccountCurrency(DEFAULT_ACCOUNT_CURRENCY);
-        }
+        // Offline/timeout keeps the last context cached for this exact account.
+        // Without one, the ready flags remain false and date/money mutations fail closed.
       });
     return () => {
       cancelled = true;
@@ -2895,9 +3226,7 @@ function ChatScreen({
         return parseSortableDateValue(right.lastMessageDate) - parseSortableDateValue(left.lastMessageDate);
       });
     }
-    return nextChats.slice().sort((left, right) => (
-      parseSortableDateValue(right.lastMessageDate) - parseSortableDateValue(left.lastMessageDate)
-    ));
+    return sortChatContactsByRecency(nextChats);
   }, [activeFilter, archivedViewOpen, listBaseChats, phoneChatConditionEvalContext, settings.sortMode]);
   const visibleChatIdSet = useMemo(() => new Set(filteredChats.map((contact) => contact.id)), [filteredChats]);
   const selectedChatIdSet = useMemo(() => new Set(selectedChatIds), [selectedChatIds]);
@@ -3337,6 +3666,10 @@ function ChatScreen({
   };
 
   const openScheduleSheet = (contact: ChatContact) => {
+    if (!businessTimezoneReady) {
+      Alert.alert('Zona horaria no disponible', 'Vuelve a conectar la app antes de programar mensajes.');
+      return;
+    }
     resetSheetState();
     setSheetContact(contact);
     setScheduleText('');
@@ -3407,6 +3740,10 @@ function ChatScreen({
   const scheduleMessageForContact = async (contact: ChatContact) => {
     const text = scheduleText.trim();
     if (scheduleBusy) return;
+    if (!businessTimezoneReady) {
+      setScheduleError('No pudimos confirmar la zona horaria de la cuenta.');
+      return;
+    }
     if (!text) {
       setScheduleError('Escribe el mensaje que quieres programar.');
       return;
@@ -3430,7 +3767,14 @@ function ChatScreen({
     setScheduleBusy(true);
     setScheduleError('');
     try {
-      await api.scheduleText(contact, text, scheduledDate.toISOString(), scheduleChannel);
+      const scheduledAt = scheduledDate.toISOString();
+      const signature = [contact.id, text, scheduledAt, scheduleChannel].join('|');
+      const scheduledId = scheduleIntentRef.current?.signature === signature
+        ? scheduleIntentRef.current.scheduledId
+        : createNativeMutationId('native-scheduled', contact.id);
+      scheduleIntentRef.current = { signature, scheduledId };
+      await api.scheduleText(contact, text, scheduledAt, scheduleChannel, scheduledId);
+      scheduleIntentRef.current = null;
       closeSheet();
       setScheduleText('');
       setScheduleDraft(createDefaultScheduleDraft(businessTimezone));
@@ -3527,8 +3871,9 @@ function ChatScreen({
     cameraSendLockedRef.current = true;
     setCameraSending(true);
     try {
+      const hydratedAttachment = await hydrateDraftAttachmentData(cameraAttachment);
       const results = await Promise.allSettled(cameraRecipients.map((contact) => (
-        sendDraftAttachment(api, contact, cameraAttachment, caption)
+        sendDraftAttachment(api, contact, hydratedAttachment, caption)
       )));
       const failed = results.filter((result) => result.status === 'rejected');
       const succeededContacts = cameraRecipients.filter((_, index) => results[index]?.status === 'fulfilled');
@@ -3882,7 +4227,7 @@ function ChatScreen({
           }}
           data={filteredChats}
           keyExtractor={(item) => item.id}
-          extraData={`${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${businessTimezone}|${selectionActive ? 'selecting' : 'normal'}|${settings.showLastPreview ? 'preview' : 'no-preview'}|${settings.showUnreadIndicators ? 'unread' : 'no-unread'}`}
+          extraData={`${selectedChatIds.join(',')}|${archivedChatIds.join(',')}|${businessTimezone}|${businessTimezoneReady ? 'timezone-ready' : 'timezone-pending'}|${selectionActive ? 'selecting' : 'normal'}|${settings.showLastPreview ? 'preview' : 'no-preview'}|${settings.showUnreadIndicators ? 'unread' : 'no-unread'}`}
           refreshControl={<RefreshControl tintColor={COLORS.accent} refreshing={refreshing} onRefresh={refresh} />}
           onEndReached={() => {
             if (!canPaginateChatList) return;
@@ -3906,6 +4251,7 @@ function ChatScreen({
               selected={selectedChatIdSet.has(item.id)}
               themeTone={activeNativeThemeTone}
               timezone={businessTimezone}
+              timezoneReady={businessTimezoneReady}
               onLongPress={handleChatRowLongPress}
               onPress={handleChatRowPress}
             />
@@ -3932,16 +4278,18 @@ function ChatScreen({
           width={chatRouteWidth}
         >
           <NativeConversationScreen
+            key={selected.id}
             api={api}
             appBaseUrl={baseUrl}
             contact={selected}
-            accountCurrency={accountCurrency}
+            accountCurrency={accountCurrencyReady ? accountCurrency : ''}
             archived={archivedChatIds.includes(selected.id)}
             businessPhones={businessPhones}
             customLabels={customLabels}
             integrationsStatus={integrationsStatus}
             muted={mutedChatIds.includes(selected.id)}
             timezone={businessTimezone}
+            timezoneReady={businessTimezoneReady}
             onArchiveToggle={(contact) => {
               if (archivedChatIds.includes(contact.id)) {
                 restoreChat(contact);
@@ -3952,9 +4300,12 @@ function ChatScreen({
             onBack={closeChatConversation}
             onContactPatch={(contactId, patch) => {
               setSelected((current) => (current?.id === contactId ? mergeContactWithoutLosingAvatar(current, patch as ChatContact) : current));
-              setChats((current) => current.map((item) => (
-                item.id === contactId ? mergeContactWithoutLosingAvatar(item, patch as ChatContact) : item
-              )));
+              setChats((current) => patchChatContactList(
+                current,
+                contactId,
+                patch,
+                Boolean(patch.lastMessageDate),
+              ));
             }}
             pendingDraft={pendingConversationDraft?.contact.id === selected.id ? pendingConversationDraft : null}
             onPendingDraftHandled={(id) => {
@@ -3962,7 +4313,7 @@ function ChatScreen({
             }}
             onNavigate={onNavigate}
             onNavigateToContactTool={onNavigateToContactTool}
-            onRefreshChats={() => void loadChats(true)}
+            onRefreshChats={requestSilentInboxRefresh}
             onToggleMute={toggleMuteChat}
           />
         </ConversationRouteLayer>
@@ -4114,8 +4465,10 @@ function PaymentsSection({
   onInitialContactConsumed?: (key: string) => void;
 }) {
   const [view, setView] = useState<PaymentView>('select');
-  const [accountCurrency, setAccountCurrency] = useState(DEFAULT_ACCOUNT_CURRENCY);
-  const [businessTimezone, setBusinessTimezone] = useState(DEFAULT_BUSINESS_TIMEZONE);
+  const [accountCurrency, setAccountCurrency] = useState('');
+  const [accountContextLoading, setAccountContextLoading] = useState(true);
+  const [accountContextError, setAccountContextError] = useState('');
+  const [businessTimezone, setBusinessTimezone] = useState('');
   const [pendingPaymentMode, setPendingPaymentMode] = useState<Exclude<PaymentView, 'select' | 'products'> | null>(null);
   const [paymentContactQuery, setPaymentContactQuery] = useState('');
   const [paymentContactResults, setPaymentContactResults] = useState<ChatContact[]>([]);
@@ -4150,17 +4503,23 @@ function PaymentsSection({
   const customerLowerLabel = formatMobileCrmLabelLower(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
 
   const loadAccountContext = useCallback(async () => {
+    setAccountContextLoading(true);
+    setAccountContextError('');
     try {
-      const [configResponse, timezoneResponse] = await Promise.all([
-        api.getConfig([ACCOUNT_CURRENCY_CONFIG_KEY]).catch(() => ({})),
-        api.getTimezone().catch(() => null),
-      ]);
+      const configResponse = await api.getConfig([ACCOUNT_CURRENCY_CONFIG_KEY, 'account_timezone']);
       const config = getConfigMap(configResponse);
-      setAccountCurrency(normalizeCurrencyCode(config[ACCOUNT_CURRENCY_CONFIG_KEY], DEFAULT_ACCOUNT_CURRENCY));
-      if (timezoneResponse?.timezone) setBusinessTimezone(String(timezoneResponse.timezone));
-    } catch {
-      setAccountCurrency(DEFAULT_ACCOUNT_CURRENCY);
-      setBusinessTimezone(DEFAULT_BUSINESS_TIMEZONE);
+      const currency = normalizeRequiredCurrencyCode(config[ACCOUNT_CURRENCY_CONFIG_KEY]);
+      const timezone = normalizeRequiredBusinessTimezone(config.account_timezone);
+      if (!currency) throw new Error('No pude leer la moneda configurada de la cuenta.');
+      if (!timezone) throw new Error('No pude confirmar la zona horaria configurada de la cuenta.');
+      setAccountCurrency(currency);
+      setBusinessTimezone(timezone);
+    } catch (error) {
+      setAccountCurrency('');
+      setBusinessTimezone('');
+      setAccountContextError(error instanceof Error ? error.message : 'No pude cargar la configuración de pagos.');
+    } finally {
+      setAccountContextLoading(false);
     }
   }, [api]);
 
@@ -4234,8 +4593,14 @@ function PaymentsSection({
   }, [loadProducts, view]);
 
   useEffect(() => {
-    if (view === 'select') void loadRecentPayments();
-  }, [loadRecentPayments, view]);
+    if (
+      view === 'select'
+      && !accountContextLoading
+      && !accountContextError
+      && accountCurrency
+      && businessTimezone
+    ) void loadRecentPayments();
+  }, [accountContextError, accountContextLoading, accountCurrency, businessTimezone, loadRecentPayments, view]);
 
   useEffect(() => {
     if (!initialContact || !initialContactKey || handledInitialPaymentContactKeyRef.current === initialContactKey) return;
@@ -4342,6 +4707,10 @@ function PaymentsSection({
   };
 
   const handleSaveProduct = async () => {
+    if (!accountCurrency) {
+      Alert.alert('Moneda no disponible', 'Vuelve a cargar la configuración de la cuenta antes de crear precios o cobros.');
+      return;
+    }
     const name = productForm.name.trim();
     const amount = normalizeAmountInput(productForm.amount);
     if (!name) {
@@ -4455,6 +4824,23 @@ function PaymentsSection({
     setCustomRecentRangeOpen(false);
     setCustomRecentRangeError('');
   };
+
+  if (accountContextLoading) {
+    return (
+      <View style={styles.centerState}>
+        <Text style={styles.caption}>Preparando pagos...</Text>
+      </View>
+    );
+  }
+
+  if (!accountCurrency || !businessTimezone || accountContextError) {
+    return (
+      <View style={styles.centerState}>
+        <Text style={styles.errorText}>{accountContextError || 'No se pudieron confirmar la moneda y zona horaria de la cuenta.'}</Text>
+        <SecondaryButton label="Reintentar" onPress={() => void loadAccountContext()} />
+      </View>
+    );
+  }
 
   if (view === 'products') {
     return (
@@ -5009,6 +5395,20 @@ type NativeMessageLinkPreviewResult = {
 };
 
 const nativeUrlPreviewCache = new Map<string, NativeUrlPreviewMetadata | null>();
+const NATIVE_URL_PREVIEW_CACHE_LIMIT = 80;
+const NATIVE_URL_PREVIEW_MAX_HTML_CHARS = 512_000;
+const NATIVE_URL_PREVIEW_XHR_HEADERS_RECEIVED = 2;
+const NATIVE_URL_PREVIEW_XHR_LOADING = 3;
+
+function cacheNativeUrlPreview(url: string, value: NativeUrlPreviewMetadata | null) {
+  nativeUrlPreviewCache.delete(url);
+  nativeUrlPreviewCache.set(url, value);
+  while (nativeUrlPreviewCache.size > NATIVE_URL_PREVIEW_CACHE_LIMIT) {
+    const oldestUrl = nativeUrlPreviewCache.keys().next().value;
+    if (!oldestUrl) break;
+    nativeUrlPreviewCache.delete(oldestUrl);
+  }
+}
 
 type PaymentDatePickerTarget =
   | { kind: 'paymentDate' }
@@ -5086,70 +5486,8 @@ function hasContactAvatarValue(contact?: ChatContact | null) {
   return Boolean(String(getContactAvatar(contact) || '').trim());
 }
 
-function mergeContactWithoutLosingAvatar(base: ChatContact, patch: ChatContact) {
-  const merged: ChatContact = { ...base, ...patch };
-  (['profilePhotoUrl', 'avatarUrl', 'photoUrl', 'pictureUrl'] as const).forEach((key) => {
-    const patchValue = String(patch[key] || '').trim();
-    const baseValue = String(base[key] || '').trim();
-    if (baseValue) {
-      merged[key] = base[key];
-    } else if (patchValue) {
-      merged[key] = patch[key];
-    }
-  });
-  // Si el poll no trajo cambios reales, conservar la referencia previa para
-  // que las filas memoizadas no se re-rendericen en cada reconciliación.
-  try {
-    if (JSON.stringify(base) === JSON.stringify(merged)) return base;
-  } catch {
-    // sin fallback: un contacto no serializable simplemente se reemplaza
-  }
-  return merged;
-}
-
-function mergeChatContactPages(current: ChatContact[], incoming: ChatContact[]) {
-  if (!incoming.length) return current;
-  const merged = [...current];
-  const indexById = new Map(merged.map((contact, index) => [contact.id, index]));
-  incoming.forEach((contact) => {
-    if (!contact?.id) return;
-    const existingIndex = indexById.get(contact.id);
-    if (existingIndex === undefined) {
-      indexById.set(contact.id, merged.length);
-      merged.push(contact);
-      return;
-    }
-    merged[existingIndex] = mergeContactWithoutLosingAvatar(merged[existingIndex], contact);
-  });
-  return merged;
-}
-
-// Silent-refresh merge: the fresh page 0 carries the server's newest ordering,
-// so it goes first; previously-loaded contacts not present in it (the deeper
-// paginated tail) are kept afterwards so scrolled depth is preserved. Mirrors
-// the web reconcileCachedChatTail behavior instead of blindly replacing.
-function mergeFreshChatPage(fresh: ChatContact[], previous: ChatContact[]) {
-  if (!fresh.length) return previous;
-  const previousById = new Map(previous.map((contact) => [contact.id, contact]));
-  const freshIds = new Set<string>();
-  const merged = fresh.map((contact) => {
-    if (contact?.id) {
-      freshIds.add(contact.id);
-      const prior = previousById.get(contact.id);
-      if (prior) return mergeContactWithoutLosingAvatar(prior, contact);
-    }
-    return contact;
-  });
-  previous.forEach((contact) => {
-    if (!contact?.id || freshIds.has(contact.id)) return;
-    merged.push(contact);
-  });
-  // Poll sin novedades => mismas referencias en el mismo orden => devolver el
-  // array anterior para que el setState sea un no-op de React.
-  if (merged.length === previous.length && merged.every((contact, index) => contact === previous[index])) {
-    return previous;
-  }
-  return merged;
+function mergeContactWithoutLosingAvatar(base: ChatContact, patch: Partial<ChatContact>) {
+  return mergeChatContact(base, patch);
 }
 
 function normalizeNativePlanSavedCards(provider: NativePlanSavedCardOption['provider'], cards: SavedPaymentMethodItem[]): NativePlanSavedCardOption[] {
@@ -5321,6 +5659,10 @@ function PaymentFormView({
   const [datePickerTarget, setDatePickerTarget] = useState<PaymentDatePickerTarget | null>(null);
   const [datePickerMonth, setDatePickerMonth] = useState(() => todayDateOnlyInTimezone(timezone));
   const paymentFormScrollRef = useRef<ScrollView>(null);
+  const paymentSubmitLockRef = useRef(false);
+  const paymentIntentKeyRef = useRef(`ristak-mobile-payment-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const manualPaymentIdRef = useRef(`native_payment_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  const subscriptionIdRef = useRef(`subscription_mobile_${Date.now()}_${Math.random().toString(36).slice(2)}`);
   const paymentPlanIdempotencyKeyRef = useRef(`ristak-mobile-plan-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
   const selectedProduct = useMemo(() => (
@@ -5858,6 +6200,7 @@ function PaymentFormView({
   );
 
   const submit = async () => {
+    if (paymentSubmitLockRef.current) return;
     const parsedAmount = resolvedAmount;
     const paymentConcept = concept.trim() || (mode === 'subscription' ? 'Suscripción' : mode === 'partial' ? 'Plan de parcialidades' : 'Pago');
     const paymentDescription = description.trim() || paymentConcept;
@@ -5898,6 +6241,7 @@ function PaymentFormView({
       }
     }
 
+    paymentSubmitLockRef.current = true;
     setSaving(true);
     try {
       if (mode === 'single') {
@@ -5977,6 +6321,7 @@ function PaymentFormView({
             Alert.alert('Falta tarjeta guardada', 'Selecciona una tarjeta guardada del contacto.');
             return;
           }
+          const savedCardRequestId = `${paymentIntentKeyRef.current}:saved-card`;
           const chargeResponse = await api.chargeSavedCard(selectedPlanSavedCard.provider, {
             contactId: selectedContact.id,
             contactName: resolvedContactName,
@@ -5994,7 +6339,8 @@ function PaymentFormView({
             paymentMethodId: selectedPlanSavedCard.provider === 'stripe' ? selectedPlanSavedCard.paymentMethodId : undefined,
             paymentSourceId: selectedPlanSavedCard.provider === 'conekta' ? selectedPlanSavedCard.paymentMethodId : undefined,
             rebillCardId: selectedPlanSavedCard.provider === 'rebill' ? selectedPlanSavedCard.paymentMethodId : undefined,
-          });
+            clientRequestId: savedCardRequestId,
+          }, savedCardRequestId);
           // Only treat the charge as completed when the gateway confirms it;
           // an authorization-required / processing status is surfaced instead of
           // reporting a false "cobro realizado" (matches /movil).
@@ -6013,7 +6359,7 @@ function PaymentFormView({
         }
 
         await api.createTransaction({
-          id: `native_payment_${Date.now()}`,
+          id: manualPaymentIdRef.current,
           amount: parsedAmount,
           currency: resolvedCurrency,
           method,
@@ -6157,7 +6503,9 @@ function PaymentFormView({
       }
 
       const startDate = subscriptionStartDate || todayDateOnlyInTimezone(timezone);
+      const subscriptionRequestId = `${paymentIntentKeyRef.current}:subscription`;
       const createdSubscription = await api.createSubscription({
+        id: subscriptionIdRef.current,
         contactId: selectedContact?.id || null,
         contactName: resolvedContactName,
         contactEmail: resolvedContactEmail || null,
@@ -6190,7 +6538,8 @@ function PaymentFormView({
           paymentMethodId: selectedPlanSavedCard?.paymentMethodId,
           savedCardProvider: selectedPlanSavedCard?.provider,
         },
-      });
+        clientRequestId: subscriptionRequestId,
+      }, subscriptionRequestId);
       const subscriptionUrl = getCreatedSubscriptionLinkUrl(createdSubscription);
       if (subscriptionCollectionMode === 'authorization_link' && subscriptionUrl && selectedContact?.id) {
         const amountLabel = formatCurrency(parsedAmount, resolvedCurrency);
@@ -6212,8 +6561,18 @@ function PaymentFormView({
       }
       onSaved(subscriptionCollectionMode === 'saved_card' ? buildPaymentCompletionDraft(parsedAmount, `${paymentConcept} activada`) : undefined);
     } catch (err) {
+      if (shouldRotatePaymentAttemptAfterError(err)) {
+        // El servidor rechazo definitivamente los datos antes de aceptar el
+        // intento. Una correccion del formulario necesita llave e ID nuevos;
+        // timeouts/5xx conservan los anteriores para obtener replay seguro.
+        paymentIntentKeyRef.current = `ristak-mobile-payment-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        manualPaymentIdRef.current = `native_payment_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        subscriptionIdRef.current = `subscription_mobile_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        paymentPlanIdempotencyKeyRef.current = `ristak-mobile-plan-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      }
       Alert.alert('No se guardó', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
+      paymentSubmitLockRef.current = false;
       setSaving(false);
     }
   };
@@ -7011,14 +7370,6 @@ function withCalendarRequestTimeout<T>(request: Promise<T>, timeoutMs = CALENDAR
   });
 }
 
-async function calendarRequestOrFallback<T>(request: Promise<T>, fallback: T): Promise<T> {
-  try {
-    return await withCalendarRequestTimeout(request);
-  } catch {
-    return fallback;
-  }
-}
-
 function getEventKey(event: CalendarEventItem, index = 0) {
   return String(event.id || event._id || `${getEventStart(event)}-${index}`);
 }
@@ -7364,6 +7715,11 @@ function extractAppointmentIdFromUrl(url: string) {
   }
 }
 
+// CalendarSection se desmonta al cambiar de pestaña. Conservar los links ya
+// aplicados a nivel de proceso evita que Linking.getInitialURL() vuelva a abrir
+// la misma cita cada vez que el usuario regresa a Agenda.
+const HANDLED_APPOINTMENT_DEEP_LINK_IDS = new Set<string>();
+
 function CalendarSection({
   api,
   footer,
@@ -7390,16 +7746,21 @@ function CalendarSection({
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [calendarBootstrapError, setCalendarBootstrapError] = useState('');
+  const [calendarSyncNotice, setCalendarSyncNotice] = useState('');
   const [activeSheet, setActiveSheet] = useState<CalendarSheetMode>(null);
   const [closingSheet, setClosingSheet] = useState<CalendarSheetMode>(null);
   const [selectedEvent, setSelectedEvent] = useState<CalendarEventItem | null>(null);
   const [appointmentMode, setAppointmentMode] = useState<AppointmentFormMode>('create');
   const [appointmentDraft, setAppointmentDraft] = useState<AppointmentDraft | null>(null);
   const [appointmentBusy, setAppointmentBusy] = useState(false);
+  const appointmentSaveLockRef = useRef(false);
+  const appointmentCreateIntentRef = useRef<{ signature: string; clientRequestId: string } | null>(null);
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<ChatContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
   const [pendingAppointmentDefaults, setPendingAppointmentDefaults] = useState<PendingAppointmentDefaults | null>(null);
+  const [pendingAppointmentLinks, setPendingAppointmentLinks] = useState<string[]>([]);
   const [timelineSelection, setTimelineSelection] = useState<TimelineSelectionState | null>(null);
   const [monthSwipeWidth, setMonthSwipeWidth] = useState(0);
   const monthSwipePosition = useRef(new Animated.Value(getDateOnlyMonthSerial(initialToday))).current;
@@ -7407,16 +7768,20 @@ function CalendarSection({
   const timelineSelectionRef = useRef<TimelineSelectionState | null>(null);
   const timelinePendingTouchRef = useRef<TimelinePendingTouch | null>(null);
   const timelineSwipeRef = useRef<{ dateOnly: string; x: number; y: number; dx: number; dy: number } | null>(null);
-  const handledOpenAppointmentRef = useRef('');
+  const handledOpenAppointmentRef = useRef(HANDLED_APPOINTMENT_DEEP_LINK_IDS);
+  const openingAppointmentRef = useRef('');
   const handledInitialAppointmentContactKeyRef = useRef('');
   const lastDayTapRef = useRef<{ dateOnly: string; at: number } | null>(null);
   const sheetCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const calendarEventsGenerationRef = useRef(0);
+  const calendarEventsAbortRef = useRef<AbortController | null>(null);
 
   const activeCalendars = useMemo(() => calendars.filter(calendarIsActive), [calendars]);
   const selectedCalendar = useMemo(() => {
     return calendars.find((calendar) => getCalendarKey(calendar) === selectedCalendarId) || activeCalendars[0] || calendars[0] || null;
   }, [activeCalendars, calendars, selectedCalendarId]);
   const selectedCalendarKey = getCalendarKey(selectedCalendar);
+  const calendarContextUsable = calendarReady && Boolean(normalizeRequiredBusinessTimezone(businessTimezone));
   const todayDateOnly = useMemo(() => todayDateOnlyInBusinessTimezone(businessTimezone), [businessTimezone]);
   const currentMonthSerial = getDateOnlyMonthSerial(currentMonthDateOnly);
   const monthPages = useMemo(() => MONTH_PAGER_OFFSETS.map((offset, index) => {
@@ -7718,7 +8083,7 @@ function CalendarSection({
     selectedCalendarIdRef.current = id;
     setSelectedCalendarId(id);
     void writeJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, id);
-    void writeJsonValue<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {
+    writeCache<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {
       timezone: businessTimezone,
       selectedCalendarId: id,
       calendars,
@@ -7728,11 +8093,19 @@ function CalendarSection({
   }, [businessTimezone, calendars, closeSheet]);
 
   const loadCalendars = useCallback(async () => {
+    setCalendarBootstrapError('');
+    setCalendarSyncNotice('');
     const [savedCalendarId, cachedBootstrap] = await Promise.all([
       readJsonValue(CALENDAR_SELECTED_ID_STORAGE_KEY, '').catch(() => ''),
-      readJsonValue<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {}).catch((): CalendarBootstrapCache => ({})),
+      readCache<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {}).catch((): CalendarBootstrapCache => ({})),
     ]);
     const cachedCalendars = unwrapCalendars(cachedBootstrap.calendars || []);
+    const cachedTimezone = normalizeRequiredBusinessTimezone(cachedBootstrap.timezone);
+    const hasUsableCachedBootstrap = Boolean(
+      cachedTimezone
+      && Array.isArray(cachedBootstrap.calendars)
+      && String(cachedBootstrap.updatedAt || '').trim(),
+    );
 
     const applyCalendars = (
       calendarList: CalendarItem[],
@@ -7740,7 +8113,10 @@ function CalendarSection({
       defaultCalendarIdValue: string,
       preferredCalendarIdValue?: string,
     ) => {
-      const nextTimezone = resolveBusinessTimezone(timezoneValue);
+      const nextTimezone = normalizeRequiredBusinessTimezone(timezoneValue);
+      if (!nextTimezone) {
+        throw new Error('No pudimos confirmar la zona horaria del negocio.');
+      }
       const preferredId = [preferredCalendarIdValue, selectedCalendarIdRef.current, savedCalendarId, defaultCalendarIdValue]
         .map((value) => String(value || '').trim())
         .find((value) => value && calendarList.some((calendar) => getCalendarKey(calendar) === value && calendarIsActive(calendar)));
@@ -7758,54 +8134,87 @@ function CalendarSection({
       return { nextTimezone, nextCalendarId };
     };
 
-    if (cachedCalendars.length) {
+    if (hasUsableCachedBootstrap) {
       applyCalendars(
         cachedCalendars,
-        String(cachedBootstrap.timezone || ''),
+        cachedTimezone,
         String(cachedBootstrap.defaultCalendarId || ''),
         String(cachedBootstrap.selectedCalendarId || ''),
       );
       setLoading(false);
     }
 
-    const [configResponse, calendarsResponse] = await Promise.all([
-      calendarRequestOrFallback<Awaited<ReturnType<RistakApiClient['getConfig']>>>(
-        api.getConfig(['account_timezone', 'default_calendar_id']),
-        {},
-      ),
-      calendarRequestOrFallback<Awaited<ReturnType<RistakApiClient['getCalendars']>>>(
-        api.getCalendars(),
-        [],
-      ),
+    const [configResult, calendarsResult] = await Promise.allSettled([
+      withCalendarRequestTimeout(api.getConfig(['account_timezone', 'default_calendar_id'])),
+      withCalendarRequestTimeout(api.getCalendars()),
     ]);
-    const configValues = unwrapConfigValues(configResponse);
-    const timezone = typeof configValues.account_timezone === 'string'
-      ? configValues.account_timezone
+
+    let remoteTimezone = '';
+    let defaultCalendarId = String(cachedBootstrap.defaultCalendarId || '');
+    let configFailure = '';
+    if (configResult.status === 'fulfilled') {
+      const configValues = unwrapConfigValues(configResult.value);
+      remoteTimezone = normalizeRequiredBusinessTimezone(configValues.account_timezone);
+      defaultCalendarId = typeof configValues.default_calendar_id === 'string'
+        ? configValues.default_calendar_id
+        : defaultCalendarId;
+      if (!remoteTimezone) configFailure = 'El servidor no devolvió una zona horaria válida.';
+    } else {
+      configFailure = configResult.reason instanceof Error
+        ? configResult.reason.message
+        : 'No se pudo cargar la zona horaria del negocio.';
+    }
+
+    const calendarsFailure = calendarsResult.status === 'rejected'
+      ? (calendarsResult.reason instanceof Error
+        ? calendarsResult.reason.message
+        : 'No se pudo cargar la lista de calendarios.')
       : '';
-    const defaultCalendarId = typeof configValues.default_calendar_id === 'string'
-      ? configValues.default_calendar_id
-      : '';
-    const calendarList = unwrapCalendars(calendarsResponse);
-    const effectiveCalendarList = calendarList.length ? calendarList : cachedCalendars;
-    if (effectiveCalendarList.length || !cachedCalendars.length) {
-      const { nextTimezone, nextCalendarId } = applyCalendars(
-        effectiveCalendarList,
-        timezone || String(cachedBootstrap.timezone || ''),
-        defaultCalendarId || String(cachedBootstrap.defaultCalendarId || ''),
-        String(cachedBootstrap.selectedCalendarId || ''),
-      );
-      void writeJsonValue<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {
-        timezone: nextTimezone,
-        defaultCalendarId,
-        selectedCalendarId: nextCalendarId,
-        calendars: effectiveCalendarList,
-        updatedAt: new Date().toISOString(),
-      });
+
+    if ((configFailure || calendarsFailure) && !hasUsableCachedBootstrap) {
+      if (configFailure) {
+        throw new Error('No pudimos confirmar la zona horaria del negocio. Revisa tu conexión y vuelve a intentar.');
+      }
+      throw new Error('No pudimos cargar tus calendarios. Revisa tu conexión y vuelve a intentar.');
+    }
+
+    const effectiveTimezone = remoteTimezone || cachedTimezone;
+    const effectiveCalendarList = calendarsResult.status === 'fulfilled'
+      ? unwrapCalendars(calendarsResult.value)
+      : cachedCalendars;
+    const { nextTimezone, nextCalendarId } = applyCalendars(
+      effectiveCalendarList,
+      effectiveTimezone,
+      defaultCalendarId,
+      String(cachedBootstrap.selectedCalendarId || ''),
+    );
+    writeCache<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {
+      timezone: nextTimezone,
+      defaultCalendarId,
+      selectedCalendarId: nextCalendarId,
+      calendars: effectiveCalendarList,
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (configFailure || calendarsFailure) {
+      setCalendarSyncNotice('No pudimos actualizar todo el calendario. Conservamos la última copia segura; toca Reintentar cuando vuelva tu conexión.');
     }
   }, [api]);
 
   const loadEvents = useCallback(async (silent = false) => {
+    const generation = ++calendarEventsGenerationRef.current;
+    calendarEventsAbortRef.current?.abort();
+    const controller = new AbortController();
+    calendarEventsAbortRef.current = controller;
+    const isLatest = () => (
+      calendarEventsGenerationRef.current === generation
+      && !controller.signal.aborted
+    );
+
     if (!selectedCalendarKey) {
+      if (calendarEventsAbortRef.current === controller) {
+        calendarEventsAbortRef.current = null;
+      }
       setEvents([]);
       setLoading(false);
       setRefreshing(false);
@@ -7819,32 +8228,51 @@ function CalendarSection({
         throw new Error('Rango de calendario inválido.');
       }
       if (!silent) {
-        const cache = await readJsonValue<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
+        const cache = await readCache<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
+        if (!isLatest()) return;
         if (Object.prototype.hasOwnProperty.call(cache, calendarEventCacheKey)) {
           const cachedEvents = Array.isArray(cache[calendarEventCacheKey]) ? cache[calendarEventCacheKey] : [];
           setEvents(cachedEvents);
           setLoading(false);
+        } else {
+          setEvents([]);
         }
       }
-      const response = await withCalendarRequestTimeout(api.getCalendarEvents(
+      const response = await api.getCalendarEvents(
         eventRangeTimestamps.startTime,
         eventRangeTimestamps.endTime,
         selectedCalendarKey,
-      ));
+        { signal: controller.signal },
+      );
+      if (!isLatest()) return;
       const nextEvents = unwrapCalendarEvents(response);
       setEvents(nextEvents);
-      const cache = await readJsonValue<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
-      await writeJsonValue(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {
+      const cache = await readCache<Record<string, CalendarEventItem[]>>(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {});
+      if (!isLatest()) return;
+      writeCache(CALENDAR_EVENTS_CACHE_STORAGE_KEY, {
         ...cache,
         [calendarEventCacheKey]: nextEvents,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'No se pudieron cargar las citas.');
+      if (isLatest() && !(err instanceof Error && err.name === 'AbortError')) {
+        setError(err instanceof Error ? err.message : 'No se pudieron cargar las citas.');
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (calendarEventsAbortRef.current === controller) {
+        calendarEventsAbortRef.current = null;
+      }
+      if (isLatest()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [api, calendarEventCacheKey, eventRangeTimestamps.endTime, eventRangeTimestamps.startTime, selectedCalendarKey]);
+
+  useEffect(() => () => {
+    calendarEventsGenerationRef.current += 1;
+    calendarEventsAbortRef.current?.abort();
+    calendarEventsAbortRef.current = null;
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -7853,7 +8281,7 @@ function CalendarSection({
     loadCalendars()
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'No se pudieron cargar los calendarios.');
+          setCalendarBootstrapError(err instanceof Error ? err.message : 'No se pudieron cargar los calendarios.');
           setLoading(false);
           setRefreshing(false);
         }
@@ -7901,11 +8329,21 @@ function CalendarSection({
 
   const openAppointmentFromLink = useCallback(async (url: string) => {
     const appointmentId = extractAppointmentIdFromUrl(url);
-    if (!appointmentId || handledOpenAppointmentRef.current === appointmentId) return;
-    handledOpenAppointmentRef.current = appointmentId;
+    if (
+      !calendarContextUsable
+      || !appointmentId
+      || handledOpenAppointmentRef.current.has(appointmentId)
+      || openingAppointmentRef.current === appointmentId
+    ) return;
+    openingAppointmentRef.current = appointmentId;
+    const removePendingLink = () => {
+      setPendingAppointmentLinks((current) => current.filter(
+        (pendingUrl) => extractAppointmentIdFromUrl(pendingUrl) !== appointmentId,
+      ));
+    };
     try {
       const appointment = await api.getAppointment(appointmentId);
-      if (!appointment) return;
+      if (!appointment) throw new Error('La cita no existe o ya no está disponible.');
       const eventDateOnly = getBusinessDateOnly(getEventStart(appointment), businessTimezone);
       if (eventDateOnly) {
         setSelectedDateOnly(eventDateOnly);
@@ -7918,28 +8356,53 @@ function CalendarSection({
       }
       setSelectedEvent(appointment);
       openSheet('event');
+      handledOpenAppointmentRef.current.add(appointmentId);
+      removePendingLink();
     } catch {
+      removePendingLink();
       Alert.alert('No se abrió la cita', 'El calendario abrió, pero los detalles no cargaron.');
+    } finally {
+      if (openingAppointmentRef.current === appointmentId) openingAppointmentRef.current = '';
     }
-  }, [api, businessTimezone, calendars, openSheet]);
+  }, [api, businessTimezone, calendarContextUsable, calendars, openSheet]);
+
+  const enqueueAppointmentLink = useCallback((url: string, allowReopen = false) => {
+    const appointmentId = extractAppointmentIdFromUrl(url);
+    if (!appointmentId) return;
+    if (allowReopen) handledOpenAppointmentRef.current.delete(appointmentId);
+    if (handledOpenAppointmentRef.current.has(appointmentId)) return;
+    setPendingAppointmentLinks((current) => (
+      current.some((pendingUrl) => extractAppointmentIdFromUrl(pendingUrl) === appointmentId)
+        ? current
+        : [...current, url]
+    ));
+  }, []);
 
   useEffect(() => {
     void Linking.getInitialURL().then((url) => {
-      if (url) void openAppointmentFromLink(url);
+      if (url) enqueueAppointmentLink(url);
     });
     const subscription = Linking.addEventListener('url', ({ url }) => {
-      void openAppointmentFromLink(url);
+      // Un tap nuevo sobre la misma notificación sí debe volver a abrirla; el
+      // guard persistente sólo evita reprocesar getInitialURL al cambiar tab.
+      enqueueAppointmentLink(url, true);
     });
     return () => subscription.remove();
-  }, [openAppointmentFromLink]);
+  }, [enqueueAppointmentLink]);
+
+  useEffect(() => {
+    if (!calendarContextUsable || !pendingAppointmentLinks.length) return;
+    void openAppointmentFromLink(pendingAppointmentLinks[0]);
+  }, [calendarContextUsable, openAppointmentFromLink, pendingAppointmentLinks]);
 
   const refresh = useCallback(() => {
     setRefreshing(true);
+    setCalendarBootstrapError('');
     void Promise.resolve()
       .then(() => loadCalendars())
       .then(() => loadEvents(true))
       .catch((err) => {
-        setError(err instanceof Error ? err.message : 'No se pudo actualizar el calendario.');
+        setCalendarBootstrapError(err instanceof Error ? err.message : 'No se pudo actualizar el calendario.');
         setRefreshing(false);
         setLoading(false);
       });
@@ -7948,6 +8411,10 @@ function CalendarSection({
   const goToday = handleQuickReturn;
 
   const openCreateAppointmentRange = useCallback((dateOnly: string, startMinutes: number, endMinutes: number) => {
+    if (!calendarContextUsable) {
+      Alert.alert('Calendario no disponible', 'Primero confirma la zona horaria de la cuenta.');
+      return;
+    }
     if (!selectedCalendarKey) {
       Alert.alert('Selecciona calendario', 'Elige un calendario activo antes de agendar.');
       return;
@@ -7965,7 +8432,7 @@ function CalendarSection({
     setContactQuery('');
     setContactResults([]);
     openSheet('contactPicker');
-  }, [openSheet, selectedCalendar, selectedCalendarKey]);
+  }, [calendarContextUsable, openSheet, selectedCalendar, selectedCalendarKey]);
 
   const openCreateAppointmentForDateOnly = useCallback((dateOnly: string) => {
     const startTime = getDefaultAppointmentStartTime(dateOnly, businessTimezone);
@@ -8005,6 +8472,10 @@ function CalendarSection({
   }, [clearTimelinePendingTouch]);
 
   const handleTimelineGrant = useCallback((dateOnly: string, event: GestureResponderEvent) => {
+    if (!calendarContextUsable) {
+      Alert.alert('Calendario no disponible', 'Primero confirma la zona horaria de la cuenta.');
+      return;
+    }
     if (!selectedCalendarKey) {
       Alert.alert('Selecciona calendario', 'Elige un calendario activo antes de agendar.');
       return;
@@ -8030,7 +8501,7 @@ function CalendarSection({
       }, TIMELINE_LONG_PRESS_DELAY_MS),
     };
     timelinePendingTouchRef.current = pending;
-  }, [clearTimelinePendingTouch, selectedCalendar, selectedCalendarKey, setTimelineSelectionValue]);
+  }, [calendarContextUsable, clearTimelinePendingTouch, selectedCalendar, selectedCalendarKey, setTimelineSelectionValue]);
 
   const handleTimelineMove = useCallback((dateOnly: string, event: GestureResponderEvent) => {
     const pending = timelinePendingTouchRef.current;
@@ -8103,19 +8574,28 @@ function CalendarSection({
   }, [clearTimelinePendingTouch, setTimelineSelectionValue]);
 
   const openCreateSheet = useCallback(() => {
+    if (!calendarContextUsable) {
+      Alert.alert('Calendario no disponible', 'Primero confirma la zona horaria y los calendarios de la cuenta.');
+      return;
+    }
     setPendingAppointmentDefaults(null);
     setContactQuery('');
     setContactResults([]);
     openSheet('contactPicker');
-  }, [openSheet]);
+  }, [calendarContextUsable, openSheet]);
 
   const openCreateAppointmentForContact = useCallback((contact: ChatContact) => {
+    if (!calendarContextUsable) {
+      Alert.alert('Calendario no disponible', 'Primero confirma la zona horaria de la cuenta.');
+      return;
+    }
     if (!selectedCalendarKey) {
       Alert.alert('Selecciona calendario', 'Elige un calendario activo antes de agendar.');
       return;
     }
     const title = getContactName(contact);
     const defaults = pendingAppointmentDefaults;
+    appointmentCreateIntentRef.current = null;
     setAppointmentMode('create');
     setAppointmentDraft({
       title: defaults?.title || title,
@@ -8133,17 +8613,17 @@ function CalendarSection({
     });
     setPendingAppointmentDefaults(null);
     openSheet('appointmentForm');
-  }, [businessTimezone, openSheet, pendingAppointmentDefaults, selectedCalendarKey, selectedDateOnly]);
+  }, [businessTimezone, calendarContextUsable, openSheet, pendingAppointmentDefaults, selectedCalendarKey, selectedDateOnly]);
 
   useEffect(() => {
     if (!initialContact || !initialContactKey || handledInitialAppointmentContactKeyRef.current === initialContactKey) return;
-    if (!calendarReady || !selectedCalendarKey) return;
+    if (!calendarContextUsable || !selectedCalendarKey) return;
     handledInitialAppointmentContactKeyRef.current = initialContactKey;
     setPendingAppointmentDefaults(null);
     openCreateAppointmentForContact(initialContact);
     onInitialContactConsumed?.(initialContactKey);
   }, [
-    calendarReady,
+    calendarContextUsable,
     initialContact,
     initialContactKey,
     onInitialContactConsumed,
@@ -8152,12 +8632,16 @@ function CalendarSection({
   ]);
 
   const openEditAppointment = useCallback((event: CalendarEventItem) => {
+    if (!calendarContextUsable) {
+      Alert.alert('Calendario no disponible', 'Primero confirma la zona horaria de la cuenta antes de editar fechas.');
+      return;
+    }
     const eventId = getEventId(event);
     const start = getEventStart(event);
     const end = getEventEnd(event);
     const startFields = isoToBusinessDateTimeFields(start, businessTimezone);
-    const startMs = start ? new Date(start).getTime() : Number.NaN;
-    const endMs = end ? new Date(end).getTime() : Number.NaN;
+    const startMs = start ? parseSortableDateValue(start) : Number.NaN;
+    const endMs = end ? parseSortableDateValue(end) : Number.NaN;
     const durationMinutes = Number.isFinite(startMs) && Number.isFinite(endMs)
       ? Math.max(15, Math.round((endMs - startMs) / 60000))
       : 60;
@@ -8168,6 +8652,7 @@ function CalendarSection({
     }
     const parsedNotes = splitAppointmentNotesAndGuests(String(event.notes || event.description || ''));
 
+    appointmentCreateIntentRef.current = null;
     setAppointmentMode('edit');
     setAppointmentDraft({
       eventId,
@@ -8185,7 +8670,7 @@ function CalendarSection({
       guests: parsedNotes.guests,
     });
     openSheet('appointmentForm');
-  }, [businessTimezone, openSheet, selectedCalendarKey, selectedDateOnly]);
+  }, [businessTimezone, calendarContextUsable, openSheet, selectedCalendarKey, selectedDateOnly]);
 
   const getDraftBlockedConflict = useCallback(async (
     draft: AppointmentDraft,
@@ -8224,7 +8709,11 @@ function CalendarSection({
   }, [api, businessTimezone, calendars, selectedCalendar]);
 
   const saveAppointmentDraft = useCallback(async (draft: AppointmentDraft) => {
-    if (appointmentBusy) return;
+    if (appointmentBusy || appointmentSaveLockRef.current) return;
+    if (!calendarContextUsable) {
+      Alert.alert('Zona horaria no disponible', 'Vuelve a cargar el calendario antes de guardar esta cita.');
+      return;
+    }
     const calendarId = draft.calendarId || selectedCalendarKey;
     const draftCalendar = calendars.find((calendar) => getCalendarKey(calendar) === calendarId) || selectedCalendar;
     if (!calendarId) {
@@ -8248,6 +8737,10 @@ function CalendarSection({
       return;
     }
 
+    // State is not synchronous: two taps can enter this callback before the
+    // busy prop rerenders. Acquire the ref only after synchronous validation so
+    // every early return above leaves the form usable.
+    appointmentSaveLockRef.current = true;
     setAppointmentBusy(true);
     try {
       const blockedSlot = await getDraftBlockedConflict(draft, calendarId, startIso, endIso);
@@ -8283,7 +8776,17 @@ function CalendarSection({
         if (!draft.eventId) throw new Error('La cita no tiene ID.');
         await api.updateAppointment(draft.eventId, payload);
       } else {
-        await api.createAppointment(payload);
+        const signature = JSON.stringify(payload);
+        const existingIntent = appointmentCreateIntentRef.current;
+        const createIntent = existingIntent?.signature === signature
+          ? existingIntent
+          : {
+              signature,
+              clientRequestId: createNativeMutationId('native-appointment', draft.contactId || calendarId),
+            };
+        appointmentCreateIntentRef.current = createIntent;
+        await api.createAppointment(payload, createIntent.clientRequestId);
+        appointmentCreateIntentRef.current = null;
       }
       closeSheet();
       setSelectedEvent(null);
@@ -8291,9 +8794,10 @@ function CalendarSection({
     } catch (err) {
       Alert.alert('No se pudo guardar', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
+      appointmentSaveLockRef.current = false;
       setAppointmentBusy(false);
     }
-  }, [api, appointmentBusy, appointmentMode, businessTimezone, calendars, closeSheet, getDraftBlockedConflict, loadEvents, selectedCalendar, selectedCalendarKey]);
+  }, [api, appointmentBusy, appointmentMode, businessTimezone, calendarContextUsable, calendars, closeSheet, getDraftBlockedConflict, loadEvents, selectedCalendar, selectedCalendarKey]);
 
   const deleteAppointment = useCallback((event: CalendarEventItem) => {
     const eventId = getEventId(event);
@@ -8360,6 +8864,8 @@ function CalendarSection({
     : calendarView === 'year'
       ? nextUpcomingEvents
       : [];
+  const blockingCalendarError = calendarReady ? '' : (calendarBootstrapError || error);
+  const calendarVisibleNotice = calendarReady ? (calendarBootstrapError || calendarSyncNotice || error) : '';
 
   return (
     <AppFrame>
@@ -8450,6 +8956,13 @@ function CalendarSection({
             </Pressable>
           </View>
         </View>
+
+        {calendarVisibleNotice ? (
+          <View style={styles.calendarSyncNotice}>
+            <Text style={styles.calendarSyncNoticeText}>{calendarVisibleNotice}</Text>
+            <SecondaryButton label="Reintentar" onPress={refresh} />
+          </View>
+        ) : null}
 
         {loading && !calendarReady ? (
           <View style={styles.calendarCenterState}>
@@ -8544,9 +9057,9 @@ function CalendarSection({
               />
             )}
             ListEmptyComponent={(
-              error ? (
-                <CalendarErrorState message={error} onRetry={refresh} />
-              ) : calendarView === 'year' ? (
+              blockingCalendarError ? (
+                <CalendarErrorState message={blockingCalendarError} onRetry={refresh} />
+              ) : error ? null : calendarView === 'year' ? (
                 <CalendarEmptyState
                   title="No hay citas próximas"
                   subtitle="Cambia de calendario o crea una cita nueva."
@@ -9451,7 +9964,7 @@ function AppointmentFormSheet({
   const [freeSlotsLoading, setFreeSlotsLoading] = useState(false);
   const [freeSlotsError, setFreeSlotsError] = useState('');
   const [selectedSlotDate, setSelectedSlotDate] = useState('');
-  const [selectedSlot, setSelectedSlot] = useState('');
+  const [selectedSlot, setSelectedSlot] = useState<CalendarSlotSelection | null>(null);
   const [guestSearchQuery, setGuestSearchQuery] = useState('');
   const [guestContacts, setGuestContacts] = useState<ChatContact[]>([]);
   const [guestSearching, setGuestSearching] = useState(false);
@@ -9467,11 +9980,30 @@ function AppointmentFormSheet({
   const wheelScrollRefs = useRef<Record<string, ScrollView | null>>({});
   const wheelScrollValues = useRef<Record<string, Animated.Value>>({});
   const preferredSlotDateRef = useRef('');
+  const freeSlotsGenerationRef = useRef(0);
+  const freeSlotsAbortRef = useRef<AbortController | null>(null);
+  const assignmentGenerationRef = useRef(0);
+  const assignmentAbortRef = useRef<AbortController | null>(null);
 
   const activeDraftCalendar = useMemo(() => {
     const draftCalendarId = String(draft?.calendarId || '').trim();
     return calendars.find((item) => getCalendarKey(item) === draftCalendarId) || calendar || null;
   }, [calendar, calendars, draft?.calendarId]);
+  const activeDraftCalendarKey = getCalendarKey(activeDraftCalendar);
+  const activeDraftCalendarKeyRef = useRef(activeDraftCalendarKey);
+  activeDraftCalendarKeyRef.current = activeDraftCalendarKey;
+  const activeDraftCalendarIsRoundRobin = isRoundRobinCalendar(activeDraftCalendar);
+  const assignmentTeamMemberIdsKey = (activeDraftCalendar?.teamMembers || [])
+    .map(getCalendarTeamMemberId)
+    .filter(Boolean)
+    .join('\u0001');
+  const assignmentRequestScope = [
+    activeDraftCalendarKey,
+    activeDraftCalendarIsRoundRobin ? 'round-robin' : 'standard',
+    assignmentTeamMemberIdsKey,
+  ].join('\u0002');
+  const assignmentRequestScopeRef = useRef(assignmentRequestScope);
+  assignmentRequestScopeRef.current = assignmentRequestScope;
 
   const updateDraft = useCallback((updates: Partial<AppointmentDraft>) => {
     if (!draft) return;
@@ -9479,14 +10011,26 @@ function AppointmentFormSheet({
   }, [draft, onChange]);
 
   const loadFreeSlots = useCallback(async () => {
-    const calendarId = getCalendarKey(activeDraftCalendar);
+    const calendarId = activeDraftCalendarKey;
     if (!calendarId) return;
+    const generation = ++freeSlotsGenerationRef.current;
+    freeSlotsAbortRef.current?.abort();
+    const controller = new AbortController();
+    freeSlotsAbortRef.current = controller;
+    const isLatest = () => (
+      freeSlotsGenerationRef.current === generation
+      && !controller.signal.aborted
+      && activeDraftCalendarKeyRef.current === calendarId
+    );
     setFreeSlotsLoading(true);
     setFreeSlotsError('');
     try {
       const startDate = todayDateOnlyInBusinessTimezone(timezone);
       const endDate = addBusinessDateOnlyDays(startDate, 30);
-      const response = await api.getFreeSlots(calendarId, startDate, endDate, timezone);
+      const response = await api.getFreeSlots(calendarId, startDate, endDate, timezone, {
+        signal: controller.signal,
+      });
+      if (!isLatest()) return;
       const nextSlots = Array.isArray(response) ? response.filter((group) => Array.isArray(group.slots) && group.slots.length > 0) : [];
       const preferredDate = preferredSlotDateRef.current;
       setFreeSlots(nextSlots);
@@ -9496,43 +10040,73 @@ function AppointmentFormSheet({
         return nextSlots[0]?.date || '';
       });
     } catch (err) {
-      setFreeSlots([]);
-      setFreeSlotsError(err instanceof Error ? err.message : 'No se pudieron cargar slots.');
+      if (isLatest() && !(err instanceof Error && err.name === 'AbortError')) {
+        setFreeSlots([]);
+        setFreeSlotsError(err instanceof Error ? err.message : 'No se pudieron cargar slots.');
+      }
     } finally {
-      setFreeSlotsLoading(false);
+      if (freeSlotsAbortRef.current === controller) {
+        freeSlotsAbortRef.current = null;
+      }
+      if (isLatest()) setFreeSlotsLoading(false);
     }
-  }, [activeDraftCalendar, api, timezone]);
+  }, [activeDraftCalendarKey, api, timezone]);
 
   const loadAssignmentUsers = useCallback(async () => {
-    const teamMemberIds = (activeDraftCalendar?.teamMembers || [])
-      .map(getCalendarTeamMemberId)
-      .filter(Boolean);
+    const calendarId = activeDraftCalendarKey;
+    if (!calendarId) return;
+    const scope = assignmentRequestScope;
+    const teamMemberIds = assignmentTeamMemberIdsKey
+      ? assignmentTeamMemberIdsKey.split('\u0001').filter(Boolean)
+      : [];
+    const generation = ++assignmentGenerationRef.current;
+    assignmentAbortRef.current?.abort();
+    const controller = new AbortController();
+    assignmentAbortRef.current = controller;
+    const isLatest = () => (
+      assignmentGenerationRef.current === generation
+      && !controller.signal.aborted
+      && activeDraftCalendarKeyRef.current === calendarId
+      && assignmentRequestScopeRef.current === scope
+    );
 
     setAssignmentLoading(true);
     setAssignmentError('');
     try {
-      const response = teamMemberIds.length > 0 && isRoundRobinCalendar(activeDraftCalendar)
-        ? await api.getCalendarUsersByIds(teamMemberIds)
-        : await api.getCalendarUsers();
+      const response = teamMemberIds.length > 0 && activeDraftCalendarIsRoundRobin
+        ? await api.getCalendarUsersByIds(teamMemberIds, { signal: controller.signal })
+        : await api.getCalendarUsers({ signal: controller.signal });
+      if (!isLatest()) return;
       let users = unwrapCalendarUsers(response);
       if (!users.length && teamMemberIds.length) {
         users = teamMemberIds.map((id) => ({ id, name: `Usuario ${id.slice(0, 8)}...` }));
       }
       setAssignmentUsers(users);
     } catch (err) {
-      setAssignmentUsers(teamMemberIds.map((id) => ({ id, name: `Usuario ${id.slice(0, 8)}...` })));
-      setAssignmentError(err instanceof Error ? err.message : 'No se pudo cargar el equipo.');
+      if (isLatest() && !(err instanceof Error && err.name === 'AbortError')) {
+        setAssignmentUsers(teamMemberIds.map((id) => ({ id, name: `Usuario ${id.slice(0, 8)}...` })));
+        setAssignmentError(err instanceof Error ? err.message : 'No se pudo cargar el equipo.');
+      }
     } finally {
-      setAssignmentLoading(false);
+      if (assignmentAbortRef.current === controller) {
+        assignmentAbortRef.current = null;
+      }
+      if (isLatest()) setAssignmentLoading(false);
     }
-  }, [activeDraftCalendar, api]);
+  }, [
+    activeDraftCalendarIsRoundRobin,
+    activeDraftCalendarKey,
+    api,
+    assignmentRequestScope,
+    assignmentTeamMemberIdsKey,
+  ]);
 
   useEffect(() => {
     if (!open || !draft) return;
     preferredSlotDateRef.current = draft.dateOnly;
     setScheduleMode(mode === 'create' ? 'default' : 'custom');
     setAdvancedPicker(null);
-    setSelectedSlot('');
+    setSelectedSlot(null);
     setGuestSearchQuery('');
     setGuestContacts([]);
     setGuestSearching(false);
@@ -9548,7 +10122,7 @@ function AppointmentFormSheet({
       setAdvancedPicker(null);
       setFreeSlots([]);
       setSelectedSlotDate('');
-      setSelectedSlot('');
+      setSelectedSlot(null);
       setGuestSearchQuery('');
       setGuestContacts([]);
       setGuestSearching(false);
@@ -9560,15 +10134,46 @@ function AppointmentFormSheet({
       setAssignmentError('');
       return;
     }
-    if (scheduleMode === 'default') {
-      void loadFreeSlots();
-    }
+  }, [Boolean(draft), open]);
+
+  useEffect(() => {
+    freeSlotsGenerationRef.current += 1;
+    freeSlotsAbortRef.current?.abort();
+    freeSlotsAbortRef.current = null;
+    setFreeSlotsLoading(false);
+    setFreeSlotsError('');
+    setFreeSlots([]);
+    setSelectedSlotDate('');
+    setSelectedSlot(null);
+  }, [activeDraftCalendarKey, open, scheduleMode]);
+
+  useEffect(() => {
+    if (!open || !draft || scheduleMode !== 'default') return;
+    void loadFreeSlots();
   }, [Boolean(draft), loadFreeSlots, open, scheduleMode]);
 
   useEffect(() => {
-    if (!open || !draft || (!draft.assignedUserId && !isRoundRobinCalendar(activeDraftCalendar))) return;
+    assignmentGenerationRef.current += 1;
+    assignmentAbortRef.current?.abort();
+    assignmentAbortRef.current = null;
+    setAssignmentLoading(false);
+    setAssignmentError('');
+    setAssignmentUsers([]);
+  }, [assignmentRequestScope, open]);
+
+  useEffect(() => {
+    if (!open || !draft || (!draft.assignedUserId && !activeDraftCalendarIsRoundRobin)) return;
     void loadAssignmentUsers();
-  }, [activeDraftCalendar, draft?.assignedUserId, draft?.calendarId, loadAssignmentUsers, open]);
+  }, [activeDraftCalendarIsRoundRobin, Boolean(draft?.assignedUserId), loadAssignmentUsers, open]);
+
+  useEffect(() => () => {
+    freeSlotsGenerationRef.current += 1;
+    freeSlotsAbortRef.current?.abort();
+    freeSlotsAbortRef.current = null;
+    assignmentGenerationRef.current += 1;
+    assignmentAbortRef.current?.abort();
+    assignmentAbortRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!open || !draft || !selectedSlotDate || scheduleMode !== 'default') return;
@@ -9637,17 +10242,42 @@ function AppointmentFormSheet({
     return Array.from({ length: endYear - startYear + 1 }, (_, index) => startYear + index);
   }, [currentBusinessYear, selectedDateParts.year]);
   const selectedSlotGroup = freeSlots.find((group) => group.date === selectedSlotDate) || null;
-  const assignmentRequired = mode === 'create' && isRoundRobinCalendar(activeDraftCalendar);
+  const assignmentRequired = mode === 'create' && activeDraftCalendarIsRoundRobin;
   const showAssignmentPicker = Boolean(draft && (
     assignmentRequired ||
     draft.assignedUserId ||
-    (isRoundRobinCalendar(activeDraftCalendar) && (assignmentUsers.length || assignmentLoading || assignmentError))
+    (activeDraftCalendarIsRoundRobin && (assignmentUsers.length || assignmentLoading || assignmentError))
   ));
 
   const setScheduleModeSafely = useCallback((nextMode: AppointmentScheduleMode) => {
     setScheduleMode(nextMode);
     setAdvancedPicker(null);
+    if (nextMode !== 'default') setSelectedSlot(null);
   }, []);
+
+  const saveDraftSafely = useCallback(() => {
+    if (!draft) return;
+    if (mode === 'create' && scheduleMode === 'default') {
+      const selectionIsCurrent = isCurrentCalendarSlotSelection({
+        calendarId: activeDraftCalendarKey,
+        dateOnly: draft.dateOnly,
+        freeSlots,
+        selection: selectedSlot,
+      });
+      if (!selectionIsCurrent) {
+        const hadSelection = Boolean(selectedSlot);
+        setSelectedSlot(null);
+        Alert.alert(
+          hadSelection ? 'Horario desactualizado' : 'Elige un horario',
+          hadSelection
+            ? 'Ese horario ya no pertenece al calendario y fecha actuales. Selecciona otro horario antes de crear la cita.'
+            : 'Selecciona uno de los horarios disponibles o cambia a Personalizado antes de crear la cita.',
+        );
+        return;
+      }
+    }
+    onSave(draft);
+  }, [activeDraftCalendarKey, draft, freeSlots, mode, onSave, scheduleMode, selectedSlot]);
 
   const applyDatePart = useCallback((updates: Partial<typeof selectedDateParts>) => {
     const year = updates.year ?? selectedDateParts.year;
@@ -10146,9 +10776,24 @@ function AppointmentFormSheet({
         : '';
   const activeCalendarId = getCalendarKey(activeDraftCalendar);
   const selectDraftCalendar = useCallback((nextCalendar: CalendarItem) => {
-    updateDraft({ calendarId: getCalendarKey(nextCalendar) });
-    setSelectedSlot('');
+    // Invalidate in-flight work synchronously. Waiting for the next effect
+    // leaves a small microtask window where the previous calendar can still
+    // paint its slots/team after the user has already selected the new one.
+    freeSlotsGenerationRef.current += 1;
+    freeSlotsAbortRef.current?.abort();
+    freeSlotsAbortRef.current = null;
+    assignmentGenerationRef.current += 1;
+    assignmentAbortRef.current?.abort();
+    assignmentAbortRef.current = null;
+    updateDraft({ calendarId: getCalendarKey(nextCalendar), assignedUserId: '' });
+    setFreeSlotsLoading(false);
+    setFreeSlotsError('');
+    setFreeSlots([]);
+    setSelectedSlot(null);
     setSelectedSlotDate('');
+    setAssignmentLoading(false);
+    setAssignmentError('');
+    setAssignmentUsers([]);
     setCalendarPickerOpen(false);
   }, [updateDraft]);
   const sheetTitle = calendarPickerOpen
@@ -10346,7 +10991,7 @@ function AppointmentFormSheet({
                               accessibilityRole="button"
                               onPress={() => {
                                 setSelectedSlotDate(groupDate);
-                                setSelectedSlot('');
+                                setSelectedSlot(null);
                               }}
                               style={({ pressed }) => [
                               styles.freeSlotDateChip,
@@ -10369,7 +11014,7 @@ function AppointmentFormSheet({
                       <View style={styles.freeSlotTimeGrid}>
                         {(selectedSlotGroup?.slots || []).slice(0, 18).map((slot) => {
                           const fields = isoToBusinessDateTimeFields(slot, timezone);
-                          const selected = selectedSlot === slot;
+                          const selected = selectedSlot?.slot === slot;
                           const durationMinutes = getCalendarSlotDurationMinutes(activeDraftCalendar);
                           const slotDateOnly = fields.dateOnly || selectedSlotDate || draft.dateOnly;
                           const slotStartTime = fields.time || draft.startTime;
@@ -10379,7 +11024,12 @@ function AppointmentFormSheet({
                               key={slot}
                               accessibilityRole="button"
                               onPress={() => {
-                                setSelectedSlot(slot);
+                                setSelectedSlot({
+                                  calendarId: activeDraftCalendarKey,
+                                  groupDate: selectedSlotDate,
+                                  dateOnly: slotDateOnly,
+                                  slot,
+                                });
                                 updateDraft({
                                   dateOnly: slotDateOnly,
                                   startTime: slotStartTime,
@@ -10448,7 +11098,7 @@ function AppointmentFormSheet({
             <PrimaryButton
               label={mode === 'edit' ? 'Guardar cambios' : 'Crear cita'}
               busy={busy}
-              onPress={() => onSave(draft)}
+              onPress={saveDraftSafely}
             />
           </ScrollView>
         </KeyboardAvoidingView>
@@ -10843,7 +11493,15 @@ function AnalyticsDualLineChart({
   );
 }
 
-function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: RistakApiClient; customLabels?: CustomLabels }) {
+function AnalyticsSection({
+  api,
+  customLabels = DEFAULT_CUSTOM_LABELS,
+  hasWebAnalyticsAccess = true,
+}: {
+  api: RistakApiClient;
+  customLabels?: CustomLabels;
+  hasWebAnalyticsAccess?: boolean;
+}) {
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d');
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const [customRangeOpen, setCustomRangeOpen] = useState(false);
@@ -10855,25 +11513,34 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
   const [chartView, setChartView] = useState<AnalyticsChartView>('revenue-spend');
   const [financialScope, setFinancialScope] = useState<DashboardFunnelScope>('all');
   const [funnelScope, setFunnelScope] = useState<DashboardFunnelScope>('all');
-  const [originTab, setOriginTab] = useState<AnalyticsOriginTab>('traffic');
+  const [originTab, setOriginTab] = useState<AnalyticsOriginTab>(hasWebAnalyticsAccess ? 'traffic' : 'leads');
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [chartData, setChartData] = useState<AnalyticsChartPoint[]>([]);
   const [funnelData, setFunnelData] = useState<DashboardFunnelRow[]>([]);
   const [originData, setOriginData] = useState<OriginDistributionData>(EMPTY_ORIGIN_DATA);
   const [detectedPhones, setDetectedPhones] = useState<WhatsAppApiPhoneNumber[]>([]);
   const [labels, setLabels] = useState<CustomLabels>(() => cleanAnalyticsLabels(customLabels));
-  const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
-  const [accountCurrency, setAccountCurrency] = useState(normalizeCurrencyCode());
+  const [businessTimezone, setBusinessTimezone] = useState('');
+  const [accountCurrency, setAccountCurrency] = useState('');
+  const [accountContextLoading, setAccountContextLoading] = useState(true);
+  const [accountContextError, setAccountContextError] = useState('');
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
   const [funnelLoading, setFunnelLoading] = useState(true);
   const [originLoading, setOriginLoading] = useState(true);
+  const [chartError, setChartError] = useState('');
+  const [funnelError, setFunnelError] = useState('');
+  const [originError, setOriginError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
+  const analyticsOverviewGenerationRef = useRef(0);
 
   const activePeriod = ANALYTICS_PERIOD_OPTIONS.find((option) => option.id === period) || ANALYTICS_PERIOD_OPTIONS[0];
-  const defaultCustomRange = useMemo(() => getTodayRange(30, businessTimezone), [businessTimezone]);
+  const defaultCustomRange = useMemo(
+    () => businessTimezone ? getTodayRange(30, businessTimezone) : { startDate: '', endDate: '' },
+    [businessTimezone],
+  );
   const customRangeLabel = isValidDateOnly(customStartDate) && isValidDateOnly(customEndDate)
     ? `${formatDateOnlyRangeLabel(customStartDate)} - ${formatDateOnlyRangeLabel(customEndDate)}`
     : '';
@@ -10886,7 +11553,9 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
       };
     }
 
-    return getTodayRange(activePeriod.days ?? 30, businessTimezone);
+    return businessTimezone
+      ? getTodayRange(activePeriod.days ?? 30, businessTimezone)
+      : { startDate: '', endDate: '' };
   }, [activePeriod.days, businessTimezone, customEndDate, customStartDate, period]);
   const groupBy = useMemo(() => getAnalyticsGroupBy(period, range.startDate, range.endDate), [period, range.endDate, range.startDate]);
 
@@ -10895,6 +11564,16 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
   }, [customLabels]);
 
   useEffect(() => {
+    if (!hasWebAnalyticsAccess && chartView === 'visitors-leads') {
+      setChartView('leads-appointments');
+    }
+    if (!hasWebAnalyticsAccess && originTab === 'traffic') {
+      setOriginTab('leads');
+    }
+  }, [chartView, hasWebAnalyticsAccess, originTab]);
+
+  useEffect(() => {
+    if (!defaultCustomRange.startDate || !defaultCustomRange.endDate) return;
     setCustomStartDate((current) => current || defaultCustomRange.startDate);
     setCustomEndDate((current) => current || defaultCustomRange.endDate);
     setCustomDraftStartDate((current) => current || defaultCustomRange.startDate);
@@ -10903,78 +11582,142 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
 
   useEffect(() => {
     let cancelled = false;
+    setAccountContextLoading(true);
+    setAccountContextError('');
 
-    Promise.all([
-      api.getConfig(['account_timezone', 'account_currency']).catch(() => ({})),
-      api.getCustomLabels().catch(() => DEFAULT_CUSTOM_LABELS),
-    ]).then(([configResponse, labelsResponse]) => {
-      if (cancelled) return;
-      const values = configResponse && typeof configResponse === 'object' && 'config' in configResponse
-        ? configResponse.config
-        : configResponse;
-      const timezone = values && typeof values === 'object' && 'account_timezone' in values
-        ? values.account_timezone
-        : '';
-      const currency = values && typeof values === 'object' && 'account_currency' in values
-        ? values.account_currency
-        : '';
-      setBusinessTimezone(resolveBusinessTimezone(typeof timezone === 'string' ? timezone : ''));
-      setAccountCurrency(normalizeCurrencyCode(typeof currency === 'string' ? currency : ''));
-      setLabels(cleanAnalyticsLabels(labelsResponse));
-    });
+    void api.getCustomLabels()
+      .then((labelsResponse) => {
+        if (!cancelled) setLabels(cleanAnalyticsLabels(labelsResponse));
+      })
+      .catch(() => undefined);
+
+    void api.getConfig(['account_timezone', 'account_currency'])
+      .then((configResponse) => {
+        if (cancelled) return;
+        const values = configResponse && typeof configResponse === 'object' && 'config' in configResponse
+          ? configResponse.config
+          : configResponse;
+        const timezone = normalizeRequiredBusinessTimezone(
+          values && typeof values === 'object' && 'account_timezone' in values
+            ? values.account_timezone
+            : '',
+        );
+        const currency = normalizeRequiredCurrencyCode(
+          values && typeof values === 'object' && 'account_currency' in values
+            ? values.account_currency
+            : '',
+        );
+        if (!timezone || !currency) {
+          throw new Error('La cuenta no devolvi\u00f3 una zona horaria y moneda v\u00e1lidas.');
+        }
+        setBusinessTimezone(timezone);
+        setAccountCurrency(currency);
+      })
+      .catch((contextError) => {
+        if (cancelled) return;
+        console.warn('[RistakNative][analytics] account context failed', contextError);
+        setBusinessTimezone('');
+        setAccountCurrency('');
+        setAccountContextError('No pudimos confirmar la zona horaria y moneda de tu cuenta. Reintenta para mostrar cifras correctas.');
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setAccountContextLoading(false);
+      });
 
     return () => {
       cancelled = true;
     };
-  }, [api]);
+  }, [api, reloadKey]);
 
   const loadOverview = useCallback(async () => {
+    const generation = ++analyticsOverviewGenerationRef.current;
     setLoading(true);
     setOriginLoading(true);
     setError('');
+    setOriginError('');
 
     try {
-      const [metricsResponse, originResponse, whatsappStatus] = await Promise.all([
+      const [metricsResult, originResult, whatsappResult] = await Promise.allSettled([
         api.getDashboardMetrics(range.startDate, range.endDate),
-        api.getOriginDistribution(range.startDate, range.endDate).catch(() => EMPTY_ORIGIN_DATA),
-        api.getWhatsAppApiStatus().catch(() => null),
+        api.getOriginDistribution(range.startDate, range.endDate, hasWebAnalyticsAccess),
+        api.getWhatsAppApiStatus(),
       ]);
 
-      setMetrics(metricsResponse);
-      setOriginData({
-        ...EMPTY_ORIGIN_DATA,
-        ...originResponse,
-        traffic: {
-          ...EMPTY_ORIGIN_DATA.traffic,
-          ...(originResponse?.traffic || {}),
-        },
-        whatsappNumbers: originResponse?.whatsappNumbers || [],
-      });
-      setDetectedPhones((whatsappStatus?.phoneNumbers || []).filter((phone) => (
-        Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
-      )));
+      if (generation !== analyticsOverviewGenerationRef.current) return;
+      if (metricsResult.status === 'fulfilled') {
+        setMetrics(metricsResult.value);
+      } else {
+        console.warn('[RistakNative][analytics] metrics failed', metricsResult.reason);
+        setMetrics(null);
+        setError(metricsResult.reason instanceof Error ? metricsResult.reason.message : 'No se pudieron cargar los indicadores.');
+      }
+
+      if (originResult.status === 'fulfilled') {
+        const originResponse = originResult.value;
+        setOriginData({
+          ...EMPTY_ORIGIN_DATA,
+          ...originResponse,
+          traffic: {
+            ...EMPTY_ORIGIN_DATA.traffic,
+            ...(originResponse?.traffic || {}),
+          },
+          whatsappNumbers: originResponse?.whatsappNumbers || [],
+        });
+      } else {
+        console.warn('[RistakNative][analytics] origin failed', originResult.reason);
+        setOriginError(originResult.reason instanceof Error ? originResult.reason.message : 'No se pudo cargar el origen de los resultados.');
+      }
+
+      if (whatsappResult.status === 'fulfilled') {
+        setDetectedPhones((whatsappResult.value?.phoneNumbers || []).filter((phone) => (
+          Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
+        )));
+      } else {
+        console.warn('[RistakNative][analytics] WhatsApp phone lookup failed', whatsappResult.reason);
+      }
     } catch (err) {
+      if (generation !== analyticsOverviewGenerationRef.current) return;
       console.warn('[RistakNative][analytics] loadOverview failed', err);
       setMetrics(null);
-      setOriginData(EMPTY_ORIGIN_DATA);
-      setDetectedPhones([]);
-      setError(err instanceof Error ? err.message : 'No se pudieron cargar las analíticas.');
+      const fallbackMessage = err instanceof Error ? err.message : 'No se pudieron cargar las analíticas.';
+      setError(fallbackMessage);
+      setOriginError(fallbackMessage);
     } finally {
+      if (generation !== analyticsOverviewGenerationRef.current) return;
       setLoading(false);
       setOriginLoading(false);
       setRefreshing(false);
     }
-  }, [api, range.endDate, range.startDate]);
+  }, [api, hasWebAnalyticsAccess, range.endDate, range.startDate]);
 
   useEffect(() => {
+    if (!businessTimezone || !accountCurrency || accountContextError) {
+      analyticsOverviewGenerationRef.current += 1;
+      setLoading(accountContextLoading);
+      setOriginLoading(accountContextLoading);
+      setRefreshing(false);
+      return;
+    }
     void loadOverview();
-  }, [loadOverview, reloadKey]);
+  }, [accountContextError, accountContextLoading, accountCurrency, businessTimezone, loadOverview, reloadKey]);
+
+  useEffect(() => () => {
+    analyticsOverviewGenerationRef.current += 1;
+  }, []);
 
   useEffect(() => {
+    if (!businessTimezone || !accountCurrency || accountContextError) {
+      setChartData([]);
+      setChartLoading(accountContextLoading);
+      setChartError('');
+      return;
+    }
     let active = true;
 
     const loadChart = async () => {
       setChartLoading(true);
+      setChartError('');
 
       try {
         if (chartView === 'revenue-spend') {
@@ -10990,6 +11733,10 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
 
         let response: AnalyticsChartPoint[] = [];
         if (chartView === 'visitors-leads') {
+          if (!hasWebAnalyticsAccess) {
+            if (active) setChartData([]);
+            return;
+          }
           const [visitors, leads] = await Promise.all([
             api.getDashboardSeries('visitors', range.startDate, range.endDate, groupBy),
             api.getDashboardSeries('leads', range.startDate, range.endDate, groupBy),
@@ -11016,9 +11763,12 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
         }
 
         if (active) setChartData(response);
-      } catch {
-        console.warn('[RistakNative][analytics] loadChart failed');
-        if (active) setChartData([]);
+      } catch (chartLoadError) {
+        console.warn('[RistakNative][analytics] loadChart failed', chartLoadError);
+        if (active) {
+          setChartData([]);
+          setChartError(chartLoadError instanceof Error ? chartLoadError.message : 'No se pudo cargar esta gráfica.');
+        }
       } finally {
         if (active) setChartLoading(false);
       }
@@ -11029,19 +11779,29 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
     return () => {
       active = false;
     };
-  }, [api, chartView, financialScope, groupBy, range.endDate, range.startDate, reloadKey]);
+  }, [accountContextError, accountContextLoading, accountCurrency, api, businessTimezone, chartView, financialScope, groupBy, hasWebAnalyticsAccess, range.endDate, range.startDate, reloadKey]);
 
   useEffect(() => {
+    if (!businessTimezone || !accountCurrency || accountContextError) {
+      setFunnelData([]);
+      setFunnelLoading(accountContextLoading);
+      setFunnelError('');
+      return;
+    }
     let active = true;
     setFunnelLoading(true);
+    setFunnelError('');
 
-    api.getFunnelData(range.startDate, range.endDate, funnelScope)
+    api.getFunnelData(range.startDate, range.endDate, funnelScope, hasWebAnalyticsAccess)
       .then((response) => {
         if (active) setFunnelData(Array.isArray(response) ? response : []);
       })
-      .catch(() => {
-        console.warn('[RistakNative][analytics] loadFunnel failed');
-        if (active) setFunnelData([]);
+      .catch((funnelLoadError) => {
+        console.warn('[RistakNative][analytics] loadFunnel failed', funnelLoadError);
+        if (active) {
+          setFunnelData([]);
+          setFunnelError(funnelLoadError instanceof Error ? funnelLoadError.message : 'No se pudo cargar el embudo.');
+        }
       })
       .finally(() => {
         if (active) setFunnelLoading(false);
@@ -11050,15 +11810,15 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
     return () => {
       active = false;
     };
-  }, [api, funnelScope, range.endDate, range.startDate, reloadKey]);
+  }, [accountContextError, accountContextLoading, accountCurrency, api, businessTimezone, funnelScope, hasWebAnalyticsAccess, range.endDate, range.startDate, reloadKey]);
 
   const chartOptions = useMemo<Array<{ id: AnalyticsChartView; label: string }>>(() => ([
-    { id: 'revenue-spend', label: 'Ingresos vs gastos' },
-    { id: 'visitors-leads', label: `Visitantes vs ${labels.leads}` },
-    { id: 'leads-appointments', label: `${labels.leads} vs citas` },
-    { id: 'appointments-attendances', label: 'Citas vs asistencias' },
-    { id: 'attendances-sales', label: 'Asistencias vs ventas' },
-  ]), [labels.leads]);
+    { id: 'revenue-spend' as const, label: 'Ingresos vs gastos' },
+    ...(hasWebAnalyticsAccess ? [{ id: 'visitors-leads' as const, label: `Visitantes vs ${labels.leads}` }] : []),
+    { id: 'leads-appointments' as const, label: `${labels.leads} vs citas` },
+    { id: 'appointments-attendances' as const, label: 'Citas vs asistencias' },
+    { id: 'attendances-sales' as const, label: 'Asistencias vs ventas' },
+  ]), [hasWebAnalyticsAccess, labels.leads]);
 
   const chartMeta = useMemo<AnalyticsChartMeta>(() => {
     if (chartView === 'visitors-leads') {
@@ -11088,29 +11848,24 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
   ]), [accountCurrency]);
 
   const hasChartData = chartData.some((point) => point.value > 0 || point.value2 > 0);
-  const funnelRows = funnelData.length > 0
-    ? funnelData
-    : [
-      { stage: 'Visitantes', value: 0 },
-      { stage: labels.leads, value: 0 },
-      { stage: 'Citas', value: 0 },
-      { stage: 'Asistencias', value: 0 },
-      { stage: labels.customers, value: 0 },
-    ];
+  const analyticsContextPending = accountContextLoading || !businessTimezone || !accountCurrency;
+  const analyticsError = accountContextError || error;
+  const funnelRows = funnelData.filter((item) => hasWebAnalyticsAccess || item.stage?.trim().toLowerCase() !== 'visitantes');
   const funnelMax = Math.max(1, ...funnelRows.map((item) => item.value || 0));
   const totalConversion = funnelRows[0]?.value > 0
     ? ((funnelRows[funnelRows.length - 1].value / funnelRows[0].value) * 100).toFixed(1)
     : '0.0';
   const originOptions = useMemo<Array<{ id: AnalyticsOriginTab; label: string }>>(() => ([
-    { id: 'traffic', label: 'Tráfico' },
-    { id: 'leads', label: labels.leads },
-    { id: 'appointments', label: 'Citas' },
-    { id: 'conversions', label: labels.customers },
-  ]), [labels.customers, labels.leads]);
+    ...(hasWebAnalyticsAccess ? [{ id: 'traffic' as const, label: 'Tráfico' }] : []),
+    { id: 'leads' as const, label: labels.leads },
+    { id: 'appointments' as const, label: 'Citas' },
+    { id: 'conversions' as const, label: labels.customers },
+  ]), [hasWebAnalyticsAccess, labels.customers, labels.leads]);
   const originRows = useMemo<SourceDatum[]>(() => {
+    if (originTab === 'traffic' && !hasWebAnalyticsAccess) return [];
     if (originTab === 'traffic') return originData.traffic.sources || [];
     return originData[originTab] || [];
-  }, [originData, originTab]);
+  }, [hasWebAnalyticsAccess, originData, originTab]);
   const originMax = Math.max(1, ...originRows.map((item) => item.value || 0));
   const originTotal = originRows.reduce((sum, item) => sum + (item.value || 0), 0);
   const phoneNumberRows = useMemo(
@@ -11222,13 +11977,15 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
           ) : null}
         </View>
 
-      {error ? (
+      {analyticsError ? (
         <View style={styles.analyticsInlineError}>
-          <Text style={styles.errorText}>{error}</Text>
-          <SecondaryButton label="Reintentar" onPress={loadOverview} />
+          <Text style={styles.errorText}>{analyticsError}</Text>
+          <SecondaryButton label="Reintentar" onPress={refresh} />
         </View>
       ) : null}
 
+      {accountContextError ? null : (
+      <>
       <View style={styles.analyticsMetricsGrid}>
         {metricCards.map(({ key, title, Icon, tone, formatter }) => {
           const metric = metrics?.[key];
@@ -11240,10 +11997,10 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
               </View>
               <Text numberOfLines={1} style={styles.analyticsMetricTitle}>{title}</Text>
               <Text numberOfLines={1} adjustsFontSizeToFit style={styles.analyticsMetricValue}>
-                {loading || !metric ? '...' : formatter(Number(metric.value || 0))}
+                {loading || analyticsContextPending || !metric ? '...' : formatter(Number(metric.value || 0))}
               </Text>
               <Text numberOfLines={1} style={[styles.analyticsMetricDelta, variation >= 0 ? styles.analyticsDeltaPositive : styles.analyticsDeltaNegative]}>
-                {loading || !metric ? '' : `${getVariationLabel(variation)} vs antes`}
+                {loading || analyticsContextPending || !metric ? '' : `${getVariationLabel(variation)} vs antes`}
               </Text>
             </View>
           );
@@ -11313,7 +12070,12 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
           </View>
         </View>
 
-        {chartLoading ? (
+        {chartError ? (
+          <View style={styles.analyticsInlineError}>
+            <Text style={styles.errorText}>{chartError}</Text>
+            <SecondaryButton label="Reintentar" onPress={refresh} />
+          </View>
+        ) : chartLoading || (analyticsContextPending && !accountContextError) ? (
           <View style={styles.analyticsLoadingState}>
             <ActivityIndicator color={COLORS.accent} />
           </View>
@@ -11333,7 +12095,7 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
             <Text style={styles.analyticsPanelTitle}>Conversiones</Text>
           </View>
           <View style={styles.analyticsConversionPill}>
-            <Text style={styles.analyticsConversionPillText}>{totalConversion}%</Text>
+            <Text style={styles.analyticsConversionPillText}>{funnelRows.length ? `${totalConversion}%` : '—'}</Text>
           </View>
         </View>
 
@@ -11354,11 +12116,16 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
           ))}
         </View>
 
-        {funnelLoading ? (
+        {funnelError ? (
+          <View style={styles.analyticsInlineError}>
+            <Text style={styles.errorText}>{funnelError}</Text>
+            <SecondaryButton label="Reintentar" onPress={refresh} />
+          </View>
+        ) : funnelLoading ? (
           <View style={styles.analyticsLoadingState}>
             <ActivityIndicator color={COLORS.accent} />
           </View>
-        ) : (
+        ) : funnelRows.length ? (
           <View style={styles.analyticsFunnelList}>
             {funnelRows.map((item, index) => {
               const percentage = ((item.value || 0) / funnelMax) * 100;
@@ -11385,6 +12152,10 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
               );
             })}
           </View>
+        ) : (
+          <View style={styles.analyticsEmptyState}>
+            <Text style={styles.analyticsEmptyText}>Sin datos de conversión para este periodo.</Text>
+          </View>
         )}
       </View>
 
@@ -11395,7 +12166,7 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
             <Text style={styles.analyticsPanelTitle}>Fuentes</Text>
           </View>
           <View style={styles.analyticsConversionPill}>
-            <Text style={styles.analyticsConversionPillText}>{formatNumber(originTotal)}</Text>
+            <Text style={styles.analyticsConversionPillText}>{originError ? '—' : formatNumber(originTotal)}</Text>
           </View>
         </View>
 
@@ -11422,7 +12193,12 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
           })}
         </ScrollView>
 
-        {originLoading ? (
+        {originError ? (
+          <View style={styles.analyticsInlineError}>
+            <Text style={styles.errorText}>{originError}</Text>
+            <SecondaryButton label="Reintentar" onPress={refresh} />
+          </View>
+        ) : originLoading ? (
           <View style={styles.analyticsLoadingState}>
             <ActivityIndicator color={COLORS.accent} />
           </View>
@@ -11475,6 +12251,8 @@ function AnalyticsSection({ api, customLabels = DEFAULT_CUSTOM_LABELS }: { api: 
             </View>
           </View>
         ) : null}
+      </>
+      )}
       </ScrollView>
       <BottomActionSheet
         open={customRangeOpen}
@@ -13097,7 +13875,9 @@ function isLicenseFeatureEnabled(features: LicenseStatusResponse['features'] | u
   const value = features?.[featureKey];
   if (value === false) return false;
   if (value === true) return true;
-  return true;
+  // Premium money-moving capabilities are fail-closed when the license server
+  // did not provide an explicit feature map.
+  return false;
 }
 
 function isPaymentGatewayConnected(integrations: IntegrationsStatus | null | undefined, key: PaymentGatewayProvider) {
@@ -13122,9 +13902,7 @@ function resolveMobilePaymentAccess(
   const plan = normalizeMobileLicensePlan(license?.plan);
   const connectedGateways = getConnectedPaymentGateways(integrations);
   const hasConnectedGateway = connectedGateways.length > 0;
-  // /movil gates online payments purely on gateway connection (no license/plan
-  // check), so a connected 'basic' account keeps links/plans/subscriptions.
-  const offlineOnly = !hasConnectedGateway;
+  const offlineOnly = plan === 'basic' || !hasConnectedGateway;
   // Match /movil's usePaymentGatewayCapabilities: plans need a plan-capable
   // gateway (stripe/conekta/rebill) and subscriptions a sub-capable one
   // (stripe/conekta/mercadopago/rebill), so a clip-only or mercadopago-only
@@ -13136,8 +13914,8 @@ function resolveMobilePaymentAccess(
     hasConnectedGateway,
     connectedGateways,
     offlineOnly,
-    canUsePaymentPlans: planProviders.length > 0 && isLicenseFeatureEnabled(license?.features, 'payment_plans'),
-    canUseSubscriptions: subscriptionProviders.length > 0 && isLicenseFeatureEnabled(license?.features, 'subscriptions'),
+    canUsePaymentPlans: !offlineOnly && planProviders.length > 0 && isLicenseFeatureEnabled(license?.features, 'payment_plans'),
+    canUseSubscriptions: !offlineOnly && subscriptionProviders.length > 0 && isLicenseFeatureEnabled(license?.features, 'subscriptions'),
   };
 }
 
@@ -13199,6 +13977,28 @@ function normalizeCurrencyCode(value: unknown = DEFAULT_ACCOUNT_CURRENCY, fallba
   return /^[A-Z]{3}$/.test(fallbackNormalized) ? fallbackNormalized : DEFAULT_ACCOUNT_CURRENCY;
 }
 
+function normalizeRequiredCurrencyCode(value: unknown) {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!/^[A-Z]{3}$/.test(normalized)) return '';
+  try {
+    new Intl.NumberFormat('es-MX', { style: 'currency', currency: normalized }).format(0);
+    return normalized;
+  } catch {
+    return '';
+  }
+}
+
+function normalizeRequiredBusinessTimezone(value: unknown) {
+  const timezone = String(value || '').trim();
+  if (!timezone) return '';
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: timezone }).format(0);
+    return timezone;
+  } catch {
+    return '';
+  }
+}
+
 function normalizeTransactionsResponse(response: TransactionItem[] | { transactions?: TransactionItem[] }) {
   if (Array.isArray(response)) return response;
   return Array.isArray(response?.transactions) ? response.transactions : [];
@@ -13243,8 +14043,7 @@ function getPaymentAmount(transaction: TransactionItem) {
 
 function getPaymentSortTime(transaction: TransactionItem) {
   const value = transaction.date || transaction.paymentDate || transaction.paidAt || transaction.createdAt || '';
-  const parsed = Date.parse(value);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return parseSortableDateValue(value);
 }
 
 function getPaymentContactLabel(transaction: TransactionItem, fallback = 'Contacto sin nombre') {
@@ -13444,7 +14243,8 @@ function formatPaymentDate(value?: string | null, timezone = DEFAULT_BUSINESS_TI
         timeZone: 'UTC',
       }).format(new Date(Date.UTC(parts.year, parts.month - 1, parts.day, 12)));
     }
-    const date = new Date(value);
+    const timestamp = parseSortableDateValue(value);
+    const date = timestamp ? new Date(timestamp) : new Date(Number.NaN);
     if (Number.isNaN(date.getTime())) return 'Sin fecha';
     return new Intl.DateTimeFormat('es-MX', {
       day: 'numeric',
@@ -17475,12 +18275,6 @@ function firstReadableContactValue(values: unknown[]) {
   return '';
 }
 
-function parseSortableDateValue(value?: string | null) {
-  if (!value) return 0;
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
 function getContactInfoDateTime(value?: string | null, timezone?: string | null) {
   if (!value) return '';
   const parts = getBusinessDateTimeParts(value, timezone);
@@ -18035,7 +18829,8 @@ function getDailyJourneyEventScore(event: JourneyEvent) {
 const contactInfoJourneyDayFormatters = new Map<string, Intl.DateTimeFormat>();
 
 function getContactInfoJourneyDayKey(date: string, timezone: string) {
-  const parsed = new Date(date);
+  const timestamp = parseSortableDateValue(date);
+  const parsed = timestamp ? new Date(timestamp) : new Date(Number.NaN);
   if (Number.isNaN(parsed.getTime())) return String(date || '');
 
   let formatter = contactInfoJourneyDayFormatters.get(timezone);
@@ -19070,8 +19865,8 @@ function getAgentStateStatus(state?: ConversationAgentState | null) {
 function getAgentStateTimestamp(state?: ConversationAgentState | null) {
   const candidates = [state?.signalAt, state?.updatedAt, state?.activatedAt, state?.lastReplyAt];
   return candidates.reduce((latest, value) => {
-    const time = Date.parse(String(value || ''));
-    return Number.isFinite(time) ? Math.max(latest, time) : latest;
+    const time = parseSortableDateValue(value);
+    return time ? Math.max(latest, time) : latest;
   }, 0);
 }
 
@@ -19340,6 +20135,7 @@ const ChatRow = React.memo(function ChatRow({
   // estilos viven en un objeto global que se intercambia al vuelo).
   themeTone: _themeTone,
   timezone,
+  timezoneReady,
   onPress,
   onLongPress,
 }: {
@@ -19351,6 +20147,7 @@ const ChatRow = React.memo(function ChatRow({
   showUnreadIndicators: boolean;
   themeTone?: string;
   timezone: string;
+  timezoneReady: boolean;
   onPress: (contact: ChatContact) => void;
   onLongPress?: (contact: ChatContact) => void;
 }) {
@@ -19391,7 +20188,9 @@ const ChatRow = React.memo(function ChatRow({
       <View style={styles.chatRowBody}>
         <View style={styles.rowHeader}>
           <Text numberOfLines={1} style={[styles.chatName, showUnread && styles.chatNameUnread]}>{getContactName(contact)}</Text>
-          <Text style={[styles.rowTime, showUnread && styles.rowTimeUnread]}>{formatChatListDate(contact.lastMessageDate, timezone)}</Text>
+          <Text style={[styles.rowTime, showUnread && styles.rowTimeUnread]}>
+            {timezoneReady ? formatChatListDate(contact.lastMessageDate, timezone) : ''}
+          </Text>
         </View>
         {showLastPreview || showUnread ? (
           <View style={styles.rowFooter}>
@@ -19448,6 +20247,7 @@ function ConversationScreen({
       contact={contact}
       muted={false}
       timezone={resolveBusinessTimezone()}
+      timezoneReady
       onArchiveToggle={() => undefined}
       onBack={onBack}
       onContactPatch={() => undefined}
@@ -20333,6 +21133,7 @@ function NativeConversationScreen({
   integrationsStatus,
   muted,
   timezone,
+  timezoneReady,
   onArchiveToggle,
   onBack,
   onContactPatch,
@@ -20353,6 +21154,7 @@ function NativeConversationScreen({
   integrationsStatus?: IntegrationsStatus | null;
   muted: boolean;
   timezone: string;
+  timezoneReady: boolean;
   onArchiveToggle: (contact: ChatContact) => void;
   onBack: () => void;
   onContactPatch: (contactId: string, patch: Partial<ChatContact>) => void;
@@ -20363,12 +21165,12 @@ function NativeConversationScreen({
   onToggleMute: (contact: ChatContact) => void;
   pendingDraft?: PendingChatDraft | null;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => conversationMessageMemCache.get(contact.id) || []);
-  const [conversationCacheHydrated, setConversationCacheHydrated] = useState(() => Boolean(conversationMessageMemCache.get(contact.id)?.length));
+  const [messages, setMessages] = useState<ChatMessage[]>(() => getConversationMessageMemCache(api, contact.id));
+  const [conversationCacheHydrated, setConversationCacheHydrated] = useState(() => Boolean(getConversationMessageMemCache(api, contact.id).length));
   const [journeyEvents, setJourneyEvents] = useState<JourneyEvent[]>([]);
   const [localActivityMarkers, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
   const [completionNotice, setCompletionNotice] = useState<NativeConversationSuccessNotice | null>(null);
-  const [loading, setLoading] = useState(() => !(conversationMessageMemCache.get(contact.id)?.length));
+  const [loading, setLoading] = useState(() => !getConversationMessageMemCache(api, contact.id).length);
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -20433,15 +21235,37 @@ function NativeConversationScreen({
   const conversationRealtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationRealtimeRefreshInFlightRef = useRef(false);
   const conversationRealtimeRefreshQueuedRef = useRef(false);
+  const conversationForegroundLoadInFlightRef = useRef(false);
+  const conversationRefreshKickRef = useRef<(event?: Partial<ChatLiveMessageEvent>) => void>(() => undefined);
   const activeConversationContactIdRef = useRef(contact.id);
   const onContactPatchRef = useRef(onContactPatch);
   const unreadCountRef = useRef(contact.unreadCount);
+  const chatReadPendingRef = useRef(Number(contact.unreadCount || 0) > 0);
+  const chatReadInFlightRef = useRef(false);
+  const chatReadVersionRef = useRef(0);
   const messagesRef = useRef<ChatMessage[]>([]);
   const sendLockedRef = useRef(false);
+  const sendIntentRef = useRef<{ signature: string; externalId: string } | null>(null);
+  const locationSendIntentRef = useRef<{
+    externalId: string;
+    location: { latitude: number; longitude: number; name: string; address: string; url: string };
+  } | null>(null);
+  const reactionSendIntentRef = useRef(new Map<string, string>());
+  const templateSendIntentRef = useRef(new Map<string, string>());
+  const clabeSendIntentRef = useRef(new Map<string, string>());
+  const scheduleSendIntentRef = useRef<{ signature: string; scheduledId: string } | null>(null);
+  const quickPaymentIntentRef = useRef<{ signature: string; transactionId: string; paidAt: string } | null>(null);
+  const quickAppointmentIntentRef = useRef<{ signature: string; clientRequestId: string } | null>(null);
+  const conversationActionLocksRef = useRef(new Set<string>());
   const agentStatesRef = useRef<ConversationAgentState[]>([]);
   const olderMessagesLoadingRef = useRef(false);
   const conversationHasOlderMessagesRef = useRef(false);
+  const conversationHistoryCursorRef = useRef<ConversationHistoryCursor | null>(null);
   const conversationHistoryExhaustedContactIdRef = useRef<string | null>(null);
+  const scheduledMessagesLastLoadedAtRef = useRef(0);
+  const conversationPrimaryAbortRef = useRef<AbortController | null>(null);
+  const conversationSupplementalAbortRef = useRef<AbortController | null>(null);
+  const conversationSupplementalGenerationRef = useRef(0);
 
   // La lista está invertida: offset 0 es el mensaje más reciente. Mantenerse
   // pegado al último mensaje y compensar prepends lo hace el nativo vía
@@ -20458,95 +21282,241 @@ function NativeConversationScreen({
     setContentFocusItem(item);
   }, []);
 
+  const acquireConversationActionLock = useCallback((key: string) => {
+    if (conversationActionLocksRef.current.has(key)) return false;
+    conversationActionLocksRef.current.add(key);
+    return true;
+  }, []);
+
+  const releaseConversationActionLock = useCallback((key: string) => {
+    conversationActionLocksRef.current.delete(key);
+  }, []);
+
   useEffect(() => {
     onContactPatchRef.current = onContactPatch;
   }, [onContactPatch]);
 
   useEffect(() => {
     unreadCountRef.current = contact.unreadCount;
+    if (Number(contact.unreadCount || 0) > 0) chatReadPendingRef.current = true;
   }, [contact.unreadCount]);
 
   useEffect(() => {
     messagesRef.current = messages;
     // Persistir la conversación (memoria + disco) para que al reabrirla —incluso
     // tras cerrar la app— los mensajes anteriores aparezcan al instante.
-    if (messages.length) {
-      conversationMessageMemCache.set(contact.id, messages);
-      writeCache(conversationCacheKey(contact.id), messages.slice(0, CONVERSATION_MESSAGE_CACHE_LIMIT));
-    }
-  }, [messages, contact.id]);
+    // No escribimos durante la hidratación inicial: un [] prematuro borraría la
+    // copia de disco antes de alcanzarla a leer. Ya hidratado, [] sí es un valor
+    // autoritativo y debe limpiar cualquier hilo fantasma anterior.
+    if (!conversationCacheHydrated) return;
+    setConversationMessageMemCache(api, contact.id, messages);
+    const latestMessages = messages
+      .slice(-CONVERSATION_MESSAGE_CACHE_LIMIT)
+      .map(stripNativeMessageTransientCacheData);
+    writeCache(conversationCacheKey(contact.id), latestMessages);
+  }, [api, messages, contact.id, conversationCacheHydrated]);
 
   useEffect(() => {
     agentStatesRef.current = agentStates;
   }, [agentStates]);
 
   useEffect(() => {
+    conversationPrimaryAbortRef.current?.abort();
+    conversationSupplementalAbortRef.current?.abort();
+    conversationPrimaryAbortRef.current = null;
+    conversationSupplementalAbortRef.current = null;
+    conversationSupplementalGenerationRef.current += 1;
     activeConversationContactIdRef.current = contact.id;
     olderMessagesLoadingRef.current = false;
     sendLockedRef.current = false;
+    sendIntentRef.current = null;
+    locationSendIntentRef.current = null;
+    reactionSendIntentRef.current.clear();
+    templateSendIntentRef.current.clear();
+    clabeSendIntentRef.current.clear();
+    scheduleSendIntentRef.current = null;
+    quickPaymentIntentRef.current = null;
+    quickAppointmentIntentRef.current = null;
+    conversationActionLocksRef.current.clear();
+    chatReadPendingRef.current = Number(contact.unreadCount || 0) > 0;
+    chatReadInFlightRef.current = false;
+    chatReadVersionRef.current = 0;
     setSending(false);
     conversationHasOlderMessagesRef.current = false;
+    conversationHistoryCursorRef.current = null;
     conversationHistoryExhaustedContactIdRef.current = null;
+    scheduledMessagesLastLoadedAtRef.current = 0;
     setOlderMessagesLoading(false);
     setPaymentLinkDraftPreview(null);
-    setConversationCacheHydrated(Boolean(conversationMessageMemCache.get(contact.id)?.length));
-  }, [contact.id]);
+    setConversationCacheHydrated(Boolean(getConversationMessageMemCache(api, contact.id).length));
+  }, [api, contact.id]);
+
+  useEffect(() => () => {
+    conversationPrimaryAbortRef.current?.abort();
+    conversationSupplementalAbortRef.current?.abort();
+    conversationSupplementalGenerationRef.current += 1;
+  }, []);
 
   const loadConversation = useCallback(async (silent = false, background = false) => {
     const requestId = loadRequestRef.current + 1;
     loadRequestRef.current = requestId;
+    const contactId = contact.id;
+    conversationPrimaryAbortRef.current?.abort();
+    const primaryAbortController = new AbortController();
+    conversationPrimaryAbortRef.current = primaryAbortController;
+    const foregroundLoad = !silent && !background;
+    if (foregroundLoad) conversationForegroundLoadInFlightRef.current = true;
     // Si ya hay mensajes en pantalla (caché hidratada), refrescamos sin spinner:
     // la lista anterior se queda visible y se reemplaza cuando llega lo nuevo.
     if (!silent && !background && !messagesRef.current.length) {
       setLoading(true);
     }
     try {
-      const [journey, fullJourney, scheduled] = await Promise.all([
-        api.getConversation(contact.id, CHAT_CONVERSATION_MESSAGE_LIMIT),
-        api.getContactJourney(contact.id).catch(() => []),
-        api.getScheduledMessages(contact.id).catch(() => []),
-      ]);
-      if (requestId !== loadRequestRef.current) return;
-      const nextJourneyEvents = Array.isArray(fullJourney) ? fullJourney : Array.isArray(journey) ? journey : [];
-      // Un poll sin novedades debe ser un no-op de React: conservar las
-      // referencias actuales evita el re-render de todo el hilo en cada reconciliación.
-      setJourneyEvents((current) => (
-        JSON.stringify(current) === JSON.stringify(nextJourneyEvents) ? current : nextJourneyEvents
-      ));
-      const journeyMessages = buildMessagesFromJourney(contact.id, journey, appBaseUrl);
-      const receivedFullPage = journeyMessages.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
-      conversationHasOlderMessagesRef.current = receivedFullPage && conversationHistoryExhaustedContactIdRef.current !== contact.id;
-      if (!receivedFullPage) {
-        conversationHistoryExhaustedContactIdRef.current = contact.id;
+      const shouldRefreshScheduled = !background
+        || Date.now() - scheduledMessagesLastLoadedAtRef.current >= 30_000;
+      // Los mensajes son la ruta crítica: se pintan primero. La actividad completa
+      // y los programados se reconcilian después, sin retener el spinner del chat.
+      const journey = await api.getConversation(
+        contactId,
+        CHAT_CONVERSATION_MESSAGE_LIMIT,
+        { signal: primaryAbortController.signal },
+      );
+      if (requestId !== loadRequestRef.current || activeConversationContactIdRef.current !== contactId) return;
+      const journeyMessages = buildMessagesFromJourney(contactId, journey, appBaseUrl);
+      const receivedFullPage = Array.isArray(journey) && journey.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
+      const recentPageHistoryCursor = getOldestConversationHistoryCursor(journey);
+      // Un poll trae otra vez solo la ventana reciente. Si el usuario ya cargo
+      // paginas antiguas, conservar su limite evita obligarlo a recorrerlas de
+      // nuevo (los merges deduplicarian, pero la experiencia se sentiria trabada).
+      if (!conversationHistoryCursorRef.current) {
+        conversationHistoryCursorRef.current = recentPageHistoryCursor;
       }
-      const scheduledItems = buildScheduledMessages(contact.id, scheduled);
-      const nextMessages = mergeNativeChatMessages(journeyMessages, scheduledItems);
-      setScheduledMessages((current) => (
-        JSON.stringify(current) === JSON.stringify(scheduledItems) ? current : scheduledItems
-      ));
+      conversationHasOlderMessagesRef.current = Boolean(
+        receivedFullPage
+        && recentPageHistoryCursor
+        && conversationHistoryExhaustedContactIdRef.current !== contactId
+      );
+      if (!receivedFullPage) {
+        conversationHistoryExhaustedContactIdRef.current = contactId;
+      }
+      const hasUnreadSummary = Number(unreadCountRef.current || 0) > 0;
+      const hasNewInbound = hasNewInboundNativeMessage(messagesRef.current, journeyMessages);
+      if (hasUnreadSummary || hasNewInbound) chatReadVersionRef.current += 1;
+      const shouldMarkRead = chatReadPendingRef.current || hasUnreadSummary || hasNewInbound;
       setMessages((current) => {
-        if (!silent && !background && !current.length) return nextMessages;
-        // El fetch de programados es autoritativo: retirar fantasmas
-        // `scheduled-*` que ya se enviaron o cancelaron en el servidor.
-        const scheduledIds = new Set(scheduledItems.map((item) => item.id));
-        const base = current.filter((message) => !message.id.startsWith('scheduled-') || scheduledIds.has(message.id));
-        const next = mergeNativeChatMessages(base, nextMessages);
+        if (!silent && !background) {
+          const retainedOutboxMessages = retainNativeLocalOutboxMessages(current);
+          const foregroundMessages = mergeNativeChatMessagesAuthoritatively(
+            !sendLockedRef.current,
+            journeyMessages,
+            current.filter((message) => message.id.startsWith('scheduled-')),
+            retainedOutboxMessages,
+          );
+          return areNativeMessageArraysIdentical(current, foregroundMessages) ? current : foregroundMessages;
+        }
+        const next = mergeNativeChatMessages(current, journeyMessages);
         return areNativeMessageArraysIdentical(current, next) ? current : next;
       });
-      void api.markChatRead(contact.id).catch(() => undefined);
-      if (Number(unreadCountRef.current || 0) > 0) {
+      setLoading(false);
+      if (shouldMarkRead) {
+        chatReadPendingRef.current = true;
         unreadCountRef.current = 0;
-        onContactPatchRef.current(contact.id, { unreadCount: 0 });
+        onContactPatchRef.current(contactId, { unreadCount: 0 });
+        if (!chatReadInFlightRef.current) {
+          const readContactId = contactId;
+          const readVersion = chatReadVersionRef.current;
+          chatReadInFlightRef.current = true;
+          void api.markChatRead(readContactId)
+            .then(() => {
+              if (activeConversationContactIdRef.current !== readContactId) return;
+              if (chatReadVersionRef.current === readVersion) {
+                chatReadPendingRef.current = false;
+                unreadCountRef.current = 0;
+              }
+            })
+            .catch(() => {
+              // Keep the pending flag so the next reconciliation poll retries.
+            })
+            .finally(() => {
+              if (activeConversationContactIdRef.current === readContactId) {
+                chatReadInFlightRef.current = false;
+                if (chatReadPendingRef.current && chatReadVersionRef.current !== readVersion) {
+                  conversationRefreshKickRef.current();
+                }
+              }
+            });
+        }
+      }
+
+      if (!background || shouldRefreshScheduled) {
+        conversationSupplementalAbortRef.current?.abort();
+        const supplementalAbortController = new AbortController();
+        conversationSupplementalAbortRef.current = supplementalAbortController;
+        const supplementalGeneration = conversationSupplementalGenerationRef.current + 1;
+        conversationSupplementalGenerationRef.current = supplementalGeneration;
+
+        void Promise.all([
+          background
+            ? Promise.resolve(null)
+            : api.getContactJourney(contactId, supplementalAbortController.signal).catch(() => null),
+          shouldRefreshScheduled
+            ? api.getScheduledMessages(contactId, supplementalAbortController.signal).catch(() => null)
+            : Promise.resolve(null),
+        ]).then(([fullJourney, scheduled]) => {
+          if (
+            supplementalAbortController.signal.aborted
+            || supplementalGeneration !== conversationSupplementalGenerationRef.current
+            || activeConversationContactIdRef.current !== contactId
+          ) return;
+
+          if (Array.isArray(fullJourney)) {
+            setJourneyEvents((current) => (
+              JSON.stringify(current) === JSON.stringify(fullJourney) ? current : fullJourney
+            ));
+          }
+
+          if (scheduled !== null) {
+            const scheduledItems = buildScheduledMessages(contactId, scheduled);
+            scheduledMessagesLastLoadedAtRef.current = Date.now();
+            setScheduledMessages((current) => (
+              JSON.stringify(current) === JSON.stringify(scheduledItems) ? current : scheduledItems
+            ));
+            setMessages((current) => {
+              // Programados sí es autoritativo: retirar fantasmas enviados o
+              // cancelados y agregar los que todavía siguen pendientes.
+              const scheduledIds = new Set(scheduledItems.map((item) => item.id));
+              const withoutStaleScheduled = current.filter((message) => (
+                !message.id.startsWith('scheduled-') || scheduledIds.has(message.id)
+              ));
+              const next = mergeNativeChatMessages(withoutStaleScheduled, scheduledItems);
+              return areNativeMessageArraysIdentical(current, next) ? current : next;
+            });
+          }
+        }).finally(() => {
+          if (conversationSupplementalAbortRef.current === supplementalAbortController) {
+            conversationSupplementalAbortRef.current = null;
+          }
+        });
       }
     } catch (err) {
-      if (requestId !== loadRequestRef.current) return;
+      if (primaryAbortController.signal.aborted || requestId !== loadRequestRef.current) return;
       // A background poll must never interrupt the user with an alert.
       if (!background) {
         Alert.alert('Chat', err instanceof Error ? err.message : 'No se pudo cargar la conversación.');
       }
     } finally {
-      if (requestId === loadRequestRef.current && !silent && !background) {
+      if (conversationPrimaryAbortRef.current === primaryAbortController) {
+        conversationPrimaryAbortRef.current = null;
+      }
+      if (requestId === loadRequestRef.current) {
         setLoading(false);
+      }
+      if (foregroundLoad) {
+        conversationForegroundLoadInFlightRef.current = false;
+        if (conversationRealtimeRefreshQueuedRef.current) {
+          conversationRealtimeRefreshQueuedRef.current = false;
+          conversationRefreshKickRef.current();
+        }
       }
     }
   }, [api, appBaseUrl, contact.id]);
@@ -20554,8 +21524,8 @@ function NativeConversationScreen({
   const loadOlderConversationMessages = useCallback(async () => {
     if (loading || olderMessagesLoadingRef.current || !conversationHasOlderMessagesRef.current) return;
     const contactId = contact.id;
-    const beforeMessageDate = getOldestNativeConversationMessageDate(messagesRef.current);
-    if (!beforeMessageDate) {
+    const historyCursor = conversationHistoryCursorRef.current;
+    if (!historyCursor?.beforeMessageDate) {
       conversationHasOlderMessagesRef.current = false;
       conversationHistoryExhaustedContactIdRef.current = contactId;
       return;
@@ -20564,17 +21534,56 @@ function NativeConversationScreen({
     olderMessagesLoadingRef.current = true;
     setOlderMessagesLoading(true);
     try {
-      const olderJourney = await api.getConversation(contactId, CHAT_CONVERSATION_MESSAGE_LIMIT, beforeMessageDate);
-      if (activeConversationContactIdRef.current !== contactId) return;
-      const olderMessages = buildMessagesFromJourney(contactId, olderJourney, appBaseUrl);
-      const receivedFullPage = olderMessages.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
-      conversationHasOlderMessagesRef.current = receivedFullPage;
-      if (!receivedFullPage) {
-        conversationHistoryExhaustedContactIdRef.current = contactId;
+      let requestCursor: ConversationHistoryCursor = historyCursor;
+      let collectedOlderMessages: ChatMessage[] = [];
+      let collectedOlderJourney: JourneyEvent[] = [];
+
+      for (
+        let attempt = 0;
+        attempt < CHAT_CONVERSATION_EMPTY_HISTORY_PREFETCH_LIMIT;
+        attempt += 1
+      ) {
+        const olderJourney = await api.getConversation(
+          contactId,
+          CHAT_CONVERSATION_MESSAGE_LIMIT,
+          requestCursor,
+        );
+        if (activeConversationContactIdRef.current !== contactId) return;
+
+        const pageMessages = buildMessagesFromJourney(contactId, olderJourney, appBaseUrl);
+        collectedOlderMessages = mergeNativeChatMessages(collectedOlderMessages, pageMessages);
+        collectedOlderJourney = mergeNativeJourneyEvents(collectedOlderJourney, olderJourney);
+
+        const receivedFullPage = Array.isArray(olderJourney)
+          && olderJourney.length >= CHAT_CONVERSATION_MESSAGE_LIMIT;
+        const nextHistoryCursor = getOldestConversationHistoryCursor(olderJourney);
+        const cursorAdvanced = isConversationHistoryCursorOlder(nextHistoryCursor, requestCursor);
+
+        if (cursorAdvanced && nextHistoryCursor) {
+          conversationHistoryCursorRef.current = nextHistoryCursor;
+          requestCursor = nextHistoryCursor;
+        }
+
+        conversationHasOlderMessagesRef.current = Boolean(receivedFullPage && cursorAdvanced);
+        if (!receivedFullPage || !cursorAdvanced) {
+          conversationHistoryExhaustedContactIdRef.current = contactId;
+          break;
+        }
+
+        // Reacciones a un globo ya cargado y eventos no visuales pueden ocupar
+        // una pagina cruda completa sin aumentar la altura del FlatList. Avanzar
+        // unas paginas en la misma llamada evita que onEndReached se quede varado.
+        if (hasNewRenderableConversationHistoryMessage(messagesRef.current, collectedOlderMessages)) {
+          break;
+        }
       }
-      if (!olderMessages.length) return;
-      setMessages((current) => mergeNativeChatMessages(olderMessages, current));
-      setJourneyEvents((current) => mergeNativeJourneyEvents(olderJourney, current));
+
+      if (collectedOlderMessages.length) {
+        setMessages((current) => mergeNativeChatMessages(collectedOlderMessages, current));
+      }
+      if (collectedOlderJourney.length) {
+        setJourneyEvents((current) => mergeNativeJourneyEvents(collectedOlderJourney, current));
+      }
     } catch {
       if (activeConversationContactIdRef.current === contactId) {
         conversationHasOlderMessagesRef.current = true;
@@ -20591,14 +21600,14 @@ function NativeConversationScreen({
   // en frío) leemos la última conversación guardada y la pintamos al instante
   // mientras loadConversation trae los mensajes nuevos.
   useEffect(() => {
-    if (conversationMessageMemCache.get(contact.id)?.length) {
+    if (getConversationMessageMemCache(api, contact.id).length) {
       setConversationCacheHydrated(true);
       return undefined;
     }
     let alive = true;
     void readCache<ChatMessage[]>(conversationCacheKey(contact.id), []).then((cached) => {
       if (!alive || !cached.length) return;
-      conversationMessageMemCache.set(contact.id, cached);
+      setConversationMessageMemCache(api, contact.id, cached);
       setMessages((current) => (current.length ? current : cached));
       setLoading(false);
     }).finally(() => {
@@ -20607,7 +21616,7 @@ function NativeConversationScreen({
     return () => {
       alive = false;
     };
-  }, [contact.id]);
+  }, [api, contact.id]);
 
   useEffect(() => {
     if (!conversationCacheHydrated) return;
@@ -20619,12 +21628,12 @@ function NativeConversationScreen({
     if (eventContactId && eventContactId !== contact.id) return;
 
     if (conversationRealtimeRefreshTimeoutRef.current) {
-      clearTimeout(conversationRealtimeRefreshTimeoutRef.current);
+      return;
     }
 
     conversationRealtimeRefreshTimeoutRef.current = setTimeout(() => {
       conversationRealtimeRefreshTimeoutRef.current = null;
-      if (conversationRealtimeRefreshInFlightRef.current) {
+      if (conversationForegroundLoadInFlightRef.current || conversationRealtimeRefreshInFlightRef.current) {
         conversationRealtimeRefreshQueuedRef.current = true;
         return;
       }
@@ -20639,6 +21648,7 @@ function NativeConversationScreen({
       });
     }, CHAT_REALTIME_REFRESH_DEBOUNCE_MS);
   }, [contact.id, loadConversation]);
+  conversationRefreshKickRef.current = requestSilentConversationRefresh;
 
   // SSE is the fast path; polling/app-state remains the reconciliation fallback.
   useEffect(() => {
@@ -20814,7 +21824,8 @@ function NativeConversationScreen({
       const currentOption = composerChannelOptions.find((option) => option.value === current && !option.disabledReason);
       const defaultRoute = getDefaultComposerRoute(contact, composerChannelOptions);
       if (!contactChanged && selectedSendManuallyRef.current && currentOption) return current;
-      if (!contactChanged && currentOption && !(isCommentComposerRoute(defaultRoute) && !isCommentComposerRoute(current))) return current;
+      // Automatic routing follows the latest inbound sender/channel. Only an
+      // explicit user selection is sticky across live contact-summary updates.
       return defaultRoute;
     });
   }, [composerChannelOptions, contact.id, contact.lastMessageChannel, contact.lastMessageTransport, contact.source]);
@@ -20973,7 +21984,7 @@ function NativeConversationScreen({
   };
 
   const sendCurrentLocation = async () => {
-    if (sending) return;
+    if (sending || sendLockedRef.current) return;
     if (!selectedChannelCanSend) {
       Alert.alert('Canal no disponible', selectedChannelOption?.disabledReason || 'Elige otro canal para enviar.');
       return;
@@ -20991,7 +22002,9 @@ function NativeConversationScreen({
       return;
     }
 
+    sendLockedRef.current = true;
     closeSheet();
+    let optimisticId = '';
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (!permission.granted) {
@@ -21000,17 +22013,26 @@ function NativeConversationScreen({
       }
 
       setSending(true);
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      let intent = locationSendIntentRef.current;
+      if (!intent) {
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+        const location = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          name: 'Ubicación actual',
+          address: '',
+          url: buildNativeLocationUrl(position.coords.latitude, position.coords.longitude, 'Ubicación actual'),
+        };
+        intent = {
+          externalId: createNativeMutationId('native-location', contact.id),
+          location,
+        };
+        locationSendIntentRef.current = intent;
+      }
       const sentAt = new Date().toISOString();
-      const optimisticId = `location-${Date.now()}`;
-      const locationPayload = {
-        latitude: position.coords.latitude,
-        longitude: position.coords.longitude,
-        name: 'Ubicación actual',
-        address: '',
-        url: buildNativeLocationUrl(position.coords.latitude, position.coords.longitude, 'Ubicación actual'),
-      };
-      setMessages((current) => [...current, {
+      optimisticId = `location-${intent.externalId}`;
+      const locationPayload = intent.location;
+      const optimisticMessage: ChatMessage = {
         id: optimisticId,
         contactId: contact.id,
         date: sentAt,
@@ -21020,8 +22042,11 @@ function NativeConversationScreen({
         transport: 'native',
         status: 'enviando',
         pending: true,
+        failed: false,
+        errorReason: '',
         location: locationPayload,
-      }]);
+      };
+      setMessages((current) => mergeNativeChatMessages(current, [optimisticMessage]));
       updateContactPreview('📍 Ubicación', sentAt, 'whatsapp_api');
 
       const response = await api.sendLocation(
@@ -21032,6 +22057,7 @@ function NativeConversationScreen({
         locationPayload.address,
         selectedRoutePhoneNumberId,
         resolveWhatsAppSendTransport().transport,
+        intent.externalId,
       );
       const localMessageId = getSendResponseLocalMessageId(response);
       const providerMessageId = getSendResponseProviderMessageId(response);
@@ -21043,6 +22069,8 @@ function NativeConversationScreen({
             serverMessageId: localMessageId || message.serverMessageId,
             providerMessageId: providerMessageId || message.providerMessageId,
             pending: false,
+            failed: false,
+            errorReason: '',
             status: response.status || 'sent',
             channel: response.transport || message.channel,
             transport: response.transport || message.transport,
@@ -21050,17 +22078,19 @@ function NativeConversationScreen({
           }
           : message
       )));
+      locationSendIntentRef.current = null;
       onRefreshChats();
-      void loadConversation(true, true);
+      requestSilentConversationRefresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No pude enviar la ubicación.';
       setMessages((current) => current.map((item) => (
-        item.id.startsWith('location-') && item.pending
+        optimisticId && item.id === optimisticId
           ? { ...item, pending: false, failed: true, status: 'error', errorReason: message }
           : item
       )));
       Alert.alert('Ubicación', message);
     } finally {
+      sendLockedRef.current = false;
       setSending(false);
     }
   };
@@ -21209,10 +22239,24 @@ function NativeConversationScreen({
       }
     }
 
-    const optimisticId = `local-${Date.now()}`;
     const sentAt = new Date().toISOString();
     const optimisticChannel = getBackendChannelForComposer(selectedRouteChannel);
     const replyPayload = replyingToMessage ? getNativeMessageReferencePayload(replyingToMessage) : undefined;
+    const sendSignature = JSON.stringify({
+      contactId: contact.id,
+      text: textToSend,
+      attachmentIds: attachmentsToSend.map((attachment) => attachment.id),
+      channel: selectedRouteChannel,
+      phoneNumberId: selectedRoutePhoneNumberId,
+      replyPayload,
+      commentReplyMode,
+    });
+    const externalId = sendIntentRef.current?.signature === sendSignature
+      ? sendIntentRef.current.externalId
+      : `native-send-${contact.id}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    sendIntentRef.current = { signature: sendSignature, externalId };
+    const optimisticId = `local-${externalId}`;
+    const retryAttachmentClientIds = new Set(attachmentsToSend.map((attachment) => attachment.id));
     const optimisticMessages: ChatMessage[] = attachmentsToSend.length
       ? attachmentsToSend.map((attachment, index) => ({
         id: `${optimisticId}-attachment-${index}`,
@@ -21229,6 +22273,7 @@ function NativeConversationScreen({
         replyToProviderMessageId: replyPayload?.replyToProviderMessageId,
         attachment: {
           type: attachment.kind,
+          clientId: attachment.id,
           dataUrl: attachment.dataUrl,
           url: attachment.uri,
           name: attachment.name,
@@ -21258,18 +22303,53 @@ function NativeConversationScreen({
     setDraftAttachments([]);
     setPaymentLinkDraftPreview(null);
     setReplyingToMessage(null);
-    setMessages((current) => [...current, ...optimisticMessages]);
+    setMessages((current) => [
+      ...current.filter((message) => (
+        message.id !== optimisticId
+        && !message.id.startsWith(`${optimisticId}-attachment-`)
+        && !(
+          message.failed
+          && message.attachment?.clientId
+          && retryAttachmentClientIds.has(message.attachment.clientId)
+        )
+      )),
+      ...optimisticMessages,
+    ]);
     scrollConversationToLatest(false);
     updateContactPreview(attachmentsToSend.length ? (textToSend || getAttachmentLabel(attachmentsToSend[0]?.kind)) : textToSend, sentAt, optimisticChannel);
     try {
       if (attachmentsToSend.length > 0) {
-        const responses = await Promise.all(attachmentsToSend.map((attachment, index) => (
-          sendDraftAttachment(api, contact, attachment, index === 0 ? textToSend : '', selectedRoutePhoneNumberId, resolvedWhatsAppTransport, selectedRouteChannel, replyPayload)
-        )));
+        const responses: PromiseSettledResult<Awaited<ReturnType<typeof sendDraftAttachment>>>[] = [];
+        // Read/encode and upload one file at a time. Four 25 MB files encoded in
+        // parallel can exceed 130 MB in JS memory and freeze or kill Android.
+        for (let index = 0; index < attachmentsToSend.length; index += 1) {
+          try {
+            const response = await sendDraftAttachment(
+              api,
+              contact,
+              attachmentsToSend[index],
+              index === 0 ? textToSend : '',
+              selectedRoutePhoneNumberId,
+              resolvedWhatsAppTransport,
+              selectedRouteChannel,
+              replyPayload,
+            );
+            responses.push({ status: 'fulfilled', value: response });
+          } catch (reason) {
+            responses.push({ status: 'rejected', reason });
+          }
+        }
         setMessages((current) => current.map((message) => {
           if (!message.id.startsWith(`${optimisticId}-attachment-`)) return message;
           const index = Number(message.id.replace(`${optimisticId}-attachment-`, ''));
-          const response = responses[index];
+          const result = responses[index];
+          if (!result || result.status === 'rejected') {
+            const errorReason = result?.status === 'rejected' && result.reason instanceof Error
+              ? result.reason.message
+              : 'No se pudo enviar este archivo.';
+            return { ...message, pending: false, failed: true, status: 'error', errorReason };
+          }
+          const response = result.value;
           const localMessageId = getSendResponseLocalMessageId(response);
           const providerMessageId = getSendResponseProviderMessageId(response);
           const responseAudioUrl = response?.audio?.link || response?.audio?.url || response?.localMedia?.publicUrl || '';
@@ -21281,6 +22361,8 @@ function NativeConversationScreen({
             serverMessageId: localMessageId || message.serverMessageId,
             providerMessageId: providerMessageId || message.providerMessageId,
             pending: false,
+            failed: false,
+            errorReason: '',
             status: response?.status || 'sent',
             channel: response?.transport || message.channel,
             transport: response?.transport || message.transport,
@@ -21295,6 +22377,21 @@ function NativeConversationScreen({
               : message.attachment,
           };
         }));
+        const failedIndexes = responses
+          .map((result, index) => result.status === 'rejected' ? index : -1)
+          .filter((index) => index >= 0);
+        if (failedIndexes.length === responses.length) {
+          const firstFailure = responses[failedIndexes[0]];
+          throw firstFailure?.status === 'rejected' ? firstFailure.reason : new Error('No se enviaron los archivos.');
+        }
+        if (failedIndexes.length) {
+          setDraftAttachments(failedIndexes.map((index) => attachmentsToSend[index]).filter(Boolean));
+          if (failedIndexes.includes(0)) {
+            setDraft(text);
+            setPaymentLinkDraftPreview(paymentPreviewToSend);
+          }
+          Alert.alert('Envío parcial', `Se enviaron ${responses.length - failedIndexes.length} archivo(s), pero ${failedIndexes.length} quedaron listos para reintentar.`);
+        }
       } else {
         const response = commentReplyMode
           ? await api.sendMetaSocialCommentReply({
@@ -21309,8 +22406,17 @@ function NativeConversationScreen({
             message: textToSend,
             replyType: commentReplyMode,
             commentId: selectedCommentReplyTarget?.commentId,
+            externalId,
           })
-          : await api.sendText(contact, textToSend, selectedRouteChannel as NativeMessageChannel, replyPayload, selectedRoutePhoneNumberId, resolvedWhatsAppTransport);
+          : await api.sendText(
+            contact,
+            textToSend,
+            selectedRouteChannel as NativeMessageChannel,
+            replyPayload,
+            selectedRoutePhoneNumberId,
+            resolvedWhatsAppTransport,
+            externalId,
+          );
         const localMessageId = getSendResponseLocalMessageId(response);
         const providerMessageId = getSendResponseProviderMessageId(response);
         setMessages((current) => current.map((message) => (
@@ -21321,6 +22427,8 @@ function NativeConversationScreen({
               serverMessageId: localMessageId || message.serverMessageId,
               providerMessageId: providerMessageId || message.providerMessageId,
               pending: false,
+              failed: false,
+              errorReason: '',
               status: response.status || 'sent',
               channel: response.transport || message.channel,
               transport: response.transport || message.transport,
@@ -21330,8 +22438,9 @@ function NativeConversationScreen({
         )));
         if (commentReplyMode) setCommentReplyTarget(null);
       }
+      sendIntentRef.current = null;
       onRefreshChats();
-      void loadConversation(true, true);
+      requestSilentConversationRefresh();
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Intenta otra vez.';
       setMessages((current) => current.map((message) => (
@@ -21431,7 +22540,13 @@ function NativeConversationScreen({
       return;
     }
 
-    const localReactionId = `local-reaction-${Date.now()}`;
+    const reactionActionKey = `reaction:${message.id}`;
+    if (!acquireConversationActionLock(reactionActionKey)) return;
+    const reactionIntentKey = `${message.id}:${providerMessageId}:${emoji}`;
+    const externalId = reactionSendIntentRef.current.get(reactionIntentKey)
+      || createNativeMutationId('native-reaction', message.id);
+    reactionSendIntentRef.current.set(reactionIntentKey, externalId);
+    const localReactionId = `local-reaction-${externalId}`;
     closeSheet();
     setMessages((current) => current.map((item) => (
       item.id === message.id
@@ -21446,8 +22561,9 @@ function NativeConversationScreen({
     )));
 
     try {
-      await api.sendReaction(contact, message, emoji, localReactionId);
-      void loadConversation(true, true);
+      await api.sendReaction(contact, message, emoji, externalId);
+      reactionSendIntentRef.current.delete(reactionIntentKey);
+      requestSilentConversationRefresh();
     } catch (err) {
       setMessages((current) => current.map((item) => (
         item.id === message.id
@@ -21458,6 +22574,8 @@ function NativeConversationScreen({
           : item
       )));
       Alert.alert('Reacción', err instanceof Error ? err.message : 'No se pudo mandar la reacción.');
+    } finally {
+      releaseConversationActionLock(reactionActionKey);
     }
   };
 
@@ -21485,10 +22603,15 @@ function NativeConversationScreen({
     if (!message.failed) return;
     setDraft(message.text || '');
     if (message.attachment?.dataUrl || message.attachment?.url) {
+      const storedDataUrl = String(message.attachment.dataUrl || '').startsWith('data:')
+        ? String(message.attachment.dataUrl)
+        : String(message.attachment.url || '').startsWith('data:')
+          ? String(message.attachment.url)
+          : '';
       setDraftAttachments([{
-        id: `retry-${message.id}`,
-        uri: message.attachment.url || message.attachment.dataUrl || '',
-        dataUrl: message.attachment.dataUrl || message.attachment.url || '',
+        id: message.attachment.clientId || `retry-${message.id}`,
+        uri: storedDataUrl ? '' : message.attachment.url || message.attachment.dataUrl || '',
+        ...(storedDataUrl ? { dataUrl: storedDataUrl } : {}),
         kind: getNativeAttachmentKind(message.attachment),
         name: message.attachment.name || getAttachmentLabel(message.attachment),
         mimeType: message.attachment.mimeType || '',
@@ -21499,7 +22622,23 @@ function NativeConversationScreen({
     closeSheet();
   };
 
+  const openConversationScheduleSheet = (text = '') => {
+    if (!timezoneReady) {
+      Alert.alert('Zona horaria no disponible', 'Vuelve a conectar la app antes de programar mensajes.');
+      return;
+    }
+    setScheduleEditingMessageId(null);
+    setScheduleText(text);
+    setScheduleDraft(createDefaultScheduleDraft(timezone));
+    setScheduleError('');
+    openSheet('schedule');
+  };
+
   const editScheduledMessage = (message: ChatMessage) => {
+    if (!timezoneReady) {
+      Alert.alert('Zona horaria no disponible', 'Vuelve a conectar la app antes de cambiar este mensaje programado.');
+      return;
+    }
     const scheduledId = message.scheduledMessageId || message.providerMessageId || message.id.replace(/^scheduled-/, '');
     if (!scheduledId) {
       Alert.alert('Programado', 'No encontré el ID de esta programación.');
@@ -21605,12 +22744,19 @@ function NativeConversationScreen({
     }
 
     const templateKey = template.id || template.name || localText;
+    const templateActionKey = `template:${templateKey || 'template'}`;
+    if (!acquireConversationActionLock(templateActionKey)) return;
+    const templateIntentKey = `${contact.id}:${templateKey || 'template'}`;
+    const externalId = templateSendIntentRef.current.get(templateIntentKey)
+      || createNativeMutationId('native-template', contact.id);
+    templateSendIntentRef.current.set(templateIntentKey, externalId);
     setTemplateBusyId(templateKey || 'template');
     try {
-      const response = await api.sendWhatsAppTemplate(contact, template);
+      const response = await api.sendWhatsAppTemplate(contact, template, externalId);
+      templateSendIntentRef.current.delete(templateIntentKey);
       const sentAt = new Date().toISOString();
-      setMessages((current) => [...current, {
-        id: `template-${Date.now()}`,
+      setMessages((current) => mergeNativeChatMessages(current, [{
+        id: `template-${externalId}`,
         contactId: contact.id,
         date: sentAt,
         direction: 'outbound',
@@ -21618,14 +22764,15 @@ function NativeConversationScreen({
         channel: response.channel || response.transport || 'whatsapp_api',
         transport: response.transport || 'native',
         status: response.status || 'sent',
-      }]);
+      }]));
       updateContactPreview(localText || template.name || 'Plantilla enviada', sentAt, 'whatsapp_api');
       closeSheet();
-      void loadConversation(true, true);
+      requestSilentConversationRefresh();
     } catch (err) {
       Alert.alert('Plantillas', err instanceof Error ? err.message : 'No se pudo enviar la plantilla.');
     } finally {
       setTemplateBusyId(null);
+      releaseConversationActionLock(templateActionKey);
     }
   };
 
@@ -21682,13 +22829,28 @@ function NativeConversationScreen({
       Alert.alert('Canal no disponible', 'Envía la CLABE por Messenger o WhatsApp; el canal de comentario público es solo para responder publicaciones.');
       return;
     }
+    const clabeActionKey = `clabe:${account.id}`;
+    if (!acquireConversationActionLock(clabeActionKey)) return;
     setClabeBusyId(account.id);
     try {
       const text = buildClabeMessage(account);
-      await api.sendText(contact, text, selectedRouteChannel as NativeMessageChannel, undefined, selectedRoutePhoneNumberId);
+      const clabeIntentKey = [contact.id, account.id, selectedRouteChannel, selectedRoutePhoneNumberId || '', text].join('|');
+      const externalId = clabeSendIntentRef.current.get(clabeIntentKey)
+        || createNativeMutationId('native-clabe', contact.id);
+      clabeSendIntentRef.current.set(clabeIntentKey, externalId);
+      await api.sendText(
+        contact,
+        text,
+        selectedRouteChannel as NativeMessageChannel,
+        undefined,
+        selectedRoutePhoneNumberId,
+        selectedRouteChannel === 'whatsapp' ? resolveWhatsAppSendTransport().transport : undefined,
+        externalId,
+      );
+      clabeSendIntentRef.current.delete(clabeIntentKey);
       const sentAt = new Date().toISOString();
-      setMessages((current) => [...current, {
-        id: `clabe-${Date.now()}`,
+      setMessages((current) => mergeNativeChatMessages(current, [{
+        id: `clabe-${externalId}`,
         contactId: contact.id,
         date: sentAt,
         direction: 'outbound',
@@ -21696,14 +22858,15 @@ function NativeConversationScreen({
         channel: getBackendChannelForComposer(selectedRouteChannel),
         transport: 'native',
         status: 'sent',
-      }]);
+      }]));
       updateContactPreview('CLABE', sentAt, getBackendChannelForComposer(selectedRouteChannel));
       closeSheet();
-      void loadConversation(true, true);
+      requestSilentConversationRefresh();
     } catch (err) {
       Alert.alert('CLABE', err instanceof Error ? err.message : 'No se pudo enviar la CLABE.');
     } finally {
       setClabeBusyId(null);
+      releaseConversationActionLock(clabeActionKey);
     }
   };
 
@@ -21714,31 +22877,52 @@ function NativeConversationScreen({
   };
 
   const createPaymentForContact = async () => {
+    const paymentCurrency = normalizeRequiredCurrencyCode(accountCurrency);
+    if (!paymentCurrency) {
+      Alert.alert(
+        'Moneda no disponible',
+        'No pude confirmar la moneda configurada de la cuenta. Revisa la conexión y vuelve a intentar antes de registrar el pago.',
+      );
+      return;
+    }
     const amount = Number(paymentDraft.amount.replace(',', '.'));
     if (!Number.isFinite(amount) || amount <= 0) {
       Alert.alert('Registrar pago', 'Escribe un monto mayor a 0.');
       return;
     }
+    const paymentActionKey = 'payment:create';
+    if (!acquireConversationActionLock(paymentActionKey)) return;
     setPaymentBusy(true);
     try {
-      const paidAt = new Date().toISOString();
       const concept = paymentDraft.concept.trim() || 'Pago';
+      const signature = [contact.id, amount, paymentCurrency, paymentDraft.method || 'cash', concept].join('|');
+      const intent = quickPaymentIntentRef.current?.signature === signature
+        ? quickPaymentIntentRef.current
+        : {
+          signature,
+          transactionId: createNativeMutationId('native-payment', contact.id),
+          paidAt: new Date().toISOString(),
+        };
+      quickPaymentIntentRef.current = intent;
       await api.createTransaction({
+        id: intent.transactionId,
         amount,
-        currency: accountCurrency,
+        currency: paymentCurrency,
         status: 'paid',
         paymentMethod: paymentDraft.method || 'cash',
         paymentMode: 'single',
         title: concept,
         description: concept,
-        date: paidAt,
+        date: intent.paidAt,
         contactId: contact.id,
         contactName: getContactName(contact),
         email: contact.email,
         phone: contact.phone,
         metadata: { source: 'native_mobile_chat' },
       });
-      const amountLabel = formatCurrency(amount, accountCurrency);
+      quickPaymentIntentRef.current = null;
+      const paidAt = intent.paidAt;
+      const amountLabel = formatCurrency(amount, paymentCurrency);
       setLocalActivityMarkers((current) => mergeConversationActivityMarkers(current, [{
         id: `local-payment-${Date.now()}`,
         kind: 'payment',
@@ -21760,15 +22944,25 @@ function NativeConversationScreen({
       Alert.alert('Registrar pago', err instanceof Error ? err.message : 'No se pudo registrar el pago.');
     } finally {
       setPaymentBusy(false);
+      releaseConversationActionLock(paymentActionKey);
     }
   };
 
   const openAppointmentSheet = () => {
+    if (!timezoneReady) {
+      Alert.alert('Zona horaria no disponible', 'Vuelve a conectar la app antes de agendar una cita.');
+      return;
+    }
+    quickAppointmentIntentRef.current = null;
     setAppointmentDraft(createDefaultAppointmentDraft(timezone));
     openSheet('appointment');
   };
 
   const createAppointmentForContact = async () => {
+    if (!timezoneReady) {
+      Alert.alert('Zona horaria no disponible', 'Vuelve a cargar la cuenta antes de agendar esta cita.');
+      return;
+    }
     const title = appointmentDraft.title.trim() || `Cita con ${getContactName(contact)}`;
     const startTime = localDateTimePartsToUtcIso(appointmentDraft.date, appointmentDraft.time, timezone);
     if (!startTime) {
@@ -21777,10 +22971,12 @@ function NativeConversationScreen({
     }
     const durationMinutes = Math.max(15, Number(appointmentDraft.durationMinutes || 60) || 60);
     const endTime = new Date(new Date(startTime).getTime() + durationMinutes * 60000).toISOString();
+    const appointmentActionKey = 'appointment:create';
+    if (!acquireConversationActionLock(appointmentActionKey)) return;
     setAppointmentBusy(true);
     try {
       const bookedAt = new Date().toISOString();
-      await api.createAppointment({
+      const payload = {
         title,
         contactId: contact.id,
         contactName: getContactName(contact),
@@ -21788,7 +22984,17 @@ function NativeConversationScreen({
         endTime,
         notes: appointmentDraft.notes.trim(),
         appointmentStatus: 'confirmed',
-      });
+      };
+      const signature = JSON.stringify(payload);
+      const intent = quickAppointmentIntentRef.current?.signature === signature
+        ? quickAppointmentIntentRef.current
+        : {
+            signature,
+            clientRequestId: createNativeMutationId('native-appointment-chat', contact.id),
+          };
+      quickAppointmentIntentRef.current = intent;
+      await api.createAppointment(payload, intent.clientRequestId);
+      quickAppointmentIntentRef.current = null;
       const appointmentLabel = formatSchedulePreviewLabel(startTime, timezone);
       setLocalActivityMarkers((current) => mergeConversationActivityMarkers(current, [{
         id: `local-appointment-${Date.now()}`,
@@ -21811,6 +23017,7 @@ function NativeConversationScreen({
       Alert.alert('Agendar cita', err instanceof Error ? err.message : 'No se pudo crear la cita.');
     } finally {
       setAppointmentBusy(false);
+      releaseConversationActionLock(appointmentActionKey);
     }
   };
 
@@ -21854,6 +23061,10 @@ function NativeConversationScreen({
   const scheduleMessageForContact = async (target: ChatContact) => {
     const text = scheduleText.trim();
     if (scheduleBusy) return;
+    if (!timezoneReady) {
+      setScheduleError('No pudimos confirmar la zona horaria de la cuenta.');
+      return;
+    }
     if (!text) {
       setScheduleError('Escribe el mensaje que quieres programar.');
       return;
@@ -21906,13 +23117,28 @@ function NativeConversationScreen({
     setScheduleError('');
     try {
       const editingId = scheduleEditingMessageId;
-      await api.scheduleText(target, text, scheduledDate.toISOString(), selectedRouteChannel as NativeMessageChannel, editingId || undefined, selectedRoutePhoneNumberId, { transport: scheduledTransport });
+      const scheduledAt = scheduledDate.toISOString();
+      const signature = [
+        target.id,
+        text,
+        scheduledAt,
+        selectedRouteChannel,
+        selectedRoutePhoneNumberId || '',
+        scheduledTransport || '',
+        editingId || '',
+      ].join('|');
+      const scheduledId = editingId || (scheduleSendIntentRef.current?.signature === signature
+        ? scheduleSendIntentRef.current.scheduledId
+        : createNativeMutationId('native-scheduled', target.id));
+      if (!editingId) scheduleSendIntentRef.current = { signature, scheduledId };
+      await api.scheduleText(target, text, scheduledAt, selectedRouteChannel as NativeMessageChannel, scheduledId, selectedRoutePhoneNumberId, { transport: scheduledTransport });
+      scheduleSendIntentRef.current = null;
       closeSheet();
       setScheduleText('');
       setScheduleDraft(createDefaultScheduleDraft(timezone));
       setScheduleEditingMessageId(null);
       if (draft.trim() === text) setDraft('');
-      void loadConversation(true, true);
+      requestSilentConversationRefresh();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudo programar el mensaje.';
       setScheduleError(message);
@@ -22366,13 +23592,7 @@ function NativeConversationScreen({
                   style={styles.composerInput}
                 />
                 {draft.trim() && !draftAttachments.length ? (
-                  <Pressable accessibilityRole="button" onPress={() => {
-                    setScheduleEditingMessageId(null);
-                    setScheduleText(draft);
-                    setScheduleDraft(createDefaultScheduleDraft(timezone));
-                    setScheduleError('');
-                    openSheet('schedule');
-                  }} style={styles.composerScheduleButton}>
+                  <Pressable accessibilityRole="button" onPress={() => openConversationScheduleSheet(draft)} style={styles.composerScheduleButton}>
                     <LiquidControlBackground />
                     <Clock size={17} color={COLORS.accent} strokeWidth={2.45} />
                   </Pressable>
@@ -22440,13 +23660,7 @@ function NativeConversationScreen({
         onLocation={() => void sendCurrentLocation()}
         onMore={openChatMore}
         onPayment={() => navigateToContactTool(contact, 'payments')}
-        onSchedule={() => {
-          setScheduleEditingMessageId(null);
-          setScheduleText(draft);
-          setScheduleDraft(createDefaultScheduleDraft(timezone));
-          setScheduleError('');
-          openSheet('schedule');
-        }}
+        onSchedule={() => openConversationScheduleSheet(draft)}
         onSearch={() => {
           closeSheet();
           setSearchOpen(true);
@@ -22530,13 +23744,7 @@ function NativeConversationScreen({
         onClose={closeSheet}
         onMarkRead={markChatAsRead}
         onPayment={() => navigateToContactTool(contact, 'payments')}
-        onSchedule={() => {
-          setScheduleEditingMessageId(null);
-          setScheduleText('');
-          setScheduleDraft(createDefaultScheduleDraft(timezone));
-          setScheduleError('');
-          openSheet('schedule');
-        }}
+        onSchedule={() => openConversationScheduleSheet('')}
         onSelect={() => {
           closeSheet();
           Alert.alert('Seleccionar', 'La selección múltiple se maneja desde la lista de chats.');
@@ -23469,7 +24677,11 @@ function NativeMessageLinkPreviewCard({
   onOpenContent?: (item: NativeContentFocusItem) => void;
   preview: NativeMessageLinkPreviewData;
 }) {
-  const [metadata, setMetadata] = useState<NativeUrlPreviewMetadata | null | undefined>(() => nativeUrlPreviewCache.get(preview.url));
+  const [metadata, setMetadata] = useState<NativeUrlPreviewMetadata | null | undefined>(() => (
+    outbound && isSafeNativePreviewFetchUrl(preview.url)
+      ? nativeUrlPreviewCache.get(preview.url)
+      : null
+  ));
   const host = getPaymentLinkPreviewHost(preview.url);
   const title = metadata?.title || preview.title;
   const subtitle = metadata?.description || metadata?.siteName || preview.subtitle;
@@ -23477,6 +24689,15 @@ function NativeMessageLinkPreviewCard({
 
   useEffect(() => {
     let cancelled = false;
+    // No inbound bubble may make the phone visit a URL automatically. The
+    // payment-looking heuristic is presentation only; a contact can otherwise
+    // disguise a private-network URL as `/payment` and probe the device's LAN.
+    if (!outbound || !isSafeNativePreviewFetchUrl(preview.url)) {
+      setMetadata(null);
+      return () => {
+        cancelled = true;
+      };
+    }
     if (nativeUrlPreviewCache.has(preview.url)) {
       setMetadata(nativeUrlPreviewCache.get(preview.url));
       return () => {
@@ -23486,17 +24707,17 @@ function NativeMessageLinkPreviewCard({
     setMetadata(undefined);
     fetchNativeUrlPreviewMetadata(preview.url)
       .then((result) => {
-        nativeUrlPreviewCache.set(preview.url, result);
+        cacheNativeUrlPreview(preview.url, result);
         if (!cancelled) setMetadata(result);
       })
       .catch(() => {
-        nativeUrlPreviewCache.set(preview.url, null);
+        cacheNativeUrlPreview(preview.url, null);
         if (!cancelled) setMetadata(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [preview.url]);
+  }, [outbound, preview.kind, preview.url]);
 
   return (
     <Pressable
@@ -24526,27 +25747,122 @@ function getNativeMessageLinkPreview(message: ChatMessage): NativeMessageLinkPre
 }
 
 async function fetchNativeUrlPreviewMetadata(url: string): Promise<NativeUrlPreviewMetadata | null> {
-  const response = await Promise.race([
-    fetch(url, {
-      headers: {
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-    }),
-    new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error('preview_timeout')), 4500);
-    }),
-  ]);
-  const contentType = response.headers.get('content-type') || '';
-  if (!response.ok || (contentType && !contentType.toLowerCase().includes('text/html'))) return null;
-  const html = await response.text();
+  if (!isSafeNativePreviewFetchUrl(url)) return null;
+  const response = await readNativeUrlPreviewHtml(url);
+  if (!response) return null;
+  const { html, responseUrl } = response;
   if (!html.trim()) return null;
-  const metadata: NativeUrlPreviewMetadata = {
-    title: readNativeHtmlMeta(html, ['og:title', 'twitter:title']) || readNativeHtmlTitle(html),
-    description: readNativeHtmlMeta(html, ['og:description', 'twitter:description', 'description']),
-    imageUrl: resolveNativePreviewUrl(readNativeHtmlMeta(html, ['og:image', 'og:image:url', 'twitter:image', 'twitter:image:src']), url),
-    siteName: readNativeHtmlMeta(html, ['og:site_name', 'application-name']),
-  };
-  return metadata.title || metadata.description || metadata.imageUrl || metadata.siteName ? metadata : null;
+    const resolvedImageUrl = resolveNativePreviewUrl(
+      readNativeHtmlMeta(html, ['og:image', 'og:image:url', 'twitter:image', 'twitter:image:src']),
+      responseUrl,
+    );
+    const metadata: NativeUrlPreviewMetadata = {
+      title: readNativeHtmlMeta(html, ['og:title', 'twitter:title']) || readNativeHtmlTitle(html),
+      description: readNativeHtmlMeta(html, ['og:description', 'twitter:description', 'description']),
+      imageUrl: isSafeNativePreviewFetchUrl(resolvedImageUrl) ? resolvedImageUrl : '',
+      siteName: readNativeHtmlMeta(html, ['og:site_name', 'application-name']),
+    };
+    return metadata.title || metadata.description || metadata.imageUrl || metadata.siteName ? metadata : null;
+}
+
+function isSafeNativePreviewFetchUrl(value: string) {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return false;
+    const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+    if (!hostname || !hostname.includes('.')) return false;
+    if (
+      hostname === 'localhost'
+      || hostname.endsWith('.localhost')
+      || hostname.endsWith('.local')
+      || hostname.endsWith('.internal')
+      || hostname.endsWith('.lan')
+      || hostname.endsWith('.home')
+      || hostname.endsWith('.test')
+      || hostname.endsWith('.invalid')
+    ) return false;
+
+    if (hostname.includes(':')) {
+      const compact = hostname.replace(/^::ffff:/, '');
+      if (/^(::|::1)$/.test(hostname) || /^(fc|fd|fe8|fe9|fea|feb)/.test(hostname)) return false;
+      if (compact !== hostname && isPrivateNativePreviewIpv4(compact)) return false;
+      return true;
+    }
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname)) {
+      return !isPrivateNativePreviewIpv4(hostname);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPrivateNativePreviewIpv4(hostname: string) {
+  const parts = hostname.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [first, second] = parts;
+  return first === 0
+    || first === 10
+    || first === 127
+    || (first === 100 && second >= 64 && second <= 127)
+    || (first === 169 && second === 254)
+    || (first === 172 && second >= 16 && second <= 31)
+    || (first === 192 && second === 168)
+    || first >= 224;
+}
+
+function readNativeUrlPreviewHtml(url: string): Promise<{ html: string; responseUrl: string } | null> {
+  if (typeof XMLHttpRequest === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const request = new XMLHttpRequest();
+    let settled = false;
+    const finish = (value: { html: string; responseUrl: string } | null) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const abortOversizedOrInvalid = () => {
+      const contentType = String(request.getResponseHeader('content-type') || '').toLowerCase();
+      const contentLength = Number(request.getResponseHeader('content-length') || 0);
+      if (
+        (contentType && !contentType.includes('text/html'))
+        || (Number.isFinite(contentLength) && contentLength > NATIVE_URL_PREVIEW_MAX_HTML_CHARS)
+      ) {
+        request.abort();
+        finish(null);
+        return true;
+      }
+      return false;
+    };
+
+    request.open('GET', url, true);
+    request.timeout = 4500;
+    request.setRequestHeader('Accept', 'text/html,application/xhtml+xml;q=0.9');
+    request.onreadystatechange = () => {
+      if (request.readyState >= NATIVE_URL_PREVIEW_XHR_HEADERS_RECEIVED && abortOversizedOrInvalid()) return;
+      if (request.readyState === NATIVE_URL_PREVIEW_XHR_LOADING && request.responseText.length > NATIVE_URL_PREVIEW_MAX_HTML_CHARS) {
+        request.abort();
+        finish(null);
+      }
+    };
+    request.onload = () => {
+      if (request.status < 200 || request.status >= 300 || abortOversizedOrInvalid()) {
+        finish(null);
+        return;
+      }
+      const html = request.responseText || '';
+      if (html.length > NATIVE_URL_PREVIEW_MAX_HTML_CHARS) {
+        finish(null);
+        return;
+      }
+      const responseUrl = String(request.responseURL || url);
+      finish(isSafeNativePreviewFetchUrl(responseUrl) ? { html, responseUrl } : null);
+    };
+    request.onerror = () => finish(null);
+    request.onabort = () => finish(null);
+    request.ontimeout = () => finish(null);
+    request.send();
+  });
 }
 
 function readNativeHtmlMeta(html: string, keys: string[]) {
@@ -24723,7 +26039,6 @@ function assertAttachmentSize(size: number | undefined, maxBytes: number, label:
 async function preparePickedMediaAttachment(asset: ImagePicker.ImagePickerAsset, index: number): Promise<ConversationDraftAttachment> {
   const kind: ConversationDraftAttachment['kind'] = asset.type === 'video' ? 'video' : 'image';
   let preparedUri = asset.uri;
-  let preparedBase64 = asset.base64;
   let mimeType = asset.mimeType || (kind === 'video' ? 'video/mp4' : 'image/jpeg');
 
   if (kind === 'image') {
@@ -24737,12 +26052,10 @@ async function preparePickedMediaAttachment(asset: ImagePicker.ImagePickerAsset,
     }
     const rendered = await manipulator.renderAsync();
     const optimized = await rendered.saveAsync({
-      base64: true,
       compress: CHAT_IMAGE_OUTPUT_QUALITY,
       format: SaveFormat.JPEG,
     });
     preparedUri = optimized.uri;
-    preparedBase64 = optimized.base64;
     mimeType = 'image/jpeg';
   }
 
@@ -24750,11 +26063,9 @@ async function preparePickedMediaAttachment(asset: ImagePicker.ImagePickerAsset,
   assertAttachmentSize(size, kind === 'video' ? VIDEO_ATTACHMENT_MAX_BYTES : MEDIA_ATTACHMENT_MAX_BYTES, kind === 'video' ? 'El video' : 'La imagen', true);
   const originalName = asset.fileName || getFilenameFromUri(asset.uri, `${kind}-${Date.now()}-${index}.${kind === 'video' ? 'mp4' : 'jpg'}`);
   const name = kind === 'image' ? `${originalName.replace(/\.[a-z0-9]{2,8}$/i, '') || `image-${Date.now()}-${index}`}.jpg` : originalName;
-  const dataUrl = preparedBase64 ? buildDataUrl(preparedBase64, mimeType) : await readFileAsDataUrl(preparedUri, mimeType);
   return {
     id: `${kind}-${Date.now()}-${index}`,
     uri: preparedUri,
-    dataUrl,
     kind,
     name,
     mimeType,
@@ -24770,7 +26081,6 @@ async function preparePickedDocumentAttachment(asset: DocumentPicker.DocumentPic
   return {
     id: `document-${Date.now()}-${index}`,
     uri: asset.uri,
-    dataUrl: await readFileAsDataUrl(asset.uri, mimeType),
     kind: 'document',
     name: asset.name || getFilenameFromUri(asset.uri, `documento-${index + 1}`),
     mimeType,
@@ -24786,7 +26096,6 @@ async function prepareVoiceAttachment(uri: string, durationMs?: number): Promise
   return {
     id: `audio-${Date.now()}`,
     uri,
-    dataUrl: await readFileAsDataUrl(uri, mimeType),
     kind: 'audio',
     name: getFilenameFromUri(uri, 'nota-de-voz.m4a'),
     mimeType,
@@ -24795,7 +26104,15 @@ async function prepareVoiceAttachment(uri: string, durationMs?: number): Promise
   };
 }
 
-function sendDraftAttachment(
+async function hydrateDraftAttachmentData(attachment: ConversationDraftAttachment) {
+  if (attachment.dataUrl) return attachment;
+  return {
+    ...attachment,
+    dataUrl: await readFileAsDataUrl(attachment.uri, attachment.mimeType),
+  };
+}
+
+async function sendDraftAttachment(
   api: RistakApiClient,
   contact: ChatContact,
   attachment: ConversationDraftAttachment,
@@ -24805,13 +26122,16 @@ function sendDraftAttachment(
   channel: ComposerRouteChannel = 'whatsapp',
   reply?: { replyToMessageId?: string; replyToProviderMessageId?: string },
 ) {
+  const hydrated = await hydrateDraftAttachmentData(attachment);
+  const dataUrl = hydrated.dataUrl || '';
+  const externalId = `native-attachment-${contact.id}-${attachment.id}`;
   if (attachment.kind === 'audio' && (channel === 'messenger' || channel === 'instagram')) {
-    return api.sendMetaSocialAudio(contact, channel, attachment.dataUrl, attachment.durationMs, reply);
+    return api.sendMetaSocialAudio(contact, channel, dataUrl, attachment.durationMs, reply, externalId);
   }
-  if (attachment.kind === 'video') return api.sendVideo(contact, attachment.dataUrl, caption, phoneNumberId, transport);
-  if (attachment.kind === 'audio') return api.sendAudio(contact, attachment.dataUrl, attachment.durationMs, phoneNumberId, transport);
-  if (attachment.kind === 'document') return api.sendDocument(contact, attachment.dataUrl, attachment.name, attachment.mimeType, caption, phoneNumberId, transport);
-  return api.sendImage(contact, attachment.dataUrl, caption, phoneNumberId, transport);
+  if (attachment.kind === 'video') return api.sendVideo(contact, dataUrl, caption, phoneNumberId, transport, externalId);
+  if (attachment.kind === 'audio') return api.sendAudio(contact, dataUrl, attachment.durationMs, phoneNumberId, transport, externalId);
+  if (attachment.kind === 'document') return api.sendDocument(contact, dataUrl, attachment.name, attachment.mimeType, caption, phoneNumberId, transport, externalId);
+  return api.sendImage(contact, dataUrl, caption, phoneNumberId, transport, externalId);
 }
 
 // Native port of /movil's WhatsApp reply-window logic. An inbound WhatsApp
@@ -24870,27 +26190,7 @@ function buildScheduledMessages(contactId: string, scheduled: ScheduledChatMessa
 }
 
 function getNativeMessageSortTime(value?: string | null) {
-  const timestamp = value ? new Date(value).getTime() : NaN;
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
-function getOldestNativeConversationMessageDate(messages: ChatMessage[]) {
-  let oldestDate = '';
-  messages.forEach((message) => {
-    if (!message || isScheduledMessage(message) || message.direction === 'system') return;
-    if (!message.date) return;
-    if (!oldestDate || getNativeMessageSortTime(message.date) < getNativeMessageSortTime(oldestDate)) {
-      oldestDate = message.date;
-    }
-  });
-  return oldestDate;
-}
-
-// Prefijos de mensajes optimistas creados localmente antes del ack del backend.
-const NATIVE_LOCAL_MESSAGE_ID_PREFIXES = ['local-', 'template-', 'clabe-', 'location-'];
-
-function isNativeLocalMessageId(id: string) {
-  return NATIVE_LOCAL_MESSAGE_ID_PREFIXES.some((prefix) => id.startsWith(prefix));
+  return parseSortableDateValue(value);
 }
 
 function isSameNativeChatMessage(left: ChatMessage, right: ChatMessage) {
@@ -24899,6 +26199,19 @@ function isSameNativeChatMessage(left: ChatMessage, right: ChatMessage) {
   } catch {
     return false;
   }
+}
+
+function stripNativeMessageTransientCacheData(message: ChatMessage): ChatMessage {
+  if (!message.attachment?.dataUrl) return message;
+  const { dataUrl: _dataUrl, ...attachment } = message.attachment;
+  return { ...message, attachment };
+}
+
+function hasNewInboundNativeMessage(current: ChatMessage[], incoming: ChatMessage[]) {
+  const knownIds = new Set(current
+    .filter((message) => message.direction === 'inbound')
+    .map((message) => message.id));
+  return incoming.some((message) => message.direction === 'inbound' && !knownIds.has(message.id));
 }
 
 // Ventana hacia adelante para emparejar un mensaje optimista con su copia del
@@ -24946,6 +26259,7 @@ function mergeNativeServerMessageIntoOptimistic(localRow: ChatMessage, serverRow
     text: serverRow.text || localRow.text,
     pending: false,
     failed: false,
+    errorReason: '',
     ...(attachment ? { attachment } : {}),
   };
 }
@@ -24953,15 +26267,16 @@ function mergeNativeServerMessageIntoOptimistic(localRow: ChatMessage, serverRow
 // El poll trae la copia persistida con otra identidad. La fusionamos DENTRO del
 // globo local y retiramos la fila remota duplicada; borrar el local provocaba un
 // unmount/remount, otra descarga de la foto y saltos de scroll.
-function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>) {
+function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>, includeUnsettledLocal = false) {
   const localRows: ChatMessage[] = [];
   const serverRows: ChatMessage[] = [];
   byId.forEach((message) => {
     if (message.direction !== 'outbound' || message.reactionEmoji || isScheduledMessage(message)) return;
     if (message.optimisticId || isNativeLocalMessageId(message.id)) {
       // Las filas pending siguen esperando el ack de send(): quitarlas antes
-      // de tiempo rompería el marcado de error si el envío falla.
-      if (!message.failed && !message.pending) localRows.push(message);
+      // de tiempo rompería el marcado de error si el envío falla. La carga
+      // inicial sí puede reconciliarlas porque ya viene de una nueva instancia.
+      if (includeUnsettledLocal || (!message.failed && !message.pending)) localRows.push(message);
     } else {
       serverRows.push(message);
     }
@@ -25012,7 +26327,7 @@ function reconcileNativeOptimisticMessages(byId: Map<string, ChatMessage>) {
     });
 }
 
-function mergeNativeChatMessages(...groups: ChatMessage[][]) {
+function mergeNativeChatMessageGroups(groups: ChatMessage[][], includeUnsettledLocal = false) {
   const byId = new Map<string, ChatMessage>();
   groups.forEach((group) => {
     group.forEach((message) => {
@@ -25029,8 +26344,20 @@ function mergeNativeChatMessages(...groups: ChatMessage[][]) {
       byId.set(message.id, isSameNativeChatMessage(existing, merged) ? existing : merged);
     });
   });
-  reconcileNativeOptimisticMessages(byId);
-  return Array.from(byId.values()).sort((left, right) => getNativeMessageSortTime(left.date) - getNativeMessageSortTime(right.date));
+  reconcileNativeOptimisticMessages(byId, includeUnsettledLocal);
+  return resolveChatMessageReactions(Array.from(byId.values()));
+}
+
+function mergeNativeChatMessages(...groups: ChatMessage[][]) {
+  return mergeNativeChatMessageGroups(groups);
+}
+
+function mergeNativeChatMessagesAuthoritatively(
+  makePendingRetryable: boolean,
+  ...groups: ChatMessage[][]
+) {
+  const reconciled = mergeNativeChatMessageGroups(groups, true);
+  return makeUnreconciledNativePendingMessagesRetryable(reconciled, makePendingRetryable);
 }
 
 // true cuando ambos arrays contienen exactamente las mismas referencias en el
@@ -25214,7 +26541,7 @@ function getNativeLocationMapTiles(location: NonNullable<ChatMessage['location']
 
 function formatNativeScheduledCountdown(value?: string | null, nowMs = Date.now()) {
   if (!value) return '';
-  const targetMs = new Date(value).getTime();
+  const targetMs = parseSortableDateValue(value);
   if (!Number.isFinite(targetMs)) return '';
   const diffMinutes = Math.max(0, Math.ceil((targetMs - nowMs) / 60000));
   if (diffMinutes < 60) return `${diffMinutes}m`;
@@ -28051,6 +29378,22 @@ function createAppStyles() {
     paddingBottom: 0,
     gap: 8,
     backgroundColor: COLORS.bg,
+  },
+  calendarSyncNotice: {
+    marginHorizontal: 15,
+    marginTop: 10,
+    gap: 10,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    backgroundColor: COLORS.panel,
+    padding: 12,
+  },
+  calendarSyncNoticeText: {
+    color: COLORS.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    fontWeight: '700',
   },
   calendarToolbar: {
     minHeight: 46,

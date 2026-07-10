@@ -3338,6 +3338,21 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_contact ON appointments(contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_appointments_start_time ON appointments(start_time)')
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS appointment_creation_requests (
+        client_request_id TEXT PRIMARY KEY,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        appointment_id TEXT,
+        response_json TEXT,
+        error_status INTEGER,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_appointment_creation_request_appointment ON appointment_creation_requests(appointment_id)')
+
     // Calendarios locales de Ristak. Si un calendario viene de HighLevel,
     // ghl_calendar_id guarda el ID remoto; si nace en Ristak, se llena al sincronizar.
     await db.run(`
@@ -3970,6 +3985,18 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_chat_read_states_contact ON chat_read_states (contact_id)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_chat_read_states_user_unread ON chat_read_states (user_id, unread_count)')
 
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS chat_inbound_message_claims (
+        channel TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        message_timestamp DATETIME,
+        claimed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (channel, message_id)
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_chat_inbound_message_claims_contact ON chat_inbound_message_claims (contact_id)')
+
     for (const [columnName, columnType] of [
       ['provider', "TEXT DEFAULT 'ycloud'"],
       ['origin', 'TEXT'],
@@ -4182,6 +4209,22 @@ async function initTables() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS subscription_creation_requests (
+        idempotency_key TEXT PRIMARY KEY,
+        provider TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        subscription_id TEXT,
+        response_json TEXT,
+        error_status INTEGER,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_subscription_creation_request_subscription ON subscription_creation_requests(subscription_id)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS payment_plan_creation_requests (

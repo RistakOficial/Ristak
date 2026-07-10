@@ -1,11 +1,24 @@
 import { getAppConfig, setAppConfig, db } from '../config/database.js'
 import { logger } from '../utils/logger.js'
+import {
+  ACCOUNT_COUNTRY_CONFIG_KEY,
+  ACCOUNT_CURRENCY_CONFIG_KEY,
+  ACCOUNT_DIAL_CODE_CONFIG_KEY,
+  getAccountLocaleSettings
+} from '../utils/accountLocale.js'
+import { ACCOUNT_TIMEZONE_CONFIG_KEY, getAccountTimezone } from '../utils/dateUtils.js'
 
 const SENSITIVE_CONFIG_KEY_PATTERN = /(private_key|secret|password|api_token|access_token|refresh_token|service_account|client_secret|webhook_secret)/i
 const META_SOCIAL_MESSAGING_PLATFORM_BY_KEY = {
   meta_messenger_messaging_enabled: 'messenger',
   meta_instagram_messaging_enabled: 'instagram'
 }
+const ACCOUNT_LOCALE_CONFIG_KEYS = new Set([
+  ACCOUNT_COUNTRY_CONFIG_KEY,
+  ACCOUNT_CURRENCY_CONFIG_KEY,
+  ACCOUNT_DIAL_CODE_CONFIG_KEY,
+  ACCOUNT_TIMEZONE_CONFIG_KEY
+])
 
 function cleanString(value) {
   if (value === null || value === undefined) return ''
@@ -29,6 +42,24 @@ function getSafeLogValue(key, value) {
   return isSensitiveConfigKey(key) ? '[redacted]' : value
 }
 
+export function applyResolvedAccountLocaleConfig(config = {}, locale = {}, requestedKeys = null) {
+  const next = { ...config }
+  const requested = requestedKeys ? new Set(requestedKeys) : null
+  const resolvedValues = {
+    [ACCOUNT_COUNTRY_CONFIG_KEY]: locale.countryCode,
+    [ACCOUNT_CURRENCY_CONFIG_KEY]: locale.currency,
+    [ACCOUNT_DIAL_CODE_CONFIG_KEY]: locale.dialCode,
+    [ACCOUNT_TIMEZONE_CONFIG_KEY]: locale.timezone
+  }
+
+  for (const [key, value] of Object.entries(resolvedValues)) {
+    if (requested && !requested.has(key)) continue
+    if (value === undefined || value === null || value === '') continue
+    next[key] = value
+  }
+  return next
+}
+
 /**
  * Obtiene TODA la configuración de la app (o una clave específica)
  * GET /api/config
@@ -40,12 +71,17 @@ export async function getConfig(req, res) {
 
     // Si se especifican keys, obtener solo esas
     if (keys) {
-      const keyArray = keys.split(',').map(k => k.trim())
-      const config = {}
+      const keyArray = keys.split(',').map(k => k.trim()).filter(Boolean)
+      let config = {}
 
       for (const key of keyArray) {
         const value = await getAppConfig(key)
         config[key] = getSafeConfigValue(key, value)
+      }
+
+      if (keyArray.some(key => ACCOUNT_LOCALE_CONFIG_KEYS.has(key))) {
+        const [locale, timezone] = await Promise.all([getAccountLocaleSettings(), getAccountTimezone()])
+        config = applyResolvedAccountLocaleConfig(config, { ...locale, timezone }, keyArray)
       }
 
       return res.json({
@@ -57,10 +93,12 @@ export async function getConfig(req, res) {
     // Si no se especifican keys, obtener TODA la configuración
     const rows = await db.all('SELECT config_key, config_value FROM app_config')
 
-    const config = {}
+    let config = {}
     rows.forEach(row => {
       config[row.config_key] = getSafeConfigValue(row.config_key, row.config_value)
     })
+    const [locale, timezone] = await Promise.all([getAccountLocaleSettings(), getAccountTimezone()])
+    config = applyResolvedAccountLocaleConfig(config, { ...locale, timezone })
 
     res.json({
       success: true,

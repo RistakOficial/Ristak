@@ -485,7 +485,10 @@ test('chat contacts caps oversized pages for safer inbox prefetch', async () => 
       const phone = `+52998${phoneSeed}${String(index).padStart(3, '0')}`
       const minute = String(Math.floor(index / 60)).padStart(2, '0')
       const second = String(index % 60).padStart(2, '0')
-      const timestamp = `2099-07-01T12:${minute}:${second}.000Z`
+      const isoTimestamp = `2099-07-01T12:${minute}:${second}.000Z`
+      const timestamp = index % 2 === 0
+        ? isoTimestamp.replace('T', ' ').replace('.000Z', '')
+        : isoTimestamp
 
       await insertRow('contacts', {
         id: contactId,
@@ -516,10 +519,28 @@ test('chat contacts caps oversized pages for safer inbox prefetch', async () => 
     const firstPage = await readChatContacts({ limit: '110' })
     const firstPageSyntheticChats = firstPage.filter(chat => String(chat.id).startsWith(prefix))
     assert.equal(firstPageSyntheticChats.length, 100)
+    assert.equal(firstPageSyntheticChats[0].id, `${prefix}_119`)
+    assert.equal(firstPageSyntheticChats[99].id, `${prefix}_20`)
 
     const secondPage = await readChatContacts({ limit: '110', offset: '100' })
     const secondPageSyntheticChats = secondPage.filter(chat => String(chat.id).startsWith(prefix))
     assert.equal(secondPageSyntheticChats.length, 20)
+
+    const boundary = firstPage[firstPage.length - 1]
+    assert.ok(boundary?.lastMessageDate)
+    const cursorPage = await readChatContacts({
+      limit: '110',
+      beforeMessageDate: boundary.lastMessageDate,
+      beforeContactId: boundary.id
+    })
+    const cursorSyntheticChats = cursorPage.filter(chat => String(chat.id).startsWith(prefix))
+    assert.equal(cursorSyntheticChats.length, 20)
+    assert.equal(cursorSyntheticChats[0].id, `${prefix}_19`)
+    assert.equal(cursorSyntheticChats[19].id, `${prefix}_0`)
+    assert.equal(
+      cursorSyntheticChats.some(chat => firstPageSyntheticChats.some(first => first.id === chat.id)),
+      false
+    )
   } finally {
     await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id LIKE ?', [`${prefix}%`]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${prefix}%`]).catch(() => undefined)
@@ -1098,6 +1119,121 @@ test('contact conversation applies messageLimit globally and pages older message
       olderPage.map(event => event.data.message_text),
       ['Global 2', 'Global 3', 'Global 4', 'Global 5', 'Global 6']
     )
+  } finally {
+    await cleanup(contactId, phone)
+  }
+})
+
+test('contact conversation compound cursor paginates equal timestamps without omissions or duplicates', async () => {
+  const id = randomUUID().replace(/-/g, '')
+  const contactId = `journey_tied_cursor_${id}`
+  const phone = `+52995${Date.now().toString().slice(-7)}`
+  const tiedTimestamp = '2026-06-18T12:00:00.000Z'
+  const expectedTexts = []
+
+  await cleanup(contactId, phone)
+
+  try {
+    await insertRow('contacts', {
+      id: contactId,
+      phone,
+      full_name: 'Cliente con mensajes empatados',
+      first_name: 'Cliente',
+      source: 'manual',
+      created_at: '2026-06-18T09:00:00.000Z',
+      updated_at: '2026-06-18T09:00:00.000Z'
+    })
+
+    const whatsappIdSuffixes = ['-A', '_a', 'Zed', 'alpha', '9']
+    for (let index = 0; index < whatsappIdSuffixes.length; index += 1) {
+      const text = `WhatsApp empate ${index}`
+      expectedTexts.push(text)
+      await insertRow('whatsapp_api_messages', {
+        id: `api_tied_${id}${whatsappIdSuffixes[index]}`,
+        contact_id: contactId,
+        phone,
+        from_phone: phone,
+        to_phone: '+526561000000',
+        business_phone: '+526561000000',
+        transport: 'api',
+        direction: 'inbound',
+        message_type: 'text',
+        message_text: text,
+        message_timestamp: tiedTimestamp,
+        created_at: tiedTimestamp
+      })
+    }
+
+    for (let index = 0; index < 5; index += 1) {
+      const text = `Meta empate ${index}`
+      expectedTexts.push(text)
+      await insertRow('meta_social_messages', {
+        id: `meta_tied_${id}_${index}`,
+        platform: 'instagram',
+        meta_message_id: `meta_tied_provider_${id}_${index}`,
+        contact_id: contactId,
+        sender_id: 'ig_customer',
+        recipient_id: 'ig_business',
+        direction: 'inbound',
+        status: 'received',
+        message_type: 'text',
+        message_text: text,
+        message_timestamp: tiedTimestamp,
+        created_at: tiedTimestamp
+      })
+    }
+
+    for (let index = 0; index < 4; index += 1) {
+      const text = `Email empate ${index}`
+      expectedTexts.push(text)
+      await insertRow('email_messages', {
+        id: `email_tied_${id}_${index}`,
+        contact_id: contactId,
+        from_email: `cliente_${id}@example.test`,
+        to_email: 'negocio@example.test',
+        direction: 'inbound',
+        status: 'received',
+        subject: text,
+        message_text: '',
+        message_timestamp: tiedTimestamp,
+        created_at: tiedTimestamp
+      })
+    }
+
+    const collectedEvents = []
+    let beforeMessageDate
+    let beforeMessageCursor
+    for (let pageNumber = 0; pageNumber < 10; pageNumber += 1) {
+      const page = await readConversation(contactId, {
+        messageLimit: '4',
+        beforeMessageDate,
+        beforeMessageCursor
+      })
+      if (!page.length) break
+      assert.ok(page.every(event => event.date === tiedTimestamp))
+      assert.ok(page.every(event => typeof event.cursorKey === 'string' && event.cursorKey.length > 0))
+      const pageCursorKeys = page.map(event => event.cursorKey)
+      assert.deepEqual(pageCursorKeys, [...pageCursorKeys].sort((left, right) => (
+        left === right ? 0 : left < right ? -1 : 1
+      )))
+      collectedEvents.push(...page)
+      beforeMessageDate = page[0].date
+      beforeMessageCursor = page[0].cursorKey
+    }
+
+    assert.equal(collectedEvents.length, expectedTexts.length)
+    assert.equal(new Set(collectedEvents.map(event => event.cursorKey)).size, expectedTexts.length)
+    assert.deepEqual(
+      collectedEvents.map(event => event.data.message_text || event.data.subject).sort(),
+      expectedTexts.sort()
+    )
+
+    // Los clientes viejos siguen usando fecha estricta y reciben el contrato previo.
+    const legacyPage = await readConversation(contactId, {
+      messageLimit: '4',
+      beforeMessageDate: tiedTimestamp
+    })
+    assert.deepEqual(legacyPage, [])
   } finally {
     await cleanup(contactId, phone)
   }

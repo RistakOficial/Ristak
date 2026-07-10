@@ -7,7 +7,7 @@ import { formatContactName } from '../utils/contactNameFormatter.js'
 import { getMetaConfig } from './metaAdsService.js'
 import { sendChatMessageNotification } from './pushNotificationsService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
-import { recordInboundChatUnread } from './chatReadStateService.js'
+import { claimInboundChatMessage } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 import { buildLocalMediaUrl, saveWhatsAppAudioPlaybackPreviewDataUrl } from './whatsappApiService.js'
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js'
@@ -1274,7 +1274,8 @@ async function syncMetaSocialConversationMessages({
           socialContactId,
           contactId: localContact.id,
           socialMessage,
-          config
+          config,
+          historyImport: true
         })
 
         if (savedMessage.isNew && socialMessage.direction === 'inbound') {
@@ -2944,7 +2945,7 @@ function getMetaSocialMessageLocalId(socialMessage = {}) {
   )
 }
 
-async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null }) {
+async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessage, config = null, historyImport = false }) {
   const messageId = getMetaSocialMessageLocalId(socialMessage)
   const existing = await db.get('SELECT id, media_url FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
 
@@ -3023,11 +3024,21 @@ async function upsertMetaSocialMessage({ socialContactId, contactId, socialMessa
     socialMessage.permalink || null
   ])
 
+  const inboundClaim = socialMessage.direction === 'inbound'
+    ? await claimInboundChatMessage({
+      channel: socialMessage.platform,
+      messageId,
+      contactId,
+      messageTimestamp: socialMessage.messageTimestamp,
+      incrementUnread: !historyImport
+    })
+    : null
+
   return {
     messageId,
     mediaUrl: resolvedMediaUrl || '',
     mediaMimeType: resolvedMediaMime || '',
-    isNew: !existing
+    isNew: socialMessage.direction === 'inbound' ? Boolean(inboundClaim?.claimed) : !existing
   }
 }
 
@@ -3219,25 +3230,21 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
           timestamp: socialMessage.messageTimestamp
         }
         results.push(result)
-        publishChatMessageEvent({
-          contactId: result.contactId,
-          messageId: result.messageId,
-          channel: result.platform,
-          provider: 'meta',
-          transport: result.platform,
-          direction: result.direction,
-          messageType: result.messageType,
-          messageTimestamp: result.timestamp,
-          isNew: result.isNew
-        })
+        if (result.direction !== 'inbound' || result.isNew) {
+          publishChatMessageEvent({
+            contactId: result.contactId,
+            messageId: result.messageId,
+            channel: result.platform,
+            provider: 'meta',
+            transport: result.platform,
+            direction: result.direction,
+            messageType: result.messageType,
+            messageTimestamp: result.timestamp,
+            isNew: result.isNew
+          })
+        }
 
         if (result.direction === 'inbound' && result.isNew !== false) {
-          recordInboundChatUnread({
-            contactId: result.contactId,
-            messageTimestamp: result.timestamp
-          }).catch(error => {
-            logger.warn(`[Chat Read State] No se pudo incrementar unread ${result.platform} ${result.messageId}: ${error.message}`)
-          })
           // (NOTI-003) Abrir/evaluar la ventana de confirmación de citas antes de
           // disparar automatizaciones/agente: el contacto pudo responder por DM al
           // recordatorio. Si hay ventana activa con bypass, no se disparan.
@@ -3376,24 +3383,21 @@ export async function processMetaSocialWebhook({ payload = {}, rawBody = '', sig
             timestamp: comment.messageTimestamp
           })
 
-          publishChatMessageEvent({
-            contactId: localContact.id,
-            messageId: savedComment.messageId,
-            channel: comment.platform,
-            provider: 'meta',
-            transport: comment.platform,
-            direction: comment.direction,
-            messageType: 'comment',
-            messageTimestamp: comment.messageTimestamp,
-            isNew: savedComment.isNew
-          })
+          if (comment.direction !== 'inbound' || savedComment.isNew) {
+            publishChatMessageEvent({
+              contactId: localContact.id,
+              messageId: savedComment.messageId,
+              channel: comment.platform,
+              provider: 'meta',
+              transport: comment.platform,
+              direction: comment.direction,
+              messageType: 'comment',
+              messageTimestamp: comment.messageTimestamp,
+              isNew: savedComment.isNew
+            })
+          }
 
           if (comment.direction === 'inbound' && savedComment.isNew !== false) {
-            recordInboundChatUnread({ contactId: localContact.id, messageTimestamp: comment.messageTimestamp })
-              .catch(error => {
-                logger.warn(`[Chat Read State] No se pudo incrementar unread de comentario: ${error.message}`)
-              })
-
             // Cachear el contenido de la publicación comentada (no bloquea el flujo).
             resolveMetaSocialGraphCredentials(comment.platform, config, { safe: true })
               .then(credentials => fetchAndCacheSocialPost(comment, credentials.token, credentials.baseUrl))

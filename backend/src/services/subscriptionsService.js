@@ -76,6 +76,12 @@ function cleanString(value) {
   return String(value ?? '').trim()
 }
 
+function subscriptionValidationError(message) {
+  const error = new Error(message)
+  error.status = 400
+  return error
+}
+
 function normalizeAmount(value) {
   const amount = Number(value)
   if (!Number.isFinite(amount)) return 0
@@ -1187,8 +1193,8 @@ export async function createSubscription(payload = {}) {
   let row = await buildSubscriptionRow(payload)
   const accountTimezone = await getDefaultSubscriptionTimezone()
 
-  if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
-  if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
+  if (!row.name) throw subscriptionValidationError('El nombre de la suscripción es obligatorio.')
+  if (!row.amount || row.amount <= 0) throw subscriptionValidationError('El monto de la suscripción debe ser mayor a cero.')
   assertClipIsNotUsedForSubscription(row)
   assertSubscriptionDatesNotInPast(row, accountTimezone)
   row = await createSubscriptionStartPaymentLinkIfNeeded(row, payload)
@@ -1317,8 +1323,8 @@ export async function updateSubscription(subscriptionId, payload = {}) {
   let row = await buildSubscriptionRow(payload, existing)
   const accountTimezone = await getDefaultSubscriptionTimezone()
 
-  if (!row.name) throw new Error('El nombre de la suscripción es obligatorio.')
-  if (!row.amount || row.amount <= 0) throw new Error('El monto de la suscripción debe ser mayor a cero.')
+  if (!row.name) throw subscriptionValidationError('El nombre de la suscripción es obligatorio.')
+  if (!row.amount || row.amount <= 0) throw subscriptionValidationError('El monto de la suscripción debe ser mayor a cero.')
   assertClipIsNotUsedForSubscription(row)
   assertSubscriptionDatesNotInPast(row, accountTimezone)
   row = await createSubscriptionStartPaymentLinkIfNeeded(row, payload)

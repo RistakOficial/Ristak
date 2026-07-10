@@ -125,16 +125,47 @@ llegar sin reemplazar su `id`: la identidad persistida vive en
 preview local (`dataUrl`/archivo) se conserva mientras el hilo siga montado.
 Así el poll no desmonta la fila, no vuelve a descargar la foto ni altera su
 altura. Las filas (`NativeMessageBubble`, `ChatRow`) van en `React.memo` con
-callbacks de identidad estable.
+callbacks de identidad estable. Cada intento conserva un `externalId` estable
+al reintentar despues de timeout/ACK perdido. Los adjuntos se leen y envian uno
+por uno; si falla solo una parte, no se reenvian los archivos ya confirmados.
 
 Recepcion viva del chat nativo: `mobile/` debe suscribirse a
 `/api/chat-events/stream` con la misma sesion bearer que usa para REST. Cada
-`chat_message` se trata como nudge local: refresca la bandeja y solo refresca el
-hilo si el `contactId` coincide con la conversacion abierta. Ese refresh debe ir
-coalescido para no disparar varias cargas simultaneas cuando llegan mensajes en
-rafaga. El polling sigue existiendo como reconciliacion de respaldo: bandeja cada
-12 s e hilo abierto cada 4 s, sin spinner, sin borrar cache visible y sin mover
-el scroll si no hubo cambios reales.
+`chat_message` aplica inmediatamente sus metadatos a la fila existente
+(`contactId`, instante, direccion, canal, transporte y tipo), actualiza el no
+leido entrante y promueve la conversacion antes de esperar otra llamada de red.
+Despues hace un refetch silencioso y coalescido como reconciliacion canonica; ese
+refetch no calienta avatares externos, tiene timeout/cancelacion y solo refresca
+el hilo si el `contactId` coincide con la conversacion abierta. El backend
+persiste el incremento de `chat_read_states` antes de publicar el evento para que
+la reconciliacion no observe un contador viejo. El polling sigue existiendo como
+respaldo: bandeja cada 12 s e hilo abierto cada 4 s, sin spinner, sin borrar cache
+visible y sin mover el scroll si no hubo cambios reales. El poll del hilo no debe
+volver a descargar el journey completo ni mandar `mark-read` si no aparecio un
+entrante nuevo; los programados se reconcilian con una frecuencia menor.
+Al abrir una conversacion, `/contacts/:id/conversation` es la ruta critica y sus
+ultimos mensajes se pintan en cuanto responde. El journey completo y los
+mensajes programados cargan despues con cancelacion/generacion propia; nunca
+deben retener el spinner del hilo.
+La paginacion historica de esa ruta usa un cursor keyset compuesto:
+`beforeMessageDate` + `beforeMessageCursor`. Cada evento de chat devuelve un
+`cursorKey` estable y el backend ordena por `(instante, cursorKey)`; asi, si
+varios canales guardaron mensajes en el mismo instante, el limite no omite ni
+repite filas. `beforeMessageDate` sin cursor conserva compatibilidad estricta
+con clientes anteriores. `mobile/` guarda el limite de la pagina cruda que
+respondio el servidor —incluidas reacciones o tarjetas que no generan una
+burbuja normal— y no lo vuelve a calcular desde los mensajes visibles. Un poll
+de la ventana reciente tampoco debe reemplazar el limite historico que el
+usuario ya alcanzo.
+
+El outbox local conserva durante siete dias solo mensajes salientes locales que
+sigan pendientes o hayan fallado. Al reabrir un hilo, un pendiente sin acuse ni
+copia reconciliada del servidor se convierte en fallido y ofrece `Reintentar`;
+si el envio original sigue activo no se habilita el segundo intento. Una
+respuesta canonica exitosa fusiona la copia remota con el mensaje optimista y
+limpia su estado fallido. La cache del hilo no se escribe antes de terminar la
+hidratacion inicial, pero despues de hidratarse una respuesta autoritativa vacia
+si debe persistir `[]` para retirar mensajes fantasma.
 
 Arranque offline-first de Android: antes de pedir datos frescos al servidor,
 `mobile/` debe hidratar desde la copia local en disco la configuracion del shell,
@@ -145,7 +176,19 @@ mostrar un spinner circular ni vaciar la pantalla si ya hay datos guardados: se
 pinta la ultima sesion conocida y luego se revalida en segundo plano. El task
 `ristak-inbox-refresh` puede refrescar la bandeja cacheada cuando Android le da
 ventana de background, pero es best-effort; la fuente de verdad sigue siendo el
-backend al reconectar.
+backend al reconectar. Si ese refresh responde correctamente con cero chats,
+tambien persiste `[]` como resultado autoritativo para no revivir filas viejas
+en el siguiente arranque offline. Los catalogos y eventos de calendario tambien viven en
+esa cache de archivos; no se guardan arreglos grandes dentro de `SecureStore`.
+La ultima identidad verificada y su ACL se conserva en un registro pequeno
+en `SecureStore`, ligado al servidor y token de esa sesion sin guardar el bearer
+dentro del namespace. En arranque offline solo esa ACL conocida puede habilitar
+secciones; sin usuario verificado la navegacion falla cerrada. Con licencia
+aplicada, una fuente de features invalida o una llave de modulo ausente tampoco
+concede acceso por default. La app revalida al volver a estado activo y cada 30 s
+mientras esta en foreground: solo un `401` o `license_blocked` definitivo elimina
+sesion/cache; timeout, offline y `5xx` conservan temporalmente la ultima ACL
+valida.
 
 Regla de dueño unico del teclado: en cada ruta visible solo puede haber UN
 keyboard avoider habilitado. Dos `KeyboardAvoidingView` apilados (p. ej. el
@@ -524,7 +567,9 @@ pantalla web movil:
 Los rangos visibles `30d`, `60d`, `180d`, `year` y `custom` deben calcularse con
 la zona horaria de negocio (`account_timezone`) y los importes deben formatearse
 con `account_currency`. No uses la zona local del dispositivo ni una moneda
-hardcodeada como fuente de verdad de negocio. El rango personalizado usa fechas
+hardcodeada como fuente de verdad de negocio. Si cualquiera de esos valores no
+se puede confirmar, la pantalla muestra reintento y no renderiza cifras con un
+fallback inventado. El rango personalizado usa fechas
 `YYYY-MM-DD` y debe aplicar el mismo rango a metricas, grafica, embudo y origen.
 
 La pantalla nativa debe conservar la estructura de `PhoneAnalytics`: encabezado
@@ -538,6 +583,24 @@ disponibles pero la pantalla muestra que no todo pudo actualizarse, y al volver 
 foreground vuelve a intentar. La consulta de numeros de WhatsApp corre aparte de
 Origen: un fallo de telefonos no bloquea ese panel ni borra los numeros
 cacheados; la cache secundaria solo se reemplaza tras una respuesta exitosa.
+
+La licencia `web_analytics` se respeta igual que en `/movil`: sin esa feature no
+se pide la serie de visitantes, `funnel` y `origin-distribution` mandan
+`includeWeb=0`, y la UI oculta `Visitantes`/`Trafico` en vez de convertir un 403
+silencioso en ceros falsos.
+
+En Android, contexto de cuenta, resumen/KPIs, grafica, embudo y origen conservan
+estado de carga y error independiente. Si falla una de esas consultas, su panel
+muestra el error con `Reintentar` y no lo convierte en cero ni en `Sin datos`;
+los paneles que si respondieron permanecen utilizables.
+
+El acceso a esta pantalla usa el modulo ACL `dashboard` tanto en Android como en
+`/movil`, porque su contrato principal son los endpoints `/api/dashboard/*` y el
+resumen operativo/financiero del negocio. El modulo ACL `analytics` conserva su
+significado de sesiones, visitantes y conversiones web en la superficie de
+escritorio; no debe usarse como atajo para abrir datos del Dashboard. En tablet,
+el panel embebido dentro de Chat repite el mismo guard y no puede saltarse el
+`AccessRoute` de `/movil/analytics`.
 
 ## Icono de instalación
 
@@ -731,10 +794,24 @@ de la semana, y despues fecha corta como `04-jul`. No uses `Hoy` en filas de
 chat con mensaje del dia actual.
 
 La bandeja nativa no debe quedarse limitada al primer bloque de conversaciones.
-`mobile/` consume `/contacts/chats` con `limit`/`offset`, carga el primer lote de
-50 chats y al llegar al final del scroll pide el siguiente bloque. Los lotes se
-fusionan por `contact.id` para evitar duplicados y preservar avatares ya
-hidratados.
+`mobile/` consume `/contacts/chats` con `limit`, carga el primer lote de 50 chats
+y al llegar al final pide el siguiente bloque con cursor estable
+`beforeMessageDate` + `beforeContactId` (y `offset` solo como compatibilidad si no
+existe borde util). Los lotes se fusionan por `contact.id` para evitar duplicados
+y preservar avatares ya hidratados. El primer lote fresco es autoritativo cuando
+trae menos de 50 filas:
+debe retirar chats eliminados/ocultos en vez de conservar fantasmas de cache. Si
+la pagina viene llena, solo conserva la cola ya cargada que sea realmente mas
+antigua que el borde fresco. Para ordenar, los timestamps SQLite
+`YYYY-MM-DD HH:mm:ss` se interpretan como UTC igual que los ISO; Android/Hermes no
+debe decidir la zona del instante.
+
+Para entrantes de WhatsApp, Messenger, Instagram y comentarios Meta, el backend
+reserva `channel + message_id` en `chat_inbound_message_claims`. El claim y el
+incremento de `chat_read_states` ocurren juntos; solo el proceso ganador publica
+el SSE y activa los efectos de mensaje nuevo. Los imports historicos reservan la
+misma llave sin crear no leidos, para que un webhook repetido no reviva historial
+viejo ni duplique la fila.
 
 ## Remitente de WhatsApp en chat movil
 
@@ -874,7 +951,9 @@ el formulario de cita. El formulario abre por defecto en modo `Por defecto`, con
 flujo rapido: fechas disponibles, horarios disponibles, invitados, notas y CTA
 de crear cita. En ese modo no se muestran fecha, hora, duracion, zona horaria ni
 direccion porque la fecha y el horario salen de los slots superiores y la zona se
-hereda del calendario. Al cambiar a `Personalizado`, aparecen selectores internos
+hereda del calendario. `Crear cita` queda bloqueado hasta que el usuario toque un
+slot real; la hora precargada del borrador no cuenta como seleccion. Al cambiar a
+`Personalizado`, aparecen selectores internos
 separados para dia/mes/anio, hora/minutos/AM-PM y duracion por horas mas minutos.
 El formulario mantiene `Invitados` antes de `Notas`: busca contactos existentes,
 permite agregarlos sin icono de enviar mensaje, crea contactos nuevos dentro del
@@ -894,7 +973,22 @@ la fila Domingo-Sabado queda libre sobre la grilla, sin capsula visual. Los
 numeros de la grilla mensual deben mantenerse compactos respecto a la bolita de
 seleccion; la bolita puede conservar mayor presencia que el texto. El swipe
 entre meses no debe mostrar de regreso el mes anterior en frames intermedios. En
-el sheet `Nueva cita`, la lista de contactos no debe mostrar icono de enviar
+red, cada cambio de rango cancela la solicitud anterior y solo la generacion mas
+reciente puede reemplazar `events`; una respuesta lenta de junio no puede pintar
+encima de julio. La cache por calendario/zona/rango vive en `expo-file-system`. En
+un arranque sin cache, fallar `/calendars` o `account_timezone` muestra error y
+reintento; no se convierte en un calendario vacio exitoso. Con cache valida se
+conserva la ultima agenda y se muestra un aviso no bloqueante. Crear, editar o
+guardar fechas queda bloqueado hasta confirmar una zona horaria valida. En
+Android, un deep link `open=appointment&id=...` se encola hasta que ese bootstrap
+de zona horaria y lista de calendarios sea utilizable; solo entonces se consulta
+y se marca como atendido una vez, evitando abrir la cita con la zona fallback o
+perder la seleccion de su calendario. Cada cita creada desde Agenda o desde el
+chat manda un `clientRequestId` estable durante timeout/reintento. El backend
+reserva esa llave en `appointment_creation_requests`, reproduce la respuesta ya
+completada y bloquea intentos simultaneos, ambiguos o reutilizados con otro
+payload para no duplicar la cita ni sus efectos externos.
+En el sheet `Nueva cita`, la lista de contactos no debe mostrar icono de enviar
 mensaje porque la accion es agendar, no mandar chat.
 En `ios/app`, la cache de citas se separa por calendario y mes
 (`calendarID + yyyy-MM`). Cambiar de calendario limpia primero las filas del
@@ -1078,7 +1172,22 @@ Para suscripciones por autorizacion, el movil debe enviar `paymentMethod`
 `stripe_link` en Stripe y `conekta_link` en Conekta; para tarjeta guardada debe
 enviar `stripe_saved_card`, `conekta_subscription` o `rebill_subscription` segun
 la tarjeta seleccionada.
-permanente. `Registrar pago unico` manual no debe preguntar estado: al registrar
+El mismo intento de cobro con tarjeta guardada o alta de suscripcion debe
+conservar un `Idempotency-Key`/`clientRequestId` estable aunque la app reciba un
+timeout y el usuario pulse reintentar. El backend reserva ese intento antes de
+crear cargos, planes, links o suscripciones remotas. Si ya termino, reproduce la
+respuesta guardada; si sigue procesando o termino de forma ambigua, lo bloquea
+para revision en vez de repetir dinero o crear otra suscripcion a ciegas.
+La misma regla aplica al registro manual iniciado desde el chat: Android manda
+un identificador estable por intento; `PhoneChat` pasa un scope estable a
+`RecordPaymentModal`, y el modal genera y conserva el `Idempotency-Key`. Cambiar
+los datos o completar/cerrar el flujo crea un intento nuevo; un timeout por si
+solo no lo rota.
+
+Pagos debe confirmar juntos `account_currency` y `account_timezone` antes de
+habilitar productos, cobros o fechas programadas; nunca usa la zona por defecto
+del telefono o de Mexico como sustituto silencioso. `Registrar pago unico`
+manual no debe preguntar estado: al registrar
 un pago recibido, el estado se manda siempre como `paid`/confirmado. Cuando
 `Registrar pago unico` crea un link de pago, la app nativa debe abrir la
 conversacion del contacto usando por default el ultimo canal disponible del
@@ -1169,6 +1278,10 @@ modal de enfoque propio de Ristak. Imagenes y videos se presentan dentro del
 modal; documentos/enlaces muestran una ficha interna y dejan `Abrir fuera` como
 accion secundaria. Ubicaciones y links de pago quedan fuera de esta regla porque
 su flujo natural requiere Maps o checkout externo.
+Los enlaces genericos recibidos no deben hacer una visita automatica desde el
+telefono solo por renderizar el globo: muestran host/copy local y cargan el
+destino cuando el usuario toca. Los links enviados por el negocio y los de pago
+pueden enriquecer metadata con timeout, abort, limite de HTML y cache acotada.
 ubicacion. Los globos de texto deben interpretar el formato estilo WhatsApp
 (`*negrita*`, `_italica_`, `~tachado~` y monospace con backticks) sin romper URLs
 ni identificadores con guion bajo. Cualquier canal pendiente

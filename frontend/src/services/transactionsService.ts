@@ -114,6 +114,10 @@ interface TransactionSummaryParams {
   statuses?: string[]
 }
 
+interface CreateTransactionOptions {
+  idempotencyKey?: string
+}
+
 const EMPTY_TRANSACTION_SUMMARY: TransactionSummary = {
   totalRevenue: 0,
   totalRevenuePrev: 0,
@@ -261,8 +265,14 @@ export const transactionsService = {
     }
   },
 
-  async createTransaction(transaction: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'>): Promise<Transaction> {
-    const data = await apiClient.post<Transaction>('/transactions', transaction)
+  async createTransaction(
+    transaction: Omit<Transaction, 'id' | 'createdAt' | 'updatedAt'>,
+    options: CreateTransactionOptions = {}
+  ): Promise<Transaction> {
+    const cleanIdempotencyKey = String(options.idempotencyKey || '').trim()
+    const data = await apiClient.post<Transaction>('/transactions', transaction, cleanIdempotencyKey
+      ? { headers: { 'Idempotency-Key': cleanIdempotencyKey } }
+      : undefined)
     return data
   },
 

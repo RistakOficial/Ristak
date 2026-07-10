@@ -47,6 +47,7 @@ import { mercadoPagoPaymentsService } from '@/services/mercadoPagoPaymentsServic
 import { rebillPaymentsService, type RebillSavedPaymentSource } from '@/services/rebillPaymentsService'
 import { stripePaymentsService, type StripeSavedPaymentMethod } from '@/services/stripePaymentsService'
 import { suppressContactAutofill } from '@/utils/browserAutofill'
+import { resolveStableRequestIntent, type StableRequestIntent } from '@/utils/requestIntent'
 import {
   defaultPaymentSettings,
   paymentSettingsService,
@@ -316,6 +317,11 @@ interface RecordPaymentModalProps {
    */
   variant?: 'modal' | 'embedded'
   layout?: 'phone' | 'wide'
+  /**
+   * Activa una llave durable para el registro manual local. El mismo payload
+   * conserva la llave durante un reintento; cambiarlo o reabrir el flujo la rota.
+   */
+  manualPaymentIdempotencyScope?: string
 }
 
 interface Contact {
@@ -720,7 +726,8 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   lockInitialContact = false,
   showEmbeddedBackButton = true,
   variant = 'modal',
-  layout = 'phone'
+  layout = 'phone',
+  manualPaymentIdempotencyScope = ''
 }) => {
   const { timezone } = useTimezone()
   const { labels } = useLabels()
@@ -729,6 +736,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<RecordPaymentStep>('form')
   const paymentPlanRequestKeyRef = useRef('')
+  const manualPaymentRequestRef = useRef<StableRequestIntent | null>(null)
 
   // Contact search
   const [searchQuery, setSearchQuery] = useState('')
@@ -1678,6 +1686,10 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       cancelled = true
     }
   }, [isOpen, rebillConnected, selectedContact?.id, paymentOption])
+
+  useEffect(() => {
+    manualPaymentRequestRef.current = null
+  }, [isOpen, initialContact?.id, manualPaymentIdempotencyScope])
 
   useEffect(() => {
     if (!isOpen) {
@@ -3345,7 +3357,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
       }
 
       try {
-        await transactionsService.createTransaction({
+        const transactionData = {
           date: buildPaymentTimestamp(manualPaymentData.paymentDate, timezone),
           contactId: selectedContact.id,
           contactName: selectedContact.name,
@@ -3375,7 +3387,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
               }
             })
           }
+        } satisfies Parameters<typeof transactionsService.createTransaction>[0]
+        const requestIntent = manualPaymentIdempotencyScope
+          ? resolveStableRequestIntent(
+              manualPaymentRequestRef.current,
+              manualPaymentIdempotencyScope,
+              {
+                ...transactionData,
+                date: manualPaymentData.paymentDate
+              }
+            )
+          : null
+        if (requestIntent) manualPaymentRequestRef.current = requestIntent
+
+        await transactionsService.createTransaction(transactionData, {
+          idempotencyKey: requestIntent?.clientRequestId
         })
+        manualPaymentRequestRef.current = null
 
         showToast('success', 'Éxito', 'Pago registrado correctamente')
         onSuccess?.()
@@ -3557,7 +3585,7 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
 
       if (canSaveManualPaymentLocally && selectedContact) {
         try {
-          await transactionsService.createTransaction({
+          const transactionData = {
             date: buildPaymentTimestamp(manualPaymentData.paymentDate, timezone),
             contactId: selectedContact.id,
             contactName: selectedContact.name,
@@ -3587,7 +3615,23 @@ export const RecordPaymentModal: React.FC<RecordPaymentModalProps> = ({
                 }
               })
             }
+          } satisfies Parameters<typeof transactionsService.createTransaction>[0]
+          const requestIntent = manualPaymentIdempotencyScope
+            ? resolveStableRequestIntent(
+                manualPaymentRequestRef.current,
+                manualPaymentIdempotencyScope,
+                {
+                  ...transactionData,
+                  date: manualPaymentData.paymentDate
+                }
+              )
+            : null
+          if (requestIntent) manualPaymentRequestRef.current = requestIntent
+
+          await transactionsService.createTransaction(transactionData, {
+            idempotencyKey: requestIntent?.clientRequestId
           })
+          manualPaymentRequestRef.current = null
 
           showToast('success', 'Pago registrado en Ristak', 'El pago quedó guardado y aparecerá en el historial del contacto.')
           onSuccess?.()

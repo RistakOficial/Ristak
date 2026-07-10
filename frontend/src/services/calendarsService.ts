@@ -240,6 +240,12 @@ export interface CalendarEvent {
   masterEventId?: string;
 }
 
+export interface CreateAppointmentPayload extends Partial<CalendarEvent> {
+  clientRequestId?: string;
+  client_request_id?: string;
+  [key: string]: unknown;
+}
+
 export interface GoogleCalendarIntegrationStatus {
   connectionMode?: 'oauth';
   configured?: boolean;
@@ -595,7 +601,10 @@ export const calendarsService = {
   /**
    * Crear una nueva cita
    */
-  async createAppointment(appointmentData: any, accessToken?: string): Promise<CalendarEvent | null> {
+  async createAppointment(
+    appointmentData: CreateAppointmentPayload,
+    accessToken?: string
+  ): Promise<CalendarEvent | null> {
     try {
       const data = await apiClient.post<CalendarEvent>('/calendars/appointments', {
         ...appointmentData,

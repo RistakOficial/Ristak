@@ -1,20 +1,18 @@
 const fs = require('fs')
 const path = require('path')
 
-const baseConfig = require('./app.json')
-
-module.exports = () => {
-  const config = {
-    ...baseConfig.expo,
+module.exports = ({ config }) => {
+  const finalConfig = {
+    ...config,
     android: {
-      ...baseConfig.expo.android,
+      ...config.android,
     },
   }
 
   const googleServicesPath = path.join(__dirname, 'google-services.json')
   if (fs.existsSync(googleServicesPath)) {
-    config.android.googleServicesFile = './google-services.json'
+    finalConfig.android.googleServicesFile = './google-services.json'
   }
 
-  return config
+  return finalConfig
 }

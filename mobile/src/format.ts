@@ -19,6 +19,47 @@ const CALENDAR_MONTHS = [
 const CALENDAR_SHORT_MONTHS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const BUSINESS_DATE_ONLY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
+// SQLite stores CRM instants in UTC and commonly returns them as
+// `YYYY-MM-DD HH:mm:ss`. Hermes/Android does not interpret that format
+// consistently: depending on the runtime it can be invalid or treated as the
+// phone's local time. Normalize those server timestamps before sorting or
+// formatting so every mobile surface sees the same instant as the backend.
+export function parseSortableDateValue(value?: unknown): number {
+  if (value instanceof Date) {
+    const timestamp = value.getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const raw = String(value || '').trim();
+  if (!raw) return 0;
+
+  let normalized = raw;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    normalized = `${raw}T00:00:00.000Z`;
+  } else if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(raw)) {
+    const withDateSeparator = raw.replace(/\s+/, 'T');
+    const withNormalizedOffset = withDateSeparator
+      .replace(/([+-]\d{2})(\d{2})$/, '$1:$2')
+      .replace(/([+-]\d{2})$/, '$1:00');
+    normalized = /[zZ]$|[+-]\d{2}:\d{2}$/.test(withNormalizedOffset)
+      ? withNormalizedOffset
+      : `${withNormalizedOffset}Z`;
+  }
+
+  const timestamp = Date.parse(normalized);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function parseServerDate(value: string | Date) {
+  if (value instanceof Date) return value;
+  const timestamp = parseSortableDateValue(value);
+  return timestamp ? new Date(timestamp) : new Date(Number.NaN);
+}
+
 export type BusinessDateParts = {
   date: Date;
   year: number;
@@ -81,7 +122,7 @@ export function getContactAvatar(contact?: ChatContact | null) {
 
 export function formatShortDate(value?: string) {
   if (!value) return '';
-  const date = new Date(value);
+  const date = parseServerDate(value);
   if (Number.isNaN(date.getTime())) return '';
 
   const today = new Date();
@@ -110,7 +151,7 @@ export function resolveBusinessTimezone(value?: string | null) {
 }
 
 function getZonedDateParts(value: string | Date, timezone?: string | null) {
-  const date = value instanceof Date ? value : new Date(value);
+  const date = parseServerDate(value);
   if (Number.isNaN(date.getTime())) return null;
   const resolvedTimezone = resolveBusinessTimezone(timezone);
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -128,7 +169,7 @@ function getZonedDateParts(value: string | Date, timezone?: string | null) {
 }
 
 function getZonedDateTimeParts(value: string | Date, timezone?: string | null) {
-  const date = value instanceof Date ? value : new Date(value);
+  const date = parseServerDate(value);
   if (Number.isNaN(date.getTime())) return null;
   const resolvedTimezone = resolveBusinessTimezone(timezone);
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -288,7 +329,7 @@ export function formatBusinessDayHeader(value: string) {
 
 export function formatCalendarEventTime(value?: string | null, timezone?: string | null) {
   if (!value) return '';
-  const date = new Date(value);
+  const date = parseServerDate(value);
   if (Number.isNaN(date.getTime())) return '';
   return new Intl.DateTimeFormat('es-MX', {
     timeZone: resolveBusinessTimezone(timezone),
@@ -657,8 +698,8 @@ function pickNestedRecord(data: Record<string, unknown>, keys: string[]) {
 function pickMessageTimestamp(data: Record<string, unknown>, keys: string[]) {
   const value = readString(data, keys);
   if (!value) return '';
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? '' : date.toISOString();
+  const timestamp = parseSortableDateValue(value);
+  return timestamp ? new Date(timestamp).toISOString() : '';
 }
 
 function pickMediaUrl(data: Record<string, unknown>) {
@@ -932,7 +973,7 @@ function getMessageProviderId(message: ChatMessage) {
   return message.providerMessageId || message.id;
 }
 
-function mergeChatMessagesById(messages: ChatMessage[]) {
+export function resolveChatMessageReactions(messages: ChatMessage[]) {
   const merged = new Map<string, ChatMessage>();
   messages.forEach((message) => {
     if (message.id) merged.set(message.id, message);
@@ -952,6 +993,11 @@ function mergeChatMessagesById(messages: ChatMessage[]) {
       const target = (message.reactionTargetMessageId ? byLocalId.get(message.reactionTargetMessageId) : null)
         || (message.reactionTargetProviderMessageId ? byProviderId.get(message.reactionTargetProviderMessageId) : null);
       if (target) {
+        const existingReaction = (target.reactions || []).find((reaction) => reaction.id === message.id);
+        if (
+          existingReaction?.emoji === message.reactionEmoji
+          && existingReaction.direction === message.direction
+        ) return;
         const updatedTarget = {
           ...target,
           reactions: [
@@ -969,7 +1015,7 @@ function mergeChatMessagesById(messages: ChatMessage[]) {
 
   return visibleMessages
     .map((message) => byLocalId.get(message.id) || message)
-    .sort((left, right) => new Date(left.date).getTime() - new Date(right.date).getTime());
+    .sort((left, right) => parseSortableDateValue(left.date) - parseSortableDateValue(right.date));
 }
 
 export function buildMessagesFromJourney(contactId: string, events: JourneyEvent[], appBaseUrl = '') {
@@ -1073,5 +1119,5 @@ export function buildMessagesFromJourney(contactId: string, events: JourneyEvent
     })
     .filter((message): message is ChatMessage => Boolean(message));
 
-  return mergeChatMessagesById(messages);
+  return resolveChatMessageReactions(messages);
 }

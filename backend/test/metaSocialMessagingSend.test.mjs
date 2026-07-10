@@ -371,6 +371,7 @@ async function seedMetaConfigForInstagramTests() {
 
 async function cleanupSocialRows({ senderId, metaMessageId }) {
   const contactId = hashTestId('meta_social_contact', `instagram:${senderId}`)
+  await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_messages WHERE sender_id = ? OR meta_message_id = ?', [senderId, metaMessageId]).catch(() => undefined)
   await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -395,6 +396,7 @@ test('syncMetaSocialConversationHistory importa historial disponible de Messenge
     await snapshotMetaConfig(async () => {
       await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
         try {
+          await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -463,6 +465,7 @@ test('syncMetaSocialConversationHistory importa historial disponible de Messenge
           const messagesCall = calls.find(call => call.url.startsWith('/conversation-messenger-history/messages'))
           assert.equal(messagesCall?.authorization, 'Bearer page-token-history-test')
         } finally {
+          await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -493,6 +496,7 @@ test('syncMetaSocialConversationHistory importa historial disponible de Instagra
     await snapshotMetaConfig(async () => {
       await snapshotAppConfig(['meta_instagram_messaging_enabled'], async () => {
         try {
+          await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
@@ -555,6 +559,7 @@ test('syncMetaSocialConversationHistory importa historial disponible de Instagra
           const messagesCall = calls.find(call => call.url.startsWith('/conversation-instagram-history/messages'))
           assert.equal(messagesCall?.authorization, 'Bearer page-token-history-test')
         } finally {
+          await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [contactId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_messages WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM meta_social_contacts WHERE sender_id = ?', [senderId]).catch(() => undefined)
           await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)

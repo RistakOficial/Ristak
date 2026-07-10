@@ -867,7 +867,7 @@ const AppWithNotifications: React.FC = () => {
             path={`${PHONE_APP_PREFIX}/analytics`}
             element={
               <ProtectedRoute>
-                <AccessRoute moduleKey="analytics">
+                <AccessRoute moduleKey="dashboard">
                   <PhoneAnalytics />
                 </AccessRoute>
               </ProtectedRoute>

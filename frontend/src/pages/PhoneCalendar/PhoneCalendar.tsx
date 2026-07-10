@@ -26,6 +26,7 @@ import { getPhoneDailyCacheKey, readPhoneDailyCache, writePhoneDailyCache } from
 import type { Contact } from '@/types'
 import { PHONE_APP_HOME_PATH, isLocalPhonePreviewHost } from '@/utils/phoneAccess'
 import { parseSortableDateValue } from '@/utils/dateSort'
+import { resolveStableRequestIntent, type StableRequestIntent } from '@/utils/requestIntent'
 import { convertLocalToUTC, dateOnlyToLocalDate, formatDateOnlyFromDate, formatInTimezone, todayDateOnlyInTimezone } from '@/utils/timezone'
 import styles from './PhoneCalendar.module.css'
 
@@ -377,6 +378,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
   const monthSwipeGestureRef = useRef<MonthSwipeGesture | null>(null)
   const monthSwipeSettleDirectionRef = useRef<MonthSwipeDirection>(0)
   const handledOpenAppointmentRef = useRef<string | null>(null)
+  const appointmentCreateIntentRef = useRef<StableRequestIntent | null>(null)
   const calendarTouchStartRef = useRef<{ x: number; y: number } | null>(null)
   const previousBusinessTodayRef = useRef(businessToday)
   // Para distinguir un swipe horizontal (cambiar de día) del arrastre vertical que selecciona hora
@@ -1018,6 +1020,7 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
       return
     }
 
+    appointmentCreateIntentRef.current = null
     setCreateDefaults(nextDefaults)
     setIsCreateModalOpen(true)
   }, [embedded, onCreateAppointmentRequest, selectedCalendar, showToast, timezone])
@@ -1514,11 +1517,23 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
     setLoading(true)
     try {
-      await calendarsService.createAppointment({
+      const appointmentData = {
         calendarId: selectedCalendar.id,
         ...(locationId ? { locationId } : {}),
         ...payload
+      }
+      const requestIntent = resolveStableRequestIntent(
+        appointmentCreateIntentRef.current,
+        'phone-calendar-appointment',
+        appointmentData
+      )
+      appointmentCreateIntentRef.current = requestIntent
+
+      await calendarsService.createAppointment({
+        ...appointmentData,
+        clientRequestId: requestIntent.clientRequestId
       }, accessToken || undefined)
+      appointmentCreateIntentRef.current = null
       setIsCreateModalOpen(false)
       await loadEvents()
     } catch {
@@ -2194,7 +2209,10 @@ export const PhoneCalendar: React.FC<PhoneCalendarProps> = ({ embedded = false, 
 
       <AppointmentModal
         isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
+        onClose={() => {
+          appointmentCreateIntentRef.current = null
+          setIsCreateModalOpen(false)
+        }}
         mode="create"
         calendar={selectedCalendar}
         defaultStart={createDefaults.start}

@@ -136,6 +136,11 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     agregarlos sin icono de enviar mensaje, crear contactos nuevos dentro del
     mismo sheet y guardar la lista en notas con bloque `Invitados:` para mantener
     compatibilidad con el backend actual.
+  - Confiabilidad 2026-07-10: rangos, slots y usuarios usan cancelacion y
+    generacion; una respuesta vieja no reemplaza el calendario actual. Sin cache,
+    un fallo de `/calendars` o `account_timezone` es error visible; con cache se
+    conserva la agenda con aviso. Crear/editar/guardar queda bloqueado sin zona
+    horaria confirmada, sin slot vigente o durante un doble tap.
   - Brechas pendientes: replicar validacion avanzada de slots/bloqueos y usuarios
     Round Robin del modal original de `/movil`.
 - [ ] Paridad completa de Pagos.
@@ -147,7 +152,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     pasarela con MSI basico, plan de
     parcialidades y suscripción con contacto requerido. Los cobros usan
     `account_currency` y `account_timezone` desde `/api/config`; si no se puede
-    leer la moneda de cuenta, los formularios no crean pagos. Los links externos
+    leer moneda o zona horaria de cuenta, los formularios no crean pagos ni
+    programan fechas con defaults. Los links externos
     se abren con `Linking` desde un sheet nativo de "link listo". Si HighLevel
     está conectado, el pago manual crea invoice y registra pago offline en GHL;
     si no, guarda una transacción local.
@@ -245,10 +251,14 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     vacios equivalentes de primer pase. Aun falta el estado cache-refresh exacto
     de `/movil` cuando se muestra cache y actualiza en segundo plano.
 - [x] Replicar recepcion viva de chat.
-  - Avance: `mobile/` ya escucha `/api/chat-events/stream` con bearer, emite un
-    nudge local para bandeja/hilo abierto y conserva polling de respaldo corto
-    sin duplicar cargas en rafaga.
-- [ ] Replicar empty/loading/cache-refresh states.
+  - Avance: `mobile/` escucha `/api/chat-events/stream` con bearer, aplica el
+    timestamp/direccion/canal/unread y promueve la fila local antes del REST;
+    despues reconcilia sin calentamiento de avatares, con timeout, abort y
+    coalescing. El backend guarda unread antes de publicar el evento.
+- [x] Replicar empty/loading/cache-refresh states.
+  - Avance: una falla silenciosa conserva filas cacheadas; una respuesta fresca
+    corta o vacia retira fantasmas, y la cache canonica no se contamina con una
+    busqueda o bandeja filtrada por numero.
 - [ ] Validar visualmente contra `/movil` en telefono.
 
 ### 2. Conversacion
@@ -296,10 +306,19 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 - [ ] Info de mensaje, receipts, errores, pendientes y reintentos.
   - Avance: long press sobre globo abre bottom sheet con preview, reacciones
     rapidas, responder e informacion de canal/estado/hora. Los globos muestran
-    pending/error y ticks sent/delivered/read. Falta reintento real, pantalla
-    completa de info del mensaje y acciones especiales de programados.
+    pending/error y ticks sent/delivered/read. El outbox conserva pendientes o
+    fallidos siete dias, reconcilia acuses al abrir y ofrece reintento real sin
+    duplicar un envio que siga activo. Falta pantalla completa de info del
+    mensaje y acciones especiales de programados.
 - [ ] Contact info/modal movil y campos personalizados.
 - [ ] Agenda desde chat.
+- [x] Aislar y aligerar sincronizacion de conversaciones.
+  - Avance: cada contacto remonta su pantalla; la cache queda aislada por cliente
+    API, conserva los 150 mensajes mas recientes sin base64 y tiene limite LRU.
+    El poll de fondo ya no descarga journey completo, no marca leido sin un
+    entrante nuevo y consulta programados como maximo cada 30 segundos. La carga
+    fria pinta primero los ultimos mensajes y deja journey/programados como
+    solicitudes secundarias que no retienen el spinner.
 - [ ] Validar en Android real.
 
 ### 3. Menus y sheets
@@ -348,8 +367,13 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   `Registrar pago unico`, `Planes de pago`, `Suscripcion` y `Precios Guardados`.
 - [x] Panel desplegable de ultimos pagos con periodos `Hoy`, `7 dias`,
   `30 dias` y `90 dias`, consumiendo `/api/transactions` con rango de negocio.
-- [x] Moneda visible tomada de `account_currency` y fecha/rangos desde
-  `/api/settings/timezone`.
+- [x] Moneda y fechas visibles tomadas de `account_currency` y
+  `account_timezone` resueltos por `/api/config`.
+  - Confiabilidad: si cualquiera falta o no se puede leer, la pantalla y
+    el registro directo desde chat bloquean la creacion; no inventan MXN ni una
+    zona horaria de Mexico. Basic,
+    mapa de licencia incompleto o falta de pasarela mantienen los flujos premium
+    apagados.
 - [x] Vista nativa de `Precios Guardados` con cargar, refrescar, crear, editar y
   eliminar productos via `/api/products`.
 - [x] Formulario nativo funcional para registrar pago unico manual via
@@ -428,6 +452,14 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
   financiero, leyenda, embudo con scopes, fuentes y origen por numero de
   WhatsApp.
 - [x] Agregar estados de loading, error, vacio y pull to refresh nativos.
+- [x] Respetar `web_analytics`.
+  - Sin feature, Android no pide visitantes, manda `includeWeb=0` en embudo y
+    origen, y oculta `Visitantes`/`Trafico` igual que `/movil`.
+- [x] Alinear el ACL de Analiticas con sus APIs de Dashboard.
+  - Android y `/movil/analytics` requieren lectura de `dashboard`; el modo
+    tablet aplica el mismo guard aunque renderice la pantalla dentro de Chat.
+  - `analytics` sigue reservado para sesiones, visitantes y conversiones web y
+    no concede por si solo acceso al resumen operativo/financiero movil.
 - [ ] Validar visualmente contra `/movil/analytics` en Android real y ajustar
   proporciones finas de tipografia, espaciado, iconos o animacion si Raúl detecta
   diferencias.
@@ -437,6 +469,8 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
 ## Validacion minima por fase
 
 - `npm run mobile:native:typecheck`.
+- `cd mobile && npm run test:chat-reliability` para fechas UTC, ACL offline,
+  promocion SSE, merges autoritativos, slots de calendario e intentos de pago.
 - `git diff --check`.
 - Instalar Release en Android fisico cuando cambie UI principal:
   `npm run mobile:native:android`.

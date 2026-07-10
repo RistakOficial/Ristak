@@ -40,6 +40,7 @@ import {
 } from '../services/publicPaymentGateService.js';
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { formatContactName, splitContactName } from '../utils/contactNameFormatter.js';
+import { runIdempotentAppointmentCreation } from '../services/appointmentCreationSafetyService.js';
 
 /**
  * Controlador para calendarios de Ristak con sincronizaciones externas opcionales.
@@ -2027,8 +2028,21 @@ export async function updateBlockedSlot(req, res) {
  */
 export async function createAppointment(req, res) {
   try {
-    const { accessToken, locationId, ...appointmentData } = req.body;
+    const {
+      accessToken,
+      locationId,
+      clientRequestId,
+      client_request_id: legacyClientRequestId,
+      ...appointmentData
+    } = req.body;
     const context = await getHighLevelContext(req, { locationId, accessToken });
+    const createdAppointment = await runIdempotentAppointmentCreation({
+      clientRequestId: clientRequestId || legacyClientRequestId,
+      payload: {
+        ...appointmentData,
+        locationId: context.locationId || null
+      },
+      create: async () => {
     const localCalendar = await localCalendarService.getLocalCalendar(appointmentData.calendarId || appointmentData.calendar_id);
     // El render de variables de plantilla (título/notas) es cosmético y NUNCA debe
     // impedir crear la cita: si falla, degradamos a valores planos.
@@ -2073,12 +2087,11 @@ export async function createAppointment(req, res) {
         logger.warn(`[Calendars Controller] No se pudo verificar disponibilidad del slot, permito crear: ${error.message}`);
       }
       if (!availability.available) {
-        return res.status(409).json({
-          success: false,
-          code: 'slot_unavailable',
-          error: 'Ese horario ya alcanzó el límite de citas. Elige otro horario o confirma el sobreagendamiento.',
-          data: { limit: availability.limit, overlapping: availability.overlapping }
-        });
+        const conflictError = new Error('Ese horario ya alcanzó el límite de citas. Elige otro horario o confirma el sobreagendamiento.');
+        conflictError.status = 409;
+        conflictError.code = 'slot_unavailable';
+        conflictError.data = { limit: availability.limit, overlapping: availability.overlapping };
+        throw conflictError;
       }
     }
 
@@ -2176,15 +2189,26 @@ export async function createAppointment(req, res) {
       logger.warn(`[Calendars Controller] No se pudo enviar push de cita: ${error.message}`);
     });
 
+        return appointment;
+      }
+    });
+
     res.status(201).json({
       success: true,
-      data: appointment
+      data: createdAppointment
     });
   } catch (error) {
-    logger.error(`[Calendars Controller] Error en createAppointment: ${error.message}`);
-    res.status(500).json({
+    const requestedStatus = Number(error.status || 500);
+    const status = Number.isInteger(requestedStatus) && requestedStatus >= 400 && requestedStatus <= 599
+      ? requestedStatus
+      : 500;
+    const log = status < 500 ? logger.warn : logger.error;
+    log(`[Calendars Controller] Error en createAppointment: ${error.message}`);
+    res.status(status).json({
       success: false,
-      error: error.message
+      code: error.code,
+      error: error.message,
+      data: error.data
     });
   }
 }

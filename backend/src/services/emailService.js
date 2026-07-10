@@ -1151,7 +1151,7 @@ async function saveInboundEmailFromImap({ imapMessage, parsed, config }) {
   })
 
   if (isNew) {
-    recordInboundChatUnread({
+    await recordInboundChatUnread({
       contactId: contact.id,
       messageTimestamp
     }).catch(error => {

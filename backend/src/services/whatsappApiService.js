@@ -42,7 +42,7 @@ import { getMetaConfig } from './metaAdsService.js'
 import { getVerifiedAppBaseUrl } from './sitesService.js'
 import { renderTemplateVariables } from './templateVariablesService.js'
 import { publishChatMessageEvent } from './chatLiveEventsService.js'
-import { recordInboundChatUnread } from './chatReadStateService.js'
+import { claimInboundChatMessage } from './chatReadStateService.js'
 import { captureContactIdentityFromMessage } from './contactMessageIdentityCaptureService.js'
 import {
   clearWhatsAppApiIntegrationCredentials,
@@ -6962,19 +6962,34 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     ])
   }
 
-  publishChatMessageEvent({
-    contactId: localContact.id,
-    messageId,
-    channel: 'whatsapp',
-    provider,
-    transport: finalTransport,
-    direction: identity.direction,
-    messageType,
-    messageTimestamp,
-    isNew: !existingMessage,
-    historyImport: historyImport === true
-  })
-  if (!existingMessage && identity.direction === 'inbound') {
+  const inboundClaim = identity.direction === 'inbound'
+    ? await claimInboundChatMessage({
+      channel: 'whatsapp',
+      messageId,
+      contactId: localContact.id,
+      messageTimestamp,
+      incrementUnread: !historyImport
+    })
+    : null
+  const isNewMessage = identity.direction === 'inbound'
+    ? Boolean(inboundClaim?.claimed)
+    : !existingMessage
+
+  if (identity.direction !== 'inbound' || isNewMessage) {
+    publishChatMessageEvent({
+      contactId: localContact.id,
+      messageId,
+      channel: 'whatsapp',
+      provider,
+      transport: finalTransport,
+      direction: identity.direction,
+      messageType,
+      messageTimestamp,
+      isNew: isNewMessage,
+      historyImport: historyImport === true
+    })
+  }
+  if (isNewMessage && identity.direction === 'inbound') {
     await captureContactIdentityFromMessage({
       contactId: localContact.id,
       text: messageText,
@@ -6982,15 +6997,6 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       allowEmail: true,
       allowPhone: false
     })
-
-    if (!historyImport) {
-      recordInboundChatUnread({
-        contactId: localContact.id,
-        messageTimestamp
-      }).catch(error => {
-        logger.warn(`[Chat Read State] No se pudo incrementar unread WhatsApp ${messageId}: ${error.message}`)
-      })
-    }
   }
 
   return {
@@ -7024,7 +7030,7 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     buttonPayload: buttonReply?.payload || '',
     buttonTitle: buttonReply?.title || '',
     buttonReplyType: buttonReply?.type || '',
-    isNew: !existingMessage,
+    isNew: isNewMessage,
     messageTimestamp
   }
 }

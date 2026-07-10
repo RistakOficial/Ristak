@@ -19,6 +19,7 @@ import type {
   ConversationAgentState,
   ConversationalAgentConfig,
   ConversationalAgentDefinition,
+  ConversationHistoryCursor,
   CreateTransactionInput,
   DashboardFinancialPoint,
   DashboardFunnelRow,
@@ -68,18 +69,36 @@ const PAYMENT_BANK_CLABES_CONFIG_KEY = 'payment_bank_clabes';
 const CHAT_STREAM_ENDPOINT = '/chat-events/stream';
 const CHAT_STREAM_INITIAL_RECONNECT_MS = 1000;
 const CHAT_STREAM_MAX_RECONNECT_MS = 15000;
+const CHAT_STREAM_HEARTBEAT_TIMEOUT_MS = 45_000;
+const CHAT_STREAM_MAX_RESPONSE_CHARS = 256_000;
 const XHR_HEADERS_RECEIVED = 2;
 const XHR_LOADING = 3;
 const XHR_DONE = 4;
+const DEFAULT_API_GET_TIMEOUT_MS = 20_000;
+const DEFAULT_API_MUTATION_TIMEOUT_MS = 75_000;
+let nativeExternalIdSequence = 0;
+
+function createNativeExternalId(prefix: string) {
+  nativeExternalIdSequence = (nativeExternalIdSequence + 1) % 1_000_000;
+  return `${prefix}-${Date.now()}-${nativeExternalIdSequence.toString(36)}`;
+}
 
 type RequestOptions = RequestInit & {
   params?: Record<string, string | number | boolean | undefined>;
+  timeoutMs?: number;
 };
 
 type ChatListQueryOptions = {
   businessPhoneNumberId?: string;
   businessPhone?: string;
   warmProfilePictures?: boolean;
+  signal?: AbortSignal;
+  beforeMessageDate?: string;
+  beforeContactId?: string;
+};
+
+type ConversationQueryOptions = Partial<ConversationHistoryCursor> & {
+  signal?: AbortSignal;
 };
 
 export type ChatLiveMessageEvent = {
@@ -178,6 +197,7 @@ type InstallmentFlowPayload = {
 };
 
 type SubscriptionPayload = {
+  id?: string;
   contactId?: string | null;
   contactName?: string;
   contactEmail?: string | null;
@@ -202,6 +222,7 @@ type SubscriptionPayload = {
   source?: string;
   lineItems?: Array<Record<string, unknown>>;
   metadata?: Record<string, unknown>;
+  clientRequestId?: string;
 };
 
 type ApiError = Error & {
@@ -313,7 +334,8 @@ function getNativeScheduleRoute(contact: ChatContact, channel?: NativeMessageCha
 }
 
 export type ApiClientHandlers = {
-  onLicenseBlocked?: () => void;
+  onUnauthorized?: (requestToken: string) => void;
+  onLicenseBlocked?: (requestToken: string) => void;
   onFeatureBlocked?: (message: string, feature?: unknown) => void;
 };
 
@@ -335,6 +357,12 @@ export class RistakApiClient {
   }
 
   private async request<T>(path: string, options: RequestOptions = {}): Promise<T> {
+    const {
+      params,
+      timeoutMs,
+      signal: callerSignal,
+      ...fetchOptions
+    } = options;
     const headers = new Headers(options.headers);
     const hasBody = options.body !== undefined && options.body !== null;
     if (hasBody && !headers.has('Content-Type')) {
@@ -344,58 +372,92 @@ export class RistakApiClient {
       headers.set('Authorization', `Bearer ${this.token}`);
     }
 
-    const response = await fetch(this.buildUrl(path, options.params), {
-      ...options,
-      headers,
-    });
+    const method = String(options.method || 'GET').toUpperCase();
+    const resolvedTimeoutMs = timeoutMs ?? (method === 'GET' ? DEFAULT_API_GET_TIMEOUT_MS : DEFAULT_API_MUTATION_TIMEOUT_MS);
+    const controller = new AbortController();
+    let timedOut = false;
+    const abortFromCaller = () => controller.abort();
+    if (callerSignal?.aborted) controller.abort();
+    else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+    const timeout = resolvedTimeoutMs > 0
+      ? setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, resolvedTimeoutMs)
+      : null;
 
-    if (response.status === 204) {
-      return {} as T;
-    }
-
-    let payload: unknown = null;
+    let response: Response;
     try {
-      payload = await response.json();
-    } catch {
-      payload = null;
-    }
+      response = await fetch(this.buildUrl(path, params), {
+        ...fetchOptions,
+        headers,
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      const message = getErrorMessage(payload, response.statusText);
-      const error = new Error(message || `HTTP ${response.status}`) as ApiError;
-      error.status = response.status;
-      error.body = payload;
-      let code = '';
-      if (payload && typeof payload === 'object') {
-        code = String((payload as { code?: unknown }).code || '');
-        error.code = code;
+      if (response.status === 204) {
+        return {} as T;
       }
-      // Cross-cutting handling mirroring the web authFetch/apiClient interceptors.
-      if (response.status === 403 && code === 'license_blocked') {
-        this.handlers.onLicenseBlocked?.();
-      } else if (response.status === 403 && code === 'feature_not_available') {
-        const method = String(options.method || 'GET').toUpperCase();
-        // The web only surfaces the plan-gate message on user actions, not on
-        // background screen-load GETs, to avoid nagging on read requests.
-        if (method !== 'GET') {
-          const feature = typeof payload === 'object' && payload
-            ? (payload as { feature?: unknown }).feature
-            : undefined;
-          this.handlers.onFeatureBlocked?.(error.message, feature);
+
+      let payload: unknown = null;
+      try {
+        payload = await response.json();
+      } catch (error) {
+        // Abort during body streaming must not be mistaken for a successful
+        // empty JSON response. The outer catch converts timeout aborts to the
+        // friendly API error and preserves caller-driven cancellation.
+        if (timedOut || callerSignal?.aborted) throw error;
+        payload = null;
+      }
+
+      if (!response.ok) {
+        const message = getErrorMessage(payload, response.statusText);
+        const error = new Error(message || `HTTP ${response.status}`) as ApiError;
+        error.status = response.status;
+        error.body = payload;
+        let code = '';
+        if (payload && typeof payload === 'object') {
+          code = String((payload as { code?: unknown }).code || '');
+          error.code = code;
         }
+        // Cross-cutting handling mirroring the web authFetch/apiClient interceptors.
+        if (response.status === 401) {
+          this.handlers.onUnauthorized?.(this.token);
+        } else if (response.status === 403 && code === 'license_blocked') {
+          this.handlers.onLicenseBlocked?.(this.token);
+        } else if (response.status === 403 && code === 'feature_not_available') {
+          const method = String(options.method || 'GET').toUpperCase();
+          // The web only surfaces the plan-gate message on user actions, not on
+          // background screen-load GETs, to avoid nagging on read requests.
+          if (method !== 'GET') {
+            const feature = typeof payload === 'object' && payload
+              ? (payload as { feature?: unknown }).feature
+              : undefined;
+            this.handlers.onFeatureBlocked?.(error.message, feature);
+          }
+        }
+        throw error;
+      }
+
+      if (
+        payload && typeof payload === 'object'
+        && 'success' in payload && 'data' in payload
+        && (payload as { data?: unknown }).data !== undefined
+      ) {
+        return (payload as { data: T }).data;
+      }
+
+      return (payload ?? {}) as T;
+    } catch (error) {
+      if (timedOut) {
+        const timeoutError = new Error('El servidor tardó demasiado en responder. Intenta de nuevo.') as ApiError;
+        timeoutError.code = 'request_timeout';
+        throw timeoutError;
       }
       throw error;
+    } finally {
+      if (timeout) clearTimeout(timeout);
+      callerSignal?.removeEventListener('abort', abortFromCaller);
     }
-
-    if (
-      payload && typeof payload === 'object'
-      && 'success' in payload && 'data' in payload
-      && (payload as { data?: unknown }).data !== undefined
-    ) {
-      return (payload as { data: T }).data;
-    }
-
-    return (payload ?? {}) as T;
   }
 
   login(email: string, password: string) {
@@ -414,6 +476,7 @@ export class RistakApiClient {
 
   getChats(query = '', offset = 0, limit = 50, options: ChatListQueryOptions = {}) {
     return this.request<ChatContact[]>('/contacts/chats', {
+      signal: options.signal,
       params: {
         q: query.trim() || undefined,
         limit,
@@ -421,6 +484,8 @@ export class RistakApiClient {
         businessPhoneNumberId: options.businessPhoneNumberId?.trim() || undefined,
         businessPhone: options.businessPhone?.trim() || undefined,
         warmProfilePictures: options.warmProfilePictures || undefined,
+        beforeMessageDate: options.beforeMessageDate?.trim() || undefined,
+        beforeContactId: options.beforeContactId?.trim() || undefined,
       },
     });
   }
@@ -454,12 +519,20 @@ export class RistakApiClient {
       let responseOffset = 0;
       let frameBuffer = '';
       let finished = false;
+      let lastActivityAt = Date.now();
       const request = new XMLHttpRequest();
       activeRequest = request;
+      const watchdog = setInterval(() => {
+        if (Date.now() - lastActivityAt <= CHAT_STREAM_HEARTBEAT_TIMEOUT_MS) return;
+        options.onError?.(new Error('Chat live stream heartbeat timeout'));
+        finish(true);
+        request.abort();
+      }, 10_000);
 
       const finish = (shouldReconnect = true) => {
         if (finished) return;
         finished = true;
+        clearInterval(watchdog);
         if (activeRequest === request) activeRequest = null;
         if (shouldReconnect) scheduleReconnect();
       };
@@ -470,14 +543,20 @@ export class RistakApiClient {
 
         frameBuffer += responseText.slice(responseOffset);
         responseOffset = responseText.length;
+        lastActivityAt = Date.now();
 
         const frames = frameBuffer.split(/\r?\n\r?\n/);
         frameBuffer = frames.pop() || '';
         frames.forEach((frame) => dispatchChatSseFrame(frame, options));
+        if (responseOffset >= CHAT_STREAM_MAX_RESPONSE_CHARS) {
+          finish(true);
+          request.abort();
+        }
       };
 
       request.onreadystatechange = () => {
         if (request.readyState >= XHR_HEADERS_RECEIVED && (request.status === 401 || request.status === 403)) {
+          if (request.status === 401) this.handlers.onUnauthorized?.(this.token);
           stopped = true;
           finish(false);
           request.abort();
@@ -573,18 +652,31 @@ export class RistakApiClient {
     });
   }
 
-  getConversation(contactId: string, limit = 50, beforeMessageDate?: string) {
+  getConversation(
+    contactId: string,
+    limit = 50,
+    options: ConversationQueryOptions | string = {},
+    legacySignal?: AbortSignal,
+  ) {
+    const normalizedOptions: ConversationQueryOptions = typeof options === 'string'
+      ? { beforeMessageDate: options }
+      : (options || {});
     return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/conversation`, {
+      timeoutMs: 10_000,
+      signal: normalizedOptions.signal || legacySignal,
       params: {
         refreshExternalStatuses: false,
         messageLimit: limit,
-        beforeMessageDate: beforeMessageDate || undefined,
+        beforeMessageDate: normalizedOptions.beforeMessageDate?.trim() || undefined,
+        beforeMessageCursor: normalizedOptions.beforeMessageCursor?.trim() || undefined,
       },
     });
   }
 
-  getContactJourney(contactId: string) {
+  getContactJourney(contactId: string, signal?: AbortSignal) {
     return this.request<JourneyEvent[]>(`/contacts/${encodeURIComponent(contactId)}/journey`, {
+      timeoutMs: 15_000,
+      signal,
       params: {
         refreshExternalStatuses: false,
       },
@@ -691,12 +783,20 @@ export class RistakApiClient {
       method: 'POST',
       body: JSON.stringify({
         ...payload,
-        externalId: payload.externalId || `native-comment-${payload.replyType}-${Date.now()}`,
+        externalId: payload.externalId || createNativeExternalId(`native-comment-${payload.replyType}`),
       }),
     });
   }
 
-  sendText(contact: ChatContact, text: string, channel: NativeMessageChannel = 'whatsapp', reply?: MessageReplyPayload, phoneNumberId?: string, transport?: 'qr' | 'api') {
+  sendText(
+    contact: ChatContact,
+    text: string,
+    channel: NativeMessageChannel = 'whatsapp',
+    reply?: MessageReplyPayload,
+    phoneNumberId?: string,
+    transport?: 'qr' | 'api',
+    externalId?: string,
+  ) {
     if (channel === 'email') {
       throw new Error('El correo todavía se envía desde la vista completa de chats.');
     }
@@ -708,7 +808,7 @@ export class RistakApiClient {
           contactId: contact.id,
           platform: channel,
           message: text,
-          externalId: `native-${channel}-${Date.now()}`,
+          externalId: externalId || createNativeExternalId(`native-${channel}`),
           replyToMessageId: reply?.replyToMessageId || undefined,
           replyToProviderMessageId: reply?.replyToProviderMessageId || undefined,
         }),
@@ -723,7 +823,7 @@ export class RistakApiClient {
           channel: 'sms_qr',
           message: text,
           toNumber: contact.phone || undefined,
-          externalId: `native-sms-${Date.now()}`,
+          externalId: externalId || createNativeExternalId('native-sms'),
         }),
       });
     }
@@ -735,7 +835,7 @@ export class RistakApiClient {
         from: contact.lastBusinessPhone || undefined,
         contactId: contact.id,
         text,
-        externalId: `native-${Date.now()}`,
+        externalId: externalId || createNativeExternalId('native'),
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'manual_chat',
         transport: transport || undefined,
@@ -749,7 +849,7 @@ export class RistakApiClient {
     return this.request<PaymentLinkDeliveryOptions>(`/contacts/${encodeURIComponent(contactId)}/payment-link-delivery-options`);
   }
 
-  sendImage(contact: ChatContact, imageDataUrl: string, caption = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
+  sendImage(contact: ChatContact, imageDataUrl: string, caption = '', phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/image', {
       method: 'POST',
       body: JSON.stringify({
@@ -758,7 +858,7 @@ export class RistakApiClient {
         contactId: contact.id,
         imageDataUrl,
         caption,
-        externalId: `native-image-${Date.now()}`,
+        externalId: externalId || createNativeExternalId('native-image'),
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'manual_chat',
         transport: transport || undefined,
@@ -766,7 +866,7 @@ export class RistakApiClient {
     });
   }
 
-  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
+  sendDocument(contact: ChatContact, documentDataUrl: string, filename: string, mimeType = '', caption = '', phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/document', {
       method: 'POST',
       body: JSON.stringify({
@@ -777,7 +877,7 @@ export class RistakApiClient {
         filename,
         mimeType: mimeType || undefined,
         caption,
-        externalId: `native-document-${Date.now()}`,
+        externalId: externalId || createNativeExternalId('native-document'),
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'manual_chat',
         transport: transport || undefined,
@@ -785,7 +885,7 @@ export class RistakApiClient {
     });
   }
 
-  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
+  sendVideo(contact: ChatContact, videoDataUrl: string, caption = '', phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/video', {
       method: 'POST',
       body: JSON.stringify({
@@ -794,7 +894,7 @@ export class RistakApiClient {
         contactId: contact.id,
         videoDataUrl,
         caption,
-        externalId: `native-video-${Date.now()}`,
+        externalId: externalId || createNativeExternalId('native-video'),
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'manual_chat',
         transport: transport || undefined,
@@ -802,7 +902,7 @@ export class RistakApiClient {
     });
   }
 
-  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number, phoneNumberId?: string, transport?: 'qr' | 'api') {
+  sendAudio(contact: ChatContact, audioDataUrl: string, durationMs?: number, phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/audio', {
       method: 'POST',
       body: JSON.stringify({
@@ -812,7 +912,7 @@ export class RistakApiClient {
         audioDataUrl,
         durationMs,
         voice: true,
-        externalId: `native-audio-${Date.now()}`,
+        externalId: externalId || createNativeExternalId('native-audio'),
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'manual_chat',
         transport: transport || undefined,
@@ -820,7 +920,7 @@ export class RistakApiClient {
     });
   }
 
-  sendMetaSocialAudio(contact: ChatContact, platform: 'messenger' | 'instagram', audioDataUrl: string, durationMs?: number, reply?: MessageReplyPayload) {
+  sendMetaSocialAudio(contact: ChatContact, platform: 'messenger' | 'instagram', audioDataUrl: string, durationMs?: number, reply?: MessageReplyPayload, externalId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/meta/social/messages/audio', {
       method: 'POST',
       body: JSON.stringify({
@@ -828,14 +928,14 @@ export class RistakApiClient {
         platform,
         audioDataUrl,
         durationMs,
-        externalId: `native-${platform}-audio-${Date.now()}`,
+        externalId: externalId || createNativeExternalId(`native-${platform}-audio`),
         replyToMessageId: reply?.replyToMessageId || undefined,
         replyToProviderMessageId: reply?.replyToProviderMessageId || undefined,
       }),
     });
   }
 
-  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', phoneNumberId?: string, transport?: 'qr' | 'api') {
+  sendLocation(contact: ChatContact, latitude: number, longitude: number, name = 'Ubicación', address = '', phoneNumberId?: string, transport?: 'qr' | 'api', externalId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/messages/location', {
       method: 'POST',
       body: JSON.stringify({
@@ -846,7 +946,7 @@ export class RistakApiClient {
         longitude,
         name,
         address,
-        externalId: `native-location-${Date.now()}`,
+        externalId: externalId || createNativeExternalId('native-location'),
         phoneNumberId: phoneNumberId || contact.lastBusinessPhoneNumberId || undefined,
         messageOrigin: 'manual_chat',
         transport: transport || undefined,
@@ -854,7 +954,7 @@ export class RistakApiClient {
     });
   }
 
-  sendReaction(contact: ChatContact, message: ChatMessage, emoji: string, externalId = `native-reaction-${Date.now()}`) {
+  sendReaction(contact: ChatContact, message: ChatMessage, emoji: string, externalId = createNativeExternalId('native-reaction')) {
     const probe = `${message.transport || ''} ${message.channel || ''}`.toLowerCase();
     const metaPlatform = probe.includes('instagram')
       ? 'instagram'
@@ -903,7 +1003,7 @@ export class RistakApiClient {
     phoneNumberId?: string,
     options: { transport?: 'qr' | 'api'; template?: WhatsAppTemplate } = {},
   ) {
-    const externalId = scheduledId || `native-scheduled-${Date.now()}`;
+    const externalId = scheduledId || createNativeExternalId('native-scheduled');
     const route = getNativeScheduleRoute(contact, channel);
     // Prefer the caller-computed transport (qr/api resolved from the selected
     // phone + reply window) over the route default, matching /movil scheduling.
@@ -933,8 +1033,10 @@ export class RistakApiClient {
     });
   }
 
-  getScheduledMessages(contactId: string) {
+  getScheduledMessages(contactId: string, signal?: AbortSignal) {
     return this.request<ScheduledChatMessage[]>('/whatsapp-api/messages/scheduled', {
+      timeoutMs: 8_000,
+      signal,
       params: { contactId },
     });
   }
@@ -950,7 +1052,7 @@ export class RistakApiClient {
     return this.request<MessageTemplateBundle>('/settings/message-templates');
   }
 
-  sendWhatsAppTemplate(contact: ChatContact, template: WhatsAppTemplate) {
+  sendWhatsAppTemplate(contact: ChatContact, template: WhatsAppTemplate, externalId?: string) {
     return this.request<SendTextResponse>('/whatsapp-api/templates/send', {
       method: 'POST',
       body: JSON.stringify({
@@ -960,7 +1062,7 @@ export class RistakApiClient {
         templateId: template.id || undefined,
         templateName: template.name || undefined,
         language: template.language || 'es_MX',
-        externalId: `native-template-${Date.now()}`,
+        externalId: externalId || createNativeExternalId('native-template'),
         phoneNumberId: contact.lastBusinessPhoneNumberId || undefined,
       }),
     });
@@ -1055,9 +1157,10 @@ export class RistakApiClient {
     return this.request<SavedPaymentMethodItem[]>(`/rebill/contacts/${encodeURIComponent(contactId)}/payment-sources`);
   }
 
-  createSubscription(payload: SubscriptionPayload) {
+  createSubscription(payload: SubscriptionPayload, idempotencyKey = '') {
     return this.request<PaymentSubscription>('/subscriptions', {
       method: 'POST',
+      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
       body: JSON.stringify(payload),
     });
   }
@@ -1104,7 +1207,11 @@ export class RistakApiClient {
     });
   }
 
-  chargeSavedCard(provider: 'stripe' | 'conekta' | 'rebill', payload: SavedCardPaymentPayload) {
+  chargeSavedCard(
+    provider: 'stripe' | 'conekta' | 'rebill',
+    payload: SavedCardPaymentPayload,
+    idempotencyKey = '',
+  ) {
     const providerPath: Record<'stripe' | 'conekta' | 'rebill', string> = {
       stripe: '/stripe/saved-card-payments',
       conekta: '/conekta/saved-card-payments',
@@ -1112,6 +1219,7 @@ export class RistakApiClient {
     };
     return this.request<SavedCardPaymentResponse>(providerPath[provider], {
       method: 'POST',
+      headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined,
       body: JSON.stringify(payload),
     });
   }
@@ -1174,21 +1282,28 @@ export class RistakApiClient {
     });
   }
 
-  getFunnelData(startDate: string, endDate: string, scope: DashboardFunnelScope = 'all') {
+  getFunnelData(
+    startDate: string,
+    endDate: string,
+    scope: DashboardFunnelScope = 'all',
+    includeWeb = true,
+  ) {
     return this.request<DashboardFunnelRow[]>('/dashboard/funnel', {
       params: {
         startDate,
         endDate,
         scope,
+        includeWeb: includeWeb ? '1' : '0',
       },
     });
   }
 
-  getOriginDistribution(startDate: string, endDate: string) {
+  getOriginDistribution(startDate: string, endDate: string, includeWeb = true) {
     return this.request<OriginDistributionData>('/dashboard/origin-distribution', {
       params: {
         startDate,
         endDate,
+        includeWeb: includeWeb ? '1' : '0',
       },
     });
   }
@@ -1205,8 +1320,15 @@ export class RistakApiClient {
     return this.request<CalendarItem[] | { calendars?: CalendarItem[] }>('/calendars');
   }
 
-  getCalendarEvents(startTime: number, endTime: number, calendarId?: string) {
+  getCalendarEvents(
+    startTime: number,
+    endTime: number,
+    calendarId?: string,
+    options: { signal?: AbortSignal } = {},
+  ) {
     return this.request<CalendarEventItem[] | { events?: CalendarEventItem[] }>('/calendars/events', {
+      signal: options.signal,
+      timeoutMs: 8000,
       params: {
         startTime,
         endTime,
@@ -1231,8 +1353,16 @@ export class RistakApiClient {
     });
   }
 
-  getFreeSlots(calendarId: string, startDate: string, endDate: string, timezone?: string) {
+  getFreeSlots(
+    calendarId: string,
+    startDate: string,
+    endDate: string,
+    timezone?: string,
+    options: { signal?: AbortSignal } = {},
+  ) {
     return this.request<CalendarFreeSlot[]>(`/calendars/${encodeURIComponent(calendarId)}/free-slots`, {
+      signal: options.signal,
+      timeoutMs: 8000,
       params: {
         startDate,
         endDate,
@@ -1241,23 +1371,31 @@ export class RistakApiClient {
     });
   }
 
-  getCalendarUsers() {
-    return this.request<{ users?: CalendarUser[] }>('/highlevel/users');
+  getCalendarUsers(options: { signal?: AbortSignal } = {}) {
+    return this.request<{ users?: CalendarUser[] }>('/highlevel/users', {
+      signal: options.signal,
+      timeoutMs: 8000,
+    });
   }
 
-  getCalendarUsersByIds(userIds: string[]) {
+  getCalendarUsersByIds(userIds: string[], options: { signal?: AbortSignal } = {}) {
     // The backend route is POST and reads req.body.userIds (an array); the old
     // GET with a comma-joined query string 404'd, so team names never loaded.
     return this.request<{ users?: CalendarUser[] }>('/highlevel/users/by-ids', {
       method: 'POST',
+      signal: options.signal,
+      timeoutMs: 8000,
       body: JSON.stringify({ userIds }),
     });
   }
 
-  createAppointment(appointmentData: Record<string, unknown>) {
+  createAppointment(appointmentData: Record<string, unknown>, clientRequestId?: string) {
     return this.request<CalendarEventItem>('/calendars/appointments', {
       method: 'POST',
-      body: JSON.stringify(appointmentData),
+      body: JSON.stringify({
+        ...appointmentData,
+        ...(clientRequestId ? { clientRequestId } : {}),
+      }),
     });
   }
 

@@ -5,8 +5,9 @@ import * as BackgroundTask from 'expo-background-task';
 import * as TaskManager from 'expo-task-manager';
 import { readApiBaseUrl, readAuthToken } from './storage';
 import { RistakApiClient } from './api';
-import { setCacheNamespace, writeCacheNow } from './cache';
+import { writeCacheNow } from './cache';
 import { CHAT_LIST_PAGE_SIZE, NATIVE_INBOX_CACHE_KEY, NATIVE_INBOX_CACHE_LIMIT } from './cacheKeys';
+import { getSessionCacheNamespace, isCurrentSessionCacheNamespace } from './sessionAccess';
 
 export const INBOX_BACKGROUND_TASK = 'ristak-inbox-refresh';
 
@@ -16,14 +17,26 @@ TaskManager.defineTask(INBOX_BACKGROUND_TASK, async () => {
   try {
     const [baseUrl, token] = await Promise.all([readApiBaseUrl(), readAuthToken()]);
     if (!baseUrl || !token) return BackgroundTask.BackgroundTaskResult.Success;
-    setCacheNamespace(baseUrl);
+    const sessionNamespace = getSessionCacheNamespace(baseUrl, token);
+    if (!sessionNamespace) return BackgroundTask.BackgroundTaskResult.Success;
     const api = new RistakApiClient(baseUrl, token);
     const data = await api.getChats('', 0, CHAT_LIST_PAGE_SIZE);
     const chats = Array.isArray(data) ? data : [];
-    if (chats.length) {
-      // Immediate write: the JS runtime is suspended as soon as we resolve.
-      await writeCacheNow(NATIVE_INBOX_CACHE_KEY, chats.slice(0, NATIVE_INBOX_CACHE_LIMIT));
+    // The request may have started before logout or an account switch. Re-read
+    // the durable session; changing it makes this old result a no-op. The write
+    // below is explicitly scoped and never changes the foreground app's active
+    // namespace, even if both runtimes overlap during an account switch.
+    const [currentBaseUrl, currentToken] = await Promise.all([readApiBaseUrl(), readAuthToken()]);
+    if (!isCurrentSessionCacheNamespace(sessionNamespace, currentBaseUrl, currentToken)) {
+      return BackgroundTask.BackgroundTaskResult.Success;
     }
+    // Empty is authoritative too: otherwise a successful zero-chat refresh
+    // leaves a stale inbox on the next offline launch.
+    await writeCacheNow(
+      NATIVE_INBOX_CACHE_KEY,
+      chats.slice(0, NATIVE_INBOX_CACHE_LIMIT),
+      sessionNamespace,
+    );
     return BackgroundTask.BackgroundTaskResult.Success;
   } catch {
     return BackgroundTask.BackgroundTaskResult.Failed;

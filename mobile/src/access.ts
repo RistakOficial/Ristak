@@ -34,7 +34,11 @@ export const PHONE_SECTION_MODULE: Record<PhoneSection, NativeModuleKey> = {
   chat: 'chat',
   calendar: 'appointments',
   payments: 'payments',
-  analytics: 'analytics',
+  // La pantalla movil de Analiticas es el resumen operativo del negocio y
+  // consume /api/dashboard/*. El permiso `analytics` corresponde al modulo
+  // web de sesiones/visitantes; `web_analytics` sigue controlando esas series
+  // dentro de esta pantalla.
+  analytics: 'dashboard',
   settings: 'settings_mobile',
 };
 
@@ -42,8 +46,19 @@ function isAdmin(user?: RistakUser | null) {
   return String(user?.role || '') === 'admin';
 }
 
+export function hasLicenseFeature(
+  user: RistakUser | null | undefined,
+  featureKeys: readonly string[],
+) {
+  if (!user?.licenseEnforced) return true;
+  if (user.licenseFeaturesSourceValid === false) return false;
+  const features = user.licenseFeatures || {};
+  return featureKeys.some((featureKey) => features[featureKey] === true);
+}
+
 function hasLicenseFeatureAccess(user: RistakUser | null | undefined, moduleKey: NativeModuleKey) {
   if (!user?.licenseEnforced) return true;
+  if (user.licenseFeaturesSourceValid === false) return false;
 
   const rule = LICENSE_FEATURES_BY_MODULE[moduleKey];
   if (!rule) return true;
@@ -55,7 +70,9 @@ function hasLicenseFeatureAccess(user: RistakUser | null | undefined, moduleKey:
   if (has(rule.primary)) return features[rule.primary] === true;
   if (rule.legacy?.length) return rule.legacy.some((key) => features[key] === true);
 
-  return true;
+  // El backend entrega un mapa normalizado. Si una respuesta legacy/incompleta
+  // no trae la llave, no podemos asumir que el plan la incluye.
+  return false;
 }
 
 export function hasModuleAccess(
@@ -77,9 +94,9 @@ export function hasModuleAccess(
 }
 
 export function hasPhoneSectionAccess(user: RistakUser | null | undefined, section: PhoneSection) {
-  // While the verified user is still loading (or a verify timeout left it null),
-  // we cannot evaluate permissions, so don't hide sections. The backend still
-  // enforces access per request, and the section re-hides once the user resolves.
-  if (!user) return true;
+  // Unknown permissions must never unlock the native shell. Offline startup
+  // hydrates the last user verified for this exact server/session namespace;
+  // without that evidence we fail closed until verification succeeds.
+  if (!user) return false;
   return hasModuleAccess(user, PHONE_SECTION_MODULE[section], 'read');
 }

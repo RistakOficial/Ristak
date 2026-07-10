@@ -16,6 +16,7 @@ export type RistakUser = {
   accessConfig?: NativeAccessConfig | null;
   licenseEnforced?: boolean;
   licensePlan?: string | null;
+  licenseFeaturesSourceValid?: boolean;
   licenseFeatures?: NativeLicenseFeatures | null;
   licenseLimits?: Record<string, unknown> | null;
   licenseExternalModules?: Record<string, unknown> | null;
@@ -204,11 +205,18 @@ export type ConversationalAgentDefinition = {
 export type JourneyEvent = {
   type: string;
   date: string;
+  cursorKey?: string;
   data?: Record<string, unknown>;
+};
+
+export type ConversationHistoryCursor = {
+  beforeMessageDate: string;
+  beforeMessageCursor?: string;
 };
 
 export type ChatAttachment = {
   type: 'image' | 'video' | 'audio' | 'document' | 'file';
+  clientId?: string;
   url?: string;
   dataUrl?: string;
   name?: string;
@@ -681,6 +689,7 @@ export type SavedCardPaymentPayload = {
   paymentMethodId?: string;
   paymentSourceId?: string;
   rebillCardId?: string;
+  clientRequestId?: string;
   installments?: {
     enabled?: boolean;
     maxInstallments?: number;
@@ -827,6 +836,7 @@ export type PaymentSubscription = {
 };
 
 export type SubscriptionPayload = {
+  id?: string;
   contactId?: string | null;
   contactName?: string | null;
   contactEmail?: string | null;
@@ -851,6 +861,7 @@ export type SubscriptionPayload = {
   source?: string;
   lineItems?: Array<Record<string, unknown>>;
   metadata?: Record<string, unknown>;
+  clientRequestId?: string;
 };
 
 export type CalendarItem = {

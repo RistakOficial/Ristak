@@ -43,3 +43,7 @@ export async function readJsonValue<T>(key: string, fallback: T): Promise<T> {
 export async function writeJsonValue<T>(key: string, value: T): Promise<void> {
   await SecureStore.setItemAsync(key, JSON.stringify(value));
 }
+
+export async function removeJsonValue(key: string): Promise<void> {
+  await SecureStore.deleteItemAsync(key);
+}

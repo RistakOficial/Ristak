@@ -726,7 +726,7 @@ async function upsertWhatsAppRow({ message, contact, transport, direction, notif
   }
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
-    recordInboundChatUnread({
+    await recordInboundChatUnread({
       contactId: contact.id,
       messageTimestamp
     }).catch(error => {
@@ -835,7 +835,7 @@ async function upsertEmailRow({ message, contact, direction, notifyNewInbound })
   ])
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
-    recordInboundChatUnread({
+    await recordInboundChatUnread({
       contactId: contact.id,
       messageTimestamp
     }).catch(error => {
@@ -960,7 +960,7 @@ async function upsertMetaRow({ message, contact, platform, direction, notifyNewI
   }
 
   if (isNew && notifyNewInbound && direction === 'inbound') {
-    recordInboundChatUnread({
+    await recordInboundChatUnread({
       contactId: contact.id,
       messageTimestamp
     }).catch(error => {

@@ -67,7 +67,7 @@ interface PhoneEcosystemNavProps {
   badges?: Partial<Record<PhoneSection, number>>
   placement?: 'bottom' | 'top' | 'rail'
   className?: string
-  onSelect?: (section: PhoneSection) => void
+  onSelect?: (section: PhoneSection) => boolean | void
   style?: React.CSSProperties
 }
 
@@ -285,6 +285,14 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
               }
               if (onSelect) {
                 event.preventDefault()
+                const accepted = onSelect(key)
+                if (accepted === false) {
+                  setIndicatorIndex(activeIndex)
+                  setIndicatorDragPosition(null)
+                  setDragHoverIndex(null)
+                  dragHoverIndexRef.current = null
+                  return
+                }
                 const nextIndex = getPhoneSectionIndex(key)
                 storePhoneNavIntent(active, key)
                 window.sessionStorage.setItem(PHONE_NAV_ACTIVE_INDEX_KEY, String(nextIndex))
@@ -292,7 +300,6 @@ export const PhoneEcosystemNav: React.FC<PhoneEcosystemNavProps> = ({ active, ba
                 setIndicatorDragPosition(null)
                 setDragHoverIndex(null)
                 dragHoverIndexRef.current = null
-                onSelect(key)
                 return
               }
               storePhoneNavIntent(active, key)

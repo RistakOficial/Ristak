@@ -33,6 +33,7 @@ import { getChatContacts } from '../src/controllers/contactsController.js'
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII='
 
 async function cleanup({ contactId, apiContactId, messageId, phone, eventId }) {
+  await db.run('DELETE FROM chat_inbound_message_claims WHERE channel = ? AND contact_id = ?', ['whatsapp', contactId]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_attribution WHERE whatsapp_api_message_id = ? OR contact_id = ? OR phone = ?', [messageId, contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_messages WHERE id = ? OR contact_id = ? OR phone = ?', [messageId, contactId, phone]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_contacts WHERE id = ? OR contact_id = ? OR phone = ?', [apiContactId, contactId, phone]).catch(() => undefined)

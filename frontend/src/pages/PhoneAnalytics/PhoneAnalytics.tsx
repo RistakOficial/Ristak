@@ -20,7 +20,7 @@ import { PhonePageTransition } from '@/components/phone/PhonePageTransition'
 import { useAuth } from '@/contexts/AuthContext'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
-import { usePhoneElasticScroll } from '@/hooks'
+import { useAccountCurrency, usePhoneElasticScroll } from '@/hooks'
 import {
   dashboardService,
   type DashboardMetrics,
@@ -91,14 +91,6 @@ const EMPTY_ORIGIN_DATA: OriginDistributionData = {
   whatsappNumbers: []
 }
 
-const shortCurrencyFormatter = new Intl.NumberFormat('es-MX', {
-  notation: 'compact',
-  compactDisplay: 'short',
-  maximumFractionDigits: 1,
-  style: 'currency',
-  currency: 'MXN'
-})
-
 const shortNumberFormatter = new Intl.NumberFormat('es-MX', {
   notation: 'compact',
   compactDisplay: 'short',
@@ -145,8 +137,15 @@ function formatShortDateLabel(label: string, timezone: string) {
   })
 }
 
-function formatCompactValue(value: number, currency: boolean) {
-  return currency ? shortCurrencyFormatter.format(value || 0) : shortNumberFormatter.format(value || 0)
+function formatCompactValue(value: number, currency: boolean, accountCurrency: string) {
+  if (!currency) return shortNumberFormatter.format(value || 0)
+  return new Intl.NumberFormat('es-MX', {
+    notation: 'compact',
+    compactDisplay: 'short',
+    maximumFractionDigits: 1,
+    style: 'currency',
+    currency: accountCurrency
+  }).format(value || 0)
 }
 
 function getVariationLabel(value: number) {
@@ -224,10 +223,12 @@ function buildPhoneNumberRows(
 }
 
 function MobileDualLineChart({
+  accountCurrency,
   data,
   meta,
   timezone
 }: {
+  accountCurrency: string
   data: ChartPoint[]
   meta: ChartMeta
   timezone: string
@@ -256,7 +257,7 @@ function MobileDualLineChart({
 
   return (
     <div className={styles.chartCanvas}>
-      <div className={styles.chartTopScale}>{formatCompactValue(maxValue, meta.currency)}</div>
+      <div className={styles.chartTopScale}>{formatCompactValue(maxValue, meta.currency, accountCurrency)}</div>
       <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${meta.label1} y ${meta.label2}`}>
         {[0.25, 0.5, 0.75].map((step) => {
           const y = padding.top + plotHeight * step
@@ -298,6 +299,7 @@ export const PhoneAnalytics: React.FC = () => {
   const { user } = useAuth()
   const { labels } = useLabels()
   const { timezone } = useTimezone()
+  const [accountCurrency] = useAccountCurrency()
   const hasWebAnalyticsAccess = hasLicenseFeature(user, ['web_analytics'])
   usePhoneElasticScroll()
 
@@ -512,15 +514,15 @@ export const PhoneAnalytics: React.FC = () => {
   }, [chartView, labels.leads])
 
   const metricCards = useMemo<MetricCardConfig[]>(() => ([
-    { key: 'ingresosNetos', title: 'Ingresos netos', Icon: DollarSign, tone: 'green', formatter: formatCurrency },
-    { key: 'gastosPublicidad', title: 'Gastos publicidad', Icon: CreditCard, tone: 'black', formatter: formatCurrency },
-    { key: 'gananciaBruta', title: 'Ganancia bruta', Icon: TrendingUp, tone: 'blue', formatter: formatCurrency },
+    { key: 'ingresosNetos', title: 'Ingresos netos', Icon: DollarSign, tone: 'green', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'gastosPublicidad', title: 'Gastos publicidad', Icon: CreditCard, tone: 'black', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'gananciaBruta', title: 'Ganancia bruta', Icon: TrendingUp, tone: 'blue', formatter: (value) => formatCurrency(value, accountCurrency) },
     { key: 'roas', title: 'ROAS', Icon: Activity, tone: 'gold', formatter: formatRoas },
-    { key: 'totalCostos', title: 'Gastos negocio', Icon: WalletCards, tone: 'black', formatter: formatCurrency },
-    { key: 'gananciaNeta', title: 'Ganancia neta', Icon: Banknote, tone: 'green', formatter: formatCurrency },
-    { key: 'reembolsos', title: 'Reembolsos', Icon: TrendingDown, tone: 'red', formatter: formatCurrency },
-    { key: 'ltvPromedio', title: 'Pago promedio', Icon: Users, tone: 'blue', formatter: formatCurrency }
-  ]), [])
+    { key: 'totalCostos', title: 'Gastos negocio', Icon: WalletCards, tone: 'black', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'gananciaNeta', title: 'Ganancia neta', Icon: Banknote, tone: 'green', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'reembolsos', title: 'Reembolsos', Icon: TrendingDown, tone: 'red', formatter: (value) => formatCurrency(value, accountCurrency) },
+    { key: 'ltvPromedio', title: 'Pago promedio', Icon: Users, tone: 'blue', formatter: (value) => formatCurrency(value, accountCurrency) }
+  ]), [accountCurrency])
 
   const hasChartData = chartData.some((point) => point.value > 0 || point.value2 > 0)
   const funnelRows = (funnelData.length > 0
@@ -676,7 +678,7 @@ export const PhoneAnalytics: React.FC = () => {
               <Loader2 size={17} className={styles.spinIcon} aria-hidden="true" />
             </div>
           ) : hasChartData ? (
-            <MobileDualLineChart data={chartData} meta={chartMeta} timezone={timezone} />
+            <MobileDualLineChart accountCurrency={accountCurrency} data={chartData} meta={chartMeta} timezone={timezone} />
           ) : (
             <div className={styles.emptyState}>Sin datos para este periodo.</div>
           )}

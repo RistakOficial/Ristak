@@ -17,7 +17,7 @@ import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/
 import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
 import { buildContactSearchClause, buildContactSearchRank, normalizePhoneDigits } from '../utils/searchText.js'
-import { coalescedTimestampSortExpression, parseSortableTimestamp, timestampSortExpression } from '../utils/sqlTimestampSort.js'
+import { coalescedTimestampSortExpression, parseSortableTimestamp, timestampSortExpression, timestampSortParameterExpression } from '../utils/sqlTimestampSort.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
 import { findWhatsAppProfilePictureUrl, getWhatsAppApiStatus, markLatestInboundWhatsAppApiMessageReadForContact, warmWhatsAppApiProfilePictures } from '../services/whatsappApiService.js'
@@ -468,13 +468,60 @@ const parseJourneyMessageBefore = (value) => {
   return parseSortableTimestamp(raw) > 0 ? raw : null
 }
 
-const appendOptionalBeforeParam = (params, beforeDate) => (
-  beforeDate ? [...params, beforeDate] : params
-)
+const parseJourneyMessageCursor = (value) => {
+  const raw = cleanString(value)
+  if (!raw || raw.length > 512) return null
+  return raw
+}
 
-const optionalBeforeClause = (expression, beforeDate) => (
-  beforeDate ? `AND ${expression} < ?` : ''
-)
+const buildJourneyMessageCursorKey = (prefix, value) => {
+  const cleanValue = cleanString(value)
+  return cleanValue ? `${prefix}:${cleanValue}` : ''
+}
+
+const journeyMessageCursorSqlExpression = (prefix, valueExpression) => {
+  const identity = `('${prefix}:' || CAST(${valueExpression} AS TEXT))`
+  return isPostgresDatabase
+    ? `(${identity} COLLATE "C")`
+    : `(${identity} COLLATE BINARY)`
+}
+
+const appendJourneyMessageBeforeParams = (params, beforeDate, beforeCursor) => {
+  if (!beforeDate) return params
+  return beforeCursor
+    ? [...params, beforeDate, beforeDate, beforeCursor]
+    : [...params, beforeDate]
+}
+
+// Cursor compuesto para que dos mensajes con el mismo instante no se pierdan
+// entre paginas. beforeMessageDate sin cursor conserva el contrato legacy (<).
+const journeyMessageBeforeClause = (
+  timestampExpression,
+  cursorIdentityExpression,
+  beforeDate,
+  beforeCursor
+) => {
+  if (!beforeDate) return ''
+  const timestampSort = timestampSortExpression(timestampExpression)
+  const cursorTimestampSort = timestampSortParameterExpression()
+  if (!beforeCursor) return `AND ${timestampSort} < ${cursorTimestampSort}`
+  return `AND (
+    ${timestampSort} < ${cursorTimestampSort}
+    OR (
+      ${timestampSort} = ${cursorTimestampSort}
+      AND ${cursorIdentityExpression} < ?
+    )
+  )`
+}
+
+const compareJourneyMessagesByCursor = (left, right) => {
+  const timestampDifference = parseSortableTimestamp(left?.date) - parseSortableTimestamp(right?.date)
+  if (timestampDifference !== 0) return timestampDifference
+  const leftCursor = cleanString(left?.cursorKey)
+  const rightCursor = cleanString(right?.cursorKey)
+  if (leftCursor === rightCursor) return 0
+  return leftCursor < rightCursor ? -1 : 1
+}
 
 const appendOptionalLimitParam = (params, limit) => (
   limit ? [...params, limit] : params
@@ -2310,12 +2357,17 @@ export const getChatContacts = async (req, res) => {
       limit = CHAT_CONTACTS_DEFAULT_LIMIT,
       offset = 0,
       businessPhoneNumberId = '',
-      businessPhone = ''
+      businessPhone = '',
+      beforeMessageDate = '',
+      beforeContactId = ''
     } = req.query
     const limitNumber = Math.min(Math.max(Number(limit) || CHAT_CONTACTS_DEFAULT_LIMIT, 1), CHAT_CONTACTS_MAX_LIMIT)
-    const offsetNumber = Math.max(Math.floor(Number(offset) || 0), 0)
     const shouldWarmProfilePictures = isTruthyQueryValue(req.query.warmProfilePictures || req.query.warmProfiles)
     const searchTerm = cleanString(q)
+    const cursorMessageDate = cleanString(beforeMessageDate)
+    const cursorContactId = cleanString(beforeContactId)
+    const cursorEnabled = Boolean(cursorMessageDate && cursorContactId)
+    const offsetNumber = cursorEnabled ? 0 : Math.max(Math.floor(Number(offset) || 0), 0)
     const phoneNumberIdFilter = cleanString(businessPhoneNumberId)
     const businessPhoneFilter = normalizePhoneForStorage(businessPhone)
     const relatedBusinessPhoneFilters = await resolveRelatedBusinessPhoneFilters({
@@ -2348,6 +2400,15 @@ export const getChatContacts = async (req, res) => {
       conditions.push(hiddenCondition)
     }
 
+    if (cursorEnabled) {
+      const cursorTimestampSort = timestampSortParameterExpression()
+      conditions.push(`(
+        chat_stats.last_message_sort < ${cursorTimestampSort}
+        OR (chat_stats.last_message_sort = ${cursorTimestampSort} AND chat_stats.contact_id < ?)
+      )`)
+      params.push(cursorMessageDate, cursorMessageDate, cursorContactId)
+    }
+
     const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
     const buildWhatsAppWhereClause = (extraConditions = []) => {
       const clauses = [...whatsappMessageConditions, ...extraConditions].filter(Boolean)
@@ -2373,7 +2434,8 @@ export const getChatContacts = async (req, res) => {
         SELECT
           direct_contact_id AS contact_id,
           COUNT(*) AS message_count,
-          MAX(message_date) AS last_message_date
+          MAX(message_date) AS last_message_date,
+          MAX(${timestampSortExpression('message_date')}) AS last_message_sort
         FROM whatsapp_stats_source_rows
         WHERE direct_contact_id IS NOT NULL
         GROUP BY direct_contact_id
@@ -2381,7 +2443,8 @@ export const getChatContacts = async (req, res) => {
         SELECT
           contact_id,
           COUNT(*) AS message_count,
-          MAX(message_date) AS last_message_date
+          MAX(message_date) AS last_message_date,
+          MAX(${timestampSortExpression('message_date')}) AS last_message_sort
         FROM (
           SELECT
             message_id,
@@ -2397,7 +2460,8 @@ export const getChatContacts = async (req, res) => {
         SELECT
           contact_id,
           COUNT(*) AS message_count,
-          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date
+          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date,
+          MAX(${timestampSortExpression('COALESCE(message_timestamp, created_at)')}) AS last_message_sort
         FROM meta_social_messages
         WHERE contact_id IS NOT NULL
         GROUP BY contact_id
@@ -2407,7 +2471,8 @@ export const getChatContacts = async (req, res) => {
         SELECT
           contact_id,
           COUNT(*) AS message_count,
-          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date
+          MAX(COALESCE(message_timestamp, created_at)) AS last_message_date,
+          MAX(${timestampSortExpression('COALESCE(message_timestamp, created_at)')}) AS last_message_sort
         FROM email_messages
         WHERE contact_id IS NOT NULL
         GROUP BY contact_id
@@ -2563,7 +2628,8 @@ export const getChatContacts = async (req, res) => {
         SELECT
           contact_id,
           SUM(message_count) AS message_count,
-          MAX(last_message_date) AS last_message_date
+          MAX(last_message_date) AS last_message_date,
+          MAX(last_message_sort) AS last_message_sort
         FROM message_stats_rows
         GROUP BY contact_id
       ),
@@ -2571,11 +2637,12 @@ export const getChatContacts = async (req, res) => {
         SELECT
           chat_stats.contact_id,
           chat_stats.message_count,
-          chat_stats.last_message_date
+          chat_stats.last_message_date,
+          chat_stats.last_message_sort
         FROM chat_stats
         JOIN contacts c ON c.id = chat_stats.contact_id
         ${whereClause}
-        ORDER BY chat_stats.last_message_date DESC, chat_stats.contact_id DESC
+        ORDER BY chat_stats.last_message_sort DESC, chat_stats.contact_id DESC
         LIMIT ? OFFSET ?
       ),
       ranked_contact_phones AS (
@@ -2597,7 +2664,7 @@ export const getChatContacts = async (req, res) => {
           *,
           ROW_NUMBER() OVER (
             PARTITION BY contact_id
-            ORDER BY message_date DESC, created_at DESC
+            ORDER BY ${timestampSortExpression('message_date')} DESC, ${timestampSortExpression('created_at')} DESC
           ) AS row_rank
         FROM selected_message_rows
       ),
@@ -2606,7 +2673,7 @@ export const getChatContacts = async (req, res) => {
           *,
           ROW_NUMBER() OVER (
             PARTITION BY contact_id
-            ORDER BY message_date DESC, created_at DESC
+            ORDER BY ${timestampSortExpression('message_date')} DESC, ${timestampSortExpression('created_at')} DESC
           ) AS row_rank
         FROM selected_message_rows
         WHERE direction = 'inbound'
@@ -2617,7 +2684,7 @@ export const getChatContacts = async (req, res) => {
           *,
           ROW_NUMBER() OVER (
             PARTITION BY contact_id
-            ORDER BY message_date ASC, created_at ASC
+            ORDER BY ${timestampSortExpression('message_date')} ASC, ${timestampSortExpression('created_at')} ASC
           ) AS row_rank
         FROM selected_message_rows
         WHERE direction = 'inbound'
@@ -2698,7 +2765,7 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
             AND ${CONFIRMATION_BADGE_CONDITION}
         ) AS has_confirmation_badge,
         ranked_chats.message_count,
-        ranked_chats.last_message_date,
+        lm.message_date AS last_message_date,
         lm.message_text AS last_message_text,
         lm.message_type AS last_message_type,
         lm.message_channel AS last_message_channel,
@@ -2717,7 +2784,7 @@ ${CONTACT_META_MESSAGE_FLAGS_SELECT},
       LEFT JOIN latest_messages lm ON lm.contact_id = c.id AND lm.row_rank = 1
       LEFT JOIN latest_inbound_messages lim ON lim.contact_id = c.id AND lim.row_rank = 1
       LEFT JOIN first_inbound_messages fim ON fim.contact_id = c.id AND fim.row_rank = 1
-      ORDER BY ranked_chats.last_message_date DESC, ranked_chats.contact_id DESC
+      ORDER BY ranked_chats.last_message_sort DESC, ranked_chats.contact_id DESC
     `, [
       ...whatsappMessageParams,
       ...params,
@@ -4951,6 +5018,7 @@ export const permanentDeleteContact = async (req, res) => {
     }
     // (DB-003) Conservar los pagos: desacoplarlos del contacto antes de borrarlo (contact_id es nullable).
     await db.run('UPDATE payments SET contact_id = NULL WHERE contact_id = ?', [id])
+    await db.run('DELETE FROM chat_inbound_message_claims WHERE contact_id = ?', [id])
     await db.run('DELETE FROM contacts WHERE id = ?', [id])
     logger.info(`Contacto borrado permanentemente (pagos conservados): ${id} (${existing.full_name})`)
     await recordAudit({ entityType: 'contact', entityId: id, action: 'permanent_delete', actor: req.user, details: { full_name: existing.full_name } })
@@ -5173,6 +5241,11 @@ export const getContactJourney = async (req, res) => {
     const journeyMessageBefore = parseJourneyMessageBefore(
       req.query?.beforeMessageDate ?? req.query?.messageBeforeDate ?? req.query?.beforeMessage
     )
+    const journeyMessageBeforeCursor = journeyMessageBefore
+      ? parseJourneyMessageCursor(
+        req.query?.beforeMessageCursor ?? req.query?.messageBeforeCursor ?? req.query?.beforeCursor
+      )
+      : null
     const outboundMessageDirectionPlaceholders = OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS.map(() => '?').join(', ')
 
     // (SEC-005 / ACL-002) No exponer el journey de un contacto oculto: si cae bajo un
@@ -5373,13 +5446,24 @@ export const getContactJourney = async (req, res) => {
          SELECT *
          FROM whatsapp_attribution
          WHERE contact_id = ?
-         ${optionalBeforeClause('created_at', journeyMessageBefore)}
-         ORDER BY ${timestampSortExpression('created_at')} DESC, id DESC
+         ${journeyMessageBeforeClause(
+           'created_at',
+           journeyMessageCursorSqlExpression('whatsapp_attribution', 'id'),
+           journeyMessageBefore,
+           journeyMessageBeforeCursor
+         )}
+         ORDER BY ${timestampSortExpression('created_at')} DESC,
+                  ${journeyMessageCursorSqlExpression('whatsapp_attribution', 'id')} DESC
          ${optionalLimitClause(journeyMessageLimit)}
        ) recent_whatsapp_attribution
-       ORDER BY created_at ASC, id ASC`,
+       ORDER BY ${timestampSortExpression('created_at')} ASC,
+                ${journeyMessageCursorSqlExpression('whatsapp_attribution', 'id')} ASC`,
       appendOptionalLimitParam(
-        appendOptionalBeforeParam([id], journeyMessageBefore),
+        appendJourneyMessageBeforeParams(
+          [id],
+          journeyMessageBefore,
+          journeyMessageBeforeCursor
+        ),
         journeyMessageLimit
       )
     )
@@ -5412,6 +5496,7 @@ export const getContactJourney = async (req, res) => {
       whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.created_at,
+        cursorKey: buildJourneyMessageCursorKey('whatsapp_attribution', msg.id),
         data: {
           ...data,
           is_ad_attributed: isAdAttributed,
@@ -5468,15 +5553,23 @@ export const getContactJourney = async (req, res) => {
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
          )
-         ${optionalBeforeClause('COALESCE(msg.message_timestamp, msg.created_at)', journeyMessageBefore)}
-       ORDER BY COALESCE(msg.message_timestamp, msg.created_at) DESC, msg.created_at DESC, msg.id DESC
+         ${journeyMessageBeforeClause(
+           'COALESCE(msg.message_timestamp, msg.created_at)',
+           journeyMessageCursorSqlExpression('whatsapp_api', 'msg.id'),
+           journeyMessageBefore,
+           journeyMessageBeforeCursor
+         )}
+       ORDER BY ${coalescedTimestampSortExpression('msg.message_timestamp', 'msg.created_at')} DESC,
+                ${journeyMessageCursorSqlExpression('whatsapp_api', 'msg.id')} DESC
        ${optionalLimitClause(journeyMessageLimit)}
        ) recent_whatsapp_api_messages
-       ORDER BY journey_message_date ASC, created_at ASC, whatsapp_api_message_id ASC`,
+       ORDER BY ${timestampSortExpression('journey_message_date')} ASC,
+                ${journeyMessageCursorSqlExpression('whatsapp_api', 'whatsapp_api_message_id')} ASC`,
       appendOptionalLimitParam(
-        appendOptionalBeforeParam(
+        appendJourneyMessageBeforeParams(
           [...whatsappApiMessageContactMatch.params, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
-          journeyMessageBefore
+          journeyMessageBefore,
+          journeyMessageBeforeCursor
         ),
         journeyMessageLimit
       )
@@ -5547,6 +5640,7 @@ export const getContactJourney = async (req, res) => {
       whatsappJourneyEvents.push({
         type: 'whatsapp_message',
         date: msg.message_timestamp || msg.created_at,
+        cursorKey: buildJourneyMessageCursorKey('whatsapp_api', msg.whatsapp_api_message_id),
         data: {
           ...data,
           is_ad_attributed: isAdAttributed,
@@ -5601,15 +5695,23 @@ export const getContactJourney = async (req, res) => {
            ? = 1
            OR LOWER(COALESCE(msg.direction, 'inbound')) NOT IN (${outboundMessageDirectionPlaceholders})
          )
-         ${optionalBeforeClause('COALESCE(msg.message_timestamp, msg.created_at)', journeyMessageBefore)}
-       ORDER BY COALESCE(msg.message_timestamp, msg.created_at) DESC, msg.created_at DESC, msg.id DESC
+         ${journeyMessageBeforeClause(
+           'COALESCE(msg.message_timestamp, msg.created_at)',
+           journeyMessageCursorSqlExpression('meta_social', 'msg.id'),
+           journeyMessageBefore,
+           journeyMessageBeforeCursor
+         )}
+       ORDER BY ${coalescedTimestampSortExpression('msg.message_timestamp', 'msg.created_at')} DESC,
+                ${journeyMessageCursorSqlExpression('meta_social', 'msg.id')} DESC
        ${optionalLimitClause(journeyMessageLimit)}
        ) recent_meta_social_messages
-       ORDER BY journey_message_date ASC, created_at ASC, meta_social_message_id ASC`,
+       ORDER BY ${timestampSortExpression('journey_message_date')} ASC,
+                ${journeyMessageCursorSqlExpression('meta_social', 'meta_social_message_id')} ASC`,
       appendOptionalLimitParam(
-        appendOptionalBeforeParam(
+        appendJourneyMessageBeforeParams(
           [...metaPersonContactIds, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
-          journeyMessageBefore
+          journeyMessageBefore,
+          journeyMessageBeforeCursor
         ),
         journeyMessageLimit
       )
@@ -5635,6 +5737,7 @@ export const getContactJourney = async (req, res) => {
       metaSocialJourneyEvents.push({
         type: 'meta_message',
         date: msg.message_timestamp || msg.created_at,
+        cursorKey: buildJourneyMessageCursorKey('meta_social', msg.meta_social_message_id),
         data: {
           source,
           social_platform: platform,
@@ -5711,15 +5814,23 @@ export const getContactJourney = async (req, res) => {
 	           ? = 1
 	           OR LOWER(COALESCE(direction, 'outbound')) NOT IN (${outboundMessageDirectionPlaceholders})
 	         )
-	         ${optionalBeforeClause('COALESCE(message_timestamp, created_at)', journeyMessageBefore)}
-	       ORDER BY COALESCE(message_timestamp, created_at) DESC, created_at DESC, id DESC
+	         ${journeyMessageBeforeClause(
+	           'COALESCE(message_timestamp, created_at)',
+	           journeyMessageCursorSqlExpression('email', 'id'),
+	           journeyMessageBefore,
+	           journeyMessageBeforeCursor
+	         )}
+	       ORDER BY ${coalescedTimestampSortExpression('message_timestamp', 'created_at')} DESC,
+	                ${journeyMessageCursorSqlExpression('email', 'id')} DESC
 	       ${optionalLimitClause(journeyMessageLimit)}
 	       ) recent_email_messages
-	       ORDER BY journey_message_date ASC, created_at ASC, email_message_id ASC`,
+	       ORDER BY ${timestampSortExpression('journey_message_date')} ASC,
+	                ${journeyMessageCursorSqlExpression('email', 'email_message_id')} ASC`,
 	      appendOptionalLimitParam(
-	        appendOptionalBeforeParam(
+	        appendJourneyMessageBeforeParams(
 	          [id, includeBusinessMessages ? 1 : 0, ...OUTBOUND_JOURNEY_MESSAGE_DIRECTIONS],
-	          journeyMessageBefore
+	          journeyMessageBefore,
+	          journeyMessageBeforeCursor
 	        ),
 	        journeyMessageLimit
 	      )
@@ -5732,6 +5843,7 @@ export const getContactJourney = async (req, res) => {
       journey.push({
         type: 'email_message',
         date: msg.message_timestamp || msg.created_at,
+        cursorKey: buildJourneyMessageCursorKey('email', msg.email_message_id),
         data: {
           source: 'Correo',
           email_message_id: msg.email_message_id,
@@ -5771,15 +5883,26 @@ export const getContactJourney = async (req, res) => {
          AND w.status = 'done'
          AND w.result = 'confirmed'
          AND COALESCE(w.confirmation_success_action, 'chat_card') = 'chat_card'
-         ${optionalBeforeClause(appointmentConfirmationTimestampExpression, journeyMessageBefore)}
-       ORDER BY ${coalescedTimestampSortExpression('w.processed_at', 'w.updated_at', 'w.created_at')} ASC, w.id ASC`,
-      appendOptionalBeforeParam([id], journeyMessageBefore)
+         ${journeyMessageBeforeClause(
+           appointmentConfirmationTimestampExpression,
+           journeyMessageCursorSqlExpression('appointment_confirmation', 'w.id'),
+           journeyMessageBefore,
+           journeyMessageBeforeCursor
+         )}
+       ORDER BY ${coalescedTimestampSortExpression('w.processed_at', 'w.updated_at', 'w.created_at')} ASC,
+                ${journeyMessageCursorSqlExpression('appointment_confirmation', 'w.id')} ASC`,
+      appendJourneyMessageBeforeParams(
+        [id],
+        journeyMessageBefore,
+        journeyMessageBeforeCursor
+      )
     ).catch(() => [])
 
     appointmentConfirmationCards.forEach(card => {
       journey.push({
         type: 'appointment_confirmation',
         date: card.processed_at || card.updated_at || card.created_at,
+        cursorKey: buildJourneyMessageCursorKey('appointment_confirmation', card.id),
         data: {
           id: card.id,
           appointment_id: card.appointment_id,
@@ -5793,7 +5916,7 @@ export const getContactJourney = async (req, res) => {
     })
 
     if (chatMessagesOnly) {
-      journey.sort((a, b) => parseSortableTimestamp(a.date) - parseSortableTimestamp(b.date))
+      journey.sort(compareJourneyMessagesByCursor)
       const limitedJourney = journeyMessageLimit ? journey.slice(-journeyMessageLimit) : journey
       logger.info(`Mensajes de chat obtenidos para contacto ${id}: ${limitedJourney.length} eventos`)
 

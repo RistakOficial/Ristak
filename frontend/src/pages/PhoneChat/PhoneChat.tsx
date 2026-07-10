@@ -85,7 +85,7 @@ import { PhoneSubscriptionForm } from '@/components/phone/PhoneSubscriptionForm'
 import { PhoneButton, PhoneDurationField, PhoneFilterChips, PhoneSheet, PhoneTextArea, PhoneTextField, PhoneTimeField, formatDurationLabel, formatTimeLabel } from '@/components/phone/ui'
 import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { hasLicenseFeature } from '@/utils/accessControl'
+import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
 import {
   getChatSendResponseIds,
@@ -195,6 +195,7 @@ import { mergeContactCustomFields } from '@/utils/contactCustomFields'
 import { getContactStageBadge } from '@/utils/contactStageBadge'
 import { parseSortableDateValue } from '@/utils/dateSort'
 import { normalizeSearchText } from '@/utils/searchText'
+import { resolveStableRequestIntent, type StableRequestIntent } from '@/utils/requestIntent'
 import { formatCurrency, formatDate, formatUrlParameter } from '@/utils/format'
 import { PHONE_APP_HOME_PATH, getLocalPhonePreviewDeviceMode, getPortableDeviceMode, toCanonicalPhoneAppPath, writeTabletViewPreference, type PortableDeviceMode } from '@/utils/phoneAccess'
 import { normalizeTrafficSource } from '@/utils/trafficSourceNormalizer'
@@ -5340,6 +5341,7 @@ export const PhoneChat: React.FC = () => {
   const requestedActionParam = searchParams.get('action')
   const { locationId, accessToken, user } = useAuth()
   const hasEmailAccess = hasLicenseFeature(user, ['email'])
+  const hasMobileAnalyticsAccess = hasModuleAccess(user, 'dashboard', 'read')
   const baseComposerMessageChannelOptions = useMemo(
     () => COMPOSER_MESSAGE_CHANNEL_OPTIONS.filter((option) => option.value !== 'email' || hasEmailAccess),
     [hasEmailAccess]
@@ -5735,7 +5737,9 @@ export const PhoneChat: React.FC = () => {
   const chatSwipeGestureRef = useRef<ChatSwipeGesture | null>(null)
   const messageInfoSwipeGestureRef = useRef<MessageInfoSwipeGesture | null>(null)
   const handledRouteAppointmentRef = useRef<string | null>(null)
+  const appointmentCreateIntentRef = useRef<StableRequestIntent | null>(null)
   const closeSheetNow = useCallback(() => {
+    appointmentCreateIntentRef.current = null
     setSheet(null)
     setWideAppointmentDefaults(null)
     setWideAppointmentContact(null)
@@ -10121,7 +10125,15 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleWideRailSelect = (section: PhoneSection) => {
-    if (!isWideChatDevice) return
+    if (!isWideChatDevice) return false
+
+    // En tablet PhoneAnalytics se embebe dentro de Chat y no pasa por el
+    // AccessRoute de /movil/analytics. Repite aqui el mismo guard para que ese
+    // atajo no pueda saltarse el permiso del Dashboard.
+    if (section === 'analytics' && !hasMobileAnalyticsAccess) {
+      showToast('error', 'Sin acceso', 'No tienes permiso para ver el resumen del negocio.')
+      return false
+    }
 
     const shouldCloseSheetImmediately = sheet === 'appointment' && Boolean(wideAppointmentDefaults)
     const closeSheetForRailChange = () => {
@@ -10166,6 +10178,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const closeWideSidebarMode = () => {
+    appointmentCreateIntentRef.current = null
     setWideSidebarMode('chats')
     setWideAppointmentDefaults(null)
     setWideAppointmentContact(null)
@@ -10210,6 +10223,7 @@ export const PhoneChat: React.FC = () => {
   }
 
   const handleWideCalendarCreateRequest = (request: PhoneCalendarCreateRequest) => {
+    appointmentCreateIntentRef.current = null
     setWideAppointmentDefaults(request)
     setWideAppointmentContact(null)
     setWideSidebarMode('chats')
@@ -10708,6 +10722,7 @@ export const PhoneChat: React.FC = () => {
       runConversationOpenBottomScrollSequence()
       setActiveContactId(contact.id)
     }
+    appointmentCreateIntentRef.current = null
     setChatActionContactId(null)
     setConversationAgentDropdownOpen(false)
     closeComposerChannelPicker()
@@ -13858,11 +13873,23 @@ export const PhoneChat: React.FC = () => {
     }
 
     try {
-      await calendarsService.createAppointment({
+      const appointmentData = {
         calendarId: calendarForAppointment.id,
         ...(locationId ? { locationId } : {}),
         ...payload
+      }
+      const requestIntent = resolveStableRequestIntent(
+        appointmentCreateIntentRef.current,
+        'phone-chat-appointment',
+        appointmentData
+      )
+      appointmentCreateIntentRef.current = requestIntent
+
+      await calendarsService.createAppointment({
+        ...appointmentData,
+        clientRequestId: requestIntent.clientRequestId
       }, accessToken || undefined)
+      appointmentCreateIntentRef.current = null
 
       if (wideSidebarMode === 'appointment') {
         setWideSidebarMode('chats')
@@ -21692,6 +21719,7 @@ export const PhoneChat: React.FC = () => {
               lockPaymentMode
               initialContact={null}
               lockInitialContact={false}
+              manualPaymentIdempotencyScope="phone-chat-wide-manual-payment"
               onClose={() => setWideRailSection('chat')}
               onSuccess={(context) => {
                 if (context?.keepOpen) return
@@ -22389,6 +22417,7 @@ export const PhoneChat: React.FC = () => {
                       lockPaymentMode
                       initialContact={initialContact}
                       lockInitialContact={Boolean(initialContact?.id)}
+                      manualPaymentIdempotencyScope="phone-chat-manual-payment"
                       showEmbeddedBackButton={false}
                       onClose={actionSheetDismiss.requestClose}
                       onSuccess={(context) => {

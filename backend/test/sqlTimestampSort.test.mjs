@@ -1,5 +1,5 @@
-import test from 'node:test'
 import assert from 'node:assert/strict'
+import test from 'node:test'
 
 import { db } from '../src/config/database.js'
 import {
@@ -7,6 +7,12 @@ import {
   parseSortableTimestamp,
   timestampSortExpression
 } from '../src/utils/sqlTimestampSort.js'
+
+const moduleUrl = new URL('../src/utils/sqlTimestampSort.js', import.meta.url)
+
+function placeholderCount(value) {
+  return (String(value).match(/\?/g) || []).length
+}
 
 test('timestamp sort helpers order contacts, appointments and payments by real time across stored formats', async () => {
   const suffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
@@ -101,5 +107,25 @@ test('timestamp sort helpers order contacts, appointments and payments by real t
     for (const id of [...Object.values(contactIds), contactId]) {
       await db.run('DELETE FROM contacts WHERE id = ?', [id]).catch(() => {})
     }
+  }
+})
+
+test('timestampSortParameterExpression binds exactly once on SQLite and Postgres', async () => {
+  const originalDatabaseUrl = process.env.DATABASE_URL
+  try {
+    delete process.env.DATABASE_URL
+    const sqliteModule = await import(`${moduleUrl.href}?dialect=sqlite-${Date.now()}`)
+    const sqliteExpression = sqliteModule.timestampSortParameterExpression()
+    assert.equal(placeholderCount(sqliteExpression), 1)
+    assert.match(sqliteExpression, /julianday\(\?\)/)
+
+    process.env.DATABASE_URL = 'postgresql://binding-check.invalid/ristak'
+    const postgresModule = await import(`${moduleUrl.href}?dialect=postgres-${Date.now()}`)
+    const postgresExpression = postgresModule.timestampSortParameterExpression()
+    assert.equal(placeholderCount(postgresExpression), 1)
+    assert.match(postgresExpression, /EXTRACT\(EPOCH/)
+  } finally {
+    if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL
+    else process.env.DATABASE_URL = originalDatabaseUrl
   }
 })

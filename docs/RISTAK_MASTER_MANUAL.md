@@ -321,7 +321,8 @@ Familias de tablas relevantes:
 - Pagos: `payments`, `payment_flows`, `installment_payments`, `payment_plans`,
   `subscriptions`, metodos Stripe/Conekta, productos y precios.
 - Citas/calendarios: `appointments`, `calendars`, `blocked_slots`,
-  attendance signals, reminders, confirmation windows.
+  `appointment_creation_requests`, attendance signals, reminders, confirmation
+  windows.
 - Sites/tracking: `public_sites`, `public_site_domains`, `public_site_blocks`,
   submissions, imports, assets, folders, `sessions`, video playback
   sessions/events, identity matches.
@@ -743,16 +744,22 @@ del cliente y compatibilidad legacy.
 
 La recepcion rapida de mensajes de chat usa `/api/chat-events/stream` como
 camino principal en desktop (`/chat`), movil web (`/movil`), cliente nativo
-React Native (`mobile/`) y app iOS Swift. El evento SSE `chat_message` es solo
-un nudge: no transporta el texto completo del mensaje, sino `contactId` y
-metadatos minimos para que el cliente haga un refetch silencioso y coalescido
-de la bandeja y, si corresponde, del hilo abierto. El backend debe publicar este
-evento desde cada servicio que inserte o actualice mensajes reales de chat
-entrantes o salientes; despues de escribir el frame debe intentar flush inmediato
-para no dejarlo retenido por buffers. El polling queda como red de seguridad,
-no como camino principal: bandeja cada 12 s, hilo abierto cada 4 s y acuses de
-salientes cada 12 s. Si se pierde el stream por proxy, reconexion o app
-suspendida, el siguiente tick reconcilia sin spinner ni salto de scroll.
+React Native (`mobile/`) y app iOS Swift. El evento SSE `chat_message` no
+transporta el mensaje completo, pero sus metadatos minimos permiten que el
+cliente nativo promueva y actualice la fila local inmediatamente antes del
+refetch silencioso y coalescido. Para entrantes nuevos, el servicio de canal debe
+persistir primero el incremento de `chat_read_states` y publicar despues; ese
+incremento es un UPSERT atomico para todos los usuarios activos y una falla se
+registra sin invalidar el mensaje ya guardado. WhatsApp y Meta reservan ademas
+`channel + message_id` en `chat_inbound_message_claims` dentro de la misma
+transaccion del unread: dos webhooks concurrentes no pueden incrementar ni
+publicar dos veces. Un import historico crea el claim sin sumar unread. Despues
+de escribir el frame, el
+stream intenta flush inmediato para no dejarlo retenido por buffers. El polling
+queda como red de seguridad, no como camino principal: bandeja cada 12 s, hilo
+abierto cada 4 s y acuses de salientes cada 12 s. Si se pierde el stream por
+proxy, reconexion o app suspendida, el siguiente tick reconcilia sin spinner ni
+salto de scroll.
 
 La app SwiftUI `ios/app` usa los metadatos minimos del SSE y de cada envio
 optimista para promover de inmediato la fila del contacto al inicio, incluso si
@@ -1156,6 +1163,15 @@ Reglas base:
   `user_config.mobile_chat_appointment_entry_mode`; el modo mensual mantiene
   selector de calendario, cambio de mes por swipe/flechas y captura de hora,
   duracion, ubicacion e invitados antes de crear la cita por el endpoint normal.
+- Las creaciones autenticadas de cita aceptan `clientRequestId`. `mobile/`,
+  `PhoneCalendar` y el formulario de cita dentro de `PhoneChat` generan una
+  llave por intento y la conservan al reintentar el mismo payload; el backend
+  la reserva atomicamente en `appointment_creation_requests`, reproduce una
+  respuesta completada y rechaza concurrencia, resultados ambiguos o la misma
+  llave con datos distintos. Clientes legacy sin llave conservan temporalmente
+  el contrato anterior. Los deep links de cita de Android esperan primero un
+  bootstrap utilizable de `account_timezone` y calendarios para no consumir el
+  enlace con contexto fallback.
 - En `ios/app`, los snapshots de citas usan una clave compuesta por calendario y
   mes. Cambiar calendario vacia las filas anteriores antes de hidratar la clave
   correcta, y volver a foreground fuerza la revalidacion del calendario activo.
@@ -1211,6 +1227,16 @@ Para suscripciones moviles por autorizacion, el frontend debe enviar
 `paymentMethod=stripe_link` en Stripe y `paymentMethod=conekta_link` en Conekta.
 Para tarjeta guardada, debe enviar el metodo de suscripcion directa que espera la
 pasarela (`stripe_saved_card`, `conekta_subscription` o `rebill_subscription`).
+Los cobros con tarjeta guardada y la creacion de suscripciones iniciados desde
+el movil envian una llave de intento estable en `Idempotency-Key` y
+`clientRequestId`. `saved_card_payment_requests` y
+`subscription_creation_requests` reservan la mutacion antes de tocar la
+pasarela: una operacion completada reproduce su respuesta durable; una en
+proceso o con resultado ambiguo queda bloqueada para revision y no vuelve a
+cobrar ni a crear una suscripcion a ciegas.
+El flujo movil no habilita importes ni fechas hasta confirmar juntos
+`account_currency` y `account_timezone`. Si falta cualquiera, muestra reintento
+y no sustituye moneda o zona horaria con defaults del dispositivo/Mexico.
 
 El modo de pasarelas puede ser `test` o `live`. Ese modo debe viajar con el pago
 en `payment_mode` o metadata equivalente para evitar mezclar pruebas con dinero
@@ -1255,6 +1281,12 @@ intenta cargar la previsualizacion real de la URL con metadata Open Graph
 app. Si la pagina no entrega metadata, el chat cae a una preview minima con host.
 Los cobros con tarjeta guardada usan el endpoint de la pasarela elegida, no se
 registran como pagos manuales.
+
+El pago manual iniciado dentro de `PhoneChat` conserva una llave idempotente por
+intento: la pantalla entrega un scope estable a `RecordPaymentModal`, el modal
+genera el `Idempotency-Key` y `/api/transactions` evita duplicar el registro si
+la respuesta se perdio y el usuario reintenta sin cambiar los datos. Android
+aplica el mismo contrato con su identificador estable de transaccion.
 
 Cuando se registra un pago manual, se cobra una tarjeta guardada o se agenda una
 cita desde la app nativa, el contacto vuelve a su conversacion y el chat muestra
@@ -2860,8 +2892,9 @@ diferente o recortada.
 La lista de chats nativa debe mantenerse alineada con `PhoneChat`: header de
 chats, buscador, chips de filtros, filas planas, avatares sin aro de canal y
 badge inferior derecho con asset nativo, preview de ultimo mensaje, estados de
-no leido, fila/vista de archivados, swipe lateral `Mas` + `Archivar`/`Restaurar`
-y seleccion multiple por long press. Tambien debe usar sheets nativos para
+no leido, fila/vista de archivados y seleccion multiple por long press. Tocar
+abre la conversacion y mantener presionado abre `Mas acciones`; no hay acciones
+laterales por swipe. Tambien debe usar sheets nativos para
 `Mas`, `+`/nuevo chat y selector de destinatarios despues de camara. Cuando
 cambien filtros, labels, canales, unread, archivados, seleccion, swipe, camara,
 sheets o preview en `/movil`, se debe revisar el equivalente en
@@ -2882,13 +2915,50 @@ La pantalla de analiticas nativa debe mantenerse alineada con
 `PhoneAnalytics`: periodos `30d`/`60d`/`180d`/`year`/`custom`, 8 KPIs, grafica
 principal, embudo, distribucion de origen y origen por numero de WhatsApp. Los
 rangos se calculan con `account_timezone`, el rango personalizado usa fechas
-`YYYY-MM-DD`, y los importes se formatean con `account_currency`.
+`YYYY-MM-DD`, y los importes se formatean con `account_currency`. Si no se pueden
+confirmar ambos valores, la pantalla falla cerrada y ofrece reintento en vez de
+mostrar cifras o periodos con defaults inventados. Si la licencia
+no incluye `web_analytics`, Android manda `includeWeb=0` al embudo/origen y no
+muestra visitantes ni trafico web.
+
+El ACL de esta pantalla movil es `dashboard` en Android y `/movil`, igual que
+los endpoints `/api/dashboard/*` que alimentan el resumen operativo y
+financiero. El permiso `analytics` no sustituye ese acceso: corresponde al
+modulo web de sesiones, visitantes y conversiones. El rail de tablet aplica el
+mismo guard antes de montar `PhoneAnalytics` dentro de Chat.
+
+Contrato de confiabilidad Android: la bandeja aplica los metadatos del SSE antes
+de reconciliar, normaliza timestamps SQLite/ISO como instantes UTC, conserva la
+lista cacheada ante fallos silenciosos y cancela requests colgados. La
+conversacion se remonta por `contactId`, guarda solo sus mensajes mas recientes
+sin base64, limita la cache en memoria y pinta `/conversation` antes de cargar
+journey/programados secundarios; no consulta journey/acuse de lectura en cada
+poll. El outbox local conserva pendientes/fallidos siete dias, vuelve
+reintentable un envio sin acuse al reabrir, evita el segundo intento mientras el
+primero sigue activo y permite que una respuesta canonica vacia limpie cache
+fantasma despues de hidratar. Calendario cancela rangos viejos y guarda sus
+arreglos en archivos: sin cache, un fallo de calendarios/zona horaria es error visible; con cache conserva
+la ultima agenda con aviso y bloquea cambios de fecha hasta tener timezone
+valida. Pagos bloquea creacion si no puede confirmar moneda y zona horaria, y
+mantiene features avanzadas en fail-closed.
+
+El arranque offline Android conserva la ultima ACL verificada solo para el mismo
+servidor y token. Sin esa evidencia no monta modulos; al volver a primer plano y
+periodicamente revalida la sesion. `401`/`license_blocked` limpian sesion y cache,
+mientras timeout, offline o `5xx` conservan temporalmente la ultima ACL valida.
+Si la licencia esta aplicada, una fuente de features marcada invalida o una
+llave de modulo ausente falla cerrada y no habilita esa seccion por omision.
 
 En la implementacion SwiftUI, una recarga de Analiticas solo cuenta como fresca
 si completan metricas, grafica, embudo y origen. Si algun panel falla, conserva
 el snapshot pero lo advierte y vuelve a intentar al regresar a foreground. La
 consulta de numeros de WhatsApp es independiente de Origen y solo reemplaza su
 cache cuando responde con exito.
+
+En Android, contexto, KPIs, grafica, embudo y origen fallan por separado: cada
+panel muestra error y reintento sin fabricar ceros ni presentar `Sin datos`
+cuando en realidad fallo la red o el servidor. Los paneles sanos permanecen
+visibles.
 
 El cliente de red iOS captura `{baseURL, token, generation}` al iniciar cada
 request. Un 401 o rollback perteneciente a una cuenta anterior no puede mutar la
