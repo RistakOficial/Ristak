@@ -1168,6 +1168,103 @@ export async function createOfflineContactPayment(payload) {
   }
 }
 
+/**
+ * Registra el anticipo pagado por transferencia bancaria que el agente
+ * conversacional validó con el comprobante del contacto. Inserta el pago
+ * directo en Ristak (sin invoice de GoHighLevel): el candado de evidencia del
+ * agente (findVerifiedPaymentEvidence) lee esta misma tabla, así que este
+ * registro es lo que desbloquea la acción de avance.
+ */
+export async function registerAgentTransferDepositPayment({
+  contactId,
+  amount,
+  currency = '',
+  concept = 'Anticipo por transferencia',
+  reference = null,
+  agentId = null,
+  mediaUrl = null,
+  extracted = null
+} = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const normalizedAmount = normalizeAmount(amount)
+  if (!cleanContactId) throw new Error('Falta el contacto para registrar el anticipo')
+  if (!(normalizedAmount > 0)) throw new Error('El monto del anticipo debe ser mayor a 0')
+
+  const accountCurrency = await getAccountCurrency()
+  const paymentCurrency = String(currency || accountCurrency || '').trim().toUpperCase() || accountCurrency
+  const paidAtIso = new Date().toISOString()
+  const paymentId = createRistakPaymentEntityId('transfer_proof')
+  const metadata = {
+    source: 'conversational_agent_transfer_proof',
+    agentId: agentId || null,
+    mediaUrl: mediaUrl || null,
+    extracted: extracted || null,
+    reviewSuggested: true
+  }
+
+  await db.run(
+    `INSERT INTO payments (
+      id, contact_id, amount, currency, status, payment_method, payment_mode,
+      payment_provider, reference, title, description, paid_at, metadata_json, date,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'paid', 'bank_transfer', 'live', 'manual', ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+    [
+      paymentId,
+      cleanContactId,
+      normalizedAmount,
+      paymentCurrency,
+      reference || null,
+      String(concept || 'Anticipo por transferencia').slice(0, 240),
+      [
+        'Anticipo validado por el agente conversacional con comprobante de transferencia.',
+        extracted?.bank ? `Banco: ${extracted.bank}` : '',
+        reference ? `Referencia: ${reference}` : ''
+      ].filter(Boolean).join(' '),
+      paidAtIso,
+      JSON.stringify(metadata),
+      paidAtIso
+    ]
+  )
+
+  await updateSingleContactStats(cleanContactId).catch(() => {})
+  logger.info(`Anticipo por transferencia registrado por el agente conversacional para contacto ${cleanContactId}: ${normalizedAmount} ${paymentCurrency}`)
+
+  return {
+    paymentId,
+    amount: normalizedAmount,
+    currency: paymentCurrency,
+    status: 'paid',
+    paymentMethod: 'bank_transfer',
+    paidAt: paidAtIso
+  }
+}
+
+/**
+ * Idempotencia del comprobante: si ya existe un anticipo por transferencia
+ * registrado por el agente para este contacto con el mismo monto en la ventana
+ * reciente, no se duplica.
+ */
+export async function findRecentAgentTransferDepositPayment({ contactId, amount, windowHours = 48 } = {}) {
+  const cleanContactId = String(contactId || '').trim()
+  const normalizedAmount = normalizeAmount(amount)
+  if (!cleanContactId || !(normalizedAmount > 0)) return null
+  const sinceIso = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString()
+  const row = await db.get(
+    `SELECT id, amount, currency, status, paid_at
+     FROM payments
+     WHERE contact_id = ?
+       AND payment_method = 'bank_transfer'
+       AND payment_provider = 'manual'
+       AND status = 'paid'
+       AND COALESCE(paid_at, date, created_at) >= ?
+       AND ABS(COALESCE(amount, 0) - ?) < 0.01
+     ORDER BY COALESCE(paid_at, date, created_at) DESC
+     LIMIT 1`,
+    [cleanContactId, sinceIso, normalizedAmount]
+  ).catch(() => null)
+  return row || null
+}
+
 function resolveScheduleTimezone(timezone) {
   return resolveTimezone(timezone)
 }

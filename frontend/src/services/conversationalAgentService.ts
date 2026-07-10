@@ -111,6 +111,11 @@ export interface AgentFollowUpConfig {
 
 export type AgentGoalOwner = 'human' | 'ai' | 'url'
 export type AgentDepositMode = 'fixed' | 'range'
+
+export interface AgentDepositMethodsConfig {
+  paymentLink: boolean
+  bankTransfer: boolean
+}
 export type AgentSalesPaymentMode = 'full_payment' | 'deposit'
 export type AgentCompletionMode = 'notify_only' | 'assign_user'
 export type AgentIdentityMode = 'business' | 'user' | 'custom' | 'agent'
@@ -156,6 +161,8 @@ export interface AgentGoalWorkflowConfig {
     minAmount: number | null
     maxAmount: number | null
     currency: string
+    methods?: AgentDepositMethodsConfig
+    bankTransferDetails?: string
   }
   completion: {
     mode: AgentCompletionMode
@@ -575,6 +582,11 @@ const COMPLETION_SIGNAL_META: Record<Exclude<ConversationSignal, 'discarded'>, {
 }
 const COMPLETION_SIGNAL_SET = new Set<Exclude<ConversationSignal, 'discarded'>>(Object.keys(COMPLETION_SIGNAL_META) as Array<Exclude<ConversationSignal, 'discarded'>>)
 
+export const DEFAULT_AGENT_DEPOSIT_METHODS: AgentDepositMethodsConfig = {
+  paymentLink: true,
+  bankTransfer: false
+}
+
 export const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
   appointments: {
     owner: 'human',
@@ -615,7 +627,9 @@ export const DEFAULT_AGENT_GOAL_WORKFLOW: AgentGoalWorkflowConfig = {
     amount: null,
     minAmount: null,
     maxAmount: null,
-    currency: ''
+    currency: '',
+    methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS },
+    bankTransferDetails: ''
   },
   completion: {
     mode: 'notify_only',
@@ -749,7 +763,11 @@ function normalizeAgentDef<T extends ConversationalAgentDef>(agent: T): T {
       },
       deposit: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit,
-        ...((agent.goalWorkflow?.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>)
+        ...((agent.goalWorkflow?.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>),
+        methods: {
+          ...DEFAULT_AGENT_DEPOSIT_METHODS,
+          ...((agent.goalWorkflow?.deposit?.methods || {}) as Partial<AgentDepositMethodsConfig>)
+        }
       },
       completion: {
         ...DEFAULT_AGENT_GOAL_WORKFLOW.completion,

@@ -181,6 +181,7 @@ test('activar una conversación con agentId asigna ese agente al estado', async 
   try {
     await seedReadyBusinessProfile()
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente test desktop',
       enabled: true,
       objective: 'citas'
@@ -212,6 +213,7 @@ test('la asignación automática marca la conversación como activada por el age
 
   try {
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente automático test',
       enabled: true,
       objective: 'citas'
@@ -272,6 +274,7 @@ test('un agente nuevo catch-all no hereda omisiones legacy anteriores', async ()
     `, [`cas_${randomUUID()}`, contactId])
 
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente nuevo todos los chats',
       enabled: true,
       objective: 'citas'
@@ -319,6 +322,7 @@ test('una omisión manual conserva la asignación aunque sus timestamps sean ant
   try {
     await seedContact(contactId)
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente nuevo desbloquea legacy',
       enabled: true,
       objective: 'citas'
@@ -367,6 +371,7 @@ test('una asignación legacy activa se revalida por reglas y guarda procedencia 
   try {
     await seedContact(contactId)
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente revalida asignación legacy',
       enabled: true,
       objective: 'citas'
@@ -567,6 +572,7 @@ test('un estado pausado de otro agente no bloquea a un agente nuevo', async () =
   try {
     await seedContact(contactId)
     const oldAgent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente viejo pausado',
       enabled: false,
       objective: 'citas'
@@ -580,6 +586,7 @@ test('un estado pausado de otro agente no bloquea a un agente nuevo', async () =
     await setConversationStatus(contactId, 'paused', { updatedBy: 'user', agentId: oldAgentId })
 
     const newAgent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente nuevo independiente',
       enabled: true,
       objective: 'citas'
@@ -616,6 +623,7 @@ test('un agente solo para contactos nuevos respeta su corte al hacer matching re
 
   try {
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente solo nuevos',
       enabled: true,
       objective: 'citas',
@@ -675,11 +683,13 @@ test('reinicia las omisiones de contactos de un agente sin tocar otros estados',
 
   try {
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente omisiones test',
       enabled: false,
       objective: 'citas'
     })
     const otherAgent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente omisiones externo',
       enabled: false,
       objective: 'ventas'
@@ -726,11 +736,13 @@ test('reiniciar omisiones opera por agente aunque el contacto tenga otro agente 
   try {
     await seedContact(contactId)
     const skippedAgent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente omitido del mismo contacto',
       enabled: false,
       objective: 'citas'
     })
     const activeAgent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente activo del mismo contacto',
       enabled: false,
       objective: 'ventas'
@@ -765,6 +777,7 @@ test('un mensaje nuevo reabre una conversación completada con acción concreta 
   try {
     await seedContact(contactId)
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente reapertura test',
       enabled: true,
       objective: 'citas'
@@ -836,6 +849,7 @@ test('una conversación completada no reabre si el agente está apagado o ya no 
   try {
     await seedContact(contactId)
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente reapertura con reglas',
       enabled: true,
       objective: 'citas',
@@ -920,6 +934,7 @@ test('un handoff pendiente no se borra ni se reabre por un mensaje nuevo', async
   try {
     await seedContact(contactId)
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente handoff terminal test',
       enabled: true,
       objective: 'citas',
@@ -974,6 +989,7 @@ test('los resúmenes de cierre solo salen cuando el agente asignado completa el 
 
   try {
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente resumen test',
       enabled: true,
       objective: 'citas'
@@ -1034,6 +1050,7 @@ test('bloquea activar una conversación con agente cuando el prompt interno no e
   try {
     await db.run('DELETE FROM ai_business_profile WHERE id = 1')
     const agent = await createConversationalAgent({
+      defaultCalendarId: 'cal_state_test',
       name: 'Agente test bloqueado',
       enabled: true,
       objective: 'citas'

@@ -55,6 +55,23 @@ function amountsMatch(left, right) {
   return a !== null && b !== null && Math.abs(a - b) < 0.005
 }
 
+/**
+ * Comprueba si un monto cumple el requisito de anticipo configurado
+ * (fijo exacto o dentro del rango). Lo usan el candado de evidencia y la
+ * validación del comprobante por transferencia para no duplicar criterios.
+ */
+export function depositRequirementAmountMatches(requirement = {}, amount) {
+  const candidate = normalizeAmount(amount)
+  if (candidate === null) return false
+  const mode = String(requirement.mode || 'fixed').trim() === 'range' ? 'range' : 'fixed'
+  if (mode === 'range') {
+    const minAmount = normalizeAmount(requirement.minAmount)
+    const maxAmount = normalizeAmount(requirement.maxAmount)
+    return (!minAmount || candidate >= minAmount) && (!maxAmount || candidate <= maxAmount)
+  }
+  return amountsMatch(candidate, requirement.amount)
+}
+
 function phraseAppears(text, phrase) {
   const cleanText = ` ${normalizeText(text)} `
   const cleanPhrase = normalizeText(phrase)
@@ -455,7 +472,10 @@ export async function validatePaymentRequestAgainstCatalog({
   const workflow = config.goalWorkflow || {}
   const sales = workflow.sales || {}
   const deposit = workflow.deposit || {}
-  const paymentMode = String(sales.paymentMode || sales.payment_mode || '').trim() === 'deposit'
+  // En citas el anticipo vive en deposit.enabled (no en sales.paymentMode):
+  // un cobro del agente para ese objetivo siempre es el anticipo configurado.
+  const paymentMode = String(sales.paymentMode || sales.payment_mode || '').trim() === 'deposit' ||
+    (config.objective === 'citas' && deposit.enabled === true)
     ? 'deposit'
     : 'full_payment'
   const rows = await loadProductPrices(database)
@@ -469,6 +489,7 @@ export async function validatePaymentRequestAgainstCatalog({
 
   if (paymentMode === 'deposit') {
     const mode = String(deposit.mode || 'fixed').trim() === 'range' ? 'range' : 'fixed'
+    const depositLabels = [...workflowLabels, ...labelsFromCatalog]
     candidates.push({
       source: 'workflow_deposit',
       mode,
@@ -477,7 +498,9 @@ export async function validatePaymentRequestAgainstCatalog({
       maxAmount: normalizeAmount(deposit.maxAmount),
       currency: normalizeCurrency(deposit.currency || sales.currency || trustedAccountCurrency),
       primaryLabel: sales.productName || configuredRows[0]?.product_name || null,
-      labels: [...workflowLabels, ...labelsFromCatalog]
+      // Un anticipo de citas no tiene producto configurado: acepta el concepto
+      // genérico de anticipo/apartado para que el link del anticipo sí pueda salir.
+      labels: depositLabels.length ? depositLabels : ['anticipo', 'apartado', 'reserva', 'cita', 'deposito']
     })
   } else if (configuredRows.length) {
     candidates.push(...configuredRows.map((row) => paymentCandidateFromRow(row, trustedAccountCurrency)))

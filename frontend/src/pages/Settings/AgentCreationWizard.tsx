@@ -4,7 +4,7 @@ import {
   Building2, User, Coffee, Compass, Target, Briefcase, Smile, MessageCircle,
   UserCheck, CalendarCheck, CreditCard, Link2, Wallet, ShieldCheck, Users, Rocket, Bell, MessageSquareText, Bot, type LucideIcon
 } from 'lucide-react'
-import { Modal, Button, CustomSelect, NumberInput } from '@/components/common'
+import { Modal, Button, CustomSelect, NumberInput, Switch } from '@/components/common'
 import { useLabels } from '@/contexts/LabelsContext'
 import {
   conversationalAIProviderOptions,
@@ -208,7 +208,8 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   // Pasos ACTIVOS según las respuestas (if/if-not). El calendario y el cobro solo
   // aparecen cuando aplican; si no, ni se ven.
   const activeSteps = useMemo<StepId[]>(() => {
-    const showCalendar = isCitasBooking(draft) || (draft.objective === 'citas' && draft.successAction === 'send_goal_url')
+    // El calendario es obligatorio para citas sin importar quién agenda (humano, IA o enlace).
+    const showCalendar = draft.objective === 'citas'
     const showPayment = isCitasBooking(draft) || isVentasCharging(draft)
     const showGoalUrl = draft.successAction === 'send_goal_url' && (draft.objective === 'citas' || draft.objective === 'ventas')
     const showCompletion = ['book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link'].includes(draft.successAction)
@@ -311,8 +312,15 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     if (step === 'objective' && draft.objective === 'custom') return draft.customObjective.trim().length > 0
     if (step === 'delay' && draft.responseDelay.mode === 'random') return Number(draft.responseDelay.minValue) <= Number(draft.responseDelay.maxValue)
     if (step === 'delivery' && humanMessagesEnabled) return Number(draft.replyDelivery.minDelaySeconds) <= Number(draft.replyDelivery.maxDelaySeconds)
-    // Si pide anticipo/pago, exige el monto: sin él el backend deja el avance atascado.
-    if (step === 'payment' && needsDepositAmount) return Number(draft.depositAmount) > 0
+    // El calendario es obligatorio: sin él el backend rechaza publicar el agente de citas.
+    if (step === 'calendar') return Boolean(draft.calendarId)
+    // Si pide anticipo/pago, exige monto y al menos un método de cobro completo.
+    if (step === 'payment' && needsDepositAmount) {
+      if (!(Number(draft.depositAmount) > 0)) return false
+      if (!draft.depositPaymentLink && !draft.depositBankTransfer) return false
+      if (draft.depositBankTransfer && !draft.depositBankTransferDetails.trim()) return false
+      return true
+    }
     if (step === 'goalUrl') return draft.goalUrl.trim().length > 0
     if (step === 'completion' && draft.completionMode === 'assign_user') return draft.completionUserId.trim().length > 0
     return true
@@ -333,11 +341,58 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     if (draft.objective === 'filtrar') return `¿Quién debería atender al ${leadLowerLabel} filtrado?`
     return '¿Quién debería completar el objetivo?'
   })()
+  const depositMethodsRecap = [
+    draft.depositPaymentLink ? 'link de pago' : '',
+    draft.depositBankTransfer ? 'transferencia' : ''
+  ].filter(Boolean).join(' o ')
+  const depositRecap = `Anticipo de ${money(draft.depositAmount)}${depositMethodsRecap ? ` · ${depositMethodsRecap}` : ''}`
   const cobroRecap = (() => {
-    if (isCitasBooking(draft)) return draft.askDeposit ? `Anticipo de ${money(draft.depositAmount)}` : 'Sin anticipo'
-    if (isVentasCharging(draft)) return draft.paymentMode === 'deposit' ? `Anticipo de ${money(draft.depositAmount)}` : 'Pago completo'
+    if (isCitasBooking(draft)) return draft.askDeposit ? depositRecap : 'Sin anticipo'
+    if (isVentasCharging(draft)) return draft.paymentMode === 'deposit' ? depositRecap : 'Pago completo'
     return ''
   })()
+
+  // Métodos con los que la persona puede pagar el anticipo. Compartido por citas y ventas.
+  const depositMethodsSection = (
+    <>
+      <div className={styles.field}>
+        <label className={styles.label}>Cómo puede pagar el anticipo</label>
+        <div className={styles.depositMethodRow}>
+          <Switch
+            checked={draft.depositPaymentLink}
+            onChange={(next) => patch({ depositPaymentLink: next })}
+            aria-label="Cobrar el anticipo con link de pago"
+          />
+          <span>Link de pago</span>
+        </div>
+        <div className={styles.depositMethodRow}>
+          <Switch
+            checked={draft.depositBankTransfer}
+            onChange={(next) => patch({ depositBankTransfer: next })}
+            aria-label="Cobrar el anticipo por transferencia bancaria"
+          />
+          <span>Transferencia bancaria</span>
+        </div>
+        {!draft.depositPaymentLink && !draft.depositBankTransfer && (
+          <p className={styles.fieldHint}>Activa al menos un método para cobrar el anticipo.</p>
+        )}
+      </div>
+      {draft.depositBankTransfer && (
+        <div className={styles.field}>
+          <label className={styles.label}>Datos para transferencia</label>
+          <textarea
+            className={styles.textarea}
+            value={draft.depositBankTransferDetails}
+            rows={3}
+            maxLength={1200}
+            placeholder="Banco, CLABE o cuenta, titular…"
+            onChange={(e) => patch({ depositBankTransferDetails: e.target.value })}
+          />
+          <p className={styles.fieldHint}>El agente compartirá estos datos y pedirá foto del comprobante; la IA valida el monto y registra el anticipo.</p>
+        </div>
+      )}
+    </>
+  )
 
   return (
     <Modal
@@ -679,15 +734,24 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'calendar' && (
             <>
               <h2 className={styles.title}>¿En qué calendario aparta las citas?</h2>
-              <p className={styles.help}>Aquí caen las citas que la IA agende. Si no eliges, ella revisa todos tus calendarios activos y acomoda donde haya hueco real.</p>
+              <p className={styles.help}>Aquí caen las citas de este asistente. El agente ofrecerá los espacios disponibles de este calendario.</p>
               <div className={styles.field}>
-                <CustomSelect value={draft.calendarId || ''} onValueChange={(value) => patch({ calendarId: value || null })} portal>
-                  <option value="">Que elija entre mis calendarios</option>
+                <CustomSelect
+                  value={draft.calendarId || ''}
+                  onValueChange={(value) => patch({ calendarId: value || null })}
+                  placeholder={calendars.length === 0 ? 'No hay calendarios activos' : 'Elegir calendario'}
+                  portal
+                  disabled={calendars.length === 0}
+                >
                   {calendars.map((c) => (
                     <option key={c.id} value={c.id}>{c.name}</option>
                   ))}
                 </CustomSelect>
-                <p className={styles.fieldHint}>Puedes cambiarlo o afinar horarios después en el editor.</p>
+                <p className={styles.fieldHint}>
+                  {calendars.length === 0
+                    ? 'Crea o activa un calendario primero para poder continuar.'
+                    : 'Elige uno para continuar. Puedes cambiarlo o afinar horarios después en el editor.'}
+                </p>
               </div>
             </>
           )}
@@ -701,7 +765,10 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 <OptionCard active={draft.askDeposit} Icon={Wallet} label="Sí, pido anticipo" example="Pide el anticipo, valida el comprobante y luego aparta." onClick={() => patch({ askDeposit: true })} />
               </div>
               {draft.askDeposit && (
-                <MoneyField label="¿Cuánto de anticipo?" amount={draft.depositAmount} currency={accountCurrency} onChange={(v) => patch({ depositAmount: v })} />
+                <>
+                  <MoneyField label="¿Cuánto de anticipo?" amount={draft.depositAmount} currency={accountCurrency} onChange={(v) => patch({ depositAmount: v })} />
+                  {depositMethodsSection}
+                </>
               )}
             </>
           )}
@@ -715,7 +782,10 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 <OptionCard active={draft.paymentMode === 'deposit'} Icon={Wallet} label="Solo anticipo" example="Cobra una parte para apartar. El resto se ve después." onClick={() => patch({ paymentMode: 'deposit' })} />
               </div>
               {draft.paymentMode === 'deposit' && (
-                <MoneyField label="¿De cuánto es el anticipo?" amount={draft.depositAmount} currency={accountCurrency} onChange={(v) => patch({ depositAmount: v })} />
+                <>
+                  <MoneyField label="¿De cuánto es el anticipo?" amount={draft.depositAmount} currency={accountCurrency} onChange={(v) => patch({ depositAmount: v })} />
+                  {depositMethodsSection}
+                </>
               )}
             </>
           )}
@@ -871,8 +941,8 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 <RecapRow label="Su misión" value={draft.objective === 'custom' ? (draft.customObjective.trim() || 'Meta propia') : labelOf(objectiveChoices, draft.objective)} />
                 <RecapRow label="Habla como" value={draft.identityMode === 'user' ? (draft.identityUserName || 'Persona del equipo') : draft.identityMode === 'custom' ? (draft.identityCustomName.trim() || 'Nombre propio') : labelOf(identityChoices, draft.identityMode)} />
                 <RecapRow label="Al estar listo" value={labelOf(actionChoices, draft.successAction)} />
-                {isCitasBooking(draft) && (
-                  <RecapRow label="Calendario" value={calendars.find((c) => c.id === draft.calendarId)?.name || 'El que tenga hueco'} />
+                {draft.objective === 'citas' && (
+                  <RecapRow label="Calendario" value={calendars.find((c) => c.id === draft.calendarId)?.name || 'Sin elegir'} />
                 )}
                 {draft.goalUrl.trim() && <RecapRow label="Enlace" value={draft.goalUrl.trim()} />}
                 {cobroRecap && <RecapRow label="Cobro" value={cobroRecap} />}

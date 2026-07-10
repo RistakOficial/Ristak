@@ -7,8 +7,14 @@ import { createAppointment } from '../../controllers/calendarsController.js'
 import { updateContact } from '../../controllers/contactsController.js'
 import { listCalendarsTool } from '../tools/appointmentTools.js'
 import { getLocalFreeSlots } from '../../services/localCalendarService.js'
-import { createSinglePaymentLink } from '../../services/paymentFlowService.js'
-import { getBusinessProfileSnapshot } from '../../services/aiAgentService.js'
+import {
+  createSinglePaymentLink,
+  findRecentAgentTransferDepositPayment,
+  registerAgentTransferDepositPayment
+} from '../../services/paymentFlowService.js'
+import { getBusinessProfileSnapshot, getOpenAIApiKey } from '../../services/aiAgentService.js'
+import { getDepositPaymentMethods } from './prompt.js'
+import { analyzePaymentReceiptImage } from './mediaContext.js'
 import { buildTriggerLinkPublicUrl, getTriggerLink } from '../../services/triggerLinksService.js'
 import { getAccountTimezone, normalizeDateOnlyInTimezone } from '../../utils/dateUtils.js'
 import { getAccountCurrency } from '../../utils/accountLocale.js'
@@ -26,6 +32,7 @@ import { sendConversationalAgentPriorityNotification } from '../../services/push
 import { logger } from '../../utils/logger.js'
 import { requireClosingPhasesIfNeeded } from './closingPhaseGate.js'
 import {
+  depositRequirementAmountMatches,
   findVerifiedPaymentEvidence,
   revalidateAppointmentSlot,
   validatePaymentRequestAgainstCatalog,
@@ -95,6 +102,23 @@ function allowAppointmentOverlaps(config = {}) {
   )
 }
 
+// El calendario del objetivo lo decide la CONFIGURACIÓN, no el modelo. Si el
+// negocio fijó un calendario, toda lectura de disponibilidad y todo agendado
+// ocurren en ése, aunque el modelo mande otro id.
+function getConfiguredAppointmentCalendarId(config = {}) {
+  const configured = String(config.goalWorkflow?.appointments?.calendarId || config.defaultCalendarId || '').trim()
+  return configured || null
+}
+
+function resolveEffectiveCalendarId(config = {}, requestedCalendarId = '') {
+  const configured = getConfiguredAppointmentCalendarId(config)
+  const requested = String(requestedCalendarId || '').trim()
+  if (configured) {
+    return { calendarId: configured, overrodeModelCalendar: Boolean(requested && requested !== configured) }
+  }
+  return { calendarId: requested || null, overrodeModelCalendar: false }
+}
+
 function getSalesPaymentMode(config = {}) {
   const mode = String(config.goalWorkflow?.sales?.paymentMode || config.goalWorkflow?.sales?.payment_mode || '').trim()
   if (mode === 'deposit' || mode === 'full_payment') return mode
@@ -160,15 +184,22 @@ async function rejectMissingDepositIfNeeded(ctx, config = {}, comprobanteValidad
       return null
     }
   }
+  const methods = getDepositPaymentMethods(config)
+  const collectionHints = []
+  if (methods.paymentLink) collectionHints.push('manda el link de pago con create_payment_link')
+  if (methods.bankTransfer) collectionHints.push('comparte los datos de transferencia y, cuando llegue la foto del comprobante, valídala con register_deposit_payment_proof')
+  const collectionHint = collectionHints.length
+    ? `Para cobrarlo: ${collectionHints.join('; o ')}.`
+    : 'Solicita que el equipo registre el pago o pasa la conversación a una persona.'
   return {
     ok: false,
     actionCompleted: false,
     paymentEvidenceRequired: true,
-    transferRequired: !ctx.dryRun,
+    transferRequired: !ctx.dryRun && !collectionHints.length,
     claimedProofIgnored: !ctx.dryRun && comprobanteValidado === true,
     error: ctx.dryRun
-      ? `Falta validar el ${paymentLabel} (${formatDepositRequirement(deposit, accountLocale)}). En vivo se exigirá un pago confirmado o registro real; una foto o un booleano de la IA no bastan.`
-      : `No existe un pago confirmado o registro verificable del ${paymentLabel} (${formatDepositRequirement(deposit, accountLocale)}). No se ejecutó la acción. No afirmes que el comprobante fue validado; solicita que el equipo registre el pago o pasa la conversación a una persona.`
+      ? `Falta validar el ${paymentLabel} (${formatDepositRequirement(deposit, accountLocale)}). En vivo se exigirá un pago confirmado o registro real; una foto sin validar o un booleano de la IA no bastan. ${collectionHint}`
+      : `No existe un pago confirmado o registro verificable del ${paymentLabel} (${formatDepositRequirement(deposit, accountLocale)}). No se ejecutó la acción y no debes afirmar que el comprobante fue validado. ${collectionHint}`
   }
 }
 
@@ -248,6 +279,43 @@ async function getPaymentContact(contactId) {
   const row = await db.get('SELECT id, full_name, email, phone FROM contacts WHERE id = ?', [contactId])
   if (!row) return null
   return { id: row.id, name: row.full_name, email: row.email, phone: row.phone }
+}
+
+const RECEIPT_MEDIA_WINDOW_HOURS = 72
+
+// Busca la imagen o PDF ENTRANTE más reciente del contacto (WhatsApp/SMS/webchat
+// y DMs de Meta) dentro de la ventana: es el comprobante que se va a validar.
+async function findLatestInboundReceiptMedia(contactId) {
+  if (!contactId) return null
+  const sinceIso = new Date(Date.now() - RECEIPT_MEDIA_WINDOW_HOURS * 60 * 60 * 1000).toISOString()
+  const mediaFilter = "(LOWER(COALESCE(media_mime_type, '')) LIKE 'image/%' OR LOWER(COALESCE(media_mime_type, '')) = 'application/pdf')"
+
+  const [whatsappRow, metaRow] = await Promise.all([
+    db.get(`
+      SELECT id, media_url, media_mime_type, COALESCE(message_timestamp, created_at) AS media_at
+      FROM whatsapp_api_messages
+      WHERE contact_id = ? AND direction = 'inbound'
+        AND COALESCE(media_url, '') != '' AND ${mediaFilter}
+        AND COALESCE(message_timestamp, created_at) >= ?
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT 1
+    `, [contactId, sinceIso]).catch(() => null),
+    db.get(`
+      SELECT id, media_url, media_mime_type, COALESCE(message_timestamp, created_at) AS media_at
+      FROM meta_social_messages
+      WHERE contact_id = ? AND direction = 'inbound'
+        AND COALESCE(media_url, '') != '' AND ${mediaFilter}
+        AND COALESCE(message_timestamp, created_at) >= ?
+      ORDER BY COALESCE(message_timestamp, created_at) DESC
+      LIMIT 1
+    `, [contactId, sinceIso]).catch(() => null)
+  ])
+
+  const candidates = [whatsappRow, metaRow].filter((row) => row?.media_url)
+  if (!candidates.length) return null
+  candidates.sort((a, b) => new Date(b.media_at || 0).getTime() - new Date(a.media_at || 0).getTime())
+  const chosen = candidates[0]
+  return { messageId: chosen.id, mediaUrl: chosen.media_url, mimeType: chosen.media_mime_type || '', receivedAt: chosen.media_at || null }
 }
 
 async function notifyHumanPriority(ctx, { reason = '', summary = '', signal = 'ready_for_human' } = {}) {
@@ -478,28 +546,36 @@ export function createConversationalTools(ctx) {
       ? 'Obtiene horarios de atención de un calendario para agendar. Este agente SÍ tiene permitido empalmar citas, así que puede devolver horarios aunque ya exista otra cita en ese mismo horario.'
       : 'Obtiene horarios libres de un calendario en un rango de fechas. Este agente NO puede empalmar citas: sólo devuelve horarios sin otra cita activa en ese horario.',
     parameters: z.object({
-      calendarId: z.string().describe('ID del calendario (usa list_calendars)'),
+      calendarId: z.string().nullable().describe('ID del calendario. Déjalo null para usar el calendario configurado del agente; sólo usa list_calendars si no hay calendario configurado.'),
       startDate: z.string().describe('Fecha inicial YYYY-MM-DD'),
       endDate: z.string().describe('Fecha final YYYY-MM-DD')
     }),
     execute: async ({ calendarId, startDate, endDate }) => {
+      const { calendarId: effectiveCalendarId, overrodeModelCalendar } = resolveEffectiveCalendarId(config, calendarId)
+      if (!effectiveCalendarId) {
+        return { ok: false, total: 0, slots: [], error: 'No hay calendario configurado ni indicado: usa list_calendars para elegir uno activo.' }
+      }
       const overlapsAllowed = allowAppointmentOverlaps(config)
-      const slots = await getLocalFreeSlots(calendarId, startDate, endDate, null, {
+      const slots = await getLocalFreeSlots(effectiveCalendarId, startDate, endDate, null, {
         ignoreAppointmentConflicts: overlapsAllowed,
         appointmentLimit: overlapsAllowed ? undefined : 1
       })
 
       if (!Array.isArray(slots) || !slots.length) {
-        return { ok: true, total: 0, slots: [], note: 'Sin horarios disponibles en ese rango (o el calendario no existe).' }
+        return { ok: true, total: 0, slots: [], calendarId: effectiveCalendarId, note: 'Sin horarios disponibles en ese rango (o el calendario no existe).' }
       }
 
       return {
         ok: true,
         total: slots.reduce((total, day) => total + (Array.isArray(day.slots) ? day.slots.length : 0), 0),
+        calendarId: effectiveCalendarId,
         overlapPolicy: overlapsAllowed ? 'allowed' : 'blocked',
-        note: overlapsAllowed
-          ? 'Empalme permitido: estos horarios respetan horas de atención, pero pueden coincidir con citas existentes.'
-          : 'Empalme bloqueado: estos horarios no tienen otra cita activa encima.',
+        note: [
+          overlapsAllowed
+            ? 'Empalme permitido: estos horarios respetan horas de atención, pero pueden coincidir con citas existentes.'
+            : 'Empalme bloqueado: estos horarios no tienen otra cita activa encima.',
+          overrodeModelCalendar ? 'Se usó el calendario configurado del agente (el id indicado se ignoró).' : ''
+        ].filter(Boolean).join(' '),
         slots
       }
     }
@@ -509,14 +585,18 @@ export function createConversationalTools(ctx) {
     name: 'book_appointment',
     description: 'Agenda la cita del contacto en un horario REAL obtenido con get_free_slots y confirmado por la persona. Calcula el fin con la duración del calendario automáticamente. Nunca la uses sin que la persona haya confirmado el horario.',
     parameters: z.object({
-      calendarId: z.string().describe('ID del calendario (usa list_calendars o get_business_profile)'),
+      calendarId: z.string().nullable().describe('ID del calendario. Déjalo null para usar el calendario configurado del agente.'),
       startTime: z.string().describe('Inicio exacto del slot elegido, ISO 8601 tal como lo devolvió get_free_slots'),
       title: z.string().nullable().describe('Título corto de la cita (ej. "Cita - Juan Pérez")'),
       notes: z.string().nullable().describe('Resumen breve de lo que busca la persona'),
       comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
       anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
     }),
-    execute: async ({ calendarId, startTime, title, notes, comprobanteValidado, anticipoValidado }) => {
+    execute: async ({ calendarId: requestedCalendarId, startTime, title, notes, comprobanteValidado, anticipoValidado }) => {
+      const { calendarId } = resolveEffectiveCalendarId(config, requestedCalendarId)
+      if (!calendarId) {
+        return { ok: false, actionCompleted: false, error: 'No hay calendario configurado ni indicado: usa list_calendars para obtener el ID real. No se agendó nada.' }
+      }
       const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
       if (phaseError) return phaseError
       const depositError = await rejectMissingDepositIfNeeded(ctx, config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
@@ -1430,6 +1510,148 @@ export function createConversationalTools(ctx) {
     }
   })
 
+  const registerDepositProofTool = tool({
+    name: 'register_deposit_payment_proof',
+    description: 'Valida el comprobante de transferencia que el contacto mandó en FOTO o PDF y, si el monto coincide con el anticipo configurado, registra el pago real. Ejecútala EN SILENCIO en cuanto llegue el comprobante. SOLO su resultado ok cuenta como anticipo pagado; nunca lo des por validado tú.',
+    parameters: z.object({
+      montoIndicado: z.number().nullable().describe('Monto que la persona dijo haber transferido, si lo mencionó (solo referencia; la validación usa el comprobante)'),
+      referencia: z.string().nullable().describe('Referencia o folio si la persona lo compartió en texto')
+    }),
+    execute: async ({ montoIndicado, referencia }) => {
+      const deposit = getDepositRequirement(config)
+      if (!deposit) {
+        return { ok: false, actionCompleted: false, error: 'Este agente no tiene anticipo configurado; no hay nada que validar.' }
+      }
+      const methods = getDepositPaymentMethods(config)
+      if (!methods.bankTransfer) {
+        return { ok: false, actionCompleted: false, error: 'La transferencia bancaria no está habilitada para este anticipo. Usa el método configurado o manda a humano.' }
+      }
+      const paymentLabel = getDepositRequirementLabel(config)
+      const expectedLabel = formatDepositRequirement(deposit, ctx.accountLocale)
+
+      const action = pushAction(ctx, 'register_deposit_payment_proof', {
+        montoIndicado: Number(montoIndicado) || null,
+        referencia: referencia || null,
+        effect: { liveEffect: `VALIDARÍA el comprobante con visión y registraría el ${paymentLabel} como pago real`, marksObjectiveCompleted: false }
+      })
+
+      if (ctx.dryRun) {
+        settleAction(action, 'simulated', { actionCompleted: false, wouldRegisterPayment: true })
+        return {
+          ok: true,
+          simulated: true,
+          wouldRegisterPayment: true,
+          note: `Simulación: en vivo se leería el comprobante real y sólo se registraría el pago si el monto coincide con ${expectedLabel}.`
+        }
+      }
+
+      const accountCurrency = String(ctx.accountLocale?.currency || await getAccountCurrency().catch(() => '')).trim().toUpperCase()
+
+      // Idempotencia: si el anticipo ya quedó registrado (por esta tool o por el
+      // equipo), no se duplica el pago.
+      const existingEvidence = await findVerifiedPaymentEvidence({
+        database: db,
+        contactId: ctx.contactId,
+        agentId: config.id || ctx.agentId || null,
+        accountCurrency,
+        requirement: { ...deposit, currency: deposit.currency || accountCurrency }
+      })
+      if (existingEvidence.ok) {
+        settleAction(action, 'ok', { actionCompleted: true, alreadyRegistered: true, paymentId: existingEvidence.evidence.paymentId })
+        return { ok: true, actionCompleted: true, alreadyRegistered: true, payment: existingEvidence.evidence, note: `El ${paymentLabel} ya estaba registrado; continúa con la acción de avance.` }
+      }
+
+      const receiptMedia = await findLatestInboundReceiptMedia(ctx.contactId)
+      if (!receiptMedia) {
+        settleAction(action, 'error', { error: 'no_receipt_media' })
+        return { ok: false, actionCompleted: false, error: 'No encontré una foto o PDF reciente del comprobante en la conversación. Pide a la persona que mande la foto del comprobante y vuelve a intentar.' }
+      }
+
+      const apiKey = await getOpenAIApiKey().catch(() => null)
+      const analysis = await analyzePaymentReceiptImage({
+        mediaUrl: receiptMedia.mediaUrl,
+        expectedCurrency: accountCurrency,
+        apiKey
+      })
+      if (!analysis.ok) {
+        settleAction(action, 'error', { error: analysis.reason || 'analysis_failed' })
+        return { ok: false, actionCompleted: false, error: 'No pude leer el comprobante con claridad. Pide una foto más clara y completa (que se vea el monto) o manda a humano con send_to_human.' }
+      }
+      if (!analysis.isPaymentReceipt || !analysis.amount) {
+        settleAction(action, 'error', { error: 'not_a_receipt', analysis: { isPaymentReceipt: analysis.isPaymentReceipt, amount: analysis.amount } })
+        return { ok: false, actionCompleted: false, error: 'La imagen recibida no parece un comprobante de pago legible (no se distingue un monto transferido). Pide la foto del comprobante real de la transferencia.' }
+      }
+      if (analysis.currency && accountCurrency && analysis.currency !== accountCurrency) {
+        settleAction(action, 'error', { error: 'currency_mismatch', detected: analysis.currency })
+        return { ok: false, actionCompleted: false, error: `El comprobante indica moneda ${analysis.currency} y la cuenta cobra en ${accountCurrency}. No se registró el pago; manda a humano con send_to_human para revisarlo.` }
+      }
+      if (!depositRequirementAmountMatches(deposit, analysis.amount)) {
+        settleAction(action, 'error', { error: 'amount_mismatch', detected: analysis.amount })
+        return { ok: false, actionCompleted: false, detectedAmount: analysis.amount, error: `El comprobante muestra ${analysis.amount} ${accountCurrency} y el ${paymentLabel} configurado es ${expectedLabel}. No se registró el pago: dile con naturalidad la diferencia y pide el comprobante por el monto correcto, o manda a humano.` }
+      }
+
+      // Doble idempotencia por monto/ventana: evita registrar el mismo comprobante dos veces.
+      const duplicate = await findRecentAgentTransferDepositPayment({ contactId: ctx.contactId, amount: analysis.amount })
+      if (duplicate) {
+        settleAction(action, 'ok', { actionCompleted: true, alreadyRegistered: true, paymentId: duplicate.id })
+        return { ok: true, actionCompleted: true, alreadyRegistered: true, payment: { paymentId: duplicate.id, amount: duplicate.amount, currency: duplicate.currency }, note: `Ese comprobante ya estaba registrado; continúa con la acción de avance.` }
+      }
+
+      let payment
+      try {
+        payment = await registerAgentTransferDepositPayment({
+          contactId: ctx.contactId,
+          amount: analysis.amount,
+          currency: accountCurrency,
+          concept: `${paymentLabel === 'anticipo' ? 'Anticipo' : 'Pago'} por transferencia`,
+          reference: analysis.reference || (referencia || null),
+          agentId: config.id || ctx.agentId || null,
+          mediaUrl: receiptMedia.mediaUrl,
+          extracted: {
+            amount: analysis.amount,
+            currency: analysis.currency,
+            date: analysis.date,
+            bank: analysis.bank,
+            reference: analysis.reference,
+            recipientHint: analysis.recipientHint,
+            confidence: analysis.confidence
+          }
+        })
+      } catch (error) {
+        logger.error(`[Agente conversacional] No se pudo registrar el anticipo por transferencia: ${error.message}`)
+        settleAction(action, 'error', { error: error.message })
+        return { ok: false, actionCompleted: false, transferRequired: true, error: 'El comprobante se leyó bien pero no se pudo registrar el pago. Pasa la conversación a una persona con send_to_human.' }
+      }
+
+      await recordConversationalAgentEvent({
+        contactId: ctx.contactId,
+        eventType: 'deposit_transfer_registered',
+        detail: {
+          agentId: config.id || null,
+          paymentId: payment.paymentId,
+          amount: payment.amount,
+          currency: payment.currency,
+          mediaMessageId: receiptMedia.messageId || null,
+          confidence: analysis.confidence
+        }
+      }).catch(() => {})
+      // El equipo recibe aviso para auditar el comprobante aunque el agente continúe.
+      await notifyHumanPriority(ctx, {
+        reason: `${paymentLabel === 'anticipo' ? 'Anticipo' : 'Pago'} por transferencia validado por IA`,
+        summary: `${payment.amount} ${payment.currency} · revisar comprobante`,
+        signal: 'deposit_transfer_registered'
+      })
+
+      settleAction(action, 'ok', { actionCompleted: true, paymentId: payment.paymentId, amount: payment.amount, currency: payment.currency })
+      return {
+        ok: true,
+        actionCompleted: true,
+        payment: { paymentId: payment.paymentId, amount: payment.amount, currency: payment.currency },
+        note: `${paymentLabel === 'anticipo' ? 'Anticipo' : 'Pago'} registrado y validado. Confirma a la persona con naturalidad y continúa con la acción de avance.`
+      }
+    }
+  })
+
   const tools = [
     getBusinessProfileTool,
     listProductsTool,
@@ -1461,6 +1683,19 @@ export function createConversationalTools(ctx) {
     if (config?.successAction === 'ready_to_buy') tools.push(createPaymentLinkTool)
     if (config?.successAction === 'send_goal_url') tools.push(sendGoalUrlTool)
     if (config?.successAction === 'send_trigger_link') tools.push(sendTriggerLinkTool)
+
+    // Cobro del anticipo: el agente necesita con qué cobrarlo según los métodos
+    // configurados, sin importar cuál sea su acción de cierre.
+    const depositRequirement = getDepositRequirement(config)
+    if (depositRequirement) {
+      const depositMethods = getDepositPaymentMethods(config)
+      if (depositMethods.paymentLink && config?.successAction !== 'ready_to_buy') {
+        tools.push(createPaymentLinkTool)
+      }
+      if (depositMethods.bankTransfer) {
+        tools.push(registerDepositProofTool)
+      }
+    }
   }
   return tools
 }

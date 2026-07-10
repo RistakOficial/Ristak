@@ -1,7 +1,7 @@
 import { Agent, Runner } from '@openai/agents'
 import { DEFAULT_OPENAI_MODEL } from '../../config/openAIModels.js'
 import { logger } from '../../utils/logger.js'
-import { hasConfiguredPriceDisclosureGate } from './prompt.js'
+import { hasConfiguredPriceDisclosureGate, PRICE_INSISTENCE_HARD_THRESHOLD } from './prompt.js'
 
 /**
  * Guardián de una regla EXPLÍCITA del negocio.
@@ -89,10 +89,13 @@ Responde sólo JSON válido:
  * Devuelve la respuesta original o una corrección limitada a la condición configurada.
  * Fail-open: una caída del supervisor nunca bloquea la conversación.
  */
-export async function enforceComplianceGuard({ reply = '', messages = [], config = {}, runtime = null, model = null } = {}) {
+export async function enforceComplianceGuard({ reply = '', messages = [], config = {}, runtime = null, model = null, priceInsistenceCount = 0 } = {}) {
   const original = String(reply || '')
   if (!original.trim()) return { reply: original, changed: false }
   if (!complianceGuardApplies(config)) return { reply: original, changed: false }
+  // Regla de la casa: a la tercera petición de precio la insistencia del contacto
+  // cumple la condición y el dato real debe pasar; retenerlo mata la conversación.
+  if (Number(priceInsistenceCount) >= PRICE_INSISTENCE_HARD_THRESHOLD) return { reply: original, changed: false }
   if (!replyMightViolate(original)) return { reply: original, changed: false }
   if (!runtime?.modelProvider) return { reply: original, changed: false }
 

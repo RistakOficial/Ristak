@@ -97,9 +97,23 @@ function validateWorkflow(config, issues) {
     addIssue(issues, 'missing_custom_objective', 'Describe el resultado que debe lograr este agente.', 'customObjective', 'error')
   }
 
-  if (config.successAction === 'book_appointment') {
+  if (config.objective === 'citas') {
+    // El calendario es requisito del objetivo de citas sin importar quién agende
+    // (humano, IA o enlace): de ahí salen los espacios que el agente ofrece.
     const calendarId = cleanId(workflow.appointments?.calendarId || config.defaultCalendarId)
-    if (!calendarId) addIssue(issues, 'calendar_selected_at_runtime', 'No hay un calendario fijo; el agente tendrá que consultar los calendarios activos y elegir uno real antes de agendar.', 'goalWorkflow.appointments.calendarId', 'warning')
+    if (!calendarId) addIssue(issues, 'missing_calendar', 'Elige el calendario para las citas: el agente lo necesita para ofrecer los espacios disponibles.', 'goalWorkflow.appointments.calendarId', 'error')
+  }
+
+  if (workflow.deposit?.enabled === true || workflow.sales?.paymentMode === 'deposit') {
+    const methods = workflow.deposit?.methods || {}
+    const paymentLink = methods.paymentLink === undefined ? true : Boolean(methods.paymentLink)
+    const bankTransfer = Boolean(methods.bankTransfer)
+    if (!paymentLink && !bankTransfer) {
+      addIssue(issues, 'missing_deposit_method', 'Activa al menos un método para cobrar el anticipo (link de pago o transferencia).', 'goalWorkflow.deposit.methods', 'error')
+    }
+    if (bankTransfer && !cleanText(workflow.deposit?.bankTransferDetails, 1200)) {
+      addIssue(issues, 'missing_transfer_details', 'Escribe los datos de transferencia que el agente compartirá para el anticipo.', 'goalWorkflow.deposit.bankTransferDetails', 'error')
+    }
   }
 
   if (config.successAction === 'ready_to_buy') {

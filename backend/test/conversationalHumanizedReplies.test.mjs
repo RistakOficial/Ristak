@@ -1753,7 +1753,8 @@ test('publicar un agente enciende el runtime aunque el switch legacy estuviera a
     await saveConversationalAgentConfig({ enabled: false })
     agent = await createConversationalAgent({
       name: 'Agente runtime apagado',
-      enabled: false
+      enabled: false,
+      defaultCalendarId: 'cal_runtime_test'
     })
 
     const published = await updateConversationalAgent(agent.id, { enabled: true })
@@ -1856,7 +1857,8 @@ test('cambiar a silenciar aplica sobre conversaciones ya asignadas y mantiene el
       name: 'Agente modo editable',
       enabled: true,
       hideAttended: false,
-      hideAttendedNotifications: false
+      hideAttendedNotifications: false,
+      defaultCalendarId: 'cal_runtime_test'
     })
 
     await assignAgentToConversation(contactId, agent.id, {
@@ -3115,7 +3117,7 @@ test('la estrategia adaptable renderiza los datos reales sin placeholders crudos
   })
   const rendered = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, parameters, { replaceMissing: true })
 
-  assert.match(rendered, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
+  assert.match(rendered, /AGENTE CONVERSACIONAL DE CIERRE, VERSIÓN CON CRITERIO/)
   assert.match(rendered, /Academia Sol/)
   assert.match(rendered, /escuela de idiomas/)
   assert.match(rendered, /clases de inglés para adultos/)
@@ -3123,27 +3125,38 @@ test('la estrategia adaptable renderiza los datos reales sin placeholders crudos
   assert.match(rendered, /español colombiano/)
   assert.match(rendered, /mark_ready_to_advance/)
   assert.doesNotMatch(rendered, /dato pendiente de configurar/)
-  assert.doesNotMatch(rendered, /\[(?:ESCRIBIR[^\]]*|NOMBRE_DEL_NEGOCIO|INDUSTRIA|PRODUCTO_O_SERVICIO|CANAL_DE_CONVERSACION|HERRAMIENTA_INTERNA_DE_AVANCE|HERRAMIENTA_INTERNA_DE_DESCARTE|CULTURA_TEXTUAL_REGIONAL)\]/)
-  assert.ok(rendered.length > 2500)
-  assert.ok(rendered.length < 9000)
+  assert.doesNotMatch(rendered, /\[(?:ESCRIBIR[^\]]*|NOMBRE_DEL_NEGOCIO|INDUSTRIA|PRODUCTO_O_SERVICIO|CANAL_DE_CONVERSACION|HERRAMIENTA_INTERNA_DE_AVANCE|HERRAMIENTA_INTERNA_DE_DESCARTE|CULTURA_TEXTUAL_REGIONAL|PAIS_CUENTA|CODIGO_PAIS|REGISTRO_DEL_NEGOCIO|TIPO_DE_PERSONA)\]/)
+  assert.ok(rendered.length > 40000)
+  assert.ok(rendered.length < 160000)
 })
 
-test('estrategia adaptable prioriza ayuda, evidencia y objetivos específicos', () => {
-  assert.match(DEFAULT_CLOSING_STRATEGY, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Separa HECHOS de HIPÓTESIS/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /pregunta directa, respóndela primero/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /UNA pregunta principal/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /no la vuelvas a pedir/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /ADAPTACIÓN AL OBJETIVO/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /CITAS:.*día y una hora exactos/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /VENTAS:.*valor, la moneda y el canal/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /DATOS: recopila únicamente los campos configurados/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /FILTRO: comprueba los criterios escritos/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /OBJETIVO PERSONALIZADO: interpreta literalmente/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /inconsistencia, señálala con tacto/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /menor fricción posible/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /memoria de apoyo, no una lista por completar/)
-  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /estatus sin necesidad|se califique sola|tu primera respuesta NO informa|el precio NUNCA es lo primero|costo de no actuar|reto suave|fases obligatorias|ajedrez de la motivación/i)
+test('el guion de fábrica con criterio trae la filosofía completa de cierre', () => {
+  assert.match(DEFAULT_CLOSING_STRATEGY, /AGENTE CONVERSACIONAL DE CIERRE, VERSIÓN CON CRITERIO/)
+  // Filosofía raíz: curiosidad genuina + puro pull, nunca push.
+  assert.match(DEFAULT_CLOSING_STRATEGY, /CURIOSIDAD GENUINA/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Puro PULL, nunca push/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /tu PRIMER mensaje JAMÁS explica el producto/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /LA BIBLIA DEL PRIMER CONTACTO/)
+  // Manejo de precio: construir valor primero, sin evasivas prohibidas.
+  assert.match(DEFAULT_CLOSING_STRATEGY, /El precio NUNCA es lo primero/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /no tengo el valor cargado/)
+  // Anti-loop y anti-mamón: desarmar, no rebotar infinito, no quedarse callado.
+  assert.match(DEFAULT_CLOSING_STRATEGY, /NO te quedes en LOOP rebotando/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Baja la guardia/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /JAMÁS te quedes callado cuando la persona/)
+  // Giros sensibles: la empatía manda sobre el estatus.
+  assert.match(DEFAULT_CLOSING_STRATEGY, /la EMPATÍA y la CONTENCIÓN van PRIMERO/)
+  // Textura humana y prohibiciones absolutas.
+  assert.match(DEFAULT_CLOSING_STRATEGY, /CERO groserías/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /PROHIBIDO el guion largo/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /PROHIBICIÓN MÁXIMA: NO COPIES/)
+  // Contratos con el sistema: placeholders de herramientas internas.
+  assert.match(DEFAULT_CLOSING_STRATEGY, /\[HERRAMIENTA_INTERNA_DE_AVANCE\]/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /\[HERRAMIENTA_INTERNA_DE_DESCARTE\]/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /\[CULTURA_TEXTUAL_REGIONAL\]/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /\[REGISTRO_DEL_NEGOCIO\]/)
+  // Estructura de globitos alineada con el splitter (saltos de línea = globos).
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Estructura de globitos/)
 })
 
 test('[Fase 2] buildRuntimeBusinessContext usa el texto libre como fuente de verdad + anti-invención', () => {
@@ -3179,9 +3192,11 @@ test('base directa conserva el mismo contrato sin la variante adaptable', () => 
 test('usesLightDirectClosingBase cubre la matriz de iniciativa y registro', () => {
   const persuasions = ['low', 'medium', 'high']
   const languages = ['professional', 'intermediate', 'colloquial']
+  // La base directa acompaña SOLO a iniciativa baja (Anfitrión); el registro
+  // Ejecutivo ya se calibra dentro del guion con criterio, no cambiando de base.
   const adaptiveQuadrant = new Set([
-    'medium|intermediate', 'medium|colloquial',
-    'high|intermediate', 'high|colloquial'
+    'medium|professional', 'medium|intermediate', 'medium|colloquial',
+    'high|professional', 'high|intermediate', 'high|colloquial'
   ])
   for (const persuasionLevel of persuasions) {
     for (const languageLevel of languages) {
@@ -3198,7 +3213,7 @@ test('usesLightDirectClosingBase cubre la matriz de iniciativa y registro', () =
     }
   }
   assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'low', languageLevel: 'colloquial' }), true)
-  assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'high', languageLevel: 'professional' }), true)
+  assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'high', languageLevel: 'professional' }), false)
   assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'high', languageLevel: 'intermediate' }), false)
 })
 
@@ -3226,25 +3241,29 @@ test('instrucciones montan bases compactas y la iniciativa nunca cambia las prec
   })
 
   const adaptive = build('high', 'intermediate')
-  assert.match(adaptive, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
+  assert.match(adaptive, /AGENTE CONVERSACIONAL DE CIERRE, VERSIÓN CON CRITERIO/)
   assert.match(adaptive, /Nivel de iniciativa: ALTA/)
   assert.doesNotMatch(adaptive, /ESTRATEGIA CONVERSACIONAL DIRECTA/)
+  // La jerarquía del guion con criterio dosifica: pull en preguntas vagas.
+  assert.match(adaptive, /Atiende SIEMPRE lo que preguntó/)
+  assert.match(adaptive, /nunca rebotes más de dos veces/)
 
   const anfitrionCallejero = build('low', 'colloquial')
   assert.match(anfitrionCallejero, /ESTRATEGIA CONVERSACIONAL DIRECTA/)
   assert.match(anfitrionCallejero, /Nivel de iniciativa: BAJA \(Anfitrión\)/)
   assert.match(anfitrionCallejero, /Registro de lenguaje: CALLEJERO/)
+  // La base directa conserva la respuesta inmediata a preguntas específicas.
+  assert.match(anfitrionCallejero, /responde esa duda PRIMERO/i)
+  assert.doesNotMatch(anfitrionCallejero, /AGENTE CONVERSACIONAL DE CIERRE, VERSIÓN CON CRITERIO/)
 
   const highExecutive = build('high', 'professional')
-  assert.match(highExecutive, /ESTRATEGIA CONVERSACIONAL DIRECTA/)
+  assert.match(highExecutive, /AGENTE CONVERSACIONAL DE CIERRE, VERSIÓN CON CRITERIO/)
   assert.match(highExecutive, /Nivel de iniciativa: ALTA/)
   assert.match(highExecutive, /Registro de lenguaje: EJECUTIVO/)
 
   for (const instructions of [adaptive, anfitrionCallejero, highExecutive]) {
-    assert.match(instructions, /responde esa duda PRIMERO/i)
     assert.match(instructions, /precondición del objetivo concreto/)
     assert.match(instructions, /No existe un recorrido universal/)
-    assert.doesNotMatch(instructions, /Fases obligatorias|reto suave|costo de no actuar|arco de cierre/i)
     assert.doesNotMatch(instructions, /dato pendiente de configurar/)
     assert.doesNotMatch(instructions, /\[(?:NOMBRE_DEL_NEGOCIO|CANAL_DE_CONVERSACION|OBJETIVO_FINAL|HERRAMIENTA_INTERNA_DE_AVANCE)\]/)
   }
@@ -3423,7 +3442,7 @@ test('instrucciones universales evitan repetir datos y simular handoff sin tool'
   assert.match(instructions, /guárdalo con save_contact_data si corresponde/)
   assert.match(instructions, /Nunca escribas como si ya hubieras pasado el chat al equipo/)
   assert.match(instructions, /si no ejecutaste mark_ready_to_advance o send_to_human/)
-  assert.match(instructions, /Este agente NO agenda por su cuenta; un humano cierra la cita/)
+  assert.match(instructions, /Este agente NO crea la cita por su cuenta; un humano la cierra/)
   assert.match(instructions, /Después de esa tool, el bot se detiene/)
   assert.match(instructions, /una persona que no entiende el proceso después de explicarlo breve/)
   assert.match(instructions, /Suficiencia por objetivo y mínima fricción/)
@@ -3555,10 +3574,54 @@ test('instrucciones del agente incluyen anticipo y acción final configurados', 
 
   assert.match(instructions, /Anticipo antes de concretar/)
   assert.match(instructions, /Monto configurado: entre 200 y 900 MXN/)
-  assert.match(instructions, /NO ejecutes la acción de avance hasta que el contacto haya enviado comprobante/)
-  assert.match(instructions, /comprobanteValidado=true/)
+  assert.match(instructions, /NO ejecutes la acción de avance hasta que exista un pago verificado/)
+  assert.match(instructions, /Nunca afirmes que el pago quedó validado o recibido/)
+  // Método default: link de pago (los agentes previos no traen methods configurado).
+  assert.match(instructions, /Método disponible, link de pago/)
   assert.match(instructions, /Después de cumplir el objetivo/)
   assert.match(instructions, /asigna el contacto a Ana Ventas/)
+})
+
+test('instrucciones de anticipo por transferencia comparten datos y exigen validar con la tool', () => {
+  const instructions = buildConversationalInstructions({
+    config: {
+      objective: 'citas',
+      customObjective: '',
+      successAction: 'book_appointment',
+      requiredData: '',
+      handoffRules: '',
+      extraInstructions: '',
+      allowEmojis: false,
+      closingStrategyMode: 'system',
+      closingStrategyCustom: '',
+      goalWorkflow: {
+        appointments: { owner: 'ai', calendarId: 'cal_test' },
+        deposit: {
+          enabled: true,
+          mode: 'fixed',
+          amount: 500,
+          currency: 'MXN',
+          methods: { paymentLink: false, bankTransfer: true },
+          bankTransferDetails: 'BBVA · CLABE 012345678901234567 · Titular: Clinica Sol'
+        }
+      }
+    },
+    businessContext: '',
+    brandVoice: '',
+    businessName: 'Clinica Sol',
+    timezone: 'America/Mexico_City',
+    nowIso: 'miércoles, 17 de junio de 2026, 14:00',
+    contactName: null,
+    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+  })
+
+  assert.match(instructions, /Método disponible, transferencia bancaria/)
+  assert.match(instructions, /CLABE 012345678901234567/)
+  assert.match(instructions, /register_deposit_payment_proof EN SILENCIO/)
+  assert.match(instructions, /SOLO si esa herramienta confirma ok/)
+  assert.doesNotMatch(instructions, /Método disponible, link de pago/)
+  // El calendario configurado manda para toda la disponibilidad.
+  assert.match(instructions, /Calendario configurado: cal_test\. Toda la disponibilidad sale de ESE calendario/)
 })
 
 test('instrucciones de agenda por IA piden sólo disponibilidad real y horario exacto', () => {
@@ -3596,7 +3659,7 @@ test('instrucciones de agenda por IA piden sólo disponibilidad real y horario e
   assert.match(instructions, /Si todavía no elige día y hora, pregunta sólo por esa preferencia/)
   assert.match(instructions, /Usa book_appointment sólo con un horario real devuelto por get_free_slots/)
   assert.match(instructions, /disponibilidad real más confirmación explícita de día y hora exactos/)
-  assert.doesNotMatch(instructions, /goalIntentQuality\/goalMotivation\/priceShoppingRisk|solo preguntó el precio sin dar contexto/)
+  assert.doesNotMatch(instructions, /goalIntentQuality\/goalMotivation\/priceShoppingRisk/)
 })
 
 test('instrucciones de venta completa no piden comprobante aunque exista deposito legacy', () => {
@@ -3737,12 +3800,11 @@ test('integra la memoria estructurada como evidencia y no como checklist', () =>
   assert.match(instructions, /update_closing_context/)
   assert.match(instructions, /Parámetros conversacionales del negocio/)
   assert.match(instructions, /No inventes una cadencia ni requisitos/)
-  assert.match(instructions, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
-  assert.match(instructions, /responde esa duda PRIMERO/i)
+  assert.match(instructions, /AGENTE CONVERSACIONAL DE CIERRE, VERSIÓN CON CRITERIO/)
+  assert.match(instructions, /Atiende SIEMPRE lo que preguntó/)
   assert.match(instructions, /Cultura textual regional/)
   assert.match(instructions, /Cuenta configurada en México/)
   assert.match(instructions, /Espejo y rapport/)
-  assert.doesNotMatch(instructions, /Fases obligatorias|reto suave|costo de no actuar|guión de fábrica/i)
   assert.doesNotMatch(instructions, /\[(?:ESCRIBIR[^\]]*|NOMBRE_DEL_NEGOCIO|INDUSTRIA|PRODUCTO_O_SERVICIO|CANAL_DE_CONVERSACION|HERRAMIENTA_INTERNA_DE_AVANCE|HERRAMIENTA_INTERNA_DE_DESCARTE)\]/)
 
   const customInstructions = build({
@@ -3756,7 +3818,7 @@ test('integra la memoria estructurada como evidencia y no como checklist', () =>
   assert.match(customInstructions, /Contexto interno estructurado/)
   assert.match(customInstructions, /Parámetros conversacionales del negocio/)
   assert.match(customInstructions, /update_closing_context/)
-  assert.doesNotMatch(customInstructions, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
+  assert.doesNotMatch(customInstructions, /AGENTE CONVERSACIONAL DE CIERRE, VERSIÓN CON CRITERIO/)
 })
 
 test('memoria de cierre avanzado solo acepta parametros del contrato', () => {

@@ -5,6 +5,7 @@ import {
   type ConversationalAIProviderId
 } from '@/constants/conversationalAIProviders'
 import {
+  DEFAULT_AGENT_DEPOSIT_METHODS,
   DEFAULT_AGENT_GOAL_WORKFLOW,
   type AgentCompletionMode,
   type AgentGoalWorkflowConfig,
@@ -39,6 +40,9 @@ export interface AgentWizardDraft {
   paymentMode: AgentSalesPaymentMode
   askDeposit: boolean
   depositAmount: number | null
+  depositPaymentLink: boolean
+  depositBankTransfer: boolean
+  depositBankTransferDetails: string
   contactScope: ConversationalContactScope
   extraInstructions: string
   handoffRules: string
@@ -123,6 +127,9 @@ export function buildInitialAgentWizardDraft(
     paymentMode: 'full_payment',
     askDeposit: false,
     depositAmount: null,
+    depositPaymentLink: DEFAULT_AGENT_DEPOSIT_METHODS.paymentLink,
+    depositBankTransfer: DEFAULT_AGENT_DEPOSIT_METHODS.bankTransfer,
+    depositBankTransferDetails: '',
     contactScope: 'new_only',
     extraInstructions: '',
     handoffRules: '',
@@ -153,21 +160,39 @@ export function buildGoalWorkflowFromDraft(draft: AgentWizardDraft, accountCurre
     data: { ...DEFAULT_AGENT_GOAL_WORKFLOW.data },
     qualification: { ...DEFAULT_AGENT_GOAL_WORKFLOW.qualification },
     triggerLink: { ...DEFAULT_AGENT_GOAL_WORKFLOW.triggerLink },
-    deposit: { ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit },
+    deposit: { ...DEFAULT_AGENT_GOAL_WORKFLOW.deposit, methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS } },
     completion: { ...DEFAULT_AGENT_GOAL_WORKFLOW.completion }
+  }
+
+  const buildDepositFromDraft = (): AgentGoalWorkflowConfig['deposit'] => ({
+    ...workflow.deposit,
+    enabled: true,
+    mode: 'fixed',
+    amount: draft.depositAmount,
+    currency: accountCurrency,
+    methods: {
+      paymentLink: draft.depositPaymentLink,
+      bankTransfer: draft.depositBankTransfer
+    },
+    bankTransferDetails: draft.depositBankTransfer ? draft.depositBankTransferDetails.trim() : ''
+  })
+
+  // El calendario aplica a TODAS las variantes de citas: agenda un humano, la IA o un enlace.
+  if (draft.objective === 'citas') {
+    workflow.appointments = { ...workflow.appointments, calendarId: draft.calendarId }
   }
 
   if (isAgentWizardCitasBooking(draft)) {
     workflow.appointments = { ...workflow.appointments, owner: 'ai', calendarId: draft.calendarId }
     if (draft.askDeposit) {
-      workflow.deposit = { ...workflow.deposit, enabled: true, mode: 'fixed', amount: draft.depositAmount, currency: accountCurrency }
+      workflow.deposit = buildDepositFromDraft()
     }
   }
 
   if (isAgentWizardVentasCharging(draft)) {
     workflow.sales = { ...workflow.sales, owner: 'ai', paymentMode: draft.paymentMode, currency: accountCurrency }
     if (draft.paymentMode === 'deposit') {
-      workflow.deposit = { ...workflow.deposit, enabled: true, mode: 'fixed', amount: draft.depositAmount, currency: accountCurrency }
+      workflow.deposit = buildDepositFromDraft()
     }
   }
 
@@ -245,7 +270,7 @@ export function buildOverridesFromDraft(
     hideAttended: false,
     hideAttendedNotifications: draft.hideAttendedNotifications,
     goalWorkflow: buildGoalWorkflowFromDraft(draft, accountCurrency),
-    defaultCalendarId: isAgentWizardCitasBooking(draft) ? draft.calendarId : null,
+    defaultCalendarId: draft.objective === 'citas' ? draft.calendarId : null,
     contactScope: draft.contactScope
   }
 }

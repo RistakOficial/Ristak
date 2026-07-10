@@ -64,9 +64,11 @@ import { hasFeature } from '../../services/licenseService.js'
 import {
   buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
+  countPriceInsistence,
   getAccountRegionalLocaleTag,
   getClosingChannelLabel,
-  hasConfiguredPriceDisclosureGate
+  hasConfiguredPriceDisclosureGate,
+  PRICE_INSISTENCE_HARD_THRESHOLD
 } from './prompt.js'
 import { createConversationalTools } from './tools.js'
 import { buildInputItems } from '../runner.js'
@@ -420,9 +422,12 @@ function runtimePriceGuardApplies(config = {}) {
   )
 }
 
-export function rewritePrematurePriceDisclosure(reply = '', config = {}) {
+export function rewritePrematurePriceDisclosure(reply = '', config = {}, { priceInsistenceCount = 0 } = {}) {
   const text = String(reply || '').trim()
   if (!text || !runtimePriceGuardApplies(config)) return text
+  // Regla de la casa: a la tercera petición de precio ya no se torea al contacto;
+  // soltar el dato deja de ser "prematuro" y este guard no debe borrarlo.
+  if (Number(priceInsistenceCount) >= PRICE_INSISTENCE_HARD_THRESHOLD) return text
   if (!PRICE_DISCLOSURE_PATTERN.test(text) || !PRICE_QUALIFICATION_PATTERN.test(text)) return text
   return 'Claro, para darte un valor que sí aplique, cuéntame tantito qué estás buscando resolver?'
 }
@@ -440,7 +445,8 @@ export function applyConversationalRuntimeReplyGuard({
   actions = [],
   config = {},
   readiness = null,
-  suppressReply = false
+  suppressReply = false,
+  priceInsistenceCount = 0
 } = {}) {
   let nextReply = String(reply || '').trim()
   let nextSuppressReply = Boolean(suppressReply)
@@ -454,7 +460,7 @@ export function applyConversationalRuntimeReplyGuard({
   // ahora SOLO lo decide el modelo con sus tools explícitas (send_to_human /
   // mark_ready_to_advance). La señal de readiness sigue llegando al modelo como HINT
   // (buildConversationDecisionContextMessage), no como acción terminal.
-  const priceGuardReply = rewritePrematurePriceDisclosure(nextReply, config)
+  const priceGuardReply = rewritePrematurePriceDisclosure(nextReply, config, { priceInsistenceCount })
   if (priceGuardReply !== nextReply) {
     nextReply = priceGuardReply
     events.push({ type: 'runtime_price_guard_rewrite' })
@@ -1241,7 +1247,7 @@ async function loadInboundMessagesForRecoveryWindow(channel, {
   return rows
 }
 
-async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '', executionId = '' }) {
+async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '', executionId = '', priceInsistenceCount = 0 }) {
   const [aiConfig, timezone, businessProfile, accountLocale, approvedLearning] = await Promise.all([
     getAIAgentConfig({}),
     getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
@@ -1298,7 +1304,8 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     channel,
     advancedClosingContext,
     accountLocale,
-    followUpContext
+    followUpContext,
+    priceInsistenceCount
   })
 
   const agent = new Agent({
@@ -2387,6 +2394,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       })
       const decisionContextMessage = buildConversationDecisionContextMessage(conversationDecision)
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
+      const priceInsistenceCount = countPriceInsistence(baseMessagesForAgent)
 
       const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
         config: agentConfig,
@@ -2397,7 +2405,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       channel: normalizedChannel,
       ruleContext,
       executionId: latest.id,
-      knowledgeQuery: traceMessage
+      knowledgeQuery: traceMessage,
+      priceInsistenceCount
       })
       const previousIntelligence = await loadConversationIntelligenceState({
         stateId: agentState.id,
@@ -2484,7 +2493,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       // Guardián de cumplimiento: revisa las reglas de apertura de la biblia sobre la
       // respuesta visible y la reescribe si las rompe (precio/pitch antes de calificar).
       if (reply && !ctx.suppressReply) {
-        const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: agentConfig, runtime, model })
+        const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: agentConfig, runtime, model, priceInsistenceCount })
         if (guarded.changed) {
           reply = guarded.reply
           ctx.actions.push({ type: 'compliance_rewrite', rules: guarded.violation?.rules || [], reason: guarded.violation?.reason || '', effect: { liveEffect: 'REESCRIBIÓ el mensaje para cumplir la biblia (no soltar precio/pitch antes de calificar)', marksObjectiveCompleted: false } })
@@ -2498,7 +2507,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         actions: ctx.actions,
         config: agentConfig,
         readiness: conversationDecision,
-        suppressReply: ctx.suppressReply
+        suppressReply: ctx.suppressReply,
+        priceInsistenceCount
       })
       reply = runtimeGuard.reply
       ctx.suppressReply = runtimeGuard.suppressReply
@@ -3028,6 +3038,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     throw error
   }
 
+  const previewPriceInsistenceCount = countPriceInsistence(cleanMessages)
   const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
     config: runtimeConfig,
     conversationModel: runtimeConfig.model || runtimeDefaults.model,
@@ -3036,7 +3047,8 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     dryRun: true,
     channel: previewChannel,
     ruleContext: null,
-    knowledgeQuery: cleanMessages.map((message) => message.content).join(' ').slice(-4000)
+    knowledgeQuery: cleanMessages.map((message) => message.content).join(' ').slice(-4000),
+    priceInsistenceCount: previewPriceInsistenceCount
   })
 
   const openAIFallbackApiKey = aiProvider === 'openai'
@@ -3103,7 +3115,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
 
   // Guardián de cumplimiento (mismo que en vivo, para que el tester lo refleje 1:1).
   if (reply && !ctx.suppressReply) {
-    const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: runtimeConfig, runtime, model })
+    const guarded = await enforceComplianceGuard({ reply, messages: messagesForAgent, config: runtimeConfig, runtime, model, priceInsistenceCount: previewPriceInsistenceCount })
     if (guarded.changed) {
       reply = guarded.reply
       ctx.actions.push({ type: 'compliance_rewrite', rules: guarded.violation?.rules || [], reason: guarded.violation?.reason || '', effect: { liveEffect: 'REESCRIBIÓ el mensaje para cumplir la biblia (no soltar precio/pitch antes de calificar)', marksObjectiveCompleted: false } })

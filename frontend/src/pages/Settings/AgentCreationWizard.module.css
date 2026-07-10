@@ -251,6 +251,13 @@
   text-transform: uppercase;
   color: var(--text-mute);
 }
+.depositMethodRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
 .moneyInputWrap {
   position: relative;
   min-width: 0;

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { AlertTriangle, ArrowLeft, Bot, CheckCircle2, ChevronDown, CircleSlash, FileText, Image as ImageIcon, KeyRound, Pause, PauseCircle, Play, Plus, RotateCcw, ShieldCheck, Target, Trash2, UserCheck, Users, Video, X } from 'lucide-react'
-import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, TabList, TagPicker } from '@/components/common'
+import { Badge, Button, Card, CustomSelect, KpiCard, Modal, NumberInput, PageHeader, Switch, TabList, TagPicker } from '@/components/common'
 import {
   PhoneChatPreview,
   PhoneChatPreviewAttachmentMenu,
@@ -28,8 +28,10 @@ import { useAIAgentAvailability, useAppConfig } from '@/hooks'
 import {
   conversationalAgentService,
   isConversationalAgentEntryConflictError,
+  DEFAULT_AGENT_DEPOSIT_METHODS,
   type AgentFilterOptions,
   type AgentCompletionMode,
+  type AgentDepositMethodsConfig,
   type AgentDepositMode,
   type AgentIdentityMode,
   type AgentFollowUpConfig,
@@ -309,7 +311,9 @@ const defaultGoalWorkflow: AgentGoalWorkflowConfig = {
     amount: null,
     minAmount: null,
     maxAmount: null,
-    currency: ''
+    currency: '',
+    methods: { ...DEFAULT_AGENT_DEPOSIT_METHODS },
+    bankTransferDetails: ''
   },
   completion: {
     mode: 'notify_only',
@@ -979,7 +983,11 @@ function getAgentGoalWorkflow(agent: ConversationalAgentDef): AgentGoalWorkflowC
     },
     deposit: {
       ...defaultGoalWorkflow.deposit,
-      ...deposit
+      ...deposit,
+      methods: {
+        ...DEFAULT_AGENT_DEPOSIT_METHODS,
+        ...((deposit.methods || {}) as Partial<AgentDepositMethodsConfig>)
+      }
     },
     completion: {
       ...defaultGoalWorkflow.completion,
@@ -1040,8 +1048,29 @@ function getAgentIdentityError(agent: ConversationalAgentDef) {
   return ''
 }
 
+function getAgentCalendarError(agent: ConversationalAgentDef) {
+  if (agent.objective !== 'citas') return ''
+  const calendarId = agent.goalWorkflow?.appointments?.calendarId || agent.defaultCalendarId
+  return calendarId ? '' : 'Elige el calendario para las citas antes de guardar.'
+}
+
+function getAgentDepositError(agent: ConversationalAgentDef) {
+  const workflow = getAgentGoalWorkflow(agent)
+  const depositApplies = (agent.objective === 'citas' && workflow.deposit.enabled) ||
+    (agent.objective === 'ventas' && getWorkflowSalesPaymentMode(workflow) === 'deposit')
+  if (!depositApplies) return ''
+  const methods = workflow.deposit.methods || DEFAULT_AGENT_DEPOSIT_METHODS
+  if (!methods.paymentLink && !methods.bankTransfer) return 'Activa al menos un método para cobrar el anticipo.'
+  if (methods.bankTransfer && !String(workflow.deposit.bankTransferDetails || '').trim()) {
+    return 'Escribe los datos de transferencia para el anticipo.'
+  }
+  return ''
+}
+
 function getAgentValidationError(agent: ConversationalAgentDef) {
   return getAgentIdentityError(agent) ||
+    getAgentCalendarError(agent) ||
+    getAgentDepositError(agent) ||
     getResponseDelayError(getAgentResponseDelay(agent)) ||
     getReplyDeliveryError(getAgentReplyDelivery(agent)) ||
     getFollowUpError(getAgentFollowUp(agent))
@@ -1076,7 +1105,12 @@ function mergeGoalWorkflow(
     },
     deposit: {
       ...base.deposit,
-      ...((patch.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>)
+      ...((patch.deposit || {}) as Partial<AgentGoalWorkflowConfig['deposit']>),
+      methods: {
+        ...DEFAULT_AGENT_DEPOSIT_METHODS,
+        ...((base.deposit.methods || {}) as Partial<AgentDepositMethodsConfig>),
+        ...((patch.deposit?.methods || {}) as Partial<AgentDepositMethodsConfig>)
+      }
     },
     completion: {
       ...base.completion,
@@ -1637,6 +1671,11 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     updateGoalWorkflow({ deposit: nextDeposit })
   }
 
+  const depositMethods = deposit.methods || DEFAULT_AGENT_DEPOSIT_METHODS
+  const updateDepositMethods = (patch: Partial<AgentDepositMethodsConfig>) => {
+    updateDeposit({ methods: { ...depositMethods, ...patch } })
+  }
+
   const updateSalesPaymentMode = (paymentMode: AgentSalesPaymentMode) => {
     const needsDeposit = paymentMode === 'deposit'
     updateGoalWorkflow({
@@ -1721,9 +1760,8 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     let nextGoalWorkflow: AgentGoalWorkflowConfig | null = null
     if (objective === 'citas') {
       const owner = successAction === 'book_appointment' ? 'ai' : successAction === 'send_goal_url' ? 'url' : 'human'
-      const calendarId = owner === 'ai' || owner === 'url'
-        ? goalWorkflow.appointments.calendarId || agent.defaultCalendarId || calendars[0]?.id || null
-        : goalWorkflow.appointments.calendarId
+      // El calendario lo elige el usuario explícitamente: aquí solo se conserva el ya elegido.
+      const calendarId = goalWorkflow.appointments.calendarId || agent.defaultCalendarId || null
       nextGoalWorkflow = mergeGoalWorkflow(goalWorkflow, {
         appointments: { ...goalWorkflow.appointments, owner, calendarId },
         ...(owner === 'ai' ? {} : { deposit: { ...goalWorkflow.deposit, enabled: false } })
@@ -2287,54 +2325,57 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
     void clearTestMediaCache().catch(() => undefined)
   }
 
-  const appointmentSchedulingSettings = showAiAppointmentSettings ? (
+  const appointmentSchedulingSettings = agent.objective === 'citas' ? (
     <>
       <div className={styles.field}>
         <label className={styles.label}>Calendario</label>
         <CustomSelect
-          value={agent.defaultCalendarId || ''}
+          value={selectedGoalCalendarId}
           onChange={(event) => {
             const calendarId = event.target.value || null
             onChange({
               defaultCalendarId: calendarId,
               goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
-                appointments: { ...goalWorkflow.appointments, owner: 'ai', calendarId }
+                appointments: { ...goalWorkflow.appointments, calendarId }
               })
             })
           }}
+          placeholder={calendars.length === 0 ? 'No hay calendarios activos' : 'Elegir calendario'}
           portal
+          disabled={calendars.length === 0}
         >
-          <option value="">Que elija entre calendarios activos</option>
           {calendars.map((calendar) => (
             <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
           ))}
         </CustomSelect>
-        <p className={styles.helper}>Sólo agenda con horarios reales.</p>
+        <p className={styles.helper}>El agente ofrecerá los espacios disponibles de este calendario.</p>
       </div>
 
-      <div className={styles.field}>
-        <label className={styles.label}>Empalme de citas</label>
-        <CustomSelect
-          value={goalWorkflow.appointments.allowOverlappingAppointments ? 'yes' : 'no'}
-          onChange={(event) => {
-            updateGoalWorkflow({
-              appointments: {
-                ...goalWorkflow.appointments,
-                owner: 'ai',
-                allowOverlappingAppointments: event.target.value === 'yes'
-              }
-            })
-          }}
-          portal
-        >
-          {appointmentOverlapOptions.map((option) => (
-            <option key={option.value} value={option.value}>{option.label}</option>
-          ))}
-        </CustomSelect>
-        <p className={styles.helper}>
-          Si está apagado, la IA sólo ofrece horarios sin otra cita. Si está prendido, puede agendar varias personas en el mismo horario.
-        </p>
-      </div>
+      {showAiAppointmentSettings && (
+        <div className={styles.field}>
+          <label className={styles.label}>Empalme de citas</label>
+          <CustomSelect
+            value={goalWorkflow.appointments.allowOverlappingAppointments ? 'yes' : 'no'}
+            onChange={(event) => {
+              updateGoalWorkflow({
+                appointments: {
+                  ...goalWorkflow.appointments,
+                  owner: 'ai',
+                  allowOverlappingAppointments: event.target.value === 'yes'
+                }
+              })
+            }}
+            portal
+          >
+            {appointmentOverlapOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </CustomSelect>
+          <p className={styles.helper}>
+            Si está apagado, la IA sólo ofrece horarios sin otra cita. Si está prendido, puede agendar varias personas en el mismo horario.
+          </p>
+        </div>
+      )}
     </>
   ) : null
 
@@ -2436,6 +2477,50 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
           <p className={styles.helper}>
             {depositHelper}
           </p>
+
+          <div className={styles.field}>
+            <label className={styles.label}>Cómo puede pagar el anticipo</label>
+            <div className={styles.depositMethodList}>
+              <div className={styles.depositMethodRow}>
+                <Switch
+                  checked={depositMethods.paymentLink}
+                  onChange={(next) => updateDepositMethods({ paymentLink: next })}
+                  aria-label="Cobrar el anticipo con link de pago"
+                />
+                <span>Link de pago</span>
+              </div>
+              <div className={styles.depositMethodRow}>
+                <Switch
+                  checked={depositMethods.bankTransfer}
+                  onChange={(next) => updateDepositMethods({ bankTransfer: next })}
+                  aria-label="Cobrar el anticipo por transferencia bancaria"
+                />
+                <span>Transferencia bancaria</span>
+              </div>
+            </div>
+            {!depositMethods.paymentLink && !depositMethods.bankTransfer && (
+              <p className={`${styles.helper} ${styles.helperError}`}>
+                Activa al menos un método para cobrar el anticipo.
+              </p>
+            )}
+          </div>
+
+          {depositMethods.bankTransfer && (
+            <div className={styles.fieldWide}>
+              <label className={styles.label}>Datos para transferencia</label>
+              <textarea
+                className={styles.textarea}
+                value={deposit.bankTransferDetails || ''}
+                placeholder="Banco, CLABE o cuenta, titular…"
+                onChange={(event) => updateDeposit({ bankTransferDetails: event.target.value })}
+                rows={3}
+                maxLength={1200}
+              />
+              <p className={styles.helper}>
+                El agente compartirá estos datos y pedirá foto del comprobante; la IA valida el monto y registra el anticipo.
+              </p>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -2443,31 +2528,6 @@ const AgentCard: React.FC<AgentCardProps> = ({ agent, aiProviders, calendars, pr
 
   const goalUrlSettings = showGoalUrlSettings ? (
     <>
-      {agent.objective === 'citas' && (
-        <div className={styles.field}>
-          <label className={styles.label}>Calendario del enlace</label>
-          <CustomSelect
-            value={selectedGoalCalendarId}
-            onChange={(event) => {
-              const calendarId = event.target.value || null
-              onChange({
-                defaultCalendarId: calendarId,
-                goalWorkflow: mergeGoalWorkflow(goalWorkflow, {
-                  appointments: { ...goalWorkflow.appointments, owner: 'url', calendarId }
-                })
-              })
-            }}
-            portal
-          >
-            <option value="">Elegir calendario activo</option>
-            {calendars.map((calendar) => (
-              <option key={calendar.id} value={calendar.id}>{calendar.name}</option>
-            ))}
-          </CustomSelect>
-          <p className={styles.helper}>El enlace queda ligado a este calendario.</p>
-        </div>
-      )}
-
       {agent.objective === 'ventas' && (
         <>
           <div className={styles.field}>

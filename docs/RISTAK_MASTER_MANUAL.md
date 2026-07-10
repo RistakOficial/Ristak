@@ -2514,6 +2514,22 @@ Una politica invalida no puede publicarse. Cada alta, cambio o rollback guarda
 una version en `conversational_agent_policy_versions`; las rutas autenticadas de
 gobernanza permiten listar versiones y revertir una configuracion anterior.
 
+Requisitos duros al publicar (`enabled=true`, validados en
+`assertAgentGoalRequirements` de `conversationalAgentService.js` y espejados en
+wizard/editor web):
+
+- Objetivo de citas: es obligatorio elegir un calendario
+  (`goalWorkflow.appointments.calendarId` o `defaultCalendarId`), sin importar si
+  agenda la IA, un humano o un enlace. De ese calendario salen los espacios que
+  el agente ofrece; `get_free_slots`/`book_appointment` fuerzan ese calendario en
+  codigo aunque el modelo mande otro id.
+- Anticipo activo: al menos un metodo de cobro habilitado en
+  `goalWorkflow.deposit.methods` (`paymentLink` y/o `bankTransfer`); si la
+  transferencia esta activa, `deposit.bankTransferDetails` (banco, cuenta/CLABE,
+  titular) no puede quedar vacio.
+
+Un borrador apagado puede guardarse incompleto; publicarlo exige lo anterior.
+
 El alcance `new_only` sella `contact_scope_cutoff_at`; no adopta contactos
 anteriores al corte. Los estados legacy no se heredan como bloqueos de un agente
 nuevo, pero una pausa, omision o asignacion manual real conserva su procedencia.
@@ -2603,6 +2619,19 @@ la base de datos, nunca un booleano escrito por el modelo.
 - Pago: producto, precio, monto, concepto y moneda deben coincidir con workflow o
   catalogo real. Crear/enviar link deja la compra `pending`; solo un pago real la
   completa. Un supuesto comprobante del modelo no sirve como evidencia.
+- Anticipos: se cobran por los metodos configurados. Con `paymentLink`, el agente
+  puede mandar `create_payment_link` aunque su cierre sea una cita. Con
+  `bankTransfer`, comparte los datos configurados y, al recibir la foto o PDF del
+  comprobante, ejecuta `register_deposit_payment_proof`: la tool lee el
+  comprobante con vision (monto, moneda, fecha, banco, referencia), lo compara
+  contra el anticipo configurado (fijo exacto o rango, moneda de la cuenta) y, si
+  cuadra, inserta el pago real (`payments`, `bank_transfer`/`manual`, metadata
+  con lo extraido) via `registerAgentTransferDepositPayment`. El candado
+  `findVerifiedPaymentEvidence` se satisface con ese registro; el equipo recibe
+  push para auditar el comprobante (`deposit_transfer_registered`). Un
+  comprobante ilegible, con monto distinto u otra moneda se rechaza y el agente
+  pide una foto clara o transfiere. La tool es idempotente por evidencia previa y
+  por monto/ventana de 48h.
 - Handoff: `send_to_human` registra transferencia, pero no infla la meta como
   conversion. El resumen estructurado evita que la persona repita su historia.
 - Meta por URL: el enlace visible contiene solo un ID de seguimiento y se puede
@@ -2635,11 +2664,27 @@ la base de datos, nunca un booleano escrito por el modelo.
   se aceptan unicamente por header y nunca se generan ni se agregan a enlaces
   nuevos.
 
-El precio se bloquea unicamente cuando el negocio escribio una condicion literal
-en sus reglas (por ejemplo, "no dar precio hasta confirmar X"). El nivel de
-iniciativa no crea por si solo un bloqueo de precio. Tampoco se fuerza un handoff
-por regex de texto ni se transforma un silencio transitorio en una transferencia
+Manejo de precio. El guion de fabrica ("Agente conversacional de cierre, version
+con criterio", `backend/src/agents/conversational/strategies/agenteCierreCriterio.md`)
+abre las preguntas de precio construyendo valor primero (pull), pero con una
+escalera dura anti-toreo contada por mensaje entrante
+(`countPriceInsistence`): a la 2a peticion el prompt prohibe un tercer rebote y a
+la 3a (`PRICE_INSISTENCE_HARD_THRESHOLD`) se inyecta la REGLA DURA de soltar el
+precio real de inmediato, y los guardianes de precio (complianceGuard y el
+rewrite del runtime) dejan pasar el dato aunque exista una condicion literal del
+negocio. El bloqueo condicionado sigue existiendo solo cuando el negocio escribio
+la condicion en sus reglas y aplica hasta la 2a peticion. El nivel de iniciativa
+no crea por si solo un bloqueo de precio. Tampoco se fuerza un handoff por regex
+de texto ni se transforma un silencio transitorio en una transferencia
 permanente: las tools y el estado real mandan.
+
+Bases de estrategia: la base adaptable de fabrica es el guion con criterio
+(pull, estatus con calidez, textura humana de chat, cierre etico, giros
+sensibles con empatia primero); se renderiza con los placeholders del
+perfil/formulario (`renderClosingStrategyTemplate`). La base directa
+(`LIGHT_DIRECT_CLOSING_STRATEGY`) solo acompaña iniciativa baja (Anfitrion); el
+registro Ejecutivo se calibra dentro del guion con la directiva de registro, ya
+no cambiando de base.
 
 ### Aprendizaje, metricas y seguridad
 

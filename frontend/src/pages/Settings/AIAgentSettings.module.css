@@ -505,6 +505,20 @@
   min-width: 0;
 }
 
+.depositMethodList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.depositMethodRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
 .moneyInputWrap {
   position: relative;
   min-width: 0;

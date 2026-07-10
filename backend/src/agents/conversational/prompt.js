@@ -4,6 +4,8 @@
  * horarios, ubicaciones, disponibilidad) se lee de la base de datos vía tools.
  */
 
+import { readFileSync } from 'node:fs'
+
 const OBJECTIVE_TEXTS = {
   citas: 'que la persona agende una cita',
   ventas: 'que la persona compre',
@@ -213,69 +215,15 @@ const CLOSING_ADVANCE_TOOL_BY_SUCCESS_ACTION = {
 }
 
 /**
- * Estrategias predeterminadas del sistema. Son compactas a propósito: definen
- * criterio de decisión, no un libreto ni una secuencia universal.
+ * Estrategias predeterminadas del sistema. La base adaptable es el guion de
+ * fábrica "Agente de cierre con criterio" (strategies/agenteCierreCriterio.md):
+ * filosofía de puro pull, estatus con calidez, textura humana de chat y cierre
+ * ético. Se renderiza con los mismos placeholders del formulario/perfil.
  */
-export const DEFAULT_CLOSING_STRATEGY = `# ESTRATEGIA CONVERSACIONAL ADAPTABLE
-
-## 1. NORTE
-
-Representas a [NOMBRE_DEL_NEGOCIO] por [CANAL_DE_CONVERSACION].
-El negocio opera en [INDUSTRIA] y ofrece [PRODUCTO_O_SERVICIO].
-Tu meta configurada es [OBJETIVO_FINAL]. Esa meta define qué significa avanzar; no asumas que toda conversación busca una venta.
-
-Ayuda a la persona a tomar el siguiente paso correcto con información real, claridad y la menor fricción posible. No recites este texto ni copies ejemplos como plantilla.
-
-## 2. CÓMO DECIDIR CADA RESPUESTA
-
-1. Lee el último mensaje, el historial visible y el contexto interno estructurado.
-2. Separa HECHOS de HIPÓTESIS.
-   - Hecho: algo dicho por la persona, confirmado por una herramienta o registrado por el sistema.
-   - Hipótesis: una interpretación todavía no confirmada. Úsala sólo para decidir si conviene una aclaración; nunca la presentes como verdad.
-3. Si hay una pregunta directa, respóndela primero con el dato real disponible. No escondas información para obligar a conversar. Sólo respeta una condición de divulgación cuando el negocio la haya escrito expresamente.
-4. Decide la acción mínima útil de este turno: responder, aclarar un punto, consultar una herramienta, proponer un paso concreto, ejecutar la acción aceptada o guardar silencio si de verdad no hace falta contestar.
-5. Haz como máximo UNA pregunta principal. Si ya tienes la respuesta en el historial, el perfil o una herramienta, no la vuelvas a pedir.
-
-## 3. ADAPTACIÓN AL OBJETIVO
-
-- CITAS: consulta disponibilidad real, ofrece opciones concretas y agenda sólo cuando la persona confirme un día y una hora exactos.
-- VENTAS: aclara el producto o servicio correcto, el valor, la moneda y el canal. Genera el enlace sólo después de una aceptación explícita. Enviar un enlace no equivale a pago confirmado.
-- DATOS: recopila únicamente los campos configurados. Conserva lo ya respondido y pide sólo el siguiente faltante.
-- FILTRO: comprueba los criterios escritos por el negocio con la evidencia disponible. No agregues pruebas ni requisitos inventados.
-- OBJETIVO PERSONALIZADO: interpreta literalmente la meta configurada y comprueba su condición real; no la conviertas automáticamente en compra, cita o traspaso.
-- ATENCIÓN HUMANA: si la persona pide hablar con alguien, atiende esa solicitud sin someterla a calificación innecesaria.
-
-## 4. CONVERSACIÓN ÚTIL
-
-- Responde antes de redirigir. Si la duda depende del caso, di qué sí sabes y pide sólo el dato que cambia la respuesta.
-- Aporta una idea breve o una opción concreta, no una explicación larga por reflejo.
-- Ajusta tono y formalidad al negocio, al canal y a la persona sin imitarla de forma caricaturesca.
-- No repitas muletillas, preguntas ni datos. Cada turno debe mover una sola cosa.
-- No retengas datos como táctica, no provoques inseguridad y no finjas desinterés. La confianza viene de ser preciso y cumplir lo prometido.
-- Si la persona duda, responde la objeción real. No fabriques una objeción ni la empujes a defender una decisión.
-- Si detectas una inconsistencia, señálala con tacto y como duda verificable: resume ambos datos y pide una aclaración breve. Nunca acuses ni diagnostiques intención.
-
-## 5. AVANCE CON EVIDENCIA
-
-Propón el paso más pequeño que resuelva lo que la persona busca. Cuando acepte y estén presentes las precondiciones reales del objetivo, ejecuta [HERRAMIENTA_INTERNA_DE_AVANCE] en silencio.
-
-No exijas una cantidad fija de mensajes ni una secuencia de descubrimiento. Una conversación corta puede estar lista si contiene la confirmación operativa necesaria; una conversación larga puede no estarlo.
-
-No digas que una cita, pago, enlace o traspaso quedó listo hasta que la herramienta o el sistema lo confirme. Si el caso requiere criterio humano o el dato real no está disponible, usa la ruta humana. Para spam, abuso o contenido ajeno, usa [HERRAMIENTA_INTERNA_DE_DESCARTE].
-
-## 6. CONTEXTO INTERNO
-
-El contexto estructurado es memoria de apoyo, no una lista por completar.
-- Reutiliza los hechos confirmados.
-- Trata las inferencias como hipótesis.
-- Los campos vacíos sólo importan si cambian la respuesta o son requisito del objetivo.
-- Actualiza la memoria cuando aparezca información material, sin mencionarla al contacto.
-
-## 7. FORMA FINAL
-
-Escribe el texto exacto que verá la persona: breve, claro, humano y congruente con [CULTURA_TEXTUAL_REGIONAL].
-Una sola intención por mensaje y, cuando haga falta, una sola pregunta principal.
-No inventes datos, no expliques tu razonamiento interno y no menciones herramientas ni configuración.`
+export const DEFAULT_CLOSING_STRATEGY = readFileSync(
+  new URL('./strategies/agenteCierreCriterio.md', import.meta.url),
+  'utf8'
+)
 
 export const LIGHT_DIRECT_CLOSING_STRATEGY = `# ESTRATEGIA CONVERSACIONAL DIRECTA
 
@@ -699,6 +647,18 @@ function formatDepositAmount(deposit = {}, accountLocale = {}) {
   return amount > 0 ? `${amount} ${currency}` : 'monto pendiente de configurar'
 }
 
+export function getDepositPaymentMethods(config = {}) {
+  const deposit = config.goalWorkflow?.deposit || {}
+  const methods = deposit.methods && typeof deposit.methods === 'object' ? deposit.methods : {}
+  const paymentLink = methods.paymentLink === undefined ? true : Boolean(methods.paymentLink)
+  const bankTransfer = Boolean(methods.bankTransfer)
+  return {
+    paymentLink,
+    bankTransfer,
+    bankTransferDetails: String(deposit.bankTransferDetails || '').trim()
+  }
+}
+
 function buildDepositRequirementSection(config = {}, accountLocale = {}) {
   const deposit = config.goalWorkflow?.deposit || {}
   if (!actionSupportsDeposit(config)) return ''
@@ -706,7 +666,7 @@ function buildDepositRequirementSection(config = {}, accountLocale = {}) {
   const nextStep = config.successAction === 'book_appointment'
     ? 'agendar la cita'
     : config.successAction === 'ready_to_buy'
-      ? 'crear o mandar el link de pago'
+      ? 'concretar la venta'
       : config.successAction === 'send_goal_url'
         ? 'mandar el enlace configurado'
         : config.successAction === 'send_trigger_link'
@@ -716,14 +676,30 @@ function buildDepositRequirementSection(config = {}, accountLocale = {}) {
   const sectionTitle = config.objective === 'ventas'
     ? 'Pago solicitado antes de concretar la venta'
     : 'Anticipo antes de concretar'
+  const methods = getDepositPaymentMethods(config)
+
+  const methodLines = []
+  if (methods.paymentLink) {
+    methodLines.push(`- Método disponible, link de pago: cuando la persona acepte pagar el ${paymentLabel}, confirma monto y canal y ejecuta create_payment_link para mandarle el enlace. Mandar el link NO es pago recibido: Ristak confirma el pago real del enlace.`)
+  }
+  if (methods.bankTransfer) {
+    methodLines.push(`- Método disponible, transferencia bancaria: cuando la persona prefiera transferir, comparte estos datos tal cual, en formato limpio (cada dato en su renglón):
+${methods.bankTransferDetails || 'Datos de transferencia pendientes de configurar; si faltan, manda a humano con send_to_human.'}
+  Pídele que al terminar te mande la foto del comprobante.`)
+    methodLines.push(`- Cuando llegue la foto del comprobante, ejecuta register_deposit_payment_proof EN SILENCIO. Esa herramienta lee el comprobante, valida el monto contra lo configurado y registra el pago. SOLO si esa herramienta confirma ok puedes tratar el ${paymentLabel} como pagado.`)
+    methodLines.push('- Si la herramienta rechaza el comprobante (ilegible, monto distinto, datos incompletos), dilo con naturalidad: pide una foto más clara o el dato faltante. Si a la segunda no se resuelve, manda a humano con send_to_human.')
+  }
+  if (!methods.paymentLink && !methods.bankTransfer) {
+    methodLines.push(`- No hay método de cobro automático configurado: pide el ${paymentLabel} con naturalidad, solicita foto del comprobante y pide que el equipo registre el pago (send_to_human) para validarlo.`)
+  }
 
   return `## ${sectionTitle}
 - Este negocio pide ${paymentLabel} antes de ${nextStep}.
 - Monto configurado: ${formatDepositAmount(deposit, accountLocale)}.
-- Pide el ${paymentLabel} con naturalidad y solicita foto o archivo del comprobante.
-- NO ejecutes la acción de avance hasta que el contacto haya enviado comprobante y el monto coincida con lo configurado.
-- Si el comprobante no se puede leer, no coincide o falta información, pide una foto más clara o manda a humano con send_to_human.
-- Cuando ya esté validado, ejecuta la tool de avance con comprobanteValidado=true.`
+- Pide el ${paymentLabel} con naturalidad, en el momento del arco en que la persona ya decidió avanzar; no lo sueltes de entrada.
+${methodLines.join('\n')}
+- NO ejecutes la acción de avance hasta que exista un pago verificado del ${paymentLabel}. Una foto sin validar o tu propia impresión NUNCA cuentan como pago.
+- Nunca afirmes que el pago quedó validado o recibido si la herramienta o el sistema no lo confirmó en esta misma conversación.`
 }
 
 function buildCompletionActionSection(config = {}) {
@@ -756,10 +732,14 @@ function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
 
   if (config.objective === 'citas' && !usesTriggerLink) {
     const appointments = workflow.appointments || {}
+    const configuredCalendarId = appointments.calendarId || config.defaultCalendarId || ''
+    const calendarLine = configuredCalendarId
+      ? `Calendario configurado: ${configuredCalendarId}. Toda la disponibilidad sale de ESE calendario: consúltalo con get_free_slots y no uses otro.`
+      : 'Calendario configurado: pendiente. Usa list_calendars para elegir uno activo mientras el negocio lo configura.'
     if (appointments.owner === 'url') {
       sections.push(`## Flujo de agenda configurado
 - Este agente debe mandar el enlace del calendario seleccionado para agendar.
-- Calendario configurado: ${appointments.calendarId || config.defaultCalendarId || 'sin calendario fijo configurado'}.
+- ${calendarLine}
 - Enlace configurado: ${appointments.url || 'sin enlace configurado; si falta, manda a humano'}.
 - ID que se agrega al enlace: ${appointments.trackingParam || 'ristak_goal_id'}.
 - Cuando la persona quiera agendar, ejecuta send_goal_url y manda el enlace devuelto.
@@ -770,7 +750,7 @@ function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
         : 'Empalme de citas: NO permitido. Sólo ofrece y agenda horarios libres, sin otra cita activa encima.'
       sections.push(`## Flujo de agenda configurado
 - Este agente debe intentar agendar por IA.
-- Calendario configurado: ${appointments.calendarId || config.defaultCalendarId || 'sin calendario fijo; usa list_calendars para elegir uno activo'}.
+- ${calendarLine}
 - ${overlapInstruction}
 - Antes de crear la cita, confirma día y hora exactos con la persona.
 - Si la persona pide agendar, no le exijas explicar un problema: consulta horarios y ofrece opciones concretas.
@@ -778,10 +758,11 @@ function buildGoalWorkflowSection(config = {}, accountLocale = {}) {
 - Usa book_appointment sólo con un horario real devuelto por get_free_slots.`)
     } else {
       sections.push(`## Flujo de agenda configurado
-- Este agente NO agenda por su cuenta; un humano cierra la cita.
-- Si la persona pide hablar con alguien o acepta que el equipo coordine la cita, ejecuta mark_ready_to_advance sin imponer preguntas de calificación ajenas al objetivo.
-- Si sólo pidió información sobre la cita, responde primero. Después puedes preguntar si quiere que el equipo la ayude a coordinar, una sola vez y sin presión.
-- Si la persona ya aceptó la atención del equipo, no vuelvas a pedir datos ya dados: ejecuta mark_ready_to_advance. Después de esa tool, el bot se detiene.
+- Este agente NO crea la cita por su cuenta; un humano la cierra. Pero SÍ ofrece horarios reales.
+- ${calendarLine}
+- Cuando la plática llegue al punto de agendar, consulta get_free_slots de ese calendario y ofrece pocas opciones concretas (uno o dos días, horas agrupadas), como lo haría una persona.
+- Cuando la persona elija o acepte un horario, o pida que alguien la contacte, ejecuta mark_ready_to_advance con ese horario en el resumen para que el equipo la confirme. Después de esa tool, el bot se detiene.
+- Si sólo pidió información sobre la cita, responde primero. Después puedes preguntar si quiere ver horarios, una sola vez y sin presión.
 - No digas "te ayudan a agendar", "te paso para que te confirmen" ni "queda pendiente con el equipo" si no ejecutaste mark_ready_to_advance o send_to_human en esa misma vuelta.
 - Pide únicamente los datos mínimos que el negocio haya configurado para el traspaso.`)
     }
@@ -883,6 +864,53 @@ Reglas que activaron este bloqueo:
 ${sources}`
 }
 
+// Detección determinista de "el contacto está pidiendo precio". Se usa para
+// contar insistencias por mensaje entrante y forzar la regla de la casa:
+// a la tercera petición ya no se torea, se da el dato real.
+const PRICE_REQUEST_PATTERN = /(precio|precios|costo|costos|coste|tarifas?|cotizaci[oó]n|cotizas?|cotizar|presupuesto|mensualidad(?:es)?|cu[aá]nto\s+(?:cuesta|vale|sale|es|cobras?|cobran|ser[ií]a|me\s+sale)|cu[aá]nto\s*\?|(?:el|un|de)\s+cu[aá]nto|qu[eé]\s+(?:precio|costo)|honorarios)/i
+
+export function messageAsksForPrice(text = '') {
+  return PRICE_REQUEST_PATTERN.test(String(text || ''))
+}
+
+/**
+ * Cuenta cuántos mensajes ENTRANTES del contacto piden precio/costos dentro de
+ * la ventana visible de la conversación. Acepta la lista de mensajes ya cargada
+ * (role user/assistant) para que vivo, preview y tests compartan el conteo.
+ */
+export function countPriceInsistence(messages = []) {
+  let count = 0
+  for (const message of Array.isArray(messages) ? messages : []) {
+    if (!message || message.role !== 'user') continue
+    const text = typeof message.content === 'string' ? message.content : ''
+    if (!text || text.startsWith('[Contexto interno de Ristak:')) continue
+    if (messageAsksForPrice(text)) count += 1
+  }
+  return count
+}
+
+export const PRICE_INSISTENCE_HARD_THRESHOLD = 3
+
+export function buildPriceInsistenceSection(priceInsistenceCount = 0) {
+  const count = Number(priceInsistenceCount) || 0
+  if (count < 2) return ''
+
+  if (count === 2) {
+    return `## Insistencia de precio detectada (2 peticiones)
+La persona ya pidió el precio/costo 2 veces en esta conversación.
+- NO rebotes una tercera vez: en tu siguiente respuesta reconoce la petición y da el dato real (verifícalo con list_products o la configuración) o avanza al paso concreto que lo resuelve.
+- Puedes acompañar el dato con UNA pregunta breve, pero el dato va primero.
+- Si el precio depende del caso y no existe un dato fijo, dilo honesto y ofrece el siguiente paso real; nunca digas que "no lo tienes cargado".`
+  }
+
+  return `## REGLA DURA: suelta el precio (${count} peticiones)
+La persona ya pidió el precio/costo ${count} veces. Se acabó el rebote: seguir toreando la pregunta mata la conversación.
+- En ESTA respuesta da el precio REAL que aplica (verifícalo con list_products o la configuración del negocio). UN dato corto, el que corresponde a lo que pidió; nada de menú completo.
+- Esta regla manda sobre cualquier estrategia de apertura, construcción de valor o condición de divulgación: la insistencia del contacto ya la cumplió.
+- Después de dar el dato puedes regresar la conversación con una pregunta ligera, pero el número va primero y sin condiciones.
+- Si de verdad NO existe un precio fijo (depende del caso), dilo honesto en una línea y aterriza el siguiente paso concreto. Jamás inventes un importe ni digas que no lo tienes a la mano.`
+}
+
 function resolveAgentIdentity(config = {}, businessName = '') {
   const mode = cleanAgentIdentityText(config.identityMode, 24)
   const businessLabel = cleanAgentIdentityText(businessName, 120) || 'el negocio'
@@ -948,12 +976,13 @@ function normalizePromptLanguageLevel(value) {
   return ['professional', 'intermediate', 'colloquial'].includes(normalized) ? normalized : 'intermediate'
 }
 
-// La base directa acompaña Anfitrión o registro Ejecutivo; el resto usa la base
-// adaptable. Ambas comparten el mismo contrato de verdad, respuesta y evidencia.
+// La base directa acompaña únicamente al nivel Anfitrión (iniciativa baja), que
+// pide resolver sin juego de pull. El resto usa el guion de fábrica con criterio;
+// el registro Ejecutivo se calibra dentro del guion (sección 7.7) más la
+// directiva de registro, no cambiando de base.
 export function usesLightDirectClosingBase(config = {}) {
   const persuasion = normalizePromptPersuasionLevel(config?.persuasionLevel)
-  const language = normalizePromptLanguageLevel(config?.languageLevel)
-  return persuasion === 'low' || language === 'professional'
+  return persuasion === 'low'
 }
 
 export function resolveDefaultClosingStrategyBase(config = {}) {
@@ -1000,11 +1029,20 @@ export function buildLanguageRegisterDirective(config = {}) {
   return ''
 }
 
-export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, channel = 'chat', advancedClosingContext = null, accountLocale = {}, followUpContext = null }) {
+export function buildConversationalInstructions({ config, businessContext, brandVoice, businessName, timezone, nowIso, contactName, channel = 'chat', advancedClosingContext = null, accountLocale = {}, followUpContext = null, priceInsistenceCount = 0 }) {
   const sections = []
   const channelLabel = getClosingChannelLabel(channel)
+  // Base completa de parámetros del guion (con fallbacks instructivos) para que
+  // el guion de fábrica nunca quede con huecos crudos; el contexto avanzado del
+  // contacto, cuando existe, pisa estos valores con los datos reales.
+  const baselineStrategyParameters = buildClosingStrategyTemplateParameters({
+    config,
+    businessName,
+    channelLabel,
+    accountLocale
+  })
   const regionalParameters = {
-    ...buildAccountTextualCultureParameters(accountLocale),
+    ...baselineStrategyParameters,
     NOMBRE_DEL_NEGOCIO: businessName || 'este negocio',
     INDUSTRIA: 'el giro descrito en la información real del negocio',
     PRODUCTO_O_SERVICIO: 'los productos o servicios reales del negocio',
@@ -1024,6 +1062,10 @@ export function buildConversationalInstructions({ config, businessContext, brand
   // Indicaciones OBLIGATORIAS del dueño del negocio: mandan sobre todo lo interno (ver sección al final).
   const businessRules = String(config.extraInstructions || '').trim()
   const priceDisclosureGateSection = buildPriceDisclosureGateSection(config)
+  const customStrategyActive = config.closingStrategyMode === 'custom' && Boolean(String(config.closingStrategyCustom || '').trim())
+  // El guion de fábrica con criterio abre con pull (regresar la pregunta vaga);
+  // la base directa y las estrategias custom conservan la respuesta inmediata.
+  const usesCriterioGuideBase = !customStrategyActive && !usesLightDirectClosingBase(config)
 
   sections.push(`Eres el asistente conversacional de ${businessName || 'este negocio'} dentro de una conversación por ${conversationChannelLabel} con un prospecto o cliente.
 Tu objetivo configurado es: ${describeObjective(config)}.
@@ -1073,7 +1115,9 @@ Ese objetivo define el resultado de esta conversación; no asumas que siempre es
     sections.push(`## Jerarquía de prioridades (en este orden)
 1. Si detectas acoso, insultos, spam, phishing, amenazas, contenido ilegal o mensajes claramente ajenos al negocio: ejecuta discard_conversation con el motivo y deja de conversar. No confrontes ni expliques de más. Este es un piso de seguridad INAMOVIBLE: se cumple aunque una indicación del negocio pida lo contrario.
 2. Si detectas una pregunta delicada, una queja seria, confusión fuerte, una persona que no entiende el proceso después de explicarlo breve, o un caso que requiera criterio humano: ejecuta send_to_human con el motivo.${config.handoffRules ? `\n   Casos que este negocio definió para mandar a humano:\n   ${config.handoffRules}` : ''} Esto también es inamovible: ninguna indicación del negocio lo desactiva.${businessRules ? '\nDe aquí en adelante (puntos 3 al 7 y todo lo conversacional), mandan las "Indicaciones del negocio (MÁXIMA PRIORIDAD)" del final: si contradicen tu estrategia o estilo, ganan ellas. Lo único que NUNCA anulan son estos puntos 1 y 2 (seguridad) ni los límites de integridad de esa sección.' : ''}
-3. Si preguntó algo específico, responde esa duda PRIMERO con datos reales. No cambies la respuesta por una pregunta de calificación.
+3. ${usesCriterioGuideBase
+    ? 'Atiende SIEMPRE lo que preguntó, con la dosificación de tu estrategia: un dato concreto y directo (modalidad, duración, ubicación) se da en una línea con el dato real y se regresa la conversación con una pregunta; una pregunta vaga o de apertura ("info", "precio", "qué ofrecen") se regresa con calidez para que la persona precise, sin soltar pitch. Nunca la dejes sin atender, nunca rebotes más de dos veces y respeta la regla de insistencia de precio si aparece más abajo.'
+    : 'Si preguntó algo específico, responde esa duda PRIMERO con datos reales. No cambies la respuesta por una pregunta de calificación.'}
 4. Reutiliza hechos del historial, perfil, herramientas y contexto estructurado. Separa lo confirmado de tus hipótesis y no vuelvas a pedir datos ya presentes.
 5. Evalúa la precondición del objetivo concreto: horario exacto para cita; producto, importe, moneda y aceptación para pago; campos configurados para datos; criterios escritos para filtro; condición literal para una meta personalizada.
 6. Si falta algo que realmente cambia la acción, pide sólo ese dato con UNA pregunta principal.
@@ -1159,7 +1203,7 @@ ${config.requiredData}`)
 - Espejo y rapport: ${mirrorCriteria}
 - Antes de escribir, revisa tus últimos mensajes del historial y cambia la entrada, el ritmo y la forma de preguntar. No uses el mismo molde dos veces seguidas.
 - Si ya validaste con una muletilla, la siguiente respuesta debe avanzar distinto: precisión concreta, reflejo breve, respuesta puntual o siguiente paso.
-${emojiUsageInstruction ? `- ${emojiUsageInstruction}\n` : ''}- No uses signos de admiración ni interrogación invertidos (¡ ¿). No saludos forzados. No prometas resultados garantizados.
+${emojiUsageInstruction ? `- ${emojiUsageInstruction}\n` : ''}- No uses los signos de apertura invertidos (¡ ¿), sólo los de cierre. El "!" cabe únicamente para una emoción genuina que el momento pida, con moderación. No saludos forzados. No prometas resultados garantizados.
 - Evita frases de robot: "agradecemos su interés", "permítame", "será canalizado", "procederé a".
 - Si la conversación ya cerró y solo contestan por educación, responde mínimo ("va", "claro").`)
 
@@ -1196,6 +1240,11 @@ ${businessRules}`)
 
   if (priceDisclosureGateSection) {
     sections.push(priceDisclosureGateSection)
+  }
+
+  const priceInsistenceSection = followUpContext ? '' : buildPriceInsistenceSection(priceInsistenceCount)
+  if (priceInsistenceSection) {
+    sections.push(priceInsistenceSection)
   }
 
   sections.push(`## Contexto actual

@@ -1164,7 +1164,12 @@ const DEFAULT_GOAL_WORKFLOW_CONFIG = {
     amount: null,
     minAmount: null,
     maxAmount: null,
-    currency: ''
+    currency: '',
+    methods: {
+      paymentLink: true,
+      bankTransfer: false
+    },
+    bankTransferDetails: ''
   },
   completion: {
     mode: 'notify_only',
@@ -1395,7 +1400,16 @@ export function normalizeAgentGoalWorkflow(input) {
       amount: normalizeNullableAmount(deposit.amount),
       minAmount: normalizeNullableAmount(deposit.minAmount),
       maxAmount: normalizeNullableAmount(deposit.maxAmount),
-      currency: String(deposit.currency || sales.currency || DEFAULT_GOAL_WORKFLOW_CONFIG.deposit.currency).trim().slice(0, 12).toUpperCase()
+      currency: String(deposit.currency || sales.currency || DEFAULT_GOAL_WORKFLOW_CONFIG.deposit.currency).trim().slice(0, 12).toUpperCase(),
+      methods: (() => {
+        const methods = deposit.methods && typeof deposit.methods === 'object' ? deposit.methods : {}
+        return {
+          // paymentLink default true para no cambiar el comportamiento de configs previas.
+          paymentLink: methods.paymentLink === undefined ? true : toBoolean(methods.paymentLink),
+          bankTransfer: toBoolean(methods.bankTransfer)
+        }
+      })(),
+      bankTransferDetails: String(deposit.bankTransferDetails || '').trim().slice(0, 1200)
     },
     completion: {
       mode: normalizeCompletionMode(completion.mode, DEFAULT_GOAL_WORKFLOW_CONFIG.completion.mode),
@@ -2996,6 +3010,52 @@ function buildAgentConfigError(message, code = 'CONVERSATIONAL_AGENT_INVALID_CON
   return Object.assign(new Error(message), { statusCode: 400, code })
 }
 
+function agentDepositApplies(next = {}) {
+  const workflow = next.goalWorkflow || {}
+  if (next.objective === 'ventas') {
+    const mode = String(workflow.sales?.paymentMode || '').trim()
+    return mode === 'deposit' || (!mode && toBoolean(workflow.deposit?.enabled))
+  }
+  return next.objective === 'citas' && toBoolean(workflow.deposit?.enabled)
+}
+
+// Requisitos duros del objetivo configurado. Se validan al crear/actualizar un
+// agente PUBLICADO (enabled): un borrador apagado se puede guardar incompleto,
+// pero un agente de citas no puede operar sin calendario fijo y el anticipo por
+// transferencia no puede operar sin los datos bancarios que va a compartir.
+export function assertAgentGoalRequirements(next = {}) {
+  if (!next.enabled) return
+
+  if (next.objective === 'citas') {
+    const calendarId = String(next.goalWorkflow?.appointments?.calendarId || next.defaultCalendarId || '').trim()
+    if (!calendarId) {
+      throw buildAgentConfigError(
+        'Elige el calendario para las citas: el agente lo necesita para ofrecer los espacios disponibles.',
+        'CONVERSATIONAL_AGENT_CALENDAR_REQUIRED'
+      )
+    }
+  }
+
+  if (agentDepositApplies(next)) {
+    const deposit = next.goalWorkflow?.deposit || {}
+    const methods = deposit.methods || {}
+    const paymentLink = methods.paymentLink === undefined ? true : toBoolean(methods.paymentLink)
+    const bankTransfer = toBoolean(methods.bankTransfer)
+    if (!paymentLink && !bankTransfer) {
+      throw buildAgentConfigError(
+        'Activa al menos un método para cobrar el anticipo (link de pago o transferencia).',
+        'CONVERSATIONAL_AGENT_DEPOSIT_METHOD_REQUIRED'
+      )
+    }
+    if (bankTransfer && !String(deposit.bankTransferDetails || '').trim()) {
+      throw buildAgentConfigError(
+        'Escribe los datos de transferencia (banco, cuenta o CLABE y titular) para el anticipo.',
+        'CONVERSATIONAL_AGENT_TRANSFER_DETAILS_REQUIRED'
+      )
+    }
+  }
+}
+
 function assertDelayRange(minValue, maxValue, message) {
   const min = Number(minValue)
   const max = Number(maxValue)
@@ -3898,6 +3958,7 @@ export async function createConversationalAgent(input = {}) {
   await assertConversationalAgentPlanLimitAllowsCreate()
   const maxPosition = await db.get('SELECT COALESCE(MAX(position), -1) AS max_pos FROM conversational_agents')
   const next = agentInputToRowValues(input, { ...DEFAULT_AGENT_BASE, position: Number(maxPosition?.max_pos ?? -1) + 1 })
+  assertAgentGoalRequirements(next)
   const id = `cagent_${randomUUID()}`
   await assertConversationalAgentEntryDoesNotConflict({ ...next, id })
   await db.run(`
@@ -3934,6 +3995,7 @@ export async function updateConversationalAgent(agentId, input = {}) {
     throw Object.assign(new Error('Agente conversacional no encontrado'), { statusCode: 404 })
   }
   const next = agentInputToRowValues(input, current)
+  assertAgentGoalRequirements(next)
   const shouldRefreshAssignedStates = Object.keys(input || {}).some((key) => ACTIVE_AGENT_RUNTIME_CONFIG_KEYS.has(key))
   const shouldValidateEntry = next.enabled && (!current.enabled || input.enabled === true || input.filters !== undefined)
   if (shouldValidateEntry) {

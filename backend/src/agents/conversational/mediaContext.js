@@ -805,3 +805,99 @@ export async function hydrateConversationalPreviewMessagesMedia(messages = [], o
 
   return output
 }
+
+/**
+ * Lee un comprobante de pago (foto o PDF de una transferencia) y extrae los
+ * datos verificables con visión. Devuelve SOLO lo legible en la imagen; la
+ * decisión de si el pago cuenta la toma quien llama comparando contra el
+ * requisito configurado. Nunca lanza: ante error devuelve ok:false con motivo.
+ */
+export async function analyzePaymentReceiptImage({ mediaUrl = '', expectedCurrency = '', apiKey = '' } = {}) {
+  const cleanUrl = cleanString(mediaUrl)
+  if (!cleanUrl) return { ok: false, reason: 'missing_media_url' }
+
+  let media = null
+  try {
+    media = await readMediaBuffer({ media_url: cleanUrl }, { maxBytes: MAX_INLINE_MEDIA_BYTES })
+  } catch (error) {
+    logger.warn(`[Agente conversacional] No se pudo leer el comprobante: ${error.message}`)
+    return { ok: false, reason: 'media_unreadable', error: error.message }
+  }
+  if (!media?.buffer?.length) return { ok: false, reason: 'media_unreadable' }
+
+  const mimeType = normalizeMimeType(media.mimeType) || 'image/jpeg'
+  const isPdf = mimeType === 'application/pdf'
+  if (!mimeType.startsWith('image/') && !isPdf) {
+    return { ok: false, reason: 'unsupported_media_type', mimeType }
+  }
+
+  const resolvedApiKey = cleanString(apiKey) || await getOpenAIApiKey().catch(() => null)
+  if (!resolvedApiKey) return { ok: false, reason: 'missing_api_key' }
+
+  const dataUrl = `data:${mimeType};base64,${media.buffer.toString('base64')}`
+  const analysisPart = isPdf
+    ? { type: 'input_file', filename: media.filename || 'comprobante.pdf', file_data: dataUrl }
+    : { type: 'input_image', image_url: dataUrl, detail: 'high' }
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), VISUAL_ANALYSIS_TIMEOUT_MS)
+  try {
+    const response = await fetch(OPENAI_RESPONSES_URL, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${resolvedApiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: VISUAL_ANALYSIS_MODEL,
+        max_output_tokens: 400,
+        instructions: 'Eres un verificador de comprobantes de pago (transferencias SPEI, depósitos, pagos bancarios). Lee ÚNICAMENTE lo visible en el documento; nunca inventes ni completes datos que no se lean con claridad. Responde SOLO JSON válido con este shape exacto: {"isPaymentReceipt":true|false,"amount":number|null,"currency":"MXN"|string|null,"date":"YYYY-MM-DD"|null,"reference":string|null,"bank":string|null,"recipientHint":string|null,"confidence":0..1}. amount es el monto principal transferido (número sin símbolos). Si el documento NO es un comprobante de pago, isPaymentReceipt=false. Si un dato no se lee, va null.',
+        input: [{
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: `Extrae los datos de este comprobante.${expectedCurrency ? ` La moneda esperada de la cuenta es ${expectedCurrency}; si el comprobante no indica moneda y el formato es local, usa null en currency.` : ''}`
+            },
+            analysisPart
+          ]
+        }]
+      })
+    })
+
+    let payload = null
+    try {
+      payload = await response.json()
+    } catch {
+      payload = null
+    }
+    if (!response.ok) {
+      const message = payload?.error?.message || payload?.message || `HTTP ${response.status}`
+      throw new Error(message)
+    }
+
+    const text = extractOpenAIResponseText(payload)
+    const jsonMatch = String(text || '').match(/\{[\s\S]*\}/)
+    if (!jsonMatch) return { ok: false, reason: 'unparseable_analysis', raw: String(text || '').slice(0, 400) }
+    const parsed = JSON.parse(jsonMatch[0])
+    const amount = Number(parsed.amount)
+    return {
+      ok: true,
+      isPaymentReceipt: parsed.isPaymentReceipt === true,
+      amount: Number.isFinite(amount) && amount > 0 ? Math.round(amount * 100) / 100 : null,
+      currency: cleanString(parsed.currency).toUpperCase() || null,
+      date: cleanString(parsed.date) || null,
+      reference: cleanString(parsed.reference).slice(0, 120) || null,
+      bank: cleanString(parsed.bank).slice(0, 120) || null,
+      recipientHint: cleanString(parsed.recipientHint).slice(0, 160) || null,
+      confidence: Math.max(0, Math.min(1, Number(parsed.confidence) || 0)),
+      mimeType
+    }
+  } catch (error) {
+    logger.warn(`[Agente conversacional] Falló el análisis del comprobante: ${error.message}`)
+    return { ok: false, reason: 'analysis_failed', error: error.message }
+  } finally {
+    clearTimeout(timeout)
+  }
+}
