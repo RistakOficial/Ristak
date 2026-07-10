@@ -2338,6 +2338,16 @@ interrumpe, el runtime detiene los globos restantes, no marca el inbound anterio
 como completamente contestado y agenda una nueva corrida; esa nueva corrida
 vuelve a pasar por la ventana de espera previa al modelo y OpenAI recibe tanto
 lo que el agente ya alcanzo a decir como los mensajes nuevos del contacto.
+Antes de llamar al modelo, el runtime tambien evalua una decision simple de
+suficiencia para traspasos a humano (`ready_for_human`): si la persona ya dio
+contexto real, ya acepto el siguiente paso propuesto y no faltan datos minimos
+obvios como nombre cuando el agente lo pide, el sistema marca la conversacion
+como lista para humano sin otra ronda de preguntas. El guion de cierre se trata
+como evidencia, no como checklist infinito: un "quiero cita" frio sigue
+bloqueado, pero un caso con motivo real y aceptacion explicita no debe seguir
+recibiendo preguntas redundantes. En ese caso el runtime envia una frase corta
+de avance, registra `conversation_decision_ready`, completa `ready_for_human`,
+notifica al humano y detiene al bot.
 
 Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
 el formulario manual avanzado. `extraInstructions` es la superficie editable de

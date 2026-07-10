@@ -1,6 +1,7 @@
 import { Agent, Runner } from '@openai/agents'
 import { CHEAPEST_OPENAI_MODEL } from '../../config/openAIModels.js'
 import { logger } from '../../utils/logger.js'
+import { evaluateConversationalGoalReadiness, visibleConversationMessages } from './decisionState.js'
 
 /**
  * FASES DE CIERRE COMO CANDADO (no prompt).
@@ -66,7 +67,7 @@ export function closingPhaseGateApplies(config = {}) {
 }
 
 function countSubstantiveUserMessages(messages = []) {
-  return (Array.isArray(messages) ? messages : []).filter((m) => {
+  return visibleConversationMessages(messages).filter((m) => {
     if (!m || m.role !== 'user') return false
     const text = typeof m.content === 'string' ? m.content : ''
     return text.trim().length >= MIN_USER_MESSAGE_LENGTH
@@ -74,8 +75,7 @@ function countSubstantiveUserMessages(messages = []) {
 }
 
 function conversationToText(messages = []) {
-  return (Array.isArray(messages) ? messages : [])
-    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
+  return visibleConversationMessages(messages)
     .map((m) => `${m.role === 'user' ? 'CLIENTE' : 'AGENTE'}: ${m.content.trim()}`)
     .join('\n')
     .slice(-9000)
@@ -135,6 +135,8 @@ export async function requireClosingPhasesIfNeeded(config, ctx) {
   if (!closingPhaseGateApplies(config)) return null
 
   const messages = ctx?.conversationMessages || []
+  const goalReadiness = evaluateConversationalGoalReadiness({ messages, config })
+  if (goalReadiness.ready) return null
 
   // 1) Piso determinista: sin plática real no se cierra (mata el "precio" suelto).
   if (countSubstantiveUserMessages(messages) < MIN_SUBSTANTIVE_USER_MESSAGES) {

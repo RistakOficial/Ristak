@@ -32,6 +32,27 @@ test('piso determinista: conversación corta (pregunta de precio) NO deja cerrar
   assert.match(result.error, /no ha habido plática suficiente|arco/i)
 })
 
+test('traspaso humano con contexto real y aceptación no se convierte en interrogatorio infinito', async () => {
+  const ctx = {
+    conversationMessages: [
+      longMsg('hola, quiero más información'),
+      { role: 'assistant', content: 'cuéntame qué necesitas revisar y desde cuándo te pasa?' },
+      longMsg('traigo un problema desde hace varios meses y ya me afecta al comer y trabajar'),
+      { role: 'assistant', content: 'si gustas, te ayudo a dejarlo listo para que el equipo revise tu caso?' },
+      longMsg('sí, está bien')
+    ],
+    aiRuntime: null
+  }
+
+  const result = await requireClosingPhasesIfNeeded({
+    persuasionLevel: 'medium',
+    objective: 'citas',
+    successAction: 'ready_for_human'
+  }, ctx)
+
+  assert.equal(result, null)
+})
+
 test('con plática mínima y sin runtime de validación: fail-open (no rompe el cierre)', async () => {
   const ctx = {
     conversationMessages: [

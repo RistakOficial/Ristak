@@ -2151,6 +2151,10 @@ No estás para vender de forma agresiva. Estás para acompañar, orientar, resol
   }
 
   if (!followUpContext) {
+    sections.push(`## Decisión de suficiencia (evita el interrogatorio infinito)
+- No trates el guion como checklist de preguntas. Trátalo como evidencia: si la persona ya dio contexto real, ya entiendes qué necesita y ya aceptó el siguiente paso, AVANZA.
+- Cuando el contexto ya alcanza, no sigas retando, no sigas vendiendo y no repitas datos. Ejecuta la acción de avance correspondiente o responde mínimo si la herramienta ya se ejecutó.
+- Si recibes un contexto interno de Ristak con "Estado: ready_to_advance", obedece esa decisión: no hagas más preguntas de calificación ni pidas datos ya visibles en el historial.`)
     sections.push(`## Acción cuando la persona está lista\n${SUCCESS_ACTION_TEXTS[config.successAction] || SUCCESS_ACTION_TEXTS.ready_for_human}`)
     sections.push(`## Disciplina de cierre (así cierra una empresa seria)
 - Primero CALIFICA: entiende qué necesita la persona, para qué y su situación real antes de empujar cualquier paso. No cierras a ciegas.

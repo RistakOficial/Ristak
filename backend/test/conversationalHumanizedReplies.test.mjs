@@ -75,6 +75,10 @@ import {
   splitMessageIntoBubblesFallback
 } from '../src/agents/conversational/messageSplitter.js'
 import {
+  buildConversationDecisionContextMessage,
+  evaluateConversationalGoalReadiness
+} from '../src/agents/conversational/decisionState.js'
+import {
   DEFAULT_CLOSING_STRATEGY,
   LIGHT_DIRECT_CLOSING_STRATEGY,
   buildBusinessAdaptiveClosingSection,
@@ -2001,6 +2005,94 @@ test('candado runtime no duplica pase si la herramienta real ya se ejecuto', () 
   assert.deepEqual(result.events, [])
 })
 
+test('decisión de suficiencia avanza a humano sin seguir interrogando cuando ya hay contexto y aceptación', () => {
+  const messages = [
+    { role: 'user', content: '¡Hola! Quiero más información.' },
+    { role: 'assistant', content: 'cuéntame tantito qué molestia tienes y desde cuándo empezó?' },
+    { role: 'user', content: 'se me inflaman las encías y me duele mucho, con frío o caliente el dolor es mucho. Ya me habían empezado trabajos pero no terminé el tratamiento' },
+    { role: 'assistant', content: 'Desde cuándo traes así el dolor?' },
+    { role: 'user', content: 'ya tengo varios meses' },
+    { role: 'assistant', content: 'si gustas, te ayudo a dejarlo ya en revisión para que el equipo vea cómo va tu caso?' },
+    { role: 'user', content: 'si, está bien' }
+  ]
+
+  const decision = evaluateConversationalGoalReadiness({
+    messages,
+    config: {
+      objective: 'citas',
+      successAction: 'ready_for_human',
+      requiredData: ''
+    }
+  })
+
+  assert.equal(decision.ready, true)
+  assert.equal(decision.recommendedAction, 'mark_ready_to_advance')
+  assert.equal(decision.facts.hasRealContext, true)
+  assert.equal(decision.facts.acceptedNextStep, true)
+
+  const contextMessage = buildConversationDecisionContextMessage(decision)
+  assert.match(contextMessage.content, /Estado: ready_to_advance/)
+  assert.match(contextMessage.content, /no hagas más preguntas de calificación/i)
+
+  const guard = applyConversationalRuntimeReplyGuard({
+    reply: 'y desde cuándo te anda dando lata otra vez?',
+    latestText: 'si, está bien',
+    actions: [],
+    config: { persuasionLevel: 'medium', successAction: 'ready_for_human' },
+    readiness: decision
+  })
+
+  assert.equal(guard.forceHumanHandoff?.source, 'objective_sufficiency_ready')
+  assert.equal(guard.forceHumanHandoff?.completeObjective, true)
+  assert.equal(guard.reply, 'Perfecto, ya con eso te paso con el equipo para que te confirmen el siguiente paso.')
+  assert.deepEqual(guard.events.map((event) => event.type), ['runtime_objective_sufficiency_forced'])
+})
+
+test('decisión de suficiencia no avanza con interés frío o sí vacío', () => {
+  const cold = evaluateConversationalGoalReadiness({
+    messages: [{ role: 'user', content: 'quiero cita' }],
+    config: { objective: 'citas', successAction: 'ready_for_human' }
+  })
+  assert.equal(cold.ready, false)
+  assert.deepEqual(cold.missing, ['contexto_real', 'aceptacion_explicita'])
+
+  const emptyYes = evaluateConversationalGoalReadiness({
+    messages: [
+      { role: 'user', content: 'hola, quiero información' },
+      { role: 'assistant', content: 'te ayudo a revisarlo?' },
+      { role: 'user', content: 'sí' }
+    ],
+    config: { objective: 'citas', successAction: 'ready_for_human' }
+  })
+  assert.equal(emptyYes.ready, false)
+  assert.ok(emptyYes.missing.includes('contexto_real'))
+})
+
+test('decisión de suficiencia respeta nombre requerido sin confundir frases comunes', () => {
+  const missingName = evaluateConversationalGoalReadiness({
+    messages: [
+      { role: 'user', content: 'tengo un problema desde hace varios meses y me afecta mucho' },
+      { role: 'assistant', content: 'si gustas, te paso con el equipo para revisarlo?' },
+      { role: 'user', content: 'sí, está bien' }
+    ],
+    config: { objective: 'citas', successAction: 'ready_for_human', requiredData: 'nombre completo' }
+  })
+  assert.equal(missingName.ready, false)
+  assert.ok(missingName.missing.includes('nombre_requerido'))
+
+  const withName = evaluateConversationalGoalReadiness({
+    messages: [
+      { role: 'user', content: 'tengo un problema desde hace varios meses y me afecta mucho' },
+      { role: 'assistant', content: 'me confirmas tu nombre completo?' },
+      { role: 'user', content: 'marisela hernandez maldonado' },
+      { role: 'assistant', content: 'si gustas, te paso con el equipo para revisarlo?' },
+      { role: 'user', content: 'sí, está bien' }
+    ],
+    config: { objective: 'citas', successAction: 'ready_for_human', requiredData: 'nombre completo' }
+  })
+  assert.equal(withName.ready, true)
+})
+
 test('candado runtime convierte silencio ante confirmacion de agenda en pase humano real', () => {
   const latestText = 'Entonces si queda agendada para mañana viernes a la 1 pm???'
   assert.equal(shouldEscalateSilentSchedulingQuestion(latestText, [{ type: 'stay_silent' }]), true)
@@ -3323,6 +3415,9 @@ test('instrucciones universales evitan repetir datos y simular handoff sin tool'
   assert.match(instructions, /Este agente NO agenda por su cuenta; un humano cierra la cita/)
   assert.match(instructions, /Después de esa tool, el bot se detiene/)
   assert.match(instructions, /una persona que no entiende el proceso después de explicarlo breve/)
+  assert.match(instructions, /Decisión de suficiencia/)
+  assert.match(instructions, /No trates el guion como checklist de preguntas/)
+  assert.match(instructions, /Estado: ready_to_advance/)
 })
 
 test('instrucciones del agente respetan el toggle de emojis', () => {

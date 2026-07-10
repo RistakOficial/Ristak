@@ -30,6 +30,8 @@ import {
   releaseAgentFromConversation,
   setConversationSignal,
   setConversationStatus,
+  applyAgentCompletionAction,
+  applyAgentSuccessExtras,
   buildRuleContext,
   exitRulesMatch,
   contactIsOutOfScopeForAgent,
@@ -71,6 +73,10 @@ import {
   hydrateConversationalMessagesMedia,
   hydrateConversationalPreviewMessagesMedia
 } from './mediaContext.js'
+import {
+  buildConversationDecisionContextMessage,
+  evaluateConversationalGoalReadiness
+} from './decisionState.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 
 const HISTORY_LIMIT = 20
@@ -398,12 +404,25 @@ export function applyConversationalRuntimeReplyGuard({
   latestText = '',
   actions = [],
   config = {},
+  readiness = null,
   suppressReply = false
 } = {}) {
   let nextReply = String(reply || '').trim()
   let nextSuppressReply = Boolean(suppressReply)
   const events = []
   let forceHumanHandoff = null
+
+  if (readiness?.ready && !hasActionType(actions, HUMAN_HANDOFF_ACTION_TYPES)) {
+    nextReply = buildRuntimeReadyToAdvanceReply()
+    nextSuppressReply = false
+    forceHumanHandoff = {
+      reason: readiness.reason || 'El contacto ya dio contexto suficiente y acepto avanzar.',
+      summary: readiness.summary || String(latestText || '').trim().slice(0, 500),
+      source: 'objective_sufficiency_ready',
+      completeObjective: true
+    }
+    events.push({ type: 'runtime_objective_sufficiency_forced' })
+  }
 
   if (shouldEscalateSilentSchedulingQuestion(latestText, actions)) {
     nextReply = 'Te paso con el equipo para que te confirmen eso.'
@@ -422,7 +441,7 @@ export function applyConversationalRuntimeReplyGuard({
     events.push({ type: 'runtime_price_guard_rewrite' })
   }
 
-  if (replySuggestsHumanHandoff(nextReply) && !hasActionType(actions, HUMAN_HANDOFF_ACTION_TYPES)) {
+  if (replySuggestsHumanHandoff(nextReply) && !hasActionType(actions, HUMAN_HANDOFF_ACTION_TYPES) && !forceHumanHandoff?.completeObjective) {
     forceHumanHandoff = forceHumanHandoff || {
       reason: 'La respuesta prometio intervencion humana sin ejecutar una herramienta de traspaso.',
       summary: nextReply.slice(0, 500),
@@ -462,13 +481,16 @@ async function forceRuntimeHumanHandoff({ contactId, agentConfig, latest, channe
   const reason = String(handoff.reason || 'El runtime detecto que el caso requiere humano.').trim()
   const summary = String(handoff.summary || '').trim()
   const signal = 'ready_for_human'
+  const completeObjective = handoff.completeObjective === true
   const action = {
-    type: 'runtime_send_to_human',
+    type: completeObjective ? 'runtime_mark_ready_to_advance' : 'runtime_send_to_human',
     motivo: reason,
     source: handoff.source || 'runtime_guard',
     effect: {
-      liveEffect: 'Pasa el chat a humano por candado de runtime. NO marca el objetivo como cumplido.',
-      marksObjectiveCompleted: false
+      liveEffect: completeObjective
+        ? 'MARCA el objetivo como cumplido por suficiencia de contexto y pasa el chat a humano.'
+        : 'Pasa el chat a humano por candado de runtime. NO marca el objetivo como cumplido.',
+      marksObjectiveCompleted: completeObjective
     }
   }
   if (Array.isArray(ctx?.actions)) ctx.actions.push(action)
@@ -476,9 +498,12 @@ async function forceRuntimeHumanHandoff({ contactId, agentConfig, latest, channe
   await setConversationSignal(contactId, signal, {
     reason,
     summary,
-    status: 'human',
+    status: completeObjective ? 'completed' : 'human',
     agentId: agentConfig?.id || ''
   })
+  if (completeObjective) {
+    await applyAgentCompletionAction(agentConfig || {}, contactId)
+  }
 
   try {
     const result = await sendConversationalAgentPriorityNotification({ contactId, reason, summary, signal })
@@ -506,7 +531,27 @@ async function forceRuntimeHumanHandoff({ contactId, agentConfig, latest, channe
       source: handoff.source || 'runtime_guard'
     }
   })
+  if (completeObjective) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'objective_completed',
+      detail: {
+        agentId: agentConfig?.id || null,
+        signal,
+        kind: 'ready_for_human',
+        intencionDetectada: reason,
+        urgencia: null,
+        siguientePaso: null,
+        source: handoff.source || 'runtime_guard'
+      }
+    })
+    await applyAgentSuccessExtras(agentConfig || {}, contactId)
+  }
   return action
+}
+
+function buildRuntimeReadyToAdvanceReply() {
+  return 'Perfecto, ya con eso te paso con el equipo para que te confirmen el siguiente paso.'
 }
 
 export async function waitForConversationalResponseWindow({
@@ -2085,8 +2130,104 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
       if (!messages.length) return
 	      const pendingMessages = await loadPendingInboundMessages(contactId, agentState, normalizedChannel)
       const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
-      const messagesForAgent = pendingContextMessage ? [...messages, pendingContextMessage] : messages
+      const baseMessagesForAgent = pendingContextMessage ? [...messages, pendingContextMessage] : messages
+      const conversationDecision = evaluateConversationalGoalReadiness({
+        messages: baseMessagesForAgent,
+        config: agentConfig,
+        contactName: contact?.full_name || ''
+      })
+      const decisionContextMessage = buildConversationDecisionContextMessage(conversationDecision)
+      const messagesForAgent = decisionContextMessage ? [...baseMessagesForAgent, decisionContextMessage] : baseMessagesForAgent
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
+
+      if (conversationDecision.ready) {
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'conversation_decision_ready',
+          detail: {
+            messageId: latest.id,
+            agentId: agentConfig.id || null,
+            channel: normalizedChannel,
+            action: conversationDecision.recommendedAction,
+            reason: conversationDecision.reason,
+            facts: conversationDecision.facts || {}
+          }
+        }).catch(() => {})
+
+        const latestBeforeDecisionSend = await loadNewerInboundMessage(contactId, latest.id, normalizedChannel)
+        if (latestBeforeDecisionSend) {
+          await recordConversationalAgentEvent({
+            contactId,
+            eventType: 'reply_suppressed',
+            detail: {
+              messageId: latest.id,
+              agentId: agentConfig.id || null,
+              channel: normalizedChannel,
+              reason: 'newer_inbound_before_decision_reply',
+              newerMessageId: latestBeforeDecisionSend.id
+            }
+          })
+          scheduleConversationalAgentRerun({
+            contactId,
+            phone,
+            latestMessage: latestBeforeDecisionSend,
+            channel: normalizedChannel,
+            reason: 'mensaje nuevo antes de cierre por suficiencia'
+          })
+          return
+        }
+
+        const reply = buildRuntimeReadyToAdvanceReply()
+        const delivery = await sendReplyParts({
+          contactId,
+          phone,
+          latest,
+          agentConfig: {
+            ...agentConfig,
+            replyDelivery: { ...agentConfig.replyDelivery, mode: 'normal', splitMessagesEnabled: false }
+          },
+          reply,
+          apiKey: runtime.apiKey,
+          model: agentConfig.model || config.model,
+          channel: normalizedChannel,
+          dependencies: {
+            splitter: splitMessageIntoBubblesFallback
+          }
+        })
+
+        const runtimeCtx = { actions: [] }
+        await forceRuntimeHumanHandoff({
+          contactId,
+          agentConfig,
+          latest,
+          channel: normalizedChannel,
+          ctx: runtimeCtx,
+          handoff: {
+            reason: conversationDecision.reason,
+            summary: conversationDecision.summary,
+            source: 'objective_sufficiency_ready',
+            completeObjective: true
+          }
+        })
+
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'reply_sent',
+          detail: {
+            messageId: latest.id,
+            agentId: agentConfig.id || null,
+            channel: normalizedChannel,
+            replyPreview: reply.slice(0, 280),
+            partCount: delivery.parts.length,
+            pendingInboundCount: pendingMessages.length,
+            aiProvider,
+            actions: runtimeCtx.actions,
+            decisionState: conversationDecision.state
+          }
+        })
+        await resetFollowUpStateAfterReply({ contactId, latest, agentConfig, phone, channel: normalizedChannel })
+        return
+      }
 
       const { agent, ctx, model } = await buildAgentForRun({
         config: agentConfig,
@@ -2128,6 +2269,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         latestText: traceMessage,
         actions: ctx.actions,
         config: agentConfig,
+        readiness: conversationDecision,
         suppressReply: ctx.suppressReply
       })
       reply = runtimeGuard.reply
