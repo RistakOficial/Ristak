@@ -1067,7 +1067,14 @@ fotos por `/whatsapp-api/messages/image`, videos por
 `/whatsapp-api/messages/video`, documentos por
 `/whatsapp-api/messages/document`, notas de voz por
 `/whatsapp-api/messages/audio` y ubicacion por
-`/whatsapp-api/messages/location`. Las previews nativas deben diferenciar cada
+`/whatsapp-api/messages/location`. Al elegir una foto, `/movil`, `mobile/` e
+`ios/app` la reducen a un maximo de 1600 px y JPEG de calidad de chat antes de
+convertirla a data URL; el backend normaliza otra vez como respaldo. El globo
+optimista usa la copia local de inmediato y no debe
+esperar la subida ni el ACK QR. Cuando Baileys acepta el mensaje con `key.id`, la
+UI recibe `sent`; `delivered`/`read` se reconcilian despues en background sobre
+el mismo globo.
+Las previews nativas deben diferenciar cada
 tipo como `/movil`: fotos con proporcion real y `contain` sin marco fijo,
 video reproducible, waveform de nota de voz con avatar/microfono/progreso,
 tarjeta abrible para documento y mini-mapa con tiles de OpenStreetMap para

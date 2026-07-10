@@ -154,9 +154,11 @@ carpeta asignada + lee (sin modificar) el resto.
 ## Media (doc 12)
 
 - Envíos de chat: base64 **data URL** en JSON (`imageDataUrl` etc.). Límites de
-  entrada: imagen 25MB (JPG/PNG/WebP — convierte HEIC a JPEG antes), video
-  25MB (MP4/MOV), audio 16MB (envía m4a/AAC, el backend transcodifica), doc
-  20MB. `MediaEncoder` centraliza conversión+límites+errores en español. El
+  entrada: imagen 25MB (JPG/PNG/WebP/HEIC decodificable), video 25MB
+  (MP4/MOV), audio 16MB (envía m4a/AAC, el backend transcodifica), doc 20MB.
+  `MediaEncoder` reduce toda foto a un máximo de 1600 px, la convierte a JPEG
+  0.80 antes del base64 y centraliza límites/errores en español; no debe mandar
+  la foto completa de cámara para que el backend la reduzca después. El
   backend conserva un preview M4A reproducible para API y QR y normaliza el
   alias detectado `audio/x-m4a` a `audio/mp4` antes de guardarlo.
 - Render: URLs de media públicas (CDN) — `ImageLoader` con caché en memoria y

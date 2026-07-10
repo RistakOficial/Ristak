@@ -4917,6 +4917,7 @@ function getMessageMediaId(message = {}) {
 
 const QR_MEDIA_MESSAGE_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
 const OUTBOUND_API_MEDIA_QR_ECHO_TYPES = new Set(['image', 'video', 'audio', 'voice', 'document', 'sticker'])
+const QR_MEDIA_FINGERPRINT_KEYS = new Set(['filesha256', 'fileencsha256', 'sha256'])
 
 function recentMessageWindowExpressions() {
   return {
@@ -5002,12 +5003,59 @@ async function handleRecentQrEchoDuplicate({
   return { skipped: true, reason: 'duplicate_recent', messageId: duplicate?.id }
 }
 
-async function findRecentOutboundApiMediaDuplicate({
+function collectQrMediaFingerprints(value, fingerprints = new Set(), depth = 0) {
+  if (value == null || depth > 12) return fingerprints
+
+  if (typeof value === 'string') {
+    const cleanValue = value.trim()
+    if ((cleanValue.startsWith('{') && cleanValue.endsWith('}')) || (cleanValue.startsWith('[') && cleanValue.endsWith(']'))) {
+      try {
+        collectQrMediaFingerprints(JSON.parse(cleanValue), fingerprints, depth + 1)
+      } catch {
+        // El raw de proveedores puede traer strings que parecen JSON sin serlo.
+      }
+    }
+    return fingerprints
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectQrMediaFingerprints(item, fingerprints, depth + 1)
+    return fingerprints
+  }
+
+  if (!isPlainObject(value)) return fingerprints
+
+  for (const [key, child] of Object.entries(value)) {
+    const normalizedKey = cleanString(key).toLowerCase()
+    if (QR_MEDIA_FINGERPRINT_KEYS.has(normalizedKey) && typeof child === 'string') {
+      const fingerprint = cleanString(child)
+      if (fingerprint) fingerprints.add(fingerprint)
+    }
+    collectQrMediaFingerprints(child, fingerprints, depth + 1)
+  }
+
+  return fingerprints
+}
+
+function qrMediaFingerprints(value) {
+  return collectQrMediaFingerprints(value)
+}
+
+function sharesQrMediaFingerprint(left, right) {
+  if (!left?.size || !right?.size) return false
+  for (const fingerprint of left) {
+    if (right.has(fingerprint)) return true
+  }
+  return false
+}
+
+async function findRecentOutboundMediaDuplicate({
   cleanContactPhone,
   cleanDirection,
   cleanMessageType,
   cleanWamid,
-  messageTimestamp
+  messageTimestamp,
+  raw
 } = {}) {
   if (cleanDirection !== 'outbound') return null
   if (!OUTBOUND_API_MEDIA_QR_ECHO_TYPES.has(cleanMessageType)) return null
@@ -5018,7 +5066,7 @@ async function findRecentOutboundApiMediaDuplicate({
     messageTimeExpr
   } = recentMessageWindowExpressions()
 
-  return db.get(`
+  const candidates = await db.all(`
     SELECT
       id,
       contact_id,
@@ -5030,18 +5078,38 @@ async function findRecentOutboundApiMediaDuplicate({
       direction,
       message_type,
       message_timestamp,
-      created_at
+      created_at,
+      raw_payload_json
     FROM whatsapp_api_messages
     WHERE phone = ?
       AND direction = ?
       AND LOWER(COALESCE(message_type, '')) = ?
       AND COALESCE(message_text, '') = ''
-      AND LOWER(COALESCE(transport, 'api')) != 'qr'
       AND COALESCE(wamid, '') != ?
       AND ${messageTimeExpr} BETWEEN ${lowerBoundExpr} AND ${upperBoundExpr}
     ORDER BY updated_at DESC, created_at DESC
-    LIMIT 1
-  `, [cleanContactPhone, cleanDirection, cleanMessageType, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => null)
+    LIMIT 8
+  `, [cleanContactPhone, cleanDirection, cleanMessageType, cleanWamid, messageTimestamp, messageTimestamp]).catch(() => [])
+
+  if (!candidates?.length) return null
+
+  // Para ecos de un envío QR directo no basta "mismo tipo + mismo minuto": el
+  // operador puede mandar dos fotos seguidas sin caption. Baileys sí entrega la
+  // huella criptográfica del archivo en ambos eventos, aunque use WAMID distintos.
+  // La usamos para reconciliar exactamente la misma media sin comernos otra foto.
+  const incomingFingerprints = qrMediaFingerprints(raw)
+  if (incomingFingerprints.size) {
+    const exactMediaMatch = candidates.find(candidate => sharesQrMediaFingerprint(
+      incomingFingerprints,
+      qrMediaFingerprints(candidate.raw_payload_json)
+    ))
+    if (exactMediaMatch) return exactMediaMatch
+  }
+
+  // La API oficial no siempre expone la huella que devuelve el eco de WhatsApp
+  // Web. Conservamos el dedupe previo para esa ruta, pero no lo aplicamos a filas
+  // QR sin fingerprint porque podría ocultar una segunda foto real.
+  return candidates.find(candidate => cleanString(candidate.transport).toLowerCase() !== 'qr') || null
 }
 
 function rememberOfficialApiOutboundForQrEcho({ phoneNumberId, toPhone, type, text = '' } = {}) {
@@ -6835,12 +6903,13 @@ export async function captureQrChatMessage({
     }
   } else {
     const cleanMessageType = cleanString(messageType).toLowerCase()
-    const duplicate = await findRecentOutboundApiMediaDuplicate({
+    const duplicate = await findRecentOutboundMediaDuplicate({
       cleanContactPhone,
       cleanDirection,
       cleanMessageType,
       cleanWamid,
-      messageTimestamp
+      messageTimestamp,
+      raw
     })
     if (duplicate) {
       return handleRecentQrEchoDuplicate({
@@ -9633,24 +9702,37 @@ async function sendLocationViaQrFallback({ fromPhone, toPhone, location, externa
   }
 }
 
-async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
+async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageDataUrl, preparedImage, externalId, phoneNumberId, contactId, localMedia, publicBaseUrl, fallbackReason, originalError, persist = true, skipQrSendProtection = false } = {}) {
   try {
     const localMediaUrl = localMedia ? buildLocalMediaUrl(localMedia, publicBaseUrl) : ''
-    const response = await sendWhatsAppQrImageMessage({
-      phoneNumberId,
-      from: fromPhone,
-      to: toPhone,
-      imageDataUrl,
-      imageUrl: requestImage?.link || localMediaUrl,
-      caption: requestImage?.caption,
-      externalId,
-      skipQrSendProtection
-    })
-    const qrPreviewImage = localMedia ? null : await saveQrInlineImageForChatPreview(imageDataUrl)
+    const optimizedImage = preparedImage || (!localMedia && cleanString(imageDataUrl)
+      ? await prepareWhatsAppImageForProviderUpload(imageDataUrl)
+      : null)
+    const optimizedImageDataUrl = optimizedImage ? buildPreparedMediaDataUrl(optimizedImage) : imageDataUrl
+    const [response, qrPreviewImage] = await Promise.all([
+      sendWhatsAppQrImageMessage({
+        phoneNumberId,
+        from: fromPhone,
+        to: toPhone,
+        imageDataUrl: optimizedImageDataUrl,
+        imageUrl: requestImage?.link || localMediaUrl,
+        caption: requestImage?.caption,
+        externalId,
+        skipQrSendProtection
+      }),
+      localMedia
+        ? Promise.resolve(null)
+        : optimizedImage
+          ? savePreparedMediaForChatPreview(optimizedImage, {
+              type: 'image',
+              mediaLabel: 'foto de WhatsApp QR'
+            })
+          : saveQrInlineImageForChatPreview(imageDataUrl)
+    ])
     const qrPreviewImageUrl = cleanString(qrPreviewImage?.link || qrPreviewImage?.publicUrl || qrPreviewImage?.url || qrPreviewImage?.mediaUrl)
     const responseImage = isPlainObject(response.image) ? response.image : {}
     const qrMetadata = buildQrInlineMediaMetadata({
-      dataUrl: imageDataUrl,
+      dataUrl: optimizedImageDataUrl,
       mimeType: requestImage?.mimeType || localMedia?.mimeType,
       filename: requestImage?.filename || localMedia?.filename,
       defaultBasename: 'whatsapp-image',
@@ -10613,8 +10695,15 @@ export async function sendWhatsAppApiImageMessage({
   let link = cleanImageUrl
   let providerImage = null
   let providerPreviewImage = null
+  let preparedImage = null
+
+  const getPreparedImage = async () => {
+    if (!preparedImage) preparedImage = await prepareWhatsAppImageForProviderUpload(imageDataUrl)
+    return preparedImage
+  }
 
   if (cleanTransport === 'qr') {
+    const optimizedImage = link ? null : await getPreparedImage()
     return sendImageViaQrFallback({
       phoneNumberId,
       fromPhone,
@@ -10624,6 +10713,7 @@ export async function sendWhatsAppApiImageMessage({
         ...(cleanCaption ? { caption: cleanCaption } : {})
       },
       imageDataUrl,
+      preparedImage: optimizedImage,
       externalId,
       contactId,
       publicBaseUrl,
@@ -10640,6 +10730,7 @@ export async function sendWhatsAppApiImageMessage({
     checkReplyWindow: true
   })
   if (allowQrFallback && fallbackDecision.shouldFallback) {
+    const optimizedImage = link ? null : await getPreparedImage()
     return sendImageViaQrFallback({
       phoneNumberId: fallbackDecision.fallbackPhoneRow?.id || phoneNumberId,
       fromPhone,
@@ -10649,6 +10740,7 @@ export async function sendWhatsAppApiImageMessage({
         ...(cleanCaption ? { caption: cleanCaption } : {})
       },
       imageDataUrl,
+      preparedImage: optimizedImage,
       externalId,
       contactId,
       publicBaseUrl,
@@ -10659,17 +10751,21 @@ export async function sendWhatsAppApiImageMessage({
   throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
   if (!link) {
-    const preparedImage = await prepareWhatsAppImageForProviderUpload(imageDataUrl)
-    providerImage = await uploadPreparedMediaToYCloud({
-      config,
-      fromPhone,
-      media: preparedImage,
-      type: 'image'
-    })
-    providerPreviewImage = await savePreparedMediaForChatPreview(preparedImage, {
-      type: 'image',
-      mediaLabel: 'foto de WhatsApp API'
-    })
+    const optimizedImage = await getPreparedImage()
+    const uploads = await Promise.all([
+      uploadPreparedMediaToYCloud({
+        config,
+        fromPhone,
+        media: optimizedImage,
+        type: 'image'
+      }),
+      savePreparedMediaForChatPreview(optimizedImage, {
+        type: 'image',
+        mediaLabel: 'foto de WhatsApp API'
+      })
+    ])
+    providerImage = uploads[0]
+    providerPreviewImage = uploads[1]
   }
 
   if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {
@@ -10742,6 +10838,7 @@ export async function sendWhatsAppApiImageMessage({
         toPhone,
         requestImage: requestBody.image,
         imageDataUrl,
+        preparedImage,
         externalId,
         contactId,
         publicBaseUrl,

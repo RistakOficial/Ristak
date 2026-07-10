@@ -18,8 +18,11 @@ import UniformTypeIdentifiers
 ///   OGG/Opus, formato de nota de voz de WhatsApp).
 /// - Documento: PDF/Word/Excel/PowerPoint/TXT/CSV ≤20 MB; filename sanitizado.
 enum MediaEncoder {
-    /// Calidad JPEG de conversión (paridad RN `quality: 0.86`).
-    static let jpegConversionQuality: CGFloat = 0.86
+    /// WhatsApp termina reduciendo las fotos a un tamaño parecido. Hacerlo antes
+    /// evita subir 3-8 MB como base64 para que el servidor y WhatsApp vuelvan a
+    /// comprimir exactamente lo mismo.
+    static let jpegConversionQuality: CGFloat = 0.80
+    static let imageMaxPixelDimension: CGFloat = 1_600
 
     // MARK: Data URL
 
@@ -33,30 +36,47 @@ enum MediaEncoder {
     /// Codifica una `UIImage` (cámara/galería) como JPEG listo para
     /// `imageDataUrl`.
     static func encodeImage(_ image: UIImage, filename: String? = nil) throws -> EncodedChatMedia {
-        guard let jpegData = image.jpegData(compressionQuality: jpegConversionQuality), !jpegData.isEmpty else {
+        let preparedImage = downscaledChatImage(image)
+        guard let jpegData = preparedImage.jpegData(compressionQuality: jpegConversionQuality), !jpegData.isEmpty else {
             throw MediaEncodingError.imageEmpty
         }
         return try validatedImage(data: jpegData, mimeType: "image/jpeg", filename: filename ?? defaultFilename(ext: "jpg"))
     }
 
-    /// Codifica datos de imagen ya cargados. Si el MIME no es JPG/PNG/WebP
-    /// (HEIC, TIFF, etc.) intenta convertir a JPEG; si no se puede decodificar
-    /// → formato inválido.
+    /// Codifica datos de imagen ya cargados (JPG/PNG/WebP/HEIC u otro formato
+    /// que UIKit pueda leer), los reduce y los convierte a JPEG.
     static func encodeImageData(_ data: Data, mimeType: String?, filename: String? = nil) throws -> EncodedChatMedia {
         guard !data.isEmpty else { throw MediaEncodingError.imageEmpty }
-        let normalizedMime = normalizeMime(mimeType)
-        if ChatMediaLimits.allowedImageMimeTypes.contains(normalizedMime) {
-            return try validatedImage(
-                data: data,
-                mimeType: normalizedMime == "image/jpg" ? "image/jpeg" : normalizedMime,
-                filename: filename ?? defaultFilename(ext: fileExtension(forMime: normalizedMime) ?? "jpg")
-            )
-        }
-        // HEIC/HEIF u otro formato: convertir a JPEG.
+        // Todas las fotos decodificables pasan por la misma optimización. Antes
+        // JPG/PNG/WebP "válidos" saltaban directo y una foto de cámara de varios
+        // megapíxeles viajaba completa aunque el backend la redujera después.
         guard let image = UIImage(data: data) else {
             throw MediaEncodingError.imageInvalidFormat
         }
         return try encodeImage(image, filename: jpegFilename(from: filename))
+    }
+
+    private static func downscaledChatImage(_ image: UIImage) -> UIImage {
+        let width = image.size.width
+        let height = image.size.height
+        let longestSide = max(width, height)
+        guard longestSide > imageMaxPixelDimension, width > 0, height > 0 else {
+            return image
+        }
+
+        let ratio = imageMaxPixelDimension / longestSide
+        let targetSize = CGSize(
+            width: max(1, (width * ratio).rounded()),
+            height: max(1, (height * ratio).rounded())
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        return UIGraphicsImageRenderer(size: targetSize, format: format).image { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(origin: .zero, size: targetSize))
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
     }
 
     /// Codifica un archivo de imagen del disco.

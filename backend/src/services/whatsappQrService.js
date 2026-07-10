@@ -8,9 +8,9 @@ import { waitForWhatsAppQrDripSlot } from './whatsappQrDripService.js'
 
 const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak podrá usarla para mensajes configurados cuando QR sea el canal principal, o como respaldo si hay WhatsApp API conectada y yo activo ese respaldo.'
 const CONNECT_TIMEOUT_MS = 20000
-const QR_SEND_ACK_TIMEOUT_MS = 20000
 const QR_RECENT_ACK_RETENTION_MS = 90000
 const QR_RECENT_RISTAK_OUTBOUND_RETENTION_MS = 90000
+const QR_ACK_PERSIST_RETRY_DELAYS_MS = [75, 300, 1000]
 const QR_PROFILE_PICTURE_TIMEOUT_MS = 4500
 const QR_PROFILE_PICTURE_CACHE_TTL_MS = 24 * 60 * 60 * 1000
 const QR_PROFILE_PICTURE_BATCH_LIMIT = 8
@@ -75,7 +75,6 @@ const DOCUMENT_MIME_BY_EXTENSION = {
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 
 const liveSessions = new Map()
-const qrSendAckWaiters = new Map()
 const qrRecentMessageAcks = new Map()
 const qrRecentRistakOutboundAttempts = new Map()
 let baileysRuntime = null
@@ -440,7 +439,12 @@ function normalizeQrAttemptText(value = '') {
 }
 
 function qrOutboundAttemptKey({ phoneId, contactPhone, type, text = '' } = {}) {
-  const contact = normalizePhoneDigits(contactPhone)
+  // WhatsApp puede devolver el mismo numero mexicano como 52... o 521...
+  // dependiendo de si el evento viene del JID principal, remoteJidAlt o un
+  // dispositivo vinculado. La memoria de dedupe debe usar la identidad canonica
+  // que tambien usamos al guardar contactos; si se queda con digitos crudos, el
+  // eco QR no encuentra el intento original y crea otro globo multimedia.
+  const contact = normalizePhoneDigits(normalizePhoneForStorage(contactPhone) || contactPhone)
   const cleanType = cleanString(type || 'text').toLowerCase()
   return `${cleanString(phoneId)}|${contact}|${cleanType}|${normalizeQrAttemptText(text)}`
 }
@@ -591,13 +595,6 @@ function pickBestQrAck(current, next) {
   return getQrAckPriority(next) >= getQrAckPriority(current) ? next : current
 }
 
-function shouldResolveQrAck(ack = {}) {
-  if (!ack) return false
-  const status = cleanString(ack.status).toLowerCase()
-  const code = getBaileysStatusCode(ack.statusCode)
-  return status === 'failed' || code === QR_ACK_STATUS.ERROR || code >= QR_ACK_STATUS.DELIVERY_ACK
-}
-
 function isConfirmedQrSendAck(ack = {}) {
   if (!ack) return false
   const status = cleanString(ack.status).toLowerCase()
@@ -724,20 +721,7 @@ function rememberQrAck(ack) {
   })
 }
 
-function resolveQrAckWaiter(ack) {
-  if (!ack?.messageId) return
-  const waiter = qrSendAckWaiters.get(ack.messageId)
-  if (!waiter) return
-
-  waiter.bestAck = pickBestQrAck(waiter.bestAck, ack)
-  if (!shouldResolveQrAck(waiter.bestAck)) return
-
-  clearTimeout(waiter.timeout)
-  qrSendAckWaiters.delete(ack.messageId)
-  waiter.resolve(waiter.bestAck)
-}
-
-async function updateStoredQrMessageAck(ack) {
+async function updateStoredQrMessageAck(ack, retryAttempt = 0) {
   if (!ack?.messageId || !ack.status) return
 
   const rows = await db.all(`
@@ -746,6 +730,19 @@ async function updateStoredQrMessageAck(ack) {
     WHERE transport = 'qr'
       AND (ycloud_message_id = ? OR wamid = ?)
   `, [ack.messageId, ack.messageId])
+
+  // Al responder de forma optimista el ACK puede ganarle por milisegundos al
+  // INSERT del mensaje. Reintentamos en background para no perder delivered/read
+  // sin volver a bloquear el request que acaba de mandar la media.
+  if (!rows?.length && retryAttempt < QR_ACK_PERSIST_RETRY_DELAYS_MS.length) {
+    const timeout = setTimeout(() => {
+      updateStoredQrMessageAck(ack, retryAttempt + 1).catch(error => {
+        logger.warn(`[WhatsApp QR] No se pudo reintentar ACK ${ack.messageId}: ${error.message}`)
+      })
+    }, QR_ACK_PERSIST_RETRY_DELAYS_MS[retryAttempt])
+    timeout.unref?.()
+    return
+  }
 
   await Promise.all((rows || [])
     .filter(row => shouldUpdateStoredStatus(row.status, ack.status))
@@ -788,7 +785,6 @@ async function handleQrMessageReceipts(phone, updates = []) {
 
 function processQrAck(phone, ack) {
   rememberQrAck(ack)
-  resolveQrAckWaiter(ack)
   updateStoredQrMessageAck(ack).catch(error => {
     logger.warn(`[WhatsApp QR] No se pudo guardar ACK ${ack.messageId} (${phone.id}): ${error.message}`)
   })
@@ -1292,76 +1288,37 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null) {
   }
 }
 
-function waitForQrSendAck(messageId, response = {}) {
-  const cleanMessageId = cleanString(messageId)
-  if (!cleanMessageId) {
-    return Promise.resolve({
-      messageId: '',
-      status: 'pending',
-      statusCode: QR_ACK_STATUS.PENDING,
-      source: 'missing-message-id',
-      timedOut: true,
-      receivedAt: nowIso()
-    })
-  }
-
-  const initialAck = buildQrFailureAckFromSendResponse(cleanMessageId, response)
-  const recentAck = qrRecentMessageAcks.get(cleanMessageId)?.ack
-  const bestImmediateAck = pickBestQrAck(recentAck, initialAck)
-  if (shouldResolveQrAck(bestImmediateAck)) return Promise.resolve(bestImmediateAck)
-
-  return new Promise(resolve => {
-    const timeout = setTimeout(() => {
-      const waiter = qrSendAckWaiters.get(cleanMessageId)
-      qrSendAckWaiters.delete(cleanMessageId)
-      const latestAck = qrRecentMessageAcks.get(cleanMessageId)?.ack
-      resolve(pickBestQrAck(latestAck, waiter?.bestAck || bestImmediateAck) || {
-        messageId: cleanMessageId,
-        status: 'pending',
-        statusCode: QR_ACK_STATUS.PENDING,
-        source: 'timeout',
-        timedOut: true,
-        receivedAt: nowIso()
-      })
-    }, QR_SEND_ACK_TIMEOUT_MS)
-
-    qrSendAckWaiters.set(cleanMessageId, {
-      timeout,
-      resolve,
-      bestAck: bestImmediateAck
-    })
-  })
-}
-
 async function finalizeQrSendResponse({ response, recipient, externalId }) {
   cacheSentQrMessage(response)
   const accepted = assertQrSendAccepted(response, recipient.jid)
-  const ack = await waitForQrSendAck(accepted.messageId, response)
+  const immediateAck = pickBestQrAck(
+    qrRecentMessageAcks.get(accepted.messageId)?.ack,
+    buildQrFailureAckFromSendResponse(accepted.messageId, response)
+  )
 
-  if (cleanString(ack.status).toLowerCase() === 'failed') {
-    const error = new Error(ack.errorMessage || 'WhatsApp rechazo el mensaje enviado por QR')
-    error.code = ack.errorCode || 'qr_send_failed'
+  if (cleanString(immediateAck?.status).toLowerCase() === 'failed') {
+    const error = new Error(immediateAck.errorMessage || 'WhatsApp rechazo el mensaje enviado por QR')
+    error.code = immediateAck.errorCode || 'qr_send_failed'
     error.statusCode = 400
-    error.qrAck = ack
+    error.qrAck = immediateAck
     throw error
   }
 
-  // (WA-002) El servidor de WhatsApp ya aceptó el mensaje (Baileys devolvió key.id en
-  // `accepted.messageId`). Antes lanzábamos 408 cuando el destinatario no confirmaba
-  // entrega en 20s (típico si está offline), aunque WhatsApp lo entregaría luego: el
-  // operador lo veía como "falló" y reenviaba, generando duplicados. Ahora tratamos el
-  // mensaje aceptado como ÉXITO con estado 'sent'; los acks posteriores actualizan a
-  // delivered/read. Solo un 'failed' explícito (arriba) se considera error.
-  const confirmed = isConfirmedQrSendAck(ack)
-  const resolvedStatus = confirmed ? (ack.status || 'delivered') : 'sent'
+  // Baileys ya acepto el mensaje al devolver key.id. No bloqueamos la respuesta
+  // HTTP esperando hasta 20 s por delivered/read: esos ACK siguen entrando por
+  // messages.update/message-receipt.update y actualizan la fila en background.
+  // Es el mismo contrato optimista de las apps de mensajeria: aceptar rapido y
+  // reconciliar entrega despues. Un fallo sincronico real se conserva arriba.
+  const confirmed = isConfirmedQrSendAck(immediateAck)
+  const resolvedStatus = confirmed ? (immediateAck.status || 'delivered') : 'sent'
 
   return {
     id: accepted.messageId || externalId || '',
     wamid: accepted.messageId || '',
     recipientJid: accepted.remoteJid,
     status: resolvedStatus,
-    ack,
-    raw: safeJson({ response, ack })
+    ack: immediateAck || null,
+    raw: safeJson({ response, ack: immediateAck || null, ackPending: !confirmed })
   }
 }
 
@@ -1621,7 +1578,6 @@ export function resetWhatsAppQrServiceForTest() {
   reconnectDelayOverrideForTest = null
   whatsappWebVersionCache = null
   whatsappWebVersionPromise = null
-  qrSendAckWaiters.clear()
   qrRecentMessageAcks.clear()
   qrRecentRistakOutboundAttempts.clear()
   connectionOpenListeners.clear()

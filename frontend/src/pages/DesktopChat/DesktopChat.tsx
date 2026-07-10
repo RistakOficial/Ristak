@@ -87,6 +87,7 @@ import {
   todayDateOnlyInTimezone
 } from '@/utils/timezone'
 import { hasLicenseFeature } from '@/utils/accessControl'
+import { optimizeChatImageFile } from '@/utils/chatMedia'
 import apiClient from '@/services/apiClient'
 import automationsService, { type AutomationSummary } from '@/services/automationsService'
 import { calendarsService, type Calendar, type CalendarEvent } from '@/services/calendarsService'
@@ -5013,15 +5014,17 @@ export const DesktopChat: React.FC = () => {
     deliveryMode: DraftAttachmentDeliveryMode,
     source: string
   ) => {
-    const dataUrl = await readFileAsDataUrl(file, mimeType)
+    const preparedFile = kind === 'image' ? await optimizeChatImageFile(file) : file
+    const preparedMimeType = preparedFile.type || mimeType
+    const dataUrl = await readFileAsDataUrl(preparedFile, preparedMimeType)
     addDraftAttachment({
       id: `${source}-${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       kind,
       deliveryMode,
-      name: file.name || `${kind}-${Date.now()}`,
-      mimeType,
+      name: preparedFile.name || file.name || `${kind}-${Date.now()}`,
+      mimeType: preparedMimeType,
       dataUrl,
-      size: file.size
+      size: preparedFile.size
     })
   }, [addDraftAttachment])
 

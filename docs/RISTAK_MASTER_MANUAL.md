@@ -871,11 +871,21 @@ historial interno debe guardar una copia publica de preview en
 `mediaStorageService` y persistir `media_url`, MIME y nombre en
 `whatsapp_api_messages` para que `/chat`, `/movil` y las apps moviles la puedan
 abrir despues de recargar.
+Las fotos manuales se reducen a un maximo de 1600 px y JPEG optimizado antes de
+subirse cuando la superficie lo permite. El backend repite esa normalizacion
+como red de seguridad, reutiliza el mismo buffer preparado para WhatsApp y el
+preview, y ejecuta en paralelo la subida al proveedor y a
+`mediaStorageService`. No debe enviar la foto original de varios megapixeles a
+WhatsApp para despues volver a comprimirla y subirla otra vez.
 Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el eco saliente
 que WhatsApp Web emite para esa foto no debe crear una segunda burbuja `QR` con
 el texto generico `Foto`. El backend debe marcar los envios API originados por
-Ristak y deduplicar ecos recientes de media sin caption por telefono, direccion,
-tipo de mensaje y ventana temporal antes de persistirlos como mensajes nuevos.
+Ristak y deduplicar ecos recientes de media sin caption por telefono canonico,
+direccion, tipo de mensaje y ventana temporal antes de persistirlos como
+mensajes nuevos. Para envios QR directos, donde WhatsApp puede cambiar el WAMID
+entre la respuesta de Baileys y el eco de otro dispositivo, la reconciliacion
+debe comparar `fileSha256`/`fileEncSha256` del archivo; no basta agrupar por
+minuto porque el operador puede mandar dos fotos distintas seguidas.
 
 Los mensajes entrantes estructurados de WhatsApp (plantillas, botones, listas,
 OTP/copy-code e interactivos) no deben degradarse a la etiqueta generica
@@ -903,6 +913,11 @@ Para media manual (foto, video, audio o documento), el fallback por ventana
 cerrada debe conservar el tipo real del contenido: una foto fuera de 24 horas se
 manda por WhatsApp QR como imagen, no como mensaje de texto ni como placeholder
 `Foto`.
+Una vez que Baileys devuelve `key.id`, el request manual responde `sent` sin
+esperar hasta 20 segundos por `delivered`/`read`. Los ACK posteriores se guardan
+en background y actualizan la misma fila; si el ACK llega antes del INSERT, el
+backend reintenta esa reconciliacion. Este contrato aplica a texto y multimedia
+QR y evita que el composer parezca atorado aunque WhatsApp ya acepto el mensaje.
 
 Cuando no existe ningun remitente oficial de WhatsApp API conectado y existe
 un remitente WhatsApp QR/Baileys conectado, las automatizaciones deben tratar QR

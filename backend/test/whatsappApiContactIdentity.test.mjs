@@ -1052,6 +1052,101 @@ test('eco QR de foto API sin caption no crea globo Foto duplicado', async () => 
   }
 })
 
+test('eco QR tardio de la misma foto reconcilia por sha aunque WhatsApp cambie el wamid', async () => {
+  const id = randomUUID()
+  const suffix = Date.now().toString().slice(-7)
+  const phone = `+52656${suffix}`
+  const businessPhone = `+52655${suffix}`
+  const phoneNumberId = `phone_qr_photo_sha_${id}`
+  const contactId = `rstk_contact_qr_photo_sha_${id}`
+  const originalMessageId = `qr_photo_original_${id}`
+  const originalWamid = `3EB0_${id}`
+  const echoWamid = `2A09_${id}`
+  const fileSha256 = `same-photo-sha-${id}`
+  const messageAt = '2026-07-10T23:37:40.000Z'
+
+  await cleanup({ contactId, messageId: originalMessageId, phone })
+  await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [originalWamid, echoWamid]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+
+  try {
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status,
+        qr_connected_phone, status, updated_at
+      ) VALUES (?, 'qr', NULL, NULL, 'QR Foto SHA', 1, 0, 1, 'connected', ?, 'QR_ONLY', ?)
+    `, [phoneNumberId, businessPhone, messageAt])
+
+    await db.run(`
+      INSERT INTO contacts (
+        id, phone, full_name, first_name, source, created_at, updated_at
+      ) VALUES (?, ?, 'Cliente Foto SHA', 'Cliente', 'WhatsApp_QR', ?, ?)
+    `, [contactId, phone, messageAt, messageAt])
+
+    await db.run(`
+      INSERT INTO whatsapp_api_messages (
+        id, provider, ycloud_message_id, wamid, contact_id, phone, from_phone, to_phone,
+        business_phone, business_phone_number_id, transport, direction, message_type,
+        message_text, media_url, media_mime_type, media_filename, status,
+        raw_payload_json, message_timestamp, created_at, updated_at
+      ) VALUES (?, 'ycloud', ?, ?, ?, ?, ?, ?, ?, ?, 'qr', 'outbound', 'image',
+        NULL, 'https://cdn.example.com/original-photo.jpg', 'image/jpeg', 'whatsapp-image.jpg', 'sent',
+        ?, ?, ?, ?)
+    `, [
+      originalMessageId,
+      originalWamid,
+      originalWamid,
+      contactId,
+      phone,
+      businessPhone,
+      phone,
+      businessPhone,
+      phoneNumberId,
+      JSON.stringify({
+        raw: JSON.stringify({
+          response: { message: { imageMessage: { fileSha256 } } }
+        })
+      }),
+      messageAt,
+      messageAt,
+      messageAt
+    ])
+
+    const result = await captureQrChatMessage({
+      phoneNumberId,
+      businessPhone,
+      direction: 'outbound',
+      wamid: echoWamid,
+      messageType: 'image',
+      text: '',
+      contactPhone: `+521${phone.replace(/^\+52/, '')}`,
+      timestamp: '2026-07-10T23:38:06.000Z',
+      raw: {
+        key: { id: echoWamid, fromMe: true },
+        message: { imageMessage: { fileSha256 } }
+      }
+    })
+
+    assert.equal(result.skipped, true)
+    assert.equal(result.reason, 'duplicate_recent')
+    assert.equal(result.messageId, originalMessageId)
+
+    const rows = await db.all(`
+      SELECT id, wamid, media_url
+      FROM whatsapp_api_messages
+      WHERE contact_id = ? AND direction = 'outbound' AND message_type = 'image'
+    `, [contactId])
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0].wamid, originalWamid)
+    assert.equal(rows[0].media_url, 'https://cdn.example.com/original-photo.jpg')
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [originalWamid, echoWamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    await cleanup({ contactId, messageId: originalMessageId, phone })
+  }
+})
+
 test('envio API fallido inmediato responde y persiste el respaldo QR limpio', async () => {
   const id = randomUUID()
   const phone = `+52994${Date.now().toString().slice(-7)}`
@@ -1156,12 +1251,16 @@ test('envio API fallido inmediato responde y persiste el respaldo QR limpio', as
       })
 
       assert.equal(result.transport, 'qr')
-      assert.equal(result.status, 'delivered')
+      assert.equal(result.status, 'sent')
       assert.equal(result.fallback, true)
       assert.equal(result.fallbackFrom, 'api')
       assert.equal(result.routingReason, 'La conversación lleva más de 24 horas sin respuesta del cliente; WhatsApp API solo permite plantillas.')
       assert.equal(sentMessages.length, 1)
       assert.equal(sentMessages[0].payload.text, body)
+
+      // El request ya respondio `sent`; el ACK asincrono debe reconciliar la
+      // fila poco despues aunque haya llegado antes de terminar el INSERT.
+      await new Promise(resolve => setTimeout(resolve, 150))
 
       const message = await db.get(`
         SELECT transport, routing_reason, status, error_code, error_message, raw_payload_json, message_text

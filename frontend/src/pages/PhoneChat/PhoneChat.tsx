@@ -86,6 +86,7 @@ import { PhoneButton, PhoneDurationField, PhoneFilterChips, PhoneSheet, PhoneTex
 import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature } from '@/utils/accessControl'
+import { optimizeChatImageFile } from '@/utils/chatMedia'
 import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useTimezone } from '@/contexts/TimezoneContext'
@@ -11596,13 +11597,15 @@ export const PhoneChat: React.FC = () => {
     mimeType: string,
     deliveryMode: MobileAttachmentDeliveryMode
   ) => {
-    const dataUrl = await readFileAsDataUrl(file, mimeType)
+    const preparedFile = kind === 'image' ? await optimizeChatImageFile(file) : file
+    const preparedMimeType = preparedFile.type || mimeType
+    const dataUrl = await readFileAsDataUrl(preparedFile, preparedMimeType)
     const baseAttachment = {
       id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: file.name || `${kind}-${Date.now()}`,
-      type: mimeType,
+      name: preparedFile.name || file.name || `${kind}-${Date.now()}`,
+      type: preparedMimeType,
       dataUrl,
-      size: file.size,
+      size: preparedFile.size,
       deliveryMode
     }
 

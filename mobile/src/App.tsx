@@ -33,6 +33,7 @@ import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
 import {
@@ -859,6 +860,9 @@ const MEDIA_ATTACHMENT_MAX_BYTES = 16 * 1024 * 1024;
 const DOCUMENT_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
 const VIDEO_ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
 const CAMERA_SHARE_VIDEO_MAX_DURATION_SECONDS = 60;
+const CHAT_IMAGE_PICKER_QUALITY = 1;
+const CHAT_IMAGE_OUTPUT_QUALITY = 0.80;
+const CHAT_IMAGE_MAX_DIMENSION = 1_600;
 const CALENDAR_SELECTED_ID_STORAGE_KEY = 'ristak.native.calendar.selectedCalendarId.v1';
 const CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY = 'ristak.native.calendar.bootstrapCache.v1';
 const CALENDAR_EVENTS_CACHE_STORAGE_KEY = 'ristak.native.calendar.eventsCache.v1';
@@ -3475,7 +3479,7 @@ function ChatScreen({
     try {
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['images', 'videos'],
-        quality: 0.86,
+        quality: CHAT_IMAGE_PICKER_QUALITY,
         allowsEditing: false,
         videoMaxDuration: CAMERA_SHARE_VIDEO_MAX_DURATION_SECONDS,
       });
@@ -20797,11 +20801,11 @@ function NativeConversationScreen({
     const result = source === 'camera'
       ? await ImagePicker.launchCameraAsync({
         mediaTypes: ['images', 'videos'],
-        quality: 0.86,
+        quality: CHAT_IMAGE_PICKER_QUALITY,
       })
       : await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
-        quality: 0.86,
+        quality: CHAT_IMAGE_PICKER_QUALITY,
         allowsMultipleSelection: remaining > 1,
         selectionLimit: remaining,
       });
@@ -24580,14 +24584,38 @@ function assertAttachmentSize(size: number | undefined, maxBytes: number, label:
 
 async function preparePickedMediaAttachment(asset: ImagePicker.ImagePickerAsset, index: number): Promise<ConversationDraftAttachment> {
   const kind: ConversationDraftAttachment['kind'] = asset.type === 'video' ? 'video' : 'image';
-  const mimeType = asset.mimeType || (kind === 'video' ? 'video/mp4' : 'image/jpeg');
-  const size = await getLocalFileSize(asset.uri, asset.fileSize);
+  let preparedUri = asset.uri;
+  let preparedBase64 = asset.base64;
+  let mimeType = asset.mimeType || (kind === 'video' ? 'video/mp4' : 'image/jpeg');
+
+  if (kind === 'image') {
+    const width = Math.max(0, Number(asset.width) || 0);
+    const height = Math.max(0, Number(asset.height) || 0);
+    const longestSide = Math.max(width, height);
+    const manipulator = ImageManipulator.manipulate(asset.uri);
+    if (longestSide > CHAT_IMAGE_MAX_DIMENSION) {
+      if (width >= height) manipulator.resize({ width: CHAT_IMAGE_MAX_DIMENSION });
+      else manipulator.resize({ height: CHAT_IMAGE_MAX_DIMENSION });
+    }
+    const rendered = await manipulator.renderAsync();
+    const optimized = await rendered.saveAsync({
+      base64: true,
+      compress: CHAT_IMAGE_OUTPUT_QUALITY,
+      format: SaveFormat.JPEG,
+    });
+    preparedUri = optimized.uri;
+    preparedBase64 = optimized.base64;
+    mimeType = 'image/jpeg';
+  }
+
+  const size = await getLocalFileSize(preparedUri, kind === 'video' ? asset.fileSize : undefined);
   assertAttachmentSize(size, kind === 'video' ? VIDEO_ATTACHMENT_MAX_BYTES : MEDIA_ATTACHMENT_MAX_BYTES, kind === 'video' ? 'El video' : 'La imagen', true);
-  const name = asset.fileName || getFilenameFromUri(asset.uri, `${kind}-${Date.now()}-${index}.${kind === 'video' ? 'mp4' : 'jpg'}`);
-  const dataUrl = asset.base64 ? buildDataUrl(asset.base64, mimeType) : await readFileAsDataUrl(asset.uri, mimeType);
+  const originalName = asset.fileName || getFilenameFromUri(asset.uri, `${kind}-${Date.now()}-${index}.${kind === 'video' ? 'mp4' : 'jpg'}`);
+  const name = kind === 'image' ? `${originalName.replace(/\.[a-z0-9]{2,8}$/i, '') || `image-${Date.now()}-${index}`}.jpg` : originalName;
+  const dataUrl = preparedBase64 ? buildDataUrl(preparedBase64, mimeType) : await readFileAsDataUrl(preparedUri, mimeType);
   return {
     id: `${kind}-${Date.now()}-${index}`,
-    uri: asset.uri,
+    uri: preparedUri,
     dataUrl,
     kind,
     name,

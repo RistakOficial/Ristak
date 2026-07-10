@@ -32,7 +32,7 @@ function sqlFuture(offsetMs = 1500) {
   return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ')
 }
 
-function createFakeBaileysRuntime(sentMessages = []) {
+function createFakeBaileysRuntime(sentMessages = [], { emitAck = true } = {}) {
   let messageIndex = 0
 
   return {
@@ -92,10 +92,12 @@ function createFakeBaileysRuntime(sentMessages = []) {
           messageIndex += 1
           const id = `qr_protected_msg_${messageIndex}`
           sentMessages.push({ id, jid, payload })
-          await emit('messages.update', [{
-            key: { id, remoteJid: jid, fromMe: true },
-            update: { status: 3 }
-          }])
+          if (emitAck) {
+            await emit('messages.update', [{
+              key: { id, remoteJid: jid, fromMe: true },
+              update: { status: 3 }
+            }])
+          }
           return {
             key: { id, remoteJid: jid, fromMe: true },
             message: payload
@@ -195,6 +197,27 @@ async function withQrFixture(callback) {
     await cleanupQrFixture(phoneNumberId)
   }
 }
+
+test('WhatsApp QR responde al aceptar el mensaje sin esperar el ACK de entrega', async () => {
+  const sentMessages = []
+
+  await withQrFixture(async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sentMessages, { emitAck: false }))
+    const startedAt = Date.now()
+
+    const result = await sendWhatsAppQrImageMessage({
+      phoneNumberId,
+      to: CONTACT_PHONE,
+      imageDataUrl: 'data:image/png;base64,iVBORw0KGgo=',
+      caption: ''
+    })
+
+    assert.equal(result.status, 'sent')
+    assert.equal(JSON.parse(result.raw).ackPending, true)
+    assert.equal(sentMessages.length, 1)
+    assert.ok(Date.now() - startedAt < 1_000, 'el request no debe quedarse esperando hasta 20 s por delivered/read')
+  })
+})
 
 test('WhatsApp QR aplica pausas automáticas a todos los tipos de mensaje QR', async () => {
   await snapshotAppConfig([WHATSAPP_QR_DRIP_CONFIG_KEY], async () => {
