@@ -263,6 +263,76 @@ test('WhatsApp QR usa la versión viva de WhatsApp Web al crear el socket', asyn
   })
 })
 
+test('WhatsApp QR solicita y persiste el historial completo sin marcarlo como no leído', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    const contactPhone = '+526561111222'
+    const contactJid = '526561111222@s.whatsapp.net'
+    const wamid = `history-${randomUUID()}`
+    const reactionWamid = `reaction-${randomUUID()}`
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
+
+    try {
+      const result = await resumeWhatsAppQrSessions({ source: 'history-test' })
+      assert.equal(result.resumed, 1)
+      assert.equal(sockets.length, 1)
+      assert.equal(sockets[0].options.syncFullHistory, true)
+      assert.equal(sockets[0].options.shouldSyncHistoryMessage({ syncType: 'FULL' }), true)
+
+      await sockets[0].emit('messaging-history.set', {
+        contacts: [{ id: contactJid, notify: 'Cliente Histórico' }],
+        messages: [{
+          key: { id: wamid, remoteJid: contactJid, fromMe: false },
+          messageTimestamp: 1_767_225_600,
+          message: { extendedTextMessage: { text: 'Mensaje recuperado del teléfono' } }
+        }],
+        progress: 100,
+        isLatest: true
+      })
+
+      const stored = await db.get(`
+        SELECT wamid, phone, direction, message_text, transport
+        FROM whatsapp_api_messages
+        WHERE wamid = ?
+      `, [wamid])
+      assert.equal(stored.wamid, wamid)
+      assert.equal(stored.phone, contactPhone)
+      assert.equal(stored.direction, 'inbound')
+      assert.equal(stored.message_text, 'Mensaje recuperado del teléfono')
+      assert.equal(stored.transport, 'qr')
+
+      const unread = await db.get(
+        'SELECT COUNT(*) AS total FROM chat_read_states WHERE contact_id = (SELECT contact_id FROM whatsapp_api_messages WHERE wamid = ?)',
+        [wamid]
+      )
+      assert.equal(Number(unread.total), 0)
+
+      await sockets[0].emit('messages.reaction', [{
+        key: { id: wamid, remoteJid: contactJid, fromMe: false },
+        reaction: {
+          key: { id: reactionWamid, remoteJid: contactJid, fromMe: false },
+          text: '🔥',
+          senderTimestampMs: 1_767_225_601_000
+        }
+      }])
+
+      const storedReaction = await db.get(`
+        SELECT message_type, message_text, context_json
+        FROM whatsapp_api_messages
+        WHERE wamid = ?
+      `, [reactionWamid])
+      assert.equal(storedReaction.message_type, 'reaction')
+      assert.equal(storedReaction.message_text, '🔥')
+      assert.equal(JSON.parse(storedReaction.context_json).id, wamid)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [wamid, reactionWamid]).catch(() => undefined)
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [contactPhone]).catch(() => undefined)
+      await db.run('DELETE FROM contacts WHERE phone = ?', [contactPhone]).catch(() => undefined)
+    }
+  })
+})
+
 test('WHATSAPP_WEB_VERSION tiene prioridad sobre la consulta viva', async () => {
   const sockets = []
   const previousVersion = process.env.WHATSAPP_WEB_VERSION

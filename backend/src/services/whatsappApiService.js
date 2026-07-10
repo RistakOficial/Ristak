@@ -6432,7 +6432,7 @@ function normalizeWebhookMessage(rawMessage = {}) {
   return normalized
 }
 
-async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api', contactId = null }) {
+async function upsertMessage({ payload, message, direction, businessPhoneHints = [], transport = 'api', contactId = null, historyImport = false }) {
   const normalizedMessage = normalizeWebhookMessage(message)
   const identity = getMessageIdentity({ payload, direction, message: normalizedMessage, businessPhoneHints })
   const contactIdHint = cleanString(
@@ -6738,7 +6738,8 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
     direction: identity.direction,
     messageType,
     messageTimestamp,
-    isNew: !existingMessage
+    isNew: !existingMessage,
+    historyImport: historyImport === true
   })
   if (!existingMessage && identity.direction === 'inbound') {
     await captureContactIdentityFromMessage({
@@ -6749,12 +6750,14 @@ async function upsertMessage({ payload, message, direction, businessPhoneHints =
       allowPhone: false
     })
 
-    recordInboundChatUnread({
-      contactId: localContact.id,
-      messageTimestamp
-    }).catch(error => {
-      logger.warn(`[Chat Read State] No se pudo incrementar unread WhatsApp ${messageId}: ${error.message}`)
-    })
+    if (!historyImport) {
+      recordInboundChatUnread({
+        contactId: localContact.id,
+        messageTimestamp
+      }).catch(error => {
+        logger.warn(`[Chat Read State] No se pudo incrementar unread WhatsApp ${messageId}: ${error.message}`)
+      })
+    }
   }
 
   return {
@@ -6845,7 +6848,8 @@ export async function captureQrChatMessage({
   contactPhone,
   timestamp,
   raw = null,
-  resolveInboundMedia = null
+  resolveInboundMedia = null,
+  historyImport = false
 } = {}) {
   const cleanDirection = direction === 'outbound' ? 'outbound' : 'inbound'
   const cleanBusinessPhone = normalizePhoneForStorage(businessPhone) || cleanString(businessPhone)
@@ -6930,7 +6934,10 @@ export async function captureQrChatMessage({
   // Solo el inbound lo cubre de forma redundante el webhook de YCloud. Un mensaje saliente
   // escrito directamente en el teléfono llega únicamente como eco fromMe de Baileys y no tiene
   // copia por webhook, así que jamás debe omitirse aquí: es su única fuente para el chat.
-  if (officialApiOperational && cleanDirection === 'inbound') {
+  // En vivo, la API oficial es la fuente primaria y evita duplicar el webhook.
+  // Durante un HistorySync QR no podemos asumir que la API ya tenga ese pasado:
+  // se importa y el dedupe por IDs/contenido decide si ya existía.
+  if (officialApiOperational && cleanDirection === 'inbound' && !historyImport) {
     // El número usa WhatsApp API (YCloud/oficial): la media entrante llega hospedada por el
     // proveedor a través del webhook, así que NO descargamos ni rehospedamos en Bunny.
     return { skipped: true, reason: 'official_api_active' }
@@ -6996,7 +7003,8 @@ export async function captureQrChatMessage({
     },
     direction: cleanDirection,
     businessPhoneHints: [cleanBusinessPhone].filter(Boolean),
-    transport: 'qr'
+    transport: 'qr',
+    historyImport
   })
 
   if (!result.businessPhoneNumberId && phoneRow?.id && result.messageId) {
@@ -7007,7 +7015,7 @@ export async function captureQrChatMessage({
     `, [phoneRow.id, result.messageId]).catch(() => {})
   }
 
-  if (cleanDirection === 'inbound' && result.isNew) {
+  if (cleanDirection === 'inbound' && result.isNew && !historyImport) {
     scheduleInboundWhatsAppContactProfilePictureRefresh(result, 'whatsapp_qr')
 
     // Ventana de confirmación con IA: registrar mensaje y determinar si se deben

@@ -796,6 +796,7 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
   const contactId = `rstk_contact_qr_outbound_echo_${id}`
   const outboundWamid = `qr_outbound_echo_${id}`
   const inboundWamid = `qr_inbound_echo_${id}`
+  const historicalInboundWamid = `qr_inbound_history_${id}`
   const outboundBody = `Respuesta escrita en el teléfono ${id}`
   const inboundBody = `Mensaje entrante del cliente ${id}`
   const messageAt = '2024-06-01T10:20:30.000Z'
@@ -803,7 +804,7 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
   const configKeys = [keys.enabled, keys.apiKey, keys.senderPhone, keys.phoneNumberId, keys.wabaId, keys.provider]
 
   await cleanup({ contactId, messageId: outboundWamid, phone })
-  await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [outboundWamid, inboundWamid]).catch(() => undefined)
+  await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?, ?)', [outboundWamid, inboundWamid, historicalInboundWamid]).catch(() => undefined)
   await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
 
   try {
@@ -874,9 +875,31 @@ test('eco QR saliente escrito en el teléfono se captura aunque la API oficial e
 
       const inboundRow = await db.get('SELECT id FROM whatsapp_api_messages WHERE wamid = ?', [inboundWamid])
       assert.ok(!inboundRow, 'el entrante no debe persistirse por QR cuando la API oficial está operativa')
+
+      // Un bloque histórico QR sí se conserva: puede contener pasado anterior a
+      // la conexión API y el dedupe evita repetir lo que el webhook ya guardó.
+      const historicalInboundResult = await captureQrChatMessage({
+        phoneNumberId,
+        businessPhone,
+        direction: 'inbound',
+        wamid: historicalInboundWamid,
+        messageType: 'text',
+        text: 'Mensaje histórico anterior a la API',
+        contactPhone: phone,
+        timestamp: messageAt,
+        historyImport: true
+      })
+
+      assert.equal(historicalInboundResult.skipped, false)
+      const historicalInboundRow = await db.get(
+        'SELECT transport, direction FROM whatsapp_api_messages WHERE wamid = ?',
+        [historicalInboundWamid]
+      )
+      assert.equal(historicalInboundRow.transport, 'qr')
+      assert.equal(historicalInboundRow.direction, 'inbound')
     })
   } finally {
-    await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?)', [outboundWamid, inboundWamid]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_messages WHERE wamid IN (?, ?, ?)', [outboundWamid, inboundWamid, historicalInboundWamid]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
     await cleanup({ contactId, messageId: outboundWamid, phone })
   }

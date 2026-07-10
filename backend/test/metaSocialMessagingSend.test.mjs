@@ -101,7 +101,11 @@ async function startMetaSendServer(calls) {
               message: 'Hola desde historial Messenger',
               created_time: '2026-07-03T22:40:00+0000',
               from: { id: 'psid-history-test', name: 'Cliente Messenger Historial' },
-              to: { data: [{ id: 'page-history-test', name: 'Ristak Page' }] }
+              to: { data: [{ id: 'page-history-test', name: 'Ristak Page' }] },
+              attachments: { data: [
+                { type: 'image', image_data: { url: 'https://assets.example.test/history-1.jpg' }, mime_type: 'image/jpeg' },
+                { type: 'file', file_data: { url: 'https://assets.example.test/history-2.pdf' }, mime_type: 'application/pdf', name: 'expediente.pdf' }
+              ] }
             },
             {
               id: 'mid-history-outbound',
@@ -422,18 +426,26 @@ test('syncMetaSocialConversationHistory importa historial disponible de Messenge
 
           assert.equal(result.skipped, false)
           assert.equal(result.conversations, 1)
-          assert.equal(result.saved, 2)
+          assert.equal(result.saved, 3)
           assert.equal(result.messagesScanned, 2)
 
           const rows = await db.all(`
-            SELECT meta_message_id, direction, sender_id, recipient_id, page_id, message_text, platform
+            SELECT meta_message_id, direction, sender_id, recipient_id, page_id, message_text, platform, media_url
             FROM meta_social_messages
             WHERE sender_id = ?
             ORDER BY message_timestamp ASC
           `, [senderId])
-          assert.equal(rows.length, 2)
-          assert.deepEqual(rows.map(row => row.meta_message_id), ['mid-history-inbound', 'mid-history-outbound'])
-          assert.deepEqual(rows.map(row => row.direction), ['inbound', 'outbound'])
+          assert.equal(rows.length, 3)
+          assert.deepEqual(rows.map(row => row.meta_message_id), [
+            'mid-history-inbound',
+            'mid-history-inbound:attachment:1',
+            'mid-history-outbound'
+          ])
+          assert.deepEqual(rows.map(row => row.direction), ['inbound', 'inbound', 'outbound'])
+          assert.deepEqual(rows.slice(0, 2).map(row => row.media_url), [
+            'https://assets.example.test/history-1.jpg',
+            'https://assets.example.test/history-2.pdf'
+          ])
           assert.equal(rows[0].recipient_id, 'page-history-test')
           assert.equal(rows[1].recipient_id, 'page-history-test')
           assert.equal(rows[0].page_id, 'page-history-test')

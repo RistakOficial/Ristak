@@ -845,6 +845,30 @@ y SMS usa `provider='highlevel'` con `channel='sms_qr'`; Messenger, Instagram y
 correo no se programan desde la app nativa hasta tener scheduler real para esos
 canales.
 
+La sincronizacion historica de mensajeria es exhaustiva dentro de lo que cada
+proveedor realmente expone y siempre es idempotente. Al vincular WhatsApp QR,
+Baileys debe arrancar con `syncFullHistory=true`, aceptar todos los tipos de
+`HistorySyncNotification` (incluido `FULL`) y consumir cada bloque de
+`messaging-history.set`; no basta escuchar `messages.upsert`, porque ese evento
+por si solo deja fuera el historial inicial. Cada bloque reutiliza el pipeline
+normal de `captureQrChatMessage`, por lo que conserva direccion, remitente,
+timestamp UTC, contenido estructurado, citas/contexto, reacciones y media
+descargable (imagen, video, audio, documento o sticker) con dedupe por WAMID. La
+media se rehospeda en `mediaStorageService` para que no dependa del dispositivo.
+Los bloques historicos nunca deben incrementar no leidos ni disparar push,
+automatizaciones, confirmaciones o agente conversacional. WhatsApp decide que
+historial entrega a un nuevo dispositivo vinculado; Ristak debe importar todos
+los bloques recibidos, pero no puede fabricar mensajes que WhatsApp no envie.
+
+WhatsApp API/YCloud ejecuta al conectar un sync de contactos, pagina el listado
+saliente disponible en `/whatsapp/messages` y reprocesa los eventos
+`whatsapp.smb.history`/webhooks ya recibidos para recuperar entradas, salidas,
+estados, atribucion y payload crudo. WhatsApp Cloud API directo no ofrece un
+endpoint Graph para descargar retroactivamente toda la cuenta: en ese proveedor
+la fuente historica disponible son webhooks/relay y ecos de coexistencia desde
+el momento en que quedan activos. La API `syncMetaDirectHistory` debe reportar
+esa limitacion como `not_available`, no fingir una sincronizacion completa.
+
 En Configuracion > WhatsApp > Plantillas y en las burbujas del chat desktop,
 modal de contacto, preview telefonico y chat movil, el texto debe respetar la
 sintaxis visual que WhatsApp aplica al mensaje: `*negritas*`, `_italicas_`,
@@ -1914,7 +1938,12 @@ Ristak usa Meta en varias areas:
   Ristak inicia en segundo plano un backfill de conversaciones disponibles por
   Graph Conversations API: Messenger usa `/{PAGE_ID}/conversations` con Page
   token; Instagram usa `/me/conversations?platform=instagram` con ese mismo Page
-  token por Facebook Graph. El backfill pagina conversaciones y mensajes,
+  token por Facebook Graph. El backfill pagina conversaciones y mensajes hasta
+  que Graph deja de devolver cursor; no aplica topes silenciosos por conversacion
+  ni por cuenta. Los limites solo se aceptan como parametros explicitos para una
+  ejecucion manual/controlada. El importador conserva el payload Graph completo,
+  adjuntos y relaciones expuestas por Meta, rehospeda media temporal para que no
+  caduque,
   deduplica por `meta_message_id`, guarda inbound/outbound en
   `meta_social_messages` y fusiona el contacto por PSID/IGSID igual que los
   webhooks. Es historial: no incrementa no leidos, no dispara push,

@@ -22,9 +22,6 @@ const META_FACEBOOK_COMMENTS_ENABLED_KEY = 'meta_facebook_comments_enabled'
 const META_INSTAGRAM_COMMENTS_ENABLED_KEY = 'meta_instagram_comments_enabled'
 const META_SOCIAL_HISTORY_CONVERSATION_PAGE_LIMIT = 50
 const META_SOCIAL_HISTORY_MESSAGE_PAGE_LIMIT = 50
-const META_SOCIAL_HISTORY_MAX_CONVERSATIONS = 1000
-const META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION = 500
-const META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES = 50000
 const META_SOCIAL_HISTORY_MESSAGE_FIELDS = 'id,message,created_time,from,to,attachments,shares'
 const COMMENT_DELETED_TEXT = 'Comentario eliminado'
 const POST_DELETED_TEXT = 'Publicación eliminada'
@@ -179,9 +176,8 @@ function normalizeGraphCollection(value) {
   return []
 }
 
-function extractGraphMessageAttachment(message = {}) {
-  const attachment = normalizeGraphCollection(message.attachments)[0]
-  if (attachment) {
+function extractGraphMessageAttachments(message = {}) {
+  const attachments = normalizeGraphCollection(message.attachments).map((attachment, index) => {
     const image = attachment.image_data || attachment.image || {}
     const video = attachment.video_data || attachment.video || {}
     const audio = attachment.audio_data || attachment.audio || {}
@@ -200,24 +196,27 @@ function extractGraphMessageAttachment(message = {}) {
     )
 
     return {
+      index,
       messageType: type || 'attachment',
       messageText: cleanString(attachment.name || attachment.title || attachment.description),
       mediaUrl,
       mediaMimeType: cleanString(attachment.mime_type || image.mime_type || video.mime_type || audio.mime_type || file.mime_type)
     }
-  }
+  })
+  if (attachments.length) return attachments
 
   const share = normalizeGraphCollection(message.shares)[0]
   if (share) {
-    return {
+    return [{
+      index: 0,
       messageType: 'link',
       messageText: cleanString(share.name || share.description || share.link),
       mediaUrl: cleanString(share.link),
       mediaMimeType: ''
-    }
+    }]
   }
 
-  return {}
+  return []
 }
 
 function extractSocialMessage({ objectType, entry, messaging, config }) {
@@ -1022,10 +1021,10 @@ function normalizeMetaSocialHistoryPlatform(platform = '') {
   return isInstagramPlatform(platform) ? 'instagram' : 'messenger'
 }
 
-function clampPositiveInteger(value, fallback, max) {
+function normalizeOptionalHistoryLimit(value) {
+  if (value === null || value === undefined || value === '') return Number.POSITIVE_INFINITY
   const number = Number(value)
-  if (!Number.isFinite(number) || number <= 0) return fallback
-  return Math.min(Math.floor(number), max)
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : Number.POSITIVE_INFINITY
 }
 
 function getMetaSocialHistoryBusinessId(platform, config = {}) {
@@ -1112,20 +1111,24 @@ function buildMetaSocialMessageFromGraphConversation({ platform, config, convers
     fallbackCustomer ||
     {}
   const text = cleanString(graphMessage?.message)
-  const attachment = extractGraphMessageAttachment(graphMessage)
+  const attachments = extractGraphMessageAttachments(graphMessage)
+  const primaryAttachment = attachments[0] || {}
   const messageTimestamp = normalizeMetaGraphTimestamp(graphMessage?.created_time)
 
-  return {
-    socialMessage: {
+  const baseMessageId = cleanString(graphMessage?.id)
+  const buildSocialMessage = (attachment = primaryAttachment, attachmentIndex = 0) => ({
       platform: cleanPlatform,
       direction,
       senderId: customerId,
       recipientId,
       pageId: cleanPlatform === 'messenger' ? cleanString(config.page_id || businessId) : cleanString(config.page_id),
       instagramAccountId: cleanPlatform === 'instagram' ? cleanString(config.instagram_account_id || businessId) : cleanString(config.instagram_account_id),
-      metaMessageId: cleanString(graphMessage?.id),
+      // Meta agrupa varios adjuntos bajo un solo mensaje. El primero conserva el
+      // MID real para replies/reacciones; los adicionales usan IDs locales estables
+      // derivados del MID para que cada archivo pueda vivir y mostrarse en el chat.
+      metaMessageId: attachmentIndex === 0 ? baseMessageId : `${baseMessageId}:attachment:${attachmentIndex}`,
       messageType: attachment.messageType || (text ? 'text' : 'message'),
-      messageText: text || attachment.messageText || '',
+      messageText: attachmentIndex === 0 ? (text || attachment.messageText || '') : (attachment.messageText || ''),
       mediaUrl: attachment.mediaUrl || '',
       mediaMimeType: attachment.mediaMimeType || '',
       postbackPayload: '',
@@ -1135,9 +1138,17 @@ function buildMetaSocialMessageFromGraphConversation({ platform, config, convers
         provider: 'meta',
         source: 'conversation_backfill',
         conversationId: cleanString(conversation?.id),
+        providerMessageId: baseMessageId,
+        attachmentIndex,
+        attachmentCount: attachments.length,
         message: graphMessage
       }
-    },
+    })
+
+  return {
+    socialMessages: attachments.length
+      ? attachments.map((attachment, index) => buildSocialMessage(attachment, index))
+      : [buildSocialMessage({}, 0)],
     participant
   }
 }
@@ -1232,65 +1243,69 @@ async function syncMetaSocialConversationMessages({
         graphMessage,
         businessId
       })
-      if (!normalized?.socialMessage) {
+      if (!normalized?.socialMessages?.length) {
         stats.skippedMessages += 1
         continue
       }
 
-      const { socialMessage, participant } = normalized
-      const messageId = getMetaSocialMessageLocalId(socialMessage)
-      const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
+      const { socialMessages, participant } = normalized
+      const firstSocialMessage = socialMessages[0]
       const profile = await resolveMetaSocialHistoryProfile({
-        platform: socialMessage.platform,
-        senderId: socialMessage.senderId,
+        platform: firstSocialMessage.platform,
+        senderId: firstSocialMessage.senderId,
         participant,
         businessId,
         accessToken: graphToken,
         baseUrl,
         profileCache
       })
-      const localContact = await upsertLocalSocialContact({ socialMessage, profile })
-      const socialContactId = await upsertMetaSocialContact({
-        contactId: localContact.id,
-        socialMessage,
-        profile,
-        incrementMessageCount: !existing
-      })
-      const savedMessage = await upsertMetaSocialMessage({
-        socialContactId,
-        contactId: localContact.id,
-        socialMessage,
-        config
-      })
+      const localContact = await upsertLocalSocialContact({ socialMessage: firstSocialMessage, profile })
 
-      if (savedMessage.isNew && socialMessage.direction === 'inbound') {
-        await captureMetaSocialContactIdentity({ contactId: localContact.id, socialMessage })
-      }
-
-      if (savedMessage.isNew) {
-        stats.saved += 1
-      } else {
-        stats.updated += 1
-      }
-
-      if (
-        publishEvents &&
-        savedMessage.isNew &&
-        (!latestPublished || isNewerMetaTimestamp(socialMessage.messageTimestamp, latestPublished.messageTimestamp))
-      ) {
-        latestPublished = {
+      for (const socialMessage of socialMessages) {
+        const messageId = getMetaSocialMessageLocalId(socialMessage)
+        const existing = await db.get('SELECT id FROM meta_social_messages WHERE id = ?', [messageId]).catch(() => null)
+        const socialContactId = await upsertMetaSocialContact({
           contactId: localContact.id,
-          contactName: localContact.contactName,
-          messageId: savedMessage.messageId,
-          platform: socialMessage.platform,
-          direction: socialMessage.direction,
-          messageType: socialMessage.messageType,
-          messageTimestamp: socialMessage.messageTimestamp
+          socialMessage,
+          profile,
+          incrementMessageCount: !existing
+        })
+        const savedMessage = await upsertMetaSocialMessage({
+          socialContactId,
+          contactId: localContact.id,
+          socialMessage,
+          config
+        })
+
+        if (savedMessage.isNew && socialMessage.direction === 'inbound') {
+          await captureMetaSocialContactIdentity({ contactId: localContact.id, socialMessage })
+        }
+
+        if (savedMessage.isNew) stats.saved += 1
+        else stats.updated += 1
+
+        if (
+          publishEvents &&
+          savedMessage.isNew &&
+          (!latestPublished || isNewerMetaTimestamp(socialMessage.messageTimestamp, latestPublished.messageTimestamp))
+        ) {
+          latestPublished = {
+            contactId: localContact.id,
+            contactName: localContact.contactName,
+            messageId: savedMessage.messageId,
+            platform: socialMessage.platform,
+            direction: socialMessage.direction,
+            messageType: socialMessage.messageType,
+            messageTimestamp: socialMessage.messageTimestamp
+          }
         }
       }
     }
 
     const nextAfter = getGraphNextAfter(data)
+    if (nextAfter && messagesInConversation >= maxMessagesPerConversation) {
+      stats.truncated = true
+    }
     if (!nextAfter || seenCursors.has(nextAfter)) break
     seenCursors.add(nextAfter)
     after = nextAfter
@@ -1319,9 +1334,9 @@ export async function syncMetaSocialConversationHistory({
   platform = 'messenger',
   config = null,
   reason = 'manual',
-  maxConversations = META_SOCIAL_HISTORY_MAX_CONVERSATIONS,
-  maxMessagesPerConversation = META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION,
-  maxTotalMessages = META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES,
+  maxConversations = null,
+  maxMessagesPerConversation = null,
+  maxTotalMessages = null,
   publishEvents = true
 } = {}) {
   const cleanPlatform = normalizeMetaSocialHistoryPlatform(platform)
@@ -1337,7 +1352,8 @@ export async function syncMetaSocialConversationHistory({
     messagesScanned: 0,
     saved: 0,
     updated: 0,
-    skippedMessages: 0
+    skippedMessages: 0,
+    truncated: false
   }
 
   const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
@@ -1362,9 +1378,9 @@ export async function syncMetaSocialConversationHistory({
   const graphCredentials = await resolveMetaSocialGraphCredentials(cleanPlatform, cfg)
   const graphToken = graphCredentials.token
   const baseUrl = graphCredentials.baseUrl
-  const conversationLimit = clampPositiveInteger(maxConversations, META_SOCIAL_HISTORY_MAX_CONVERSATIONS, META_SOCIAL_HISTORY_MAX_CONVERSATIONS)
-  const messageLimit = clampPositiveInteger(maxMessagesPerConversation, META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION, META_SOCIAL_HISTORY_MAX_MESSAGES_PER_CONVERSATION)
-  const totalMessageLimit = clampPositiveInteger(maxTotalMessages, META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES, META_SOCIAL_HISTORY_MAX_TOTAL_MESSAGES)
+  const conversationLimit = normalizeOptionalHistoryLimit(maxConversations)
+  const messageLimit = normalizeOptionalHistoryLimit(maxMessagesPerConversation)
+  const totalMessageLimit = normalizeOptionalHistoryLimit(maxTotalMessages)
   const profileCache = new Map()
   const seenCursors = new Set()
   let after = ''
@@ -1404,6 +1420,12 @@ export async function syncMetaSocialConversationHistory({
     }
 
     const nextAfter = getGraphNextAfter(data)
+    if (nextAfter && (
+      stats.conversations >= conversationLimit ||
+      stats.messagesScanned >= totalMessageLimit
+    )) {
+      stats.truncated = true
+    }
     if (!nextAfter || seenCursors.has(nextAfter)) break
     seenCursors.add(nextAfter)
     after = nextAfter

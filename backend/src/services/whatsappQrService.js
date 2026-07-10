@@ -1222,7 +1222,7 @@ async function downloadAndStoreQrInboundMedia({ phone, message, content, message
   }
 }
 
-async function handleQrIncomingMessages(phone, upsert = {}, sock = null) {
+async function handleQrIncomingMessages(phone, upsert = {}, sock = null, { historyImport = false, profileNames = null } = {}) {
   const type = cleanString(upsert.type)
   if (type && type !== 'notify' && type !== 'append') return
 
@@ -1255,7 +1255,7 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null) {
         wamid,
         messageType: content.type,
         text: content.text,
-        profileName: cleanString(message.pushName),
+        profileName: cleanString(message.pushName) || cleanString(profileNames?.get(normalizeJid(message?.key?.remoteJid))),
         contactPhone,
         timestamp: getBaileysMessageTimestampIso(message),
         raw: {
@@ -1265,9 +1265,9 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null) {
           ...(content.context ? { context: content.context } : {}),
           ...(content.reaction ? { reaction: content.reaction } : {})
         },
-        // Solo se ejecuta si el número NO tiene WhatsApp API operativa (lo decide
-        // captureQrChatMessage tras su guard). Con API activa la media la hospeda el
-        // proveedor y no gastamos nuestro storage.
+        // En vivo solo se ejecuta si la API oficial no cubre el inbound. En un
+        // bloque histórico sí descarga lo que el teléfono entregue, incluso si la
+        // API está activa hoy, porque ese archivo puede ser anterior a la conexión.
         resolveInboundMedia: QR_DOWNLOADABLE_MEDIA_TYPES.has(content.type)
           ? () => downloadAndStoreQrInboundMedia({
               phone,
@@ -1276,7 +1276,8 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null) {
               messageType: content.type,
               wamid
             })
-          : null
+          : null,
+        historyImport
       })
 
       if (!result?.skipped && result?.isNew) {
@@ -1286,6 +1287,54 @@ async function handleQrIncomingMessages(phone, upsert = {}, sock = null) {
       logger.warn(`[WhatsApp QR] No se pudo capturar mensaje de WhatsApp Web (${phone.id}): ${error.message}`)
     }
   }
+}
+
+async function handleQrHistorySync(phone, history = {}, sock = null) {
+  const messages = Array.isArray(history.messages) ? history.messages : []
+  if (!messages.length) return
+
+  const profileNames = new Map(
+    (Array.isArray(history.contacts) ? history.contacts : [])
+      .map(contact => [
+        normalizeJid(contact?.id),
+        cleanString(contact?.notify || contact?.name || contact?.verifiedName)
+      ])
+      .filter(([jid]) => Boolean(jid))
+  )
+
+  await handleQrIncomingMessages(phone, { type: 'append', messages }, sock, {
+    historyImport: true,
+    profileNames
+  })
+
+  logger.info(
+    `[WhatsApp QR] Historial recibido para ${phone.id}: ${messages.length} mensajes` +
+    `${history.progress != null ? `, progreso ${history.progress}%` : ''}` +
+    `${history.isLatest ? ', último bloque' : ''}`
+  )
+}
+
+async function handleQrMessageReactions(phone, updates = [], sock = null) {
+  const messages = (Array.isArray(updates) ? updates : []).map(update => {
+    const reaction = update?.reaction || {}
+    const reactionKey = reaction.key || {}
+    const senderTimestampMs = longLikeToNumber(reaction.senderTimestampMs)
+    return {
+      key: reactionKey,
+      messageTimestamp: senderTimestampMs > 0 ? Math.floor(senderTimestampMs / 1000) : undefined,
+      message: {
+        reactionMessage: {
+          ...reaction,
+          // En el evento separado, `update.key` es el mensaje objetivo y
+          // `reaction.key` identifica el evento de reacción.
+          key: update?.key || null
+        }
+      }
+    }
+  }).filter(message => cleanString(message.key?.id))
+
+  if (!messages.length) return
+  await handleQrIncomingMessages(phone, { type: 'notify', messages }, sock)
 }
 
 async function finalizeQrSendResponse({ response, recipient, externalId }) {
@@ -2320,7 +2369,10 @@ function closeLiveSession(phoneNumberId, { releaseLease = true } = {}) {
   try {
     live.sock.ev?.removeAllListeners?.('connection.update')
     live.sock.ev?.removeAllListeners?.('creds.update')
+    live.sock.ev?.removeAllListeners?.('messaging-history.set')
+    live.sock.ev?.removeAllListeners?.('messaging-history.status')
     live.sock.ev?.removeAllListeners?.('messages.update')
+    live.sock.ev?.removeAllListeners?.('messages.reaction')
     live.sock.ev?.removeAllListeners?.('message-receipt.update')
     live.sock.ev?.removeAllListeners?.('labels.edit')
     live.sock.ws?.close?.()
@@ -2373,7 +2425,11 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       },
       logger: baileysLogger,
       printQRInTerminal: false,
-      syncFullHistory: false,
+      // La conexión QR sí debe pedir el historial que WhatsApp entregue al nuevo
+      // dispositivo vinculado. FULL viene bloqueado por el default de Baileys, así
+      // que también autorizamos todos los tipos de bloque histórico explícitamente.
+      syncFullHistory: true,
+      shouldSyncHistoryMessage: () => true,
       markOnlineOnConnect: false,
       qrTimeout: 60000,
       browser: Browsers?.macOS ? Browsers.macOS('Desktop') : undefined,
@@ -2401,9 +2457,25 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
   })
 
   sock.ev.on('creds.update', saveCreds)
+  sock.ev.on('messaging-history.set', (history) => {
+    return handleQrHistorySync(phone, history, sock).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudo importar un bloque histórico ${phone.id}: ${error.message}`)
+    })
+  })
+  sock.ev.on('messaging-history.status', (status = {}) => {
+    logger.info(
+      `[WhatsApp QR] Estado de historial ${phone.id}: ${cleanString(status.status) || 'desconocido'}` +
+      `${status.progress != null ? ` (${status.progress}%)` : ''}`
+    )
+  })
   sock.ev.on('messages.update', (updates) => {
     handleQrMessageUpdates(phone, updates).catch(error => {
       logger.warn(`[WhatsApp QR] No se pudieron procesar actualizaciones de mensajes ${phone.id}: ${error.message}`)
+    })
+  })
+  sock.ev.on('messages.reaction', (updates) => {
+    handleQrMessageReactions(phone, updates, sock).catch(error => {
+      logger.warn(`[WhatsApp QR] No se pudieron guardar reacciones ${phone.id}: ${error.message}`)
     })
   })
   sock.ev.on('message-receipt.update', (updates) => {
