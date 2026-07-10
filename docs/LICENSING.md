@@ -118,6 +118,10 @@ en `backend/src/services/conversationalAgentService.js`; la UI solo anticipa el 
 - `/api/sites` requiere `sites`; el checkout público y cualquier bloque/gate de
   cobro en Sites requiere `payments`, y la preparación de parcialidades requiere
   `payment_plans`.
+- Calendarios base requieren `appointments`. El formulario básico para agendar
+  vive dentro de calendarios, pero usar un formulario personalizado de Sites
+  dentro del calendario requiere `forms` y `sites`; si el plan baja, el público
+  vuelve al formulario básico y el backend limpia/bloquea esa configuración.
 - `/api/highlevel` requiere `integrations`; sus endpoints operativos además piden
   el módulo real (`contacts`, `chat`, `payments`, `settings_users`) y las
   parcialidades piden `payment_plans`.

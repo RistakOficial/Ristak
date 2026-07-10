@@ -270,6 +270,11 @@ con plan `pro`/`professional` cuando el portal aun no manda esa llave. Si el
 portal manda `calendar_payments=false`, ese false gana aunque el plan sea Pro.
 Cuando el portal mande un objeto `features` parcial, cualquier feature premium no
 incluida se considera apagada; no se deben rellenar defaults premium en `true`.
+El formulario publico básico del calendario forma parte de `appointments`; usar
+un formulario personalizado de Sites dentro del calendario requiere `forms` y
+`sites`. Si la cuenta baja de plan, el calendario público vuelve al formulario
+básico y el backend bloquea/limpia esa configuración aunque la UI vieja mande el
+payload.
 
 Modulos de acceso principales:
 
@@ -992,6 +997,10 @@ Reglas base:
   se actualiza ese contacto activo en lugar de crear o escoger otro por datos
   viejos del navegador. Si no hay identidad activa validable, se conserva la
   regla de reutilizar por correo y luego por telefono.
+- Los formularios personalizados de Sites dentro de calendarios no son parte del
+  calendario base: requieren plan con `forms` y `sites`. En planes sin esa
+  combinacion, Configuracion > Calendarios muestra solo datos básicos y el
+  render público ignora cualquier custom form guardado previamente.
 - Si Meta esta configurado con dataset/pixel y token guardado, los calendarios
   locales nuevos y los calendarios remotos espejados por primera vez activan
   `customEvents.enabled` por default para mandar `Schedule` al agendar. Ediciones

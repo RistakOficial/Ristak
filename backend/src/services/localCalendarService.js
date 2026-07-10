@@ -24,6 +24,7 @@ import {
 import GHLClient from './ghlClient.js'
 import * as highlevelCalendarService from './highlevelCalendarService.js'
 import { getCalendarPublicBaseUrlStatus } from './sitesService.js'
+import { hasFeature } from './licenseService.js'
 import { isPaymentGateEnabled, normalizePaymentGateConfig } from './publicPaymentGateService.js'
 import { hasConnectedMetaDatasetConfig } from './metaAdsService.js'
 import { createEntityId, generateShortId } from '../utils/idGenerator.js'
@@ -375,7 +376,7 @@ function normalizeCalendarBookingDefaultFields(value = {}) {
   }
 }
 
-function normalizeCalendarBookingFormConfig(value = {}) {
+export function normalizeCalendarBookingFormConfig(value = {}) {
   const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
   const formSource = source.bookingForm && typeof source.bookingForm === 'object'
     ? source.bookingForm
@@ -406,6 +407,10 @@ function normalizeCalendarBookingFormConfig(value = {}) {
       formSource
     )
   }
+}
+
+async function canUseCalendarCustomForms() {
+  return (await hasFeature('forms')) && (await hasFeature('sites'))
 }
 
 export function normalizeCalendarBookingCompletionConfig(value = {}) {
@@ -1677,7 +1682,7 @@ export async function getCalendarBookingFormDefinition(calendar = {}) {
   const config = normalizeCalendarBookingFormConfig(calendar.bookingForm || calendar.booking_form || {})
   const phoneLocale = await getCalendarPhoneLocale()
 
-  if (config.useCustomForm && config.customFormId) {
+  if (config.useCustomForm && config.customFormId && await canUseCalendarCustomForms()) {
     const site = await db.get(`
       SELECT id, name, site_type, theme_json
       FROM public_sites

@@ -19,6 +19,7 @@ import { renderCalendarAppointmentTemplates } from '../services/calendarAppointm
 import { normalizePhoneForAccount } from '../utils/accountLocale.js';
 import {
   hasCalendarPaymentsFeature,
+  hasFeature,
   isLicenseEnforced,
   createCentralGoogleCalendarConnectUrl,
   disconnectCentralGoogleCalendar
@@ -265,6 +266,48 @@ function buildCalendarPaymentRequiredResponse(bookingPayment, paymentStatus = {}
 
 function disabledCalendarBookingPayment() {
   return normalizePaymentGateConfig({});
+}
+
+async function canUseCalendarCustomForms() {
+  return (await hasFeature('forms')) && (await hasFeature('sites'));
+}
+
+function disabledCalendarCustomFormConfig(value = {}) {
+  const config = localCalendarService.normalizeCalendarBookingFormConfig(value);
+  return {
+    ...config,
+    useCustomForm: false,
+    customFormId: ''
+  };
+}
+
+async function enforceCalendarCustomFormAccess(existingCalendar = {}, updateData = {}) {
+  const requestedBookingForm = updateData.bookingForm ?? updateData.booking_form;
+  const nextBookingForm = requestedBookingForm ?? existingCalendar.bookingForm ?? existingCalendar.booking_form ?? {};
+  const normalizedBookingForm = localCalendarService.normalizeCalendarBookingFormConfig(nextBookingForm);
+
+  if (!normalizedBookingForm.useCustomForm) {
+    return updateData;
+  }
+
+  if (await canUseCalendarCustomForms()) {
+    return updateData;
+  }
+
+  if (
+    requestedBookingForm !== undefined &&
+    localCalendarService.normalizeCalendarBookingFormConfig(requestedBookingForm).useCustomForm
+  ) {
+    const error = new Error('Los formularios personalizados de calendario no están incluidos en tu plan actual.');
+    error.status = 403;
+    error.code = 'feature_not_available';
+    throw error;
+  }
+
+  return {
+    ...updateData,
+    bookingForm: disabledCalendarCustomFormConfig(nextBookingForm)
+  };
 }
 
 async function resolveCalendarBookingPayment(calendar = {}, bookingForm = {}) {
@@ -1073,7 +1116,8 @@ export async function createCalendar(req, res) {
       accessToken: tokenFromBody
     });
 
-    const safeCalendarData = await enforceCalendarPaymentConfigAccess({}, calendarData);
+    const formSafeCalendarData = await enforceCalendarCustomFormAccess({}, calendarData);
+    const safeCalendarData = await enforceCalendarPaymentConfigAccess({}, formSafeCalendarData);
 
     let calendar = await localCalendarService.createLocalCalendar({
       ...safeCalendarData,
@@ -2268,7 +2312,8 @@ export async function updateCalendar(req, res) {
       });
     }
 
-    const safeUpdateData = await enforceCalendarPaymentConfigAccess(existing, updateData);
+    const formSafeUpdateData = await enforceCalendarCustomFormAccess(existing, updateData);
+    const safeUpdateData = await enforceCalendarPaymentConfigAccess(existing, formSafeUpdateData);
     const paymentSourceConflict = await findCalendarPaymentSourceConflict(existing, safeUpdateData);
     if (paymentSourceConflict) {
       return res.status(400).json({

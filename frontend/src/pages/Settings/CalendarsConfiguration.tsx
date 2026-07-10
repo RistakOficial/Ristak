@@ -493,13 +493,17 @@ const createDefaultCalendarBookingForm = (): CalendarBookingFormConfig => ({
   defaultFields: createDefaultCalendarBookingFields()
 })
 
-const normalizeCalendarBookingForm = (value?: Partial<CalendarBookingFormConfig> | null): CalendarBookingFormConfig => {
+const normalizeCalendarBookingForm = (
+  value?: Partial<CalendarBookingFormConfig> | null,
+  options: { allowCustomForm?: boolean } = {}
+): CalendarBookingFormConfig => {
   const defaultFields = normalizeCalendarBookingDefaultFields(value?.defaultFields)
   const customFormId = String(value?.customFormId || '').trim()
+  const allowCustomForm = options.allowCustomForm !== false
 
   return {
-    useCustomForm: Boolean(value?.useCustomForm && customFormId),
-    customFormId,
+    useCustomForm: Boolean(allowCustomForm && value?.useCustomForm && customFormId),
+    customFormId: allowCustomForm ? customFormId : '',
     defaultFields
   }
 }
@@ -796,9 +800,14 @@ export const CalendarsConfiguration: React.FC = () => {
   const accountCurrency = normalizeCurrencyCode(accountCurrencyConfig, detectedAccountLocaleDefaults.currency)
   const hasGoogleCalendarAccess = hasLicenseFeature(user, ['google_calendar'])
   const hasCalendarPaymentAccess = hasCalendarPaymentsAccess(user)
+  const hasCalendarCustomFormsAccess = hasLicenseFeature(user, ['forms']) && hasLicenseFeature(user, ['sites'])
   const visibleCalendarWizardSteps = useMemo(
-    () => CALENDAR_WIZARD_STEPS.filter(step => hasCalendarPaymentAccess || step.id !== 'payment'),
-    [hasCalendarPaymentAccess]
+    () => CALENDAR_WIZARD_STEPS
+      .filter(step => hasCalendarPaymentAccess || step.id !== 'payment')
+      .map(step => (!hasCalendarCustomFormsAccess && step.id === 'form'
+        ? { ...step, label: 'Datos', description: 'Campos básicos y cierre.' }
+        : step)),
+    [hasCalendarCustomFormsAccess, hasCalendarPaymentAccess]
   )
 
   // El origen de calendarios solo tiene sentido con integraciones externas.
@@ -887,8 +896,14 @@ export const CalendarsConfiguration: React.FC = () => {
   }, [locationId, accessToken, calendarSourcePreference])
 
   useEffect(() => {
+    if (!hasCalendarCustomFormsAccess) {
+      setFormSites([])
+      setLoadingFormSites(false)
+      return
+    }
+
     loadCalendarForms()
-  }, [])
+  }, [hasCalendarCustomFormsAccess])
 
   useEffect(() => {
     let cancelled = false
@@ -987,7 +1002,7 @@ export const CalendarsConfiguration: React.FC = () => {
       if (calendar) {
         setSelectedCalendar({
           ...calendar,
-          bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
+          bookingForm: normalizeCalendarBookingForm(calendar.bookingForm, { allowCustomForm: hasCalendarCustomFormsAccess }),
           bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
           bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
           bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
@@ -1004,7 +1019,7 @@ export const CalendarsConfiguration: React.FC = () => {
       setSelectedCalendar(null)
       setCalendarMetaParamsOpen(false)
     }
-  }, [calendars, expandedCalendarId, routeState.calendarId, routeState.create, routeState.view])
+  }, [calendars, expandedCalendarId, hasCalendarCustomFormsAccess, routeState.calendarId, routeState.create, routeState.view])
 
   useEffect(() => {
     if (!hasGoogleCalendarAccess && routeState.view === 'google') {
@@ -1045,7 +1060,7 @@ export const CalendarsConfiguration: React.FC = () => {
       const data = await calendarsService.getCalendars(locationId, accessToken)
       const normalizedCalendars = data.map(calendar => ({
         ...calendar,
-        bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
+        bookingForm: normalizeCalendarBookingForm(calendar.bookingForm, { allowCustomForm: hasCalendarCustomFormsAccess }),
         bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
         bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
         bookingDisplay: normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor),
@@ -1062,6 +1077,12 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const loadCalendarForms = async () => {
+    if (!hasCalendarCustomFormsAccess) {
+      setFormSites([])
+      setLoadingFormSites(false)
+      return []
+    }
+
     try {
       setLoadingFormSites(true)
       const data = await sitesService.listSites()
@@ -1600,7 +1621,7 @@ export const CalendarsConfiguration: React.FC = () => {
     const bookingDisplay = normalizeCalendarBookingDisplay(calendar.bookingDisplay, calendar.eventColor)
     setSelectedCalendar({
       ...calendar,
-      bookingForm: normalizeCalendarBookingForm(calendar.bookingForm),
+      bookingForm: normalizeCalendarBookingForm(calendar.bookingForm, { allowCustomForm: hasCalendarCustomFormsAccess }),
       bookingCompletion: normalizeCalendarBookingCompletion(calendar.bookingCompletion),
       bookingPayment: normalizeCalendarBookingPayment(calendar.bookingPayment),
       bookingDisplay,
@@ -1640,7 +1661,7 @@ export const CalendarsConfiguration: React.FC = () => {
       const googleSyncChanged = nextGoogleCalendarId !== previousGoogleCalendarId
 
       // Construir payload con todos los campos editables
-      const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
+      const bookingForm = normalizeCalendarBookingForm(selectedCalendar.bookingForm, { allowCustomForm: hasCalendarCustomFormsAccess })
       const bookingCompletion = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
       const bookingPayment = hasCalendarPaymentAccess
         ? normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
@@ -2268,8 +2289,10 @@ export const CalendarsConfiguration: React.FC = () => {
       setSelectedCalendar({ ...selectedCalendar, ...patch })
     }
 
-    const customFormSites = formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
-    const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm)
+    const customFormSites = hasCalendarCustomFormsAccess
+      ? formSites.filter(site => site.id !== CALENDAR_DEFAULT_FORM_SITE_ID)
+      : []
+    const bookingFormConfig = normalizeCalendarBookingForm(selectedCalendar.bookingForm, { allowCustomForm: hasCalendarCustomFormsAccess })
     const bookingCompletionConfig = normalizeCalendarBookingCompletion(selectedCalendar.bookingCompletion)
     const bookingPaymentConfig = hasCalendarPaymentAccess
       ? normalizeCalendarBookingPayment(selectedCalendar.bookingPayment)
@@ -2310,7 +2333,9 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     const updateBookingFormConfig = (nextConfig: CalendarBookingFormConfig) => {
-      updateSelectedCalendar({ bookingForm: normalizeCalendarBookingForm(nextConfig) })
+      updateSelectedCalendar({
+        bookingForm: normalizeCalendarBookingForm(nextConfig, { allowCustomForm: hasCalendarCustomFormsAccess })
+      })
     }
 
     const updateBookingCompletionConfig = (nextConfig: Partial<CalendarBookingCompletionConfig>) => {
@@ -2409,6 +2434,8 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     const handleCustomBookingFormToggle = (enabled: boolean) => {
+      if (enabled && !hasCalendarCustomFormsAccess) return
+
       if (enabled && !customFormSites.length) {
         showToast(
           'warning',
@@ -2439,6 +2466,8 @@ export const CalendarsConfiguration: React.FC = () => {
     }
 
     const handleCustomBookingFormChange = (formId: string) => {
+      if (!hasCalendarCustomFormsAccess) return
+
       const nextCustomForm = customFormSites.find(site => site.id === formId)
       if (formId && calendarPaymentEnabled && siteHasPaymentGateEnabled(nextCustomForm)) {
         showToast(
@@ -3122,32 +3151,38 @@ export const CalendarsConfiguration: React.FC = () => {
                 <>
           <section className={pageStyles.editorSection}>
             <div className={pageStyles.editorSectionHeader}>
-              <strong>Formulario para agendar</strong>
-              <span>Elige qué preguntas aparecen después de seleccionar fecha y hora.</span>
+              <strong>{hasCalendarCustomFormsAccess ? 'Formulario para agendar' : 'Datos para agendar'}</strong>
+              <span>
+                {hasCalendarCustomFormsAccess
+                  ? 'Elige qué preguntas aparecen después de seleccionar fecha y hora.'
+                  : 'Elige qué datos básicos se pedirán al reservar una cita.'}
+              </span>
             </div>
             <div className={pageStyles.editorFields}>
-              <div className={pageStyles.editorField}>
-                <span>Formulario personalizado</span>
-                <div className={styles.toggleContainer}>
-                  <button
-                    type="button"
-                    className={`${styles.toggle} ${bookingFormConfig.useCustomForm ? styles.toggleActive : ''}`}
-                    onClick={() => handleCustomBookingFormToggle(!bookingFormConfig.useCustomForm)}
-                    aria-pressed={bookingFormConfig.useCustomForm}
-                    aria-label={bookingFormConfig.useCustomForm ? 'Usar formulario predeterminado' : 'Usar formulario personalizado'}
-                  >
-                    <span className={styles.toggleThumb} />
-                  </button>
-                  <span className={`${styles.toggleLabel} ${bookingFormConfig.useCustomForm ? styles.toggleLabelActive : ''}`}>
-                    {bookingFormConfig.useCustomForm ? 'Sí, usar formulario' : 'No, usar predeterminado'}
-                  </span>
+              {hasCalendarCustomFormsAccess && (
+                <div className={pageStyles.editorField}>
+                  <span>Formulario personalizado</span>
+                  <div className={styles.toggleContainer}>
+                    <button
+                      type="button"
+                      className={`${styles.toggle} ${bookingFormConfig.useCustomForm ? styles.toggleActive : ''}`}
+                      onClick={() => handleCustomBookingFormToggle(!bookingFormConfig.useCustomForm)}
+                      aria-pressed={bookingFormConfig.useCustomForm}
+                      aria-label={bookingFormConfig.useCustomForm ? 'Usar formulario predeterminado' : 'Usar formulario personalizado'}
+                    >
+                      <span className={styles.toggleThumb} />
+                    </button>
+                    <span className={`${styles.toggleLabel} ${bookingFormConfig.useCustomForm ? styles.toggleLabelActive : ''}`}>
+                      {bookingFormConfig.useCustomForm ? 'Sí, usar formulario' : 'No, usar predeterminado'}
+                    </span>
+                  </div>
+                  <small>
+                    Los formularios personalizados conservan preguntas y pasos, pero se ven con el diseño interno del calendario.
+                  </small>
                 </div>
-                <small>
-                  Los formularios personalizados conservan preguntas y pasos, pero se ven con el diseño interno del calendario.
-                </small>
-              </div>
+              )}
 
-              {bookingFormConfig.useCustomForm ? (
+              {hasCalendarCustomFormsAccess && bookingFormConfig.useCustomForm ? (
                 <>
                   <div className={pageStyles.editorField}>
                     <span>Formulario</span>

@@ -63,6 +63,28 @@ test('Sites and HighLevel cannot bypass payments, plans, or integrations', async
   assert.match(highlevelRoutes, /router\.post\('\/payment-flows\/installments', requireModuleAccess\('payments'\), requireFeature\('payment_plans'\), createInstallmentFlow\)/)
 })
 
+test('calendar custom forms require the Forms/Sites plan features', async () => {
+  const calendarsController = await backendFile('src/controllers/calendarsController.js')
+  const localCalendarService = await backendFile('src/services/localCalendarService.js')
+  const calendarsConfiguration = await frontendFile('src/pages/Settings/CalendarsConfiguration.tsx')
+
+  assert.match(calendarsController, /async function canUseCalendarCustomForms\(\)/)
+  assert.match(calendarsController, /hasFeature\('forms'\)[\s\S]*hasFeature\('sites'\)/)
+  assert.match(calendarsController, /async function enforceCalendarCustomFormAccess\(existingCalendar = \{\}, updateData = \{\}\)/)
+  assert.match(calendarsController, /Los formularios personalizados de calendario no están incluidos en tu plan actual/)
+  assert.match(calendarsController, /const formSafeCalendarData = await enforceCalendarCustomFormAccess\(\{\}, calendarData\)/)
+  assert.match(calendarsController, /const formSafeUpdateData = await enforceCalendarCustomFormAccess\(existing, updateData\)/)
+
+  assert.match(localCalendarService, /export function normalizeCalendarBookingFormConfig\(value = \{\}\)/)
+  assert.match(localCalendarService, /async function canUseCalendarCustomForms\(\)/)
+  assert.match(localCalendarService, /config\.useCustomForm && config\.customFormId && await canUseCalendarCustomForms\(\)/)
+
+  assert.match(calendarsConfiguration, /const hasCalendarCustomFormsAccess = hasLicenseFeature\(user, \['forms'\]\) && hasLicenseFeature\(user, \['sites'\]\)/)
+  assert.match(calendarsConfiguration, /label: 'Datos', description: 'Campos básicos y cierre\.'/)
+  assert.match(calendarsConfiguration, /if \(!hasCalendarCustomFormsAccess\) \{[\s\S]*setFormSites\(\[\]\)/)
+  assert.match(calendarsConfiguration, /hasCalendarCustomFormsAccess && bookingFormConfig\.useCustomForm/)
+})
+
 test('automation builder and runtime reject premium nodes outside the plan', async () => {
   const flowValidation = await backendFile('src/services/automationFlowValidation.js')
   const automationsService = await backendFile('src/services/automationsService.js')
