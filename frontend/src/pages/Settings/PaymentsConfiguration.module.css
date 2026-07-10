@@ -1430,51 +1430,6 @@
   animation: spin 0.8s linear infinite;
 }
 
-.automationQrFallback {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--warn);
-  border-radius: var(--radius-ctl);
-  background: var(--warn-soft);
-}
-
-.automationQrFallbackIcon {
-  flex: 0 0 auto;
-  color: var(--warn);
-}
-
-.automationQrFallback > div {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.automationQrNotice {
-  justify-content: flex-start;
-}
-
-.automationQrPrimary {
-  justify-content: flex-start;
-  border-color: var(--border);
-  background: var(--surface-2);
-}
-
-.automationQrFallback strong {
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.automationQrFallback span {
-  color: var(--text-dim);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
 .summaryStrip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

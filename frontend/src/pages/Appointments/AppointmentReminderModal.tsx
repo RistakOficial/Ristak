@@ -1,8 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Bell, CalendarCheck, ShieldAlert, Sparkles, Trash2 } from 'lucide-react'
+import { Bell, CalendarCheck, Sparkles, Trash2 } from 'lucide-react'
 import { Modal, Button, CustomSelect, NumberInput, Switch } from '@/components/common'
 import { Badge, type BadgeVariant } from '@/components/common/Badge'
-import { useNotification } from '@/contexts/NotificationContext'
 import {
   type AppointmentReminder,
   type AppointmentReminderInput,
@@ -16,10 +15,6 @@ import {
 } from '@/services/appointmentRemindersService'
 import type { MessageTemplate } from '@/services/messageTemplatesService'
 import {
-  WHATSAPP_QR_PRECAUTION_MESSAGE,
-  WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
-  WHATSAPP_QR_FALLBACK_TITLE,
-  buildWhatsAppQrFallbackMessage,
   getWhatsAppSenderConnectionAvailability
 } from '@/utils/whatsappQrFallbackWarning'
 import styles from './AppointmentReminderModal.module.css'
@@ -172,7 +167,6 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   onSave,
   onDelete
 }) => {
-  const { showConfirm } = useNotification()
   const [draft, setDraft] = useState<AppointmentReminderInput>({})
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(false)
@@ -213,20 +207,7 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
   }
 
   const setQrFallbackEnabled = (checked: boolean) => {
-    if (!checked) {
-      set('qrFallbackEnabled', false)
-      return
-    }
-
-    showConfirm(
-      WHATSAPP_QR_FALLBACK_TITLE,
-      buildWhatsAppQrFallbackMessage('este mensaje automático de cita'),
-      () => set('qrFallbackEnabled', true),
-      'Activar respaldo QR',
-      'Cancelar',
-      undefined,
-      { typeToConfirm: WHATSAPP_QR_FALLBACK_CONFIRM_WORD }
-    )
+    set('qrFallbackEnabled', checked)
   }
 
   const selectedChannelId = String(draft.channel || reminder?.channel || 'whatsapp')
@@ -903,59 +884,25 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               </div>
             )}
 
-            {isWhatsAppQrOnly && (
-              <div className={`${styles.qrFallbackBox} ${styles.qrFallbackNotice}`}>
-                <div className={styles.qrFallbackCopy}>
-                  <div className={styles.qrFallbackTitle}>
-                    WhatsApp QR solo
-                  </div>
-                  <span className={styles.helpText}>
-                    Este mensaje se enviará por QR como canal elegido. No es respaldo de WhatsApp API, aunque la API también esté conectada.
-                  </span>
-                </div>
-              </div>
-            )}
-
             {isWhatsAppQrOnly && !hasQrConnected && (
               <div className={styles.templateNotice}>
                 Conecta un número de WhatsApp QR para enviar este mensaje por QR solo.
               </div>
             )}
 
-            {isWhatsAppApiChannel && qrOnlyConnected && (
-              <div className={`${styles.qrFallbackBox} ${styles.qrFallbackNotice}`}>
-                <div className={styles.qrFallbackCopy}>
-                  <div className={styles.qrFallbackTitle}>
-                    WhatsApp QR conectado
-                  </div>
-                  <span className={styles.helpText}>
-                    Este mensaje se enviará por QR como texto. No es respaldo porque no hay WhatsApp API conectado para este envío.
-                  </span>
-                </div>
-              </div>
-            )}
-
             {isWhatsAppApiChannel && whatsappAvailability.canShowQrFallbackSwitch && (
-              <div className={styles.qrFallbackBox}>
-                <div className={styles.qrFallbackCopy}>
-                  <div className={styles.qrFallbackTitle}>
-                    <span
-                      className={styles.qrRiskIcon}
-                      title="Precaución: el envío por QR usa una aplicación de terceros no validada por Meta y puede aumentar el riesgo de bloqueo del número."
-                    >
-                      <ShieldAlert size={17} aria-hidden="true" />
-                    </span>
-                    Usar QR como respaldo riesgoso
-                  </div>
+              <div className={styles.confirmationToggleBox}>
+                <div className={styles.confirmationToggleCopy}>
+                  <span className={styles.confirmationToggleTitle}>Usar QR como respaldo</span>
                   <span className={styles.helpText}>
                     Si WhatsApp API no está disponible{contentMode === 'template' ? ' o la plantilla sigue en revisión, rechazada o pausada' : ''},
-                    Ristak intentará mandar el texto por QR. {WHATSAPP_QR_PRECAUTION_MESSAGE}
+                    Ristak intentará mandar el texto por QR.
                   </span>
                 </div>
                 <Switch
                   checked={draft.qrFallbackEnabled === true}
                   onChange={setQrFallbackEnabled}
-                  aria-label="Usar QR como respaldo riesgoso"
+                  aria-label="Usar QR como respaldo"
                 />
               </div>
             )}

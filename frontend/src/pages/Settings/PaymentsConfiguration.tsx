@@ -83,10 +83,6 @@ import {
   type PaymentInvoiceTemplateId
 } from '@/utils/paymentInvoiceDesign'
 import {
-  WHATSAPP_QR_PRECAUTION_MESSAGE,
-  WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
-  WHATSAPP_QR_FALLBACK_TITLE,
-  buildWhatsAppQrFallbackMessage,
   getWhatsAppStatusConnectionAvailability,
   type WhatsAppConnectionAvailability
 } from '@/utils/whatsappQrFallbackWarning'
@@ -1184,32 +1180,11 @@ export const PaymentsConfiguration: React.FC = () => {
     }))
   }
 
-  const confirmAutomationQrFallback = (
-    contextLabel: string,
-    onConfirm: () => void
-  ) => {
-    showConfirm(
-      WHATSAPP_QR_FALLBACK_TITLE,
-      buildWhatsAppQrFallbackMessage(contextLabel),
-      onConfirm,
-      'Activar respaldo QR',
-      'Cancelar',
-      undefined,
-      { typeToConfirm: WHATSAPP_QR_FALLBACK_CONFIRM_WORD }
-    )
-  }
-
   const setAutomationQrFallbackValue = (
     key: 'reminderQrFallbackEnabled' | 'receiptQrFallbackEnabled' | 'failedPaymentQrFallbackEnabled',
-    value: boolean,
-    contextLabel: string
+    value: boolean
   ) => {
-    if (!value) {
-      setAutomationValue(key, false)
-      return
-    }
-
-    confirmAutomationQrFallback(contextLabel, () => setAutomationValue(key, true))
+    setAutomationValue(key, value)
   }
 
   const setTaxValue = <K extends keyof PaymentTaxSettings>(key: K, value: PaymentTaxSettings[K]) => {
@@ -3259,48 +3234,17 @@ export const PaymentsConfiguration: React.FC = () => {
   const renderAutomationQrFallbackControl = (
     key: 'reminderQrFallbackEnabled' | 'receiptQrFallbackEnabled' | 'failedPaymentQrFallbackEnabled',
     checked: boolean,
-    channel: PaymentAutomationSettings['reminderChannel'],
-    contextLabel: string
+    channel: PaymentAutomationSettings['reminderChannel']
   ) => {
     if (!channelUsesWhatsApp(channel)) return null
 
-    if (channelUsesWhatsappQrOnly(channel)) {
-      return (
-        <div className={`${styles.automationQrFallback} ${styles.automationQrPrimary}`}>
-          <div>
-            <strong>WhatsApp QR solo</strong>
-            <span>Estas automatizaciones enviarán por QR como canal principal. No es respaldo de WhatsApp API aunque la API también esté conectada.</span>
-          </div>
-        </div>
-      )
-    }
+    if (channelUsesWhatsappQrOnly(channel) || !whatsappAvailability.canShowQrFallbackSwitch) return null
 
-    if (!whatsappAvailability.canShowQrFallbackSwitch) {
-      if (!whatsappAvailability.hasQrConnected) return null
-
-      return (
-        <div className={`${styles.automationQrFallback} ${styles.automationQrPrimary}`}>
-          <div>
-            <strong>WhatsApp QR conectado</strong>
-            <span>Estas automatizaciones enviarán por QR como canal principal. No es respaldo porque no hay WhatsApp API conectado para este envío.</span>
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <div className={styles.automationQrFallback}>
-        <AlertTriangle className={styles.automationQrFallbackIcon} size={17} aria-hidden="true" />
-        <div>
-          <strong>QR como respaldo</strong>
-          <span>WhatsApp API se intenta primero. QR sólo entra si la API falla o queda restringida. {WHATSAPP_QR_PRECAUTION_MESSAGE}</span>
-        </div>
-        <Switch
-          checked={checked}
-          onChange={(next) => setAutomationQrFallbackValue(key, next, contextLabel)}
-          aria-label={`Activar QR como respaldo para ${contextLabel}`}
-        />
-      </div>
+    return renderSwitchRow(
+      'Usar QR como respaldo',
+      'Si WhatsApp API no está disponible, Ristak intentará enviar el mensaje por QR.',
+      checked,
+      (next) => setAutomationQrFallbackValue(key, next)
     )
   }
 
@@ -3311,7 +3255,7 @@ export const PaymentsConfiguration: React.FC = () => {
     if (!channelUsesWhatsApp(channel)) return undefined
     if (channelUsesWhatsappQrOnly(channel)) return 'Usa WhatsApp QR como canal principal. No requiere plantilla aprobada de Meta ni ventana de 24 horas.'
     if (whatsappAvailability.hasApiConnected) return apiHelp
-    if (whatsappAvailability.hasQrConnected) return 'Sólo hay QR conectado; se enviará el texto del mensaje por WhatsApp QR.'
+    if (whatsappAvailability.hasQrConnected) return 'WhatsApp enviará el texto del mensaje por QR.'
     return 'Conecta WhatsApp API o WhatsApp QR para enviar mensajes por WhatsApp desde esta automatización.'
   }
 
@@ -3505,7 +3449,7 @@ export const PaymentsConfiguration: React.FC = () => {
             <h2>Automatizaciones de pago</h2>
             <p>Separa lo que pasa antes del vencimiento, después de pagar y cuando un cobro falla.</p>
           </div>
-          <Badge variant="warning">
+          <Badge variant={whatsappAvailability.hasApiConnected || whatsappAvailability.hasQrConnected ? 'success' : 'neutral'}>
             <BellRing size={14} />
             {whatsappAvailability.hasApiConnected
               ? 'WhatsApp API primero'
@@ -3548,8 +3492,7 @@ export const PaymentsConfiguration: React.FC = () => {
               {renderAutomationQrFallbackControl(
                 'reminderQrFallbackEnabled',
                 automations.reminderQrFallbackEnabled,
-                automations.reminderChannel,
-                'recordatorios antes del pago'
+                automations.reminderChannel
               )}
             </div>
           </section>
@@ -3577,8 +3520,7 @@ export const PaymentsConfiguration: React.FC = () => {
               {renderAutomationQrFallbackControl(
                 'receiptQrFallbackEnabled',
                 automations.receiptQrFallbackEnabled,
-                automations.receiptDeliveryChannel,
-                'comprobantes después del pago'
+                automations.receiptDeliveryChannel
               )}
               {renderField(
                 'Acción después del pago',
@@ -3636,8 +3578,7 @@ export const PaymentsConfiguration: React.FC = () => {
               {renderAutomationQrFallbackControl(
                 'failedPaymentQrFallbackEnabled',
                 automations.failedPaymentQrFallbackEnabled,
-                automations.failedPaymentChannel,
-                'avisos de cobro fallido'
+                automations.failedPaymentChannel
               )}
             </div>
           </section>

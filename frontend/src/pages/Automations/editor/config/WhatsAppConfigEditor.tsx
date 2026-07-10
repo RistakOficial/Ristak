@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { AlertTriangle, ShieldAlert } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { CustomSelect } from './configPrimitives'
 import {
   CatalogSelect,
@@ -9,13 +9,8 @@ import {
   useCatalogOptions
 } from './configPrimitives'
 import { MessageBlocksEditor, messageBlockHelpers } from './MessageBlocksEditor'
-import { useNotification } from '@/contexts/NotificationContext'
 import { whatsappApiService } from '@/services/whatsappApiService'
 import {
-  WHATSAPP_QR_PRECAUTION_MESSAGE,
-  WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
-  WHATSAPP_QR_FALLBACK_TITLE,
-  buildWhatsAppQrFallbackMessage,
   getWhatsAppStatusConnectionAvailability,
   type WhatsAppConnectionAvailability
 } from '@/utils/whatsappQrFallbackWarning'
@@ -60,7 +55,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   onChange
 }) => {
   const set = (patch: Config) => onChange({ ...config, ...patch })
-  const { showConfirm } = useNotification()
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
@@ -193,57 +187,21 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   }
 
   const setAllowQrFallback = (checked: boolean) => {
-    if (!checked) {
-      applyQrFallback(false)
-      return
-    }
-
-    showConfirm(
-      WHATSAPP_QR_FALLBACK_TITLE,
-      buildWhatsAppQrFallbackMessage('esta automatización'),
-      () => applyQrFallback(true),
-      'Activar respaldo QR',
-      'Cancelar',
-      undefined,
-      { typeToConfirm: WHATSAPP_QR_FALLBACK_CONFIRM_WORD }
-    )
+    applyQrFallback(checked)
   }
 
   const qrFallbackNotice = (
     <>
-      {qrOnlyConnected && (
-        <div className={`${styles.qrModeBox} ${styles.qrModeNotice}`}>
-          <div className={styles.qrModeCopy}>
-            <div className={styles.qrModeTitle}>WhatsApp QR conectado</div>
-            <span className={styles.configHelp}>
-              Este nodo enviará por QR como canal principal. No es respaldo porque no hay WhatsApp API conectado para este envío.
-              {messageType === 'template' ? ' Si eliges una plantilla, Ristak mandará su texto renderizado por QR.' : ''}
-            </span>
-          </div>
-        </div>
-      )}
-
       {whatsappAvailability.canShowQrFallbackSwitch && (
-        <div className={styles.qrModeBox}>
+        <div>
           <Toggle
             checked={allowQrFallback}
             onChange={setAllowQrFallback}
             label="Permitir QR"
           />
-          <div className={styles.qrModeCopy}>
-            <div className={styles.qrModeTitle}>
-              <span
-                className={styles.qrRiskIcon}
-                title="Precaución: el envío por QR usa una aplicación de terceros no validada por Meta y puede aumentar el riesgo de bloqueo del número."
-              >
-                <ShieldAlert size={16} aria-hidden="true" />
-              </span>
-              Usar QR si WhatsApp API no está disponible
-            </div>
-            <span className={styles.configHelp}>
-              Primero se intenta WhatsApp API. Si la API no está disponible o Meta restringe el envío, se usa un número conectado por QR como respaldo. {WHATSAPP_QR_PRECAUTION_MESSAGE}
-            </span>
-          </div>
+          <span className={styles.configHelp}>
+            Si WhatsApp API no está disponible, Ristak intentará enviar el mensaje por QR.
+          </span>
         </div>
       )}
 

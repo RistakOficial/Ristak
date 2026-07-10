@@ -367,41 +367,6 @@
   color: var(--text);
 }
 
-.qrFallbackBox {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  border: 1px solid var(--warn);
-  border-radius: var(--radius-ctl);
-  background: var(--warn-soft);
-  padding: 0.85rem;
-}
-
-.qrFallbackNotice {
-  justify-content: flex-start;
-}
-
-.qrFallbackCopy {
-  min-width: 0;
-}
-
-.qrFallbackTitle {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  color: var(--text);
-  font-size: 0.85rem;
-  font-weight: 600;
-}
-
-.qrRiskIcon {
-  display: inline-flex;
-  align-items: center;
-  flex: 0 0 auto;
-  color: var(--warn);
-}
-
 .footer {
   display: flex;
   align-items: center;
@@ -420,10 +385,6 @@
   .typeGrid,
   .fieldRow {
     grid-template-columns: 1fr;
-  }
-
-  .qrFallbackBox {
-    align-items: flex-start;
   }
 
   .confirmationToggleBox {

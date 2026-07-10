@@ -881,9 +881,10 @@ como canal principal, no como respaldo. Esto aplica a nodos de WhatsApp en
 Automatizaciones, recordatorios/avisos de citas y automatizaciones de pago. Si
 la configuracion usa una plantilla, Ristak debe renderizar la plantilla local o
 predeterminada como texto limpio, incluyendo URLs de botones, y enviarla por QR
-sin exigir aprobacion de Meta/YCloud. Las advertencias visuales de "QR como
-respaldo" solo aplican cuando tambien hay WhatsApp API conectado y el QR se
-habilita para cubrir fallas o restricciones de esa API.
+sin exigir aprobacion de Meta/YCloud. El riesgo de usar QR se comunica al conectar
+la sesion; las superficies posteriores de citas, pagos y Automatizaciones no
+repiten esa advertencia. Cuando tambien hay WhatsApp API conectado, el usuario
+puede activar QR como respaldo directamente desde la configuracion correspondiente.
 
 En automatizaciones de pago, si la plantilla configurada esta pendiente,
 rechazada, pausada o no sincronizada, Ristak no debe brincar directo a QR. Primero
