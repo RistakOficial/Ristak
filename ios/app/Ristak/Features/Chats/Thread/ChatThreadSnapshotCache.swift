@@ -58,6 +58,99 @@ enum ChatThreadSnapshotCache {
             await RistakSnapshotCache.shared.storeRaw(data, for: key)
         }
     }
+
+    // MARK: - Estado del agente conversacional (robot del header)
+
+    /// Estado del agente cacheado para pintar el robot del header al instante.
+    /// Decodifica `[ConversationAgentState].self` DIRECTO del JSON guardado por
+    /// el DTO (round-trip por el `init(from:)` tolerante del modelo real).
+    @MainActor
+    static func load(agentStatesContactID contactID: String) -> [ConversationAgentState] {
+        guard let data = RistakSnapshotCache.shared.rawData(for: ChatSnapshotKey.threadAgentStates(contactID)),
+              let states = try? JSONDecoder().decode([ConversationAgentState].self, from: data) else {
+            return []
+        }
+        return states
+    }
+
+    /// Guarda el estado RAW del agente (sin filtrar) del contacto. El encode se
+    /// hace fuera de main para no provocar un stall en cada refresco.
+    @MainActor
+    static func save(_ states: [ConversationAgentState], contactID: String) {
+        let dtos = states.map(AgentStateDTO.init)
+        let key = ChatSnapshotKey.threadAgentStates(contactID)
+        Task.detached(priority: .utility) {
+            guard let data = try? JSONEncoder().encode(dtos) else { return }
+            await RistakSnapshotCache.shared.storeRaw(data, for: key)
+        }
+    }
+}
+
+// MARK: - DTO Codable del estado del agente (espejo fiel de ConversationAgentState)
+
+/// `ConversationAgentState` es Decodable-only (init(from:) tolerante, sin
+/// `encode(to:)` simétrico). Este DTO ENCODEA con las MISMAS claves que
+/// `ConversationAgentState.CodingKeys` (nombres por defecto), de modo que al
+/// recargar decodificamos `[ConversationAgentState].self` DIRECTO del JSON
+/// guardado — round-trip fiel por su `init(from:)`, sin tocar el modelo de Core.
+/// `closingContext` es `RistakJSONValue?` (Codable simétrico): hoy no pinta UI,
+/// pero incluirlo cuesta cero y deja el espejo completo.
+private struct AgentStateDTO: Codable, Sendable {
+    var id: String?
+    var contactId: String
+    var agentId: String?
+    var agentName: String?
+    var status: String
+    var pausedUntilAt: String?
+    var signal: String?
+    var signalReason: String?
+    var signalSummary: String?
+    var signalAt: String?
+    var lastInboundMessageId: String?
+    var lastAnsweredInboundMessageId: String?
+    var lastReplyAt: String?
+    var followUpBaseMessageId: String?
+    var followUpSentCount: Int?
+    var followUpLastSentAt: String?
+    var activatedAt: String?
+    var activationSource: String?
+    var activatedBy: String?
+    var updatedBy: String?
+    var agentEnabled: Bool?
+    var agentHideAttendedNotifications: Bool?
+    var closingContext: RistakJSONValue?
+    var updatedAt: String?
+    var contactName: String?
+    var contactPhone: String?
+
+    init(_ state: ConversationAgentState) {
+        id = state.id
+        contactId = state.contactId
+        agentId = state.agentId
+        agentName = state.agentName
+        status = state.status
+        pausedUntilAt = state.pausedUntilAt
+        signal = state.signal
+        signalReason = state.signalReason
+        signalSummary = state.signalSummary
+        signalAt = state.signalAt
+        lastInboundMessageId = state.lastInboundMessageId
+        lastAnsweredInboundMessageId = state.lastAnsweredInboundMessageId
+        lastReplyAt = state.lastReplyAt
+        followUpBaseMessageId = state.followUpBaseMessageId
+        followUpSentCount = state.followUpSentCount
+        followUpLastSentAt = state.followUpLastSentAt
+        activatedAt = state.activatedAt
+        activationSource = state.activationSource
+        activatedBy = state.activatedBy
+        updatedBy = state.updatedBy
+        agentEnabled = state.agentEnabled
+        agentHideAttendedNotifications = state.agentHideAttendedNotifications
+        closingContext = state.closingContext
+        updatedAt = state.updatedAt
+        contactName = state.contactName
+        contactPhone = state.contactPhone
+    }
 }
 
 // MARK: - DTO Codable de marker de actividad

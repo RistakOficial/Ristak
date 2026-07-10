@@ -200,6 +200,9 @@ final class ConversationViewModel {
         // Caché instantánea: hidrata ANTES del primer render para que el hilo
         // se pinte con los últimos mensajes sin flash de vacío/spinner.
         hydrateThreadFromCache()
+        // Igual para el estado del agente: el robot del header se pinta en el
+        // PRIMER frame desde caché, sin esperar el fetch en frío (~10 s).
+        hydrateAgentStatesFromCache()
     }
 
     func bind(appConfig: AppConfigStore) {
@@ -222,10 +225,18 @@ final class ConversationViewModel {
         // al instante; el spinner solo aparece si NO hay nada cacheado. Luego se
         // revalida contra la red (merge identity-preserving con ids estables).
         hydrateThreadFromCache()
+        // Robot del header al instante desde caché (idempotente vs. el hidrato
+        // del init). La revalidación de red sigue corriendo abajo.
+        hydrateAgentStatesFromCache()
         isLoadingInitial = timeline.isEmpty
         loadErrorMessage = nil
         accessDenied = false
         defer { isLoadingInitial = false }
+
+        // El estado del agente NO depende de la conversación: láncalo EN PARALELO
+        // al fetch del hilo para que un server frío no lo serialice detrás de él
+        // (antes corría DESPUÉS de cargar la conversación → robot ~10 s tarde).
+        async let agentTask: Void = loadAgentStates()
 
         do {
             try await loadConversation(reset: true)
@@ -243,12 +254,15 @@ final class ConversationViewModel {
             loadErrorMessage = "No se pudo cargar la conversación."
         }
 
+        // Espera SIEMPRE el fetch del agente ya en vuelo (aunque la conversación
+        // falle) para no dejar una tarea hija colgada.
+        await agentTask
+
         guard hasLoadedOnce else { return }
         markRead()
         async let contactTask: Void = hydrateContactDetail()
         async let statusTask: Void = loadWhatsAppStatus()
-        async let agentTask: Void = loadAgentStates()
-        _ = await (contactTask, statusTask, agentTask)
+        _ = await (contactTask, statusTask)
         resolveDefaultChannelIfNeeded()
     }
 
@@ -375,6 +389,25 @@ final class ConversationViewModel {
     /// el hilo al instante la próxima vez.
     private func persistThreadCache() {
         ChatThreadSnapshotCache.save(serverMessages, contactID: contactID)
+    }
+
+    /// Hidrata el estado del agente desde la caché instantánea para pintar el
+    /// robot del header (controles/activo/señal) AL INSTANTE, sin esperar los
+    /// ~10 s del fetch en frío. Idempotente y no destructivo: solo hidrata si aún
+    /// no hay estados en memoria (una recarga no pisa un fetch reciente).
+    private func hydrateAgentStatesFromCache() {
+        guard agentStates.isEmpty else { return }
+        let cached = ChatThreadSnapshotCache.load(agentStatesContactID: contactID)
+        guard !cached.isEmpty else { return }
+        agentStates = cached
+    }
+
+    /// Persiste el estado RAW del agente (sin filtrar phantoms) para que el
+    /// próximo arranque del hilo pinte el robot al instante. `assignedAgentStates`
+    /// decide qué se MUESTRA; guardar el RAW conserva el historial sin cambiar lo
+    /// visible.
+    private func persistAgentStatesCache() {
+        ChatThreadSnapshotCache.save(agentStates, contactID: contactID)
     }
 
     /// Aplica mensajes del servidor con identidad preservada + reconciliación
@@ -632,12 +665,18 @@ final class ConversationViewModel {
     }
 
     func loadAgentStates() async {
-        do {
-            agentStates = try await agentService.fetchAllStates(contactId: contactID)
-            lastAgentStatesFetch = Date()
-        } catch {
-            agentStates = []
+        guard let fresh = try? await agentService.fetchAllStates(contactId: contactID) else {
+            // Red caída en frío: NO pises lo hidratado desde caché (el robot
+            // conserva el último estado conocido). Si nunca hubo nada, sigue vacío.
+            return
         }
+        // No pises una acción del usuario en vuelo (pausar/tomar/omitir): paridad
+        // con refreshAgentStatesIfStale. `applyUpdatedAgentState` ya dejó el estado
+        // correcto; un fetch que salió antes traería el estado ANTERIOR.
+        if agentActionInFlight { return }
+        agentStates = fresh
+        lastAgentStatesFetch = Date()
+        persistAgentStatesCache()
     }
 
     /// Refresco silencioso del estado del agente desde el poll/SSE. Throttled
@@ -649,6 +688,7 @@ final class ConversationViewModel {
         guard let fresh = try? await agentService.fetchAllStates(contactId: contactID) else { return }
         agentStates = fresh
         lastAgentStatesFetch = Date()
+        persistAgentStatesCache()
     }
 
     private func markRead() {
@@ -2045,6 +2085,9 @@ final class ConversationViewModel {
             agentStates.append(updated)
         }
         lastAgentStatesFetch = Date()
+        // Persiste tras una acción local (pausar/reanudar/tomar control) para que
+        // reabrir el chat no muestre un robot con el estado ANTERIOR.
+        persistAgentStatesCache()
     }
 
     /// Descarta la señal de cierre (paridad `clear_signal`): quita el banner de

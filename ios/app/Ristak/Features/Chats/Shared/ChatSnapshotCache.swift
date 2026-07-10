@@ -18,6 +18,11 @@ enum ChatSnapshotKey {
     /// una segunda pasada de red que reacomode el hilo al entrar.
     static func threadMarkers(_ contactID: String) -> String { "chat:thread:markers:\(contactID)" }
 
+    /// Estado del agente conversacional del hilo (RAW, sin filtrar phantoms).
+    /// Permite pintar el robot del header AL INSTANTE, sin esperar el fetch en
+    /// frío (~10 s) de `GET states/:contactId?includeAll=1`.
+    static func threadAgentStates(_ contactID: String) -> String { "chat:thread:agents:\(contactID)" }
+
     /// Ficha (detalle) de un contacto.
     static func contactDetail(_ contactID: String) -> String { "chat:contact:\(contactID)" }
 

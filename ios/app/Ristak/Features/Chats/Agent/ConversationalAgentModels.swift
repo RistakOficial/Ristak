@@ -19,7 +19,7 @@ enum ConversationalAgentErrorCode {
 
 // MARK: Estado del "prompt del negocio" (bloquea encender/crear si no está listo)
 
-struct ConversationalBusinessPromptStatus: Decodable, Sendable, Equatable {
+struct ConversationalBusinessPromptStatus: Codable, Sendable, Equatable {
     let ready: Bool
     let status: String?
     let businessName: String?
@@ -42,7 +42,7 @@ struct ConversationalBusinessPromptStatus: Decodable, Sendable, Equatable {
 
 // MARK: Runtime interno — GET/POST /conversational-agent/config
 
-struct ConversationalAgentConfig: Decodable, Sendable, Equatable {
+struct ConversationalAgentConfig: Codable, Sendable, Equatable {
     let enabled: Bool
     let aiProvider: String
     let model: String
@@ -113,9 +113,35 @@ struct ConversationalAgentConfigInput: Encodable, Sendable {
     var languageLevel: String?
 }
 
+// MARK: Disponibilidad de OpenAI cacheable (gate del Hub sin bloquear el pintado)
+
+/// Snapshot Codable de la disponibilidad de OpenAI para el Hub del agente.
+///
+/// `AIAgentConfigStatus` vive en `Core` y es Decodable-only; aquí guardamos solo
+/// la última disponibilidad conocida (`configured` + `needsReconnect`) para que
+/// el gate del Hub NO bloquee el primer pintado: si la última vez OpenAI estaba
+/// listo, mostramos los agentes cacheados al instante y revalidamos por detrás.
+struct AgentOpenAIAvailabilitySnapshot: Codable, Sendable, Equatable {
+    let configured: Bool
+    let needsReconnect: Bool
+
+    init(configured: Bool, needsReconnect: Bool) {
+        self.configured = configured
+        self.needsReconnect = needsReconnect
+    }
+
+    init(_ status: AIAgentConfigStatus) {
+        configured = status.configured
+        needsReconnect = status.needsReconnect
+    }
+
+    /// Mismo criterio que `AIAgentConfigStatus.isReady`.
+    var isReady: Bool { configured && !needsReconnect }
+}
+
 // MARK: Definición de agente — GET /agents, PUT /agents/:id
 
-struct ConversationalAgentDef: Decodable, Sendable, Identifiable, Equatable {
+struct ConversationalAgentDef: Codable, Sendable, Identifiable, Equatable {
     let id: String
     let name: String
     let enabled: Bool

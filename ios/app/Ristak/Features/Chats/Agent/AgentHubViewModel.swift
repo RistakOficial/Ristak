@@ -39,17 +39,72 @@ final class AgentHubViewModel {
         agentEnabledOverrides[agent.id] ?? agent.enabled
     }
 
-    // MARK: - Carga
+    // MARK: - Carga (cache-first / SWR)
 
+    /// Cache-first: pinta al instante lo último conocido desde
+    /// `RistakSnapshotCache` (agentes + config + disponibilidad de OpenAI) sin
+    /// spinner, y revalida por detrás. Sin caché útil, muestra `.loading`.
     func load() async {
-        phase = .loading
+        if !hydrateFromCache() {
+            phase = .loading
+        }
+        await revalidate()
+    }
+
+    /// Pinta el snapshot cacheado. Devuelve `true` si dejó algo en pantalla
+    /// (`.ready` con agentes, o `.needsOpenAI` según la última disponibilidad).
+    @discardableResult
+    private func hydrateFromCache() -> Bool {
+        let cache = RistakSnapshotCache.shared
+        let availability = cache.value(
+            AgentOpenAIAvailabilitySnapshot.self,
+            for: RistakCacheKey.conversationalAgentAvailability
+        )
+
+        // Última vez sin OpenAI → pinta el gate al instante, sin spinner.
+        if let availability, !availability.isReady {
+            phase = .needsOpenAI(reconnect: availability.needsReconnect)
+            return true
+        }
+
+        // OpenAI listo/desconocido: pinta la lista cacheada al instante.
+        guard let cachedAgents = cache.value(
+            [ConversationalAgentDef].self,
+            for: RistakCacheKey.conversationalAgents
+        ) else {
+            return false
+        }
+        if let cachedConfig = cache.value(
+            ConversationalAgentConfig.self,
+            for: RistakCacheKey.conversationalAgentConfig
+        ) {
+            config = cachedConfig
+        }
+        agents = cachedAgents.sorted { $0.position < $1.position }
+        phase = .ready
+        return true
+    }
+
+    /// Revalida contra la red. Preserva las transiciones de acceso/OpenAI y, si
+    /// una recarga transitoria falla, CONSERVA la lista cacheada ya pintada en
+    /// vez de borrarla con un estado de error.
+    private func revalidate() async {
+        let cache = RistakSnapshotCache.shared
+        let hadCachedList = (phase == .ready)
+
         // Gate OpenAI (misma conexión que el Asistente Personal).
         do {
             let ai = try await AIAgentService.config()
+            cache.store(
+                AgentOpenAIAvailabilitySnapshot(ai),
+                for: RistakCacheKey.conversationalAgentAvailability
+            )
             guard ai.isReady else {
                 phase = .needsOpenAI(reconnect: ai.needsReconnect)
                 return
             }
+            // Gate OK pero aún sin lista pintada → spinner mientras carga.
+            if phase != .ready { phase = .loading }
         } catch let error as RistakAPIError where error.isAccessDenied {
             phase = .accessDenied
             return
@@ -63,8 +118,18 @@ final class AgentHubViewModel {
             async let list = ConversationalAgentService.agents()
             let (loadedConfig, loadedAgents) = try await (cfg, list)
             config = loadedConfig
-            agents = loadedAgents.sorted { $0.position < $1.position }
-            agentEnabledOverrides.removeAll()
+            cache.store(loadedConfig, for: RistakCacheKey.conversationalAgentConfig)
+            // No pises una edición local en vuelo: un GET de la lista disparado
+            // ANTES del PUT del toggle podría traer el estado ANTERIOR y revertir
+            // el cambio que el usuario acaba de hacer. Si hay guardado en vuelo,
+            // conserva la lista local (`replaceAgent` la deja consistente y la
+            // re-cachea al terminar el guardado).
+            if savingAgentIDs.isEmpty {
+                let sorted = loadedAgents.sorted { $0.position < $1.position }
+                agents = sorted
+                agentEnabledOverrides.removeAll()
+                cache.store(sorted, for: RistakCacheKey.conversationalAgents)
+            }
             phase = .ready
         } catch let error as RistakAPIError {
             switch error.kind {
@@ -73,12 +138,15 @@ final class AgentHubViewModel {
             default:
                 if error.status == 409 {
                     phase = .needsOpenAI(reconnect: false)
-                } else {
+                } else if !hadCachedList {
                     phase = .failed(error.message)
                 }
+                // Con lista cacheada en pantalla la conservamos (no la borramos).
             }
         } catch {
-            phase = .failed("No se pudo cargar el agente conversacional.")
+            if !hadCachedList {
+                phase = .failed("No se pudo cargar el agente conversacional.")
+            }
         }
     }
 
@@ -102,7 +170,9 @@ final class AgentHubViewModel {
                 replaceAgent(updated)
                 agentEnabledOverrides[agent.id] = nil
                 if shouldEnableRuntime {
-                    config = try await ConversationalAgentService.saveConfig(.init(enabled: true))
+                    let updatedConfig = try await ConversationalAgentService.saveConfig(.init(enabled: true))
+                    config = updatedConfig
+                    RistakSnapshotCache.shared.store(updatedConfig, for: RistakCacheKey.conversationalAgentConfig)
                 }
             } catch {
                 agentEnabledOverrides[agent.id] = nil
@@ -142,6 +212,9 @@ final class AgentHubViewModel {
             agents.append(def)
         }
         agents.sort { $0.position < $1.position }
+        // Mantén la caché fresca: el próximo abrir del Hub pinta el cambio ya
+        // (y evita que una revalidación en vuelo revierta un toggle recién hecho).
+        RistakSnapshotCache.shared.store(agents, for: RistakCacheKey.conversationalAgents)
     }
 
     private func present(_ error: Error, whenEnabling enabling: Bool?) {

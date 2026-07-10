@@ -318,6 +318,11 @@ enum RistakCacheKey {
     // metadatos/derivados que una pantalla quiera pintar al instante).
     static func chatConversation(contactID: String) -> String { "chat:conversation:\(contactID)" }
 
+    // Agente conversacional (Hub del chat: activar/pausar/editar agentes).
+    static let conversationalAgents = "conversational-agent:agents"
+    static let conversationalAgentConfig = "conversational-agent:config"
+    static let conversationalAgentAvailability = "capabilities:ai-agent:availability"
+
     // Señales de capacidad transversales (integraciones / features de plan).
     static let integrations = "capabilities:integrations"
 }
