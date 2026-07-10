@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Pantalla de login (doc research/02 §10 con acentos corregidos):
 /// correo + contraseña, resolución automática de tenant vía
-/// `SessionStore.login`, errores inline en español y campo avanzado
-/// "Servidor" para desarrollo. En iPad la tarjeta se centra a ~420 pt.
+/// `SessionStore.login` y errores inline en español. En iPad la tarjeta se
+/// centra a ~420 pt.
 struct LoginView: View {
     @Environment(SessionStore.self) private var session
 
@@ -13,14 +13,13 @@ struct LoginView: View {
     private enum LoginField: Hashable {
         case email
         case password
-        case server
     }
 
     var body: some View {
         GeometryReader { proxy in
             ScrollView {
                 VStack(spacing: RistakTheme.Spacing.xxl) {
-                    wordmark
+                    brandHeader
                         .padding(.top, RistakTheme.Spacing.xxl)
 
                     heading
@@ -37,8 +36,6 @@ struct LoginView: View {
                     }
 
                     submitButton
-
-                    advancedOptions
                 }
                 .frame(maxWidth: 420)
                 .padding(.horizontal, RistakTheme.Spacing.xl)
@@ -53,20 +50,28 @@ struct LoginView: View {
 
     // MARK: - Marca
 
-    /// Wordmark "Ristak" tipográfico + punto de acento (sin fuentes embebidas:
-    /// la identidad va por color/forma).
-    private var wordmark: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 2) {
+    private var brandHeader: some View {
+        VStack(spacing: RistakTheme.Spacing.sm) {
+            ZStack {
+                Circle()
+                    .fill(RistakTheme.accentSoft)
+                    .frame(width: 100, height: 100)
+
+                Image("LoginLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 72, height: 72)
+            }
+            .overlay {
+                Circle()
+                    .stroke(RistakTheme.accent.opacity(0.18), lineWidth: 1)
+            }
+            .shadow(color: RistakTheme.accent.opacity(0.18), radius: 18, y: 8)
+            .accessibilityHidden(true)
+
             Text("Ristak")
                 .font(.system(size: 40, weight: .bold, design: .rounded))
                 .foregroundStyle(RistakTheme.textPrimary)
-
-            Circle()
-                .fill(RistakTheme.accent)
-                .frame(width: 9, height: 9)
-                .alignmentGuide(.firstTextBaseline) { dimensions in
-                    dimensions[.bottom]
-                }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Ristak")
@@ -78,7 +83,7 @@ struct LoginView: View {
                 .font(.title2.bold())
                 .foregroundStyle(RistakTheme.textPrimary)
 
-            Text("Entra con el correo y la contraseña de tu cuenta.")
+            Text("Ristak detecta tu cuenta automáticamente con tu correo.")
                 .font(.subheadline)
                 .foregroundStyle(RistakTheme.textDim)
                 .multilineTextAlignment(.center)
@@ -126,29 +131,6 @@ struct LoginView: View {
         .buttonStyle(.glassProminent)
         .controlSize(.large)
         .disabled(!viewModel.canSubmit)
-    }
-
-    // MARK: - Opciones avanzadas
-
-    private var advancedOptions: some View {
-        DisclosureGroup("Opciones avanzadas", isExpanded: $viewModel.showAdvancedOptions) {
-            VStack(alignment: .leading, spacing: RistakTheme.Spacing.xs) {
-                TextField("Servidor (http://127.0.0.1:3001)", text: $viewModel.serverOverride)
-                    .textContentType(.URL)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .focused($focusedField, equals: .server)
-                    .loginFieldStyle()
-
-                Text("Conéctate directo a un servidor específico. Déjalo vacío para entrar con tu correo.")
-                    .font(.caption)
-                    .foregroundStyle(RistakTheme.textMute)
-            }
-            .padding(.top, RistakTheme.Spacing.xs)
-        }
-        .font(.subheadline.weight(.medium))
-        .tint(RistakTheme.textDim)
     }
 
     // MARK: - Acciones

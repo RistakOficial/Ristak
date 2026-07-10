@@ -790,9 +790,9 @@ tenant-scoped en nativo, MOB-004).
 
 ## 11. Contrato mínimo que debe implementar la app iOS
 
-1. Pantalla de login: email + password → `resolveMobileTenant` →
-   `POST {appUrl}/api/auth/login` (con retry MOB-003 si se desea paridad
-   completa con /movil).
+1. Pantalla de login: marca Ristak + email + password, sin configuración
+   avanzada visible → `resolveMobileTenant` → `POST {appUrl}/api/auth/login`
+   (con retry MOB-003 si se desea paridad completa con /movil).
 2. Persistir en Keychain: `apiBaseUrl` y `authToken` (equivalentes a
    `ristak.native.apiBaseUrl.v1` / `ristak.native.authToken.v1`).
 3. Cliente HTTP: `Authorization: Bearer <token>`; desenvolver `{success,data}`;

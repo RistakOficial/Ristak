@@ -285,7 +285,11 @@ del frontend y es la referencia funcional que deben mirar `mobile/` e `ios/app`
 cuando una feature exista en varias superficies. Las rutas legacy `/phone/*`
 redirigen a `/movil/*`.
 
-En iOS el contenedor nativo está configurado como app de iPhone/iPad enfocada en `/movil`. Al abrir desde Xcode o desde el icono del celular, primero resuelve la empresa contra el portal central, guarda la URL pública de la instalación del cliente y después arranca el login/chat móvil contra ese Render.
+En iOS la app SwiftUI de `ios/app` es la ruta oficial de iPhone/iPad para App
+Store. Al abrir desde Xcode o desde el icono del celular, el login muestra la
+marca Ristak, pide correo y contraseña, resuelve la empresa contra el portal
+central y autentica contra la instalación pública correspondiente. La app no
+debe mostrar configuración avanzada ni campos manuales de servidor en login.
 
 En la app Apple nativa de `ios/app`, la bandeja de chats no debe mostrar textos
 de refresco como `Actualizando...` debajo del titulo principal; los refrescos en
@@ -301,6 +305,9 @@ opciones: proveedor/modelo de IA, identidad, tono, idioma, instrucciones,
 demoras, entrega de mensajes, notificaciones, follow-up, objetivo, acciones de
 cierre, flujos de cita/venta/datos/filtro/link/anticipo, acciones extra, datos
 obligatorios, reglas de handoff, alcance y filtros.
+El login nativo de `ios/app` debe conservar logo/colores de Ristak y no debe
+mostrar configuraciones tecnicas de servidor; al capturar el correo, la app
+detecta automaticamente la instalacion correcta antes de autenticar.
 
 El bundle iOS principal debe declarar español como region de desarrollo y
 localizacion soportada (`CFBundleDevelopmentRegion=es` y
@@ -384,6 +391,9 @@ evitar teclados claros sobre pantallas oscuras o cortes de color detras del IME.
 - App React Native en `mobile/`: el login no pide URL. Resuelve el tenant con
   `/api/mobile/resolve` usando `EXPO_PUBLIC_INSTALLER_API_URL` si existe; si no,
   usa `https://www.ristak.com`.
+- App Apple nativa en `ios/app`: el login de `com.ristak.app` muestra marca
+  Ristak, solo pide correo y contraseña, no expone servidor manual y resuelve la
+  cuenta por correo vía `https://www.ristak.com/api/mobile/resolve`.
 - Android legacy Capacitor: `frontend/android/app/google-services.json` del
   proyecto Firebase vive fuera de Git y debe pertenecer al paquete
   `com.ristak.app`.

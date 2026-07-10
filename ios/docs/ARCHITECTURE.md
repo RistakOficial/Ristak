@@ -196,7 +196,6 @@ sheets del sistema), nunca para comunicar selección.
   -destination 'id=BFC68803-AC13-45B2-8664-BA6C99AAA6A1' build`
   (iPhone 17 Pro sim; iPad: `id=88C0E42B-1FAC-4470-8EF8-87A1B0064A25`).
   Usa `-derivedDataPath` propio si compilas en paralelo con otros agentes.
-- Backend local: `./start-local.sh` (backend :3001). La app permite override
-  de base URL en el login (campo avanzado "Servidor") para apuntar a
-  `http://127.0.0.1:3001` en desarrollo (agregar excepción ATS solo para
-  builds Debug via `NSAllowsLocalNetworking`).
+- Login: la app resuelve tenant por correo contra el portal central y no muestra
+  campo manual de servidor. El override directo queda reservado para pruebas
+  internas, fuera de la UI de usuario.

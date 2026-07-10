@@ -2442,6 +2442,10 @@ certificado Apple Distribution. El perfil de la app principal debe incluir Push
 Notifications y Communication Notifications
 (`com.apple.developer.usernotifications.communication`) para que las push puedan
 mostrar el avatar del contacto como remitente cuando la extension este integrada.
+El login de `com.ristak.app` muestra marca Ristak, solo pide correo y contrasena,
+no expone configuracion avanzada de servidor y resuelve automaticamente la
+instalacion correcta por correo via `https://www.ristak.com/api/mobile/resolve`
+antes de autenticar contra el backend del cliente.
 En Android, el binario necesita `frontend/android/app/google-services.json` fuera
 de Git y el envio puede resolverse por FCM local o por Ristak Installer central.
 Si el portal central reporta Android configurado, la instalacion cliente debe

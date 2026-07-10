@@ -112,8 +112,8 @@ final class SessionStore {
         try await completeLogin(email: cleanEmail, password: password, baseURL: tenant.appURL)
     }
 
-    /// Login directo contra un servidor específico (campo avanzado "Servidor"
-    /// para desarrollo, p. ej. `http://127.0.0.1:3001`). Omite el resolve.
+    /// Login directo contra un servidor específico para pruebas internas.
+    /// No se expone en la UI: el usuario siempre entra por resolve de correo.
     func login(email: String, password: String, serverURL: URL) async throws {
         let cleanEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleanEmail.isEmpty, !password.isEmpty else {

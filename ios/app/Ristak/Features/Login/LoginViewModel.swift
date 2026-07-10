@@ -3,16 +3,12 @@ import Observation
 
 /// ViewModel del login móvil de un solo paso (doc research/02):
 /// email + contraseña → resolve de tenant en el portal central → login contra
-/// la instalación. Con override de "Servidor" (opciones avanzadas) se salta
-/// el resolve y va directo contra esa URL (desarrollo).
+/// la instalación correcta de esa cuenta.
 @MainActor
 @Observable
 final class LoginViewModel {
     var email = ""
     var password = ""
-    /// Override manual de servidor (p. ej. `http://127.0.0.1:3001`).
-    var serverOverride = ""
-    var showAdvancedOptions = false
 
     private(set) var isBusy = false
     private(set) var errorMessage: String?
@@ -39,21 +35,11 @@ final class LoginViewModel {
             return
         }
 
-        let server = serverOverride.trimmingCharacters(in: .whitespacesAndNewlines)
-
         isBusy = true
         defer { isBusy = false }
 
         do {
-            if !server.isEmpty {
-                guard let serverURL = URL(string: server) else {
-                    errorMessage = "La dirección del servidor no es válida."
-                    return
-                }
-                try await session.login(email: cleanEmail, password: password, serverURL: serverURL)
-            } else {
-                try await session.login(email: cleanEmail, password: password)
-            }
+            try await session.login(email: cleanEmail, password: password)
         } catch let error as TenantResolverError {
             // Copy exacto del portal: tenant_not_found / client_inactive /
             // installation_not_ready / rate_limited (doc 02, Audit #1).

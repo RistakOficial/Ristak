@@ -35,12 +35,11 @@ xcrun devicectl device process launch --device <UDID> com.ristak.app
 ```
 
 ### Login
-- **Producción**: correo + contraseña de la cuenta. El correo resuelve el
+- **Cuenta Ristak**: correo + contraseña de la cuenta. El correo resuelve el
   tenant automáticamente vía `POST https://www.ristak.com/api/mobile/resolve`
   y la app queda apuntando al servidor de esa instalación.
-- **Desarrollo local**: `./start-local.sh` en la raíz del repo (backend en
-  `:3001`) y en el login abrir **Opciones avanzadas → Servidor** con
-  `http://127.0.0.1:3001` (ATS ya permite redes locales).
+- El login nativo no expone configuración avanzada ni campo manual de servidor:
+  la detección de cuenta por correo es el único flujo visible para usuarios.
 
 ## Arquitectura
 
