@@ -1,5 +1,6 @@
 import Foundation
 import Intents
+import UIKit
 import UserNotifications
 
 final class NotificationService: UNNotificationServiceExtension {
@@ -119,22 +120,29 @@ final class NotificationService: UNNotificationServiceExtension {
             return
         }
 
-        guard
-            let senderName = senderDisplayName(from: userInfo, fallbackTitle: content.title),
-            let avatarURL = contactAvatarURL(from: userInfo)
-        else {
+        // Basta con conocer el nombre del remitente: si hay foto la usamos y, si no
+        // (o si la descarga falla), dibujamos las iniciales localmente. Así el avatar
+        // circular tipo iMessage aparece SIEMPRE en cada mensaje de chat sin depender
+        // de que el backend logre resolver y servir una URL de imagen.
+        guard let senderName = senderDisplayName(from: userInfo, fallbackTitle: content.title) else {
             completion(content)
             return
         }
 
-        downloadImageData(from: avatarURL) { [weak self] avatarData in
+        let personIdentifier = contactIdentifier(from: userInfo)
+
+        let finalize: (Data?) -> Void = { [weak self] avatarData in
             guard let self else {
                 completion(content)
                 return
             }
 
-            let personIdentifier = self.contactIdentifier(from: userInfo)
-            let senderImage = avatarData.flatMap { INImage(imageData: $0) }
+            // Foto real descargada o, en su defecto, iniciales renderizadas nativamente.
+            let resolvedData = avatarData ?? Self.renderInitialsAvatarPNG(
+                displayName: senderName,
+                seed: personIdentifier
+            )
+            let senderImage = resolvedData.flatMap { INImage(imageData: $0) }
             let sender = INPerson(
                 personHandle: INPersonHandle(value: personIdentifier, type: .unknown),
                 nameComponents: nil,
@@ -168,6 +176,104 @@ final class NotificationService: UNNotificationServiceExtension {
                 completion(content)
             }
         }
+
+        if let avatarURL = contactAvatarURL(from: userInfo) {
+            downloadImageData(from: avatarURL) { finalize($0) }
+        } else {
+            finalize(nil)
+        }
+    }
+
+    // MARK: - Avatar de iniciales (fallback nativo)
+
+    /// Misma paleta que la insignia de iniciales del backend
+    /// (`/api/push/contact-avatar`), para que el fallback dibujado en el propio
+    /// dispositivo se vea igual que el avatar que genera el servidor.
+    private static let initialsAvatarColors: [UIColor] = [
+        UIColor(red: 14 / 255, green: 165 / 255, blue: 233 / 255, alpha: 1),
+        UIColor(red: 37 / 255, green: 99 / 255, blue: 235 / 255, alpha: 1),
+        UIColor(red: 124 / 255, green: 58 / 255, blue: 237 / 255, alpha: 1),
+        UIColor(red: 219 / 255, green: 39 / 255, blue: 119 / 255, alpha: 1),
+        UIColor(red: 5 / 255, green: 150 / 255, blue: 105 / 255, alpha: 1),
+        UIColor(red: 8 / 255, green: 145 / 255, blue: 178 / 255, alpha: 1),
+        UIColor(red: 79 / 255, green: 70 / 255, blue: 229 / 255, alpha: 1),
+        UIColor(red: 190 / 255, green: 18 / 255, blue: 60 / 255, alpha: 1)
+    ]
+
+    /// Dibuja un círculo de color sólido con 1–2 iniciales blancas y lo devuelve
+    /// como PNG listo para `INImage`. Ligero (~220pt, escala 1) para respetar el
+    /// presupuesto de memoria de la extensión.
+    private static func renderInitialsAvatarPNG(displayName: String, seed: String) -> Data? {
+        let initials = initialsText(from: displayName)
+        let trimmedSeed = seed.trimmingCharacters(in: .whitespacesAndNewlines)
+        let background = initialsAvatarColors[colorIndex(for: trimmedSeed.isEmpty ? displayName : trimmedSeed)]
+
+        let side: CGFloat = 220
+        let bounds = CGRect(x: 0, y: 0, width: side, height: side)
+        let format = UIGraphicsImageRendererFormat()
+        format.opaque = false
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(bounds: bounds, format: format)
+
+        let image = renderer.image { context in
+            background.setFill()
+            // Círculo con esquinas transparentes: se ve limpio aun sin recorte del SO.
+            context.cgContext.fillEllipse(in: bounds)
+
+            let text = initials as NSString
+            let fontSize = initials.count > 1 ? side * 0.40 : side * 0.46
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.alignment = .center
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: fontSize, weight: .semibold),
+                .foregroundColor: UIColor.white,
+                .paragraphStyle: paragraph
+            ]
+            let textSize = text.size(withAttributes: attributes)
+            let textRect = CGRect(
+                x: 0,
+                y: (side - textSize.height) / 2,
+                width: side,
+                height: textSize.height
+            )
+            text.draw(in: textRect, withAttributes: attributes)
+        }
+
+        return image.pngData()
+    }
+
+    /// Iniciales al estilo del backend: sin acentos, 1–2 letras de las primeras
+    /// palabras; fallback a las primeras alfanuméricas o "C".
+    private static func initialsText(from name: String) -> String {
+        let folded = name
+            .folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let words = folded
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+
+        if words.count >= 2 {
+            let first = words[0].first.map(String.init) ?? ""
+            let second = words[1].first.map(String.init) ?? ""
+            return (first + second).uppercased()
+        }
+        if let word = words.first {
+            return String(word.prefix(2)).uppercased()
+        }
+
+        let alphanumerics = folded.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }
+        let fallback = String(String.UnicodeScalarView(alphanumerics.prefix(2)))
+        return fallback.isEmpty ? "C" : fallback.uppercased()
+    }
+
+    /// Índice de color determinístico (FNV-1a) sobre la paleta de iniciales.
+    private static func colorIndex(for seed: String) -> Int {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in (seed.isEmpty ? "contact" : seed).utf8 {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return Int(hash % UInt64(initialsAvatarColors.count))
     }
 
     private func downloadImageData(from url: URL, completion: @escaping (Data?) -> Void) {
