@@ -13,7 +13,6 @@ import { useNotification } from '@/contexts/NotificationContext'
 import { whatsappApiService } from '@/services/whatsappApiService'
 import {
   WHATSAPP_QR_PRECAUTION_MESSAGE,
-  WHATSAPP_QR_PRECAUTION_TITLE,
   WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
   WHATSAPP_QR_FALLBACK_TITLE,
   buildWhatsAppQrFallbackMessage,
@@ -64,9 +63,10 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const { showConfirm } = useNotification()
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
-  const allowQrFallback = config.sendViaQr === true || str(config.transport) === 'qr'
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
   const [initialTextBlock] = useState<MessageBlock>(() => messageBlockHelpers.newBlock('text'))
+  const qrOnlyConnected = whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected
+  const allowQrFallback = !qrOnlyConnected && config.sendViaQr === true
 
   useEffect(() => {
     let mounted = true
@@ -82,6 +82,28 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    const currentTransport = str(config.transport)
+    if (qrOnlyConnected) {
+      if (currentTransport === 'qr') return
+      onChange({
+        ...config,
+        sendViaQr: false,
+        transport: 'qr'
+      })
+      return
+    }
+
+    if (currentTransport === 'qr' && config.sendViaQr !== true) {
+      onChange({
+        ...config,
+        sendViaQr: false,
+        transport: 'api'
+      })
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qrOnlyConnected, config.transport, config.sendViaQr])
 
   // Compatibilidad: si la config vieja solo tenía templateId, se ve como bloque
   const rawBlocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
@@ -149,7 +171,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
         templateId: str(firstTemplate?.templateId),
         templateName: str(firstTemplate?.templateName),
         sendViaQr: false,
-        transport: 'api'
+        transport: qrOnlyConnected ? 'qr' : 'api'
       })
       return
     }
@@ -157,7 +179,9 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
       messageType: next,
       messageBlocks: hasNormalTextBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
       templateId: '',
-      templateName: ''
+      templateName: '',
+      sendViaQr: false,
+      transport: qrOnlyConnected ? 'qr' : 'api'
     })
   }
 
@@ -187,6 +211,18 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
 
   const qrFallbackNotice = (
     <>
+      {qrOnlyConnected && (
+        <div className={`${styles.qrModeBox} ${styles.qrModeNotice}`}>
+          <div className={styles.qrModeCopy}>
+            <div className={styles.qrModeTitle}>WhatsApp QR conectado</div>
+            <span className={styles.configHelp}>
+              Este nodo enviará por QR como canal principal. No es respaldo porque no hay WhatsApp API conectado para este envío.
+              {messageType === 'template' ? ' Si eliges una plantilla, Ristak mandará su texto renderizado por QR.' : ''}
+            </span>
+          </div>
+        </div>
+      )}
+
       {whatsappAvailability.canShowQrFallbackSwitch && (
         <div className={styles.qrModeBox}>
           <Toggle
@@ -208,13 +244,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
               Primero se intenta WhatsApp API. Si la API no está disponible o Meta restringe el envío, se usa un número conectado por QR como respaldo. {WHATSAPP_QR_PRECAUTION_MESSAGE}
             </span>
           </div>
-        </div>
-      )}
-
-      {whatsappAvailability.hasQrConnected && !whatsappAvailability.canShowQrFallbackSwitch && (
-        <div className={styles.configWarning}>
-          <AlertTriangle size={12} />
-          {WHATSAPP_QR_PRECAUTION_TITLE}: sólo hay QR conectado para WhatsApp. {WHATSAPP_QR_PRECAUTION_MESSAGE} Conecta WhatsApp API para activar QR como respaldo.
         </div>
       )}
 

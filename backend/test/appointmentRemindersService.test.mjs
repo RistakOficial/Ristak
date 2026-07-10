@@ -14,6 +14,11 @@ import {
   getWhatsAppApiConfigKeys,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
+import {
+  QR_CONSENT_TEXT,
+  resetWhatsAppQrServiceForTest,
+  setBaileysRuntimeForTest
+} from '../src/services/whatsappQrService.js'
 
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
   return {
@@ -21,6 +26,88 @@ function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
     status,
     statusText,
     text: async () => JSON.stringify(body)
+  }
+}
+
+function normalizeDigits(value = '') {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function createFakeBaileysRuntime(connectedJid, sentMessages = []) {
+  let messageIndex = 0
+  return {
+    DisconnectReason: {
+      loggedOut: 401,
+      badSession: 500,
+      connectionReplaced: 440,
+      restartRequired: 515
+    },
+    BufferJSON: {
+      replacer: (_key, value) => value,
+      reviver: (_key, value) => value
+    },
+    Browsers: {
+      macOS: (name) => ['macOS', name, 'Ristak']
+    },
+    initAuthCreds: () => ({
+      me: { id: connectedJid },
+      registered: true
+    }),
+    makeCacheableSignalKeyStore: (keys) => keys,
+    proto: {
+      Message: {
+        AppStateSyncKeyData: {
+          fromObject: (value) => value
+        }
+      }
+    },
+    makeWASocket: () => {
+      const listeners = new Map()
+      const emit = async (eventName, payload) => {
+        for (const handler of listeners.get(eventName) || []) {
+          await handler(payload)
+        }
+      }
+      const sock = {
+        user: { id: connectedJid },
+        ev: {
+          on: (eventName, handler) => {
+            const eventListeners = listeners.get(eventName) || []
+            eventListeners.push(handler)
+            listeners.set(eventName, eventListeners)
+          },
+          removeAllListeners: (eventName) => {
+            if (eventName) listeners.delete(eventName)
+            else listeners.clear()
+          }
+        },
+        ws: {
+          close: () => {}
+        },
+        onWhatsApp: async (...candidates) => candidates.map(candidate => ({
+          exists: true,
+          jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
+        })),
+        sendMessage: async (jid, payload) => {
+          messageIndex += 1
+          const id = `qr_appointment_msg_${messageIndex}`
+          sentMessages.push({ id, jid, payload })
+          await emit('messages.update', [{
+            key: { id, remoteJid: jid, fromMe: true },
+            update: { status: 3 }
+          }])
+          return {
+            key: { id, remoteJid: jid, fromMe: true },
+            message: payload
+          }
+        },
+        emit
+      }
+      queueMicrotask(() => {
+        emit('connection.update', { connection: 'open' }).catch(() => undefined)
+      })
+      return sock
+    }
   }
 }
 
@@ -180,7 +267,42 @@ async function createReminderTemplate({ suffix, ycloudStatus = 'APPROVED' }) {
   return { ...template, name }
 }
 
-async function withReminderFixture({ ycloudStatus = 'APPROVED', qrFallbackEnabled = false }, callback) {
+async function attachQrSessionForReminder(phoneNumberId, businessPhone, sentMessages = []) {
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  setBaileysRuntimeForTest(createFakeBaileysRuntime(connectedJid, sentMessages))
+
+  await db.run(`
+    INSERT INTO whatsapp_qr_sessions (
+      id, phone_number_id, expected_phone, connected_phone, status,
+      consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+    ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+  `, [
+    `qr_${phoneNumberId}`,
+    phoneNumberId,
+    businessPhone,
+    businessPhone,
+    QR_CONSENT_TEXT
+  ])
+
+  await db.run(`
+    INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+    VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+  `, [
+    phoneNumberId,
+    JSON.stringify({
+      me: { id: connectedJid },
+      registered: true
+    })
+  ])
+}
+
+async function withReminderFixture({
+  ycloudStatus = 'APPROVED',
+  qrFallbackEnabled = false,
+  apiSendEnabled = true,
+  qrSendEnabled = false,
+  qrStatus = 'disconnected'
+}, callback) {
   const suffix = randomUUID()
   const phone = `+52155${Date.now().toString().slice(-8)}`
   const contactId = `contact_reminder_${suffix}`
@@ -199,8 +321,17 @@ async function withReminderFixture({ ycloudStatus = 'APPROVED', qrFallbackEnable
       INSERT INTO whatsapp_api_phone_numbers (
         id, waba_id, phone_number, display_phone_number, verified_name,
         is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
-      ) VALUES (?, ?, ?, ?, ?, 1, 1, 0, 'disconnected', 'CONNECTED')
-    `, [phoneNumberId, 'waba_appointment_reminder_test', '+526561234567', '+52 656 123 4567', 'Ristak Test'])
+      ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, 'CONNECTED')
+    `, [
+      phoneNumberId,
+      'waba_appointment_reminder_test',
+      '+526561234567',
+      '+52 656 123 4567',
+      'Ristak Test',
+      apiSendEnabled ? 1 : 0,
+      qrSendEnabled ? 1 : 0,
+      qrStatus
+    ])
 
     await db.run(`
       INSERT INTO contacts (id, phone, first_name, full_name, preferred_whatsapp_phone_number_id)
@@ -232,6 +363,10 @@ async function withReminderFixture({ ycloudStatus = 'APPROVED', qrFallbackEnable
 
     return await callback({ reminder, template, appointmentId, contactId, phone, phoneNumberId })
   } finally {
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
     await db.run('DELETE FROM appointment_reminder_sends WHERE appointment_id = ?', [appointmentId])
     if (reminderId) {
       await db.run('DELETE FROM appointment_reminders WHERE id = ?', [reminderId])
@@ -288,6 +423,40 @@ test('recordatorios no mandan texto normal si la plantilla no está aprobada y Q
       assert.match(overviewReminder?.deliveryHealth?.message || '', /APPROVED/)
       assert.equal(overviewReminder?.failures?.errorCount, 1)
       assert.match(overviewReminder?.failures?.lastErrorMessage || '', /APPROVED/)
+    })
+  })
+})
+
+test('recordatorios de citas con solo QR envían el texto aunque la plantilla no esté aprobada', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    const sentMessages = []
+    await withReminderFixture({
+      ycloudStatus: 'PENDING',
+      qrFallbackEnabled: false,
+      apiSendEnabled: false,
+      qrSendEnabled: true,
+      qrStatus: 'connected'
+    }, async ({ reminder, appointmentId, phoneNumberId }) => {
+      await attachQrSessionForReminder(phoneNumberId, '+526561234567', sentMessages)
+
+      const result = await processDueAppointmentReminders({ batchSize: 1 })
+
+      assert.equal(result.sent, 1)
+      assert.equal(result.errors, 0)
+      assert.equal(captures.length, 0)
+      assert.equal(sentMessages.length, 1)
+      assert.match(sentMessages[0].payload.text, /Hola Ana/)
+
+      const send = await db.get(
+        'SELECT status, error_message FROM appointment_reminder_sends WHERE appointment_id = ?',
+        [appointmentId]
+      )
+      assert.equal(send.status, 'sent')
+      assert.equal(send.error_message, null)
+
+      const overview = await getAppointmentRemindersOverview()
+      const overviewReminder = overview.reminders.find((item) => item.id === reminder.id)
+      assert.equal(overviewReminder?.deliveryHealth?.status, 'ready')
     })
   })
 })

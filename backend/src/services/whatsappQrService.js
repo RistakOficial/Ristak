@@ -6,7 +6,7 @@ import { logger } from '../utils/logger.js'
 import { acquireDistributedLock, releaseDistributedLock, renewDistributedLock } from '../utils/distributedLock.js'
 import { waitForWhatsAppQrDripSlot } from './whatsappQrDripService.js'
 
-const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak solo la usará para mensajes individuales cuando yo lo active.'
+const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak podrá usarla para mensajes configurados cuando QR sea el canal principal, o como respaldo si hay WhatsApp API conectada y yo activo ese respaldo.'
 const CONNECT_TIMEOUT_MS = 20000
 const QR_SEND_ACK_TIMEOUT_MS = 20000
 const QR_RECENT_ACK_RETENTION_MS = 90000

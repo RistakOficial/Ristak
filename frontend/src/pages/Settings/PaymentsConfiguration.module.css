@@ -1457,6 +1457,12 @@
   justify-content: flex-start;
 }
 
+.automationQrPrimary {
+  justify-content: flex-start;
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
 .automationQrFallback strong {
   color: var(--text);
   font-size: 12px;

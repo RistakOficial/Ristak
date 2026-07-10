@@ -84,7 +84,6 @@ import {
 } from '@/utils/paymentInvoiceDesign'
 import {
   WHATSAPP_QR_PRECAUTION_MESSAGE,
-  WHATSAPP_QR_PRECAUTION_TITLE,
   WHATSAPP_QR_FALLBACK_CONFIRM_WORD,
   WHATSAPP_QR_FALLBACK_TITLE,
   buildWhatsAppQrFallbackMessage,
@@ -533,15 +532,15 @@ function calculatePreviewTax(baseAmount: number, taxes: PaymentTaxSettings) {
 }
 
 const channelOptions = [
-  { value: 'whatsapp', label: 'WhatsApp API' },
+  { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'email', label: 'Correo electrónico' },
-  { value: 'both', label: 'WhatsApp API y correo electrónico' }
+  { value: 'both', label: 'WhatsApp y correo electrónico' }
 ]
 
 const channelLabelById: Record<PaymentAutomationSettings['reminderChannel'], string> = {
-  whatsapp: 'WhatsApp API',
+  whatsapp: 'WhatsApp',
   email: 'correo electrónico',
-  both: 'WhatsApp API y correo electrónico'
+  both: 'WhatsApp y correo electrónico'
 }
 
 const afterPaymentActionLabelById: Record<PaymentAutomationSettings['afterPaymentAction'], string> = {
@@ -3253,11 +3252,10 @@ export const PaymentsConfiguration: React.FC = () => {
       if (!whatsappAvailability.hasQrConnected) return null
 
       return (
-        <div className={`${styles.automationQrFallback} ${styles.automationQrNotice}`}>
-          <AlertTriangle className={styles.automationQrFallbackIcon} size={17} aria-hidden="true" />
+        <div className={`${styles.automationQrFallback} ${styles.automationQrPrimary}`}>
           <div>
-            <strong>{WHATSAPP_QR_PRECAUTION_TITLE}</strong>
-            <span>Sólo hay QR conectado para WhatsApp. {WHATSAPP_QR_PRECAUTION_MESSAGE} Conecta WhatsApp API para activar QR como respaldo controlado.</span>
+            <strong>WhatsApp QR conectado</strong>
+            <span>Estas automatizaciones enviarán por QR como canal principal. No es respaldo porque no hay WhatsApp API conectado para este envío.</span>
           </div>
         </div>
       )
@@ -3285,8 +3283,8 @@ export const PaymentsConfiguration: React.FC = () => {
   ) => {
     if (!channelUsesWhatsApp(channel)) return undefined
     if (whatsappAvailability.hasApiConnected) return apiHelp
-    if (whatsappAvailability.hasQrConnected) return 'Sólo hay QR conectado para WhatsApp; revisa la advertencia de abajo antes de automatizar envíos.'
-    return 'Conecta WhatsApp API para enviar mensajes por WhatsApp desde esta automatización.'
+    if (whatsappAvailability.hasQrConnected) return 'Sólo hay QR conectado; se enviará el texto del mensaje por WhatsApp QR.'
+    return 'Conecta WhatsApp API o WhatsApp QR para enviar mensajes por WhatsApp desde esta automatización.'
   }
 
   const getAutomationTemplateValue = (kind: PaymentAutomationTemplateKind) => {
@@ -3351,7 +3349,7 @@ export const PaymentsConfiguration: React.FC = () => {
     return (
       <div className={styles.automationTemplateBlock}>
         {renderField(
-          'Plantilla WhatsApp API',
+          whatsappAvailability.hasApiConnected ? 'Plantilla WhatsApp API' : 'Mensaje de WhatsApp',
           <CustomSelect
             value={value}
             onValueChange={(nextValue) => setAutomationTemplateValue(kind, nextValue)}
@@ -3361,7 +3359,9 @@ export const PaymentsConfiguration: React.FC = () => {
           />,
           selectedTemplate
             ? `Usará ${selectedTemplate.name} (${selectedTemplate.language || config.defaultLanguage}).`
-            : `Usará la plantilla predeterminada ${templateName}.`
+            : whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected
+              ? `Usará el texto del mensaje predeterminado ${templateName}.`
+              : `Usará la plantilla predeterminada ${templateName}.`
         )}
         <div className={styles.automationTemplateActions}>
           <Button type="button" variant="secondary" size="sm" onClick={() => openPaymentTemplateEditor(kind)}>
@@ -3383,6 +3383,16 @@ export const PaymentsConfiguration: React.FC = () => {
     )
   }
 
+  const getAutomationTransportSummary = (
+    channel: PaymentAutomationSettings['reminderChannel'],
+    qrFallbackEnabled: boolean
+  ) => {
+    if (!channelUsesWhatsApp(channel)) return ''
+    if (whatsappAvailability.canShowQrFallbackSwitch && qrFallbackEnabled) return ' · QR respaldo'
+    if (whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected) return ' · QR'
+    return ''
+  }
+
   const renderAutomationsSection = () => (
     <div className={styles.singleColumnLayout}>
       <Card className={styles.sectionCard}>
@@ -3393,7 +3403,11 @@ export const PaymentsConfiguration: React.FC = () => {
           </div>
           <Badge variant="warning">
             <BellRing size={14} />
-            WhatsApp API primero
+            {whatsappAvailability.hasApiConnected
+              ? 'WhatsApp API primero'
+              : whatsappAvailability.hasQrConnected
+                ? 'WhatsApp QR activo'
+                : 'WhatsApp pendiente'}
           </Badge>
         </div>
 
@@ -3532,17 +3546,17 @@ export const PaymentsConfiguration: React.FC = () => {
         <div>
           <Clock size={17} />
           <strong>{automations.remindersEnabled ? `${automations.reminderDaysBefore} días antes` : 'Recordatorios apagados'}</strong>
-          <span>{channelLabelById[automations.reminderChannel]}{channelUsesWhatsApp(automations.reminderChannel) ? ` · ${getAutomationTemplateName('reminder')}` : ''}{whatsappAvailability.canShowQrFallbackSwitch && automations.reminderQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
+          <span>{channelLabelById[automations.reminderChannel]}{channelUsesWhatsApp(automations.reminderChannel) ? ` · ${getAutomationTemplateName('reminder')}` : ''}{getAutomationTransportSummary(automations.reminderChannel, automations.reminderQrFallbackEnabled)}</span>
         </div>
         <div>
           <CheckCircle size={17} />
           <strong>{automations.receiptDeliveryEnabled ? 'Comprobante activo' : 'Comprobante apagado'}</strong>
-          <span>{afterPaymentActionLabelById[automations.afterPaymentAction]} · {channelLabelById[automations.receiptDeliveryChannel]}{channelUsesWhatsApp(automations.receiptDeliveryChannel) ? ` · ${getAutomationTemplateName('receipt')}` : ''}{whatsappAvailability.canShowQrFallbackSwitch && automations.receiptQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
+          <span>{afterPaymentActionLabelById[automations.afterPaymentAction]} · {channelLabelById[automations.receiptDeliveryChannel]}{channelUsesWhatsApp(automations.receiptDeliveryChannel) ? ` · ${getAutomationTemplateName('receipt')}` : ''}{getAutomationTransportSummary(automations.receiptDeliveryChannel, automations.receiptQrFallbackEnabled)}</span>
         </div>
         <div>
           <AlertTriangle size={17} />
           <strong>{automations.failedPaymentEnabled ? `${automations.failedPaymentDelayHours} h tras fallo` : 'Sin seguimiento'}</strong>
-          <span>{channelLabelById[automations.failedPaymentChannel]}{channelUsesWhatsApp(automations.failedPaymentChannel) ? ` · ${getAutomationTemplateName('failed')}` : ''}{whatsappAvailability.canShowQrFallbackSwitch && automations.failedPaymentQrFallbackEnabled ? ' · QR respaldo' : ''}</span>
+          <span>{channelLabelById[automations.failedPaymentChannel]}{channelUsesWhatsApp(automations.failedPaymentChannel) ? ` · ${getAutomationTemplateName('failed')}` : ''}{getAutomationTransportSummary(automations.failedPaymentChannel, automations.failedPaymentQrFallbackEnabled)}</span>
         </div>
       </div>
     </div>

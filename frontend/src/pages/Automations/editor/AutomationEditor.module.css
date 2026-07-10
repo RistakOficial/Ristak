@@ -1769,6 +1769,11 @@
   margin: 0 0 12px;
 }
 
+.qrModeNotice {
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
 .qrModeCopy {
   display: flex;
   flex: 1 1 auto;

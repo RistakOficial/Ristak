@@ -369,6 +369,28 @@ function getAutomationDefinition(type, settings = {}) {
   }
 }
 
+function paymentQrSenderPhone(row = {}) {
+  return cleanString(row.phone_number) || cleanString(row.display_phone_number)
+}
+
+async function getPaymentQrPrimarySender() {
+  const apiSender = await db.get(`
+    SELECT id
+    FROM whatsapp_api_phone_numbers
+    WHERE api_send_enabled = 1
+    LIMIT 1
+  `).catch(() => null)
+  if (apiSender?.id) return null
+
+  return db.get(`
+    SELECT id, phone_number, display_phone_number
+    FROM whatsapp_api_phone_numbers
+    WHERE qr_send_enabled = 1 AND LOWER(COALESCE(qr_status, '')) = 'connected'
+    ORDER BY is_default_sender DESC, updated_at DESC
+    LIMIT 1
+  `).catch(() => null)
+}
+
 function getDispatchId(paymentId, automationType, channel = 'whatsapp') {
   return `payment_auto_${automationType}_${channel}_${cleanString(paymentId, 160).replace(/[^a-zA-Z0-9_-]+/g, '_')}`
 }
@@ -638,6 +660,55 @@ async function sendPaymentWhatsAppAutomationMessage(type, payment, definition, {
   if (!claim.claimed) return { sent: false, skipped: true, type, channel: 'whatsapp', reason: claim.reason, dispatchId: claim.id }
 
   try {
+    const qrPrimarySender = await getPaymentQrPrimarySender()
+    if (qrPrimarySender?.id) {
+      const fallbackText = await buildDefaultMessageTemplateFallbackText({
+        templateId: definition.templateId,
+        templateName: definition.templateName,
+        language: definition.language,
+        variableOptions: {
+          contactId: contact.id,
+          phone: contact.phone,
+          publicBaseUrl,
+          extraVariables
+        }
+      })
+
+      if (!fallbackText) {
+        throw new Error(`La plantilla ${definition.templateName} no tiene texto para enviarse por QR.`)
+      }
+
+      const response = await sendWhatsAppApiTextMessage({
+        to: contact.phone,
+        from: paymentQrSenderPhone(qrPrimarySender) || undefined,
+        text: fallbackText,
+        contactId: contact.id,
+        publicBaseUrl,
+        extraVariables,
+        externalId: `payment:${type}:${paymentId}:qr`,
+        phoneNumberId: qrPrimarySender.id,
+        transport: 'qr',
+        allowQrFallback: false
+      })
+
+      await markDispatchSent(claim.id, {
+        ...response,
+        templateFallback: {
+          templateName: definition.templateName,
+          reason: 'Sólo hay WhatsApp QR conectado.'
+        }
+      })
+      return {
+        sent: true,
+        type,
+        channel: 'whatsapp',
+        dispatchId: claim.id,
+        templateName: definition.templateName,
+        fallback: 'qr_text',
+        response
+      }
+    }
+
     const components = await buildDefaultMessageTemplateSendComponents({
       templateId: definition.templateId,
       templateName: definition.templateName,

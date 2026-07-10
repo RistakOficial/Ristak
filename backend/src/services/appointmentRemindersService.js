@@ -366,12 +366,17 @@ function buildReminderDeliveryHealth(reminder, template, senders = []) {
   const warnings = []
   const apiSenders = senders.filter(sender => sender.apiEnabled)
   const qrSenders = senders.filter(sender => sender.qrConnected)
+  const selectedSender = reminder.senderMode === 'specific'
+    ? senders.find(sender => sender.id === reminder.senderPhoneNumberId)
+    : null
+  const selectedQrPrimary = selectedSender && !selectedSender.apiEnabled && selectedSender.qrConnected
+  const qrPrimaryAvailable = Boolean(selectedQrPrimary || (!apiSenders.length && qrSenders.length))
 
   if (!template) {
     errors.push('Selecciona una plantilla de WhatsApp para este recordatorio.')
   } else {
     const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
-    if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus)) {
+    if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus) && !qrPrimaryAvailable) {
       const statusLabel = describeTemplateStatus(templateStatus)
       if (reminder.qrFallbackEnabled && FALLBACK_TEMPLATE_STATUSES.has(templateStatus)) {
         if (qrSenders.length) {
@@ -386,20 +391,19 @@ function buildReminderDeliveryHealth(reminder, template, senders = []) {
   }
 
   if (reminder.senderMode === 'specific') {
-    const selectedSender = senders.find(sender => sender.id === reminder.senderPhoneNumberId)
     if (!selectedSender) {
       errors.push('El remitente elegido ya no está conectado.')
-    } else if (!selectedSender.apiEnabled && !reminder.qrFallbackEnabled) {
-      errors.push('El remitente elegido no puede enviar por WhatsApp API.')
+    } else if (!selectedSender.apiEnabled && !selectedSender.qrConnected) {
+      errors.push('El remitente elegido no puede enviar por WhatsApp API ni QR.')
     }
   }
 
-  if (!apiSenders.length && !reminder.qrFallbackEnabled) {
-    errors.push('Conecta un número de WhatsApp API para enviar este recordatorio.')
+  if (!apiSenders.length && !qrSenders.length) {
+    errors.push('Conecta un número de WhatsApp API o QR para enviar este recordatorio.')
   }
 
-  if (reminder.qrFallbackEnabled && !apiSenders.length && !qrSenders.length) {
-    errors.push('No hay WhatsApp API ni QR conectado para enviar este recordatorio.')
+  if (reminder.qrFallbackEnabled && apiSenders.length && !qrSenders.length) {
+    errors.push('El respaldo QR está activado, pero no hay un número QR conectado.')
   }
 
   const details = errors.length ? errors : warnings
@@ -732,8 +736,8 @@ function renderReminderTemplateText(template, context) {
   return parts.join('\n\n')
 }
 
-async function sendReminderViaQr({ reminder, appointment, sender, template, timezone, reason }) {
-  if (!reminder.qrFallbackEnabled) {
+async function sendReminderViaQr({ reminder, appointment, sender, template, timezone, reason, primary = false }) {
+  if (!primary && !reminder.qrFallbackEnabled) {
     throw new Error(reason || 'El respaldo por QR no está activado para este recordatorio.')
   }
 
@@ -991,8 +995,19 @@ export async function processDueAppointmentReminders({ batchSize = 25 } = {}) {
         }
 
         const templateStatus = normalizeTemplateStatus(template.ycloudStatus)
+        const useQrPrimary = !sender.apiEnabled && sender.qrReady
         let response
-        if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus)) {
+        if (useQrPrimary) {
+          response = await sendReminderViaQr({
+            reminder,
+            appointment,
+            sender,
+            template,
+            timezone,
+            primary: true,
+            reason: 'WhatsApp API no está disponible; se enviará por QR.'
+          })
+        } else if (!APPROVED_TEMPLATE_STATUSES.has(templateStatus)) {
           const statusLabel = templateStatus || 'sin enviar a revisión'
           if (!reminder.qrFallbackEnabled || !FALLBACK_TEMPLATE_STATUSES.has(templateStatus)) {
             throw new Error(`La plantilla ${template.name} está ${statusLabel}; solo se pueden enviar plantillas APPROVED por WhatsApp API.`)

@@ -11,6 +11,11 @@ import {
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
 import {
+  QR_CONSENT_TEXT,
+  resetWhatsAppQrServiceForTest,
+  setBaileysRuntimeForTest
+} from '../src/services/whatsappQrService.js'
+import {
   connectEmail,
   setEmailMxResolverForTest,
   setEmailTransportFactoryForTest
@@ -36,6 +41,88 @@ function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
     status,
     statusText,
     text: async () => JSON.stringify(body)
+  }
+}
+
+function normalizeDigits(value = '') {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function createFakeBaileysRuntime(connectedJid, sentMessages = []) {
+  let messageIndex = 0
+  return {
+    DisconnectReason: {
+      loggedOut: 401,
+      badSession: 500,
+      connectionReplaced: 440,
+      restartRequired: 515
+    },
+    BufferJSON: {
+      replacer: (_key, value) => value,
+      reviver: (_key, value) => value
+    },
+    Browsers: {
+      macOS: (name) => ['macOS', name, 'Ristak']
+    },
+    initAuthCreds: () => ({
+      me: { id: connectedJid },
+      registered: true
+    }),
+    makeCacheableSignalKeyStore: (keys) => keys,
+    proto: {
+      Message: {
+        AppStateSyncKeyData: {
+          fromObject: (value) => value
+        }
+      }
+    },
+    makeWASocket: () => {
+      const listeners = new Map()
+      const emit = async (eventName, payload) => {
+        for (const handler of listeners.get(eventName) || []) {
+          await handler(payload)
+        }
+      }
+      const sock = {
+        user: { id: connectedJid },
+        ev: {
+          on: (eventName, handler) => {
+            const eventListeners = listeners.get(eventName) || []
+            eventListeners.push(handler)
+            listeners.set(eventName, eventListeners)
+          },
+          removeAllListeners: (eventName) => {
+            if (eventName) listeners.delete(eventName)
+            else listeners.clear()
+          }
+        },
+        ws: {
+          close: () => {}
+        },
+        onWhatsApp: async (...candidates) => candidates.map(candidate => ({
+          exists: true,
+          jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
+        })),
+        sendMessage: async (jid, payload) => {
+          messageIndex += 1
+          const id = `qr_payment_auto_msg_${messageIndex}`
+          sentMessages.push({ id, jid, payload })
+          await emit('messages.update', [{
+            key: { id, remoteJid: jid, fromMe: true },
+            update: { status: 3 }
+          }])
+          return {
+            key: { id, remoteJid: jid, fromMe: true },
+            message: payload
+          }
+        },
+        emit
+      }
+      queueMicrotask(() => {
+        emit('connection.update', { connection: 'open' }).catch(() => undefined)
+      })
+      return sock
+    }
   }
 }
 
@@ -123,6 +210,70 @@ async function withYCloudCapture(callback) {
       setYCloudFetchForTest(null)
     }
   })
+}
+
+async function withOnlyQrPaymentSender(callback) {
+  const phoneNumberId = `phone_payment_qr_primary_${randomUUID()}`
+  const businessPhone = '+526561234567'
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const sentMessages = []
+  const existingPhones = await db.all(`
+    SELECT id, api_send_enabled, qr_send_enabled, qr_status
+    FROM whatsapp_api_phone_numbers
+  `)
+
+  resetWhatsAppQrServiceForTest()
+
+  try {
+    await db.run('UPDATE whatsapp_api_phone_numbers SET api_send_enabled = 0, qr_send_enabled = 0')
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+      ) VALUES (?, 'qr', ?, ?, ?, 'QR Payment Automation Test', 1, 0, 1, 'connected', 'CONNECTED')
+    `, [phoneNumberId, `waba_payment_qr_primary_${randomUUID()}`, businessPhone, businessPhone])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_sessions (
+        id, phone_number_id, expected_phone, connected_phone, status,
+        consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      `qr_${phoneNumberId}`,
+      phoneNumberId,
+      businessPhone,
+      businessPhone,
+      QR_CONSENT_TEXT
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+      VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+    `, [
+      phoneNumberId,
+      JSON.stringify({
+        me: { id: connectedJid },
+        registered: true
+      })
+    ])
+
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(connectedJid, sentMessages))
+    return await callback({ phoneNumberId, sentMessages })
+  } finally {
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    for (const row of existingPhones) {
+      await db.run(`
+        UPDATE whatsapp_api_phone_numbers
+        SET api_send_enabled = ?, qr_send_enabled = ?, qr_status = ?
+        WHERE id = ?
+      `, [row.api_send_enabled, row.qr_send_enabled, row.qr_status, row.id]).catch(() => undefined)
+    }
+  }
 }
 
 async function withEmailCapture(callback) {
@@ -300,6 +451,57 @@ test('envia comprobante de pago por WhatsApp solo cuando el switch esta activo',
     } finally {
       await cleanupFixtures([sentFixture.paymentId, disabledFixture.paymentId])
     }
+  })
+})
+
+test('envia comprobante de pago por WhatsApp QR como canal principal si no hay API conectada', async () => {
+  await withYCloudCapture(async (captures) => {
+    await withOnlyQrPaymentSender(async ({ sentMessages }) => {
+      const fixture = await createPaymentFixture({ status: 'paid', suffix: 'receiptqr1' })
+
+      try {
+        await upsertApprovedTemplate('comprobante_pago_recibido', 'PENDING')
+        await setAppConfig(PAYMENT_SETTINGS_CONFIG_KEY, {
+          automations: {
+            receiptDeliveryEnabled: true,
+            receiptDeliveryChannel: 'whatsapp',
+            receiptQrFallbackEnabled: false,
+            receiptTemplateName: 'comprobante_pago_recibido',
+            receiptTemplateLanguage: 'es_MX'
+          }
+        })
+
+        const result = await sendPaymentAutomationMessage('receipt', fixture.paymentId)
+        assert.equal(result.sent, true)
+        assert.equal(result.fallback, 'qr_text')
+        assert.equal(captures.length, 0)
+        assert.equal(sentMessages.length, 1)
+        assert.match(sentMessages[0].payload.text, /Pago confirmado/)
+        assert.match(sentMessages[0].payload.text, /Hola Maria/)
+        assert.match(sentMessages[0].payload.text, /Descargar comprobante: https:\/\/pagos\.example\.test\/pay\/pay_auto_receiptqr1\?receipt=1/)
+
+        const storedMessage = await db.get(`
+          SELECT transport, message_type, message_text
+          FROM whatsapp_api_messages
+          WHERE contact_id = ? AND direction = 'outbound'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `, [fixture.contactId])
+        assert.equal(storedMessage.transport, 'qr')
+        assert.equal(storedMessage.message_type, 'text')
+        assert.match(storedMessage.message_text, /Descargar comprobante:/)
+
+        const dispatch = await db.get(
+          'SELECT channel, status, raw_response_json FROM payment_automation_dispatches WHERE payment_id = ? AND automation_type = ?',
+          [fixture.paymentId, 'receipt']
+        )
+        assert.equal(dispatch.channel, 'whatsapp')
+        assert.equal(dispatch.status, 'sent')
+        assert.match(dispatch.raw_response_json, /Sólo hay WhatsApp QR conectado/)
+      } finally {
+        await cleanupFixtures([fixture.paymentId])
+      }
+    })
   })
 })
 

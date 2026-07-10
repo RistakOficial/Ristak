@@ -1535,8 +1535,12 @@ const CHANNEL_NODES: NodeDefinition[] = [
       const countLabel = !isTemplate && blocks > 1 ? ` · ${blocks} mensajes` : ''
       let methodLabel = ' · API'
       if (isTemplate) {
-        methodLabel = ' · Plantilla · API'
-      } else if (config.sendViaQr === true || str(config.transport) === 'qr') {
+        methodLabel = str(config.transport) === 'qr' && config.sendViaQr !== true
+          ? ' · Plantilla como texto · QR'
+          : ' · Plantilla · API'
+      } else if (str(config.transport) === 'qr' && config.sendViaQr !== true) {
+        methodLabel = ' · QR'
+      } else if (config.sendViaQr === true) {
         methodLabel = ' · API + QR respaldo'
       }
       return {

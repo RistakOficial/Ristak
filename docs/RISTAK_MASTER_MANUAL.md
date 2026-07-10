@@ -845,6 +845,16 @@ cerrada debe conservar el tipo real del contenido: una foto fuera de 24 horas se
 manda por WhatsApp QR como imagen, no como mensaje de texto ni como placeholder
 `Foto`.
 
+Cuando no existe ningun remitente oficial de WhatsApp API conectado y existe
+un remitente WhatsApp QR/Baileys conectado, las automatizaciones deben tratar QR
+como canal principal, no como respaldo. Esto aplica a nodos de WhatsApp en
+Automatizaciones, recordatorios/avisos de citas y automatizaciones de pago. Si
+la configuracion usa una plantilla, Ristak debe renderizar la plantilla local o
+predeterminada como texto limpio, incluyendo URLs de botones, y enviarla por QR
+sin exigir aprobacion de Meta/YCloud. Las advertencias visuales de "QR como
+respaldo" solo aplican cuando tambien hay WhatsApp API conectado y el QR se
+habilita para cubrir fallas o restricciones de esa API.
+
 En automatizaciones de pago, si la plantilla configurada esta pendiente,
 rechazada, pausada o no sincronizada, Ristak no debe brincar directo a QR. Primero
 debe renderizar la misma plantilla como texto limpio, incluyendo el URL real de
@@ -1190,8 +1200,11 @@ requerido` no deben aparecer como si fueran el resultado del pago.
 Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
 avisos de cobro fallido desde `payments_settings.automations`.
 
-- Canales soportados: WhatsApp API, correo electronico o ambos.
-- WhatsApp usa plantillas aprobadas y registra el despacho en
+- Canales soportados: WhatsApp, correo electronico o ambos.
+- WhatsApp usa API oficial con plantillas aprobadas cuando hay remitente API
+  conectado. Si solo hay WhatsApp QR conectado, envia el texto renderizado del
+  mensaje por QR como canal principal.
+- WhatsApp registra el despacho en
   `payment_automation_dispatches` con `channel='whatsapp'`.
 - Correo electronico usa la conexion SMTP guardada en Configuracion > Integraciones
   > Correos. El password vive cifrado en `app_config.email_smtp_password`; no se
@@ -1232,6 +1245,12 @@ opciones de IA/acciones de confirmacion y hace que las respuestas del contacto
 abran una ventana en `appointment_confirmation_windows`. Si el switch esta
 apagado, el mensaje queda como `message_type='reminder'` aunque su ancla sea
 `after_booking`.
+
+Si solo hay WhatsApp QR conectado, recordatorios y avisos de cita envian el
+texto renderizado del mensaje por QR aunque la plantilla de WhatsApp API este
+pendiente o no exista remotamente. Si hay API y QR conectados, la API sigue
+siendo la ruta principal; QR entra solo como respaldo cuando el switch de
+respaldo esta activo.
 
 Cada par `reminder_id + appointment_id` se reclama en
 `appointment_reminder_sends` antes de enviar para evitar duplicados. Estados

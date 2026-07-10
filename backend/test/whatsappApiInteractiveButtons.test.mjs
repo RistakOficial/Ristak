@@ -15,6 +15,11 @@ import {
   handleAutomationEvent,
   handleIncomingMessage
 } from '../src/services/automationEngine.js'
+import {
+  QR_CONSENT_TEXT,
+  resetWhatsAppQrServiceForTest,
+  setBaileysRuntimeForTest
+} from '../src/services/whatsappQrService.js'
 
 function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
   return {
@@ -23,6 +28,88 @@ function ycloudJsonResponse(body, { status = 200, statusText = 'OK' } = {}) {
     statusText,
     json: async () => body,
     text: async () => JSON.stringify(body)
+  }
+}
+
+function normalizeDigits(value = '') {
+  return String(value || '').replace(/\D/g, '')
+}
+
+function createFakeBaileysRuntime(connectedJid, sentMessages = []) {
+  let messageIndex = 0
+  return {
+    DisconnectReason: {
+      loggedOut: 401,
+      badSession: 500,
+      connectionReplaced: 440,
+      restartRequired: 515
+    },
+    BufferJSON: {
+      replacer: (_key, value) => value,
+      reviver: (_key, value) => value
+    },
+    Browsers: {
+      macOS: (name) => ['macOS', name, 'Ristak']
+    },
+    initAuthCreds: () => ({
+      me: { id: connectedJid },
+      registered: true
+    }),
+    makeCacheableSignalKeyStore: (keys) => keys,
+    proto: {
+      Message: {
+        AppStateSyncKeyData: {
+          fromObject: (value) => value
+        }
+      }
+    },
+    makeWASocket: () => {
+      const listeners = new Map()
+      const emit = async (eventName, payload) => {
+        for (const handler of listeners.get(eventName) || []) {
+          await handler(payload)
+        }
+      }
+      const sock = {
+        user: { id: connectedJid },
+        ev: {
+          on: (eventName, handler) => {
+            const eventListeners = listeners.get(eventName) || []
+            eventListeners.push(handler)
+            listeners.set(eventName, eventListeners)
+          },
+          removeAllListeners: (eventName) => {
+            if (eventName) listeners.delete(eventName)
+            else listeners.clear()
+          }
+        },
+        ws: {
+          close: () => {}
+        },
+        onWhatsApp: async (...candidates) => candidates.map(candidate => ({
+          exists: true,
+          jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
+        })),
+        sendMessage: async (jid, payload) => {
+          messageIndex += 1
+          const id = `qr_automation_msg_${messageIndex}`
+          sentMessages.push({ id, jid, payload })
+          await emit('messages.update', [{
+            key: { id, remoteJid: jid, fromMe: true },
+            update: { status: 3 }
+          }])
+          return {
+            key: { id, remoteJid: jid, fromMe: true },
+            message: payload
+          }
+        },
+        emit
+      }
+      queueMicrotask(() => {
+        emit('connection.update', { connection: 'open' }).catch(() => undefined)
+      })
+      return sock
+    }
   }
 }
 
@@ -199,6 +286,70 @@ async function withMetaDirectMessageCapture(callback) {
       setMetaDirectFetchForTest(null)
     }
   })
+}
+
+async function withOnlyQrSender(callback) {
+  const phoneNumberId = `phone_auto_qr_primary_${randomUUID()}`
+  const businessPhone = '+526561234567'
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const sentMessages = []
+  const existingPhones = await db.all(`
+    SELECT id, api_send_enabled, qr_send_enabled, qr_status
+    FROM whatsapp_api_phone_numbers
+  `)
+
+  resetWhatsAppQrServiceForTest()
+
+  try {
+    await db.run('UPDATE whatsapp_api_phone_numbers SET api_send_enabled = 0, qr_send_enabled = 0')
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId])
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+      ) VALUES (?, 'qr', 'waba_auto_qr_primary_test', ?, ?, 'QR Automation Test', 1, 0, 1, 'connected', 'CONNECTED')
+    `, [phoneNumberId, businessPhone, businessPhone])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_sessions (
+        id, phone_number_id, expected_phone, connected_phone, status,
+        consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      `qr_${phoneNumberId}`,
+      phoneNumberId,
+      businessPhone,
+      businessPhone,
+      QR_CONSENT_TEXT
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+      VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+    `, [
+      phoneNumberId,
+      JSON.stringify({
+        me: { id: connectedJid },
+        registered: true
+      })
+    ])
+
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(connectedJid, sentMessages))
+    return await callback({ phoneNumberId, sentMessages })
+  } finally {
+    resetWhatsAppQrServiceForTest()
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    for (const row of existingPhones) {
+      await db.run(`
+        UPDATE whatsapp_api_phone_numbers
+        SET api_send_enabled = ?, qr_send_enabled = ?, qr_status = ?
+        WHERE id = ?
+      `, [row.api_send_enabled, row.qr_send_enabled, row.qr_status, row.id]).catch(() => undefined)
+    }
+  }
 }
 
 test('mensaje manual pedido por QR usa API oficial si la ventana de 24h sigue abierta', async () => {
@@ -797,5 +948,87 @@ test('automatización con respaldo QR usa WhatsApp API primero cuando está disp
       await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, phone])
       await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
     }
+  })
+})
+
+test('automatización de WhatsApp usa QR como canal principal cuando no hay API conectada', async () => {
+  await withYCloudMessageCapture(async (captures) => {
+    await withOnlyQrSender(async ({ sentMessages }) => {
+      const suffix = randomUUID()
+      const contactId = `contact_qr_primary_${suffix}`
+      const automationId = `automation_qr_primary_${suffix}`
+      const phone = `+52157${Date.now().toString().slice(-8)}`
+      const flow = {
+        nodes: [
+          {
+            id: 'start',
+            type: 'start',
+            label: 'Cuando...',
+            config: {
+              triggers: [
+                { id: 'trigger-contact-created', type: 'trigger-contact-created', config: { source: '' } }
+              ]
+            }
+          },
+          {
+            id: 'send-whatsapp',
+            type: 'channel-whatsapp',
+            label: 'WhatsApp',
+            config: {
+              sender: 'default',
+              messageType: 'text',
+              messageBlocks: [
+                {
+                  id: 'block-text',
+                  type: 'text',
+                  compiledText: 'Hola por QR primario'
+                }
+              ]
+            }
+          }
+        ],
+        edges: [
+          { id: 'edge-start-send', sourceNodeId: 'start', targetNodeId: 'send-whatsapp' }
+        ],
+        settings: { allowReentry: true }
+      }
+
+      try {
+        await db.run(
+          `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+          [contactId, phone, `qr-primary-${suffix}@example.com`, 'Contacto QR Primario', 'Contacto', '{}']
+        )
+        await db.run(
+          `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+           VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+          [automationId, 'Test WhatsApp QR primary', JSON.stringify(flow), JSON.stringify(flow)]
+        )
+
+        await handleAutomationEvent('contact-created', { contactId })
+
+        const enrollment = await db.get(
+          'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+          [automationId, contactId]
+        )
+        assert.equal(enrollment.status, 'completed')
+        assert.equal(captures.length, 0)
+        assert.equal(sentMessages.length, 1)
+        assert.equal(sentMessages[0].payload.text, 'Hola por QR primario')
+
+        const stored = await db.get(
+          'SELECT transport, message_text FROM whatsapp_api_messages WHERE contact_id = ? AND direction = ?',
+          [contactId, 'outbound']
+        )
+        assert.equal(stored.transport, 'qr')
+        assert.equal(stored.message_text, 'Hola por QR primario')
+      } finally {
+        await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+        await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+        await db.run('DELETE FROM whatsapp_api_messages WHERE contact_id = ? OR phone = ?', [contactId, phone])
+        await db.run('DELETE FROM whatsapp_api_contacts WHERE contact_id = ? OR phone = ?', [contactId, phone])
+        await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+      }
+    })
   })
 })
