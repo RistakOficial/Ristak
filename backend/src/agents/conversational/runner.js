@@ -1818,15 +1818,14 @@ function getStateLastAnsweredInboundMessageId(state) {
   return state?.lastAnsweredInboundMessageId || state?.last_answered_inbound_message_id || null
 }
 
-const TERMINAL_HUMAN_HANDOFF_SIGNALS = new Set([
-  'ready_for_human',
-  'ready_to_schedule',
-  'ready_to_buy'
-])
-
 function shouldReopenCompletedConversationState(state, latestMessageId) {
   if (!state?.agentId || state.status !== 'completed') return false
-  if (TERMINAL_HUMAN_HANDOFF_SIGNALS.has(String(state.signal || '').trim())) return false
+  // [Fase 1 — nunca fantasma] Una conversación con objetivo cumplido (status 'completed',
+  // incluido el handoff ready_for_human/ready_to_buy) SÍ se reabre cuando llega un mensaje
+  // nuevo sin contestar: la persona sigue preguntando (dirección, costo, "ya quedó?") y el
+  // bot debe seguir ayudando en vez de dejarla en visto. El silencio real solo lo impone un
+  // humano que toma el chat (status 'human': send_to_human o takeover manual), que por
+  // requerir status==='completed' NO entra a esta función y se queda mudo, como debe.
   const cleanLatestMessageId = String(latestMessageId || '').trim()
   if (!cleanLatestMessageId) return false
   return getStateLastAnsweredInboundMessageId(state) !== cleanLatestMessageId
