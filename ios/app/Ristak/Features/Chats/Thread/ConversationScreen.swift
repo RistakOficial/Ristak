@@ -405,21 +405,11 @@ struct ConversationScreen: View {
     /// este contacto (User #2), sin sacar al usuario del chat.
     @ViewBuilder
     private var headerToolActions: some View {
-        // Con agente asignado, su botcito ocupa el header y el nombre (que abre la
-        // info del contacto) queda apretado/difícil de tocar. Este botón de
-        // "persona" garantiza siempre poder abrir la info del contacto.
         if viewModel.hasAgentControls {
-            Button {
-                showsContactInfo = true
-            } label: {
-                Image(systemName: "person.crop.circle")
-            }
-            .accessibilityLabel("Info del contacto")
-
             // Botcito del agente conversacional: prendido (acento) cuando algún
             // agente atiende activamente este chat; apagado (tenue) si está
             // pausado/tomado/omitido. Abre el modal de controles/protección del
-            // agente. Solo aparece si hay agente asignado a este contacto.
+            // agente. Va a la IZQUIERDA del botón de info del contacto.
             Button {
                 viewModel.agentControlsPresented = true
             } label: {
@@ -429,6 +419,16 @@ struct ConversationScreen: View {
                 )
             }
             .accessibilityLabel("Controles del agente")
+
+            // Con agente asignado, su botcito ocupa el header y el nombre (que abre
+            // la info del contacto) queda apretado/difícil de tocar. Este botón de
+            // "persona" garantiza siempre poder abrir la info del contacto.
+            Button {
+                showsContactInfo = true
+            } label: {
+                Image(systemName: "person.crop.circle")
+            }
+            .accessibilityLabel("Info del contacto")
         }
 
         Button {
