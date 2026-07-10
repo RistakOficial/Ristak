@@ -129,10 +129,14 @@
   Configuración → Tiendas móviles**, no secretos en este repo ni GitHub Secrets
   permanentes.
 - Si el usuario pide subir un build móvil desde este repo, primero revisa
-  `docs/MOBILE_STORE_RELEASES.md` y dispara el flujo desde Ristak Installer
-  (botón de Tiendas móviles o `publishMobileStoreRelease`). El workflow
+  `docs/MOBILE_STORE_RELEASES.md` y dispara el flujo desde Ristak Installer:
+  MCP `ristak-mobile-stores` (`npm --prefix "/Users/raulgomez/Desktop/Ristak - Installer/backend" run mobile:stores:mcp`),
+  botón **Tiendas móviles** o servicio `publishMobileStoreRelease`. El workflow
   `mobile-store-release` espera un `mobile_release_token` temporal generado por
   Installer.
+- El MCP de tiendas móviles corre con `dryRun` por defecto. Para subir de verdad
+  exige `dryRun=false` y confirmación explícita (`GENERAR`, `ENVIAR` o
+  `PUBLICAR`). No inventes un camino paralelo desde este repo.
 - Para iOS, Installer debe validar el certificado `.p12` guardado contra App
   Store Connect y refrescar/crear los provisioning profiles App Store de
   `com.ristak.app` y `com.ristak.app.NotificationService` antes de mandar el
