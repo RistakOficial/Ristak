@@ -697,17 +697,29 @@ function summarizeBusinessInfo({ businessContext, businessName, location, produc
   return parts.join(' · ')
 }
 
-function buildRuntimeBusinessContext(rawContext = '', businessProfile = null) {
+// [Fase 2 — base de conocimiento] La info del negocio es UN solo texto libre que el dueño
+// llena en configuración (el campo "información del negocio" del chatbot). Esa es la única
+// fuente de verdad; NO dependemos de extraer campos estructurados ni de un formulario aparte.
+// Se inyecta con la regla anti-invención: el bot responde dirección/horarios/precios/pagos SOLO
+// si están en ese texto, y para lo que no aparezca, ofrece confirmarlo en vez de inventarlo.
+// Genérico para cualquier giro.
+function buildBusinessInfoGroundingRule() {
+  return [
+    'INFORMACIÓN DEL NEGOCIO (tu única fuente de verdad para datos).',
+    'Todo lo que sabes del negocio sale ÚNICAMENTE del texto de abajo: dirección, horarios, precios, formas de pago, servicios, requisitos, promociones, cobertura, lo que sea.',
+    'Si te preguntan un dato que SÍ está en este texto, respóndelo tal cual. Si te preguntan algo que NO aparece aquí, NO lo inventes ni lo supongas: dile a la persona que se lo confirmas en un momento.'
+  ].join('\n')
+}
+
+export function buildRuntimeBusinessContext(rawContext = '', businessProfile = null) {
+  const primary = compactText(businessProfile?.sourceContext, 5000) || compactText(rawContext, 5000)
+  const summary = businessProfile?.configured ? compactText(businessProfile?.summary, 2000) : ''
   const parts = []
-  const profileSummary = compactText(businessProfile?.summary, 2400)
-  if (businessProfile?.configured && profileSummary) {
-    parts.push(`Perfil estructurado del negocio:\n${profileSummary}`)
-  }
-  const cleanRawContext = compactText(rawContext, 4000)
-  if (cleanRawContext) {
-    parts.push(`Contexto original guardado por el negocio:\n${cleanRawContext}`)
-  }
-  return parts.join('\n\n').trim()
+  if (primary) parts.push(primary)
+  if (summary && (!primary || !primary.includes(summary))) parts.push(`Resumen del negocio:\n${summary}`)
+  const infoText = parts.join('\n\n').trim()
+  if (!infoText) return ''
+  return `${buildBusinessInfoGroundingRule()}\n\n${infoText}`
 }
 
 async function loadAdvancedClosingRuntimeContext({
