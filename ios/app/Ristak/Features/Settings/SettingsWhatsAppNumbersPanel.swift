@@ -2,17 +2,15 @@ import SwiftUI
 
 /// Panel «Números de WhatsApp» (doc 10 §5.1 `renderNumbers`, solo RN):
 /// - Action card con botón «Actualizar» (`POST /whatsapp-api/refresh`).
-/// - Card «Bandeja de chats»: segmented Juntos | Separado →
-///   `mobile_chat_selected_whatsapp_phone_id` (`'all'` o phoneNumberId).
-/// - Lista de números con pills «Usar»/«En chats» y «Hacer principal»/«Principal».
+/// - Lista de números con pill «Hacer principal»/«Principal».
+///
+/// La selección de qué número VE la bandeja (Juntos/Separado + «Usar») se
+/// retiró: los filtros de la propia lista de chats ya cubren ese caso mejor.
 struct SettingsWhatsAppNumbersPanel: View {
     @Environment(SettingsModel.self) private var model
-    @Environment(AppConfigStore.self) private var appConfig
 
-    @State private var saveError = SettingsSaveErrorPresenter()
     @State private var refreshErrorMessage: String?
     @State private var defaultErrorMessage: String?
-    @State private var noNumberAlert = false
     @State private var pendingDefaultID: String?
 
     var body: some View {
@@ -26,7 +24,6 @@ struct SettingsWhatsAppNumbersPanel: View {
         .navigationTitle("Números de WhatsApp")
         .navigationBarTitleDisplayMode(.inline)
         .refreshable { await model.loadWhatsApp() }
-        .settingsSaveErrorAlert(saveError)
         .alert(
             "Números de WhatsApp",
             isPresented: Binding(
@@ -48,11 +45,6 @@ struct SettingsWhatsAppNumbersPanel: View {
             Button("Entendido", role: .cancel) { defaultErrorMessage = nil }
         } message: {
             Text(defaultErrorMessage ?? "")
-        }
-        .alert("Números de WhatsApp", isPresented: $noNumberAlert) {
-            Button("Entendido", role: .cancel) {}
-        } message: {
-            Text("No hay un número disponible para separar la bandeja.")
         }
         .confirmationDialog(
             "¿Hacer principal este número?",
@@ -97,8 +89,6 @@ struct SettingsWhatsAppNumbersPanel: View {
                 }
             }
 
-            inboxCard(status: status)
-
             if status.phoneNumbers.isEmpty {
                 SectionCard {
                     Text("Todavía no hay números de WhatsApp conectados.")
@@ -122,70 +112,10 @@ struct SettingsWhatsAppNumbersPanel: View {
         }
     }
 
-    // MARK: - Bandeja Juntos/Separado
-
-    private func inboxCard(status: WhatsAppAPIStatus) -> some View {
-        let selectedID = appConfig.selectedWhatsAppPhoneID
-        let isSeparated = selectedID != "all"
-        let separatedNumber = status.phoneNumbers.first { $0.id == selectedID }
-
-        return SectionCard(title: "Bandeja de chats") {
-            VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
-                Text("Usa todos juntos para ver la bandeja completa o separa por un remitente cuando necesites trabajar sólo un número.")
-                    .font(.footnote)
-                    .foregroundStyle(RistakTheme.textDim)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                SettingsSegmentTabs(
-                    options: [
-                        .init(id: "all", title: "Juntos"),
-                        .init(id: "separate", title: "Separado"),
-                    ],
-                    selectedID: isSeparated ? "separate" : "all",
-                    isDisabled: appConfig.savingKeys.contains(RistakAppConfigKey.selectedWhatsAppPhoneID)
-                ) { optionID in
-                    if optionID == "all" {
-                        writeSelectedPhone("all")
-                    } else {
-                        // «Separado»: usa el número ya seleccionado o el default.
-                        let fallback = status.phoneNumbers.first { $0.isDefaultSender } ?? status.phoneNumbers.first
-                        guard let target = separatedNumber ?? fallback else {
-                            noNumberAlert = true
-                            return
-                        }
-                        writeSelectedPhone(target.id)
-                    }
-                }
-
-                if isSeparated, let number = separatedNumber {
-                    Text("Separado por \(separatedHint(number)).")
-                        .font(.footnote)
-                        .foregroundStyle(RistakTheme.textDim)
-                }
-            }
-        }
-    }
-
-    private func separatedHint(_ number: WhatsAppPhoneNumber) -> String {
-        let phone = number.displayPhoneNumber ?? number.phoneNumber
-        if let phone, !phone.isEmpty, phone != number.displayTitle {
-            return "\(number.displayTitle) · \(phone)"
-        }
-        return number.displayTitle
-    }
-
-    private func writeSelectedPhone(_ value: String) {
-        saveError.run {
-            try await appConfig.setAppConfigValue(value, forKey: RistakAppConfigKey.selectedWhatsAppPhoneID)
-        }
-    }
-
     // MARK: - Fila de número
 
     private func numberRow(_ number: WhatsAppPhoneNumber) -> some View {
-        let isInboxSelected = appConfig.selectedWhatsAppPhoneID == number.id
-
-        return VStack(alignment: .leading, spacing: RistakTheme.Spacing.xs) {
+        VStack(alignment: .leading, spacing: RistakTheme.Spacing.xs) {
             HStack(spacing: RistakTheme.Spacing.sm) {
                 ContactAvatarView(
                     name: number.displayTitle,
@@ -209,14 +139,6 @@ struct SettingsWhatsAppNumbersPanel: View {
             }
 
             HStack(spacing: RistakTheme.Spacing.xs) {
-                SettingsPillButton(
-                    title: isInboxSelected ? "En chats" : "Usar",
-                    isActive: isInboxSelected,
-                    isDisabled: appConfig.savingKeys.contains(RistakAppConfigKey.selectedWhatsAppPhoneID)
-                ) {
-                    writeSelectedPhone(number.id)
-                }
-
                 SettingsPillButton(
                     title: number.isDefaultSender ? "Principal" : "Hacer principal",
                     isActive: number.isDefaultSender,

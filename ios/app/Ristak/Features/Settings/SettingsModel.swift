@@ -56,7 +56,7 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
 
     var subtitle: String {
         switch self {
-        case .numbers: return "Principal y bandejas por remitente."
+        case .numbers: return "Remitentes y número principal."
         case .templates: return "Crear y revisar estados de Meta."
         case .agent: return "Chat fijo y sugerencias."
         case .chats: return "Orden, archivados y vista previa."
