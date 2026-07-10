@@ -2474,7 +2474,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     })
   })
   sock.ev.on('messages.reaction', (updates) => {
-    handleQrMessageReactions(phone, updates, sock).catch(error => {
+    return handleQrMessageReactions(phone, updates, sock).catch(error => {
       logger.warn(`[WhatsApp QR] No se pudieron guardar reacciones ${phone.id}: ${error.message}`)
     })
   })

@@ -6862,10 +6862,13 @@ export async function captureQrChatMessage({
   const config = await loadConfig({ includeSecrets: true })
   const phoneRow = await findBusinessPhoneRowForSender({ phoneNumberId, fromPhone: cleanBusinessPhone })
   const messageText = cleanString(text)
+  const cleanMessageType = cleanString(messageType).toLowerCase()
   const messageTimestamp = toDateTime(timestamp) || nowIso()
 
   // Dedupe difusa: el mismo mensaje pudo entrar por webhook con otro wamid durante una transición.
-  if (messageText) {
+  // Las reacciones se identifican por su WAMID y mensaje objetivo: dos reacciones
+  // iguales dentro de la misma ventana son acciones distintas, no ecos duplicados.
+  if (messageText && cleanMessageType !== 'reaction') {
     // PAY-006-DB-005: datetime(?, '±2 minutes') es SQLite-only y truena en Postgres
     // (la query iba en un .catch que ocultaba el error => el dedupe nunca corría en prod).
     // Se ramifica a INTERVAL en Postgres manteniendo el mismo orden de parámetros.
@@ -6905,8 +6908,7 @@ export async function captureQrChatMessage({
         messageTimestamp
       })
     }
-  } else {
-    const cleanMessageType = cleanString(messageType).toLowerCase()
+  } else if (cleanMessageType !== 'reaction') {
     const duplicate = await findRecentOutboundMediaDuplicate({
       cleanContactPhone,
       cleanDirection,
