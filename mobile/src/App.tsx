@@ -2137,6 +2137,11 @@ function AppFrame({
   return (
     <KeyboardAvoidingView
       enabled={keyboardAvoiding}
+      // Sin `behavior` el KAV es un View inerte: Android nunca compensaba el
+      // teclado (edge-to-edge obligatorio desde Expo 53 anula adjustResize).
+      // `padding` mide el solape real contra el frame del teclado, así no
+      // duplica compensación si la ventana también se redimensiona.
+      behavior={Platform.OS === 'web' ? undefined : 'padding'}
       keyboardVerticalOffset={0}
       style={[styles.appFrame, { backgroundColor }]}
     >
@@ -2302,7 +2307,7 @@ function LoginScreen({
 
   return (
     <AppFrame keyboardAvoiding={false}>
-      <KeyboardAvoidingView style={styles.authWrap}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'web' ? undefined : 'padding'} style={styles.authWrap}>
         <ScrollView contentContainerStyle={styles.authScroller} keyboardShouldPersistTaps="handled">
           <View style={styles.authPanel}>
             <View style={styles.authBrandBlock}>
@@ -13942,12 +13947,57 @@ function BottomActionSheet({
     onPanResponderTerminationRequest: () => true,
   }), [closing, dragTranslateY, onClose, open]);
 
+  // Gesto de cierre sobre TODO el sheet, sin fase de captura: los scrolls y
+  // presses internos reclaman primero el gesto; este responder solo entra
+  // cuando ningún hijo lo toma (contenido estático), y así arrastrar hacia
+  // abajo cierra el sheet desde cualquier zona, no solo desde la agarradera.
+  const sheetBodyPanResponder = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, gestureState) => {
+      if (!open || closing) return false;
+      const absDx = Math.abs(gestureState.dx);
+      const absDy = Math.abs(gestureState.dy);
+      return gestureState.dy > 8 && absDy > absDx * 1.15;
+    },
+    onPanResponderGrant: () => {
+      dragTranslateY.stopAnimation();
+      dragTranslateY.setValue(0);
+    },
+    onPanResponderMove: (_, gestureState) => {
+      dragTranslateY.setValue(Math.max(0, gestureState.dy));
+    },
+    onPanResponderRelease: (_, gestureState) => {
+      const shouldClose = gestureState.dy > 70 || gestureState.vy > 0.72;
+      if (shouldClose) {
+        onClose();
+        return;
+      }
+      Animated.spring(dragTranslateY, {
+        toValue: 0,
+        damping: 22,
+        mass: 0.8,
+        stiffness: 240,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminate: () => {
+      Animated.spring(dragTranslateY, {
+        toValue: 0,
+        damping: 22,
+        mass: 0.8,
+        stiffness: 240,
+        useNativeDriver: true,
+      }).start();
+    },
+    onPanResponderTerminationRequest: () => true,
+  }), [closing, dragTranslateY, onClose, open]);
+
   return (
     <Modal visible={open} transparent animationType="none" onRequestClose={onClose}>
       <View style={styles.sheetModalRoot}>
         <Animated.View pointerEvents="none" style={[styles.sheetDimmer, { opacity: dimmerOpacity }]} />
         <Pressable style={styles.sheetScrim} onPress={onClose} />
         <Animated.View
+          {...sheetBodyPanResponder.panHandlers}
           style={[
             styles.actionSheet,
             keyboardSheetStyle,
@@ -15054,7 +15104,7 @@ function ContactPickerSheet({
               <CameraShareMediaPreview media={media} />
             </View>
           </View>
-          <KeyboardAvoidingView style={styles.cameraSharePanel}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'web' ? undefined : 'padding'} style={styles.cameraSharePanel}>
             <View style={styles.cameraShareSearchArea}>
               <View style={styles.sheetSearchBox}>
                 <Search size={19} color={COLORS.muted} strokeWidth={2.4} />
