@@ -18395,15 +18395,24 @@ function getResumeAgentAction(state?: ConversationAgentState | null): AgentActio
   return isPausedAgentStatus(state?.status) ? 'resume' : 'activate';
 }
 
+function isAssignedConversationAgentState(state?: ConversationAgentState | null) {
+  return Boolean(String(state?.agentId || '').trim());
+}
+
+function getAssignedConversationAgentStates(states?: ConversationAgentState[]) {
+  if (!Array.isArray(states) || !states.length) return [];
+  return states.filter(isAssignedConversationAgentState);
+}
+
 function selectPrimaryAgentState(states?: ConversationAgentState[]) {
-  if (!Array.isArray(states) || !states.length) return null;
-  return [...states].sort((left, right) => {
+  const assignedStates = getAssignedConversationAgentStates(states);
+  if (!assignedStates.length) return null;
+  return [...assignedStates].sort((left, right) => {
     const scoreState = (state: ConversationAgentState) => {
       const status = getAgentStateStatus(state);
       if (status === 'active' && state.agentId && !hasPendingAgentSignal(state)) return 5;
       if (hasPendingAgentSignal(state)) return 4;
-      if (state.agentId) return 3;
-      return 1;
+      return 3;
     };
     const scoreDiff = scoreState(right) - scoreState(left);
     if (scoreDiff !== 0) return scoreDiff;
@@ -18412,11 +18421,7 @@ function selectPrimaryAgentState(states?: ConversationAgentState[]) {
 }
 
 function getControllableConversationAgentStates(states?: ConversationAgentState[]) {
-  if (!Array.isArray(states) || !states.length) return [];
-  const withAgent = states.filter((state) => state.agentId);
-  if (withAgent.length) return withAgent;
-  const primary = selectPrimaryAgentState(states);
-  return primary ? [primary] : [];
+  return getAssignedConversationAgentStates(states);
 }
 
 function hasConversationAgentControls(states?: ConversationAgentState[], loading?: boolean) {
@@ -20187,7 +20192,9 @@ function NativeConversationScreen({
   const voiceDraftAttachment = draftAttachments.length === 1 && draftAttachments[0]?.kind === 'audio' ? draftAttachments[0] : null;
   const voiceRecordingVisible = voiceRecordingActive || audioRecorderState.isRecording;
   const primaryAgentState = useMemo(() => selectPrimaryAgentState(agentStates), [agentStates]);
-  const agentSignalState = useMemo(() => agentStates.find((state) => hasPendingAgentSignal(state)) || null, [agentStates]);
+  const agentSignalState = useMemo(() => (
+    getControllableConversationAgentStates(agentStates).find((state) => hasPendingAgentSignal(state)) || null
+  ), [agentStates]);
   const agentNoticeState = agentSignalState || ((primaryAgentState && getAgentStateStatus(primaryAgentState) !== 'active') ? primaryAgentState : null);
   const agentControlsAvailable = hasConversationAgentControls(agentStates, agentLoading);
   const activeManualAgentStates = useMemo(() => getActiveConversationAgentStates(agentStates), [agentStates]);
