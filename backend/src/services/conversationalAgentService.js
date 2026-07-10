@@ -4228,9 +4228,17 @@ export async function setConversationSignal(contactId, signal, {
 export async function clearConversationSignal(contactId, { updatedBy = 'user', agentId = null } = {}) {
   const state = await ensureConversationState(contactId, { agentId })
   if (!state?.id) return null
+  // [Fase 0 — anti-ghosting] Al limpiar la señal, REACTIVAMOS el bot si había quedado
+  // congelado por un cierre/pase automático (status 'completed' o 'human'). Antes se borraba
+  // la señal pero el status seguía en terminal, así que el gate de arranque
+  // (status !== 'active') mantenía al bot mudo para siempre aunque el staff limpiara la señal
+  // (caso oQ9XMb9R: ~10 mensajes del paciente al vacío). No tocamos estados deliberados como
+  // 'discarded', 'paused' o 'skipped'.
+  const reactivated = state.status === 'completed' || state.status === 'human'
   await db.run(`
     UPDATE conversational_agent_state
     SET signal = NULL, signal_reason = NULL, signal_summary = NULL, signal_at = NULL,
+        status = CASE WHEN status IN ('completed', 'human') THEN 'active' ELSE status END,
         updated_by = ?, updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `, [updatedBy, state.id])
@@ -4238,7 +4246,7 @@ export async function clearConversationSignal(contactId, { updatedBy = 'user', a
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'signal_cleared',
-    detail: { updatedBy, agentId: state.agentId || agentId || null }
+    detail: { updatedBy, agentId: state.agentId || agentId || null, reactivated }
   })
 
   return getConversationState(contactId, { agentId: state.agentId || agentId || null })

@@ -1978,7 +1978,9 @@ test('conserva una respuesta visible etiquetada tras razonamiento interno', () =
   assert.equal(sanitizeAgentReply(raw), 'claro, depende de qué necesitas revisar primero')
 })
 
-test('candado runtime detecta promesas de pase a humano sin herramienta', () => {
+test('[Fase 0] el candado runtime YA NO fuerza pase humano por heuristica de texto', () => {
+  // La regex sigue existiendo como señal informativa, pero frases normales como
+  // "te ayudan a seguir el agendado" ya NO deben forzar un pase que dejaba al bot mudo.
   const reply = 'perfecto, gracias entonces ya con eso te ayudan a seguir el agendado'
   assert.equal(replySuggestsHumanHandoff(reply), true)
 
@@ -1989,8 +1991,9 @@ test('candado runtime detecta promesas de pase a humano sin herramienta', () => 
     config: { persuasionLevel: 'high' }
   })
 
-  assert.equal(result.forceHumanHandoff?.source, 'human_handoff_promise_without_action')
-  assert.deepEqual(result.events.map((event) => event.type), ['runtime_handoff_promise_forced'])
+  assert.equal(result.forceHumanHandoff, null)
+  assert.equal(result.reply, reply)
+  assert.deepEqual(result.events, [])
 })
 
 test('candado runtime no duplica pase si la herramienta real ya se ejecuto', () => {
@@ -2034,6 +2037,9 @@ test('decisión de suficiencia avanza a humano sin seguir interrogando cuando ya
   assert.match(contextMessage.content, /Estado: ready_to_advance/)
   assert.match(contextMessage.content, /no hagas más preguntas de calificación/i)
 
+  // [Fase 0] La decisión de suficiencia SIGUE calculándose y se inyecta como HINT al modelo
+  // (contextMessage de arriba), pero el runtime YA NO la convierte en un cierre forzado +
+  // silencio. El modelo decide si avanza; el runtime no reescribe ni fuerza el pase.
   const guard = applyConversationalRuntimeReplyGuard({
     reply: 'y desde cuándo te anda dando lata otra vez?',
     latestText: 'si, está bien',
@@ -2042,10 +2048,9 @@ test('decisión de suficiencia avanza a humano sin seguir interrogando cuando ya
     readiness: decision
   })
 
-  assert.equal(guard.forceHumanHandoff?.source, 'objective_sufficiency_ready')
-  assert.equal(guard.forceHumanHandoff?.completeObjective, true)
-  assert.equal(guard.reply, 'Perfecto, ya con eso te paso con el equipo para que te confirmen el siguiente paso.')
-  assert.deepEqual(guard.events.map((event) => event.type), ['runtime_objective_sufficiency_forced'])
+  assert.equal(guard.forceHumanHandoff, null)
+  assert.equal(guard.reply, 'y desde cuándo te anda dando lata otra vez?')
+  assert.deepEqual(guard.events, [])
 })
 
 test('decisión de suficiencia no avanza con interés frío o sí vacío', () => {
@@ -2093,7 +2098,11 @@ test('decisión de suficiencia respeta nombre requerido sin confundir frases com
   assert.equal(withName.ready, true)
 })
 
-test('candado runtime convierte silencio ante confirmacion de agenda en pase humano real', () => {
+test('[Fase 0] silencio ante pregunta de agenda ya no fuerza un pase humano mudo', () => {
+  // El detector sigue existiendo, pero el runtime YA NO convierte el silencio en un
+  // "te paso con el equipo" + status humano (que dejaba al bot mudo para siempre). Si el
+  // modelo calla, es silencio transitorio de ese turno; el siguiente entrante lo vuelve a
+  // correr. El fix de raíz es que el prompt no calle ante preguntas genuinas.
   const latestText = 'Entonces si queda agendada para mañana viernes a la 1 pm???'
   assert.equal(shouldEscalateSilentSchedulingQuestion(latestText, [{ type: 'stay_silent' }]), true)
 
@@ -2105,13 +2114,9 @@ test('candado runtime convierte silencio ante confirmacion de agenda en pase hum
     suppressReply: true
   })
 
-  assert.equal(result.suppressReply, false)
-  assert.equal(result.reply, 'Te paso con el equipo para que te confirmen eso.')
-  assert.equal(result.forceHumanHandoff?.source, 'silent_scheduling_question')
-  assert.deepEqual(result.events.map((event) => event.type), [
-    'runtime_silence_escalated_to_human',
-    'runtime_handoff_promise_forced'
-  ])
+  assert.equal(result.suppressReply, true)
+  assert.equal(result.forceHumanHandoff, null)
+  assert.deepEqual(result.events, [])
 })
 
 test('candado runtime quita precio prematuro si el mismo mensaje aun pide calificar', () => {
@@ -3130,19 +3135,19 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /Reacciones y emoción \(escribe con sentimiento\)/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /La emoción no es decoración/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /LA BIBLIA DEL PRIMER CONTACTO Y LAS PREGUNTAS VAGAS/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Diagnosticar, jalar a tu solución y reflejar mamado/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Diagnosticar, jalar a tu solución y reflejar/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /tu primera respuesta NO informa. DEVUELVE/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /ante un mensaje vago de apertura/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /EJEMPLOS = FILOSOFÍA \(NO LIBRETO\)/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NO ASUMAS el perfil de la persona/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /signos de apertura/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 6 — Asumir el perfil/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 7 — Loop de rebotes \+ signos de apertura/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 6[^\n]*Asumir el perfil/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 7[^\n]*Loop de rebotes \+ signos de apertura/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NO te quedes en LOOP rebotando/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Varía el justificante/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Manejo del precio/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /El precio NUNCA es lo primero/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 14 — Dar el precio de inmediato a un pedido específico/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 14[^\n]*Dar el precio de inmediato a un pedido específico/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /nunca des el precio de inmediato sin antes sacar plática y construir valor/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA el menú completo/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA suenes evasivo/)
@@ -3150,7 +3155,7 @@ test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
   assert.match(DEFAULT_CLOSING_STRATEGY, /El "se me hace caro" \(voltea el costo\)/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Humor y buena experiencia/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Cuidado quirúrgico con el lenguaje/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 8 — Lenguaje tieso/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 8[^\n]*Lenguaje tieso/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /DESCARTE Y SILENCIO/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /Cuándo NO te quedes callado/)
   assert.match(DEFAULT_CLOSING_STRATEGY, /El PRIMER regreso es el más delicado/)
