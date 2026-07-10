@@ -17,7 +17,7 @@ enum RistakDateParsing {
         return formatter
     }()
 
-    nonisolated(unsafe) private static let sqlite: DateFormatter = {
+    private static let sqlite: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "UTC")
@@ -25,7 +25,7 @@ enum RistakDateParsing {
         return formatter
     }()
 
-    nonisolated(unsafe) private static let dateOnly: DateFormatter = {
+    private static let dateOnly: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = TimeZone(identifier: "UTC")

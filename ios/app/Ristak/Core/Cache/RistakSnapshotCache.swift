@@ -47,6 +47,11 @@ final class RistakSnapshotCache {
 
     /// Versión del formato en disco (permite invalidar migrando la carpeta).
     private static let storeVersion = "v1"
+    /// Presupuesto de arranque: evita que rangos personalizados y meses
+    /// historicos hagan crecer indefinidamente disco, RAM y splash.
+    nonisolated private static let maxPreloadedEntries = 180
+    nonisolated private static let maxPreloadedBytes = 32 * 1024 * 1024
+    nonisolated private static let maxEntryAge: TimeInterval = 45 * 24 * 60 * 60
 
     // MARK: Estado imperativo (no reactivo)
 
@@ -101,15 +106,35 @@ final class RistakSnapshotCache {
             let fm = FileManager.default
             guard let files = try? fm.contentsOfDirectory(
                 at: dir,
-                includingPropertiesForKeys: nil,
+                includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey],
                 options: [.skipsHiddenFiles]
             ) else { return result }
 
-            for file in files where file.pathExtension == "json" {
+            let now = Date()
+            let records = files.compactMap { file -> (URL, Date, Int)? in
+                guard file.pathExtension == "json" else { return nil }
+                let values = try? file.resourceValues(forKeys: [
+                    .contentModificationDateKey,
+                    .fileSizeKey,
+                ])
+                return (file, values?.contentModificationDate ?? .distantPast, values?.fileSize ?? 0)
+            }.sorted { $0.1 > $1.1 }
+
+            var loadedBytes = 0
+            for (index, record) in records.enumerated() {
+                let (file, modifiedAt, fileSize) = record
+                let expired = now.timeIntervalSince(modifiedAt) > Self.maxEntryAge
+                let overBudget = index >= Self.maxPreloadedEntries
+                    || loadedBytes + max(0, fileSize) > Self.maxPreloadedBytes
+                if expired || overBudget {
+                    try? fm.removeItem(at: file)
+                    continue
+                }
                 let encodedName = file.deletingPathExtension().lastPathComponent
                 guard let key = Self.decodeKey(encodedName),
                       let data = try? Data(contentsOf: file) else { continue }
                 result[key] = data
+                loadedBytes += data.count
             }
             return result
         }.value
@@ -312,7 +337,11 @@ enum RistakCacheKey {
 
     // Calendario.
     static let calendarList = "calendar:list"
-    static func calendarEvents(month: String) -> String { "calendar:events:\(month)" }
+    static func calendarEvents(month: String, calendarID: String?) -> String {
+        let scope = calendarID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scopeKey = scope?.isEmpty == false ? scope ?? "all" : "all"
+        return "calendar:events:\(scopeKey):\(month)"
+    }
 
     // Chats (la bandeja ya cachea aparte en `ChatInboxDiskCache`; esto es para
     // metadatos/derivados que una pantalla quiera pintar al instante).

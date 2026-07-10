@@ -177,10 +177,10 @@ struct ImageAttachmentView: View {
     @State private var displaySize: CGSize
 
     /// Topes de tamaño idénticos a /movil (`MESSAGE_IMAGE_MAX_WIDTH/HEIGHT`).
-    private static let maxWidth: CGFloat = 252
-    private static let maxHeight: CGFloat = 318
+    nonisolated private static let maxWidth: CGFloat = 252
+    nonisolated private static let maxHeight: CGFloat = 318
     /// Default mientras no se conocen las dimensiones (paridad /movil: 252×189).
-    private static let defaultSize = CGSize(width: 252, height: 189)
+    nonisolated private static let defaultSize = CGSize(width: 252, height: 189)
 
     init(attachment: ChatAttachment) {
         self.attachment = attachment
@@ -747,7 +747,7 @@ final class AudioPlaybackController {
     /// huérfano: el token del bloque lo retiene `NotificationCenter` hasta
     /// `removeObserver` (a diferencia de `timeObserver`, que lo retiene el propio
     /// `AVPlayer` y muere con el controller, y `statusTask`, que se auto-termina).
-    nonisolated(unsafe) private var endObserver: NSObjectProtocol?
+    @ObservationIgnored nonisolated(unsafe) private var endObserver: NSObjectProtocol?
     private var statusTask: Task<Void, Never>?
 
     var rateLabel: String {

@@ -749,7 +749,8 @@ test('Rebill cobra tarjeta guardada enviando customer como objeto en checkout', 
         email: `${contactId}@example.test`,
         phone: '+525563896389'
       }, {
-        mode: 'test'
+        mode: 'test',
+        providerIdempotencyKey: 'ristak:saved-card:rebill:test-provider-key'
       })
 
       assert.equal(result.payment.status, 'paid')
@@ -771,7 +772,7 @@ test('Rebill cobra tarjeta guardada enviando customer como objeto en checkout', 
 
       const checkoutCall = calls.find((call) => call.path === '/v3/checkout' && call.method === 'POST')
       assert.ok(checkoutCall)
-      assert.match(checkoutCall.idempotencyKey, /^ristak:rebill:/)
+      assert.equal(checkoutCall.idempotencyKey, 'ristak:saved-card:rebill:test-provider-key')
       assert.equal(checkoutCall.apiKey, secretKey)
     } finally {
       await cleanupContact(contactId)

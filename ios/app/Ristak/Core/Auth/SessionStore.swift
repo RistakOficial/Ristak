@@ -34,6 +34,9 @@ final class SessionStore {
     /// Hook best-effort para desregistrar el push token antes de cerrar sesión
     /// (lo instala el módulo Push: `DELETE /api/push/mobile-devices`).
     var pushUnregisterHandler: (@MainActor () async -> Void)?
+    /// Limpieza local sin red para 401/revocacion/licencia: en ese punto el
+    /// DELETE autenticado puede ser imposible, pero iOS debe dejar de entregar.
+    var pushLocalResetHandler: (@MainActor () -> Void)?
 
     // MARK: Internos
 
@@ -41,6 +44,9 @@ final class SessionStore {
     private let resolver = TenantResolver()
     private var licenseAlertAlreadyShown = false
     private var hooksWired = false
+    /// Epoch de identidad. Toda operacion async captura este valor y descarta
+    /// su resultado si hubo logout, cambio de tenant o rotacion de token.
+    private(set) var sessionGeneration: UInt64 = 0
 
     /// Timeout del verify de arranque (`BOOTSTRAP_SESSION_VERIFY_TIMEOUT_MS = 8000`).
     private static let bootstrapVerifyTimeout: TimeInterval = 8
@@ -53,6 +59,9 @@ final class SessionStore {
     /// guardado y verificar en paralelo. Solo 401/403 desloguean; un error de
     /// red mantiene la sesión con el usuario cacheado (o `nil`).
     func bootstrap() async {
+        sessionGeneration &+= 1
+        isVerifying = false
+        let expectedGeneration = sessionGeneration
         await wireAPIClientHooksIfNeeded()
 
         let storedBaseURL = keychain.string(for: .baseURL).flatMap { TenantResolver.cleanBaseURL($0) }
@@ -62,6 +71,7 @@ final class SessionStore {
 
         guard let storedBaseURL, let storedToken, !storedToken.isEmpty else {
             await APIClient.shared.configure(baseURL: storedBaseURL, token: nil)
+            guard expectedGeneration == sessionGeneration else { return }
             phase = .loggedOut
             return
         }
@@ -80,6 +90,7 @@ final class SessionStore {
         // para que el init de la primera burbuja de foto no bloquee el hilo.
         ChatImageSizeCache.preloadIntoMemory()
 
+        guard expectedGeneration == sessionGeneration else { return }
         phase = .active
 
         await verifySession(token: storedToken, timeout: Self.bootstrapVerifyTimeout)
@@ -135,6 +146,12 @@ final class SessionStore {
     }
 
     private func completeLogin(email: String, password: String, baseURL newBaseURL: URL) async throws {
+        sessionGeneration &+= 1
+        isVerifying = false
+        let expectedGeneration = sessionGeneration
+        let previousBaseURL = baseURL
+        let previousToken = keychain.string(for: .token)
+
         // Cambio de empresa: purgar el snapshot del tenant anterior.
         if let previous = baseURL, previous != newBaseURL {
             keychain.set(nil, for: .cachedUser)
@@ -150,12 +167,15 @@ final class SessionStore {
             )
         } catch {
             // Sin sesión válida: restaurar la configuración previa del cliente.
-            await APIClient.shared.configure(baseURL: baseURL, token: keychain.string(for: .token))
+            if expectedGeneration == sessionGeneration {
+                await APIClient.shared.configure(baseURL: previousBaseURL, token: previousToken)
+            }
             throw error
         }
 
+        guard expectedGeneration == sessionGeneration else { throw CancellationError() }
         guard let token = response.token, !token.isEmpty, let loggedUser = response.user else {
-            await APIClient.shared.configure(baseURL: baseURL, token: keychain.string(for: .token))
+            await APIClient.shared.configure(baseURL: previousBaseURL, token: previousToken)
             throw RistakAPIError(
                 kind: .server,
                 status: 0,
@@ -163,11 +183,12 @@ final class SessionStore {
             )
         }
 
+        await APIClient.shared.configure(baseURL: newBaseURL, token: token)
+        guard expectedGeneration == sessionGeneration else { throw CancellationError() }
+
         keychain.setString(newBaseURL.absoluteString, for: .baseURL)
         keychain.setString(token, for: .token)
         persistCachedUser(loggedUser)
-
-        await APIClient.shared.configure(baseURL: newBaseURL, token: token)
 
         baseURL = newBaseURL
         user = loggedUser
@@ -178,6 +199,7 @@ final class SessionStore {
             namespace: RistakSnapshotCache.namespace(baseURL: newBaseURL, userID: loggedUser.id)
         )
         await RistakSnapshotCache.shared.preloadIntoMemory()
+        guard expectedGeneration == sessionGeneration else { throw CancellationError() }
 
         licenseAlertAlreadyShown = false
         licenseBlockedAlertMessage = nil
@@ -190,6 +212,9 @@ final class SessionStore {
     /// - Parameter switchApp: `true` = "Cambiar app" (borra también la base URL
     ///   del tenant); `false` = "Cerrar sesión" (conserva la empresa).
     func logout(switchApp: Bool = false) async {
+        sessionGeneration &+= 1
+        isVerifying = false
+        let expectedGeneration = sessionGeneration
         await pushUnregisterHandler?()
         // Vaciar la caché SWR (memoria + disco del namespace) para que las
         // cuentas nunca se mezclen. Solo en logout explícito, no en un 401.
@@ -202,12 +227,15 @@ final class SessionStore {
         // Notas de voz propias (m4a = audio real grabado = PII): también viven
         // fuera del snapshot namespaceado y no deben cruzar de cuenta a cuenta.
         VoiceNoteLocalStore.removeAll()
-        clearLocalSession(keepBaseURL: !switchApp)
+        guard expectedGeneration == sessionGeneration else { return }
+        await clearLocalSession(keepBaseURL: !switchApp, invalidateGeneration: false)
     }
 
     /// Tras `POST /api/auth/change-password` el backend revoca las demás
     /// sesiones y entrega un token nuevo: reemplazarlo INMEDIATAMENTE.
     func adoptToken(_ newToken: String) async {
+        sessionGeneration &+= 1
+        isVerifying = false
         keychain.setString(newToken, for: .token)
         await APIClient.shared.updateToken(newToken)
     }
@@ -225,8 +253,13 @@ final class SessionStore {
     // MARK: - Verify
 
     private func verifySession(token: String, timeout: TimeInterval) async {
+        let expectedGeneration = sessionGeneration
         isVerifying = true
-        defer { isVerifying = false }
+        defer {
+            if expectedGeneration == sessionGeneration {
+                isVerifying = false
+            }
+        }
 
         do {
             let response: RistakVerifyResponse = try await APIClient.shared.post(
@@ -234,19 +267,21 @@ final class SessionStore {
                 body: RistakVerifyRequestBody(token: token),
                 timeout: timeout
             )
+            guard isCurrentSession(generation: expectedGeneration, token: token) else { return }
             if let verifiedUser = response.user {
                 user = verifiedUser
                 persistCachedUser(verifiedUser)
             } else {
                 // Respuesta válida sin user: token inservible.
-                clearLocalSession(keepBaseURL: true)
+                await clearLocalSession(keepBaseURL: true)
             }
         } catch let error as RistakAPIError {
+            guard isCurrentSession(generation: expectedGeneration, token: token) else { return }
             if error.status == 401 || error.status == 403 {
                 if error.kind == .licenseBlocked {
                     presentLicenseBlockedAlert(error)
                 }
-                clearLocalSession(keepBaseURL: true)
+                await clearLocalSession(keepBaseURL: true)
             }
             // Error de red/timeout/5xx: mantener la sesión (tolerante a offline).
         } catch {
@@ -263,26 +298,26 @@ final class SessionStore {
         await APIClient.shared.setHooks(
             onUnauthorized: { [weak self] error in
                 Task { @MainActor in
-                    self?.handleUnauthorized(error)
+                    await self?.handleUnauthorized(error)
                 }
             },
             onLicenseBlocked: { [weak self] error in
                 Task { @MainActor in
-                    self?.handleLicenseBlocked(error)
+                    await self?.handleLicenseBlocked(error)
                 }
             }
         )
     }
 
-    private func handleUnauthorized(_ error: RistakAPIError) {
+    private func handleUnauthorized(_ error: RistakAPIError) async {
         guard phase == .active else { return }
-        clearLocalSession(keepBaseURL: true)
+        await clearLocalSession(keepBaseURL: true)
     }
 
-    private func handleLicenseBlocked(_ error: RistakAPIError) {
+    private func handleLicenseBlocked(_ error: RistakAPIError) async {
         guard phase == .active else { return }
         presentLicenseBlockedAlert(error)
-        clearLocalSession(keepBaseURL: true)
+        await clearLocalSession(keepBaseURL: true)
     }
 
     private func presentLicenseBlockedAlert(_ error: RistakAPIError) {
@@ -291,7 +326,15 @@ final class SessionStore {
         licenseBlockedAlertMessage = "Tu licencia de Ristak ya no está activa. Inicia sesión de nuevo cuando se reactive."
     }
 
-    private func clearLocalSession(keepBaseURL: Bool) {
+    private func clearLocalSession(
+        keepBaseURL: Bool,
+        invalidateGeneration: Bool = true
+    ) async {
+        if invalidateGeneration {
+            sessionGeneration &+= 1
+            isVerifying = false
+        }
+        pushLocalResetHandler?()
         keychain.set(nil, for: .token)
         keychain.set(nil, for: .cachedUser)
         if !keepBaseURL {
@@ -303,9 +346,17 @@ final class SessionStore {
         phase = .loggedOut
 
         let retainedBaseURL = keepBaseURL ? baseURL : nil
-        Task {
-            await APIClient.shared.configure(baseURL: retainedBaseURL, token: nil)
-        }
+        await APIClient.shared.configure(baseURL: retainedBaseURL, token: nil)
+    }
+
+    func isCurrentActiveSession(_ generation: UInt64) -> Bool {
+        phase == .active && sessionGeneration == generation
+    }
+
+    private func isCurrentSession(generation: UInt64, token: String) -> Bool {
+        generation == sessionGeneration
+            && phase == .active
+            && keychain.string(for: .token) == token
     }
 
     // MARK: - Snapshot de usuario

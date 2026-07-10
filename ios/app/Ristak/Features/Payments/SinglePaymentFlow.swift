@@ -1,5 +1,6 @@
 import SwiftUI
 import Observation
+import CryptoKit
 
 // MARK: - Tarjeta guardada seleccionable
 
@@ -39,6 +40,66 @@ struct SavedCardOption: Identifiable, Equatable, Sendable {
     }
 }
 
+/// Conserva ids de intentos no resueltos para que cerrar/reabrir la app no cree
+/// otro cargo. Solo guarda hashes + UUIDs, no tokens ni datos de tarjeta. El
+/// backend conserva la deduplicacion durable.
+private enum SavedCardAttemptStore {
+    private struct Record: Codable {
+        let fingerprintHash: String
+        let requestID: String
+        let createdAt: Date
+    }
+
+    private static let defaultsKey = "ristak.payments.savedCardPendingAttempt.v1"
+    private static let maxPendingAttempts = 50
+
+    private static func loadRecords() -> [String: Record] {
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey) else { return [:] }
+        if let records = try? JSONDecoder().decode([String: Record].self, from: data) {
+            return records
+        }
+        // Migracion transparente del primer formato de registro unico.
+        if let record = try? JSONDecoder().decode(Record.self, from: data) {
+            return [record.fingerprintHash: record]
+        }
+        return [:]
+    }
+
+    private static func saveRecords(_ records: [String: Record]) {
+        if records.isEmpty {
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        } else if let data = try? JSONEncoder().encode(records) {
+            UserDefaults.standard.set(data, forKey: defaultsKey)
+        }
+    }
+
+    static func requestID(for fingerprint: String) -> String {
+        let hash = SHA256.hash(data: Data(fingerprint.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        var records = loadRecords()
+        if let record = records[hash] {
+            return record.requestID
+        }
+
+        let requestID = UUID().uuidString
+        let record = Record(fingerprintHash: hash, requestID: requestID, createdAt: Date())
+        records[hash] = record
+        if records.count > maxPendingAttempts,
+           let oldest = records.min(by: { $0.value.createdAt < $1.value.createdAt })?.key {
+            records.removeValue(forKey: oldest)
+        }
+        saveRecords(records)
+        return requestID
+    }
+
+    static func complete(requestID: String) {
+        var records = loadRecords()
+        records = records.filter { $0.value.requestID != requestID }
+        saveRecords(records)
+    }
+}
+
 // MARK: - Modelo del wizard de pago único (doc 08 §6.3)
 
 @MainActor
@@ -68,6 +129,9 @@ final class SinglePaymentModel {
         case charged
         /// La pasarela lo dejó en proceso / pendiente de autorización.
         case processing
+        /// Se perdio la respuesta: la pasarela pudo haber cobrado. Nunca se
+        /// ofrece reintento ciego; primero se reconcilia el historial.
+        case unknown
     }
 
     /// Métodos del pago manual (doc 08 §6.3.2 etapa `manual`).
@@ -106,10 +170,16 @@ final class SinglePaymentModel {
     var selectedProductID: String? {
         didSet {
             guard oldValue != selectedProductID else { return }
+            priceLoadTask?.cancel()
             selectedPriceID = nil
-            Task { await loadPrices() }
+            prices = []
+            let productID = selectedProductID
+            priceLoadTask = Task { [weak self] in
+                await self?.loadPrices(for: productID)
+            }
         }
     }
+    @ObservationIgnored private var priceLoadTask: Task<Void, Never>?
     private(set) var prices: [ProductPrice] = []
     var selectedPriceID: String? {
         didSet {
@@ -142,6 +212,7 @@ final class SinglePaymentModel {
     private(set) var savedCards: [SavedCardOption] = []
     private(set) var isLoadingSavedCards = false
     private(set) var didLoadSavedCards = false
+    private(set) var savedCardsLoadFailed = false
     var selectedSavedCardID: String?
 
     // Envío.
@@ -154,6 +225,8 @@ final class SinglePaymentModel {
     var manualSuccess = false
     /// Resultado del cobro con tarjeta guardada (nil = aún no hay resultado).
     var savedCardOutcome: SavedCardOutcome?
+    private(set) var savedCardAttemptUncertain = false
+    private var activeSavedCardRequestID: String?
 
     init(contact: PickedPaymentContact) {
         self.contact = contact
@@ -209,11 +282,23 @@ final class SinglePaymentModel {
                 description: product.description,
                 amount: enteredAmount ?? 0,
                 qty: 1,
-                currency: nil,
+                currency: selectedCatalogCurrency,
                 priceId: price?.effectiveID,
                 productId: product.effectiveID
             )
         ]
+    }
+
+    /// Moneda declarada por el precio (o por el producto como respaldo). `nil`
+    /// significa que el catalogo no fijo moneda y hereda la de la cuenta.
+    var selectedCatalogCurrency: String? {
+        for raw in [selectedPrice?.currency, selectedProduct?.currency] {
+            let code = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            if code.count == 3, code.allSatisfy({ $0.isLetter && $0.isASCII }) {
+                return code
+            }
+        }
+        return nil
     }
 
     // MARK: Cargas
@@ -246,24 +331,37 @@ final class SinglePaymentModel {
         if !force, didLoadSavedCards { return }
         guard !isLoadingSavedCards else { return }
         isLoadingSavedCards = true
+        savedCardsLoadFailed = false
         defer {
             isLoadingSavedCards = false
-            didLoadSavedCards = true
         }
 
         let contactID = contact.id
         var collected: [SavedCardOption] = []
-        await withTaskGroup(of: [SavedCardOption].self) { group in
+        var successfulGateways = 0
+        await withTaskGroup(of: [SavedCardOption]?.self) { group in
             for gateway in capable {
                 group.addTask {
-                    let cards = (try? await PaymentLinksService.savedCards(gateway: gateway, contactID: contactID)) ?? []
-                    return cards.map { SavedCardOption(gateway: gateway, card: $0) }
+                    do {
+                        let cards = try await PaymentLinksService.savedCards(
+                            gateway: gateway,
+                            contactID: contactID
+                        )
+                        return cards.map { SavedCardOption(gateway: gateway, card: $0) }
+                    } catch {
+                        return nil
+                    }
                 }
             }
             for await chunk in group {
+                guard let chunk else { continue }
+                successfulGateways += 1
                 collected.append(contentsOf: chunk)
             }
         }
+
+        savedCardsLoadFailed = successfulGateways == 0
+        didLoadSavedCards = successfulGateways > 0
 
         // Orden estable: predeterminadas primero, luego por pasarela y etiqueta.
         collected.sort { lhs, rhs in
@@ -278,14 +376,19 @@ final class SinglePaymentModel {
         }
     }
 
-    private func loadPrices() async {
-        prices = []
-        guard let product = selectedProduct else { return }
+    private func loadPrices(for productID: String?) async {
+        guard let productID,
+              let product = products.first(where: { $0.effectiveID == productID }) else { return }
+        let loaded: [ProductPrice]
         if !product.prices.isEmpty {
-            prices = product.prices
+            loaded = product.prices
         } else if let fetched = try? await ProductsService.prices(productID: product.effectiveID) {
-            prices = fetched
+            loaded = fetched
+        } else {
+            loaded = []
         }
+        guard !Task.isCancelled, selectedProductID == productID else { return }
+        prices = loaded
         if prices.count == 1 {
             selectedPriceID = prices.first?.effectiveID
         }
@@ -302,7 +405,7 @@ final class SinglePaymentModel {
 
     // MARK: Validación (copys doc 08 §6.3.1)
 
-    func validateForm() -> Bool {
+    func validateForm(accountCurrency: String? = nil) -> Bool {
         if contact.id.isEmpty {
             validationMessage = "Selecciona un contacto"
             return false
@@ -314,6 +417,12 @@ final class SinglePaymentModel {
             }
             if !prices.isEmpty, selectedPrice == nil {
                 validationMessage = "Selecciona un precio"
+                return false
+            }
+            if let catalogCurrency = selectedCatalogCurrency,
+               let accountCurrency,
+               catalogCurrency != accountCurrency.uppercased() {
+                validationMessage = "Este precio está en \(catalogCurrency), pero la cuenta cobra en \(accountCurrency.uppercased()). Elige un precio con la moneda correcta."
                 return false
             }
         }
@@ -373,7 +482,11 @@ final class SinglePaymentModel {
         case .manual:
             return nil
         case .savedCard:
+            if savedCardAttemptUncertain {
+                return "Confirma el historial antes de volver a cobrar"
+            }
             if isLoadingSavedCards { return "Buscando tarjetas guardadas…" }
+            if savedCardsLoadFailed { return "No se pudieron revisar las tarjetas guardadas" }
             if savedCards.isEmpty { return "Este contacto no tiene tarjetas guardadas" }
             if selectedSavedCard == nil { return "Selecciona una tarjeta guardada" }
             return nil
@@ -413,8 +526,6 @@ final class SinglePaymentModel {
     /// Ejecuta la acción confirmada. Devuelve `true` si terminó con éxito.
     func submit(appConfig: AppConfigStore) async -> Bool {
         guard !isSubmitting else { return false }
-        guard validateForm() else { return false }
-        guard let method else { return false }
 
         // Guard duro de moneda (doc 01 §10): sin `account_currency` NO se
         // crean registros de dinero.
@@ -422,6 +533,8 @@ final class SinglePaymentModel {
             validationMessage = "No se pudo leer la moneda de la cuenta. Reintenta cuando haya conexión."
             return false
         }
+        guard validateForm(accountCurrency: accountCurrency) else { return false }
+        guard let method else { return false }
 
         isSubmitting = true
         defer { isSubmitting = false }
@@ -478,6 +591,23 @@ final class SinglePaymentModel {
                     return false
                 }
                 let gateway = option.gateway
+                let baseURL = await APIClient.shared.currentBaseURL?.absoluteString ?? ""
+                let paymentDate = PaymentsDateMath.dateString(Date(), timeZone: timeZone)
+                let requestFingerprint = [
+                    baseURL,
+                    contact.id,
+                    gateway.rawValue,
+                    option.id,
+                    token,
+                    Self.plainAmountText(enteredAmount ?? 0),
+                    accountCurrency,
+                    title,
+                    descriptionText,
+                    breakdown.applied ? breakdown.mode : "no-tax",
+                    paymentDate,
+                ].joined(separator: "|")
+                let clientRequestID = SavedCardAttemptStore.requestID(for: requestFingerprint)
+                activeSavedCardRequestID = clientRequestID
                 var request = SavedCardPaymentRequest(
                     contactId: contact.id,
                     contactName: contact.name.isEmpty ? nil : contact.name,
@@ -490,9 +620,10 @@ final class SinglePaymentModel {
                     taxCalculationMode: breakdown.applied ? breakdown.mode : nil,
                     title: title.isEmpty ? "Pago" : title,
                     description: descriptionText.isEmpty ? nil : descriptionText,
-                    dueDate: PaymentsDateMath.dateString(Date(), timeZone: timeZone),
+                    dueDate: paymentDate,
                     source: "ios_native_payments_saved_card",
-                    lineItems: lineItems
+                    lineItems: lineItems,
+                    clientRequestId: clientRequestID
                 )
                 // Stripe usa `paymentMethodId`; Conekta/Rebill usan `paymentSourceId`
                 // (el backend de Rebill también acepta `paymentSourceId`).
@@ -506,10 +637,24 @@ final class SinglePaymentModel {
                 // estado de proceso/autorización se comunica como pendiente (no
                 // reportar un falso "cobro realizado"). Paridad RN.
                 let status = result.payment?.status ?? ""
-                if !status.isEmpty, PaymentTransactionStatus.parse(status)?.countsAsReceived != true {
-                    savedCardOutcome = .processing
-                } else {
+                switch PaymentTransactionStatus.parse(status) {
+                case .paid, .partial:
                     savedCardOutcome = .charged
+                    SavedCardAttemptStore.complete(requestID: clientRequestID)
+                    activeSavedCardRequestID = nil
+                case .pending, .sent, .scheduled, .draft:
+                    savedCardAttemptUncertain = true
+                    savedCardOutcome = .processing
+                case .failed, .void, .deleted, .overdue, .refunded:
+                    SavedCardAttemptStore.complete(requestID: clientRequestID)
+                    activeSavedCardRequestID = nil
+                    validationMessage = "La pasarela no confirmó el cobro. Revisa el detalle antes de intentar de nuevo."
+                    return false
+                case .none:
+                    // Un 2xx incompleto no confirma dinero. Puede existir un
+                    // cargo real cuya respuesta perdio campos; bloquear retry.
+                    savedCardAttemptUncertain = true
+                    savedCardOutcome = .unknown
                 }
                 return true
 
@@ -550,9 +695,28 @@ final class SinglePaymentModel {
                 return true
             }
         } catch let error as RistakAPIError {
+            if method == .savedCard,
+               (error.status == 409
+                || [.network, .decoding, .server, .starting].contains(error.kind)) {
+                // La solicitud pudo llegar a la pasarela aunque el celular no
+                // recibiera respuesta. Bloquear el reintento evita un doble
+                // cargo; el home se refresca al cerrar este aviso.
+                savedCardAttemptUncertain = true
+                savedCardOutcome = .unknown
+                return true
+            }
             validationMessage = error.message
+            if method == .savedCard, let requestID = activeSavedCardRequestID {
+                SavedCardAttemptStore.complete(requestID: requestID)
+                activeSavedCardRequestID = nil
+            }
             return false
         } catch {
+            if method == .savedCard {
+                savedCardAttemptUncertain = true
+                savedCardOutcome = .unknown
+                return true
+            }
             validationMessage = "No se pudo completar el cobro. Intenta de nuevo."
             return false
         }
@@ -711,7 +875,7 @@ struct SinglePaymentFlowView: View {
 
             Section {
                 Button {
-                    if model.validateForm() {
+                    if model.validateForm(accountCurrency: appConfig.accountCurrency) {
                         showOptions = true
                     }
                 } label: {
@@ -835,7 +999,7 @@ struct SinglePaymentOptionsView: View {
             Text("El pago quedó guardado y aparecerá en el historial del contacto.")
         }
         .alert(
-            model.savedCardOutcome == .processing ? "Cobro en proceso" : "Cobro realizado",
+            savedCardAlertTitle,
             isPresented: Binding(
                 get: { model.savedCardOutcome != nil },
                 set: { if !$0 { model.savedCardOutcome = nil } }
@@ -847,9 +1011,7 @@ struct SinglePaymentOptionsView: View {
                 onDone()
             }
         } message: {
-            Text(model.savedCardOutcome == .processing
-                 ? "El cobro con la tarjeta guardada quedó en proceso. Confirma el estado en unos minutos."
-                 : "El cobro con la tarjeta guardada se completó y aparecerá en el historial del contacto.")
+            Text(savedCardAlertMessage)
         }
         .sheet(item: $model.linkResult) { payload in
             PaymentLinkReadySheet(payload: payload)
@@ -858,6 +1020,25 @@ struct SinglePaymentOptionsView: View {
                     home.refreshRecentSilently()
                     onDone()
                 }
+        }
+    }
+
+    private var savedCardAlertTitle: String {
+        switch model.savedCardOutcome {
+        case .processing: return "Cobro en proceso"
+        case .unknown: return "Confirma antes de reintentar"
+        case .charged, .none: return "Cobro realizado"
+        }
+    }
+
+    private var savedCardAlertMessage: String {
+        switch model.savedCardOutcome {
+        case .processing:
+            return "El cobro con la tarjeta guardada quedó en proceso. Confirma el estado en unos minutos."
+        case .unknown:
+            return "Se perdió la respuesta del servidor y la tarjeta pudo haberse cobrado. No lo intentes otra vez hasta revisar el historial del contacto."
+        case .charged, .none:
+            return "El cobro con la tarjeta guardada se completó y aparecerá en el historial del contacto."
         }
     }
 
@@ -894,6 +1075,7 @@ struct SinglePaymentOptionsView: View {
 
     private var savedCardOptionSubtitle: String {
         if model.isLoadingSavedCards { return "Buscando tarjetas guardadas del contacto…" }
+        if model.savedCardsLoadFailed { return "No se pudieron revisar las tarjetas. Toca para reintentar." }
         let count = model.savedCards.count
         if count == 0 { return "Este contacto todavía no tiene tarjetas guardadas." }
         return "Cobra una tarjeta guardada del contacto (\(count) disponible\(count == 1 ? "" : "s"))."
@@ -919,7 +1101,9 @@ struct SinglePaymentOptionsView: View {
                             title: "Cobrar tarjeta guardada",
                             subtitle: savedCardOptionSubtitle,
                             isSelected: model.method == .savedCard,
-                            isDisabled: !model.isLoadingSavedCards && model.savedCards.isEmpty
+                            isDisabled: !model.isLoadingSavedCards
+                                && model.savedCards.isEmpty
+                                && !model.savedCardsLoadFailed
                         ) {
                             model.method = .savedCard
                         }
@@ -948,6 +1132,21 @@ struct SinglePaymentOptionsView: View {
                         .foregroundStyle(RistakTheme.textDim)
                 }
                 .listRowSeparator(.hidden)
+            } else if model.savedCardsLoadFailed {
+                Text("No se pudieron consultar las tarjetas guardadas. No significa que el cliente no tenga tarjetas.")
+                    .font(.subheadline)
+                    .foregroundStyle(RistakTheme.textDim)
+                    .listRowSeparator(.hidden)
+
+                Button("Reintentar") {
+                    Task {
+                        await model.loadSavedCards(
+                            connectedGateways: home.capabilities?.connectedGateways ?? [],
+                            force: true
+                        )
+                    }
+                }
+                .font(.subheadline.weight(.semibold))
             } else if model.savedCards.isEmpty {
                 Text("Este contacto no tiene tarjetas guardadas. Regresa y usa un enlace de pago o registra el pago manual.")
                     .font(.subheadline)

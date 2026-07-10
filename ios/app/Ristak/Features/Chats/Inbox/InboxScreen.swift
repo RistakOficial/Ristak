@@ -198,6 +198,15 @@ struct InboxScreen: View {
                 .listRowSeparator(.hidden)
             }
 
+            if viewModel.loadMoreFailed, !viewModel.isSearchActive {
+                Button("Reintentar cargar más chats") {
+                    viewModel.retryLoadMore()
+                }
+                .font(.footnote.weight(.semibold))
+                .frame(maxWidth: .infinity, alignment: .center)
+                .listRowSeparator(.hidden)
+            }
+
             if viewModel.isSearchActive {
                 // Contactos del servidor no cacheados + estado de la búsqueda.
                 searchResults
@@ -532,13 +541,15 @@ struct InboxScreen: View {
                 let preview: UIImage?
                 switch capture {
                 case .image(let image):
-                    media = try MediaEncoder.encodeImage(image)
+                    media = try await Task.detached(priority: .userInitiated) {
+                        try MediaEncoder.encodeImage(image)
+                    }.value
                     preview = image
                 case .video(let url):
                     media = try await Task.detached(priority: .userInitiated) {
                         try MediaEncoder.encodeVideoFile(at: url)
                     }.value
-                    preview = InboxCameraThumbnail.generate(from: url)
+                    preview = await InboxCameraThumbnail.generate(from: url)
                 }
                 cameraShareVM = CameraShareViewModel(media: media, previewImage: preview, inbox: viewModel)
             } catch {

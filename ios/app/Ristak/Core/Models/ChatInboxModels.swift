@@ -32,20 +32,22 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
     let socialProfileName: String?
     let socialUsername: String?
     let notes: String
-    let lastMessageText: String
-    let lastMessageType: String
-    let lastMessageChannel: String
-    let lastMessageDate: String?
-    let lastMessageDirection: String
-    let lastBusinessPhone: String
-    let lastBusinessPhoneNumberId: String
+    /// Mutables porque la bandeja aplica actividad local/SSE al instante y
+    /// luego la reconcilia con la primera pagina autoritativa del servidor.
+    var lastMessageText: String
+    var lastMessageType: String
+    var lastMessageChannel: String
+    var lastMessageDate: String?
+    var lastMessageDirection: String
+    var lastBusinessPhone: String
+    var lastBusinessPhoneNumberId: String
     let lastInboundBusinessPhone: String
     let lastInboundBusinessPhoneNumberId: String
     let firstInboundBusinessPhone: String
     let firstInboundBusinessPhoneNumberId: String
     /// `"api" | "qr" | "smtp" | "ghl_email" | ""`.
-    let lastMessageTransport: String
-    let messageCount: Int
+    var lastMessageTransport: String
+    var messageCount: Int
     var unreadCount: Int
     let hasCommentMessage: Bool
     let hasPrivateDm: Bool

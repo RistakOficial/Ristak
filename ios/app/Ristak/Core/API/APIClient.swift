@@ -1,12 +1,17 @@
 import Foundation
 
+struct APIAuthorizedRequestSnapshot: Sendable {
+    var request: URLRequest
+    fileprivate let generation: UInt64
+}
+
 /// Cliente HTTP central de la app (actor). Réplica del contrato del cliente RN
 /// (`mobile/src/api.ts`, doc research/01):
 /// - Base URL del tenant + `Authorization: Bearer <jwt>`.
 /// - Prefijo `/api` automático; query params omite nil/vacíos.
 /// - Regla de envelope `{success, data}` (ver `RistakEnvelopeDecoder`).
 /// - Errores tipados `RistakAPIError` con hooks globales (401, licencia, feature).
-/// - 503 de arranque → reintento con backoff (2 reintentos) → `.starting`.
+/// - 503 de arranque → reintento con backoff SOLO para GET/HEAD idempotentes.
 actor APIClient {
     static let shared = APIClient()
 
@@ -19,6 +24,15 @@ actor APIClient {
 
     private var baseURL: URL?
     private var token: String?
+    /// Cambia cada vez que cambia tenant/token. Una respuesta de una generacion
+    /// vieja puede terminar, pero nunca dispara hooks contra la sesion nueva.
+    private var configurationGeneration: UInt64 = 0
+
+    private struct RequestContext: Sendable {
+        let baseURL: URL
+        let token: String?
+        let generation: UInt64
+    }
 
     private var onUnauthorized: (@Sendable (RistakAPIError) -> Void)?
     private var onLicenseBlocked: (@Sendable (RistakAPIError) -> Void)?
@@ -39,6 +53,9 @@ actor APIClient {
         let configuration = URLSessionConfiguration.default
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 120
+        configuration.timeoutIntervalForResource = 120
+        // Las pantallas ya tienen cache, polling y reintentos explicitos. Fallar
+        // rapido sin red evita dejar un refresh pegado durante minutos/dias.
         configuration.waitsForConnectivity = false
         session = URLSession(configuration: configuration)
     }
@@ -46,21 +63,31 @@ actor APIClient {
     // MARK: - Configuración
 
     func configure(baseURL: URL?, token: String?) {
+        if self.baseURL != baseURL || self.token != token {
+            configurationGeneration &+= 1
+        }
         self.baseURL = baseURL
         self.token = token
     }
 
     func updateToken(_ token: String?) {
+        if self.token != token {
+            configurationGeneration &+= 1
+        }
         self.token = token
     }
 
     func reset() {
+        if baseURL != nil || token != nil {
+            configurationGeneration &+= 1
+        }
         baseURL = nil
         token = nil
     }
 
     var currentBaseURL: URL? { baseURL }
     var hasSession: Bool { token?.isEmpty == false }
+    var currentConfigurationGeneration: UInt64 { configurationGeneration }
 
     func setHooks(
         onUnauthorized: (@Sendable (RistakAPIError) -> Void)?,
@@ -193,7 +220,42 @@ actor APIClient {
         accept: String? = nil,
         timeout: TimeInterval = APIClient.defaultTimeout
     ) throws -> URLRequest {
-        try buildRequest(method: method, path: path, query: query, bodyData: nil, contentType: nil, accept: accept, timeout: timeout)
+        try authorizedRequestSnapshot(
+            for: path,
+            method: method,
+            query: query,
+            accept: accept,
+            timeout: timeout
+        ).request
+    }
+
+    func authorizedRequestSnapshot(
+        for path: String,
+        method: String = "GET",
+        query: [String: String?] = [:],
+        accept: String? = nil,
+        timeout: TimeInterval = APIClient.defaultTimeout
+    ) throws -> APIAuthorizedRequestSnapshot {
+        let context = try requestContext()
+        return APIAuthorizedRequestSnapshot(
+            request: try buildRequest(
+                context: context,
+                method: method,
+                path: path,
+                query: query,
+                bodyData: nil,
+                contentType: nil,
+                accept: accept,
+                timeout: timeout
+            ),
+            generation: context.generation
+        )
+    }
+
+    func validate(_ snapshot: APIAuthorizedRequestSnapshot) throws {
+        guard snapshot.generation == configurationGeneration else {
+            throw CancellationError()
+        }
     }
 
     // MARK: - Núcleo
@@ -230,6 +292,7 @@ actor APIClient {
     }
 
     private func buildRequest(
+        context: RequestContext,
         method: String,
         path: String,
         query: [String: String?],
@@ -238,9 +301,8 @@ actor APIClient {
         accept: String? = nil,
         timeout: TimeInterval
     ) throws -> URLRequest {
-        guard let baseURL else { throw RistakAPIError.notConfigured }
         let apiPath = Self.withAPIPrefix(path)
-        guard var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false) else {
+        guard var components = URLComponents(url: context.baseURL, resolvingAgainstBaseURL: false) else {
             throw RistakAPIError.invalidResponse
         }
         components.path = apiPath
@@ -260,7 +322,7 @@ actor APIClient {
 
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = method
-        if let token, !token.isEmpty {
+        if let token = context.token, !token.isEmpty {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         if let bodyData {
@@ -283,17 +345,22 @@ actor APIClient {
     ) async throws -> Data {
         let maxStartupRetries = 2
         var attempt = 0
+        let context = try requestContext()
+        let normalizedMethod = method.uppercased()
+        let mayRetry = normalizedMethod == "GET" || normalizedMethod == "HEAD"
+        // La URL y credencial se capturan UNA sola vez. Un retry iniciado en la
+        // cuenta A nunca se reconstruye accidentalmente contra la cuenta B.
+        let request = try buildRequest(
+            context: context,
+            method: method,
+            path: path,
+            query: query,
+            bodyData: bodyData,
+            contentType: contentType,
+            timeout: timeout
+        )
 
         while true {
-            let request = try buildRequest(
-                method: method,
-                path: path,
-                query: query,
-                bodyData: bodyData,
-                contentType: contentType,
-                timeout: timeout
-            )
-
             let data: Data
             let response: URLResponse
             do {
@@ -314,23 +381,43 @@ actor APIClient {
             }
 
             if (200..<300).contains(http.statusCode) {
+                // La cuenta pudo cambiar mientras la red respondia. Aunque sea
+                // 2xx, entregar datos del tenant anterior permitiria que un VM
+                // viejo los escriba en la cache namespaceada de la cuenta nueva.
+                guard context.generation == configurationGeneration else {
+                    throw CancellationError()
+                }
                 return data
             }
 
             let payload = try? decoder.decode(RistakAPIErrorPayload.self, from: data)
 
             // 503 de arranque/deploy (sin `code`): transitorio → backoff + retry.
-            if http.statusCode == 503, payload?.code == nil, attempt < maxStartupRetries {
+            if mayRetry, http.statusCode == 503, payload?.code == nil, attempt < maxStartupRetries {
                 attempt += 1
                 let delaySeconds = 1.5 * Double(attempt)
-                try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                try await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
+                try Task.checkCancellation()
                 continue
             }
 
             let error = RistakAPIError.from(status: http.statusCode, payload: payload, rawBody: data)
-            fireHooks(for: error, method: method, path: path)
+            // Un 401 que pertenece a una peticion anterior al cambio de sesion
+            // no puede tumbar al usuario que acaba de iniciar sesion.
+            if context.generation == configurationGeneration {
+                fireHooks(for: error, method: method, path: path)
+            }
             throw error
         }
+    }
+
+    private func requestContext() throws -> RequestContext {
+        guard let baseURL else { throw RistakAPIError.notConfigured }
+        return RequestContext(
+            baseURL: baseURL,
+            token: token,
+            generation: configurationGeneration
+        )
     }
 
     private func fireHooks(for error: RistakAPIError, method: String, path: String) {

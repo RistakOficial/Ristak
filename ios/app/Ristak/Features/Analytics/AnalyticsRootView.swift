@@ -11,6 +11,7 @@ import SwiftUI
 struct AnalyticsRootView: View {
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var model = AnalyticsViewModel()
     @State private var showsCustomRange = false
@@ -42,6 +43,10 @@ struct AnalyticsRootView: View {
         .task(id: appConfig.businessTimeZone) {
             await model.start(config: appConfig)
         }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await model.reloadAll() }
+        }
         .sensoryFeedback(.selection, trigger: model.period)
     }
 
@@ -51,6 +56,14 @@ struct AnalyticsRootView: View {
         let formatters = appConfig.formatters
         return ScrollView {
             VStack(alignment: .leading, spacing: RistakTheme.Spacing.lg) {
+                if model.lastRefreshFailed {
+                    Label(
+                        "No se pudo actualizar todo. Se conservan los últimos datos disponibles.",
+                        systemImage: "wifi.exclamationmark"
+                    )
+                    .font(.footnote)
+                    .foregroundStyle(RistakTheme.warn)
+                }
                 AnalyticsKPISection(
                     model: model,
                     formatters: formatters,

@@ -161,10 +161,12 @@ final class AccessStore {
         RistakAccessRules.hasPhoneSectionAccess(user: user, section: section)
     }
 
-    /// Secciones visibles del shell en su orden canónico. Si el filtro dejara
-    /// la lista vacía, se muestran TODAS (paridad RN: nunca un dock vacío).
+    /// Secciones visibles del shell en su orden canonico. Mientras el usuario
+    /// aun no se resuelve se mantiene fail-open; con un usuario conocido que no
+    /// tiene modulos, solo Ajustes queda visible para explicar/cerrar sesion.
     func visibleSections() -> [PhoneSection] {
+        guard user != nil else { return PhoneSection.allCases }
         let allowed = PhoneSection.allCases.filter { hasSectionAccess($0) }
-        return allowed.isEmpty ? PhoneSection.allCases : allowed
+        return allowed.isEmpty ? [.settings] : allowed
     }
 }

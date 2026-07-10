@@ -127,12 +127,13 @@ actor RistakSSEStreamEngine {
 
         while !Task.isCancelled && !isStopped {
             do {
-                let request = try await APIClient.shared.authorizedRequest(
+                let requestSnapshot = try await APIClient.shared.authorizedRequestSnapshot(
                     for: path,
                     accept: "text/event-stream",
                     timeout: 60
                 )
-                let (bytes, response) = try await session.bytes(for: request)
+                let (bytes, response) = try await session.bytes(for: requestSnapshot.request)
+                try await APIClient.shared.validate(requestSnapshot)
                 guard let http = response as? HTTPURLResponse else {
                     throw URLError(.badServerResponse)
                 }
@@ -151,6 +152,7 @@ actor RistakSSEStreamEngine {
                 for try await byte in bytes {
                     if Task.isCancelled || isStopped { return }
                     if let event = parser.consume(byte) {
+                        try await APIClient.shared.validate(requestSnapshot)
                         continuation.yield(event)
                     }
                 }

@@ -21,6 +21,9 @@ final class ConversationViewModel {
     // MARK: Dependencias
 
     let contactID: String
+    /// Puente directo hacia la bandeja: el hilo puede estar cubriendola en
+    /// iPhone, pero sus filas deben seguir reaccionando en tiempo real.
+    private let onInboxActivity: (ChatInboxActivity) -> Void
     private let journeyService = JourneyService()
     private let chatsService = ChatsService()
     private let contactsService = ContactsService()
@@ -147,6 +150,9 @@ final class ConversationViewModel {
     var draftText: String = ""
     var replyTarget: ChatMessage?
     private(set) var attachments: [ComposerAttachmentDraft] = []
+    private(set) var attachmentPreparationCount = 0
+    var isPreparingAttachments: Bool { attachmentPreparationCount > 0 }
+    @ObservationIgnored private var attachmentPreparationTasks: [UUID: Task<Void, Never>] = [:]
     let voiceRecorder = VoiceRecorderController()
     private(set) var isSending = false
 
@@ -197,9 +203,14 @@ final class ConversationViewModel {
 
     // MARK: Init
 
-    init(contactID: String, seedContact: ChatContact?) {
+    init(
+        contactID: String,
+        seedContact: ChatContact?,
+        onInboxActivity: @escaping (ChatInboxActivity) -> Void
+    ) {
         self.contactID = contactID
         self.seedContact = seedContact
+        self.onInboxActivity = onInboxActivity
         // Caché instantánea: hidrata ANTES del primer render para que el hilo
         // se pinte con los últimos mensajes sin flash de vacío/spinner.
         hydrateThreadFromCache()
@@ -294,6 +305,15 @@ final class ConversationViewModel {
         // objetivo, otro dispositivo lo pausa): refréscalo junto al poll/SSE para
         // que el header y el banner no se queden pegados. Throttled y sin bloquear.
         Task { await refreshAgentStatesIfStale() }
+    }
+
+    /// El POST aceptado ya deja la burbuja optimista y la fila de bandeja en su
+    /// estado correcto. La descarga autoritativa corre aparte para no mantener
+    /// `isSending` ni el composer bloqueados durante otra vuelta de red.
+    private func scheduleServerReconciliation() {
+        Task { [weak self] in
+            await self?.refreshSilently()
+        }
     }
 
     /// Carga del hilo: página reciente + programados (+ journey completo
@@ -461,52 +481,58 @@ final class ConversationViewModel {
         }
         let window: TimeInterval = 4 * 60
         let outboundServer = serverMessages.filter { $0.direction == .outbound }
-        var consumedServerIDs: Set<String> = []
+        var availableServerIndexes = Set(outboundServer.indices)
+        var matchedServerByOptimisticIndex: [Int: Int] = [:]
+        let candidateIndexes = optimisticMessages.indices.filter { index in
+            let message = optimisticMessages[index]
+            return !message.failed && !inFlightExternalIds.contains(message.id)
+        }
 
-        for index in optimisticMessages.indices {
-            let optimistic = optimisticMessages[index]
-            guard !optimistic.failed else { continue }
-            // Nunca reconciliar una burbuja cuyo POST sigue en vuelo: su eco
-            // real aún no existe; casarla con un mensaje previo la borraría.
-            guard !inFlightExternalIds.contains(optimistic.id) else { continue }
+        // Primera pasada: identidad definitiva. Se hace antes del fallback para
+        // que un mensaje de texto parecido nunca consuma el eco que pertenece a
+        // otro optimista con providerMessageId conocido.
+        for optimisticIndex in candidateIndexes {
+            let optimistic = optimisticMessages[optimisticIndex]
+            guard let provider = optimistic.providerMessageId, !provider.isEmpty else { continue }
+            guard let match = availableServerIndexes.first(where: { index in
+                outboundServer[index].providerMessageId == provider
+            }) else { continue }
+            availableServerIndexes.remove(match)
+            matchedServerByOptimisticIndex[optimisticIndex] = match
+        }
+
+        // Segunda pasada: fallback estricto para los que aun no tienen match.
+        // Cada eco puede satisfacer exactamente una burbuja local.
+        for optimisticIndex in candidateIndexes where matchedServerByOptimisticIndex[optimisticIndex] == nil {
+            let optimistic = optimisticMessages[optimisticIndex]
             guard let optimisticDate = optimistic.parsedDate else { continue }
-
-            var bestMatch: ChatMessage?
-            var bestDistance = TimeInterval.greatestFiniteMagnitude
-
-            for server in outboundServer where !consumedServerIDs.contains(server.id) {
-                // 1) Identidad DEFINITIVA por id de proveedor: gana SIEMPRE, sin
-                //    ventana temporal. Dos mensajes distintos jamás comparten
-                //    providerMessageId, así que no hay falsos positivos; y así un
-                //    desfase de reloj dispositivo↔servidor >4 min no deja el globo
-                //    optimista duplicado para siempre pese a tener el mismo id.
-                if let provider = optimistic.providerMessageId, !provider.isEmpty,
-                   server.providerMessageId == provider {
-                    bestMatch = server
-                    bestDistance = -1
-                    break
-                }
-                // 2) Respaldo por texto/adjunto/ubicación: AQUÍ sí se exige la
-                //    ventana de ±4 min y que el eco NO sea anterior al envío
-                //    optimista (con pequeña tolerancia de reloj). Así un "ok" que
-                //    ya existía antes de mandar el nuestro no puede reclamar el
-                //    globo optimista.
-                guard let serverDate = server.parsedDate else { continue }
-                let distance = abs(serverDate.timeIntervalSince(optimisticDate))
-                guard distance <= window, distance < bestDistance else { continue }
-                guard serverDate.timeIntervalSince(optimisticDate) >= -5 else { continue }
+            let orderedIndexes = availableServerIndexes.sorted { lhs, rhs in
+                let left = outboundServer[lhs].parsedDate ?? .distantFuture
+                let right = outboundServer[rhs].parsedDate ?? .distantFuture
+                return abs(left.timeIntervalSince(optimisticDate))
+                    < abs(right.timeIntervalSince(optimisticDate))
+            }
+            guard let match = orderedIndexes.first(where: { index in
+                let server = outboundServer[index]
+                guard let serverDate = server.parsedDate else { return false }
+                guard abs(serverDate.timeIntervalSince(optimisticDate)) <= window else { return false }
+                guard serverDate.timeIntervalSince(optimisticDate) >= -5 else { return false }
                 let sameText = !optimistic.text.isEmpty
                     && optimistic.text.trimmingCharacters(in: .whitespacesAndNewlines)
                         == server.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 let bothAttachments = optimistic.attachment?.type == server.attachment?.type
                     && optimistic.attachment != nil
                 let bothLocations = optimistic.location != nil && server.location != nil
-                guard sameText || bothAttachments || bothLocations else { continue }
-                bestMatch = server
-                bestDistance = distance
-            }
+                return sameText || bothAttachments || bothLocations
+            }) else { continue }
+            availableServerIndexes.remove(match)
+            matchedServerByOptimisticIndex[optimisticIndex] = match
+        }
 
-            guard let server = bestMatch else { continue }
+        var consumedServerIDs: Set<String> = []
+        for (optimisticIndex, serverIndex) in matchedServerByOptimisticIndex {
+            let optimistic = optimisticMessages[optimisticIndex]
+            let server = outboundServer[serverIndex]
             consumedServerIDs.insert(server.id)
 
             // La fila remota trae status/ACK/URL autoritativos, pero la identidad,
@@ -535,7 +561,7 @@ final class ConversationViewModel {
             } else {
                 stable.attachment = optimistic.attachment
             }
-            optimisticMessages[index] = stable
+            optimisticMessages[optimisticIndex] = stable
         }
 
         reconciledServerMessageIDs = consumedServerIDs
@@ -623,6 +649,9 @@ final class ConversationViewModel {
         stopRealtime()
         scheduledTickTask?.cancel()
         scheduledTickTask = nil
+        attachmentPreparationTasks.values.forEach { $0.cancel() }
+        attachmentPreparationTasks.removeAll()
+        attachmentPreparationCount = 0
     }
 
     func setScenePaused(_ paused: Bool) {
@@ -657,8 +686,15 @@ final class ConversationViewModel {
             for await event in stream {
                 if Task.isCancelled { return }
                 guard let self else { return }
-                if case .message(let payload) = event, payload.contactId == self.contactID {
-                    await self.refreshSilently()
+                if case .message(let payload) = event {
+                    let belongsToVisibleThread = payload.contactId == self.contactID
+                    self.onInboxActivity(ChatInboxActivity(
+                        event: payload,
+                        conversationIsVisible: belongsToVisibleThread
+                    ))
+                    if belongsToVisibleThread {
+                        await self.refreshSilently()
+                    }
                 }
             }
             // Fin NATURAL del stream (p. ej. 401/403 de módulo que el engine trata
@@ -924,9 +960,11 @@ final class ConversationViewModel {
     // MARK: - Envío principal
 
     var canSendDraft: Bool {
-        !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isPreparingAttachments && (
+            !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !attachments.isEmpty
             || voiceRecorder.hasPreview
+        )
     }
 
     /// Solo agentes asignados y que aún existen. TODO lo que muestra, cuenta,
@@ -1063,7 +1101,7 @@ final class ConversationViewModel {
                 )
             )
             applySendResult(result, to: externalId)
-            await refreshSilently()
+            scheduleServerReconciliation()
         } catch {
             handleSendFailure(error, externalId: externalId, restoreOnWindowError: text)
         }
@@ -1156,7 +1194,7 @@ final class ConversationViewModel {
                 handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
             }
         }
-        await refreshSilently()
+        scheduleServerReconciliation()
     }
 
     private func attachmentKind(for kind: ChatMediaKind) -> ChatAttachment.Kind {
@@ -1191,7 +1229,9 @@ final class ConversationViewModel {
 
         let encoded: EncodedChatMedia
         do {
-            encoded = try MediaEncoder.encodeAudioFile(at: preview.url, durationMs: preview.durationMs)
+            encoded = try await Task.detached(priority: .userInitiated) {
+                try MediaEncoder.encodeAudioFile(at: preview.url, durationMs: preview.durationMs)
+            }.value
         } catch {
             alert = ConversationAlert(title: "Audio", message: error.localizedDescription)
             return
@@ -1262,7 +1302,7 @@ final class ConversationViewModel {
                     VoiceNoteLocalStore.store(m4aData: m4a, forRemoteURL: remote)
                 }
             }
-            await refreshSilently()
+            scheduleServerReconciliation()
         } catch {
             handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
         }
@@ -1308,7 +1348,7 @@ final class ConversationViewModel {
                 )
             )
             applySendResult(result, to: externalId)
-            await refreshSilently()
+            scheduleServerReconciliation()
         } catch {
             handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
         }
@@ -1345,7 +1385,7 @@ final class ConversationViewModel {
                 )
             )
             applySendResult(result, to: externalId)
-            await refreshSilently()
+            scheduleServerReconciliation()
         } catch {
             handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
         }
@@ -1387,7 +1427,7 @@ final class ConversationViewModel {
                 )
             )
             applySendResult(result, to: externalId)
-            await refreshSilently()
+            scheduleServerReconciliation()
         } catch {
             handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
         }
@@ -1422,7 +1462,7 @@ final class ConversationViewModel {
                 )
             )
             applySendResult(result, to: externalId)
-            await refreshSilently()
+            scheduleServerReconciliation()
         } catch {
             handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
         }
@@ -1520,7 +1560,7 @@ final class ConversationViewModel {
                 )
             )
             applySendResult(result, to: externalId)
-            await refreshSilently()
+            scheduleServerReconciliation()
         } catch {
             handleSendFailure(error, externalId: externalId, restoreOnWindowError: nil)
         }
@@ -1554,6 +1594,7 @@ final class ConversationViewModel {
         failedPayloads[message.id] = restore
         inFlightExternalIds.insert(message.id)
         rebuildCombined()
+        onInboxActivity(ChatInboxActivity(message: message))
         scrollToBottomSignal &+= 1
     }
 
@@ -1805,7 +1846,7 @@ final class ConversationViewModel {
             )
             return false
         }
-        guard attachments.count < ChatMediaLimits.maxDraftAttachments else {
+        guard attachments.count + attachmentPreparationCount < ChatMediaLimits.maxDraftAttachments else {
             alert = ConversationAlert(
                 title: "Límite de adjuntos",
                 message: "Puedes mandar hasta 4 adjuntos por mensaje."
@@ -1815,62 +1856,129 @@ final class ConversationViewModel {
         return true
     }
 
+    private func appendPreparedAttachment(_ draft: ComposerAttachmentDraft) {
+        let currentBytes = attachments.reduce(0) { $0 + $1.media.sizeBytes }
+        guard currentBytes + draft.media.sizeBytes <= ChatMediaLimits.draftTotalMaxBytes else {
+            alert = ConversationAlert(
+                title: "Adjuntos demasiado pesados",
+                message: "Los archivos juntos pesan demasiado para prepararlos sin trabar el celular. Quita uno o envíalos por separado."
+            )
+            return
+        }
+        attachments.append(draft)
+    }
+
     func addCameraImage(_ image: UIImage) {
         guard canAddAttachment() else { return }
-        do {
-            let encoded = try MediaEncoder.encodeImage(image)
-            attachments.append(
-                ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: image)
-            )
-        } catch {
-            alert = ConversationAlert(title: "Foto", message: error.localizedDescription)
+        attachmentPreparationCount += 1
+        let preparationID = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.attachmentPreparationCount = max(0, self.attachmentPreparationCount - 1)
+                self.attachmentPreparationTasks.removeValue(forKey: preparationID)
+            }
+            do {
+                let encoded = try await Task.detached(priority: .userInitiated) {
+                    try MediaEncoder.encodeImage(image)
+                }.value
+                try Task.checkCancellation()
+                self.appendPreparedAttachment(
+                    ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: image)
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                self.alert = ConversationAlert(title: "Foto", message: error.localizedDescription)
+            }
         }
+        attachmentPreparationTasks[preparationID] = task
     }
 
     /// Media elegida de la fototeca (imagen o video ya en Data).
     func addPickedMedia(data: Data, mimeType: String?, filename: String?) {
         guard canAddAttachment() else { return }
         let mime = MediaEncoder.normalizeMime(mimeType)
-        do {
-            if mime.hasPrefix("video/") {
-                // Video: escribir a tmp para validación por archivo.
-                let ext = MediaEncoder.fileExtension(forMime: mime) ?? "mp4"
-                let url = FileManager.default.temporaryDirectory
-                    .appendingPathComponent(filename ?? "video-\(Int(Date().timeIntervalSince1970)).\(ext)")
-                try data.write(to: url)
-                let encoded = try MediaEncoder.encodeVideoFile(at: url)
-                attachments.append(ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil))
-            } else {
-                let encoded = try MediaEncoder.encodeImageData(data, mimeType: mime, filename: filename)
-                attachments.append(
-                    ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: UIImage(data: data))
-                )
+        attachmentPreparationCount += 1
+        let preparationID = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.attachmentPreparationCount = max(0, self.attachmentPreparationCount - 1)
+                self.attachmentPreparationTasks.removeValue(forKey: preparationID)
             }
-        } catch {
-            alert = ConversationAlert(title: "Adjunto", message: error.localizedDescription)
+            do {
+                let result = try await Task.detached(priority: .userInitiated) { () -> (EncodedChatMedia, UIImage?) in
+                    if mime.hasPrefix("video/") {
+                        let ext = MediaEncoder.fileExtension(forMime: mime) ?? "mp4"
+                        let url = FileManager.default.temporaryDirectory
+                            .appendingPathComponent(filename ?? "video-\(UUID().uuidString).\(ext)")
+                        defer { try? FileManager.default.removeItem(at: url) }
+                        try data.write(to: url, options: .atomic)
+                        return (try MediaEncoder.encodeVideoFile(at: url), nil)
+                    }
+                    return (
+                        try MediaEncoder.encodeImageData(data, mimeType: mime, filename: filename),
+                        UIImage(data: data)
+                    )
+                }.value
+                try Task.checkCancellation()
+                self.appendPreparedAttachment(
+                    ComposerAttachmentDraft(id: UUID().uuidString, media: result.0, previewImage: result.1)
+                )
+            } catch is CancellationError {
+                return
+            } catch {
+                self.alert = ConversationAlert(title: "Adjunto", message: error.localizedDescription)
+            }
         }
+        attachmentPreparationTasks[preparationID] = task
     }
 
     func addDocument(at url: URL) {
         guard canAddAttachment(allowMetaSocialAudio: true) else { return }
-        do {
-            if selectedChannel.isMetaSocial {
-                let encoded = try MediaEncoder.encodeAudioFile(at: url, durationMs: nil)
-                attachments.append(ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil))
-                return
+        let isMetaSocial = selectedChannel.isMetaSocial
+        // `fileImporter` puede entregar una URL security-scoped. Abrir el scope
+        // ANTES de saltar al worker y cerrarlo solo cuando termino la lectura.
+        let hasSecurityScope = url.startAccessingSecurityScopedResource()
+        attachmentPreparationCount += 1
+        let preparationID = UUID()
+        let task = Task { [weak self] in
+            defer {
+                if hasSecurityScope {
+                    url.stopAccessingSecurityScopedResource()
+                }
             }
-            let encoded = try MediaEncoder.encodeDocumentFile(at: url)
-            attachments.append(ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil))
-        } catch {
-            if selectedChannel.isMetaSocial {
-                alert = ConversationAlert(
-                    title: "Adjunto no disponible",
-                    message: "Messenger e Instagram desde Meta nativo mandan texto o audio en este chat."
+            guard let self else { return }
+            defer {
+                self.attachmentPreparationCount = max(0, self.attachmentPreparationCount - 1)
+                self.attachmentPreparationTasks.removeValue(forKey: preparationID)
+            }
+            do {
+                let encoded = try await Task.detached(priority: .userInitiated) {
+                    if isMetaSocial {
+                        return try MediaEncoder.encodeAudioFile(at: url, durationMs: nil)
+                    }
+                    return try MediaEncoder.encodeDocumentFile(at: url)
+                }.value
+                try Task.checkCancellation()
+                self.appendPreparedAttachment(
+                    ComposerAttachmentDraft(id: UUID().uuidString, media: encoded, previewImage: nil)
                 )
-            } else {
-                alert = ConversationAlert(title: "Documento", message: error.localizedDescription)
+            } catch is CancellationError {
+                return
+            } catch {
+                if isMetaSocial {
+                    self.alert = ConversationAlert(
+                        title: "Adjunto no disponible",
+                        message: "Messenger e Instagram desde Meta nativo mandan texto o audio en este chat."
+                    )
+                } else {
+                    self.alert = ConversationAlert(title: "Documento", message: error.localizedDescription)
+                }
             }
         }
+        attachmentPreparationTasks[preparationID] = task
     }
 
     func removeAttachment(_ id: String) {

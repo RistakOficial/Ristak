@@ -261,6 +261,12 @@ categorias por permiso y plan; `/movil` filtra secciones/cargas y cache por
 feature; automatizaciones validan nodos premium al guardar, publicar, probar y
 ejecutar.
 
+En `ios/app`, mientras el usuario aun no termina de resolverse el shell conserva
+acceso provisional para no parpadear. Una vez conocido el usuario, si ninguna
+seccion queda autorizada, la app muestra solo Ajustes para explicar el acceso y
+permitir cerrar sesion; nunca convierte una lista vacia en acceso a todos los
+modulos.
+
 Las subfeatures premium no deben colarse por herencia visual. `appointments`
 habilita citas y calendarios locales; `google_calendar` habilita solo la
 integracion/sincronizacion con Google. El cobro antes de agendar en calendarios
@@ -748,6 +754,19 @@ no como camino principal: bandeja cada 12 s, hilo abierto cada 4 s y acuses de
 salientes cada 12 s. Si se pierde el stream por proxy, reconexion o app
 suspendida, el siguiente tick reconcilia sin spinner ni salto de scroll.
 
+La app SwiftUI `ios/app` usa los metadatos minimos del SSE y de cada envio
+optimista para promover de inmediato la fila del contacto al inicio, incluso si
+el hilo esta cubriendo la bandeja en iPhone. Deduplica la misma actividad cuando
+llega por ambos caminos y luego reconcilia texto, perfil, contadores y orden
+contra REST; no fabrica una fila incompleta si el contacto aun no estaba en la
+profundidad cargada. Los refresh vivos de bandeja mandan
+`warmProfilePictures=false` para no consultar proveedores externos en cada
+poll/SSE; el calentamiento de fotos se reserva para arranque frio y paginacion.
+La codificacion de fotos, videos, audios y documentos corre fuera del hilo
+visual, el composer bloquea enviar mientras prepara y el tray conserva el limite
+de 4 adjuntos con tope acumulado de 40 MB binarios para evitar picos de memoria
+por base64.
+
 Cuando llega una push de chat o el usuario abre `/movil` desde esa notificacion,
 el cliente debe priorizar el hilo afectado sobre la bandeja completa. La push web
 o nativa propaga `contactId`, `messageId`, `title` y `body`; el chat movil pinta
@@ -1094,6 +1113,9 @@ Reglas base:
   `user_config.mobile_chat_appointment_entry_mode`; el modo mensual mantiene
   selector de calendario, cambio de mes por swipe/flechas y captura de hora,
   duracion, ubicacion e invitados antes de crear la cita por el endpoint normal.
+- En `ios/app`, los snapshots de citas usan una clave compuesta por calendario y
+  mes. Cambiar calendario vacia las filas anteriores antes de hidratar la clave
+  correcta, y volver a foreground fuerza la revalidacion del calendario activo.
 
 Documentacion especifica:
 
@@ -1156,6 +1178,19 @@ suscripcion, el backend emite un evento por `/api/payment-events/stream`. Las
 pantallas de Transacciones, Planes de pago y Suscripciones escuchan ese stream y
 recargan solo la vista abierta. No se usa polling periodico para mantener esas
 tablas vivas; la actualizacion depende del evento que dispara el cambio real.
+
+En `ios/app`, el SSE se detiene en background y se reconecta al volver a
+foreground. Tanto `connected` como los eventos de pago/suscripcion disparan una
+reconciliacion REST con debounce, porque el stream no reproduce lo ocurrido
+durante un corte. Pagos recientes solicita `statuses=paid,partial` antes de
+paginar. La app bloquea precios cuya moneda no coincide con
+`account_currency`; si se pierde la respuesta de un cobro con tarjeta guardada,
+lo marca como incierto y exige revisar el historial antes de permitir otro
+intento. Fallar al cargar tarjetas guardadas se presenta como error reintentable,
+no como una lista vacia autoritativa. Los cobros saved-card usan
+`clientRequestId` estable: una reserva persistente por pasarela+llave reproduce
+el resultado terminado y bloquea estados processing/ambiguos, mientras la misma
+llave derivada llega a Stripe, Conekta o Rebill como segunda barrera.
 
 En el cliente nativo movil, registrar pago unico, plan de pagos y suscripcion se
 configura como wizard. En pago unico y suscripcion, el primer paso define
@@ -2713,6 +2748,18 @@ principal, embudo, distribucion de origen y origen por numero de WhatsApp. Los
 rangos se calculan con `account_timezone`, el rango personalizado usa fechas
 `YYYY-MM-DD`, y los importes se formatean con `account_currency`.
 
+En la implementacion SwiftUI, una recarga de Analiticas solo cuenta como fresca
+si completan metricas, grafica, embudo y origen. Si algun panel falla, conserva
+el snapshot pero lo advierte y vuelve a intentar al regresar a foreground. La
+consulta de numeros de WhatsApp es independiente de Origen y solo reemplaza su
+cache cuando responde con exito.
+
+El cliente de red iOS captura `{baseURL, token, generation}` al iniciar cada
+request. Un 401 o rollback perteneciente a una cuenta anterior no puede mutar la
+sesion actual, y las cargas de configuracion tambien descartan generaciones
+viejas. Solo `GET`/`HEAD` puede reintentarse automaticamente ante un 503; una
+escritura nunca se repite a ciegas.
+
 Documentos:
 
 - `docs/MOBILE_APP.md`
@@ -2739,6 +2786,18 @@ mostrar el avatar del contacto como remitente. La extension
 `com.ristak.app.NotificationService` y procesa `contactAvatarUrl` /
 `senderAvatarUrl` como avatar de remitente; `notificationImageUrl` queda para
 media real del mensaje.
+El topic APNs valido para la app Apple es exactamente `com.ristak.app`; el
+Installer no debe reportar iOS configurado con un bundle legacy o Android. La
+app registra el token con `platform=ios`, `clientType=native` y
+`appPackage=com.ristak.app`. Permiso del sistema y registro confirmado por
+backend son estados separados: Ajustes solo muestra alertas activas cuando ambos
+estan listos. La activacion se serializa, usa reintentos 5/15/60/300 s y se
+revalida en foreground si la confirmacion supera 6 h. Logout deshabilita el
+device con `DELETE /api/push/mobile-devices` best-effort y siempre limpia APNs
+local; 401/licencia revocada tambien ejecutan la limpieza local inmediata.
+La Notification Service Extension serializa tareas/callbacks para finalizar una
+sola vez, descarga con timeouts de 6–7 s y limita el avatar a 5 MB y la media
+adjunta a 12 MB; si no puede enriquecer, entrega la notificacion base.
 El login de `com.ristak.app` muestra marca Ristak, solo pide correo y contrasena,
 no expone configuracion avanzada de servidor y resuelve automaticamente la
 instalacion correcta por correo via `https://www.ristak.com/api/mobile/resolve`

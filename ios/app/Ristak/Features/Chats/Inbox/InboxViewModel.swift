@@ -71,6 +71,7 @@ final class InboxViewModel {
     private(set) var hasMore = false
     private(set) var isInitialLoading = false
     private(set) var isLoadingMore = false
+    private(set) var loadMoreFailed = false
     private(set) var isSilentRefreshing = false
     /// Píldora «Mostrando lo guardado, actualizando chats» (cache-first).
     private(set) var isShowingCachedData = false
@@ -84,6 +85,24 @@ final class InboxViewModel {
     private var loadedFetchKey = ""
     private var refreshInFlight = false
     private var refreshQueued = false
+    /// Ids de actividad ya aplicada. iPad puede recibir el mismo evento por el
+    /// SSE de la bandeja y por el callback del hilo; el set evita duplicar
+    /// badges. El orden acota la memoria sin depender de un TTL.
+    private var appliedActivityKeys: Set<String> = []
+    private var appliedActivityOrder: [String] = []
+    private static let activityDeduplicationLimit = 512
+    /// Overlay transitorio para que una respuesta REST que salio antes del
+    /// evento no regrese la fila a su posicion anterior. Se elimina cuando el
+    /// servidor refleja el mensaje o al vencer el TTL de seguridad.
+    private struct PendingInboxActivity {
+        var activity: ChatInboxActivity
+        var unreadCount: Int
+        let receivedAt: ContinuousClock.Instant
+    }
+    private let activityClock = ContinuousClock()
+    private var pendingActivityByContactID: [String: PendingInboxActivity] = [:]
+    private var activityRevision: UInt64 = 0
+    private static let pendingActivityLifetime: Duration = .seconds(60)
     private var realtimeTask: Task<Void, Never>?
     /// Cadena serial de operaciones start/stop del engine SSE (ver
     /// `startEventsStream`/`enqueueEventsStop`).
@@ -287,7 +306,7 @@ final class InboxViewModel {
         return (number.id, phone)
     }
 
-    private func fetchPage(offset: Int) async throws -> [ChatContact] {
+    private func fetchPage(offset: Int, warmProfilePictures: Bool = true) async throws -> [ChatContact] {
         let params = phoneQueryParams()
         // La bandeja SIEMPRE trae la vista completa: la búsqueda es local
         // (más `/contacts/search` en paralelo), nunca reemplaza estas filas.
@@ -296,7 +315,8 @@ final class InboxViewModel {
             limit: ChatsService.defaultPageSize,
             offset: offset,
             businessPhoneNumberId: params.id,
-            businessPhone: params.phone
+            businessPhone: params.phone,
+            warmProfilePictures: warmProfilePictures
         )
     }
 
@@ -308,6 +328,7 @@ final class InboxViewModel {
 
     /// Recarga completa (primera página) respetando query y filtro de número.
     private func reloadFromServer(showSpinner: Bool) async {
+        let startingActivityRevision = activityRevision
         if showSpinner {
             isInitialLoading = true
         } else {
@@ -322,7 +343,12 @@ final class InboxViewModel {
 
         let fetchKey = currentFetchKey
         do {
-            let page = try await fetchPage(offset: 0)
+            // `warmProfilePictures=true` puede consultar proveedores externos y
+            // convirtio polls de produccion en requests de 8-11 s. Solo se
+            // calienta en un arranque realmente frio; cache/refresh conservan
+            // los avatares hidratados durante el merge.
+            let shouldWarmPictures = rows.isEmpty && !isShowingCachedData
+            let page = try await fetchPage(offset: 0, warmProfilePictures: shouldWarmPictures)
             // Si el usuario cambió query/número mientras esta carga volaba,
             // descartar el lote (llega otro reload con los params nuevos).
             guard fetchKey == currentFetchKey else { return }
@@ -336,7 +362,8 @@ final class InboxViewModel {
                     // que el camino vivo (mergeRefresh) que nunca vacía la bandeja.
                     // No se tocan serverOffset/hasMore.
                 } else {
-                    if rows != page { rows = page }
+                    let reconciled = reconcilePendingActivities(in: page, serverPage: page)
+                    if rows != reconciled { rows = reconciled }
                     // Reemplazo total: el offset y hasMore se rebobinan a 1 página.
                     serverOffset = page.count
                     hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
@@ -349,7 +376,8 @@ final class InboxViewModel {
                 // Solo reasigna (y re-renderiza la lista) si algo cambió: un poll
                 // de 12 s idéntico ya no fuerza un re-diff completo de la bandeja.
                 let merged = ChatInboxPaginator.mergeRefresh(rows, freshFirstPage: page)
-                if merged != rows { rows = merged }
+                let reconciled = reconcilePendingActivities(in: merged, serverPage: page)
+                if reconciled != rows { rows = reconciled }
                 serverOffset = max(serverOffset, page.count)
             }
             loadedFetchKey = fetchKey
@@ -359,6 +387,12 @@ final class InboxViewModel {
             persistCacheSnapshot()
             syncUnreadBadge()
             prefetchAvatars(rows)
+            // Si la peticion salio antes de una actividad local/SSE, el overlay
+            // ya protege la UI; aun asi pedimos una vuelta fresca para confirmar
+            // pronto y retirar el estado provisional.
+            if startingActivityRevision != activityRevision {
+                requestSilentRefresh()
+            }
         } catch let error as RistakAPIError {
             isAccessDenied = error.isAccessDenied
             if rows.isEmpty {
@@ -394,20 +428,30 @@ final class InboxViewModel {
     private func loadMore() async {
         guard hasMore, !isLoadingMore else { return }
         isLoadingMore = true
+        loadMoreFailed = false
         defer { isLoadingMore = false }
         let fetchKey = currentFetchKey
         do {
             let page = try await fetchPage(offset: serverOffset)
             // Descartar lotes si una recarga movió los params mientras tanto.
             guard fetchKey == currentFetchKey, fetchKey == loadedFetchKey else { return }
-            rows = ChatInboxPaginator.appendPage(rows, page: page)
+            let appended = ChatInboxPaginator.appendPage(rows, page: page)
+            rows = reconcilePendingActivities(in: appended, serverPage: page)
             prefetchAvatars(page)
             serverOffset += page.count
             hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
             syncUnreadBadge()
         } catch {
-            hasMore = false
+            // Un fallo transitorio no significa fin del historial. Conservar
+            // `hasMore` permite que el siguiente centinela/reintento continue
+            // paginando en lugar de cortar la bandeja para toda la sesion.
+            loadMoreFailed = true
         }
+    }
+
+    func retryLoadMore() {
+        guard loadMoreFailed else { return }
+        Task { await loadMore() }
     }
 
     // MARK: - Refresh vivo (SSE + polling + pull-to-refresh)
@@ -415,6 +459,158 @@ final class InboxViewModel {
     /// Pull-to-refresh explícito.
     func refreshNow() async {
         await reloadFromServer(showSpinner: false)
+    }
+
+    /// Aplica en memoria la actividad minima que ya conocemos por el envio
+    /// optimista o por SSE. El row se promueve inmediatamente; REST sigue siendo
+    /// la fuente autoritativa para texto entrante, contadores y perfil.
+    func applyActivity(_ activity: ChatInboxActivity) {
+        guard configured, !activity.contactID.isEmpty else { return }
+        guard activityMatchesActivePhoneFilter(activity) else { return }
+
+        let key = activity.deduplicationKey
+        let isDuplicate = appliedActivityKeys.contains(key)
+        if !isDuplicate {
+            appliedActivityKeys.insert(key)
+            appliedActivityOrder.append(key)
+            if appliedActivityOrder.count > Self.activityDeduplicationLimit {
+                let expired = appliedActivityOrder.removeFirst()
+                appliedActivityKeys.remove(expired)
+            }
+        }
+
+        guard let index = rows.firstIndex(where: { $0.id == activity.contactID }) else {
+            // Un contacto fuera de la profundidad ya cargada necesita su fila
+            // completa del servidor; no se puede fabricar sin nombre/perfil.
+            return
+        }
+
+        var contact = rows[index]
+        let isOutbound = ChatRowSignals.isOutbound(activity.direction)
+        activityRevision &+= 1
+
+        // Si el hilo esta visible, nunca prender un no-leido local. Esto se
+        // aplica incluso si el callback llega despues del mismo evento SSE.
+        if activity.conversationIsVisible {
+            contact.unreadCount = 0
+        } else if !isDuplicate, activity.isNew, !isOutbound {
+            contact.unreadCount = max(0, contact.unreadCount) + 1
+        }
+
+        let activityDate = RistakDateParsing.date(fromISO: activity.timestamp)
+        let currentDate = RistakDateParsing.date(fromISO: contact.lastMessageDate)
+        let isCurrentEnough: Bool
+        if let activityDate, let currentDate {
+            // Entradas SSE y fila REST usan reloj del servidor: un evento mas
+            // viejo, aunque sea por segundos, no puede pisar el preview nuevo.
+            isCurrentEnough = activityDate >= currentDate
+        } else {
+            isCurrentEnough = true
+        }
+
+        // Un envio local siempre es actividad vigente aunque el reloj del
+        // celular difiera del servidor. Para entradas SSE si respetamos la
+        // fecha autoritativa para no revivir eventos atrasados.
+        if activity.isNew, isOutbound || isCurrentEnough {
+            contact = applyingActivityFields(activity, to: contact)
+
+            rows.remove(at: index)
+            rows.insert(contact, at: 0)
+            pendingActivityByContactID[activity.contactID] = PendingInboxActivity(
+                activity: activity,
+                unreadCount: contact.unreadCount,
+                receivedAt: activityClock.now
+            )
+        } else if contact != rows[index] {
+            rows[index] = contact
+        }
+
+        persistCacheSnapshot()
+        syncUnreadBadge()
+    }
+
+    private func activityMatchesActivePhoneFilter(_ activity: ChatInboxActivity) -> Bool {
+        guard case .phone(let selectedID) = activeFilter else { return true }
+        // El SSE global no incluye phoneNumberId. En una bandeja filtrada no se
+        // puede adivinar la ruta: se espera la reconciliacion REST filtrada.
+        guard let activityID = activity.businessPhoneNumberID, !activityID.isEmpty else { return false }
+        return activityID == selectedID
+    }
+
+    private func applyingActivityFields(
+        _ activity: ChatInboxActivity,
+        to source: ChatContact
+    ) -> ChatContact {
+        var contact = source
+        if let text = activity.text { contact.lastMessageText = text }
+        if !activity.messageType.isEmpty { contact.lastMessageType = activity.messageType }
+        if !activity.channel.isEmpty { contact.lastMessageChannel = activity.channel }
+        if !activity.transport.isEmpty { contact.lastMessageTransport = activity.transport }
+        if !activity.direction.isEmpty { contact.lastMessageDirection = activity.direction }
+        if let phone = activity.businessPhone, !phone.isEmpty {
+            contact.lastBusinessPhone = phone
+        }
+        if let phoneID = activity.businessPhoneNumberID, !phoneID.isEmpty {
+            contact.lastBusinessPhoneNumberId = phoneID
+        }
+        if !activity.timestamp.isEmpty { contact.lastMessageDate = activity.timestamp }
+        return contact
+    }
+
+    /// Reaplica promociones locales despues del merge REST sin volver a sumar
+    /// no-leidos. Las actividades se procesan de vieja a nueva; insertar cada
+    /// una al frente deja la mas reciente arriba.
+    private func reconcilePendingActivities(
+        in contacts: [ChatContact],
+        serverPage: [ChatContact]
+    ) -> [ChatContact] {
+        guard !pendingActivityByContactID.isEmpty else { return contacts }
+
+        var result = contacts
+        let now = activityClock.now
+        let ordered = pendingActivityByContactID.values.sorted { $0.receivedAt < $1.receivedAt }
+
+        for pending in ordered {
+            let activity = pending.activity
+            if pending.receivedAt.duration(to: now) >= Self.pendingActivityLifetime {
+                pendingActivityByContactID.removeValue(forKey: activity.contactID)
+                continue
+            }
+            if let server = serverPage.first(where: { $0.id == activity.contactID }),
+               serverAcknowledges(activity, in: server) {
+                pendingActivityByContactID.removeValue(forKey: activity.contactID)
+                continue
+            }
+            guard activityMatchesActivePhoneFilter(activity),
+                  let index = result.firstIndex(where: { $0.id == activity.contactID }) else { continue }
+
+            var contact = applyingActivityFields(activity, to: result.remove(at: index))
+            contact.unreadCount = activity.conversationIsVisible
+                ? 0
+                : max(contact.unreadCount, pending.unreadCount)
+            result.insert(contact, at: 0)
+        }
+
+        return result
+    }
+
+    private func serverAcknowledges(_ activity: ChatInboxActivity, in contact: ChatContact) -> Bool {
+        let directionMatches = ChatRowSignals.isOutbound(contact.lastMessageDirection)
+            == ChatRowSignals.isOutbound(activity.direction)
+        guard directionMatches else { return false }
+
+        let activityText = (activity.text ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let serverText = contact.lastMessageText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !activityText.isEmpty, activityText == serverText { return true }
+
+        let typeMatches = !activity.messageType.isEmpty
+            && contact.lastMessageType.caseInsensitiveCompare(activity.messageType) == .orderedSame
+        guard typeMatches,
+              let activityDate = RistakDateParsing.date(fromISO: activity.timestamp),
+              let serverDate = RistakDateParsing.date(fromISO: contact.lastMessageDate) else { return false }
+        return abs(serverDate.timeIntervalSince(activityDate)) <= 4 * 60
     }
 
     /// Refresh coalescido (nudge SSE / push foreground / tick de polling).
@@ -463,7 +659,8 @@ final class InboxViewModel {
             for await event in stream {
                 if Task.isCancelled { return }
                 guard let self else { return }
-                if case .message = event {
+                if case .message(let payload) = event {
+                    self.applyActivity(ChatInboxActivity(event: payload))
                     self.requestSilentRefresh()
                 }
             }

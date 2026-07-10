@@ -31,8 +31,16 @@ struct ConversationScreen: View {
 
     private static let bottomAnchorID = "thread-bottom-anchor"
 
-    init(contactID: String, seedContact: ChatContact?) {
-        _viewModel = State(initialValue: ConversationViewModel(contactID: contactID, seedContact: seedContact))
+    init(
+        contactID: String,
+        seedContact: ChatContact?,
+        onInboxActivity: @escaping (ChatInboxActivity) -> Void
+    ) {
+        _viewModel = State(initialValue: ConversationViewModel(
+            contactID: contactID,
+            seedContact: seedContact,
+            onInboxActivity: onInboxActivity
+        ))
     }
 
     var body: some View {

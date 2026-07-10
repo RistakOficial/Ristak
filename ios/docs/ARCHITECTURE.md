@@ -77,6 +77,10 @@ carpeta asignada + lee (sin modificar) el resto.
   `client_inactive`, `installation_not_ready`, `rate_limited` 429).
 - `APIClient` (actor): base URL del tenant + `Authorization: Bearer <jwt>`.
   Timeout 15s default (60s para envíos con media, 30s dashboard). Sin CORS.
+  Cada request captura un contexto inmutable `{baseURL, token, generation}`:
+  una respuesta o reintento que comenzó en la cuenta anterior no puede cambiar
+  la sesión nueva ni reconstruirse contra otro tenant. Sin conectividad falla
+  rápido; caché/polling/reintento explícito recuperan sin dejar pantallas pegadas.
 - **Regla de envelope**: decodifica `{success, data}` y desenvuelve SOLO si
   ambos existen; si no, decodifica la forma específica del endpoint
   (`{success, config}`, `{success, timezone}`, arrays pelados, `{products}`…).
@@ -89,7 +93,8 @@ carpeta asignada + lee (sin modificar) el resto.
   - 403 `feature_not_available` → silencioso en GET; alerta solo en acciones.
   - 403 `read_access_required`/`write_access_required` → error tipado para que
     la vista muestre estado "sin acceso" (no logout).
-  - 503 `Aplicación iniciando` → transitorio: reintento con backoff.
+  - 503 `Aplicación iniciando` → transitorio: reintento con backoff solo
+    para `GET`/`HEAD`. Nunca se repite automáticamente una escritura.
   - 429 `rate_limited` → mensaje con espera.
 - `RistakAPIError`: `{status, code?, message, feature?, module?}`.
 
@@ -109,9 +114,11 @@ carpeta asignada + lee (sin modificar) el resto.
 - `AccessStore`: port 1:1 de `mobile/src/access.ts` (doc 13): secciones del
   shell por `accessConfig` — chat→`chat`, citas→`appointments`,
   pagos→`payments`, analíticas→`analytics`, ajustes→`settings_mobile`;
-  admin todo write; filtrar por read; si queda vacío → mostrar todas;
-  `user == nil` (cargando) → permitir. Analíticas además maneja 403 de módulo
-  `dashboard` con estado "sin acceso" (trampa doc 09/13).
+  admin todo write; filtrar por read; `user == nil` (cargando) → permitir.
+  Con un usuario ya resuelto cuya lista quede vacía, mostrar solo Ajustes para
+  explicar el acceso y permitir cerrar sesión; nunca abrir todos los módulos por
+  fallback. Analíticas además maneja 403 de módulo `dashboard` con estado "sin
+  acceso" (trampa doc 09/13).
 
 ## Config (doc 10)
 
@@ -121,35 +128,54 @@ carpeta asignada + lee (sin modificar) el resto.
 (`POST /api/config`, `PATCH /api/user-config`). Tema:
 `mobile_chat_theme_preference` system|light|dark|auto (auto = oscuro
 19:00–06:00 hora del negocio) → `preferredColorScheme`.
+Las cargas y escrituras llevan generación de sesión y secuencia de carga: un
+resultado viejo no puede hidratar, cachear ni ejecutar rollback sobre la cuenta
+que acaba de entrar.
 
 ## Realtime (doc 11)
 
 - `ChatEventsClient`: SSE por `URLSession.bytes` a `/api/chat-events/stream`
   con header Bearer (eventos `connected`, `chat_message`); heartbeats `:` cada
-  25s; reconexión 1s→15s exponencial. Los eventos NO reemplazan datos: disparan
-  refresh REST coalescido (merge por id).
-- `PollingClock`: bandeja 20s, hilo abierto 7s, receipts 12s; pausa en
+  25s; reconexión 1s→15s exponencial. Antes del refresh REST autoritativo, la
+  app aplica la actividad mínima conocida: deduplica el evento, actualiza el
+  preview disponible y mueve la fila del contacto al inicio. Un envío optimista
+  usa el mismo puente aunque el hilo cubra la bandeja en iPhone. Los refresh
+  vivos consultan `/contacts/chats` con `warmProfilePictures=false`; el
+  calentamiento remoto de avatares queda para arranque frío/paginación.
+- `PollingClock`: bandeja 12s, hilo abierto 4s, receipts 12s; pausa en
   background.
 - `PresenceReporter`: `POST /api/chat-events/viewing {contactId, foreground}`
   cada 20s mientras un hilo está visible (traga 403 silenciosamente).
-- `PaymentEventsClient`: `payment_changed`/`subscription_changed` → refresh de
-  listas de pagos.
+- `PaymentEventsClient`: `connected`, `payment_changed` y
+  `subscription_changed` reconcilian por REST con debounce. El stream se detiene
+  en background, se vuelve a abrir en foreground y `connected` cubre eventos
+  perdidos porque SSE no tiene replay.
 
 ## Push (doc 11)
 
 - `PushRegistrar`: pedir permiso, registrar token APNs **hex** en
   `POST /api/push/mobile-devices {token, platform:"ios", calendarIds,
-  appVersion, appBuild, deviceModel, osVersion}`.
+  appVersion, appBuild, deviceModel, osVersion, clientType:"native",
+  appPackage:"com.ristak.app"}`. El permiso de iOS y el registro confirmado por
+  backend son estados distintos: "activo" exige ambos. Serializa activaciones,
+  reintenta fallos transitorios a 5/15/60/300 s y revalida en foreground si la
+  confirmación supera 6 h.
 - `NotificationRouter`: tap → deep link por `contactId`/`url`/`category`
   (chat, cita, pago). Badge: solo local desde unread de bandeja (el backend no
   manda badge).
 - Topic APNs: el backend (`APNS_BUNDLE_ID`, default `com.ristak.app`) y el
-  broker del Installer deben mantenerse en `com.ristak.app`, que ahora es la
-  identidad oficial de la app SwiftUI Apple.
+  broker del Installer exigen exactamente `com.ristak.app`; un topic legacy o
+  distinto no cuenta como iOS configurado. Es la identidad oficial de la app
+  SwiftUI Apple.
 - `RistakNotificationService`: extensión embebida con bundle
   `com.ristak.app.NotificationService`; procesa `mutable-content`, descarga
   avatar/media pública y entrega Communication Notifications con el remitente
-  correcto.
+  correcto. Su estado y callbacks se serializan para finalizar una sola vez;
+  usa timeouts de 6–7 s y rechaza avatares mayores a 5 MB o adjuntos mayores a
+  12 MB.
+- Logout explícito hace `DELETE /api/push/mobile-devices` best-effort y luego
+  limpia registro/APNs local. En 401, licencia revocada o cierre sin credencial,
+  la limpieza local ocurre de inmediato aunque el DELETE ya no sea posible.
 
 ## Media (doc 12)
 
@@ -165,12 +191,29 @@ carpeta asignada + lee (sin modificar) el resto.
   URL del globo optimista; al llegar la fila del servidor absorbe status, WAMID y
   URL remota dentro de esa misma burbuja y oculta la fila duplicada. Los polls no
   deben cerrar/reabrir el preview ni provocar saltos del `ScrollView`.
+- La codificación/lectura de foto, video, audio y documentos corre fuera del
+  `MainActor`; mientras se prepara media el composer bloquea enviar/adjuntar.
+  El tray admite hasta 4 adjuntos y un máximo acumulado de 40 MB binarios para
+  evitar picos de memoria por base64.
 - Render: URLs de media públicas (CDN) — `ImageLoader` con caché en memoria y
   disco. Visor pantalla completa con zoom, player audio con velocidades y
   scrubber alineado a los extremos sin parecer recortado, QuickLook para
   documentos, mapa para ubicación.
 
 ## Navegación / shell
+
+- Calendarios cachea citas por `calendarID + yyyy-MM`; al cambiar calendario
+  limpia las filas anteriores, hidrata solo el snapshot correcto y revalida al
+  volver a foreground.
+- Pagos recientes pide al backend `statuses=paid,partial`, no escanea páginas de
+  pendientes. Un precio con moneda distinta a `account_currency` bloquea el
+  cobro. Si se pierde la respuesta de una tarjeta guardada, el resultado queda
+  `unknown` y no se permite reintentar a ciegas hasta revisar el historial. Cada
+  intento lleva `clientRequestId` persistente; backend y proveedor deduplican y
+  reproducen la respuesta sin crear otro cargo.
+- Analíticas conserva snapshots stale-while-revalidate, pero muestra aviso si
+  no se actualizaron sus cuatro paneles. La carga de números de WhatsApp es
+  independiente de Origen y solo reemplaza su caché cuando responde con éxito.
 
 - `MainShell`: `TabView` con `Tab` tipadas (Chats por defecto, orden: Chats,
   Calendarios, Pagos, Analíticas, Ajustes) + `.tabViewStyle(.sidebarAdaptable)`

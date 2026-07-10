@@ -3,22 +3,35 @@ import Intents
 import UserNotifications
 
 final class NotificationService: UNNotificationServiceExtension {
+    private let stateQueue = DispatchQueue(label: "com.ristak.notification-service.state")
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttemptContent: UNNotificationContent?
-    private var activeTasks: [URLSessionTask] = []
+    private var activeTasks: [Int: URLSessionTask] = [:]
+
+    private static let maxAvatarBytes = 5 * 1024 * 1024
+    private static let maxAttachmentBytes = 12 * 1024 * 1024
+    private static let downloadSession: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 6
+        configuration.timeoutIntervalForResource = 7
+        configuration.waitsForConnectivity = false
+        return URLSession(configuration: configuration)
+    }()
 
     override func didReceive(
         _ request: UNNotificationRequest,
         withContentHandler contentHandler: @escaping (UNNotificationContent) -> Void
     ) {
-        self.contentHandler = contentHandler
-
         guard let mutableContent = request.content.mutableCopy() as? UNMutableNotificationContent else {
             contentHandler(request.content)
             return
         }
 
-        bestAttemptContent = mutableContent
+        stateQueue.sync {
+            self.contentHandler = contentHandler
+            self.bestAttemptContent = mutableContent
+            self.activeTasks.removeAll()
+        }
         let userInfo = request.content.userInfo
 
         attachNotificationMedia(to: mutableContent, userInfo: userInfo) { [weak self] contentWithMedia in
@@ -34,18 +47,21 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     override func serviceExtensionTimeWillExpire() {
-        activeTasks.forEach { $0.cancel() }
-        if let bestAttemptContent {
-            finish(with: bestAttemptContent)
+        let snapshot: (tasks: [URLSessionTask], content: UNNotificationContent?) = stateQueue.sync {
+            (Array(activeTasks.values), bestAttemptContent)
         }
+        snapshot.tasks.forEach { $0.cancel() }
+        if let content = snapshot.content { finish(with: content) }
     }
 
     private func finish(with content: UNNotificationContent) {
-        guard let contentHandler else {
-            return
+        let handler: ((UNNotificationContent) -> Void)? = stateQueue.sync {
+            guard let contentHandler else { return nil }
+            self.contentHandler = nil
+            self.bestAttemptContent = content
+            return contentHandler
         }
-        self.contentHandler = nil
-        contentHandler(content)
+        handler?(content)
     }
 
     private func attachNotificationMedia(
@@ -59,7 +75,7 @@ final class NotificationService: UNNotificationServiceExtension {
         }
 
         var taskIdentifier = -1
-        let task = URLSession.shared.downloadTask(with: mediaURL) { [weak self] temporaryURL, response, _ in
+        let task = Self.downloadSession.downloadTask(with: mediaURL) { [weak self] temporaryURL, response, _ in
             guard let self else {
                 completion(content)
                 return
@@ -67,12 +83,14 @@ final class NotificationService: UNNotificationServiceExtension {
 
             defer {
                 self.removeActiveTask(withIdentifier: taskIdentifier)
-                self.bestAttemptContent = content
+                self.updateBestAttemptContent(content)
                 completion(content)
             }
 
             guard
                 let temporaryURL,
+                self.responseLengthIsAllowed(response, limit: Self.maxAttachmentBytes),
+                self.fileSize(at: temporaryURL) <= Self.maxAttachmentBytes,
                 let attachmentURL = self.copyAttachment(from: temporaryURL, response: response, sourceURL: mediaURL),
                 let attachment = try? UNNotificationAttachment(
                     identifier: "message-media",
@@ -87,7 +105,7 @@ final class NotificationService: UNNotificationServiceExtension {
         }
 
         taskIdentifier = task.taskIdentifier
-        activeTasks.append(task)
+        registerActiveTask(task)
         task.resume()
     }
 
@@ -144,7 +162,7 @@ final class NotificationService: UNNotificationServiceExtension {
 
             do {
                 let updatedContent = try content.updating(from: intent)
-                self.bestAttemptContent = updatedContent
+                self.updateBestAttemptContent(updatedContent)
                 completion(updatedContent)
             } catch {
                 completion(content)
@@ -154,7 +172,9 @@ final class NotificationService: UNNotificationServiceExtension {
 
     private func downloadImageData(from url: URL, completion: @escaping (Data?) -> Void) {
         var taskIdentifier = -1
-        let task = URLSession.shared.dataTask(with: url) { [weak self] data, response, _ in
+        // DownloadTask escribe a disco; `dataTask` podia acumular una respuesta
+        // enorme completa en RAM antes de aplicar el limite y matar la extension.
+        let task = Self.downloadSession.downloadTask(with: url) { [weak self] temporaryURL, response, _ in
             guard let self else {
                 completion(nil)
                 return
@@ -165,8 +185,12 @@ final class NotificationService: UNNotificationServiceExtension {
             }
 
             guard
-                let data,
-                !data.isEmpty
+                let temporaryURL,
+                self.responseLengthIsAllowed(response, limit: Self.maxAvatarBytes),
+                self.fileSize(at: temporaryURL) <= Self.maxAvatarBytes,
+                let data = try? Data(contentsOf: temporaryURL, options: .mappedIfSafe),
+                !data.isEmpty,
+                data.count <= Self.maxAvatarBytes
             else {
                 completion(nil)
                 return
@@ -181,12 +205,37 @@ final class NotificationService: UNNotificationServiceExtension {
         }
 
         taskIdentifier = task.taskIdentifier
-        activeTasks.append(task)
+        registerActiveTask(task)
         task.resume()
     }
 
+    private func responseLengthIsAllowed(_ response: URLResponse?, limit: Int) -> Bool {
+        let length = response?.expectedContentLength ?? NSURLSessionTransferSizeUnknown
+        return length == NSURLSessionTransferSizeUnknown || length <= Int64(limit)
+    }
+
+    private func fileSize(at url: URL) -> Int {
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
+        return values?.fileSize ?? Int.max
+    }
+
+    private func registerActiveTask(_ task: URLSessionTask) {
+        stateQueue.sync {
+            activeTasks[task.taskIdentifier] = task
+        }
+    }
+
     private func removeActiveTask(withIdentifier identifier: Int) {
-        activeTasks.removeAll { $0.taskIdentifier == identifier }
+        stateQueue.sync {
+            _ = activeTasks.removeValue(forKey: identifier)
+        }
+    }
+
+    private func updateBestAttemptContent(_ content: UNNotificationContent) {
+        stateQueue.sync {
+            guard contentHandler != nil else { return }
+            bestAttemptContent = content
+        }
     }
 
     private func notificationAttachmentURL(from userInfo: [AnyHashable: Any]) -> URL? {
@@ -314,6 +363,10 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     private func copyAttachment(from temporaryURL: URL, response: URLResponse?, sourceURL: URL) -> URL? {
+        if let size = try? temporaryURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+           size > Self.maxAttachmentBytes {
+            return nil
+        }
         let fileExtension = attachmentFileExtension(response: response) ??
             allowedAttachmentExtension(sourceURL.pathExtension) ??
             allowedAttachmentExtension(response?.suggestedFilename?.split(separator: ".").last.map(String.init))

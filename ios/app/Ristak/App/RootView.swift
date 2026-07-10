@@ -7,6 +7,7 @@ struct RootView: View {
     @Environment(SessionStore.self) private var session
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(ShellState.self) private var shell
+    @Environment(NotificationRouter.self) private var notificationRouter
     @Environment(\.scenePhase) private var scenePhase
 
     /// True solo si la app estuvo en background REAL (no una interrupción
@@ -14,6 +15,9 @@ struct RootView: View {
     /// Control / la cortina de notificaciones / apareció un diálogo del sistema"
     /// —esas solo llevan la escena a `.inactive`, nunca a `.background`—.
     @State private var wasBackgrounded = false
+    /// Version observada al entrar a background. Aunque MainShell consuma el
+    /// deep link antes del retorno, el cambio de version evita resetear a Chats.
+    @State private var deepLinkVersionAtBackground = 0
 
     var body: some View {
         ZStack {
@@ -40,28 +44,52 @@ struct RootView: View {
             // Marca el background real y no hagas nada más hasta volver a `.active`.
             if newPhase == .background {
                 wasBackgrounded = true
+                deepLinkVersionAtBackground = notificationRouter.deepLinkVersion
                 return
             }
             guard newPhase == .active else { return }
-            Task { await session.verifyOnForeground() }
+            let returningFromBackground = wasBackgrounded
+            let expectedGeneration = session.sessionGeneration
             // «Volver a Chats hasta arriba» SOLO tras un regreso desde background
             // real. Antes se disparaba en cada `.inactive → .active` (Centro de
             // Control, notificaciones, app-switcher, diálogos), lo que aventaba la
             // bandeja al tope sola —el scroll fantasma reportado—.
-            if wasBackgrounded, case .active = session.phase {
-                shell.resetToChatsTop()
+            if returningFromBackground, case .active = session.phase {
+                // Un tap de push tiene prioridad. Sin este gate, el reset podia
+                // ganarle por carrera al deep link de cita/pago/chat y mandar al
+                // usuario a Chats aunque hubiera tocado otro destino.
+                let receivedDeepLinkWhileAway = notificationRouter.deepLinkVersion
+                    != deepLinkVersionAtBackground
+                if !receivedDeepLinkWhileAway, notificationRouter.pendingDeepLink == nil {
+                    shell.resetToChatsTop()
+                }
+            }
+            Task {
+                await session.verifyOnForeground()
+                guard session.isCurrentActiveSession(expectedGeneration) else { return }
+                PushRegistrar.shared.beginSession(generation: expectedGeneration)
+                if returningFromBackground {
+                    await PushRegistrar.shared.reconcileOnForeground(
+                        calendarIDs: appConfig.calendarPushEnabled
+                            ? appConfig.calendarPushCalendarIDs
+                            : []
+                    )
+                }
             }
             wasBackgrounded = false
         }
         .onChange(of: session.phase) { oldPhase, newPhase in
             switch newPhase {
             case .active:
+                let expectedGeneration = session.sessionGeneration
+                PushRegistrar.shared.beginSession(generation: expectedGeneration)
                 // Pinta tema/moneda/config con el último estado conocido de la
                 // caché SWR (ya precargada en memoria durante el bootstrap)
                 // ANTES de disparar el load de red, evitando el flash inicial.
                 appConfig.hydrateFromCache()
                 Task {
                     await appConfig.load()
+                    guard session.isCurrentActiveSession(expectedGeneration) else { return }
                     // Re-registro silencioso del token APNs si el permiso ya
                     // fue concedido (la activación explícita vive en Ajustes).
                     // El filtro de calendarios solo aplica cuando el toggle de

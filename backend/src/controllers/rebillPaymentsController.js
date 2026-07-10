@@ -16,6 +16,7 @@ import { getAppConfig } from '../config/database.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
 import { logger } from '../utils/logger.js'
 import { runIdempotentPaymentPlanCreation } from '../services/paymentPlanSafetyService.js'
+import { runIdempotentSavedCardPayment } from '../services/savedCardPaymentSafetyService.js'
 
 function cleanString(value) {
   return String(value || '').trim()
@@ -175,7 +176,15 @@ export async function createRebillPaymentPlanView(req, res) {
 
 export async function createRebillSavedCardPaymentView(req, res) {
   try {
-    const result = await createRebillSavedCardPayment(req.body || {})
+    const requestPayload = req.body || {}
+    const idempotencyKey = req.get('Idempotency-Key') || requestPayload.idempotencyKey || requestPayload.clientRequestId
+    const payload = { ...requestPayload, idempotencyKey }
+    const result = await runIdempotentSavedCardPayment({
+      provider: 'rebill',
+      idempotencyKey,
+      payload,
+      create: ({ providerIdempotencyKey }) => createRebillSavedCardPayment(payload, { providerIdempotencyKey })
+    })
     res.status(201).json({ success: true, data: result })
   } catch (error) {
     logger.error(`Error cobrando tarjeta guardada Rebill: ${error.message}`)

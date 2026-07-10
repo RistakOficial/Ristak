@@ -31,6 +31,11 @@ final class AppConfigStore {
     private(set) var appConfigLoadSucceeded = false
     /// Claves con escritura en vuelo (deshabilitar su control mientras).
     private(set) var savingKeys: Set<String> = []
+    /// Invalida cargas/escrituras que empezaron antes de un logout o cambio de
+    /// cuenta. `loadSequence` hace que, dentro de la misma sesion, gane la
+    /// recarga mas nueva.
+    private var stateGeneration: UInt64 = 0
+    private var loadSequence: UInt64 = 0
 
     init() {}
 
@@ -67,6 +72,10 @@ final class AppConfigStore {
     /// Carga inicial (llamar al abrir sesión). Las tres llamadas van en paralelo;
     /// los fallos se degradan a defaults del cliente.
     func load() async {
+        loadSequence &+= 1
+        let expectedLoadSequence = loadSequence
+        let expectedStateGeneration = stateGeneration
+
         // Pinta lo último conocido de inmediato antes de tocar la red.
         hydrateFromCache()
 
@@ -75,6 +84,11 @@ final class AppConfigStore {
         async let userConfigTask = fetchKeyedConfig(path: "/api/user-config", keys: RistakUserConfigKey.batchKeys)
 
         let (timezoneResult, appConfigResult, userConfigResult) = await (timezoneTask, appConfigTask, userConfigTask)
+
+        // La pantalla pudo cerrar sesion/cambiar de tenant mientras la red
+        // estaba lenta. Nunca aplicar ni cachear datos de esa generacion vieja.
+        guard expectedStateGeneration == stateGeneration,
+              expectedLoadSequence == loadSequence else { return }
 
         let cache = RistakSnapshotCache.shared
 
@@ -107,6 +121,8 @@ final class AppConfigStore {
 
     /// Limpia el estado al cerrar sesión / cambiar de empresa.
     func reset() {
+        stateGeneration &+= 1
+        loadSequence &+= 1
         businessTimeZone = TimeZone(identifier: Self.defaultTimeZoneIdentifier)!
         timezoneSource = nil
         appConfig = [:]
@@ -184,6 +200,7 @@ final class AppConfigStore {
         value: String?,
         dictionary keyPath: ReferenceWritableKeyPath<AppConfigStore, [String: String]>
     ) async throws {
+        let expectedStateGeneration = stateGeneration
         let previous = self[keyPath: keyPath][key]
 
         if let value {
@@ -193,7 +210,11 @@ final class AppConfigStore {
         }
 
         savingKeys.insert(key)
-        defer { savingKeys.remove(key) }
+        defer {
+            if expectedStateGeneration == stateGeneration {
+                savingKeys.remove(key)
+            }
+        }
 
         do {
             let _: APIAcknowledgment = try await APIClient.shared.post(
@@ -201,6 +222,10 @@ final class AppConfigStore {
                 body: RistakConfigWriteBody(key: key, value: value)
             )
         } catch {
+            // El store ya pertenece a otra sesion; su estado nuevo no se toca.
+            guard expectedStateGeneration == stateGeneration else {
+                throw CancellationError()
+            }
             if let previous {
                 self[keyPath: keyPath][key] = previous
             } else {

@@ -412,7 +412,12 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
 
     const calls = []
     setConektaFetchForTest(async (url, options = {}) => {
-      calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : null })
+      calls.push({
+        url,
+        method: options.method || 'GET',
+        body: options.body ? JSON.parse(options.body) : null,
+        idempotencyKey: options.headers?.['Idempotency-Key']
+      })
 
       if (url.endsWith('/customers?limit=1')) {
         return jsonResponse({ data: [] })
@@ -593,6 +598,8 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
         enabled: true,
         maxInstallments: 3
       }
+    }, {
+      providerIdempotencyKey: 'ristak:saved-card:conekta:test-provider-key'
     })
     createdPaymentIds.push(savedCardResult.payment.id)
 
@@ -603,6 +610,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
       call.body?.metadata?.ristak_payment_id === savedCardResult.payment.id
     ))
     assert.equal(savedCardOrderRequest.body.charges[0].payment_method.monthly_installments, 3)
+    assert.equal(savedCardOrderRequest.idempotencyKey, 'ristak:saved-card:conekta:test-provider-key')
 
     const contact = await db.get('SELECT conekta_customer_id FROM contacts WHERE id = ?', [contactId])
     assert.equal(contact.conekta_customer_id, 'cus_test_123')
@@ -654,7 +662,7 @@ test('Conekta payment flow: crea link, guarda payment_source y cobra tarjeta gua
       remainingPayments: [{
         sequence: 1,
         amount: 100,
-        dueDate: today,
+        dueDate: '2099-01-01',
         frequency: 'monthly'
       }],
       remainingFrequency: 'monthly',
@@ -1002,6 +1010,7 @@ test('Conekta planes: el webhook de domiciliación activa el plan con primer pag
   const conektaSourceId = `src_webhook_${suffix}`
   const orderId = `ord_webhook_${suffix}`
   const chargeId = `charge_webhook_${suffix}`
+  const contactPhone = `+52${String(Date.now()).slice(-10)}`
 
   await snapshotConektaConfig(async () => {
     const apiCalls = []
@@ -1063,7 +1072,7 @@ test('Conekta planes: el webhook de domiciliación activa el plan con primer pag
     await db.run(
       `INSERT INTO contacts (id, email, full_name, phone, created_at, updated_at)
        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [contactId, `conekta-webhook-${suffix}@example.test`, 'Cliente Webhook Conekta', '5555555555']
+      [contactId, `conekta-webhook-${suffix}@example.test`, 'Cliente Webhook Conekta', contactPhone]
     )
 
     const today = todayConektaDateOnly()
@@ -1072,7 +1081,7 @@ test('Conekta planes: el webhook de domiciliación activa el plan con primer pag
         id: contactId,
         name: 'Cliente Webhook Conekta',
         email: `conekta-webhook-${suffix}@example.test`,
-        phone: '5555555555'
+        phone: contactPhone
       },
       totalAmount: 500,
       currency: 'MXN',
@@ -1087,7 +1096,7 @@ test('Conekta planes: el webhook de domiciliación activa el plan con primer pag
       remainingPayments: [{
         sequence: 1,
         amount: 400,
-        dueDate: today,
+        dueDate: '2099-01-01',
         frequency: 'monthly'
       }],
       remainingFrequency: 'monthly',
@@ -1213,6 +1222,7 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
   const contactId = `contact_conekta_multi_${suffix}`
   const conektaCustomerId = `cus_multi_${suffix}`
   const conektaSourceId = `src_multi_${suffix}`
+  const contactPhone = `+52${String(Date.now()).slice(-10)}`
 
   await snapshotConektaConfig(async () => {
     const orderCalls = []
@@ -1270,7 +1280,7 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
         contactId,
         `conekta-multi-${suffix}@example.test`,
         'Cliente Multi Conekta',
-        '5555555555',
+        contactPhone,
         conektaCustomerId
       ]
     )
@@ -1283,13 +1293,12 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
       [`conekta_source_${suffix}`, contactId, conektaCustomerId, conektaSourceId]
     )
 
-    const today = todayConektaDateOnly()
     const futureTimedDue = new Date(Date.now() + 60 * 60 * 1000).toISOString()
     const contact = {
       id: contactId,
       name: 'Cliente Multi Conekta',
       email: `conekta-multi-${suffix}@example.test`,
-      phone: '5555555555'
+      phone: contactPhone
     }
 
     const firstPlan = await createConektaPaymentPlan({
@@ -1304,7 +1313,7 @@ test('Conekta planes: conserva varios planes del mismo contacto y procesa solo v
       remainingPayments: [{
         sequence: 1,
         amount: 350,
-        dueDate: today,
+        dueDate: '2099-01-01',
         frequency: 'custom'
       }]
     }, { baseUrl: 'https://app.example.test' })

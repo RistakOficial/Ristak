@@ -4,8 +4,9 @@ import Foundation
 /// cobros directos y planes (doc research/08 §5). Módulo `payments`;
 /// `payment-plans` exige además la feature `payment_plans`.
 ///
-/// ⚠️ Estos endpoints NO aceptan `Idempotency-Key` (doc 08 gap 8): deshabilitar
-/// el botón mientras hay un request en vuelo para no duplicar links/cobros.
+/// Los cobros con tarjeta guardada incluyen `clientRequestId`: backend y
+/// proveedor reutilizan el resultado del mismo intento para evitar doble cargo.
+/// Los demas POST siguen deshabilitando el boton mientras hay request en vuelo.
 enum PaymentLinksService {
     /// `POST /api/<gw>/payment-links` — payload común para las 5 pasarelas.
     /// Respuesta 201 `data: { payment, paymentUrl, publicPaymentId }`

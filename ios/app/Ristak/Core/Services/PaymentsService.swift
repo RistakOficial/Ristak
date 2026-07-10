@@ -12,6 +12,7 @@ enum PaymentsService {
         page: Int? = nil,
         limit: Int? = nil,
         status: String? = nil,
+        statuses: String? = nil,
         query: String? = nil,
         startDate: String? = nil,
         endDate: String? = nil,
@@ -24,6 +25,7 @@ enum PaymentsService {
                 "page": page.map(String.init),
                 "limit": limit.map(String.init),
                 "status": status,
+                "statuses": statuses,
                 "q": query,
                 "startDate": startDate,
                 "endDate": endDate,
@@ -173,11 +175,12 @@ enum PaymentsService {
         headers: [String: String],
         timeout: TimeInterval = APIClient.defaultTimeout
     ) async throws -> T {
-        var request = try await APIClient.shared.authorizedRequest(
+        let requestSnapshot = try await APIClient.shared.authorizedRequestSnapshot(
             for: path,
             method: "POST",
             timeout: timeout
         )
+        var request = requestSnapshot.request
         do {
             request.httpBody = try JSONEncoder().encode(body)
         } catch {
@@ -207,6 +210,7 @@ enum PaymentsService {
             let payload = try? JSONDecoder().decode(RistakAPIErrorPayload.self, from: data)
             throw RistakAPIError.from(status: http.statusCode, payload: payload)
         }
+        try await APIClient.shared.validate(requestSnapshot)
         do {
             return try RistakEnvelopeDecoder.unwrap(data, decoder: JSONDecoder())
         } catch {

@@ -206,7 +206,10 @@ struct ChatsRootView: View {
         case .conversation(let contactID):
             ConversationScreen(
                 contactID: contactID,
-                seedContact: viewModel.row(for: contactID)
+                seedContact: viewModel.row(for: contactID),
+                onInboxActivity: { activity in
+                    viewModel.applyActivity(activity)
+                }
             )
         case .assistant:
             AssistantComingSoonScreen()

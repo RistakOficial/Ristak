@@ -153,6 +153,11 @@ final class AnalyticsViewModel {
     /// vista se cancela (cambio de tab) antes de terminar, esto queda en `false`
     /// para que al volver al tab se reintente en vez de dejar KPIs en `$0.00`.
     private var loadCompleted = false
+    /// La UI nunca presenta una carga parcial/fallida como si todo estuviera
+    /// fresco. Se conserva la cache, pero se avisa cuando la revalidacion no
+    /// pudo completar los cuatro paneles.
+    private(set) var lastSuccessfulRefreshAt: Date?
+    private(set) var lastRefreshFailed = false
 
     // MARK: - Arranque / cambios de zona horaria
 
@@ -173,11 +178,11 @@ final class AnalyticsViewModel {
         // SWR (#4): pinta al INSTANTE lo cacheado para esta combinación (KPIs,
         // gráfica, embudo, origen) y solo después revalida en segundo plano.
         hydrateAllFromCache()
-        await reloadAll()
+        let succeeded = await reloadAll()
         // Solo consolidamos la carga si el task no fue cancelado a mitad
         // (al reaparecer, `.task(id:)` vuelve a llamar `start` y recargará).
         if !Task.isCancelled {
-            loadCompleted = true
+            loadCompleted = succeeded
         }
     }
 
@@ -191,7 +196,7 @@ final class AnalyticsViewModel {
         range = resolveRange()
         // Repinta al instante lo cacheado para el nuevo rango (o «…» si no hay).
         hydrateAllFromCache()
-        Task { await reloadAll() }
+        Task { _ = await reloadAll() }
     }
 
     /// Aplica un rango personalizado (fechas elegidas con date pickers).
@@ -208,7 +213,7 @@ final class AnalyticsViewModel {
         range = newRange
         // Repinta al instante lo cacheado para el rango personalizado.
         hydrateAllFromCache()
-        Task { await reloadAll() }
+        Task { _ = await reloadAll() }
         return nil
     }
 
@@ -246,7 +251,7 @@ final class AnalyticsViewModel {
         guard let range else { return }
         // Pinta al instante la vista cacheada para esta combinación.
         hydrateChart(range)
-        Task { await loadChart(range) }
+        Task { _ = await loadChart(range) }
     }
 
     func selectFinancialScope(_ scope: DashboardScope) {
@@ -254,7 +259,7 @@ final class AnalyticsViewModel {
         financialScope = scope
         guard let range, chartKind == .revenueSpend else { return }
         hydrateChart(range)
-        Task { await loadChart(range) }
+        Task { _ = await loadChart(range) }
     }
 
     func selectFunnelScope(_ scope: DashboardScope) {
@@ -262,42 +267,55 @@ final class AnalyticsViewModel {
         funnelScope = scope
         guard let range else { return }
         hydrateFunnel(range)
-        Task { await loadFunnel(range) }
+        Task { _ = await loadFunnel(range) }
     }
 
     // MARK: - Cargas
 
     /// Recarga TODOS los paneles en paralelo (cambio de rango, retry global
     /// del estado sin-acceso y pull-to-refresh).
-    func reloadAll() async {
-        guard let range else { return }
+    @discardableResult
+    func reloadAll() async -> Bool {
+        guard let range else { return false }
         accessDenied = false
         async let labelsLoad: Void = loadLabelsIfNeeded()
-        async let metricsLoad: Void = loadMetrics(range)
-        async let chartLoad: Void = loadChart(range)
-        async let funnelLoad: Void = loadFunnel(range)
-        async let originLoad: Void = loadOrigin(range)
-        _ = await (labelsLoad, metricsLoad, chartLoad, funnelLoad, originLoad)
+        async let metricsLoad: Bool = loadMetrics(range)
+        async let chartLoad: Bool = loadChart(range)
+        async let funnelLoad: Bool = loadFunnel(range)
+        async let originLoad: Bool = loadOrigin(range)
+        async let phonesLoad: Void = loadWhatsAppPhones(range)
+        let (_, metricsOK, chartOK, funnelOK, originOK, _) = await (
+            labelsLoad,
+            metricsLoad,
+            chartLoad,
+            funnelLoad,
+            originLoad,
+            phonesLoad
+        )
+        let succeeded = metricsOK && chartOK && funnelOK && originOK
+        lastRefreshFailed = !succeeded
+        if succeeded { lastSuccessfulRefreshAt = Date() }
+        return succeeded
     }
 
     func retryMetrics() async {
         guard let range else { return }
-        await loadMetrics(range)
+        _ = await loadMetrics(range)
     }
 
     func retryChart() async {
         guard let range else { return }
-        await loadChart(range)
+        _ = await loadChart(range)
     }
 
     func retryFunnel() async {
         guard let range else { return }
-        await loadFunnel(range)
+        _ = await loadFunnel(range)
     }
 
     func retryOrigin() async {
         guard let range else { return }
-        await loadOrigin(range)
+        _ = await loadOrigin(range)
     }
 
     // MARK: - Caché SWR: hidratación instantánea (doc Round 6 #4)
@@ -361,7 +379,7 @@ final class AnalyticsViewModel {
         AnalyticsCache.storeLabels(fetched)
     }
 
-    private func loadMetrics(_ range: AnalyticsDateRange) async {
+    private func loadMetrics(_ range: AnalyticsDateRange) async -> Bool {
         // Spinner («…») SOLO si no hay valor cacheado; si lo hay, revalida en
         // silencio (nada de vacío → spinner → dato).
         if metrics.value == nil { metrics.isLoading = true }
@@ -371,17 +389,19 @@ final class AnalyticsViewModel {
                 startDate: range.startDate,
                 endDate: range.endDate
             )
-            guard self.range == range else { return }
+            guard self.range == range else { return false }
             metrics.value = snapshot
             metrics.isLoading = false
             AnalyticsCache.storeMetrics(snapshot, range)
+            return true
         } catch {
-            guard self.range == range else { return }
+            guard self.range == range else { return false }
             metrics = applyFailure(classify(error), to: metrics, empty: nil)
+            return false
         }
     }
 
-    private func loadChart(_ range: AnalyticsDateRange) async {
+    private func loadChart(_ range: AnalyticsDateRange) async -> Bool {
         let kind = chartKind
         let scope = financialScope
         if chart.value == nil { chart.isLoading = true }
@@ -413,13 +433,15 @@ final class AnalyticsViewModel {
                     AnalyticsChartPoint(label: $0.label, value1: $0.value, value2: $0.value2)
                 }
             }
-            guard isCurrentChartRequest(range, kind, scope) else { return }
+            guard isCurrentChartRequest(range, kind, scope) else { return false }
             chart.value = points
             chart.isLoading = false
             AnalyticsCache.storeChart(points, range, kind, scope)
+            return true
         } catch {
-            guard isCurrentChartRequest(range, kind, scope) else { return }
+            guard isCurrentChartRequest(range, kind, scope) else { return false }
             chart = applyFailure(classify(error), to: chart, empty: [])
+            return false
         }
     }
 
@@ -431,7 +453,7 @@ final class AnalyticsViewModel {
         self.range == range && chartKind == kind && financialScope == scope
     }
 
-    private func loadFunnel(_ range: AnalyticsDateRange) async {
+    private func loadFunnel(_ range: AnalyticsDateRange) async -> Bool {
         let scope = funnelScope
         if funnel.value == nil { funnel.isLoading = true }
         funnel.errorMessage = nil
@@ -441,49 +463,49 @@ final class AnalyticsViewModel {
                 endDate: range.endDate,
                 scope: scope
             )
-            guard self.range == range, funnelScope == scope else { return }
+            guard self.range == range, funnelScope == scope else { return false }
             funnel.value = rows
             funnel.isLoading = false
             AnalyticsCache.storeFunnel(rows, range, scope)
+            return true
         } catch {
-            guard self.range == range, funnelScope == scope else { return }
+            guard self.range == range, funnelScope == scope else { return false }
             funnel = applyFailure(classify(error), to: funnel, empty: [])
+            return false
         }
     }
 
-    private func loadOrigin(_ range: AnalyticsDateRange) async {
+    private func loadOrigin(_ range: AnalyticsDateRange) async -> Bool {
         if origin.value == nil { origin.isLoading = true }
         origin.errorMessage = nil
-        // El status de WhatsApp se pide en paralelo y sus fallos se ignoran
-        // (catch → lista vacía, doc 09 §4.7).
-        async let phonesLoad = fetchWhatsAppPhonesSafely()
         do {
             let snapshot = try await AnalyticsService.originDistribution(
                 startDate: range.startDate,
                 endDate: range.endDate
             )
-            let phones = await phonesLoad
-            guard self.range == range else { return }
+            guard self.range == range else { return false }
             origin.value = snapshot
-            whatsappPhones = phones
             origin.isLoading = false
             AnalyticsCache.storeOrigin(snapshot, range)
-            AnalyticsCache.storePhones(phones)
+            return true
         } catch {
-            // Si el origen falla pero los teléfonos llegaron, refresca y cachea
-            // esos sin pisar los cacheados con una lista vacía.
-            let phones = await phonesLoad
-            guard self.range == range else { return }
-            if !phones.isEmpty {
-                whatsappPhones = phones
-                AnalyticsCache.storePhones(phones)
-            }
+            guard self.range == range else { return false }
             origin = applyFailure(classify(error), to: origin, empty: nil)
+            return false
         }
     }
 
-    private func fetchWhatsAppPhonesSafely() async -> [WhatsAppPhoneNumber] {
-        (try? await WhatsAppNumbersService.status())?.phoneNumbers ?? []
+    /// El panel Origen no depende de WhatsApp. Esta carga secundaria publica
+    /// por separado y solo pisa cache cuando el endpoint respondio de verdad.
+    private func loadWhatsAppPhones(_ range: AnalyticsDateRange) async {
+        do {
+            let status = try await WhatsAppNumbersService.status()
+            guard self.range == range else { return }
+            whatsappPhones = status.phoneNumbers
+            AnalyticsCache.storePhones(status.phoneNumbers)
+        } catch {
+            // Conservar telefonos cacheados ante un fallo temporal.
+        }
     }
 
     // MARK: - Clasificación de errores

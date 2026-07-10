@@ -133,24 +133,25 @@ struct SettingsNotificationsPanel: View {
     // MARK: - Card de permiso
 
     private var permissionCard: some View {
-        let granted = push.permissionState == .granted
+        let permissionGranted = push.permissionState == .granted
+        let active = push.isFullyActive
 
         return SectionCard(title: "Este celular") {
             VStack(alignment: .leading, spacing: RistakTheme.Spacing.sm) {
                 HStack(spacing: RistakTheme.Spacing.sm) {
-                    Image(systemName: granted ? "checkmark.circle.fill" : "bell.badge")
+                    Image(systemName: active ? "checkmark.circle.fill" : "bell.badge")
                         .font(.title3.weight(.medium))
-                        .foregroundStyle(granted ? RistakTheme.pos : RistakTheme.warn)
+                        .foregroundStyle(active ? RistakTheme.pos : RistakTheme.warn)
                         .frame(width: 42, height: 42)
                         .background(
                             RoundedRectangle(cornerRadius: RistakTheme.Radius.small, style: .continuous)
-                                .fill(granted ? RistakTheme.posSoft : RistakTheme.warnSoft)
+                                .fill(active ? RistakTheme.posSoft : RistakTheme.warnSoft)
                         )
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(granted
+                        Text(active
                             ? "Alertas activas en este celular · \(enabledTypesCount) tipos prendidos."
-                            : "Permiso nativo: \(permissionLabel).")
+                            : pushConnectionHeadline(permissionGranted: permissionGranted))
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(RistakTheme.textPrimary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -174,7 +175,7 @@ struct SettingsNotificationsPanel: View {
                             if push.isWorking {
                                 ProgressView().controlSize(.small)
                             }
-                            Text(granted ? "Actualizar" : "Activar")
+                            Text(active ? "Actualizar" : "Activar")
                                 .font(.subheadline.weight(.semibold))
                         }
                     }
@@ -196,10 +197,26 @@ struct SettingsNotificationsPanel: View {
         }
     }
 
+    private func pushConnectionHeadline(permissionGranted: Bool) -> String {
+        guard permissionGranted else { return "Permiso nativo: \(permissionLabel)." }
+        switch push.registrationState {
+        case .registering:
+            return "Conectando este celular con Ristak..."
+        case .unknown:
+            return "Verificando la conexión de alertas con Ristak..."
+        case .failed:
+            return "iOS dio permiso, pero Ristak todavía no confirmó este celular."
+        case .unregistered:
+            return "iOS dio permiso; falta conectar este celular con Ristak."
+        case .registered:
+            return "Alertas listas en este celular."
+        }
+    }
+
     /// Etiqueta del permiso nativo (labels RN: Activo/Bloqueado/No soportado/Activar).
     private var permissionLabel: String {
         switch push.permissionState {
-        case .granted: return "Activo"
+        case .granted: return "Permitido"
         case .denied: return "Bloqueado"
         case .notDetermined: return "Activar"
         case .unknown: return "No soportado"

@@ -293,20 +293,31 @@ struct ComposerView: View {
 
     @ViewBuilder
     private var attachmentsTray: some View {
-        if !viewModel.attachments.isEmpty {
+        if viewModel.isPreparingAttachments || !viewModel.attachments.isEmpty {
             VStack(alignment: .leading, spacing: RistakTheme.Spacing.xxs) {
-                ScrollView(.horizontal, showsIndicators: false) {
+                if viewModel.isPreparingAttachments {
                     HStack(spacing: RistakTheme.Spacing.xs) {
-                        ForEach(viewModel.attachments) { draft in
-                            attachmentChip(draft)
+                        ProgressView().controlSize(.small)
+                        Text("Preparando archivo sin trabar el chat…")
+                            .font(.caption)
+                            .foregroundStyle(RistakTheme.textDim)
+                    }
+                    .padding(.horizontal, RistakTheme.Spacing.md)
+                }
+                if !viewModel.attachments.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: RistakTheme.Spacing.xs) {
+                            ForEach(viewModel.attachments) { draft in
+                                attachmentChip(draft)
+                            }
                         }
                     }
+                    .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
+                    Text("\(viewModel.attachments.count) archivo\(viewModel.attachments.count == 1 ? "" : "s") listo\(viewModel.attachments.count == 1 ? "" : "s") · Agrega texto o envía directo.")
+                        .font(.caption2)
+                        .foregroundStyle(RistakTheme.textMute)
+                        .padding(.horizontal, RistakTheme.Spacing.md)
                 }
-                .ristakEdgeToEdgeChips(horizontalInset: RistakTheme.Spacing.md)
-                Text("\(viewModel.attachments.count) archivo\(viewModel.attachments.count == 1 ? "" : "s") listo\(viewModel.attachments.count == 1 ? "" : "s") · Agrega texto o envía directo.")
-                    .font(.caption2)
-                    .foregroundStyle(RistakTheme.textMute)
-                    .padding(.horizontal, RistakTheme.Spacing.md)
             }
             .padding(.vertical, 6)
         }
@@ -394,6 +405,7 @@ struct ComposerView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Adjuntar")
+            .disabled(viewModel.isSending || viewModel.isPreparingAttachments)
 
             HStack(alignment: .bottom, spacing: RistakTheme.Spacing.xxs) {
                 TextField("Mensaje", text: $viewModel.draftText, axis: .vertical)
@@ -466,7 +478,7 @@ struct ComposerView: View {
                 .contentTransition(.symbolEffect(.replace))
         }
         .buttonStyle(.plain)
-        .disabled(viewModel.isSending)
+        .disabled(viewModel.isSending || viewModel.isPreparingAttachments)
         .sensoryFeedback(.impact(weight: .medium), trigger: sendPulse)
         .accessibilityLabel(hasContent ? "Enviar" : (viewModel.voiceRecorder.isRecording ? "Detener grabación" : "Grabar nota de voz"))
     }

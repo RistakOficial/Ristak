@@ -70,7 +70,11 @@ enum RistakTab: String, CaseIterable, Identifiable, Hashable, Sendable {
 @Observable
 final class ShellState {
     /// Tab activa (Chats por defecto, paridad RN).
-    var selectedTab: RistakTab = .chats
+    var selectedTab: RistakTab = .chats {
+        didSet {
+            if selectedTab != oldValue { tabBarHidden = false }
+        }
+    }
 
     /// No leídos de la bandeja (badge de la tab Chats). Lo alimenta el módulo
     /// de Chats; 0 = sin badge.
@@ -146,8 +150,8 @@ private extension View {
 
 /// TabView adaptativa del shell: tab bar inferior en iPhone (minimizable al
 /// hacer scroll), sidebar adaptable en iPad. Secciones filtradas por
-/// `AccessStore.visibleSections()` (fail-open con usuario cargando; si el
-/// filtro dejara 0, se muestran todas — nunca un dock vacío).
+/// `AccessStore.visibleSections()` (fail-open con usuario cargando; un usuario
+/// conocido sin modulos conserva solo Ajustes para poder cerrar sesion).
 struct MainShell: View {
     @Environment(AccessStore.self) private var access
     @Environment(ShellState.self) private var shell

@@ -29,6 +29,9 @@ enum ChatMediaLimits {
     static let videoMaxBytes = 25 * 1024 * 1024
     static let audioMaxBytes = 16 * 1024 * 1024
     static let documentMaxBytes = 20 * 1024 * 1024
+    /// Tope acumulado del tray. Cuatro adjuntos al maximo del proveedor pueden
+    /// superar 130 MB ya convertidos a base64 y provocar jetsam en un iPhone.
+    static let draftTotalMaxBytes = 40 * 1024 * 1024
     /// `CONVERSATION_ATTACHMENT_LIMIT` de RN.
     static let maxDraftAttachments = 4
     /// Grabación de voz: duración mínima (RN: 600 ms).

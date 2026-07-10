@@ -12,6 +12,7 @@ struct CalendarsRootView: View {
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(AccessStore.self) private var access
     @Environment(ShellState.self) private var shell
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var model = CalendarsViewModel()
     @State private var showCalendarPicker = false
@@ -51,6 +52,10 @@ struct CalendarsRootView: View {
         }
         .onChange(of: appConfig.businessTimeZone) { _, newZone in
             model.updateTimeZone(newZone)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await model.reloadEvents(force: true) }
         }
         .sheet(item: $flowContext) { context in
             AppointmentFlowSheet(

@@ -82,6 +82,11 @@ final class CalendarsViewModel {
     private var bootstrapped = false
     private var eventsRequestID = 0
 
+    private func invalidateEventLoad() {
+        eventsRequestID &+= 1
+        isLoadingEvents = false
+    }
+
     init() {
         let zone = TimeZone(identifier: AppConfigStore.defaultTimeZoneIdentifier)!
         let today = CalendarDateMath.day(from: Date(), timeZone: zone)
@@ -199,6 +204,7 @@ final class CalendarsViewModel {
     /// se reagrupan los eventos ya cargados y se reancla el día visible.
     func updateTimeZone(_ zone: TimeZone) {
         guard zone.identifier != timeZone.identifier else { return }
+        invalidateEventLoad()
         applyTimeZone(zone)
         regroupEvents()
         Task { await reloadEvents(force: true) }
@@ -284,8 +290,19 @@ final class CalendarsViewModel {
 
     func selectCalendar(id: String) {
         guard id != selectedCalendarID else { return }
+        // Invalida SINCRONICAMENTE cualquier respuesta del calendario anterior;
+        // no esperamos a que arranque el Task nuevo para cambiar el epoch.
+        invalidateEventLoad()
         selectedCalendarID = id
         UserDefaults.standard.set(id, forKey: Self.selectedCalendarDefaultsKey)
+        // Nunca dejar citas del calendario anterior bajo el nombre del nuevo.
+        // Pinta el snapshot de ESTE calendario si existe; de lo contrario deja
+        // un estado vacio breve mientras llega la consulta correcta.
+        rawEvents = []
+        eventsByDay = [:]
+        loadedInterval = nil
+        loadedCalendarKey = ""
+        hydrateEventsFromCache()
         Task { await reloadEvents(force: true) }
     }
 
@@ -312,6 +329,9 @@ final class CalendarsViewModel {
 
         let interval = DateInterval(start: startDate, end: endDate)
         let calendarKey = selectedCalendarID ?? ""
+        let requestCalendarID = selectedCalendarID
+        let requestVisibleMonth = visibleMonth
+        let requestTimeZone = timeZone
         if !force,
            loadedCalendarKey == calendarKey,
            let loaded = loadedInterval,
@@ -328,14 +348,21 @@ final class CalendarsViewModel {
             let events = try await CalendarsService.events(
                 startTime: startDate,
                 endTime: endDate,
-                calendarID: selectedCalendarID
+                calendarID: requestCalendarID
             )
-            guard requestID == eventsRequestID else { return }
+            guard requestID == eventsRequestID,
+                  selectedCalendarID == requestCalendarID,
+                  timeZone.identifier == requestTimeZone.identifier else { return }
             rawEvents = events
             regroupEvents()
             loadedInterval = interval
             loadedCalendarKey = calendarKey
-            storeEventsToCache()
+            storeEventsToCache(
+                events: events,
+                visibleMonth: requestVisibleMonth,
+                calendarID: requestCalendarID,
+                timeZone: requestTimeZone
+            )
         } catch {
             guard requestID == eventsRequestID else { return }
             if let api = error as? RistakAPIError {
@@ -400,7 +427,10 @@ final class CalendarsViewModel {
     /// nada cargado, para no pisar datos frescos).
     private func hydrateEventsFromCache() {
         guard rawEvents.isEmpty else { return }
-        let key = RistakCacheKey.calendarEvents(month: monthKey(visibleMonth))
+        let key = RistakCacheKey.calendarEvents(
+            month: monthKey(visibleMonth),
+            calendarID: selectedCalendarID
+        )
         if let cached = RistakSnapshotCache.shared.value([CalendarAppointment].self, for: key),
            !cached.isEmpty {
             rawEvents = cached
@@ -415,10 +445,15 @@ final class CalendarsViewModel {
         RistakSnapshotCache.shared.storeRaw(data, for: RistakCacheKey.calendarList)
     }
 
-    /// Guarda las citas del MES VISIBLE bajo su propia clave `calendar:events:<yyyy-MM>`
-    /// (cada mes se cachea por separado, capado por el codec).
-    private func storeEventsToCache() {
-        let monthEvents = rawEvents.filter { event in
+    /// Guarda las citas del MES VISIBLE bajo su propia clave por calendario y
+    /// mes (cada consulta se cachea separada, capada por el codec).
+    private func storeEventsToCache(
+        events: [CalendarAppointment],
+        visibleMonth: CalendarBusinessDay,
+        calendarID: String?,
+        timeZone: TimeZone
+    ) {
+        let monthEvents = events.filter { event in
             guard let start = event.startDate else { return false }
             let day = CalendarDateMath.day(from: start, timeZone: timeZone)
             return day.year == visibleMonth.year && day.month == visibleMonth.month
@@ -426,7 +461,10 @@ final class CalendarsViewModel {
         guard let data = CalendarSnapshotCodec.encode(appointments: monthEvents) else { return }
         RistakSnapshotCache.shared.storeRaw(
             data,
-            for: RistakCacheKey.calendarEvents(month: monthKey(visibleMonth))
+            for: RistakCacheKey.calendarEvents(
+                month: monthKey(visibleMonth),
+                calendarID: calendarID
+            )
         )
     }
 
@@ -435,6 +473,7 @@ final class CalendarsViewModel {
     /// Botón «Hoy»: salta a hoy. Si estamos en Año/Años baja un nivel
     /// (paridad RN `handleQuickReturn`).
     func goToToday() {
+        invalidateEventLoad()
         let today = self.today
         selectedDay = today
         visibleMonth = CalendarDateMath.firstOfMonth(today)
@@ -450,6 +489,7 @@ final class CalendarsViewModel {
     /// al día seleccionado (paridad RN `handleSelectCalendarView`).
     func setViewMode(_ mode: ViewMode) {
         guard mode != viewMode else { return }
+        invalidateEventLoad()
         viewMode = mode
         if mode == .month || mode.isTimeline {
             visibleMonth = CalendarDateMath.firstOfMonth(selectedDay)
@@ -461,6 +501,7 @@ final class CalendarsViewModel {
     /// Mes/Día/Semana → Año (rejilla de 12 meses); Año → Años (década);
     /// Años → Año. Año/Años solo se alcanzan por aquí, nunca por el toggle.
     func navigateUp() {
+        invalidateEventLoad()
         switch viewMode {
         case .month:
             viewMode = .year
@@ -479,6 +520,7 @@ final class CalendarsViewModel {
     /// Tap en un mes de la vista Año → baja a la vista Mes (paridad RN
     /// `handleSelectMonthFromYear`).
     func selectMonth(monthIndex: Int) {
+        invalidateEventLoad()
         let year = visibleMonth.year
         let month = min(max(monthIndex + 1, 1), 12)
         let maxDay = CalendarDateMath.daysInMonth(year: year, month: month, timeZone: timeZone)
@@ -492,6 +534,7 @@ final class CalendarsViewModel {
     /// Tap en un año de la vista Años → baja a la vista Año (paridad RN
     /// `handleSelectYear`).
     func selectYear(_ year: Int) {
+        invalidateEventLoad()
         let month = visibleMonth.month
         let maxDay = CalendarDateMath.daysInMonth(year: year, month: month, timeZone: timeZone)
         let day = min(max(selectedDay.day, 1), maxDay)
@@ -508,9 +551,11 @@ final class CalendarsViewModel {
         case .month:
             goToMonth(offset: direction)
         case .year:
+            invalidateEventLoad()
             visibleMonth = CalendarDateMath.addingMonths(direction * 12, to: visibleMonth)
             Task { await reloadEvents(force: false) }
         case .years:
+            invalidateEventLoad()
             visibleMonth = CalendarDateMath.addingMonths(direction * 12 * 12, to: visibleMonth)
             Task { await reloadEvents(force: false) }
         case .day:
@@ -521,13 +566,16 @@ final class CalendarsViewModel {
     }
 
     func goToMonth(offset: Int) {
+        invalidateEventLoad()
         visibleMonth = CalendarDateMath.addingMonths(offset, to: visibleMonth)
         Task { await reloadEvents(force: false) }
     }
 
     func select(day: CalendarBusinessDay) {
+        let changesLoadedMonth = day.year != visibleMonth.year || day.month != visibleMonth.month
+        if changesLoadedMonth { invalidateEventLoad() }
         selectedDay = day
-        if day.year != visibleMonth.year || day.month != visibleMonth.month {
+        if changesLoadedMonth {
             visibleMonth = CalendarDateMath.firstOfMonth(day)
             Task { await reloadEvents(force: false) }
         }

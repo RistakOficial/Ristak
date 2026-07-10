@@ -4213,6 +4213,23 @@ async function initTables() {
     await db.run('CREATE INDEX IF NOT EXISTS idx_payment_plan_creation_hash_guard_expiry ON payment_plan_creation_hash_guards(expires_at)')
 
     await db.run(`
+      CREATE TABLE IF NOT EXISTS saved_card_payment_requests (
+        provider TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL,
+        status TEXT NOT NULL,
+        payment_id TEXT,
+        response_json TEXT,
+        error_status INTEGER,
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (provider, idempotency_key)
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_saved_card_payment_request_payment ON saved_card_payment_requests(payment_id)')
+
+    await db.run(`
       CREATE TABLE IF NOT EXISTS whatsapp_qr_sessions (
         id TEXT PRIMARY KEY,
         phone_number_id TEXT NOT NULL,

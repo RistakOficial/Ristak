@@ -85,15 +85,16 @@ struct InboxCameraPicker: UIViewControllerRepresentable {
 /// la cámara global (no bloquea la carga del envío; si falla se muestra un
 /// marcador con icono de video).
 enum InboxCameraThumbnail {
-    static func generate(from url: URL) -> UIImage? {
+    static func generate(from url: URL) async -> UIImage? {
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 1080, height: 1080)
         let time = CMTime(seconds: 0.1, preferredTimescale: 600)
-        guard let cgImage = try? generator.copyCGImage(at: time, actualTime: nil) else {
-            return nil
+        return await withCheckedContinuation { continuation in
+            generator.generateCGImageAsynchronously(for: time) { cgImage, _, _ in
+                continuation.resume(returning: cgImage.map(UIImage.init(cgImage:)))
+            }
         }
-        return UIImage(cgImage: cgImage)
     }
 }

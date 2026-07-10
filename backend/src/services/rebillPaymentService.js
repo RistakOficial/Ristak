@@ -2267,7 +2267,8 @@ async function chargeRebillPaymentRowWithSavedSource({
   paymentId,
   savedSource,
   source = 'rebill_saved_card_charge',
-  extraMetadata = {}
+  extraMetadata = {},
+  providerIdempotencyKey = ''
 } = {}) {
   const row = await findPaymentById(paymentId)
   if (!row) {
@@ -2328,7 +2329,7 @@ async function chargeRebillPaymentRowWithSavedSource({
     const { payload } = await rebillApiRequest('/v3/checkout', {
       method: 'POST',
       config,
-      idempotencyKey: `ristak:rebill:${row.id}:${sourceRow.rebill_card_id}:${amount}:${currency}`,
+      idempotencyKey: cleanString(providerIdempotencyKey, 200) || `ristak:rebill:${row.id}:${sourceRow.rebill_card_id}:${amount}:${currency}`,
       body: {
         transaction: buildRebillCheckoutTransaction({
           ...chargeRow,
@@ -3194,7 +3195,7 @@ export async function refreshRebillSubscription(rebillSubscriptionId, { mode = '
   return updateSubscriptionFromRebillSubscription(payload, { paymentMode: config.mode })
 }
 
-export async function createRebillSavedCardPayment(input = {}, { mode = '' } = {}) {
+export async function createRebillSavedCardPayment(input = {}, { mode = '', providerIdempotencyKey = '' } = {}) {
   const config = await getRebillClientConfig(mode)
   const contactId = cleanString(input.contactId || input.contact_id, 180)
   const sourceId = cleanString(input.paymentSourceId || input.payment_source_id || input.rebillCardId || input.rebill_card_id || input.paymentMethodId || input.payment_method_id, 180)
@@ -3266,7 +3267,8 @@ export async function createRebillSavedCardPayment(input = {}, { mode = '' } = {
   const charged = await chargeRebillPaymentRowWithSavedSource({
     paymentId: id,
     savedSource,
-    source: 'rebill_saved_card_payment'
+    source: 'rebill_saved_card_payment',
+    providerIdempotencyKey
   })
 
   return {

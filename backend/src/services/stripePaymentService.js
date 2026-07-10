@@ -3509,7 +3509,8 @@ async function chargeStripePaymentRowWithSavedMethod({
   paymentId,
   savedMethod,
   source = 'stripe_payment_plan',
-  extraMetadata = {}
+  extraMetadata = {},
+  providerIdempotencyKey = ''
 }) {
   const row = await db.get('SELECT * FROM payments WHERE id = ?', [paymentId])
   if (!row) {
@@ -3522,15 +3523,13 @@ async function chargeStripePaymentRowWithSavedMethod({
     return row
   }
 
-  // (PAY-004) Token DETERMINISTA por día (UTC), NO aleatorio. Stripe cachea el
-  // resultado de una idempotencyKey 24h: una llave estática bloquea reintentar un
-  // cargo fallido, pero una llave 100% ALEATORIA es peligrosa (un cargo que sí pasó
-  // pero perdió la respuesta se volvería a cobrar en el siguiente tick = DOBLE COBRO).
-  // El bucket diario mantiene la idempotencia dentro de la ventana de cobro (reintentos
-  // del mismo día NO re-cobran) y a la vez permite reintentar un cargo fallido al día
-  // siguiente, cuando ya expiró el cache de 24h de Stripe.
+  // Los cobros iniciados por un cliente traen una llave durable del intento. Los
+  // cobros programados conservan el token determinista por día: Stripe cachea la
+  // idempotencyKey 24h y un UUID nuevo por retry podría duplicar un cargo cuya
+  // respuesta se perdió.
   const chargeAttemptTimezone = await getAccountTimezone().catch(() => DEFAULT_PAYMENT_TIMEZONE)
   const chargeAttemptToken = businessTodayDateOnly(chargeAttemptTimezone)
+  const chargeIdempotencyKey = cleanString(providerIdempotencyKey) || `ristak:${row.id}:off-session-charge:${chargeAttemptToken}`
 
   const currency = normalizeCurrency(row.currency || config.defaultCurrency)
   const metadata = parseJson(row.metadata_json, {})
@@ -3565,8 +3564,9 @@ async function chargeStripePaymentRowWithSavedMethod({
           ...extraMetadata
         }
       },
-      // (PAY-004) Llave por intento (no estática) para no quedar bloqueados por el resultado cacheado 24h de Stripe en reintentos.
-      stripeRequestOptionsWithIdempotency(requestOptions, `ristak:${row.id}:off-session-charge:${chargeAttemptToken}`)
+      // Un intento interactivo usa la llave estable del cliente; un cobro
+      // programado usa el bucket diario calculado arriba.
+      stripeRequestOptionsWithIdempotency(requestOptions, chargeIdempotencyKey)
     )
 
     await updatePaymentFromIntent(intent, { stripe, config, requestOptions })
@@ -4927,7 +4927,7 @@ export async function applyStripePaymentPlanAction(flowId, action, options = {})
   return mirrored
 }
 
-export async function createStripeSavedCardPayment(input = {}) {
+export async function createStripeSavedCardPayment(input = {}, { providerIdempotencyKey = '' } = {}) {
   const { stripe, config, requestOptions } = await getStripeClient()
   const contactId = cleanString(input.contactId)
   const selectedPaymentMethodId = cleanString(input.paymentMethodId)
@@ -5047,7 +5047,8 @@ export async function createStripeSavedCardPayment(input = {}) {
       requestOptions,
       paymentId: id,
       savedMethod,
-      source: 'ristak_saved_card'
+      source: 'ristak_saved_card',
+      providerIdempotencyKey
     })
   } catch (error) {
     throw error

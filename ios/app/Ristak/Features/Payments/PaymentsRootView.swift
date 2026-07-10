@@ -11,6 +11,7 @@ struct PaymentsRootView: View {
     @Environment(AppConfigStore.self) private var appConfig
     @Environment(AccessStore.self) private var access
     @Environment(ShellState.self) private var shell
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var home: PaymentsHomeModel?
 
@@ -69,6 +70,14 @@ struct PaymentsRootView: View {
         }
         .onDisappear {
             home.stopRealtime()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active {
+                home.startRealtime()
+                Task { await home.refreshAll() }
+            } else if phase == .background {
+                home.stopRealtime()
+            }
         }
         .task(id: shell.pendingPaymentContactID) {
             await consumePendingContact()

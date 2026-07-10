@@ -192,6 +192,20 @@ checkout externo, el cliente nativo debe abrirlo con `Linking` o browser nativo 
 dejar la brecha documentada si aun no envia el link por WhatsApp/email/SMS desde
 el sheet.
 
+En `ios/app`, Pagos mantiene el SSE solo mientras la app esta activa. Tanto un
+evento de cambio como `connected` disparan una reconciliacion REST con debounce,
+porque el stream no tiene replay; al volver a foreground tambien se refrescan
+las vistas. Pagos recientes pide `statuses=paid,partial` al backend antes de
+paginar. Un precio de catalogo con moneda distinta a `account_currency` bloquea
+el cobro. Si una tarjeta guardada pierde la respuesta por red, decoding o error
+transitorio del servidor, la app marca el resultado como incierto, no permite
+reintentar a ciegas y pide revisar el historial para evitar un doble cargo. Un
+fallo al consultar tarjetas debe verse como error con reintento, nunca como
+"este contacto no tiene tarjetas". Cada cobro con tarjeta guardada manda un
+`clientRequestId` persistente por intento; backend y pasarela reservan esa llave,
+reproducen la misma respuesta y bloquean un proceso ambiguo en vez de generar un
+segundo cargo.
+
 El cliente nativo consolidado en `mobile/` ya agrupa los pases hechos en los
 worktrees de Chat, Conversacion, Citas, Pagos, Analiticas, Ajustes, dock inferior,
 login y notificaciones. Antes de crear otro worktree movil, parte de esta carpeta
@@ -315,9 +329,28 @@ opciones: proveedor/modelo de IA, identidad, tono, idioma, instrucciones,
 demoras, entrega de mensajes, notificaciones, follow-up, objetivo, acciones de
 cierre, flujos de cita/venta/datos/filtro/link/anticipo, acciones extra, datos
 obligatorios, reglas de handoff, alcance y filtros.
+En esa misma bandeja, enviar o recibir actividad de una conversacion mueve su
+fila al inicio inmediatamente, antes de esperar la reconciliacion REST. El hilo
+notifica esa actividad a la bandeja aunque la cubra en iPhone, y SSE aplica el
+mismo cambio con deduplicacion para no inflar no leidos. REST conserva la
+autoridad sobre texto, perfil y contadores. Los refresh por SSE, polling o
+foreground usan `/api/contacts/chats?warmProfilePictures=false` y conservan los
+avatares ya hidratados; la precarga remota de fotos se reserva para arranque frio
+y paginacion para que no convierta cada tick en una consulta lenta.
+La preparacion de fotos, videos, audios y documentos corre fuera del hilo visual.
+Mientras se codifican, el composer muestra estado de preparacion y bloquea otro
+envio/adjunto; mantiene el maximo de 4 archivos y un tope acumulado de 40 MB
+binarios para evitar que el base64 congele o cierre la app por memoria.
 El login nativo de `ios/app` debe conservar logo/colores de Ristak y no debe
 mostrar configuraciones tecnicas de servidor; al capturar el correo, la app
 detecta automaticamente la instalacion correcta antes de autenticar.
+Cada request nativo conserva el tenant, token y generacion con los que inicio:
+una respuesta tardia de otra cuenta no puede desloguear ni hidratar la sesion
+actual. Los 503 solo se reintentan automaticamente en `GET`/`HEAD`, nunca en
+acciones que puedan duplicar mensajes, citas o cobros. Mientras el usuario aun
+se resuelve, el shell puede mantener sus secciones; una vez resuelto, si no tiene
+acceso a ningun modulo, muestra unicamente Ajustes para explicar la situacion y
+permitir cerrar sesion, no todos los modulos por fallback.
 
 El bundle iOS principal debe declarar español como region de desarrollo y
 localizacion soportada (`CFBundleDevelopmentRegion=es` y
@@ -469,6 +502,13 @@ La pantalla nativa debe conservar la estructura de `PhoneAnalytics`: encabezado
 `Analiticas`, selector de periodo, 8 KPIs, grafica principal con chips, scopes
 financieros, embudo con scopes, origen por fuente y origen por numero de
 WhatsApp cuando existan varios numeros detectados.
+
+En `ios/app`, una revalidacion solo se considera fresca cuando completaron
+metricas, grafica, embudo y origen. Si alguno falla, se conservan los snapshots
+disponibles pero la pantalla muestra que no todo pudo actualizarse, y al volver a
+foreground vuelve a intentar. La consulta de numeros de WhatsApp corre aparte de
+Origen: un fallo de telefonos no bloquea ese panel ni borra los numeros
+cacheados; la cache secundaria solo se reemplaza tras una respuesta exitosa.
 
 ## Icono de instalación
 
@@ -827,6 +867,11 @@ seleccion; la bolita puede conservar mayor presencia que el texto. El swipe
 entre meses no debe mostrar de regreso el mes anterior en frames intermedios. En
 el sheet `Nueva cita`, la lista de contactos no debe mostrar icono de enviar
 mensaje porque la accion es agendar, no mandar chat.
+En `ios/app`, la cache de citas se separa por calendario y mes
+(`calendarID + yyyy-MM`). Cambiar de calendario limpia primero las filas del
+anterior e hidrata solo el snapshot de la nueva seleccion; volver a foreground
+fuerza una revalidacion para no dejar una agenda vieja despues de varias horas
+en background.
 En la vista Hoy/Semana, las tarjetas de citas del timeline usan un solo campo
 suave con borde tenue; no deben agregar una franja ni borde izquierdo intenso por
 calendario.
@@ -1291,9 +1336,24 @@ en `/api/push/mobile-devices` y delega el envio al portal central. El broker
 central intenta el ambiente configurado y reintenta el alterno cuando APNs
 responde `BadDeviceToken`, cubriendo builds de desarrollo/sandbox y
 produccion sin duplicar secretos por cliente.
+Para iOS oficial, el broker acepta como configuracion valida unicamente el topic
+exacto `com.ristak.app`; un bundle legacy o el paquete Android no debe reportar
+`iosConfigured=true`. `ios/app` registra cada token con `platform=ios`,
+`clientType=native` y `appPackage=com.ristak.app` para que el backend/Installer
+no lo clasifique como Expo o Android.
+El permiso de notificaciones y el registro confirmado en backend son estados
+distintos. Ajustes solo muestra alertas activas cuando ambos estan listos; el
+registro se serializa, reintenta fallos temporales a 5/15/60/300 segundos y se
+revalida al volver a foreground si la confirmacion tiene 6 horas. Logout llama
+`DELETE /api/push/mobile-devices` best-effort y limpia APNs local incluso cuando
+un 401 o una licencia revocada ya impiden usar la sesion.
 El archive de App Store firma dos targets: `com.ristak.app` y
 `com.ristak.app.NotificationService`. Ambos perfiles se validan y refrescan
 desde Ristak Installer antes de disparar el workflow `mobile-store-release`.
+La Notification Service Extension serializa su estado para entregar una sola
+vez el mejor contenido disponible, cancela al expirar, usa timeouts de 6–7 s y
+limita avatar a 5 MB y media adjunta a 12 MB. Si un recurso excede esos limites,
+la notificacion se entrega sin ese enriquecimiento en vez de atorarse.
 
 Solo una instalacion standalone que de verdad no use Installer debe configurar
 APNs localmente:

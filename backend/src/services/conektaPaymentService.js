@@ -4751,7 +4751,7 @@ export async function cancelConektaRecurringSubscription(customerId, subscriptio
   return callConektaSubscriptionAction(customerId, subscriptionId, 'cancel')
 }
 
-export async function createConektaSavedCardPayment(input = {}) {
+export async function createConektaSavedCardPayment(input = {}, { providerIdempotencyKey = '' } = {}) {
   const config = await getConektaPaymentConfig({ includeSecrets: true })
   if (!config.configured) {
     const error = new Error('Conekta no está configurado todavía. Guarda las llaves primero.')
@@ -4866,7 +4866,8 @@ export async function createConektaSavedCardPayment(input = {}) {
   await createOrderForPayment(row, {
     paymentSourceId: savedSource.conekta_payment_source_id,
     customerId: savedSource.conekta_customer_id,
-    installments: conektaInstallments?.maxInstallments || 1
+    installments: conektaInstallments?.maxInstallments || 1,
+    idempotencyKey: providerIdempotencyKey
   })
 
   const updated = await findPaymentById(id)

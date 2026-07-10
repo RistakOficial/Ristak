@@ -36,6 +36,9 @@ final class PaymentsHomeModel {
 
     private let eventsClient = PaymentEventsClient()
     private var eventsTask: Task<Void, Never>?
+    private var eventsControl: Task<Void, Never>?
+    private var eventsGeneration: UInt64 = 0
+    private var refreshDebounceTask: Task<Void, Never>?
     /// Cambia cuando llega `subscription_changed` (las vistas de suscripciones
     /// lo observan para refrescarse).
     private(set) var subscriptionsRefreshTick = 0
@@ -166,12 +169,9 @@ final class PaymentsHomeModel {
         let range = PaymentsDateMath.range(for: requestedPeriod, timeZone: timeZoneProvider())
 
         do {
-            // El backend pagina TODAS las transacciones (50/pág) y luego filtramos
-            // en cliente a "recibidos" (paid|partial, monto > 0). Si una página no
-            // trae ninguna recibida pero `hasNext`, hay que seguir pidiendo páginas:
-            // de lo contrario la lista se ve vacía en falso y el scroll infinito no
-            // se dispara (sin filas → sin onAppear). Paginamos hasta juntar al menos
-            // una recibida O agotar `pagination.hasNext`.
+            // El backend filtra `paid,partial` antes de paginar. El filtro local
+            // queda como defensa de contrato y para excluir montos cero; ya no se
+            // recorren decenas de paginas de pendientes para hallar un recibido.
             var collected: [PaymentTransaction] = []
             var page = currentPage
             var hasNext = false
@@ -181,6 +181,7 @@ final class PaymentsHomeModel {
                 let result = try await PaymentsService.transactions(
                     page: page,
                     limit: Self.pageSize,
+                    statuses: "paid,partial",
                     startDate: range.start,
                     endDate: range.end,
                     sortBy: "date",
@@ -247,13 +248,26 @@ final class PaymentsHomeModel {
 
     /// Refresh silencioso (SSE / al volver de un flujo de cobro).
     func refreshRecentSilently() {
-        Task { await loadRecentPayments(reset: true) }
+        // Un burst de webhooks/SSE se convierte en una sola reconciliacion. La
+        // lista no necesita lanzar una descarga completa por cada frame.
+        refreshDebounceTask?.cancel()
+        refreshDebounceTask = Task { [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                try Task.checkCancellation()
+            } catch {
+                return
+            }
+            await self?.loadRecentPayments(reset: true)
+        }
     }
 
     // MARK: - SSE (doc 11 §4): eventos → refresh REST coalescido
 
     func startRealtime() {
         guard eventsTask == nil else { return }
+        eventsGeneration &+= 1
+        let generation = eventsGeneration
         // Capturar el CLIENTE (no self) y hacer `guard let self` DENTRO del loop,
         // como los otros clientes SSE del proyecto (Chats/Bandeja): así `self` solo
         // es fuerte durante el cuerpo de cada iteración y NO durante la suspensión
@@ -262,26 +276,43 @@ final class PaymentsHomeModel {
         // y si `onDisappear`/`stopRealtime()` no llegaban (teardown abrupto), la
         // conexión SSE seguía reconectando para siempre sobre un modelo fantasma.
         let client = eventsClient
-        eventsTask = Task { [weak self] in
+        let previous = eventsControl
+        let task = Task { [weak self] in
+            await previous?.value
+            guard !Task.isCancelled else { return }
             let stream = await client.start()
             for await event in stream {
                 guard !Task.isCancelled else { break }
                 guard let self else { return }
                 switch event {
                 case .connected:
-                    break
+                    // SSE no tiene replay: al reconectar, REST confirma lo que
+                    // pudo ocurrir durante el corte.
+                    self.refreshRecentSilently()
                 case .paymentChanged:
                     self.refreshRecentSilently()
                 case .subscriptionChanged:
                     self.subscriptionsRefreshTick &+= 1
                 }
             }
+            guard let self, !Task.isCancelled, generation == self.eventsGeneration else { return }
+            self.eventsTask = nil
         }
+        eventsTask = task
+        eventsControl = task
     }
 
     func stopRealtime() {
+        eventsGeneration &+= 1
         eventsTask?.cancel()
         eventsTask = nil
-        Task { await eventsClient.stop() }
+        refreshDebounceTask?.cancel()
+        refreshDebounceTask = nil
+        let client = eventsClient
+        let previous = eventsControl
+        eventsControl = Task {
+            await previous?.value
+            await client.stop()
+        }
     }
 }

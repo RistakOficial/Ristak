@@ -2,8 +2,9 @@ import Foundation
 
 /// Bandeja de conversaciones (`/api/contacts/chats*`, doc 03).
 /// Reglas duras: paginación 50 (clamp servidor ≤100) sin total —
-/// `hasMore = count >= limit`; SIEMPRE `warmProfilePictures=true`; con filtro
-/// de número mandar `businessPhoneNumberId` Y `businessPhone`.
+/// `hasMore = count >= limit`; con filtro de numero mandar
+/// `businessPhoneNumberId` Y `businessPhone`. La hidratacion remota de avatares
+/// solo se usa en arranque/paginacion: polls y SSE deben ser consultas ligeras.
 struct ChatsService: Sendable {
     let client: APIClient
 
@@ -20,7 +21,8 @@ struct ChatsService: Sendable {
         limit: Int = ChatsService.defaultPageSize,
         offset: Int = 0,
         businessPhoneNumberId: String? = nil,
-        businessPhone: String? = nil
+        businessPhone: String? = nil,
+        warmProfilePictures: Bool = true
     ) async throws -> [ChatContact] {
         try await client.get(
             "/contacts/chats",
@@ -30,7 +32,7 @@ struct ChatsService: Sendable {
                 "offset": String(offset),
                 "businessPhoneNumberId": businessPhoneNumberId,
                 "businessPhone": businessPhone,
-                "warmProfilePictures": "true",
+                "warmProfilePictures": warmProfilePictures ? "true" : "false",
             ]
         )
     }
@@ -41,14 +43,16 @@ struct ChatsService: Sendable {
         limit: Int = ChatsService.defaultPageSize,
         offset: Int = 0,
         businessPhoneNumberId: String? = nil,
-        businessPhone: String? = nil
+        businessPhone: String? = nil,
+        warmProfilePictures: Bool = true
     ) async throws -> ChatInboxPage {
         let contacts = try await fetchChats(
             query: query,
             limit: limit,
             offset: offset,
             businessPhoneNumberId: businessPhoneNumberId,
-            businessPhone: businessPhone
+            businessPhone: businessPhone,
+            warmProfilePictures: warmProfilePictures
         )
         return ChatInboxPage(
             contacts: contacts,

@@ -1482,6 +1482,9 @@ struct SavedCardPaymentRequest: Encodable, Sendable {
     var lineItems: [PaymentLineItem]?
     /// Solo Conekta.
     var installments: PaymentInstallmentsOption?
+    /// Id durable del intento. El backend/proveedor reutiliza el resultado si
+    /// el celular repite el mismo POST tras perder la respuesta.
+    var clientRequestId: String?
 
     init(
         contactId: String,
@@ -1499,7 +1502,8 @@ struct SavedCardPaymentRequest: Encodable, Sendable {
         dueDate: String? = nil,
         source: String? = nil,
         lineItems: [PaymentLineItem]? = nil,
-        installments: PaymentInstallmentsOption? = nil
+        installments: PaymentInstallmentsOption? = nil,
+        clientRequestId: String? = nil
     ) {
         self.contactId = contactId
         self.paymentMethodId = paymentMethodId
@@ -1517,6 +1521,7 @@ struct SavedCardPaymentRequest: Encodable, Sendable {
         self.source = source
         self.lineItems = lineItems
         self.installments = installments
+        self.clientRequestId = clientRequestId
     }
 }
 

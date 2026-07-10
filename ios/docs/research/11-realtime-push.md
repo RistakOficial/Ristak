@@ -30,7 +30,7 @@ complementarias, y la app nativa iOS debe implementar las cuatro:
 |---|---|---|
 | 1. SSE de chat | `GET /api/chat-events/stream` (Server-Sent Events) | Aviso instantáneo de mensajes de chat nuevos/actualizados (evento `chat_message`). Es solo un "nudge": el cliente re-consulta la bandeja/hilo por REST. |
 | 2. SSE de pagos | `GET /api/payment-events/stream` | Aviso de cambios de pagos/suscripciones (`payment_changed`, `subscription_changed`) para refrescar listas de transacciones, planes y suscripciones. |
-| 3. Polling de reconciliación | REST periódico | Red de seguridad si se pierde un frame SSE: bandeja cada **20 s**, hilo abierto cada **7 s**, acuses de salientes cada **12 s** (/movil). El poll debe ser no-op visual si no hay cambios. |
+| 3. Polling de reconciliación | REST periódico | Red de seguridad si se pierde un frame SSE: iOS nativo usa bandeja cada **12 s**, hilo abierto cada **4 s** y acuses cada **12 s**; /movil conserva 20 s/7 s/12 s. El poll debe ser no-op visual si no hay cambios. |
 | 4. Push APNs | `/api/push/mobile-devices` + APNs | Notificaciones con la app cerrada/fondo + "nudge" en foreground para refrescar al instante. |
 
 Además hay un canal de **presencia** (`POST /api/chat-events/viewing`) con el
@@ -153,6 +153,15 @@ Valores observados en los publishers:
 - dedup de la lista por `id` de contacto (`dedupeChatsById`,
   `PhoneChat.tsx:2014`) y no-op de React si los mensajes son equivalentes
   (`areMessagesEquivalent`).
+
+`ios/app` agrega una capa inmediata antes de esa consulta: con los metadatos del
+SSE (o el mensaje optimista local) actualiza el preview disponible y promueve la
+fila del contacto. Conserva un overlay pendiente por contacto para que una
+respuesta REST iniciada antes del evento no vuelva a bajar la fila; deduplica por
+mensaje, no vuelve a sumar no leidos al reaplicar y retira el overlay cuando REST
+confirma el contenido o vence el TTL de seguridad. El hilo reenvia actividad de
+todos los contactos a la bandeja aunque la cubra en iPhone; solo refresca su
+timeline cuando `contactId` coincide. REST sigue siendo la fuente autoritativa.
 
 ### 2.5 Reconexión (cliente)
 
@@ -322,7 +331,9 @@ Registra/reactiva el token APNs del dispositivo. Body exacto
   "appVersion": "1.0.0",                    // opcional string
   "appBuild": "42",                         // opcional string
   "deviceModel": "iPhone17,1",              // opcional string
-  "osVersion": "26.0"                       // opcional string
+  "osVersion": "26.0",                      // opcional string
+  "clientType": "native",                   // iOS SwiftUI, no Expo
+  "appPackage": "com.ristak.app"            // bundle que genero el token
 }
 ```
 
@@ -347,11 +358,10 @@ Body: `{ "token": "<device token>" }`. Marca `enabled=0` (no borra fila).
   `403 { success:false, code:'FORBIDDEN', error:'No puedes apagar este celular' }`
   (`pushController.js:128-160`). Filas sin dueño sí pueden apagarse.
 - Otros errores: `400 { success:false, error:'No se pudo apagar este celular' }`.
-- Ni /movil ni la app RN llaman hoy este DELETE (no hay UI de "apagar este
-  celular"); existe para logout limpio. **OPEN QUESTION:** ¿la app iOS debe
-  desregistrar el token al cerrar sesión? El backend lo soporta pero ningún
-  cliente lo hace; si no se hace, un device de un usuario deslogueado sigue
-  recibiendo push hasta que APNs devuelva error.
+- /movil y RN legacy no llaman hoy este DELETE. `ios/app` si lo llama en logout:
+  primero invalida/cancela y espera cualquier registro en vuelo, luego desactiva
+  el token remoto y finalmente limpia APNs local. En 401/licencia revocada, donde
+  el DELETE autenticado puede ser imposible, corta de inmediato el registro local.
 
 ### 5.4 Web PWA (referencia, no aplica a iOS nativo)
 
@@ -553,8 +563,10 @@ Resultado del dispatcher: `{ sent, webSent, nativeSent, skipped, reason }` con
   `APNS_PRIVATE_KEY` o `APNS_PRIVATE_KEY_FILE`, `APNS_ENV`
   (`production` default; `development`/`sandbox` → host sandbox).
 - **Implicación clave para `ios/app`**: el `apns-topic` que usa el
-  broker/backend debe coincidir con el bundle id de la app instalada. La app
-  SwiftUI Apple usa `com.ristak.app`, la app RN Android usa
+  broker/backend debe coincidir con el bundle id de la app instalada. El
+  Installer solo considera APNs configurado cuando el topic es exactamente
+  `com.ristak.app` y rechaza otro valor al guardar. La app SwiftUI Apple usa
+  `com.ristak.app`, la app RN Android usa
   `com.ristak.android` y el NSE reservado es
   `com.ristak.app.NotificationService` (`docs/MOBILE_APP.md`, parity checklist).
 - FCM (Android, referencia): `FCM_PROJECT_ID` + `FCM_SERVICE_ACCOUNT_JSON`.
@@ -590,6 +602,10 @@ exacto:
    solo la media.
 4. `serviceExtensionTimeWillExpire`: cancela descargas y entrega el mejor
    intento.
+5. Estado, tareas y callback final se serializan; cada request termina una sola
+   vez. Los timeouts son 6–7 s. Avatar tiene tope 5 MB y media 12 MB; ambas se
+   descargan primero a archivo temporal y se valida tamaño antes de llevar datos
+   a memoria, evitando jetsam de la extensión.
 
 Requisitos de proyecto:
 
@@ -618,7 +634,11 @@ Flujo de registro (`mobile/src/notifications.ts:195-267`,
    `denied` con `"Este celular no dio permiso para recibir notificaciones de Ristak."`;
    obtiene el device token APNs nativo y hace
    `POST /push/mobile-devices` con
-   `{ token, platform:'ios', calendarIds, appVersion:'', appBuild:'', deviceModel, osVersion }`.
+   `{ token, platform:'ios', calendarIds, appVersion:'', appBuild:'', deviceModel,
+   osVersion, clientType:'native', appPackage:'com.ristak.app' }`.
+   `ios/app` separa permiso del sistema de registro confirmado en backend,
+   serializa activaciones, reintenta 5/15/60/300 s y revalida en foreground si
+   la confirmacion supera 6 h. Cada activacion queda ligada a un epoch de sesion.
 3. Reintento manual desde Ajustes → Notificaciones (botón `Activar`/
    `Actualizar`), pasando `calendarIds` = selección actual si
    `calendar_push_notifications_enabled` (App.tsx:11800-11826).
@@ -645,8 +665,10 @@ de UI (`App.tsx:897-903, 11674-11679`):
   **"Mensajes, citas, sonido y vibración."**, meta = estado del permiso:
   `Activo` | `Bloqueado` | `No soportado` | `Activar`
   (`getPushPermissionLabel`, 11377-11382). Icono campana, tono rojo.
-- Card de estado: si permiso `granted` →
-  **"Alertas activas en este celular · N tipos prendidos."**; si no →
+- Card de estado: en `ios/app` solo dice
+  **"Alertas activas en este celular · N tipos prendidos."** cuando permiso y
+  registro backend estan confirmados; permiso `granted` sin backend se presenta
+  como pendiente/fallido, nunca como activo. Si no →
   **"Permiso nativo: <label>."** + mensaje de estado
   (p. ej. "Activando alertas en este celular...", "Alertas activas en este
   celular.", o la razón de fallo). Botón con spinner:
@@ -692,9 +714,9 @@ de UI (`App.tsx:897-903, 11674-11679`):
 - Cold start: procesar la última respuesta de notificación al lanzar
   (equivalente a `getLastNotificationResponse`; en iOS nativo usar
   `didFinishLaunching` + delegate).
-- **Polling**: bandeja cada **20 s** (`CHAT_INBOX_REFRESH_INTERVAL_MS`,
-  App.tsx:729) + al volver a foreground; hilo abierto cada **7 s**
-  (`CONVERSATION_REFRESH_INTERVAL_MS`, App.tsx:734) + foreground + push.
+- **Polling**: RN usa bandeja cada **20 s** e hilo cada **7 s**. `ios/app` usa
+  **12 s** y **4 s**, respectivamente, mas foreground + push/SSE; los acuses
+  salientes conservan **12 s**.
   Un poll sin cambios debe ser no-op de render (mismas referencias).
 - La app RN hoy **no** abre SSE ni reporta presencia (solo polling+push). La
   app iOS nativa debe además implementar SSE+presencia como /movil (§2-§3).
@@ -759,16 +781,18 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
    15 s, reset al conectar; suspender en background, reconectar en foreground.
    Dos streams: chat (siempre que haya sesión y módulo chat) y pagos (al menos
    mientras Pagos esté visible).
-2. **Dedup/reconciliación**: los eventos SSE solo disparan `refresh` coalescido
-   (si hay uno en vuelo, encolar otro con el último contactId). El estado de
-   verdad siempre viene de REST; merge por id de mensaje/contacto; no-op si
-   igual.
+2. **Dedup/reconciliación**: aplicar primero la actividad minima para promover la
+   fila, luego disparar `refresh` coalescido (si hay uno en vuelo, encolar otro).
+   Mantener overlay transitorio para que REST viejo no deshaga la promocion. El
+   estado de verdad viene de REST; merge por id de mensaje/contacto; no-op si igual.
 3. **Presencia**: reportar `viewing` al abrir/cerrar chat, en cambios de
    scenePhase y keep-alive cada 20 s; `{contactId:'', foreground:false}` al
    salir.
 4. **Push**: pedir permiso tras login (auto si `prompt`), registrar token en
-   `POST /api/push/mobile-devices` con `platform:'ios'`, reintentar en cada
-   arranque/cambio de token (`didRegisterForRemoteNotificationsWithDeviceToken`).
+   `POST /api/push/mobile-devices` con `platform:'ios'`, `clientType:'native'` y
+   `appPackage:'com.ristak.app'`; reintentar en cada arranque/cambio de token
+   (`didRegisterForRemoteNotificationsWithDeviceToken`). El permiso no basta:
+   activo exige ACK del backend. Registro/retry/logout validan epoch de sesion.
    Respetar `iosConfigured` del public-key. Categorías UNNotification a
    registrar (para futuras acciones): al menos `CHAT`, `PAYMENT`,
    `APPOINTMENT_BOOKED`, `APPOINTMENT_CONFIRMED`, `RISTAK` (hoy sin acciones).
@@ -801,14 +825,12 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
 4. **`POST /api/chat-events/viewing` exige `chat:write`** (por ser POST bajo
    `requireModuleAccess`). Un usuario read-only de chat no puede suprimir sus
    push ni auto-marcar leído. **OPEN QUESTION:** ¿bug o intencional?
-5. **Bundle id / topic APNs**: los envíos usan `APNS_BUNDLE_ID`
-   (`com.ristak.app` default) o el bundle configurado en Installer. La app
-   SwiftUI de `ios/app` ya tomó la identidad oficial `com.ristak.app`; el broker
-   e Installer deben mantener ese topic para iOS.
-6. **Sin unregister en logout**: ningún cliente llama
-   `DELETE /api/push/mobile-devices`; tras cerrar sesión el device sigue
-   recibiendo push del último usuario. Recomendado: llamarlo en logout desde
-   iOS (el endpoint ya valida propiedad).
+5. **RESUELTO — Bundle id / topic APNs**: `ios/app` y el topic oficial usan
+   `com.ristak.app`; el Installer rechaza otro valor al guardar y no reporta
+   `iosConfigured=true` con un topic heredado/Android.
+6. **RESUELTO EN iOS — unregister en logout**: `ios/app` invalida registros en
+   vuelo, espera su cierre, llama `DELETE /api/push/mobile-devices` y limpia APNs
+   local. RN/PWA legacy conservan su comportamiento anterior.
 7. **No hay eventos realtime de leído/asignación/tags/citas** (solo push para
    citas/pagos y SSE para mensajes/pagos). El estado leído entre dispositivos
    solo converge por polling (el backend sí marca leído por presencia).
@@ -860,3 +882,17 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
 4. **CONFIRMADO — §6.2:** `aps.sound` solo se incluye si el destinatario tiene sonido ON
    (`pushNotificationsService.js:1905-1907`) y `aps.badge` nunca se manda hoy (ningún
    emisor setea `payload.badge`), tal como documenta §12.1.
+
+## Audit resolutions (2026-07-10, hardening iOS de produccion)
+
+1. La bandeja aplica actividad inmediata con dedup y overlay pendiente; una
+   respuesta REST vieja ya no puede deshacer el orden/preview, y el hilo abierto
+   reenvia eventos de otros contactos.
+2. El registro APNs reporta `clientType=native` y `appPackage=com.ristak.app`;
+   permiso y ACK backend son estados distintos. Reintentos y logout estan
+   ligados a la generacion de sesion para no revivir el token de otra cuenta.
+3. El Installer exige topic exacto `com.ristak.app`. El host productivo
+   `raulgomez.onrender.com` reporta `iosConfigured=true`; `app.ristak.com` es
+   standalone y no sirve para validar el broker nativo.
+4. El NSE serializa finalizacion, usa timeouts acotados y valida tamaño desde
+   archivo temporal (5 MB avatar, 12 MB media) antes de cargar bytes.

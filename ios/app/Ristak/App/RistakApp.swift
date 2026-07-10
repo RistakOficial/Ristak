@@ -17,6 +17,9 @@ struct RistakApp: App {
         session.pushUnregisterHandler = {
             await PushRegistrar.shared.unregisterForLogout()
         }
+        session.pushLocalResetHandler = {
+            PushRegistrar.shared.clearLocalRegistration()
+        }
         _session = State(initialValue: session)
         _appConfig = State(initialValue: AppConfigStore())
         _access = State(initialValue: AccessStore(session: session))

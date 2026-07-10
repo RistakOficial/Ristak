@@ -40,6 +40,10 @@ struct MobilePushDeviceRegistration: Encodable, Sendable {
     let appBuild: String
     let deviceModel: String
     let osVersion: String
+    /// Metadata explicita para que el broker nunca clasifique este token APNs
+    /// como un cliente Expo/Android heredado.
+    let clientType: String
+    let appPackage: String
 
     init(
         token: String,
@@ -48,7 +52,9 @@ struct MobilePushDeviceRegistration: Encodable, Sendable {
         appVersion: String = "",
         appBuild: String = "",
         deviceModel: String = "",
-        osVersion: String = ""
+        osVersion: String = "",
+        clientType: String = "native",
+        appPackage: String = Bundle.main.bundleIdentifier ?? "com.ristak.app"
     ) {
         self.token = token
         self.platform = platform
@@ -57,6 +63,8 @@ struct MobilePushDeviceRegistration: Encodable, Sendable {
         self.appBuild = appBuild
         self.deviceModel = deviceModel
         self.osVersion = osVersion
+        self.clientType = clientType
+        self.appPackage = appPackage
     }
 }
 

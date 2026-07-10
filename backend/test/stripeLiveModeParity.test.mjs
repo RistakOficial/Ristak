@@ -19,15 +19,6 @@ function suffix(label = 'live_parity') {
   return `${label}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
 }
 
-function todayDateOnly() {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/Mexico_City',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  }).format(new Date())
-}
-
 async function snapshotStripeConfig(callback) {
   const previousRows = await db.all(
     "SELECT config_key, config_value FROM app_config WHERE config_key LIKE 'stripe_%' OR config_key = 'payments_settings'"
@@ -342,9 +333,15 @@ test('Stripe live parity: configuración manual live usa customer y tarjeta live
         paymentMethodId: liveSavedMethodId,
         amount: 432.1,
         title: 'Pago live simulado'
+      }, {
+        providerIdempotencyKey: 'ristak:saved-card:stripe:test-provider-key'
       })
       assert.equal(savedPayment.payment.status, 'paid')
       assert.equal(stripeMock.calls.paymentIntentsCreate.at(-1).params.amount, 43210)
+      assert.equal(
+        stripeMock.calls.paymentIntentsCreate.at(-1).options.idempotencyKey,
+        'ristak:saved-card:stripe:test-provider-key'
+      )
 
       const plan = await createStripePaymentPlan({
         contact,
@@ -353,7 +350,7 @@ test('Stripe live parity: configuración manual live usa customer y tarjeta live
         paymentMethodId: liveSavedMethodId,
         firstPayment: { enabled: false },
         remainingPayments: [
-          { sequence: 1, amount: 250, dueDate: todayDateOnly(), frequency: 'monthly' },
+          { sequence: 1, amount: 250, dueDate: '2099-01-01', frequency: 'monthly' },
           { sequence: 2, amount: 750, dueDate: '2099-01-01', frequency: 'monthly' }
         ]
       }, { baseUrl: 'https://app.example.com' })
