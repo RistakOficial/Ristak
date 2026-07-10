@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { DateTime } from 'luxon'
 import { db } from '../src/config/database.js'
-import { createPublicAppointment, deleteEvent } from '../src/controllers/calendarsController.js'
+import { createPublicAppointment, deleteCalendar, deleteEvent } from '../src/controllers/calendarsController.js'
 import {
   createLocalCalendar,
   getPublicCalendarBySlug,
@@ -286,6 +286,122 @@ test('mirrored HighLevel calendar and appointment changes remain pending until r
   } finally {
     await db.run('DELETE FROM appointments WHERE id = ?', [appointmentId]).catch(() => undefined)
     await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    await highLevelSnapshot.restore()
+  }
+})
+
+test('disconnected HighLevel calendar mirror can be deleted locally', async () => {
+  const suffix = randomUUID()
+  const calendarId = `ghl_delete_local_${suffix}`
+  const remoteCalendarId = `ghl_remote_delete_${suffix}`
+  const appointmentId = `ghl_appt_delete_${suffix}`
+  const highLevelSnapshot = await snapshotRows('highlevel_config')
+  const start = DateTime.utc().plus({ days: 18 }).set({ hour: 11, minute: 0, second: 0, millisecond: 0 })
+  const end = start.plus({ minutes: 60 })
+
+  try {
+    await db.run('DELETE FROM highlevel_config')
+    await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_disconnected_delete',
+      name: 'Agenda GHL para borrar local',
+      slug: `ghl-delete-${suffix}`,
+      widgetSlug: `ghl-delete-${suffix}`,
+      source: 'ghl'
+    }, {
+      id: calendarId,
+      source: 'ghl',
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_disconnected_delete',
+      syncStatus: 'synced'
+    })
+    await upsertLocalAppointment({
+      id: appointmentId,
+      ghlAppointmentId: `ghl_remote_appt_delete_${suffix}`,
+      calendarId,
+      locationId: 'loc_disconnected_delete',
+      title: 'Cita local de calendario GHL desconectado',
+      source: 'ghl',
+      startTime: start.toISO(),
+      endTime: end.toISO(),
+      appointmentStatus: 'confirmed',
+      status: 'confirmed'
+    }, {
+      id: appointmentId,
+      source: 'ghl',
+      calendarId,
+      locationId: 'loc_disconnected_delete',
+      syncStatus: 'synced'
+    })
+
+    const res = createJsonResponse()
+    await deleteCalendar({
+      params: { id: calendarId },
+      query: { accessToken: 'stale-session-token' },
+      body: {},
+      headers: {}
+    }, res)
+
+    assert.equal(res.statusCode, 200)
+    assert.equal(res.body?.success, true)
+    assert.equal(res.body?.data?.deleted, true)
+
+    const storedCalendar = await db.get('SELECT id FROM calendars WHERE id = ?', [calendarId])
+    const storedAppointment = await db.get('SELECT id FROM appointments WHERE calendar_id = ?', [calendarId])
+    assert.equal(storedCalendar, null)
+    assert.equal(storedAppointment, null)
+  } finally {
+    await db.run('DELETE FROM appointments WHERE calendar_id = ?', [calendarId]).catch(() => undefined)
+    await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
+    await highLevelSnapshot.restore()
+  }
+})
+
+test('configured HighLevel calendar mirror remains protected from local delete', async () => {
+  const suffix = randomUUID()
+  const calendarId = `ghl_delete_blocked_${suffix}`
+  const remoteCalendarId = `ghl_remote_blocked_${suffix}`
+  const highLevelSnapshot = await snapshotRows('highlevel_config')
+
+  try {
+    await db.run('DELETE FROM highlevel_config')
+    await db.run(
+      'INSERT INTO highlevel_config (location_id, api_token, location_data) VALUES (?, ?, ?)',
+      ['loc_connected_delete', 'token_connected_delete', '{}']
+    )
+    await upsertLocalCalendar({
+      id: calendarId,
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_connected_delete',
+      name: 'Agenda GHL protegida',
+      slug: `ghl-blocked-${suffix}`,
+      widgetSlug: `ghl-blocked-${suffix}`,
+      source: 'ghl'
+    }, {
+      id: calendarId,
+      source: 'ghl',
+      ghlCalendarId: remoteCalendarId,
+      locationId: 'loc_connected_delete',
+      syncStatus: 'synced'
+    })
+
+    const res = createJsonResponse()
+    await deleteCalendar({
+      params: { id: calendarId },
+      query: {},
+      body: {},
+      headers: {}
+    }, res)
+
+    assert.equal(res.statusCode, 409)
+    assert.equal(res.body?.success, false)
+    assert.match(res.body?.error || '', /Desconecta HighLevel/)
+
+    const storedCalendar = await db.get('SELECT id FROM calendars WHERE id = ?', [calendarId])
+    assert.equal(storedCalendar?.id, calendarId)
+  } finally {
     await db.run('DELETE FROM calendars WHERE id = ?', [calendarId]).catch(() => undefined)
     await highLevelSnapshot.restore()
   }

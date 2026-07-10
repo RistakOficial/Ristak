@@ -56,20 +56,27 @@ test('Analytics: el modal muestra citas fuera del calendario de atribución (par
   const attributionCalendarId = `cal-only-attribution-${suffix}`
 
   // Guardar el valor previo de attribution_calendar_ids para restaurarlo al final.
-  const previousConfig = await db.get(
-    'SELECT config_value FROM app_config WHERE config_key = ?',
+  const previousConfigRows = await db.all(
+    'SELECT * FROM app_config WHERE config_key = ?',
     ['attribution_calendar_ids']
-  )
+  ).catch(() => [])
 
-  const cleanup = async () => {
+  const cleanup = async ({ restoreConfig = false } = {}) => {
     await db.run('DELETE FROM appointments WHERE contact_id = ?', [contactId])
     await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
     await db.run('DELETE FROM app_config WHERE config_key = ?', ['attribution_calendar_ids'])
-    if (previousConfig && previousConfig.config_value != null) {
-      await db.run(
-        'INSERT INTO app_config (config_key, config_value) VALUES (?, ?)',
-        ['attribution_calendar_ids', previousConfig.config_value]
-      )
+
+    if (restoreConfig) {
+      for (const row of previousConfigRows) {
+        const columns = Object.keys(row)
+        if (!columns.length) continue
+        const quotedColumns = columns.map(column => `"${String(column).replace(/"/g, '""')}"`).join(', ')
+        const placeholders = columns.map(() => '?').join(', ')
+        await db.run(
+          `INSERT INTO app_config (${quotedColumns}) VALUES (${placeholders})`,
+          columns.map(column => row[column])
+        )
+      }
     }
   }
 
@@ -77,10 +84,21 @@ test('Analytics: el modal muestra citas fuera del calendario de atribución (par
 
   try {
     // Configurar calendarios de atribución que EXCLUYEN el calendario de la cita.
-    await db.run(
-      'INSERT INTO app_config (config_key, config_value) VALUES (?, ?)',
-      ['attribution_calendar_ids', JSON.stringify([attributionCalendarId])]
+    const existingAttributionConfig = await db.get(
+      'SELECT config_key FROM app_config WHERE config_key = ?',
+      ['attribution_calendar_ids']
     )
+    if (existingAttributionConfig) {
+      await db.run(
+        'UPDATE app_config SET config_value = ? WHERE config_key = ?',
+        [JSON.stringify([attributionCalendarId]), 'attribution_calendar_ids']
+      )
+    } else {
+      await db.run(
+        'INSERT INTO app_config (config_key, config_value) VALUES (?, ?)',
+        ['attribution_calendar_ids', JSON.stringify([attributionCalendarId])]
+      )
+    }
 
     await db.run(`
       INSERT INTO contacts (
@@ -156,6 +174,6 @@ test('Analytics: el modal muestra citas fuera del calendario de atribución (par
     )
     assert.equal(contact.appointments[0].id, appointmentId)
   } finally {
-    await cleanup()
+    await cleanup({ restoreConfig: true })
   }
 })

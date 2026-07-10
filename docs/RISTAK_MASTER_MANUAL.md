@@ -952,6 +952,10 @@ Reglas base:
   ediciones y eliminaciones quedan en `sync_status` pendiente/error/
   `pending_delete` y se empujan a HighLevel cuando la integracion vuelva a
   conectarse.
+- Si HighLevel ya esta desconectado, un calendario espejado de HighLevel puede
+  eliminarse de Ristak como copia local junto con sus citas locales asociadas.
+  Mientras HighLevel siga configurado, el borrado local queda bloqueado porque
+  el origen remoto podria volver a sincronizarlo.
 - Las rutas publicas/privadas de calendario base dependen de `appointments`, no
   de `google_calendar`. Solo las rutas `/api/calendars/google-integration/*` y
   `/:id/google-sync` deben exigir `google_calendar`.

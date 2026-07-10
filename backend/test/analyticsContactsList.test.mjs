@@ -10,6 +10,27 @@ async function cleanupContact(contactId) {
   await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
 }
 
+async function withAppConfigKeyCleared(configKey, callback) {
+  const rows = await db.all('SELECT * FROM app_config WHERE config_key = ?', [configKey]).catch(() => [])
+
+  await db.run('DELETE FROM app_config WHERE config_key = ?', [configKey])
+  try {
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM app_config WHERE config_key = ?', [configKey]).catch(() => undefined)
+    for (const row of rows) {
+      const columns = Object.keys(row)
+      if (!columns.length) continue
+      const quotedColumns = columns.map(column => `"${String(column).replace(/"/g, '""')}"`).join(', ')
+      const placeholders = columns.map(() => '?').join(', ')
+      await db.run(
+        `INSERT INTO app_config (${quotedColumns}) VALUES (${placeholders})`,
+        columns.map(column => row[column])
+      ).catch(() => undefined)
+    }
+  }
+}
+
 async function withHighLevelConfigCleared(callback) {
   const columns = await db.all('PRAGMA table_info(highlevel_config)')
   const columnNames = columns.map(column => column.name).filter(Boolean)
@@ -130,7 +151,7 @@ test('appointment attribution uses local Ristak appointments without HighLevel c
   await cleanupContact(contactId)
 
   try {
-    await withHighLevelConfigCleared(async () => {
+    await withAppConfigKeyCleared('attribution_calendar_ids', async () => withHighLevelConfigCleared(async () => {
       await db.run(`
         INSERT INTO contacts (
           id, phone, email, full_name, created_at, updated_at
@@ -176,7 +197,7 @@ test('appointment attribution uses local Ristak appointments without HighLevel c
       })
       const bucket = report.metrics.find(item => item.date === date)
       assert.equal(bucket?.appointments, 1)
-    })
+    }))
   } finally {
     await cleanupContact(contactId)
   }

@@ -126,6 +126,10 @@ async function getSavedHighLevelConfig() {
   return db.get('SELECT location_id, api_token FROM highlevel_config LIMIT 1');
 }
 
+function isHighLevelConfigured(config = {}) {
+  return Boolean(cleanString(config?.location_id) && cleanString(config?.api_token));
+}
+
 async function getHighLevelContext(req, source = {}) {
   const saved = await getSavedHighLevelConfig().catch(() => null);
   return {
@@ -2344,7 +2348,16 @@ export async function deleteCalendar(req, res) {
       });
     }
 
-    if (existing.source !== 'ristak') {
+    if (existing.source === 'ghl') {
+      const highLevelConfig = await getSavedHighLevelConfig().catch(() => null);
+
+      if (isHighLevelConfigured(highLevelConfig)) {
+        return res.status(409).json({
+          success: false,
+          error: 'Desconecta HighLevel antes de eliminar este calendario de Ristak'
+        });
+      }
+    } else if (existing.source !== 'ristak') {
       return res.status(409).json({
         success: false,
         error: 'Los calendarios sincronizados se eliminan desde su origen'
@@ -2352,6 +2365,10 @@ export async function deleteCalendar(req, res) {
     }
 
     const deleted = await localCalendarService.deleteLocalCalendar(id);
+
+    await localCalendarService.reconcileCalendarDefaults().catch(error => {
+      logger.warn(`[Calendars Controller] No se pudo reconciliar calendario predeterminado tras eliminar calendario: ${error.message}`);
+    });
 
     res.json({
       success: true,

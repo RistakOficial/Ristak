@@ -36,6 +36,7 @@ app.use('/api/calendars', calendarsRoutes)
 | DELETE | `/api/calendars/block-slots/:id` | `deleteBlockedSlot` |
 | GET | `/api/calendars/:id` | `getCalendar` |
 | PUT | `/api/calendars/:id` | `updateCalendar` |
+| DELETE | `/api/calendars/:id` | `deleteCalendar` |
 
 El orden importa: rutas específicas como `/events` y `/block-slots` van antes de `/:id`.
 
@@ -124,6 +125,13 @@ Elimina una cita/evento.
 ### `updateCalendar(calendarId, updateData, accessToken)`
 
 Actualiza configuración de calendario.
+
+### `deleteCalendar(calendarId)`
+
+Elimina calendarios locales de Ristak y sus citas asociadas. Si el calendario es
+un espejo de HighLevel, solo se permite eliminarlo localmente cuando HighLevel ya
+no esta configurado en `highlevel_config`; con HighLevel activo el controller
+responde `409` para evitar que el origen remoto lo vuelva a sincronizar.
 
 ## Respuestas Del Controller
 

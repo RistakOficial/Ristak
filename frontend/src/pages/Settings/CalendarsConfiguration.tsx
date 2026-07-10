@@ -803,7 +803,11 @@ export const CalendarsConfiguration: React.FC = () => {
 
   // El origen de calendarios solo tiene sentido con integraciones externas.
   // Sin ellas, Ristak es la fuente operativa.
-  const { connected: highLevelConnected, loading: highLevelLoading } = useHighLevelConnected()
+  const {
+    connected: highLevelConnected,
+    configured: highLevelConfigured,
+    loading: highLevelLoading
+  } = useHighLevelConnected()
 
   // Estados locales
   const [calendars, setCalendars] = useState<CalendarType[]>([])
@@ -1825,23 +1829,42 @@ export const CalendarsConfiguration: React.FC = () => {
   }
 
   const handleDeleteCalendar = (calendar: CalendarType) => {
-    const isExternalCalendar = calendar.source === 'google' || calendar.source === 'ghl'
+    const isGoogleCalendar = calendar.source === 'google'
+    const isHighLevelCalendar = calendar.source === 'ghl'
+
+    if (isHighLevelCalendar && highLevelLoading) {
+      showToast('info', 'Verificando HighLevel', 'Espera unos segundos antes de eliminar este calendario.')
+      return
+    }
+
+    const isHighLevelStillConfigured = isHighLevelCalendar && (highLevelConnected || highLevelConfigured)
+
+    if (isGoogleCalendar || isHighLevelStillConfigured) {
+      showToast(
+        'warning',
+        'Calendario sincronizado',
+        isGoogleCalendar
+          ? 'Elimínalo o desconéctalo desde Google Calendar para que no vuelva a aparecer.'
+          : 'Desconecta HighLevel antes de eliminar este calendario de Ristak.'
+      )
+      return
+    }
+
+    const isDisconnectedHighLevelMirror = isHighLevelCalendar && !highLevelConnected && !highLevelConfigured
 
     showConfirm(
       'Eliminar calendario',
-      isExternalCalendar
-        ? `${calendar.name} viene de ${calendar.source === 'google' ? 'Google Calendar' : 'HighLevel'}. Para quitarlo de verdad hay que desconectarlo o quitarlo desde el origen; Ristak no lo va a borrar porque se volveria a sincronizar.`
+      isDisconnectedHighLevelMirror
+        ? `Se eliminará ${calendar.name} de Ristak junto con sus citas locales. HighLevel está desconectado, así que esto solo limpia la copia local y no toca el calendario remoto. Esta acción no se puede deshacer.`
         : `Se eliminará ${calendar.name} y sus citas locales asociadas. Esta acción no se puede deshacer.`,
       () => {
         const deleteCalendar = async () => {
-          if (isExternalCalendar) {
-            showToast('warning', 'Calendario sincronizado', 'Elimínalo o desconéctalo desde el origen para que no vuelva a aparecer.')
-            return
-          }
-
           setDeletingCalendarId(calendar.id)
           try {
-            await calendarsService.deleteCalendar(calendar.id, accessToken || undefined)
+            await calendarsService.deleteCalendar(
+              calendar.id,
+              isDisconnectedHighLevelMirror ? undefined : accessToken || undefined
+            )
 
             if (defaultCalendarId === calendar.id) {
               const nextDefault = calendars.find(item => item.id !== calendar.id)?.id || ''
@@ -1867,10 +1890,10 @@ export const CalendarsConfiguration: React.FC = () => {
 
         void deleteCalendar()
       },
-      isExternalCalendar ? 'Entendido' : 'Eliminar',
+      'Eliminar',
       'Cancelar',
       undefined,
-      isExternalCalendar ? undefined : { typeToConfirm: 'ELIMINAR' }
+      { typeToConfirm: 'ELIMINAR' }
     )
   }
 
