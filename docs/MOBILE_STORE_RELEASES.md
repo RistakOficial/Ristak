@@ -92,7 +92,9 @@ viejo, el archive puede fallar al firmar o iOS puede mostrar el avatar como
 attachment normal en vez de avatar de remitente. Cuando cambien capabilities,
 regenera/descarga el perfil App Store del app principal y verifica que el perfil
 de `com.ristak.app.NotificationService` siga vigente para la Notification
-Service Extension.
+Service Extension. El target `RistakNotificationService` vive en
+`ios/app/RistakNotificationService` y se embebe en `Ristak.app`; el workflow
+firma/exporta ambos bundle ids.
 
 Android:
 

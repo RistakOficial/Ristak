@@ -2472,7 +2472,11 @@ bundle necesita su propio provisioning profile App Store, ambos ligados al mismo
 certificado Apple Distribution. El perfil de la app principal debe incluir Push
 Notifications y Communication Notifications
 (`com.apple.developer.usernotifications.communication`) para que las push puedan
-mostrar el avatar del contacto como remitente cuando la extension este integrada.
+mostrar el avatar del contacto como remitente. La extension
+`ios/app/RistakNotificationService` ya se embebe en la app con bundle
+`com.ristak.app.NotificationService` y procesa `contactAvatarUrl` /
+`senderAvatarUrl` como avatar de remitente; `notificationImageUrl` queda para
+media real del mensaje.
 El login de `com.ristak.app` muestra marca Ristak, solo pide correo y contrasena,
 no expone configuracion avanzada de servidor y resuelve automaticamente la
 instalacion correcta por correo via `https://www.ristak.com/api/mobile/resolve`

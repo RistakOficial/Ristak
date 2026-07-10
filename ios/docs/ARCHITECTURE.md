@@ -146,6 +146,10 @@ carpeta asignada + lee (sin modificar) el resto.
 - Topic APNs: el backend (`APNS_BUNDLE_ID`, default `com.ristak.app`) y el
   broker del Installer deben mantenerse en `com.ristak.app`, que ahora es la
   identidad oficial de la app SwiftUI Apple.
+- `RistakNotificationService`: extensión embebida con bundle
+  `com.ristak.app.NotificationService`; procesa `mutable-content`, descarga
+  avatar/media pública y entrega Communication Notifications con el remitente
+  correcto.
 
 ## Media (doc 12)
 

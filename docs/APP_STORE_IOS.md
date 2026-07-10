@@ -86,6 +86,8 @@ If local signing fails, open `ios/app/Ristak.xcodeproj` in Xcode and check:
 
 - Target `Ristak` uses team `Y2L8669JNL`.
 - Release signing uses an App Store provisioning profile for `com.ristak.app`.
+- Target `RistakNotificationService` uses bundle `com.ristak.app.NotificationService`
+  and its own App Store provisioning profile.
 - Push Notifications capability is enabled.
 - Communication Notifications capability is enabled on the app profile.
 - Bundle ID is still `com.ristak.app`.

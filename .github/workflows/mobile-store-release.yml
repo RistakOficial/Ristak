@@ -278,8 +278,15 @@ jobs:
           project = Xcodeproj::Project.open("ios/app/Ristak.xcodeproj")
           signing_targets = {
             "Ristak" => {
+              bundle_id: ENV.fetch("APP_BUNDLE_ID"),
               profile_uuid: "IOS_PROFILE_UUID",
-              profile_name: "IOS_PROFILE_NAME"
+              profile_name: "IOS_PROFILE_NAME",
+              aps_environment: "production"
+            },
+            "RistakNotificationService" => {
+              bundle_id: ENV.fetch("NOTIFICATION_SERVICE_BUNDLE_ID"),
+              profile_uuid: "IOS_NOTIFICATION_SERVICE_PROFILE_UUID",
+              profile_name: "IOS_NOTIFICATION_SERVICE_PROFILE_NAME"
             }
           }
 
@@ -292,8 +299,8 @@ jobs:
 
             settings = release.build_settings
             settings["DEVELOPMENT_TEAM"] = ENV.fetch("APPLE_TEAM_ID")
-            settings["PRODUCT_BUNDLE_IDENTIFIER"] = ENV.fetch("APP_BUNDLE_ID")
-            settings["APS_ENVIRONMENT"] = "production"
+            settings["PRODUCT_BUNDLE_IDENTIFIER"] = env_keys.fetch(:bundle_id)
+            settings["APS_ENVIRONMENT"] = env_keys[:aps_environment] if env_keys[:aps_environment]
 
             case ENV.fetch("IOS_SIGNING_STYLE")
             when "automatic"
@@ -354,6 +361,7 @@ jobs:
           if signing_style == "manual":
               options["provisioningProfiles"] = {
                   os.environ["APP_BUNDLE_ID"]: os.environ["IOS_PROFILE_NAME"],
+                  os.environ["NOTIFICATION_SERVICE_BUNDLE_ID"]: os.environ["IOS_NOTIFICATION_SERVICE_PROFILE_NAME"],
               }
               options["signingCertificate"] = os.environ["IOS_SIGNING_IDENTITY"]
           with open(os.path.join(os.environ["RUNNER_TEMP"], "ExportOptions-AppStore-CI.plist"), "wb") as file:

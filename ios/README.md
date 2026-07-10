@@ -113,7 +113,8 @@ solo en capa flotante; copy en español.
   alerta), versión y cierre de sesión.
 - **Push y realtime**: registro del token APNs en `/api/push/mobile-devices`,
   deep links de notificación (chat/cita/pago), refresh al recibir push en
-  foreground, SSE `chat-events` + `payment-events` con reconexión.
+  foreground, Notification Service Extension para avatar/media en iOS, SSE
+  `chat-events` + `payment-events` con reconexión.
 
 ## Pendientes / brechas conocidas
 
@@ -128,10 +129,6 @@ Backend/product (documentadas en `docs/research/*` como OPEN QUESTION):
   muestra un aviso. Solución real: transcodificar a m4a en backend.
 - Archivados/silenciados son locales por dispositivo (no existe endpoint de
   sincronización; misma limitación que la app RN).
-- Extensión de notificaciones (Communication Notifications con avatar completo)
-  requiere un target adicional de Xcode — siguiente iteración. El target
-  principal ya declara el entitlement de Communication Notifications para el
-  perfil App Store de `com.ristak.app`.
 - Sin UI todavía: cobro con tarjeta guardada, envío del link de pago por
   canal (WhatsApp/email), ruta de invoices HighLevel para pago único,
   respuesta pública a comentarios FB/IG, recordatorios de cita (solo lectura

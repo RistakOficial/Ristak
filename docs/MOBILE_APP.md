@@ -23,7 +23,7 @@ proposito:
 | Identificador | Uso correcto | Estado |
 | --- | --- | --- |
 | `com.ristak.app` | App nativa Apple oficial de App Store en `ios/app` y topic APNs default historico. | Activo iOS oficial |
-| `com.ristak.app.NotificationService` | Extension/perfil de notificaciones reservado para la app Apple oficial. | Reservado Apple |
+| `com.ristak.app.NotificationService` | Notification Service Extension embebida en la app Apple oficial para avatar/media de push iOS. | Activo iOS oficial |
 | `com.ristak.android` | Paquete Android de `mobile/` React Native/Expo. | Activo Android |
 | `com.ristak.native` | Nombre viejo invalido para Android; no debe usarse porque `native` es palabra reservada de Java y rompe Gradle. | Prohibido |
 | `com.ristak.chats` | Identificador interno de UI/navegacion, no bundle id ni package id de app. | Interno |
@@ -507,6 +507,10 @@ backend debe generar un PNG publico de iniciales en
 `/api/push/contact-avatar/:contactId` con firma en querystring y usar esa URL en
 los mismos campos. Solo cuando son varios contactos o la alerta es general se
 usa el isotipo de Ristak.
+En iOS, el target `ios/app/RistakNotificationService` (`com.ristak.app.NotificationService`)
+procesa ese payload con `mutable-content`, pinta el avatar como remitente con
+Communication Notifications y adjunta media real cuando venga separada del
+avatar.
 
 El avatar del contacto, sea foto real o iniciales generadas, no debe copiarse a
 `notificationImageUrl`. `notificationImageUrl` y `notificationAttachmentUrl`
@@ -1256,6 +1260,9 @@ en `/api/push/mobile-devices` y delega el envio al portal central. El broker
 central intenta el ambiente configurado y reintenta el alterno cuando APNs
 responde `BadDeviceToken`, cubriendo builds de desarrollo/sandbox y
 produccion sin duplicar secretos por cliente.
+El archive de App Store firma dos targets: `com.ristak.app` y
+`com.ristak.app.NotificationService`. Ambos perfiles se validan y refrescan
+desde Ristak Installer antes de disparar el workflow `mobile-store-release`.
 
 Solo una instalacion standalone que de verdad no use Installer debe configurar
 APNs localmente:

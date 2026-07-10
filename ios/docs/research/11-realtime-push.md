@@ -13,7 +13,7 @@
 > `mobileAppService.ts`, `frontend/public/sw.js`,
 > `frontend/src/pages/PhoneChat/PhoneChat.tsx`), app RN
 > (`mobile/src/notifications.ts`, `mobile/src/App.tsx`, `mobile/src/api.ts`),
-> extensión iOS (`frontend/ios/App/RistakNotificationService/NotificationService.swift`)
+> extensión iOS (`ios/app/RistakNotificationService/NotificationService.swift`)
 > y docs (`docs/MOBILE_APP.md`, `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`).
 >
 > Todo lo aquí descrito fue verificado contra el código. Lo ambiguo está marcado
@@ -565,9 +565,9 @@ Resultado del dispatcher: `{ sent, webSent, nativeSent, skipped, reason }` con
 
 ## 9. Notification Service Extension (Communication Notifications)
 
-Swift de referencia — portar tal cual:
-`frontend/ios/App/RistakNotificationService/NotificationService.swift` (371
-líneas). Comportamiento exacto:
+Swift implementado en:
+`ios/app/RistakNotificationService/NotificationService.swift`. Comportamiento
+exacto:
 
 1. `didReceive` copia el contenido mutable; si falla, entrega el original.
 2. **Media**: busca la primera URL http(s) en
@@ -596,7 +596,8 @@ Requisitos de proyecto:
 - Entitlement en la app principal:
   `com.apple.developer.usernotifications.communication = true`
   (ver `mobile/app.json:24-27`) y `aps-environment`.
-- Target NSE con bundle `<app>.NotificationService`.
+- Target NSE `RistakNotificationService` con bundle
+  `com.ristak.app.NotificationService`, embebido en `Ristak.app`.
 - El backend ya manda `mutable-content:1` solo cuando hay algo que hacer.
 
 ---
@@ -815,10 +816,10 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
    canales Android). Mostrar el toggle igualmente por paridad de UI.
 9. **Payments SSE requiere feature de licencia `payments`**: manejar 403
    `license/feature` sin romper la pantalla.
-10. **NSE fuera de árbol para la app RN**: `mobile/ios` está gitignored; el
-    Swift de referencia vive en
-    `frontend/ios/App/RistakNotificationService/NotificationService.swift`.
-    Copiarlo a `ios/app` (no referenciar el de `mobile/ios`).
+10. **NSE oficial en `ios/app`**: `mobile/ios` está gitignored; la app Apple
+    oficial compila `ios/app/RistakNotificationService/NotificationService.swift`.
+    El archivo legacy bajo `frontend/ios/App/...` queda solo como referencia
+    histórica y no debe ser el target de App Store.
 11. **Avatar de iniciales requiere URL pública configurada**
     (`PUBLIC_APP_URL` etc.): en instalaciones sin ella, los push llegan sin
     avatar; el NSE ya lo tolera (muestra AppIcon).
@@ -854,8 +855,8 @@ campana del header desktop; ni /movil ni la app RN la muestran hoy.
    `PRODUCT_BUNDLE_IDENTIFIER = com.ristak.app`, alineado con el topic APNs por
    defecto (`APNS_BUNDLE_ID=com.ristak.app`) y con la identidad de App Store. El
    perfil App Store de la app principal debe conservar Push Notifications y
-   Communication Notifications; `com.ristak.app.NotificationService` queda como
-   bundle reservado para la futura extension de notificaciones.
+   Communication Notifications; `com.ristak.app.NotificationService` es el
+   bundle activo de la Notification Service Extension.
 4. **CONFIRMADO — §6.2:** `aps.sound` solo se incluye si el destinatario tiene sonido ON
    (`pushNotificationsService.js:1905-1907`) y `aps.badge` nunca se manda hoy (ningún
    emisor setea `payload.badge`), tal como documenta §12.1.
