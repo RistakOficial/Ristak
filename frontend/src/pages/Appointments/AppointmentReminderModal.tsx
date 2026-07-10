@@ -366,10 +366,15 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
 
   const changeChannel = (nextChannel: string) => {
     const nextUsesWhatsApp = isWhatsAppChannelId(nextChannel)
+    const nextContentMode = nextChannel === 'whatsapp_qr'
+      ? 'direct'
+      : nextUsesWhatsApp
+        ? 'template'
+        : 'direct'
     setDraft(prev => ({
       ...prev,
       channel: nextChannel,
-      contentMode: nextUsesWhatsApp ? (prev.contentMode || 'template') : 'direct',
+      contentMode: prev.contentMode === 'direct' ? 'direct' : nextContentMode,
       qrFallbackEnabled: nextChannel === 'whatsapp' ? prev.qrFallbackEnabled : false,
       senderMode: nextUsesWhatsApp ? prev.senderMode : 'contact',
       senderPhoneNumberId: nextUsesWhatsApp ? prev.senderPhoneNumberId : null
@@ -793,11 +798,11 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
                 value={contentMode}
                 options={usesWhatsApp
                   ? [
-                      { value: 'template', label: isWhatsAppQrOnly ? 'Plantilla como texto QR' : 'Plantilla de WhatsApp' },
-                      { value: 'direct', label: 'Mensaje directo' }
+                      { value: 'template', label: isWhatsAppQrOnly ? 'Usar mensaje guardado como texto QR' : 'Usar plantilla de WhatsApp API' },
+                      { value: 'direct', label: 'Escribir mensaje propio' }
                     ]
                   : [
-                      { value: 'direct', label: 'Mensaje directo' }
+                      { value: 'direct', label: 'Escribir mensaje propio' }
                     ]}
                 onValueChange={(value) => changeContentMode(value as 'template' | 'direct')}
                 aria-label="Tipo de contenido del mensaje"
@@ -852,12 +857,12 @@ export const AppointmentReminderModal: React.FC<AppointmentReminderModalProps> =
               </>
             ) : (
               <div className={styles.field}>
-                <label className={styles.fieldLabel}>Mensaje directo</label>
+                <label className={styles.fieldLabel}>Mensaje propio</label>
                 <textarea
                   className={styles.messageTextarea}
                   value={draft.messageText || ''}
                   onChange={(event) => set('messageText', event.target.value)}
-                  placeholder="Escribe el mensaje que recibirá el contacto."
+                  placeholder="Escribe aquí el mensaje que recibirá el contacto."
                 />
                 <span className={styles.helpText}>
                   Variables disponibles: {'{{contact.first_name}}'}, {'{{contact.name}}'}, {'{{cita.titulo}}'}, {'{{cita.fecha}}'}, {'{{cita.hora}}'}.

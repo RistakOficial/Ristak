@@ -532,17 +532,17 @@ function calculatePreviewTax(baseAmount: number, taxes: PaymentTaxSettings) {
 }
 
 const channelOptions = [
-  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'whatsapp', label: 'WhatsApp API' },
   { value: 'whatsapp_qr', label: 'WhatsApp QR solo' },
   { value: 'email', label: 'Correo electrónico' },
-  { value: 'both', label: 'WhatsApp y correo electrónico' }
+  { value: 'both', label: 'WhatsApp API y correo electrónico' }
 ]
 
 const channelLabelById: Record<PaymentAutomationSettings['reminderChannel'], string> = {
-  whatsapp: 'WhatsApp',
+  whatsapp: 'WhatsApp API',
   whatsapp_qr: 'WhatsApp QR solo',
   email: 'correo electrónico',
-  both: 'WhatsApp y correo electrónico'
+  both: 'WhatsApp API y correo electrónico'
 }
 
 const afterPaymentActionLabelById: Record<PaymentAutomationSettings['afterPaymentAction'], string> = {
@@ -3413,7 +3413,7 @@ export const PaymentsConfiguration: React.FC = () => {
             onValueChange={(nextValue) => setAutomationContentMode(kind, nextValue as 'template' | 'direct')}
             options={[
               { value: 'template', label: usesQrOnly ? 'Plantilla como texto QR' : usesWhatsApp ? 'Plantilla / predeterminado' : 'Mensaje predeterminado' },
-              { value: 'direct', label: 'Mensaje directo' }
+              { value: 'direct', label: 'Escribir mensaje propio' }
             ]}
           />,
           mode === 'direct'
@@ -3431,11 +3431,11 @@ export const PaymentsConfiguration: React.FC = () => {
 
         {mode === 'direct' ? (
           renderField(
-            'Mensaje directo',
+            'Mensaje propio',
             <textarea
               value={getAutomationDirectMessage(kind)}
               onChange={(event) => setAutomationDirectMessage(kind, event.target.value)}
-              placeholder={`Mensaje directo para ${config.label.toLowerCase()}.`}
+              placeholder={`Escribe aquí el mensaje para ${config.label.toLowerCase()}.`}
             />,
             'Variables disponibles: {{contact.first_name}}, {{payment.amount}}, {{payment.product}}, {{payment.url}}, {{payment.receipt_url}}.'
           )

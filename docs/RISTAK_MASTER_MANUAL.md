@@ -1228,7 +1228,7 @@ requerido` no deben aparecer como si fueran el resultado del pago.
 Configuracion > Pagos > Automatizaciones controla recordatorios, comprobantes y
 avisos de cobro fallido desde `payments_settings.automations`.
 
-- Canales soportados: WhatsApp, WhatsApp QR solo, correo electronico o ambos.
+- Canales soportados: WhatsApp API, WhatsApp QR solo, correo electronico o ambos.
 - Cada automatizacion de pago puede usar `contentMode='template'` o
   `contentMode='direct'`. En `template`, WhatsApp usa la plantilla configurada y
   correo usa el mensaje predeterminado del sistema. En `direct`, el texto
@@ -1279,8 +1279,9 @@ inicio de la cita. Los avisos `after_booking` se anclan a la fecha de reserva
 local en Ristak; citas sincronizadas desde Google/GHL no reciben avisos de
 reserva como si el cliente hubiera agendado por Ristak.
 
-Cada recordatorio/aviso guarda canal y contenido por separado. `channel` puede
-ser `whatsapp`, `whatsapp_qr`, `email`, `messenger` o `instagram`.
+Cada recordatorio/aviso guarda canal y contenido por separado. En la UI, el canal
+visible `WhatsApp API` guarda `channel='whatsapp'`; `WhatsApp QR solo` guarda
+`channel='whatsapp_qr'`. Tambien puede ser `email`, `messenger` o `instagram`.
 `channel='whatsapp'` usa WhatsApp API como ruta principal y QR solo como
 respaldo opcional. `channel='whatsapp_qr'` usa WhatsApp QR como ruta principal
 aunque tambien exista API conectada. En los dos canales de WhatsApp, el contenido

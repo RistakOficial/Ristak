@@ -71,7 +71,7 @@ const FALLBACK_TEMPLATE_STATUSES = new Set([
   'DELETED'
 ])
 const CHANNEL_LABELS = {
-  whatsapp: 'WhatsApp',
+  whatsapp: 'WhatsApp API',
   whatsapp_qr: 'WhatsApp QR',
   email: 'correo electrónico',
   messenger: 'Messenger',
@@ -536,7 +536,6 @@ export async function getAppointmentRemindersOverview() {
   }
   const whatsappApiConnected = senders.some(sender => sender.apiEnabled)
   const whatsappQrConnected = senders.some(sender => sender.qrConnected)
-  const whatsappConnected = whatsappApiConnected || whatsappQrConnected
   const channelState = {
     emailConnected: false,
     messengerConnected: false,
@@ -586,7 +585,7 @@ export async function getAppointmentRemindersOverview() {
     reminders,
     senders,
     channels: [
-      { id: 'whatsapp', label: 'WhatsApp', connected: whatsappConnected },
+      { id: 'whatsapp', label: 'WhatsApp API', connected: whatsappApiConnected },
       { id: 'whatsapp_qr', label: 'WhatsApp QR solo', connected: whatsappQrConnected },
       { id: 'email', label: 'Correo electrónico', connected: channelState.emailConnected },
       { id: 'messenger', label: 'Messenger', connected: channelState.messengerConnected },
