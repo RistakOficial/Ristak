@@ -1435,13 +1435,17 @@ test('confirmacion automatica de enlace de calendario confirma cita con ID real'
     assert.match(link.id, /^goal_/)
     assert.equal(new URL(link.sentUrl).searchParams.get('booking_ref'), link.id)
     assert.equal(new URL(link.sentUrl).searchParams.get('calendar_id'), 'cal_demo')
+    const callbackUrl = new URL(link.callbackUrl)
+    const confirmationToken = callbackUrl.searchParams.get('ristak_goal_token')
+    assert.ok(confirmationToken)
+    assert.equal(new URL(link.sentUrl).searchParams.has('ristak_goal_token'), false)
 
     const completed = await completeConversationGoalLinkFromWebhook({
       booking_ref: link.id,
       calendar_id: 'cal_demo',
       appointment_id: 'appt_123',
       status: 'scheduled'
-    })
+    }, { confirmationToken })
 
     assert.equal(completed.status, 'completed')
     assert.equal(completed.externalObjectId, 'appt_123')
@@ -1505,9 +1509,12 @@ test('confirmacion automatica de pedido valida producto antes de cerrar venta', 
     })
 
     const sentUrl = new URL(link.sentUrl)
+    const confirmationToken = new URL(link.callbackUrl).searchParams.get('ristak_goal_token')
     assert.equal(sentUrl.searchParams.get('pedido_ref'), link.id)
     assert.equal(sentUrl.searchParams.get('product_id'), 'prod_x')
     assert.equal(sentUrl.searchParams.get('price_id'), 'price_mensual')
+    assert.ok(confirmationToken)
+    assert.equal(sentUrl.searchParams.has('ristak_goal_token'), false)
 
     await assert.rejects(
       () => completeConversationGoalLinkFromWebhook({
@@ -1516,7 +1523,7 @@ test('confirmacion automatica de pedido valida producto antes de cerrar venta', 
         price_id: 'price_mensual',
         purchase_id: 'purchase_wrong',
         status: 'paid'
-      }),
+      }, { confirmationToken }),
       /producto esperado/
     )
 
@@ -1529,7 +1536,7 @@ test('confirmacion automatica de pedido valida producto antes de cerrar venta', 
       price_id: 'price_mensual',
       purchase_id: 'purchase_123',
       status: 'paid'
-    })
+    }, { confirmationToken })
 
     assert.equal(completed.status, 'completed')
     assert.equal(completed.externalObjectId, 'purchase_123')
@@ -1891,7 +1898,7 @@ test('calcula métricas del agente conversacional por estado y errores', () => {
       { agent_id: 'agent_1', status: 'active', signal: null, updated_at: '2026-06-13T10:00:00Z' },
       { agent_id: 'agent_1', status: 'completed', signal: 'ready_for_human', updated_at: '2026-06-13T10:05:00Z' },
       { agent_id: 'agent_2', status: 'discarded', signal: 'discarded', updated_at: '2026-06-13T10:10:00Z' },
-      { agent_id: 'agent_2', status: 'human', signal: null, updated_at: '2026-06-13T10:15:00Z' }
+      { agent_id: 'agent_2', status: 'human', signal: 'ready_for_human', updated_at: '2026-06-13T10:15:00Z' }
     ],
     eventSummary: {
       total_events: 8,
@@ -2120,9 +2127,12 @@ test('[Fase 0] silencio ante pregunta de agenda ya no fuerza un pase humano mudo
   assert.deepEqual(result.events, [])
 })
 
-test('candado runtime quita precio prematuro si el mismo mensaje aun pide calificar', () => {
+test('candado runtime quita precio sólo cuando el negocio configuró esa condición explícita', () => {
   const reply = 'Claro, la valoración tiene un valor de $800. Para darte bien el dato, cuéntame qué buscas resolver?'
-  const rewritten = rewritePrematurePriceDisclosure(reply, { persuasionLevel: 'high' })
+  const rewritten = rewritePrematurePriceDisclosure(reply, {
+    persuasionLevel: 'high',
+    extraInstructions: 'No digas el precio hasta que primero conozcas qué servicio necesita.'
+  })
 
   assert.equal(rewritten.includes('$800'), false)
   assert.equal(rewritten, 'Claro, para darte un valor que sí aplique, cuéntame tantito qué estás buscando resolver?')
@@ -3040,7 +3050,7 @@ test('convierte el perfil estructurado del negocio en parametros del prompt', ()
   assert.doesNotMatch(rendered, /\[INDUSTRIA\]/)
 })
 
-test('parametriza el cierre de fabrica sin transformar el guion general', () => {
+test('parametriza el contexto del negocio sin convertirlo en libreto', () => {
   const parameters = buildBusinessProfilePromptParameters({
     businessName: 'Growth Médico',
     industry: 'marketing para médicos especialistas',
@@ -3055,8 +3065,8 @@ test('parametriza el cierre de fabrica sin transformar el guion general', () => 
       narrativeFrame: 'No vendas marketing; guía al médico a revisar si depender de recomendaciones y mensajes sueltos está frenando su agenda.',
       customerPerception: 'Debe sentirse como una revisión profesional de su captación de pacientes, no como una compra impulsiva.',
       languageGuidance: 'Habla de pacientes, agenda, consultas, seguimiento y claridad del sistema.',
-      contrastFrame: 'Contrasta seguir con conversaciones que no llegan a cita contra ordenar el sistema para que los interesados correctos avancen.',
-      discoveryAngles: ['qué pasa con los mensajes que llegan', 'cuántas consultas reales se pierden', 'qué cambió para revisar esto ahora'],
+      contrastFrame: 'Explica las dos rutas con neutralidad cuando ayude a decidir.',
+      discoveryAngles: ['qué pasa con los mensajes que llegan', 'qué dato cambia la recomendación'],
       safeValueLanguage: 'Habla de revisar si tiene sentido y de ver una ruta clara.',
       forbiddenSalesLanguage: 'Evita compra, oferta, invierte hoy y pago hasta que el médico pida avanzar.'
     }
@@ -3067,20 +3077,18 @@ test('parametriza el cierre de fabrica sin transformar el guion general', () => 
     parameters
   })
 
-  assert.match(section, /Parámetros del negocio para el guión de fábrica/)
+  assert.match(section, /Parámetros conversacionales del negocio/)
   assert.match(section, /Growth Médico/)
   assert.match(section, /marketing para médicos especialistas/)
   assert.match(section, /No vendas marketing/)
   assert.match(section, /pacientes, agenda, consultas/)
-  assert.match(section, /no reescribe, resume, reemplaza ni transforma el guión de fábrica/)
-  assert.match(section, /El guión de fábrica manda completo/)
+  assert.match(section, /contexto de apoyo/)
+  assert.match(section, /No inventes una cadencia ni requisitos/)
   assert.match(section, /No pongas a la persona en modo comprador/)
-  assert.doesNotMatch(section, /Adaptación conversacional al negocio/)
-  assert.doesNotMatch(section, /Adapta todo el diálogo/)
-  assert.doesNotMatch(section, /manda sobre los ejemplos genéricos/)
+  assert.doesNotMatch(section, /guión de fábrica|manda completo|se califique sola/i)
 })
 
-test('los parametros del perfil no acortan ni cambian la estrategia de fabrica', () => {
+test('la estrategia adaptable renderiza los datos reales sin placeholders crudos', () => {
   const profileParameters = buildBusinessProfilePromptParameters({
     businessName: 'Academia Sol',
     industry: 'escuela de idiomas',
@@ -3099,68 +3107,35 @@ test('los parametros del perfil no acortan ni cambian la estrategia de fabrica',
   })
   const rendered = renderClosingStrategyTemplate(DEFAULT_CLOSING_STRATEGY, parameters, { replaceMissing: true })
 
+  assert.match(rendered, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
   assert.match(rendered, /Academia Sol/)
   assert.match(rendered, /escuela de idiomas/)
   assert.match(rendered, /clases de inglés para adultos/)
-  assert.match(rendered, /Cuenta configurada en Colombia \(CO\)/)
+  assert.match(rendered, /WhatsApp/)
   assert.match(rendered, /español colombiano/)
-  assert.match(rendered, /listo/)
-  assert.match(rendered, /AGENTE CONVERSACIONAL DE CIERRE/)
-  assert.match(rendered, /Escribes como una persona real tecleando por WhatsApp/)
-  assert.match(rendered, /CÓMO PIENSAS ANTES DE CADA MENSAJE/)
-  assert.match(rendered, /CONTEXTO PROFUNDO/)
-  assert.match(rendered, /PROHIBICIÓN MÁXIMA/)
   assert.match(rendered, /mark_ready_to_advance/)
-  assert.match(rendered, /NOMBRE_DEL_NEGOCIO: Academia Sol/)
-  assert.match(rendered, /INDUSTRIA: escuela de idiomas/)
-  assert.match(rendered, /PRODUCTO_O_SERVICIO: clases de inglés para adultos/)
-  assert.match(rendered, /El patrón invariable: regresar la definición a la persona SIN explicar el producto/)
   assert.doesNotMatch(rendered, /dato pendiente de configurar/)
-  assert.doesNotMatch(rendered, /\[(?:ESCRIBIR[^\]]*|NOMBRE_DEL_NEGOCIO|INDUSTRIA|PRODUCTO_O_SERVICIO|CANAL_DE_CONVERSACION|HERRAMIENTA_INTERNA_DE_AVANCE|HERRAMIENTA_INTERNA_DE_DESCARTE)\]/)
-  assert.ok(rendered.length > 15000)
+  assert.doesNotMatch(rendered, /\[(?:ESCRIBIR[^\]]*|NOMBRE_DEL_NEGOCIO|INDUSTRIA|PRODUCTO_O_SERVICIO|CANAL_DE_CONVERSACION|HERRAMIENTA_INTERNA_DE_AVANCE|HERRAMIENTA_INTERNA_DE_DESCARTE|CULTURA_TEXTUAL_REGIONAL)\]/)
+  assert.ok(rendered.length > 2500)
+  assert.ok(rendered.length < 9000)
 })
 
-test('estrategia de fabrica conserva reglas anti-molde y anti-asuncion', () => {
-  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /me da curiosidad/i)
-  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /justo ahorita/i)
-  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /qué te hizo escribirnos/i)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /AGENTE CONVERSACIONAL DE CIERRE/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Nota de género/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /PROHIBICIÓN MÁXIMA: NO COPIES/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Todos los ejemplos de este prompt son FILOSOFÍA, no libreto/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /CÓMO PIENSAS ANTES DE CADA MENSAJE/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /CÓMO ESCRIBES \(textura humana real\)/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Refleja LIMPIO, en sus palabras/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /No jales hacia lo que vendes/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /PROHIBIDO diagnosticar con TUS categorías/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Reacciones y emoción \(escribe con sentimiento\)/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /La emoción no es decoración/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /LA BIBLIA DEL PRIMER CONTACTO Y LAS PREGUNTAS VAGAS/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Diagnosticar, jalar a tu solución y reflejar/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /tu primera respuesta NO informa. DEVUELVE/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /ante un mensaje vago de apertura/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /EJEMPLOS = FILOSOFÍA \(NO LIBRETO\)/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /NO ASUMAS el perfil de la persona/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /signos de apertura/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 6[^\n]*Asumir el perfil/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 7[^\n]*Loop de rebotes \+ signos de apertura/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /NO te quedes en LOOP rebotando/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Varía el justificante/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Manejo del precio/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /El precio NUNCA es lo primero/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 14[^\n]*Dar el precio de inmediato a un pedido específico/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /nunca des el precio de inmediato sin antes sacar plática y construir valor/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA el menú completo/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /NUNCA suenes evasivo/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /JAMÁS sueltes una "biblia"/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /El "se me hace caro" \(voltea el costo\)/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Humor y buena experiencia/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Cuidado quirúrgico con el lenguaje/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Error 8[^\n]*Lenguaje tieso/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /DESCARTE Y SILENCIO/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /Cuándo NO te quedes callado/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /El PRIMER regreso es el más delicado/)
-  assert.match(DEFAULT_CLOSING_STRATEGY, /dosis EXTRA de calidez/)
+test('estrategia adaptable prioriza ayuda, evidencia y objetivos específicos', () => {
+  assert.match(DEFAULT_CLOSING_STRATEGY, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /Separa HECHOS de HIPÓTESIS/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /pregunta directa, respóndela primero/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /UNA pregunta principal/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /no la vuelvas a pedir/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /ADAPTACIÓN AL OBJETIVO/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /CITAS:.*día y una hora exactos/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /VENTAS:.*valor, la moneda y el canal/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /DATOS: recopila únicamente los campos configurados/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /FILTRO: comprueba los criterios escritos/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /OBJETIVO PERSONALIZADO: interpreta literalmente/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /inconsistencia, señálala con tacto/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /menor fricción posible/)
+  assert.match(DEFAULT_CLOSING_STRATEGY, /memoria de apoyo, no una lista por completar/)
+  assert.doesNotMatch(DEFAULT_CLOSING_STRATEGY, /estatus sin necesidad|se califique sola|tu primera respuesta NO informa|el precio NUNCA es lo primero|costo de no actuar|reto suave|fases obligatorias|ajedrez de la motivación/i)
 })
 
 test('[Fase 2] buildRuntimeBusinessContext usa el texto libre como fuente de verdad + anti-invención', () => {
@@ -3183,46 +3158,43 @@ test('[Fase 2] buildRuntimeBusinessContext usa el texto libre como fuente de ver
   assert.equal(buildRuntimeBusinessContext('', { configured: false }), '')
 })
 
-test('base ligera y directa existe y es mas ligera que la fabrica', () => {
-  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO/)
-  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /CÓMO OPERAS \(ligero y directo\)/)
-  // La esencia directa: dar info, no rebotar/esconder como la biblia de fabrica.
-  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /Responde lo que te preguntan, claro y al grano/)
-  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /GIROS SENSIBLES/)
-  assert.doesNotMatch(LIGHT_DIRECT_CLOSING_STRATEGY, /AGENTE CONVERSACIONAL DE CIERRE/)
-  // Debe ser sustancialmente mas corta que la biblia de fabrica.
-  assert.ok(LIGHT_DIRECT_CLOSING_STRATEGY.length * 3 < DEFAULT_CLOSING_STRATEGY.length)
+test('base directa conserva el mismo contrato sin la variante adaptable', () => {
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /ESTRATEGIA CONVERSACIONAL DIRECTA/)
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /Responde la pregunta directa primero/)
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /hechos confirmados de interpretaciones/)
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /El objetivo no siempre es vender/)
+  assert.match(LIGHT_DIRECT_CLOSING_STRATEGY, /no checklist/)
+  assert.doesNotMatch(LIGHT_DIRECT_CLOSING_STRATEGY, /estatus sin necesidad|se califique sola|fases obligatorias|costo de no actuar/i)
+  assert.ok(LIGHT_DIRECT_CLOSING_STRATEGY.length < DEFAULT_CLOSING_STRATEGY.length)
 })
 
-test('usesLightDirectClosingBase cubre la matriz persuasion x lenguaje', () => {
+test('usesLightDirectClosingBase cubre la matriz de iniciativa y registro', () => {
   const persuasions = ['low', 'medium', 'high']
   const languages = ['professional', 'intermediate', 'colloquial']
-  const factoryQuadrant = new Set([
+  const adaptiveQuadrant = new Set([
     'medium|intermediate', 'medium|colloquial',
     'high|intermediate', 'high|colloquial'
   ])
   for (const persuasionLevel of persuasions) {
     for (const languageLevel of languages) {
       const config = { persuasionLevel, languageLevel }
-      const expectedLight = !factoryQuadrant.has(`${persuasionLevel}|${languageLevel}`)
+      const expectedDirect = !adaptiveQuadrant.has(`${persuasionLevel}|${languageLevel}`)
       assert.equal(
         usesLightDirectClosingBase(config),
-        expectedLight,
-        `combinacion ${persuasionLevel} x ${languageLevel} deberia usar base ${expectedLight ? 'ligera' : 'fabrica'}`
+        expectedDirect,
+        `combinacion ${persuasionLevel} x ${languageLevel} deberia usar base ${expectedDirect ? 'directa' : 'adaptable'}`
       )
       const base = resolveDefaultClosingStrategyBase(config)
-      assert.equal(base === LIGHT_DIRECT_CLOSING_STRATEGY, expectedLight)
-      assert.equal(base === DEFAULT_CLOSING_STRATEGY, !expectedLight)
+      assert.equal(base === LIGHT_DIRECT_CLOSING_STRATEGY, expectedDirect)
+      assert.equal(base === DEFAULT_CLOSING_STRATEGY, !expectedDirect)
     }
   }
-  // Anfitrion (low) SIEMPRE ligera; Ejecutivo (professional) SIEMPRE ligera.
   assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'low', languageLevel: 'colloquial' }), true)
   assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'high', languageLevel: 'professional' }), true)
-  // Default de fabrica (Cerrador + Complice) se queda con la biblia.
   assert.equal(usesLightDirectClosingBase({ persuasionLevel: 'high', languageLevel: 'intermediate' }), false)
 })
 
-test('instrucciones montan la base correcta y sus moduladores por combinacion', () => {
+test('instrucciones montan bases compactas y la iniciativa nunca cambia las precondiciones', () => {
   const commonContext = {
     businessContext: 'Vendemos consultas.',
     brandVoice: '',
@@ -3245,40 +3217,32 @@ test('instrucciones montan la base correcta y sus moduladores por combinacion', 
     ...commonContext
   })
 
-  // Cuadrante de fabrica: biblia pesada, sin marca ligera.
-  const factory = build('high', 'intermediate')
-  assert.match(factory, /AGENTE CONVERSACIONAL DE CIERRE/)
-  assert.doesNotMatch(factory, /ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO/)
+  const adaptive = build('high', 'intermediate')
+  assert.match(adaptive, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
+  assert.match(adaptive, /Nivel de iniciativa: ALTA/)
+  assert.doesNotMatch(adaptive, /ESTRATEGIA CONVERSACIONAL DIRECTA/)
 
-  // Anfitrion + Callejero: base ligera + modulador Anfitrion + modulador Callejero.
   const anfitrionCallejero = build('low', 'colloquial')
-  assert.match(anfitrionCallejero, /ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO/)
-  assert.doesNotMatch(anfitrionCallejero, /AGENTE CONVERSACIONAL DE CIERRE/)
-  assert.match(anfitrionCallejero, /Intensidad de persuasión: ANFITRIÓN/)
+  assert.match(anfitrionCallejero, /ESTRATEGIA CONVERSACIONAL DIRECTA/)
+  assert.match(anfitrionCallejero, /Nivel de iniciativa: BAJA \(Anfitrión\)/)
   assert.match(anfitrionCallejero, /Registro de lenguaje: CALLEJERO/)
 
-  // Cerrador + Ejecutivo: base ligera (por Ejecutivo) + modulador Ejecutivo, sin modulador de persuasion.
-  const cerradorEjecutivo = build('high', 'professional')
-  assert.match(cerradorEjecutivo, /ASISTENTE CONVERSACIONAL EN MODO LIGERO Y DIRECTO/)
-  assert.match(cerradorEjecutivo, /Registro de lenguaje: EJECUTIVO/)
-  assert.doesNotMatch(cerradorEjecutivo, /Intensidad de persuasión: (ANFITRIÓN|ESTRATEGA)/)
+  const highExecutive = build('high', 'professional')
+  assert.match(highExecutive, /ESTRATEGIA CONVERSACIONAL DIRECTA/)
+  assert.match(highExecutive, /Nivel de iniciativa: ALTA/)
+  assert.match(highExecutive, /Registro de lenguaje: EJECUTIVO/)
 
-  // La base ligera NO monta la maquinaria de cierre avanzado; la fabrica ni el placeholder crudo se filtran.
-  assert.doesNotMatch(anfitrionCallejero, /Parámetros internos de cierre avanzado/)
-  assert.doesNotMatch(anfitrionCallejero, /dato pendiente de configurar/)
-  assert.doesNotMatch(anfitrionCallejero, /\[(?:NOMBRE_DEL_NEGOCIO|CANAL_DE_CONVERSACION|OBJETIVO_FINAL|HERRAMIENTA_INTERNA_DE_AVANCE)\]/)
-
-  // Los moduladores de persuasion sobre base ligera NO refieren la "estrategia de cierre"
-  // de la fabrica (esa referencia solo aplica cuando corre la biblia).
-  assert.doesNotMatch(anfitrionCallejero, /estrategia de cierre de arriba/)
-  const estrategaEjecutivo = build('medium', 'professional') // base ligera
-  assert.match(estrategaEjecutivo, /ajusta la intensidad de arriba/)
-  assert.doesNotMatch(estrategaEjecutivo, /recalibra la estrategia de cierre de arriba/)
-  const estrategaComplice = build('medium', 'intermediate') // base fabrica
-  assert.match(estrategaComplice, /recalibra la estrategia de cierre de arriba/)
+  for (const instructions of [adaptive, anfitrionCallejero, highExecutive]) {
+    assert.match(instructions, /responde esa duda PRIMERO/i)
+    assert.match(instructions, /precondición del objetivo concreto/)
+    assert.match(instructions, /No existe un recorrido universal/)
+    assert.doesNotMatch(instructions, /Fases obligatorias|reto suave|costo de no actuar|arco de cierre/i)
+    assert.doesNotMatch(instructions, /dato pendiente de configurar/)
+    assert.doesNotMatch(instructions, /\[(?:NOMBRE_DEL_NEGOCIO|CANAL_DE_CONVERSACION|OBJETIVO_FINAL|HERRAMIENTA_INTERNA_DE_AVANCE)\]/)
+  }
 })
 
-test('update_closing_context solo se instruye con la biblia de fabrica activa', () => {
+test('el contexto estructurado se integra en cualquier base cuando está presente', () => {
   const commonContext = {
     businessContext: 'Vendemos consultas.',
     brandVoice: '',
@@ -3289,21 +3253,33 @@ test('update_closing_context solo se instruye con la biblia de fabrica activa', 
     channel: 'whatsapp',
     accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
   }
-  const build = (persuasionLevel, languageLevel, closingStrategyMode = 'system', closingStrategyCustom = '') =>
+  const advancedClosingContext = {
+    enabled: true,
+    systemFacts: ['Canal confirmado: WhatsApp'],
+    learned: { productInterest: 'consulta inicial', timingPreference: 'martes por la tarde' },
+    missingFields: ['whyNow']
+  }
+  const build = (persuasionLevel, languageLevel, closingStrategyMode = 'system', closingStrategyCustom = '', context = advancedClosingContext) =>
     buildConversationalInstructions({
       config: { persuasionLevel, languageLevel, objective: 'ventas', successAction: 'ready_to_buy', requiredData: '', closingStrategyMode, closingStrategyCustom },
+      advancedClosingContext: context,
       ...commonContext
     })
 
-  // Cuadrante de fabrica: SI se pide update_closing_context.
-  assert.match(build('high', 'intermediate'), /update_closing_context/)
-  assert.match(build('medium', 'colloquial'), /update_closing_context/)
-  // Base ligera (Anfitrion o Ejecutivo): NO se pide, porque se omite su marco de contexto.
-  assert.doesNotMatch(build('low', 'intermediate'), /update_closing_context/)
-  assert.doesNotMatch(build('high', 'professional'), /update_closing_context/)
-  assert.doesNotMatch(build('medium', 'professional'), /update_closing_context/)
-  // Estrategia custom del negocio: tampoco.
-  assert.doesNotMatch(build('high', 'intermediate', 'custom', 'Cierra breve y humano.'), /update_closing_context/)
+  for (const instructions of [
+    build('high', 'intermediate'),
+    build('low', 'intermediate'),
+    build('high', 'professional'),
+    build('high', 'intermediate', 'custom', 'Responde breve y humano.')
+  ]) {
+    assert.match(instructions, /Contexto interno estructurado/)
+    assert.match(instructions, /Hechos que el sistema ya confirmó/)
+    assert.match(instructions, /Distingue hechos de hipótesis/)
+    assert.match(instructions, /update_closing_context/)
+    assert.match(instructions, /no es un formulario ni una lista/)
+  }
+
+  assert.doesNotMatch(build('high', 'intermediate', 'system', '', null), /update_closing_context/)
 })
 
 test('las indicaciones del negocio se inyectan como OBLIGATORIAS y con prioridad', () => {
@@ -3383,12 +3359,13 @@ test('bloquea revelar precio cuando las indicaciones condicionan el valor', () =
     extraInstructions: 'No des precios hasta conocer completamente el problema o reto de la persona.'
   })
   assert.match(fromBusinessRules, /Bloqueo de precio\/valor condicionado \(REGLA DURA\)/)
-  assert.match(fromBusinessRules, /Una pregunta directa como "precio".*NO desbloquea el precio/)
-  assert.match(fromBusinessRules, /consultar datos reales NO te autoriza a revelar el precio/)
-  assert.match(fromBusinessRules, /qué servicio\/producto busca/)
-  assert.match(fromBusinessRules, /qué le pasa hoy o qué quiere resolver/)
+  assert.match(fromBusinessRules, /condición LITERAL escrita por el negocio/)
+  assert.match(fromBusinessRules, /No agregues requisitos genéricos/)
+  assert.match(fromBusinessRules, /responde cualquier otra duda que sí puedas resolver/)
+  assert.match(fromBusinessRules, /En cuanto la condición esté cumplida, da el dato real/)
   assert.match(fromBusinessRules, /Datos mínimos configurados: - Servicio que le interesa - Reto principal/)
   assert.match(fromBusinessRules, /No des precios hasta conocer completamente el problema o reto/)
+  assert.doesNotMatch(fromBusinessRules, /qué servicio\/producto busca, qué le pasa hoy|qué resultado espera y qué dato relevante falta/)
 
   const fromAdvancedStrategy = build({
     closingStrategyMode: 'custom',
@@ -3396,7 +3373,7 @@ test('bloquea revelar precio cuando las indicaciones condicionan el valor', () =
   })
   assert.match(fromAdvancedStrategy, /Bloqueo de precio\/valor condicionado \(REGLA DURA\)/)
   assert.match(fromAdvancedStrategy, /Instrucciones avanzadas: No menciones costos ni cotices/)
-  assert.match(fromAdvancedStrategy, /Esta sección manda sobre la estrategia de cierre/)
+  assert.match(fromAdvancedStrategy, /manda únicamente sobre el dato condicionado/)
 
   const promotionOnly = build({
     extraInstructions: 'Menciona la promoción de fin de mes cuando la persona ya esté interesada.'
@@ -3441,8 +3418,9 @@ test('instrucciones universales evitan repetir datos y simular handoff sin tool'
   assert.match(instructions, /Este agente NO agenda por su cuenta; un humano cierra la cita/)
   assert.match(instructions, /Después de esa tool, el bot se detiene/)
   assert.match(instructions, /una persona que no entiende el proceso después de explicarlo breve/)
-  assert.match(instructions, /Decisión de suficiencia/)
-  assert.match(instructions, /No trates el guion como checklist de preguntas/)
+  assert.match(instructions, /Suficiencia por objetivo y mínima fricción/)
+  assert.match(instructions, /No existe un recorrido universal/)
+  assert.match(instructions, /no la sometas a preguntas adicionales salvo un dato operativo indispensable/)
   assert.match(instructions, /Estado: ready_to_advance/)
 })
 
@@ -3575,7 +3553,7 @@ test('instrucciones del agente incluyen anticipo y acción final configurados', 
   assert.match(instructions, /asigna el contacto a Ana Ventas/)
 })
 
-test('instrucciones de agenda por IA usan calidad real de intencion de meta', () => {
+test('instrucciones de agenda por IA piden sólo disponibilidad real y horario exacto', () => {
   const instructions = buildConversationalInstructions({
     config: {
       objective: 'citas',
@@ -3606,11 +3584,11 @@ test('instrucciones de agenda por IA usan calidad real de intencion de meta', ()
 
   assert.match(instructions, /Flujo de agenda configurado/)
   assert.match(instructions, /Este agente debe intentar agendar por IA/)
-  assert.match(instructions, /Si la persona está claramente urgida y pide agendar con motivo real/)
-  assert.match(instructions, /registra goalIntentQuality\/goalMotivation\/priceShoppingRisk/)
-  assert.match(instructions, /no ejecutes book_appointment hasta que confirme un horario real/)
-  assert.match(instructions, /CUÁNDO ACTIVAR book_appointment/)
-  assert.match(instructions, /NO la actives si solo saludó, solo preguntó el precio sin dar contexto/)
+  assert.match(instructions, /Si la persona pide agendar, no le exijas explicar un problema/)
+  assert.match(instructions, /Si todavía no elige día y hora, pregunta sólo por esa preferencia/)
+  assert.match(instructions, /Usa book_appointment sólo con un horario real devuelto por get_free_slots/)
+  assert.match(instructions, /disponibilidad real más confirmación explícita de día y hora exactos/)
+  assert.doesNotMatch(instructions, /goalIntentQuality\/goalMotivation\/priceShoppingRisk|solo preguntó el precio sin dar contexto/)
 })
 
 test('instrucciones de venta completa no piden comprobante aunque exista deposito legacy', () => {
@@ -3652,8 +3630,9 @@ test('instrucciones de venta completa no piden comprobante aunque exista deposit
 
   assert.match(instructions, /Flujo de cobro configurado/)
   assert.match(instructions, /Curso Intensivo · 1200 USD/)
-  assert.match(instructions, /Si la persona confirma producto, monto\/canal y motivo real de compra o pago/)
-  assert.match(instructions, /registra goalIntentQuality\/goalMotivation\/priceShoppingRisk/)
+  assert.match(instructions, /Si la persona confirma producto, monto, moneda y canal/)
+  assert.match(instructions, /Si falta alguno de esos datos, responde primero cualquier duda/)
+  assert.doesNotMatch(instructions, /goalIntentQuality\/goalMotivation\/priceShoppingRisk/)
   assert.doesNotMatch(instructions, /Pago solicitado antes de concretar la venta/)
   assert.doesNotMatch(instructions, /comprobanteValidado=true/)
 })
@@ -3689,7 +3668,7 @@ test('instrucciones del agente separan correo de canales de chat', () => {
   assert.doesNotMatch(instructions, /texto visible para WhatsApp/)
 })
 
-test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', () => {
+test('integra la memoria estructurada como evidencia y no como checklist', () => {
   const baseConfig = {
     objective: 'ventas',
     customObjective: '',
@@ -3715,18 +3694,18 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
     learned: {
       contactReason: 'pierde leads por responder tarde',
       realProblem: 'sus conversaciones se enfrían antes de que el equipo conteste',
-      problemMagnitudeAwareness: 'ya entiende que cada hora de espera enfria la intencion de compra',
-      goalIntentQuality: 'alta: pidio avanzar hoy con una llamada de diagnostico',
+      problemMagnitudeAwareness: 'interpreta que la demora afecta conversaciones',
+      goalIntentQuality: 'alta: pidió avanzar hoy con una llamada',
       goalMotivation: 'quiere dejar de perder leads sin contratar otra persona',
-      appointmentIntentQuality: 'alta: pidio hablar hoy y acepto avanzar con horario concreto',
-      priceShoppingRisk: 'bajo: pregunto valor despues de explicar el problema',
+      appointmentIntentQuality: 'alta: pidió hablar hoy y aceptó avanzar',
+      priceShoppingRisk: 'bajo: preguntó valor después de explicar el problema',
       desiredOutcome: 'responder más rápido sin contratar otra persona'
     },
     missingFields: ['whyNow', 'consequenceIfNoAction']
   }
 
-  const instructions = buildConversationalInstructions({
-    config: baseConfig,
+  const build = (config, accountLocale) => buildConversationalInstructions({
+    config,
     businessContext: 'Software para operación comercial.',
     brandVoice: '',
     businessName: 'Ristak',
@@ -3734,60 +3713,42 @@ test('agrega memoria interna de cierre solo cuando usa estrategia de fabrica', (
     nowIso: 'sábado, 13 de junio de 2026, 10:00',
     contactName: 'Juan',
     advancedClosingContext,
-    accountLocale: { countryCode: 'MX', currency: 'MXN', dialCode: '52' }
+    accountLocale
   })
+
+  const instructions = build(baseConfig, { countryCode: 'MX', currency: 'MXN', dialCode: '52' })
 
   assert.match(instructions, /Eres el asistente conversacional de Ristak/)
   assert.match(instructions, /conversación por WhatsApp/)
-  assert.match(instructions, /Parámetros internos de cierre avanzado/)
-  assert.match(instructions, /Puntos aprendidos de esta conversación/)
+  assert.match(instructions, /Contexto interno estructurado/)
+  assert.match(instructions, /Hechos que el sistema ya confirmó/)
+  assert.match(instructions, /Datos e interpretaciones conservados/)
   assert.match(instructions, /Problema real: sus conversaciones se enfrían/)
-  assert.match(instructions, /Conciencia de magnitud del problema: ya entiende que cada hora/)
-  assert.match(instructions, /Calidad de intencion de meta: alta/)
-  assert.match(instructions, /Motivacion real de meta: quiere dejar de perder leads/)
-  assert.match(instructions, /Calidad de intencion de agenda: alta/)
-  assert.match(instructions, /Riesgo de solo comparar precio: bajo/)
-  assert.match(instructions, /CUÁNDO ACTIVAR mark_ready_to_advance/)
-  assert.match(instructions, /NO la actives si solo saludó, solo preguntó el precio sin dar contexto/)
-  assert.match(instructions, /Si ya aceptó, no sigas vendiendo/)
+  assert.match(instructions, /Distingue hechos de hipótesis/)
+  assert.match(instructions, /campos vacíos no son un checklist/)
   assert.match(instructions, /update_closing_context/)
-  assert.match(instructions, /Parámetros del negocio para el guión de fábrica/)
-  assert.match(instructions, /El guión de fábrica manda completo/)
-  assert.match(instructions, /No pongas a la persona en modo comprador/)
+  assert.match(instructions, /Parámetros conversacionales del negocio/)
+  assert.match(instructions, /No inventes una cadencia ni requisitos/)
+  assert.match(instructions, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
+  assert.match(instructions, /responde esa duda PRIMERO/i)
   assert.match(instructions, /Cultura textual regional/)
   assert.match(instructions, /Cuenta configurada en México/)
-  assert.match(instructions, /GAD/)
   assert.match(instructions, /Espejo y rapport/)
-  assert.doesNotMatch(instructions, /\[NOMBRE_DEL_NEGOCIO\]/)
-  assert.match(instructions, /El patrón invariable: regresar la definición a la persona SIN explicar el producto/)
-  assert.match(instructions, /\[siguiente paso\]/)
+  assert.doesNotMatch(instructions, /Fases obligatorias|reto suave|costo de no actuar|guión de fábrica/i)
   assert.doesNotMatch(instructions, /\[(?:ESCRIBIR[^\]]*|NOMBRE_DEL_NEGOCIO|INDUSTRIA|PRODUCTO_O_SERVICIO|CANAL_DE_CONVERSACION|HERRAMIENTA_INTERNA_DE_AVANCE|HERRAMIENTA_INTERNA_DE_DESCARTE)\]/)
-  assert.match(instructions, /No uses el mismo molde dos veces seguidas/)
-  assert.match(instructions, /precisión concreta, reflejo breve, respuesta puntual o siguiente paso/)
 
-  const customInstructions = buildConversationalInstructions({
-    config: {
-      ...baseConfig,
-      closingStrategyMode: 'custom',
-      closingStrategyCustom: 'Mi estrategia custom con [NOMBRE_DEL_NEGOCIO]'
-    },
-    businessContext: '',
-    brandVoice: '',
-    businessName: 'Ristak',
-    timezone: 'America/Mexico_City',
-    nowIso: 'sábado, 13 de junio de 2026, 10:00',
-    contactName: null,
-    advancedClosingContext,
-    accountLocale: { countryCode: 'ES', currency: 'EUR', dialCode: '34' }
-  })
+  const customInstructions = build({
+    ...baseConfig,
+    closingStrategyMode: 'custom',
+    closingStrategyCustom: 'Mi estrategia custom con [NOMBRE_DEL_NEGOCIO]'
+  }, { countryCode: 'ES', currency: 'EUR', dialCode: '34' })
 
   assert.match(customInstructions, /Mi estrategia custom con \[NOMBRE_DEL_NEGOCIO\]/)
   assert.match(customInstructions, /Cuenta configurada en España/)
-  assert.match(customInstructions, /vale/)
-  assert.doesNotMatch(customInstructions, /Lenguaje natural, cercano, mexicano/)
-  assert.doesNotMatch(customInstructions, /Parámetros del negocio para el guión de fábrica/)
-  assert.doesNotMatch(customInstructions, /Adaptación conversacional al negocio/)
-  assert.doesNotMatch(customInstructions, /Parametros internos de cierre avanzado/)
+  assert.match(customInstructions, /Contexto interno estructurado/)
+  assert.match(customInstructions, /Parámetros conversacionales del negocio/)
+  assert.match(customInstructions, /update_closing_context/)
+  assert.doesNotMatch(customInstructions, /ESTRATEGIA CONVERSACIONAL ADAPTABLE/)
 })
 
 test('memoria de cierre avanzado solo acepta parametros del contrato', () => {
@@ -3836,6 +3797,25 @@ test('recupera solo mensajes entrantes recientes que no fueron contestados', () 
   assert.equal(shouldRecoverPendingInbound(latest, {
     status: 'active',
     lastReplyAt: '2026-06-13 01:16:00'
+  }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), false)
+  assert.equal(shouldRecoverPendingInbound(latest, {
+    status: 'active',
+    inboundProcessingMessageId: latest.id,
+    inboundProcessingStatus: 'processing',
+    inboundProcessingLeaseUntilAt: '2026-06-13T01:21:00.000Z'
+  }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), false)
+  assert.equal(shouldRecoverPendingInbound({
+    ...latest,
+    message_timestamp: '2026-06-12 23:00:00'
+  }, {
+    status: 'active',
+    inboundProcessingMessageId: latest.id,
+    inboundProcessingStatus: 'failed'
+  }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), true)
+  assert.equal(shouldRecoverPendingInbound(latest, {
+    status: 'active',
+    inboundProcessingMessageId: latest.id,
+    inboundProcessingStatus: 'completed'
   }, { nowMs, maxAgeMs: 60 * 60 * 1000 }), false)
   assert.equal(shouldRecoverPendingInbound({
     ...latest,

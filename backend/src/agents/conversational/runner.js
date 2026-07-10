@@ -33,9 +33,14 @@ import {
   applyAgentCompletionAction,
   applyAgentSuccessExtras,
   buildRuleContext,
+  entryRulesMatch,
   exitRulesMatch,
   contactIsOutOfScopeForAgent,
-  isStaleInheritedConversationStateForAgent,
+  isUnverifiedConversationAssignment,
+  claimConversationInboundMessage,
+  completeConversationInboundMessage,
+  failConversationInboundMessage,
+  runWithConversationStateChannel,
   normalizeConversationalPersuasionLevel,
   normalizeConversationalAgentModel,
   getAgentResponseDelayMs,
@@ -60,7 +65,8 @@ import {
   buildClosingStrategyTemplateParameters,
   buildConversationalInstructions,
   getAccountRegionalLocaleTag,
-  getClosingChannelLabel
+  getClosingChannelLabel,
+  hasConfiguredPriceDisclosureGate
 } from './prompt.js'
 import { createConversationalTools } from './tools.js'
 import { buildInputItems } from '../runner.js'
@@ -77,6 +83,19 @@ import {
   buildConversationDecisionContextMessage,
   evaluateConversationalGoalReadiness
 } from './decisionState.js'
+import {
+  analyzeConversationIntelligence,
+  applyStrategyPlan,
+  buildApprovedLearningContextMessage,
+  buildConversationIntelligenceContextMessage,
+  compileConversationalAgentPolicy,
+  finalizeConversationIntelligenceTurn,
+  getApprovedConversationalLearning,
+  loadConversationIntelligenceState,
+  planConversationStrategy,
+  retrieveRelevantBusinessKnowledge,
+  saveConversationIntelligenceState
+} from './intelligence/index.js'
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 
 const HISTORY_LIMIT = 20
@@ -86,10 +105,8 @@ const MAX_REPLY_CHARS = 1000
 const DEBOUNCE_MS = 4000
 const PENDING_INBOUND_LIMIT = 8
 const PENDING_INBOUND_SCAN_LIMIT = 30
-const PENDING_RECOVERY_SCAN_LIMIT = 80
-const PENDING_RECOVERY_SCHEDULE_LIMIT = 10
+const PENDING_RECOVERY_PAGE_SIZE = 80
 const PENDING_RECOVERY_MAX_AGE_MS = Number(process.env.CONVERSATIONAL_AGENT_PENDING_RECOVERY_MAX_AGE_MS || 60 * 60 * 1000)
-const FOLLOW_UP_RECOVERY_SCAN_LIMIT = 80
 const FOLLOW_UP_WINDOW_MS = MAX_FOLLOW_UP_DELAY_MINUTES * 60 * 1000
 const MAX_TIMER_MS = 2_147_483_647
 // Conversaciones que el agente está procesando ahora mismo (instancia única).
@@ -280,7 +297,7 @@ function sleep(ms) {
 // Reflejamos cada alta/baja en la tabla ai_agent_pending_reruns (migración 012) para
 // reconstruirlo al boot. Tolerante a fallos: nunca tumba el flujo principal del agente.
 function nowSqlTimestamp() {
-  return new Date().toISOString().slice(0, 19).replace('T', ' ')
+  return new Date().toISOString()
 }
 
 async function persistPendingRerun(runKey, entry = {}) {
@@ -335,6 +352,25 @@ export function shouldRecoverPendingInbound(latestMessage, state, {
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
 } = {}) {
   if (!latestMessage?.id) return false
+  if (state?.status && state.status !== 'active') return false
+  if (state?.lastAnsweredInboundMessageId === latestMessage.id || state?.last_answered_inbound_message_id === latestMessage.id) {
+    return false
+  }
+
+  const processingMessageId = state?.inboundProcessingMessageId || state?.inbound_processing_message_id || null
+  const processingStatus = state?.inboundProcessingStatus || state?.inbound_processing_status || null
+  const processingLeaseUntilMs = toTimestampMs(
+    state?.inboundProcessingLeaseUntilAt || state?.inbound_processing_lease_until_at
+  )
+  if (processingStatus === 'processing' && processingLeaseUntilMs > nowMs) return false
+  if (processingMessageId === latestMessage.id && processingStatus === 'completed') return false
+  if (
+    processingMessageId === latestMessage.id &&
+    (processingStatus === 'failed' || (processingStatus === 'processing' && processingLeaseUntilMs <= nowMs))
+  ) {
+    return true
+  }
+
   const messageMs = toTimestampMs(
     latestMessage.message_timestamp ||
     latestMessage.messageTimestamp ||
@@ -343,10 +379,6 @@ export function shouldRecoverPendingInbound(latestMessage, state, {
   )
   if (!messageMs) return false
   if (maxAgeMs > 0 && nowMs - messageMs > maxAgeMs) return false
-  if (state?.status && state.status !== 'active') return false
-  if (state?.lastAnsweredInboundMessageId === latestMessage.id || state?.last_answered_inbound_message_id === latestMessage.id) {
-    return false
-  }
 
   const lastReplyMs = toTimestampMs(state?.lastReplyAt || state?.last_reply_at)
   return !lastReplyMs || messageMs > lastReplyMs
@@ -382,7 +414,10 @@ export function replySuggestsHumanHandoff(reply = '') {
 }
 
 function runtimePriceGuardApplies(config = {}) {
-  return normalizeConversationalPersuasionLevel(config?.persuasionLevel) !== 'low'
+  return hasConfiguredPriceDisclosureGate(
+    config?.extraInstructions,
+    config?.closingStrategyMode === 'custom' ? config?.closingStrategyCustom : ''
+  )
 }
 
 export function rewritePrematurePriceDisclosure(reply = '', config = {}) {
@@ -474,7 +509,8 @@ async function forceRuntimeHumanHandoff({ contactId, agentConfig, latest, channe
     reason,
     summary,
     status: completeObjective ? 'completed' : 'human',
-    agentId: agentConfig?.id || ''
+    agentId: agentConfig?.id || '',
+    channel: normalizeConversationalChannel(channel || latest?.channel)
   })
   if (completeObjective) {
     await applyAgentCompletionAction(agentConfig || {}, contactId)
@@ -745,8 +781,12 @@ async function loadAdvancedClosingRuntimeContext({
       FROM contacts WHERE id = ?
     `, [contactId]).catch(() => null) : null,
 	    contactId ? db.get(
-	      'SELECT closing_context_json FROM conversational_agent_state WHERE contact_id = ? AND agent_id = ? LIMIT 1',
-	      [contactId, config?.id || null]
+	      `SELECT closing_context_json
+	       FROM conversational_agent_state
+	       WHERE contact_id = ? AND agent_id = ?
+	         AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+	       LIMIT 1`,
+	      [contactId, config?.id || null, normalizeConversationalChannel(channel)]
 	    ).catch(() => null) : null,
     db.all(`
       SELECT p.id, p.name, pp.amount, pp.currency
@@ -1113,7 +1153,10 @@ async function loadInboundMessageById(contactId, messageId, channel = 'whatsapp'
   return row ? rowToConversationalMessage(row, normalizedChannel) : null
 }
 
-async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit = PENDING_RECOVERY_SCAN_LIMIT) {
+async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', {
+  limit = PENDING_RECOVERY_PAGE_SIZE,
+  offset = 0
+} = {}) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   if (COMMENT_CHAT_CHANNELS.has(normalizedChannel)) {
     const platform = commentChannelToPlatform(normalizedChannel)
@@ -1127,8 +1170,8 @@ async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit 
         AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'
         AND contact_id IS NOT NULL
       ORDER BY COALESCE(message_timestamp, created_at) DESC
-      LIMIT ?
-    `, [platform, limit]).catch(() => [])
+      LIMIT ? OFFSET ?
+    `, [platform, limit, offset]).catch(() => [])
     return rows.map((row) => ({ ...rowToConversationalMessage(row, normalizedChannel), contact_id: row.contact_id }))
   }
   if (SOCIAL_CHAT_CHANNELS.has(normalizedChannel)) {
@@ -1141,8 +1184,8 @@ async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit 
         AND LOWER(COALESCE(direction, 'inbound')) = 'inbound'
         AND contact_id IS NOT NULL
       ORDER BY COALESCE(message_timestamp, created_at) DESC
-      LIMIT ?
-    `, [normalizedChannel, limit]).catch(() => [])
+      LIMIT ? OFFSET ?
+    `, [normalizedChannel, limit, offset]).catch(() => [])
     return rows.map((row) => ({ ...rowToConversationalMessage(row, normalizedChannel), contact_id: row.contact_id }))
   }
 
@@ -1155,8 +1198,8 @@ async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit 
       WHERE LOWER(COALESCE(direction, 'inbound')) = 'inbound'
         AND contact_id IS NOT NULL
       ORDER BY COALESCE(message_timestamp, created_at) DESC
-      LIMIT ?
-    `, [limit]).catch(() => [])
+      LIMIT ? OFFSET ?
+    `, [limit, offset]).catch(() => [])
     return rows.map((row) => ({ ...rowToConversationalMessage(row, normalizedChannel), contact_id: row.contact_id }))
   }
 
@@ -1168,17 +1211,43 @@ async function loadRecentInboundMessagesForRecovery(channel = 'whatsapp', limit 
     WHERE direction = 'inbound' AND contact_id IS NOT NULL
       ${phoneMessageTransportFilter(normalizedChannel)}
     ORDER BY COALESCE(message_timestamp, created_at) DESC
-    LIMIT ?
-  `, [limit]).catch(() => [])
+    LIMIT ? OFFSET ?
+  `, [limit, offset]).catch(() => [])
   return rows.map((row) => ({ ...rowToConversationalMessage(row, normalizedChannel), contact_id: row.contact_id }))
 }
 
-async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null }) {
-  const [aiConfig, timezone, businessProfile, accountLocale] = await Promise.all([
+async function loadInboundMessagesForRecoveryWindow(channel, {
+  nowMs = Date.now(),
+  maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS,
+  pageSize = PENDING_RECOVERY_PAGE_SIZE
+} = {}) {
+  const rows = []
+  let offset = 0
+  while (true) {
+    const page = await loadRecentInboundMessagesForRecovery(channel, { limit: pageSize, offset })
+    if (!page.length) break
+    let reachedAgeBoundary = false
+    for (const row of page) {
+      const timestampMs = messageTimestampMs(row)
+      if (maxAgeMs > 0 && timestampMs > 0 && nowMs - timestampMs > maxAgeMs) {
+        reachedAgeBoundary = true
+        break
+      }
+      rows.push(row)
+    }
+    if (reachedAgeBoundary || page.length < pageSize) break
+    offset += page.length
+  }
+  return rows
+}
+
+async function buildAgentForRun({ config, conversationModel, contactId, contactName, dryRun, channel = 'whatsapp', ruleContext = null, followUpContext = null, knowledgeQuery = '' }) {
+  const [aiConfig, timezone, businessProfile, accountLocale, approvedLearning] = await Promise.all([
     getAIAgentConfig({}),
     getAccountTimezone().catch(() => DEFAULT_TIMEZONE),
     getBusinessProfileSnapshot().catch(() => null),
-    getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' }))
+    getAccountLocaleSettings().catch(() => ({ countryCode: 'MX', currency: 'MXN', dialCode: '52' })),
+    config?.id ? getApprovedConversationalLearning(config.id).catch(() => null) : Promise.resolve(null)
   ])
 
   const aiProvider = normalizeConversationalAIProvider(config?.aiProvider)
@@ -1195,9 +1264,16 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     businessName = userRow?.business_name || null
   }
 
-  const ctx = { contactId, config, dryRun, followUpMode: Boolean(followUpContext), accountLocale, actions: [], suppressReply: false }
+  const ctx = { contactId, config, dryRun, channel: normalizeConversationalChannel(channel), followUpMode: Boolean(followUpContext), accountLocale, actions: [], suppressReply: false }
   const tools = createConversationalTools(ctx)
-  const runtimeBusinessContext = buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile)
+  const knowledge = retrieveRelevantBusinessKnowledge({
+    businessProfile,
+    fallbackContext: buildRuntimeBusinessContext(aiConfig?.business_context || '', businessProfile),
+    query: knowledgeQuery,
+    maxChars: 6000
+  })
+  const runtimeBusinessContext = knowledge.context
+  const compiledPolicy = compileConversationalAgentPolicy(config, { businessProfile })
   const advancedClosingContext = await loadAdvancedClosingRuntimeContext({
     contactId,
     config,
@@ -1232,10 +1308,10 @@ async function buildAgentForRun({ config, conversationModel, contactId, contactN
     tools
   })
 
-  return { agent, ctx, model, aiProvider }
+  return { agent, ctx, model, aiProvider, compiledPolicy, approvedLearning, knowledge }
 }
 
-async function executeAgent({ agent, modelProvider, messages, contactId, model, aiProvider = 'openai', channel = 'whatsapp', traceMessage = '' }) {
+async function executeAgent({ agent, modelProvider, messages, contactId, model, aiProvider = 'openai', channel = 'whatsapp', traceMessage = '', intelligenceTrace = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   let agentRun = null
   try {
@@ -1250,6 +1326,13 @@ async function executeAgent({ agent, modelProvider, messages, contactId, model, 
       model,
       route: { engine: aiProvider === 'openai' ? 'openai-agents-sdk' : `${aiProvider}-openai-compatible`, category: 'conversacional', contactId, channel: normalizedChannel }
     })
+    if (intelligenceTrace) {
+      await recordAgentStep(agentRun, {
+        stepType: 'conversation_assessment',
+        status: 'completed',
+        output: intelligenceTrace
+      })
+    }
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo iniciar rastro: ${error.message}`)
   }
@@ -1378,7 +1461,8 @@ async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, ph
           updated_at = CURRENT_TIMESTAMP
       WHERE contact_id = ?
         AND agent_id = ?
-    `, [contactId, agentId]).catch(() => {})
+        AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+    `, [contactId, agentId, normalizedChannel]).catch(() => {})
     return
   }
 
@@ -1390,9 +1474,10 @@ async function resetFollowUpStateAfterReply({ contactId, latest, agentConfig, ph
         updated_at = CURRENT_TIMESTAMP
     WHERE contact_id = ?
       AND agent_id = ?
-  `, [latest.id, contactId, agentId])
+      AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+  `, [latest.id, contactId, agentId, normalizedChannel])
 
-  const state = await getConversationState(contactId, { agentId }).catch(() => null)
+  const state = await getConversationState(contactId, { agentId, channel: normalizedChannel }).catch(() => null)
   scheduleNextFollowUp({ contactId, phone, latest, state, agentConfig, reason: 'respuesta enviada', channel: normalizedChannel })
 }
 
@@ -1547,7 +1632,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   // sin entitlement de 'conversational_ai' no deben dispararse.
   if (!(await hasFeature('conversational_ai'))) return
 
-  const state = await getConversationState(contactId, { agentId })
+  const state = await getConversationState(contactId, { agentId, channel: normalizedChannel })
   if (!state || state.status !== 'active' || state.signal) return
   if (state.followUpBaseMessageId !== baseMessageId) return
 
@@ -1587,7 +1672,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
   if (!hydratedMessages.length) return
 
   const followUp = normalizeAgentFollowUp(agentConfig.followUp)
-  const { agent, ctx, model } = await buildAgentForRun({
+  const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
     config: agentConfig,
     conversationModel: agentConfig.model || config.model,
     contactId,
@@ -1595,21 +1680,106 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     dryRun: false,
     channel: normalizedChannel,
     ruleContext: null,
-    followUpContext: { index: followUpIndex, strategy: followUp.strategy }
+    followUpContext: { index: followUpIndex, strategy: followUp.strategy },
+    knowledgeQuery: cleanMessageText(latest)
   })
 
-  const reply = await executeAgent({
+  const previousIntelligence = await loadConversationIntelligenceState({
+    stateId: state.id,
+    objective: compiledPolicy.objective.type,
+    channel: normalizedChannel
+  })
+  const assessed = await analyzeConversationIntelligence({
+    messages: hydratedMessages,
+    policy: compiledPolicy,
+    previousState: previousIntelligence,
+    runtime,
+    model,
+    channel: normalizedChannel,
+    followUpMode: true
+  })
+  const strategy = planConversationStrategy({
+    intelligenceState: assessed.state,
+    policy: compiledPolicy,
+    latestMessage: cleanMessageText(latest),
+    followUpMode: true
+  })
+  let intelligenceState = applyStrategyPlan(assessed.state, strategy)
+  await saveConversationIntelligenceState({
+    stateId: state.id,
+    intelligenceState,
+    policyHash: compiledPolicy.hash,
+    source: assessed.source
+  })
+
+  if (intelligenceState.followUp.stop || strategy.action === 'wait' || strategy.shouldReply === false) {
+    await recordConversationalAgentEvent({
+      contactId,
+      eventType: 'follow_up_suppressed',
+      detail: {
+        agentId: agentConfig.id,
+        baseMessageId,
+        followUpIndex,
+        channel: normalizedChannel,
+        reason: 'intelligence_stop',
+        policyHash: compiledPolicy.hash,
+        stateRevision: intelligenceState.revision,
+        strategy: strategy.action
+      }
+    }).catch(() => {})
+    return
+  }
+
+  const intelligenceContextMessage = buildConversationIntelligenceContextMessage(intelligenceState, compiledPolicy)
+  const learningContextMessage = buildApprovedLearningContextMessage(approvedLearning)
+  const messagesForAgent = [
+    ...hydratedMessages,
+    buildFollowUpContextMessage({ followUpIndex, strategy: followUp.strategy }),
+    ...(learningContextMessage ? [learningContextMessage] : []),
+    intelligenceContextMessage
+  ]
+  ctx.conversationMessages = messagesForAgent
+  ctx.aiRuntime = runtime
+  ctx.model = model
+  ctx.intelligenceState = intelligenceState
+  ctx.compiledPolicy = compiledPolicy
+
+  const reply = await runWithConversationStateChannel(normalizedChannel, () => executeAgent({
     agent,
     modelProvider: runtime.modelProvider,
-    messages: [...hydratedMessages, buildFollowUpContextMessage({ followUpIndex, strategy: followUp.strategy })],
+    messages: messagesForAgent,
     contactId,
     model,
     aiProvider,
     channel: normalizedChannel,
-    traceMessage: `seguimiento ${followUpIndex}`
-  })
+    traceMessage: `seguimiento ${followUpIndex}`,
+    intelligenceTrace: {
+      policyHash: compiledPolicy.hash,
+      policyVersion: compiledPolicy.version,
+      stateRevision: intelligenceState.revision,
+      source: assessed.source,
+      stage: intelligenceState.stage,
+      temperature: intelligenceState.temperature,
+      strategy: intelligenceState.strategy,
+      intent: intelligenceState.intent,
+      signalSummary: intelligenceState.signals,
+      followUpIndex
+    }
+  }))
 
-  const postState = await getConversationState(contactId, { agentId: agentConfig.id })
+  const postState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel })
+  intelligenceState = finalizeConversationIntelligenceTurn({
+    intelligenceState,
+    actions: ctx.actions,
+    reply,
+    suppressed: ctx.suppressReply || postState?.status !== 'active' || Boolean(postState?.signal)
+  }).state
+  await saveConversationIntelligenceState({
+    stateId: state.id,
+    intelligenceState,
+    policyHash: compiledPolicy.hash,
+    source: assessed.source
+  })
   if (ctx.suppressReply || !reply || postState?.status !== 'active' || postState?.signal) {
     await recordConversationalAgentEvent({
       contactId,
@@ -1654,7 +1824,8 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
               updated_at = CURRENT_TIMESTAMP
           WHERE contact_id = ?
             AND agent_id = ?
-        `, [doneLatest.id, followUpIndex, doneContactId, agentConfig.id])
+            AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+        `, [doneLatest.id, followUpIndex, doneContactId, agentConfig.id, normalizedChannel])
       }
     }
   })
@@ -1697,7 +1868,7 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     }
   }).catch(() => {})
 
-  const nextState = await getConversationState(contactId, { agentId: agentConfig.id }).catch(() => null)
+  const nextState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel }).catch(() => null)
   scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado', channel: normalizedChannel })
 }
 
@@ -1816,7 +1987,8 @@ export async function sendReplyParts({
           updated_at = CURRENT_TIMESTAMP
       WHERE contact_id = ?
         AND agent_id = ?
-    `, [latest.id, contactId, agentConfig?.id || null])
+        AND COALESCE(NULLIF(channel, ''), 'whatsapp') = ?
+    `, [latest.id, contactId, agentConfig?.id || null, normalizedChannel])
   }
 
   return { parts, sentParts: parts.length, interruptedBy: null, delaySchedule }
@@ -1832,51 +2004,57 @@ function getStateLastAnsweredInboundMessageId(state) {
 
 function shouldReopenCompletedConversationState(state, latestMessageId) {
   if (!state?.agentId || state.status !== 'completed') return false
-  // [Fase 1 — nunca fantasma] Una conversación con objetivo cumplido (status 'completed',
-  // incluido el handoff ready_for_human/ready_to_buy) SÍ se reabre cuando llega un mensaje
-  // nuevo sin contestar: la persona sigue preguntando (dirección, costo, "ya quedó?") y el
-  // bot debe seguir ayudando en vez de dejarla en visto. El silencio real solo lo impone un
-  // humano que toma el chat (status 'human': send_to_human o takeover manual), que por
-  // requerir status==='completed' NO entra a esta función y se queda mudo, como debe.
   const cleanLatestMessageId = String(latestMessageId || '').trim()
   if (!cleanLatestMessageId) return false
   return getStateLastAnsweredInboundMessageId(state) !== cleanLatestMessageId
 }
 
 export async function resolveInboundAgentForContact({ contactId, messageText, channel, ruleContext, latestMessageId = '' }) {
-  const states = await listConversationStatesForContact(contactId).catch(() => [])
+  const normalizedChannel = normalizeConversationalChannel(channel)
+  const states = await listConversationStatesForContact(contactId, { channel: normalizedChannel }).catch(() => [])
   const blockedAgentIds = new Set()
   const releasedAgentIds = new Set()
 
   for (const state of states.filter((item) => item?.agentId && !isRunnableConversationState(item))) {
     const agentConfig = await getConversationalAgent(state.agentId).catch(() => null)
-    if (agentConfig && isStaleInheritedConversationStateForAgent(state, agentConfig)) {
-      await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
-      await recordConversationalAgentEvent({
-        contactId,
-        eventType: 'agent_released',
-        detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'stale_inherited_state' }
-      })
-      continue
+
+    // Un handoff sigue pendiente hasta que el humano lo resuelva. Un inbound
+    // nuevo no debe borrar su señal ni permitir que otro agente se cuele.
+    const pendingHumanHandoff = state.status === 'human' || (
+      state.signal === 'ready_for_human' && agentConfig?.successAction === 'ready_for_human'
+    )
+    if (pendingHumanHandoff) {
+      return { agentConfig: null, state, assigned: false }
     }
-    if (agentConfig && shouldReopenCompletedConversationState(state, latestMessageId)) {
-      if (exitRulesMatch(agentConfig, ruleContext)) {
+
+    if (agentConfig?.enabled && shouldReopenCompletedConversationState(state, latestMessageId)) {
+      if (!entryRulesMatch(agentConfig, ruleContext)) {
         releasedAgentIds.add(agentConfig.id)
-        await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+        await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
         await recordConversationalAgentEvent({
           contactId,
           eventType: 'agent_released',
-          detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'exit_rules' }
+          detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel, reason: 'entry_rules_no_longer_match' }
+        })
+        continue
+      }
+      if (exitRulesMatch(agentConfig, ruleContext)) {
+        releasedAgentIds.add(agentConfig.id)
+        await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'agent_released',
+          detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel, reason: 'exit_rules' }
         })
         continue
       }
       if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
         releasedAgentIds.add(agentConfig.id)
-        await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+        await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
         await recordConversationalAgentEvent({
           contactId,
           eventType: 'agent_released',
-          detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'contact_out_of_scope' }
+          detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel, reason: 'contact_out_of_scope' }
         })
         continue
       }
@@ -1885,7 +2063,8 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
         updatedBy: 'agent',
         clearSignal: true,
         activationSource: 'automatic',
-        agentId: agentConfig.id
+        agentId: agentConfig.id,
+        channel: normalizedChannel
       })
       await recordConversationalAgentEvent({
         contactId,
@@ -1894,7 +2073,8 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
           agentId: agentConfig.id,
           name: agentConfig.name,
           reason: 'new_inbound_after_completion',
-          messageId: latestMessageId
+          messageId: latestMessageId,
+          channel: normalizedChannel
         }
       })
       return { agentConfig, state: reopenedState, assigned: false }
@@ -1904,15 +2084,47 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
 
   for (const state of states.filter(isRunnableConversationState)) {
     const agentConfig = await getConversationalAgent(state.agentId).catch(() => null)
+    if (isUnverifiedConversationAssignment(state)) {
+      const assignmentStillApplies = Boolean(
+        agentConfig?.enabled &&
+        entryRulesMatch(agentConfig, ruleContext) &&
+        !exitRulesMatch(agentConfig, ruleContext) &&
+        !contactIsOutOfScopeForAgent(agentConfig, ruleContext)
+      )
+      if (assignmentStillApplies) {
+        const verifiedState = await assignAgentToConversation(contactId, agentConfig.id, {
+          activationSource: 'automatic',
+          assignmentSource: 'automatic',
+          updatedBy: 'agent',
+          channel: normalizedChannel
+        })
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'agent_assignment_verified',
+          detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel, previousSource: state.assignmentSource || null }
+        }).catch(() => {})
+        return { agentConfig, state: verifiedState, assigned: false }
+      }
+
+      releasedAgentIds.add(state.agentId)
+      await releaseAgentFromConversation(contactId, state.agentId, { updatedBy: 'agent', channel: normalizedChannel })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'agent_released',
+        detail: { agentId: state.agentId, name: agentConfig?.name || null, channel: normalizedChannel, reason: 'legacy_assignment_not_applicable' }
+      })
+      continue
+    }
+
     if (!agentConfig?.enabled) continue
 
     if (exitRulesMatch(agentConfig, ruleContext)) {
       releasedAgentIds.add(agentConfig.id)
-      await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+      await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'agent_released',
-        detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'exit_rules' }
+        detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel, reason: 'exit_rules' }
       })
       continue
     }
@@ -1921,11 +2133,11 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
     // corte, suéltalo aunque tuviera asignación pegajosa (no lo dejes grandfathered).
     if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
       releasedAgentIds.add(agentConfig.id)
-      await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+      await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
       await recordConversationalAgentEvent({
         contactId,
         eventType: 'agent_released',
-        detail: { agentId: agentConfig.id, name: agentConfig.name, reason: 'contact_out_of_scope' }
+        detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel, reason: 'contact_out_of_scope' }
       })
       continue
     }
@@ -1936,7 +2148,7 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
   const agentConfig = await matchAgentForMessage({
     contactId,
     messageText,
-    channel,
+    channel: normalizedChannel,
     excludeAgentIds: [...blockedAgentIds, ...releasedAgentIds],
     ruleContext
   })
@@ -1945,12 +2157,14 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
 
   const state = await assignAgentToConversation(contactId, agentConfig.id, {
     activationSource: 'automatic',
-    updatedBy: 'agent'
+    assignmentSource: 'automatic',
+    updatedBy: 'agent',
+    channel: normalizedChannel
   })
   await recordConversationalAgentEvent({
     contactId,
     eventType: 'agent_assigned',
-    detail: { agentId: agentConfig.id, name: agentConfig.name, channel }
+    detail: { agentId: agentConfig.id, name: agentConfig.name, channel: normalizedChannel }
   })
 
   return { agentConfig, state, assigned: true }
@@ -1963,6 +2177,28 @@ export async function resolveInboundAgentForContact({ contactId, messageText, ch
 export async function handleInboundConversationalMessage({ contactId, phone, messageId, channel = 'whatsapp', postContext = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
   const runKey = getRunKey(contactId, normalizedChannel)
+  let activeClaim = null
+  const settleActiveClaim = async ({ status, answered = false, error = '' } = {}) => {
+    if (!activeClaim) return false
+    const claim = activeClaim
+    activeClaim = null
+    if (status === 'failed') {
+      const result = await failConversationInboundMessage(contactId, claim.messageId, {
+        agentId: claim.agentId,
+        channel: claim.channel,
+        claimToken: claim.claimToken,
+        error
+      })
+      return result.failed
+    }
+    const result = await completeConversationInboundMessage(contactId, claim.messageId, {
+      agentId: claim.agentId,
+      channel: claim.channel,
+      claimToken: claim.claimToken,
+      answered
+    })
+    return result.completed
+  }
   try {
     if (!contactId || !messageId) return
 
@@ -2045,7 +2281,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
 	        }).catch(() => {})
 	        return
 	      }
-	      agentState = await getConversationState(contactId, { agentId: agentConfig.id })
+	      agentState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel })
 	      if (!agentState || agentState.status !== 'active' || agentState.signal) return
 	      if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
 
@@ -2076,7 +2312,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           channel: normalizedChannel
         })
         if (exitRulesMatch(agentConfig, ruleContext)) {
-          await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+          await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
           await recordConversationalAgentEvent({
             contactId,
             eventType: 'agent_released',
@@ -2085,7 +2321,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           return
         }
         if (contactIsOutOfScopeForAgent(agentConfig, ruleContext)) {
-          await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent' })
+          await releaseAgentFromConversation(contactId, agentConfig.id, { updatedBy: 'agent', channel: normalizedChannel })
           await recordConversationalAgentEvent({
             contactId,
             eventType: 'agent_released',
@@ -2093,35 +2329,38 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           })
           return
         }
-        agentState = await getConversationState(contactId, { agentId: agentConfig.id })
+        agentState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel })
         if (!agentState || agentState.status !== 'active' || agentState.signal) return
         if (agentState.lastInboundMessageId === latest.id && agentState.lastAnsweredInboundMessageId === latest.id) return
       }
 
-	      // (AI-001/CRON-007) Claim atómico compare-and-set: reclama el mensaje
-	      // antes de correr para evitar respuestas/acciones duplicadas entre
-	      // instancias o ante reenvío de webhook. Solo procede si esta instancia
-	      // ganó el claim (changes>0); si otra ya lo reclamó, aborta sin responder.
-	      const claimRes = await db.run(`
-	        UPDATE conversational_agent_state
-	        SET last_inbound_message_id = ?, channel = ?, updated_at = CURRENT_TIMESTAMP
-	        WHERE id = ?
-	          AND (last_inbound_message_id IS NULL OR last_inbound_message_id <> ?)
-	      `, [latest.id, normalizedChannel, agentState.id, latest.id])
-	      if (!(Number(claimRes?.changes || 0) > 0)) {
+	      // Claim recuperable: el lease bloquea ejecuciones concurrentes, pero un
+	      // error deja el mismo mensaje en estado failed para que pueda reintentarse.
+	      const claim = await claimConversationInboundMessage(contactId, latest.id, {
+	        agentId: agentConfig.id,
+	        channel: normalizedChannel
+	      })
+	      if (!claim.claimed) {
 	        await recordConversationalAgentEvent({
 	          contactId,
 	          eventType: 'run_skipped_already_claimed',
-	          detail: { messageId: latest.id, channel: normalizedChannel, reason: 'inbound_already_claimed' }
+	          detail: { messageId: latest.id, channel: normalizedChannel, reason: claim.reason }
 	        }).catch(() => {})
 	        return
 	      }
+	      activeClaim = {
+	        messageId: latest.id,
+	        agentId: agentConfig.id,
+	        channel: normalizedChannel,
+	        claimToken: claim.claimToken
+	      }
+	      agentState = claim.state || agentState
 
       const aiProvider = normalizeConversationalAIProvider(agentConfig.aiProvider || config.aiProvider)
       const runtime = await resolveConversationalAIRuntime(aiProvider)
       agentConfig = { ...agentConfig, aiProvider }
 
-      const contact = await db.get('SELECT full_name FROM contacts WHERE id = ?', [contactId]).catch(() => null)
+      const contact = await db.get('SELECT id, full_name, phone, email FROM contacts WHERE id = ?', [contactId]).catch(() => null)
       const rawMessages = await loadConversationHistory(contactId, normalizedChannel)
       const openAIFallbackApiKey = aiProvider === 'openai'
         ? runtime.apiKey
@@ -2134,7 +2373,10 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         visualAnalysisApiKey: openAIFallbackApiKey,
         includeBinary: includeBinaryMedia
       })
-      if (!messages.length) return
+      if (!messages.length) {
+        await settleActiveClaim({ status: 'failed', error: 'conversation_history_empty' })
+        return
+      }
 	      const pendingMessages = await loadPendingInboundMessages(contactId, agentState, normalizedChannel)
       const pendingContextMessage = buildPendingReplyContextMessage(pendingMessages)
       const baseMessagesForAgent = pendingContextMessage ? [...messages, pendingContextMessage] : messages
@@ -2144,31 +2386,80 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         contactName: contact?.full_name || ''
       })
       const decisionContextMessage = buildConversationDecisionContextMessage(conversationDecision)
-      const messagesForAgent = decisionContextMessage ? [...baseMessagesForAgent, decisionContextMessage] : baseMessagesForAgent
       const traceMessage = cleanMessageText(pendingMessages[pendingMessages.length - 1] || latest)
 
-      // [Fase 0 — anti-ghosting] Se retiró el auto-cierre por "suficiencia de contexto":
-      // forzaba una respuesta enlatada ("te paso con el equipo") + objetivo cumplido +
-      // silencio ANTES de correr el modelo, dejando al paciente en visto justo cuando iba
-      // a agendar (caso viWyCup1). La señal de readiness YA se inyectó como hint en
-      // messagesForAgent (decisionContextMessage) para que el modelo decida por sí mismo;
-      // el runtime ya no fuerza el cierre.
-
-      const { agent, ctx, model } = await buildAgentForRun({
+      const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
         config: agentConfig,
         conversationModel: agentConfig.model || config.model,
         contactId,
         contactName: contact?.full_name || null,
         dryRun: false,
         channel: normalizedChannel,
-        ruleContext
+        ruleContext,
+        knowledgeQuery: traceMessage
       })
-      // Contexto para el candado de fases de cierre (validador que lee la conversación).
+      const previousIntelligence = await loadConversationIntelligenceState({
+        stateId: agentState.id,
+        objective: compiledPolicy.objective.type,
+        channel: normalizedChannel
+      })
+      const assessed = await analyzeConversationIntelligence({
+        messages: baseMessagesForAgent,
+        policy: compiledPolicy,
+        previousState: previousIntelligence,
+        runtime,
+        model,
+        channel: normalizedChannel
+      })
+      const strategy = planConversationStrategy({
+        intelligenceState: assessed.state,
+        policy: compiledPolicy,
+        latestMessage: traceMessage
+      })
+      let intelligenceState = applyStrategyPlan(assessed.state, strategy)
+      await saveConversationIntelligenceState({
+        stateId: agentState.id,
+        intelligenceState,
+        policyHash: compiledPolicy.hash,
+        source: assessed.source
+      })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'conversation_intelligence_updated',
+        detail: {
+          agentId: agentConfig.id,
+          stateId: agentState.id,
+          channel: normalizedChannel,
+          messageId: latest.id,
+          policyHash: compiledPolicy.hash,
+          revision: intelligenceState.revision,
+          stage: intelligenceState.stage,
+          temperature: intelligenceState.temperature,
+          strategy: intelligenceState.strategy.action,
+          tool: intelligenceState.strategy.tool,
+          source: assessed.source,
+          confirmedFacts: intelligenceState.story.confirmedFacts.length,
+          hypotheses: intelligenceState.story.hypotheses.length
+        }
+      })
+      const intelligenceContextMessage = buildConversationIntelligenceContextMessage(intelligenceState, compiledPolicy)
+      const learningContextMessage = buildApprovedLearningContextMessage(approvedLearning)
+      const messagesForAgent = [
+        ...baseMessagesForAgent,
+        ...(decisionContextMessage ? [decisionContextMessage] : []),
+        ...(learningContextMessage ? [learningContextMessage] : []),
+        intelligenceContextMessage
+      ]
+
+      // El generador recibe estado y estrategia tipados; sigue siendo la tool la que
+      // valida y confirma cualquier efecto real.
       ctx.conversationMessages = messagesForAgent
       ctx.aiRuntime = runtime
       ctx.model = model
+      ctx.intelligenceState = intelligenceState
+      ctx.compiledPolicy = compiledPolicy
 
-      let reply = await executeAgent({
+      let reply = await runWithConversationStateChannel(normalizedChannel, () => executeAgent({
         agent,
         modelProvider: runtime.modelProvider,
         messages: messagesForAgent,
@@ -2176,8 +2467,19 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         model,
         aiProvider,
         channel: normalizedChannel,
-        traceMessage
-      })
+        traceMessage,
+        intelligenceTrace: {
+          policyHash: compiledPolicy.hash,
+          policyVersion: compiledPolicy.version,
+          stateRevision: intelligenceState.revision,
+          source: assessed.source,
+          stage: intelligenceState.stage,
+          temperature: intelligenceState.temperature,
+          strategy: intelligenceState.strategy,
+          intent: intelligenceState.intent,
+          signalSummary: intelligenceState.signals
+        }
+      }))
       // Guardián de cumplimiento: revisa las reglas de apertura de la biblia sobre la
       // respuesta visible y la reescribe si las rompe (precio/pitch antes de calificar).
       if (reply && !ctx.suppressReply) {
@@ -2219,8 +2521,55 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         allowReplyAfterRuntimeHandoff = Boolean(reply)
       }
 
+      // El estado posterior es evidencia más fuerte que cualquier intención del modelo.
+      const postState = await getConversationState(contactId, { agentId: agentConfig.id, channel: normalizedChannel })
+      const stateConfirmedAction = postState?.signal === 'appointment_booked'
+        ? 'book_appointment'
+        : postState?.signal === 'purchase_completed'
+          ? 'purchase_completed'
+          : postState?.signal === 'discarded'
+            ? 'discard_conversation'
+            : postState?.status === 'human'
+              ? 'send_to_human'
+              : postState?.status === 'completed' && postState?.signal
+                ? 'mark_ready_to_advance'
+                : ''
+      const intelligenceActions = stateConfirmedAction
+        ? [...ctx.actions, { type: stateConfirmedAction, ok: true, source: 'persisted_conversation_state' }]
+        : ctx.actions
+      const finalizedIntelligence = finalizeConversationIntelligenceTurn({
+        intelligenceState,
+        actions: intelligenceActions,
+        reply,
+        suppressed: ctx.suppressReply,
+        contact,
+        now: new Date()
+      })
+      intelligenceState = finalizedIntelligence.state
+      ctx.intelligenceState = intelligenceState
+      await saveConversationIntelligenceState({
+        stateId: agentState.id,
+        intelligenceState,
+        policyHash: compiledPolicy.hash,
+        source: assessed.source
+      })
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'conversation_strategy_executed',
+        detail: {
+          agentId: agentConfig.id,
+          stateId: agentState.id,
+          channel: normalizedChannel,
+          messageId: latest.id,
+          policyHash: compiledPolicy.hash,
+          revision: intelligenceState.revision,
+          strategy: intelligenceState.strategy.action,
+          outcome: intelligenceState.outcome,
+          actionResults: finalizedIntelligence.actionResults
+        }
+      })
+
       // El estado pudo cambiar durante la ejecución o la espera (descartada, humano, etc.)
-	      const postState = await getConversationState(contactId, { agentId: agentConfig.id })
       const blockedStatuses = new Set(['discarded', 'paused', 'skipped', 'human'])
       const blockedByStatus = blockedStatuses.has(postState?.status)
       const allowedRuntimeHumanReply = allowReplyAfterRuntimeHandoff && postState?.status === 'human'
@@ -2230,6 +2579,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           eventType: 'reply_suppressed',
           detail: { messageId: latest.id, channel: normalizedChannel, actions: ctx.actions, status: postState?.status || null }
         })
+        await settleActiveClaim({ status: 'completed', answered: false })
         return
       }
 
@@ -2253,6 +2603,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           channel: normalizedChannel,
           reason: 'mensaje nuevo antes de enviar'
         })
+        await settleActiveClaim({ status: 'completed', answered: false })
         return
       }
 
@@ -2266,7 +2617,10 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
         model,
         channel: normalizedChannel,
         dependencies: {
-          splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback
+          splitter: runtime.supportsAISplitting ? splitMessageIntoBubbles : splitMessageIntoBubblesFallback,
+          markReplyComplete: async () => {
+            await settleActiveClaim({ status: 'completed', answered: true })
+          }
         }
       })
       if (delivery.interruptedBy) {
@@ -2290,8 +2644,23 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           channel: normalizedChannel,
           reason: 'envío en partes'
         })
+        await settleActiveClaim({ status: 'completed', answered: false })
         return
       }
+
+      if (!delivery.parts.length) {
+        await settleActiveClaim({ status: 'failed', error: 'empty_reply_delivery' })
+        await recordConversationalAgentEvent({
+          contactId,
+          eventType: 'reply_suppressed',
+          detail: { messageId: latest.id, agentId: agentConfig.id || null, channel: normalizedChannel, reason: 'empty_reply_delivery' }
+        }).catch(() => {})
+        return
+      }
+
+      // Defensa por compatibilidad si una implementación de envío no invocó el
+      // callback de confirmación aunque sí reportó partes enviadas.
+      if (activeClaim) await settleActiveClaim({ status: 'completed', answered: true })
 
       await recordConversationalAgentEvent({
         contactId,
@@ -2325,6 +2694,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
     }
   } catch (error) {
     runningContacts.delete(runKey)
+    await settleActiveClaim({ status: 'failed', error: error.message }).catch(() => {})
     logger.error(`[Agente conversacional] Error atendiendo mensaje entrante: ${error.message}`)
     await recordConversationalAgentEvent({
       contactId: contactId || null,
@@ -2350,7 +2720,7 @@ export async function handleInboundMessageForConversationalAgent({ contactId, ph
   return handleInboundConversationalChatMessage({ contactId, phone, messageId, channel })
 }
 
-async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT } = {}) {
+async function recoverScheduledFollowUps() {
   const rows = await db.all(`
     SELECT
       s.contact_id,
@@ -2364,8 +2734,7 @@ async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT
       AND s.agent_id <> ''
       AND s.follow_up_base_message_id IS NOT NULL
     ORDER BY COALESCE(s.follow_up_last_sent_at, s.last_reply_at, s.updated_at) ASC
-    LIMIT ?
-  `, [limit]).catch(() => [])
+  `).catch(() => [])
 
   let scheduled = 0
   for (const row of rows) {
@@ -2399,16 +2768,15 @@ async function recoverScheduledFollowUps({ limit = FOLLOW_UP_RECOVERY_SCAN_LIMIT
 
 // (AI-009) Reconstruye al boot los reruns que quedaron encolados en memoria antes de
 // un reinicio. Para cada fila persistida en ai_agent_pending_reruns que siga vigente
-// (mensaje entrante aún sin responder y dentro de la ventana de recuperación) volvemos a
+// (mensaje entrante aún sin responder) volvemos a
 // disparar el rerun por la vía normal; scheduleConversationalAgentRerun ya borra la copia
 // persistida, así que la operación es idempotente. Las filas viejas/inválidas se purgan.
-async function recoverPendingReruns({ nowMs = Date.now(), maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS } = {}) {
+async function recoverPendingReruns({ nowMs = Date.now() } = {}) {
   const rows = await db.all(`
     SELECT run_key, contact_id, channel, scheduled_for, payload, created_at
     FROM ai_agent_pending_reruns
     ORDER BY scheduled_for ASC
-    LIMIT ?
-  `, [PENDING_RECOVERY_SCAN_LIMIT]).catch(() => [])
+  `).catch(() => [])
 
   let scheduled = 0
   for (const row of rows) {
@@ -2431,12 +2799,15 @@ async function recoverPendingReruns({ nowMs = Date.now(), maxAgeMs = PENDING_REC
       await deletePendingRerun(runKey)
       continue
     }
-    const states = await listConversationStatesForContact(contactId).catch(() => [])
+    const states = await listConversationStatesForContact(contactId, { channel }).catch(() => [])
     const alreadyAnswered = states.some((state) => (
       state?.lastAnsweredInboundMessageId === latest.id ||
       state?.last_answered_inbound_message_id === latest.id
     ))
-    if (alreadyAnswered || !shouldRecoverPendingInbound(latest, null, { nowMs, maxAgeMs })) {
+    const recoveryState = states.find(isRunnableConversationState) || null
+    // Una fila explícitamente persistida no caduca por edad: se borra únicamente
+    // cuando ya fue respondida o dejó de ser ejecutable.
+    if (alreadyAnswered || !shouldRecoverPendingInbound(latest, recoveryState, { nowMs, maxAgeMs: 0 })) {
       await deletePendingRerun(runKey)
       continue
     }
@@ -2458,6 +2829,49 @@ async function recoverPendingReruns({ nowMs = Date.now(), maxAgeMs = PENDING_REC
   return { scanned: rows.length, scheduled }
 }
 
+async function loadRecoverableProcessingMessages({ nowMs = Date.now() } = {}) {
+  const nowIso = new Date(nowMs).toISOString()
+  const rows = await db.all(`
+    SELECT contact_id, agent_id, channel, inbound_processing_message_id
+    FROM conversational_agent_state
+    WHERE status = 'active'
+      AND agent_id IS NOT NULL
+      AND agent_id <> ''
+      AND inbound_processing_message_id IS NOT NULL
+      AND inbound_processing_message_id <> ''
+      AND (
+        inbound_processing_status = 'failed'
+        OR (
+          inbound_processing_status = 'processing'
+          AND (
+            inbound_processing_lease_until_at IS NULL
+            OR inbound_processing_lease_until_at <= ?
+          )
+        )
+      )
+    ORDER BY COALESCE(inbound_processing_started_at, updated_at, created_at) ASC
+  `, [nowIso]).catch(() => [])
+
+  const messages = []
+  for (const row of rows) {
+    const channel = normalizeConversationalChannel(row.channel || 'whatsapp')
+    const message = await loadInboundMessageById(
+      row.contact_id,
+      row.inbound_processing_message_id,
+      channel
+    ).catch(() => null)
+    if (!message) continue
+    messages.push({
+      ...message,
+      contact_id: row.contact_id,
+      channel,
+      recovery_agent_id: row.agent_id,
+      processing_recovery: true
+    })
+  }
+  return messages
+}
+
 export async function recoverPendingConversationalAgentConversations({
   nowMs = Date.now(),
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
@@ -2475,45 +2889,64 @@ export async function recoverPendingConversationalAgentConversations({
   // (AI-002) No recuperar pendientes si la feature premium está revocada.
   if (!(await hasFeature('conversational_ai'))) return { scanned: 0, scheduled: 0 }
 
-  const rowsByChannel = await Promise.all(
-    RECOVERABLE_CONVERSATIONAL_CHANNELS.map((channel) => loadRecentInboundMessagesForRecovery(channel, PENDING_RECOVERY_SCAN_LIMIT))
-  )
-  const rows = rowsByChannel.flat()
+  // Recorre por páginas toda la ventana configurada. El límite es tamaño de
+  // página, no un tope terminal: un contacto ya no queda enterrado detrás de
+  // los 80 mensajes más nuevos. Claims failed/vencidos se recuperan sin edad.
+  const [rowsByChannel, processingRows] = await Promise.all([
+    Promise.all(RECOVERABLE_CONVERSATIONAL_CHANNELS.map((recoverableChannel) => (
+      loadInboundMessagesForRecoveryWindow(recoverableChannel, { nowMs, maxAgeMs })
+    ))),
+    loadRecoverableProcessingMessages({ nowMs })
+  ])
+  const rows = [...rowsByChannel.flat(), ...processingRows]
     .sort((left, right) => messageTimestampMs(right) - messageTimestampMs(left))
-    .slice(0, PENDING_RECOVERY_SCAN_LIMIT)
 
   const latestByContact = new Map()
   for (const row of rows) {
     const key = getRunKey(row?.contact_id, row?.channel)
-    if (!row?.contact_id || latestByContact.has(key)) continue
-    latestByContact.set(key, row)
+    if (!row?.contact_id) continue
+    const current = latestByContact.get(key)
+    if (!current || messageTimestampMs(row) > messageTimestampMs(current)) {
+      latestByContact.set(key, row)
+      continue
+    }
+    if (current.id === row.id && row.processing_recovery) {
+      latestByContact.set(key, { ...current, ...row, processing_recovery: true })
+    }
   }
 
-	  let scheduled = 0
-	  for (const latest of latestByContact.values()) {
-	    if (scheduled >= PENDING_RECOVERY_SCHEDULE_LIMIT) break
-	    const states = await listConversationStatesForContact(latest.contact_id).catch(() => [])
-	    const runnableStates = states.filter(isRunnableConversationState)
-	    const alreadyAnswered = states.some((state) => (
-	      state?.lastAnsweredInboundMessageId === latest.id ||
-	      state?.last_answered_inbound_message_id === latest.id
-	    ))
-	    if (alreadyAnswered) continue
-	    const recoveryState = runnableStates[0] || null
-	    if (recoveryState && !shouldRecoverPendingInbound(latest, recoveryState, { nowMs, maxAgeMs })) continue
-	    if (!recoveryState && !shouldRecoverPendingInbound(latest, null, { nowMs, maxAgeMs })) continue
+  let scheduled = 0
+  for (const latest of latestByContact.values()) {
+    const latestChannel = normalizeConversationalChannel(latest.channel || 'whatsapp')
+    const states = await listConversationStatesForContact(latest.contact_id, { channel: latestChannel }).catch(() => [])
+    const runnableStates = states.filter(isRunnableConversationState)
+    const alreadyAnswered = states.some((state) => (
+      state?.lastAnsweredInboundMessageId === latest.id ||
+      state?.last_answered_inbound_message_id === latest.id
+    ))
+    if (alreadyAnswered) continue
+    const recoveryState = runnableStates.find((state) => (
+      state.inboundProcessingMessageId === latest.id ||
+      (latest.recovery_agent_id && state.agentId === latest.recovery_agent_id)
+    )) || runnableStates[0] || null
+    if (!shouldRecoverPendingInbound(latest, recoveryState, { nowMs, maxAgeMs })) continue
 
-	    await recordConversationalAgentEvent({
+    await recordConversationalAgentEvent({
       contactId: latest.contact_id,
       eventType: 'pending_recovery_scheduled',
-      detail: { messageId: latest.id, channel: latest.channel || 'whatsapp', maxAgeMs }
+      detail: {
+        messageId: latest.id,
+        channel: latestChannel,
+        maxAgeMs,
+        processingRecovery: Boolean(latest.processing_recovery)
+      }
     }).catch(() => {})
 
     scheduleConversationalAgentRerun({
       contactId: latest.contact_id,
       phone: latest.phone,
       latestMessage: latest,
-      channel: latest.channel || 'whatsapp',
+      channel: latestChannel,
       reason: 'recuperación de pendientes al arrancar'
     })
     scheduled += 1
@@ -2529,7 +2962,7 @@ export async function recoverPendingConversationalAgentConversations({
   }
 
   // (AI-009) Reconstruye los reruns que quedaron encolados en memoria antes del reinicio.
-  const reruns = await recoverPendingReruns({ nowMs, maxAgeMs }).catch((error) => {
+  const reruns = await recoverPendingReruns({ nowMs }).catch((error) => {
     logger.warn(`[Agente conversacional] No se pudieron recuperar reruns encolados: ${error.message}`)
     return { scanned: 0, scheduled: 0 }
   })
@@ -2594,32 +3027,57 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     throw error
   }
 
-  const { agent, ctx, model } = await buildAgentForRun({
+  const { agent, ctx, model, compiledPolicy, approvedLearning } = await buildAgentForRun({
     config: runtimeConfig,
     conversationModel: runtimeConfig.model || runtimeDefaults.model,
     contactId: null,
     contactName: null,
     dryRun: true,
     channel: previewChannel,
-    ruleContext: null
+    ruleContext: null,
+    knowledgeQuery: cleanMessages.map((message) => message.content).join(' ').slice(-4000)
   })
 
   const openAIFallbackApiKey = aiProvider === 'openai'
     ? runtime.apiKey
     : await getOpenAIApiKey().catch(() => null)
   const includeBinaryMedia = shouldIncludeConversationalBinaryMedia({ runtime })
-  const messagesForAgent = await hydrateConversationalPreviewMessagesMedia(cleanMessages, {
+  const hydratedMessages = await hydrateConversationalPreviewMessagesMedia(cleanMessages, {
     aiProvider,
     apiKey: runtime.apiKey,
     audioTranscriptionApiKey: openAIFallbackApiKey,
     visualAnalysisApiKey: openAIFallbackApiKey,
     includeBinary: includeBinaryMedia
   })
-  // Contexto para el candado de fases de cierre (mismo validador que en vivo, para
-  // que el tester refleje 1:1 si el arco se cumplió o no).
+  const assessed = await analyzeConversationIntelligence({
+    messages: hydratedMessages,
+    policy: compiledPolicy,
+    previousState: null,
+    runtime,
+    model,
+    channel: previewChannel
+  })
+  const latestPreviewText = [...cleanMessages].reverse().find((message) => message.role === 'user')?.content || ''
+  const strategy = planConversationStrategy({
+    intelligenceState: assessed.state,
+    policy: compiledPolicy,
+    latestMessage: latestPreviewText
+  })
+  let intelligenceState = applyStrategyPlan(assessed.state, strategy)
+  const intelligenceContextMessage = buildConversationIntelligenceContextMessage(intelligenceState, compiledPolicy)
+  const learningContextMessage = buildApprovedLearningContextMessage(approvedLearning)
+  const messagesForAgent = [
+    ...hydratedMessages,
+    ...(learningContextMessage ? [learningContextMessage] : []),
+    intelligenceContextMessage
+  ]
+
+  // Preview y runtime vivo comparten exactamente assessment, estrategia, prompt y tools.
   ctx.conversationMessages = messagesForAgent
   ctx.aiRuntime = runtime
   ctx.model = model
+  ctx.intelligenceState = intelligenceState
+  ctx.compiledPolicy = compiledPolicy
 
   let reply = await executeAgent({
     agent,
@@ -2628,7 +3086,18 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     contactId: null,
     model,
     aiProvider,
-    channel: previewChannel
+    channel: previewChannel,
+    intelligenceTrace: {
+      policyHash: compiledPolicy.hash,
+      policyVersion: compiledPolicy.version,
+      stateRevision: intelligenceState.revision,
+      source: assessed.source,
+      stage: intelligenceState.stage,
+      temperature: intelligenceState.temperature,
+      strategy: intelligenceState.strategy,
+      intent: intelligenceState.intent,
+      signalSummary: intelligenceState.signals
+    }
   })
 
   // Guardián de cumplimiento (mismo que en vivo, para que el tester lo refleje 1:1).
@@ -2639,6 +3108,13 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
       ctx.actions.push({ type: 'compliance_rewrite', rules: guarded.violation?.rules || [], reason: guarded.violation?.reason || '', effect: { liveEffect: 'REESCRIBIÓ el mensaje para cumplir la biblia (no soltar precio/pitch antes de calificar)', marksObjectiveCompleted: false } })
     }
   }
+
+  intelligenceState = finalizeConversationIntelligenceTurn({
+    intelligenceState,
+    actions: ctx.actions,
+    reply,
+    suppressed: ctx.suppressReply
+  }).state
 
   const splitResult = ctx.suppressReply
     ? { messages: [] }
@@ -2666,6 +3142,10 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
     responseDelayMs,
     suppressed: ctx.suppressReply,
     actions: ctx.actions,
+    intelligence: intelligenceState,
+    policyValidation: compiledPolicy.validation,
+    policyHash: compiledPolicy.hash,
+    assessmentSource: assessed.source,
     aiProvider,
     model
   }

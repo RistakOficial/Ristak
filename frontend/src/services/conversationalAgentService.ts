@@ -317,9 +317,11 @@ export interface ConversationalAgentDef {
   filters: AgentFilters
   createdAt: string | null
   updatedAt: string | null
+  policyVersion?: number
+  compiledPolicy?: ConversationalCompiledPolicySummary
 }
 
-export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'closingStrategyMode' | 'closingStrategyCustom'>>
+export type ConversationalAgentDefInput = Partial<Omit<ConversationalAgentDef, 'id' | 'createdAt' | 'updatedAt' | 'closingStrategyMode' | 'closingStrategyCustom' | 'policyVersion' | 'compiledPolicy'>>
 
 export interface ConversationAgentState {
   id?: string | null
@@ -345,9 +347,92 @@ export interface ConversationAgentState {
   agentEnabled?: boolean | null
   agentHideAttendedNotifications?: boolean | null
   closingContext?: Record<string, string>
+  intelligence?: ConversationIntelligenceState
+  intelligencePolicyHash?: string | null
+  intelligenceSource?: 'model' | 'deterministic' | string | null
+  intelligenceUpdatedAt?: string | null
   updatedAt: string | null
   contactName?: string | null
   contactPhone?: string | null
+}
+
+export interface ConversationIntelligenceEvidence {
+  key: string
+  value: string
+  evidence: string
+  messageId: string | null
+  source: 'contact' | 'tool' | 'business' | 'system'
+  confidence: number
+  retention?: 'conversation' | 'contact' | 'temporary' | 'do_not_retain'
+}
+
+export interface ConversationIntelligenceState {
+  schemaVersion: number
+  revision: number
+  objective: string
+  channel: string
+  stage: 'opening' | 'discovery' | 'qualification' | 'consideration' | 'decision' | 'action' | 'follow_up' | 'handoff' | 'completed'
+  summary: string
+  intent: { explicit: string; implicit: string; confidence: number }
+  story: {
+    confirmedFacts: ConversationIntelligenceEvidence[]
+    hypotheses: ConversationIntelligenceEvidence[]
+    contradictions: Array<{ key: string; previousValue: string; currentValue: string; evidence: string }>
+  }
+  signals: Record<string, number>
+  temperature: 'cold' | 'warm' | 'hot'
+  qualification: { status: 'unknown' | 'qualified' | 'disqualified' | 'partial'; matched: string[]; missing: string[]; disqualifiers: string[] }
+  objections: Array<{ category: string; status: 'expressed' | 'possible' | 'resolved'; confidence: number; evidence: string }>
+  missingInformation: string[]
+  strategy: { action: string; reason: string; primaryQuestion: string; tool: string; shouldReply: boolean }
+  followUp: { recommended: boolean; reason: string; angle: string; stop: boolean }
+  handoff: { recommended: boolean; reason: string; urgency: 'normal' | 'high'; summary: Record<string, unknown> | null }
+  outcome: { status: 'open' | 'pending' | 'completed' | 'failed' | 'disqualified'; evidence: string[]; lastAction: string; toolConfirmed: boolean }
+  updatedAt: string | null
+}
+
+export interface ConversationalCompiledPolicySummary {
+  version: number
+  hash: string
+  objective: Record<string, unknown> | null
+  qualification: Record<string, unknown> | null
+  permissions: Record<string, unknown> | null
+  validation: { valid: boolean; errors: Array<Record<string, unknown>>; warnings: Array<Record<string, unknown>> }
+}
+
+export interface ConversationalPolicyVersion {
+  id: string
+  agentId: string
+  version: number
+  policyHash: string
+  configSnapshot: ConversationalAgentDef
+  compiledPolicy: Record<string, unknown>
+  source: 'form' | 'rollback' | 'migration' | string
+  active: boolean
+  createdAt: string | null
+}
+
+export interface ConversationalLearningVersion {
+  id: string
+  agentId: string
+  version: number
+  hash: string
+  status: 'proposed' | 'approved' | 'rejected' | 'reverted'
+  basePolicyHash: string | null
+  snapshot: {
+    metrics?: Record<string, unknown>
+    proposals?: Array<{ kind: string; title: string; rationale: string; suggestedChange: string; risk: string }>
+    [key: string]: unknown
+  }
+  reviewedBy: string | null
+  reviewedAt: string | null
+  createdAt: string | null
+}
+
+export interface ConversationalAgentGovernance {
+  agentId: string
+  policyVersions: ConversationalPolicyVersion[]
+  learningVersions: ConversationalLearningVersion[]
 }
 
 export type ConversationStateAction = 'pause' | 'resume' | 'take_over' | 'skip' | 'activate' | 'clear_signal'
@@ -359,6 +444,10 @@ export interface ConversationalAgentTestResult {
   responseDelayMs?: number
   suppressed: boolean
   actions: Array<{ type: string; effect?: { liveEffect?: string; marksObjectiveCompleted?: boolean }; [key: string]: unknown }>
+  intelligence?: ConversationIntelligenceState
+  policyValidation?: { valid: boolean; errors: Array<Record<string, unknown>>; warnings: Array<Record<string, unknown>> }
+  policyHash?: string
+  assessmentSource?: 'model' | 'deterministic' | string
   aiProvider: ConversationalAIProviderId
   model: string
 }
@@ -437,6 +526,16 @@ export interface ConversationalAgentMetrics {
   errorEvents: number
   assignedEvents: number
   replyEvents: number
+  appointmentEvents: number
+  paymentLinkEvents: number
+  goalCompletionEvents: number
+  followUpSentEvents: number
+  followUpSuppressedEvents: number
+  humanHandoffEvents: number
+  toolFailureEvents: number
+  intelligenceAssessmentEvents: number
+  responseRate: number
+  toolFailureRate: number
   successRate: number
   byAgent: ConversationalAgentMetricByAgent[]
 }
@@ -567,7 +666,7 @@ function normalizeShortText(value?: unknown, maxLength = 160) {
 
 function normalizeConversationalPersuasionLevel(value?: unknown): ConversationalPersuasionLevel {
   const level = String(value || '').trim().toLowerCase()
-  return level === 'low' || level === 'medium' || level === 'high' ? level : 'high'
+  return level === 'low' || level === 'medium' || level === 'high' ? level : 'medium'
 }
 
 function normalizeConversationalLanguageLevel(value?: unknown): ConversationalLanguageLevel {
@@ -976,6 +1075,29 @@ export const conversationalAgentService = {
 
   getMetrics(): Promise<ConversationalAgentMetrics> {
     return request<ConversationalAgentMetrics>('/metrics')
+  },
+
+  getGovernance(agentId: string): Promise<ConversationalAgentGovernance> {
+    return request<ConversationalAgentGovernance>(`/agents/${encodeURIComponent(agentId)}/governance`)
+  },
+
+  generateLearning(agentId: string): Promise<ConversationalLearningVersion> {
+    return request<ConversationalLearningVersion>(`/agents/${encodeURIComponent(agentId)}/learning`, { method: 'POST' })
+  },
+
+  reviewLearning(agentId: string, learningId: string, decision: 'approved' | 'rejected' | 'reverted'): Promise<ConversationalLearningVersion> {
+    return request<ConversationalLearningVersion>(`/agents/${encodeURIComponent(agentId)}/learning/${encodeURIComponent(learningId)}/review`, {
+      method: 'POST',
+      body: JSON.stringify({ decision })
+    })
+  },
+
+  async rollbackPolicy(agentId: string, versionId: string): Promise<ConversationalAgentDef> {
+    const agent = normalizeAgentDef(await request<ConversationalAgentDef>(`/agents/${encodeURIComponent(agentId)}/policy-versions/${encodeURIComponent(versionId)}/rollback`, {
+      method: 'POST'
+    }))
+    applyCachedAgentUpdate(agent)
+    return agent
   },
 
   async createAgent(input: ConversationalAgentDefInput = {}): Promise<ConversationalAgentDef> {

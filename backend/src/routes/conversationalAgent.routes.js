@@ -9,6 +9,10 @@ import {
   listEvents,
   listAgents,
   getMetrics,
+  getAgentGovernance,
+  generateAgentLearning,
+  reviewAgentLearning,
+  rollbackAgentPolicy,
   createAgent,
   updateAgent,
   deleteAgent,
@@ -19,14 +23,12 @@ import {
   deleteAIProvider
 } from '../controllers/conversationalAgentController.js'
 import { requireAuth } from '../middleware/authMiddleware.js'
-import { requireOpenAIConfigured } from '../middleware/openAIConfigMiddleware.js'
 import { requireModuleAccess } from '../middleware/userAccessMiddleware.js'
 
 const router = express.Router()
 
 router.use(requireAuth)
 router.use(requireModuleAccess('ai_agent'))
-router.use(requireOpenAIConfigured)
 
 router.get('/config', getConfig)
 router.post('/config', saveConfig)
@@ -38,6 +40,10 @@ router.get('/metrics', getMetrics)
 router.get('/filter-options', getFilterOptions)
 router.post('/agents', createAgent)
 router.put('/agents/:agentId', updateAgent)
+router.get('/agents/:agentId/governance', getAgentGovernance)
+router.post('/agents/:agentId/learning', generateAgentLearning)
+router.post('/agents/:agentId/learning/:learningId/review', reviewAgentLearning)
+router.post('/agents/:agentId/policy-versions/:versionId/rollback', rollbackAgentPolicy)
 router.post('/agents/:agentId/reset-skipped', resetAgentSkippedContacts)
 router.delete('/agents/:agentId', deleteAgent)
 router.get('/states', listStates)

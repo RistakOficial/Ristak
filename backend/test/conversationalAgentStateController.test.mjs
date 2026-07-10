@@ -7,13 +7,17 @@ import { updateState } from '../src/controllers/conversationalAgentController.js
 import {
   assignAgentToConversation,
   buildRuleContext,
+  claimConversationInboundMessage,
+  completeConversationInboundMessage,
   createConversationalAgent,
+  failConversationInboundMessage,
   getConversationState,
-  isStaleInheritedConversationStateForAgent,
   listConversationStates,
+  listConversationStatesForContact,
   listConversationalAgentEvents,
   matchAgentForMessage,
   resetConversationalAgentSkippedContacts,
+  runWithConversationStateChannel,
   setConversationStatus,
   setConversationSignal
 } from '../src/services/conversationalAgentService.js'
@@ -283,12 +287,32 @@ test('un agente nuevo catch-all no hereda omisiones legacy anteriores', async ()
 
     const matched = await matchAgentForMessage({ contactId, messageText: 'Costos', channel: 'whatsapp' })
     assert.equal(matched?.id, agentId)
+
+    const ruleContext = await buildRuleContext({ contactId, messageText: 'Costos', channel: 'whatsapp' })
+    const resolved = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Costos',
+      channel: 'whatsapp',
+      ruleContext,
+      latestMessageId: `waapi_msg_legacy_skip_${randomUUID()}`
+    })
+    assert.equal(resolved.agentConfig?.id, agentId)
+    assert.equal(resolved.assigned, true)
+    assert.equal(resolved.state?.status, 'active')
+
+    const legacyManualSkip = await db.get(`
+      SELECT agent_id, status
+      FROM conversational_agent_state
+      WHERE contact_id = ? AND status = 'skipped'
+    `, [contactId])
+    assert.equal(legacyManualSkip?.agent_id, null)
+    assert.equal(legacyManualSkip?.status, 'skipped')
   } finally {
     await cleanup(contactId, agentId)
   }
 })
 
-test('un bloqueo heredado más viejo que el agente se suelta antes del matching automático', async () => {
+test('una omisión manual conserva la asignación aunque sus timestamps sean anteriores al agente', async () => {
   const contactId = `conversation_agent_stale_skip_${randomUUID()}`
   let agentId = ''
 
@@ -303,12 +327,15 @@ test('un bloqueo heredado más viejo que el agente se suelta antes del matching 
 
     await db.run(`
       INSERT INTO conversational_agent_state (
-        id, contact_id, agent_id, status, updated_by, activated_at, activation_source, activated_by, created_at, updated_at
-      ) VALUES (?, ?, ?, 'skipped', 'user', '2026-01-01 00:00:00', 'manual', 'user', '2026-01-01 00:00:00', '2026-01-01 00:00:00')
+        id, contact_id, agent_id, channel, status, updated_by,
+        activated_at, activation_source, activated_by,
+        assignment_source, assigned_at, assigned_by,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, 'whatsapp', 'skipped', 'user',
+        '2026-01-01 00:00:00', 'manual', 'user',
+        'manual', '2026-01-01 00:00:00', 'user',
+        '2026-01-01 00:00:00', '2026-01-01 00:00:00')
     `, [`cas_${randomUUID()}`, contactId, agentId])
-
-    const staleState = await getConversationState(contactId, { agentId })
-    assert.equal(isStaleInheritedConversationStateForAgent(staleState, agent), true)
 
     const ruleContext = await buildRuleContext({ contactId, messageText: 'Costos', channel: 'whatsapp' })
     const resolved = await resolveInboundAgentForContact({
@@ -318,22 +345,216 @@ test('un bloqueo heredado más viejo que el agente se suelta antes del matching 
       ruleContext
     })
 
-    assert.equal(resolved.agentConfig?.id, agentId)
-    assert.equal(resolved.assigned, true)
-    assert.equal(resolved.state?.status, 'active')
+    assert.equal(resolved.agentConfig, null)
+    assert.equal(resolved.assigned, false)
+    assert.equal(resolved.state?.status, 'skipped')
 
-    const activeState = await getConversationState(contactId, { agentId })
-    assert.equal(activeState?.status, 'active')
-    assert.equal(activeState?.activationSource, 'automatic')
+    const skippedState = await getConversationState(contactId, { agentId, channel: 'whatsapp' })
+    assert.equal(skippedState?.status, 'skipped')
+    assert.equal(skippedState?.assignmentSource, 'manual')
 
     const events = await listConversationalAgentEvents({ contactId })
-    assert.ok(events.some((event) => (
-      event.eventType === 'agent_released' &&
-      event.detail?.reason === 'stale_inherited_state' &&
-      event.detail?.agentId === agentId
-    )))
+    assert.equal(events.some((event) => event.eventType === 'agent_released'), false)
   } finally {
     await cleanup(contactId, agentId)
+  }
+})
+
+test('una asignación legacy activa se revalida por reglas y guarda procedencia explícita', async () => {
+  const contactId = `conversation_agent_legacy_assignment_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    const agent = await createConversationalAgent({
+      name: 'Agente revalida asignación legacy',
+      enabled: true,
+      objective: 'citas'
+    })
+    agentId = agent.id
+
+    await db.run(`
+      INSERT INTO conversational_agent_state (
+        id, contact_id, agent_id, channel, status,
+        assignment_source, assigned_at, assigned_by, created_at, updated_at
+      ) VALUES (?, ?, ?, 'whatsapp', 'active', 'legacy', ?, 'system', ?, ?)
+    `, [
+      `cas_${randomUUID()}`,
+      contactId,
+      agentId,
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z',
+      '2026-01-01T00:00:00.000Z'
+    ])
+
+    const ruleContext = await buildRuleContext({ contactId, messageText: 'Quiero información', channel: 'whatsapp' })
+    const resolved = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Quiero información',
+      channel: 'whatsapp',
+      ruleContext,
+      latestMessageId: `msg_${randomUUID()}`
+    })
+
+    assert.equal(resolved.agentConfig?.id, agentId)
+    assert.equal(resolved.assigned, false)
+    assert.equal(resolved.state?.assignmentSource, 'automatic')
+
+    const events = await listConversationalAgentEvents({ contactId })
+    assert.equal(events.some((event) => event.eventType === 'agent_assignment_verified'), true)
+    assert.equal(events.some((event) => event.detail?.reason === 'stale_inherited_state'), false)
+  } finally {
+    await cleanup(contactId, agentId)
+  }
+})
+
+test('el estado del mismo contacto y agente queda aislado por canal', async () => {
+  const contactId = `conversation_agent_channel_scope_${randomUUID()}`
+  const agentId = `agent_channel_scope_${randomUUID()}`
+
+  try {
+    await seedContact(contactId)
+    const whatsappState = await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent',
+      channel: 'whatsapp'
+    })
+    const instagramState = await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent',
+      channel: 'instagram'
+    })
+
+    assert.notEqual(whatsappState?.id, instagramState?.id)
+    await setConversationStatus(contactId, 'skipped', {
+      updatedBy: 'user',
+      agentId,
+      channel: 'whatsapp'
+    })
+
+    const skippedWhatsapp = await getConversationState(contactId, { agentId, channel: 'whatsapp' })
+    const activeInstagram = await getConversationState(contactId, { agentId, channel: 'instagram' })
+    assert.equal(skippedWhatsapp?.status, 'skipped')
+    assert.equal(activeInstagram?.status, 'active')
+
+    await runWithConversationStateChannel('instagram', () => setConversationStatus(contactId, 'paused', {
+      updatedBy: 'user',
+      agentId
+    }))
+    assert.equal((await getConversationState(contactId, { agentId, channel: 'whatsapp' }))?.status, 'skipped')
+    assert.equal((await getConversationState(contactId, { agentId, channel: 'instagram' }))?.status, 'paused')
+
+    const whatsappRows = await listConversationStatesForContact(contactId, { channel: 'whatsapp' })
+    const instagramRows = await listConversationStatesForContact(contactId, { channel: 'instagram' })
+    assert.deepEqual(whatsappRows.map((state) => state.id), [whatsappState.id])
+    assert.deepEqual(instagramRows.map((state) => state.id), [instagramState.id])
+  } finally {
+    await cleanup(contactId)
+  }
+})
+
+test('el claim inbound bloquea concurrencia y permite reintentar el mismo mensaje tras error o lease vencido', async () => {
+  const contactId = `conversation_agent_claim_${randomUUID()}`
+  const agentId = `agent_claim_${randomUUID()}`
+  const messageId = `message_claim_${randomUUID()}`
+  const secondMessageId = `message_claim_lease_${randomUUID()}`
+  const nowMs = Date.parse('2026-07-10T18:00:00.000Z')
+
+  try {
+    await seedContact(contactId)
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent',
+      channel: 'whatsapp'
+    })
+
+    const [first, concurrent] = await Promise.all([
+      claimConversationInboundMessage(contactId, messageId, {
+        agentId,
+        channel: 'whatsapp',
+        nowMs,
+        leaseMs: 60_000,
+        claimToken: 'claim_first'
+      }),
+      claimConversationInboundMessage(contactId, messageId, {
+        agentId,
+        channel: 'whatsapp',
+        nowMs,
+        leaseMs: 60_000,
+        claimToken: 'claim_concurrent'
+      })
+    ])
+    const winner = first.claimed ? first : concurrent
+    const loser = first.claimed ? concurrent : first
+    assert.equal(winner.claimed, true)
+    assert.equal(loser.claimed, false)
+    assert.equal(loser.reason, 'lease_active')
+
+    const failed = await failConversationInboundMessage(contactId, messageId, {
+      agentId,
+      channel: 'whatsapp',
+      claimToken: winner.claimToken,
+      error: 'falló una herramienta después del claim'
+    })
+    assert.equal(failed.failed, true)
+    assert.equal(failed.state?.inboundProcessingStatus, 'failed')
+
+    const retried = await claimConversationInboundMessage(contactId, messageId, {
+      agentId,
+      channel: 'whatsapp',
+      nowMs: nowMs + 1000,
+      leaseMs: 60_000,
+      claimToken: 'claim_retry'
+    })
+    assert.equal(retried.claimed, true)
+    assert.equal(retried.state?.inboundProcessingAttemptCount, 2)
+
+    const completed = await completeConversationInboundMessage(contactId, messageId, {
+      agentId,
+      channel: 'whatsapp',
+      claimToken: retried.claimToken,
+      answered: true
+    })
+    assert.equal(completed.completed, true)
+    assert.equal(completed.state?.lastAnsweredInboundMessageId, messageId)
+
+    const duplicate = await claimConversationInboundMessage(contactId, messageId, {
+      agentId,
+      channel: 'whatsapp',
+      nowMs: nowMs + 2000,
+      claimToken: 'claim_duplicate'
+    })
+    assert.equal(duplicate.claimed, false)
+    assert.equal(duplicate.reason, 'already_answered')
+
+    const abandoned = await claimConversationInboundMessage(contactId, secondMessageId, {
+      agentId,
+      channel: 'whatsapp',
+      nowMs,
+      leaseMs: 1000,
+      claimToken: 'claim_abandoned'
+    })
+    assert.equal(abandoned.claimed, true)
+    const beforeExpiry = await claimConversationInboundMessage(contactId, secondMessageId, {
+      agentId,
+      channel: 'whatsapp',
+      nowMs: nowMs + 999,
+      leaseMs: 1000,
+      claimToken: 'claim_before_expiry'
+    })
+    assert.equal(beforeExpiry.claimed, false)
+    assert.equal(beforeExpiry.reason, 'lease_active')
+    const afterExpiry = await claimConversationInboundMessage(contactId, secondMessageId, {
+      agentId,
+      channel: 'whatsapp',
+      nowMs: nowMs + 1001,
+      leaseMs: 1000,
+      claimToken: 'claim_after_expiry'
+    })
+    assert.equal(afterExpiry.claimed, true)
+    assert.equal(afterExpiry.state?.inboundProcessingAttemptCount, 2)
+  } finally {
+    await cleanup(contactId)
   }
 })
 
@@ -607,7 +828,90 @@ test('un mensaje nuevo reabre una conversación completada con acción concreta 
   }
 })
 
-test('[Fase 1] un handoff completado SÍ se reabre con mensajes nuevos para seguir contestando', async () => {
+test('una conversación completada no reabre si el agente está apagado o ya no cumple entrada', async () => {
+  const contactId = `conversation_agent_reopen_rules_${randomUUID()}`
+  const answeredMessageId = `waapi_msg_rules_answered_${randomUUID()}`
+  let agentId = ''
+
+  try {
+    await seedContact(contactId)
+    const agent = await createConversationalAgent({
+      name: 'Agente reapertura con reglas',
+      enabled: true,
+      objective: 'citas',
+      filters: {
+        entry: {
+          groups: [{
+            conditions: [{
+              category: 'message',
+              params: [{ field: 'text', operator: 'contains', value: 'cita' }]
+            }]
+          }]
+        },
+        exit: { groups: [] }
+      }
+    })
+    agentId = agent.id
+
+    await assignAgentToConversation(contactId, agentId, {
+      activationSource: 'automatic',
+      updatedBy: 'agent',
+      channel: 'whatsapp'
+    })
+    await setConversationSignal(contactId, 'appointment_booked', {
+      reason: 'Cita agendada',
+      summary: 'La cita ya quedó creada.',
+      status: 'completed',
+      agentId,
+      channel: 'whatsapp'
+    })
+    await db.run(`
+      UPDATE conversational_agent_state
+      SET last_inbound_message_id = ?, last_answered_inbound_message_id = ?
+      WHERE contact_id = ? AND agent_id = ? AND channel = 'whatsapp'
+    `, [answeredMessageId, answeredMessageId, contactId, agentId])
+
+    await db.run('UPDATE conversational_agents SET enabled = 0 WHERE id = ?', [agentId])
+    const enabledRuleContext = await buildRuleContext({ contactId, messageText: 'Otra cita', channel: 'whatsapp' })
+    const disabledResult = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Otra cita',
+      channel: 'whatsapp',
+      ruleContext: enabledRuleContext,
+      latestMessageId: `waapi_msg_disabled_${randomUUID()}`
+    })
+    assert.equal(disabledResult.agentConfig, null)
+    const preserved = await getConversationState(contactId, { agentId, channel: 'whatsapp' })
+    assert.equal(preserved?.status, 'completed')
+    assert.equal(preserved?.signal, 'appointment_booked')
+
+    await db.run('UPDATE conversational_agents SET enabled = 1 WHERE id = ?', [agentId])
+    const mismatchedRuleContext = await buildRuleContext({ contactId, messageText: 'Solo quiero precio', channel: 'whatsapp' })
+    const mismatchedResult = await resolveInboundAgentForContact({
+      contactId,
+      messageText: 'Solo quiero precio',
+      channel: 'whatsapp',
+      ruleContext: mismatchedRuleContext,
+      latestMessageId: `waapi_msg_mismatch_${randomUUID()}`
+    })
+    assert.equal(mismatchedResult.agentConfig, null)
+
+    const stored = await db.get(`
+      SELECT agent_id, status, signal
+      FROM conversational_agent_state
+      WHERE contact_id = ? AND channel = 'whatsapp'
+      ORDER BY updated_at DESC
+      LIMIT 1
+    `, [contactId])
+    assert.equal(stored?.agent_id, null)
+    assert.equal(stored?.status, 'completed')
+    assert.equal(stored?.signal, 'appointment_booked')
+  } finally {
+    await cleanup(contactId, agentId)
+  }
+})
+
+test('un handoff pendiente no se borra ni se reabre por un mensaje nuevo', async () => {
   const contactId = `conversation_agent_reopen_handoff_${randomUUID()}`
   const answeredMessageId = `waapi_msg_answered_${randomUUID()}`
   const newMessageId = `waapi_msg_new_${randomUUID()}`
@@ -648,18 +952,15 @@ test('[Fase 1] un handoff completado SÍ se reabre con mensajes nuevos para segu
       latestMessageId: newMessageId
     })
 
-    // Fase 1: el objetivo cumplido (ready_for_human) ya no muta al bot para siempre;
-    // reabre para contestar el follow-up de la persona. El mute real solo lo impone un
-    // humano que toma el chat (status 'human'), que no entra a esta ruta.
-    assert.equal(resolved.agentConfig?.id, agentId)
+    assert.equal(resolved.agentConfig, null)
     assert.equal(resolved.assigned, false)
 
     const state = await getConversationState(contactId, { agentId })
-    assert.equal(state?.status, 'active')
-    assert.equal(state?.signal, null)
+    assert.equal(state?.status, 'completed')
+    assert.equal(state?.signal, 'ready_for_human')
 
     const events = await listConversationalAgentEvents({ contactId })
-    assert.equal(events.some((event) => event.eventType === 'agent_reopened'), true)
+    assert.equal(events.some((event) => event.eventType === 'agent_reopened'), false)
   } finally {
     await cleanup(contactId, agentId)
   }

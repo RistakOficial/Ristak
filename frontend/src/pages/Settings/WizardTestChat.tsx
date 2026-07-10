@@ -204,6 +204,21 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
         nextMessages.map(toPayload),
         { config: getConfig() }
       )
+      if (result.intelligence) {
+        const temperature = result.intelligence.temperature === 'hot'
+          ? 'caliente'
+          : result.intelligence.temperature === 'warm' ? 'tibio' : 'frío'
+        const line = [
+          `🧠 Lectura interna: ${result.intelligence.stage} · ${temperature}`,
+          `siguiente movimiento: ${result.intelligence.strategy.action}`,
+          result.intelligence.strategy.reason
+        ].filter(Boolean).join(' — ')
+        setMessages((current) => [...current, { role: 'assistant', content: line, internal: true }])
+      }
+      for (const warning of result.policyValidation?.warnings || []) {
+        const message = typeof warning.message === 'string' ? warning.message : ''
+        if (message) setMessages((current) => [...current, { role: 'assistant', content: `⚠︎ Configuración: ${message}`, internal: true }])
+      }
       for (const action of result.actions || []) {
         const effectText = typeof action.effect?.liveEffect === 'string' ? action.effect.liveEffect : ''
         const line = effectText
@@ -222,9 +237,9 @@ export function WizardTestChat({ getConfig, agentName, density = 'regular' }: Pr
     } catch (error: any) {
       const status = error?.statusCode || error?.status
       const raw = String(error?.message || '')
-      const needsOpenAI = status === 409 || /openai|llave|api key/i.test(raw)
-      const message = needsOpenAI
-        ? 'Para probar aquí necesitas conectar tu llave de OpenAI en Ajustes (aunque tu agente use otra IA). Conéctala y vuelve a intentar.'
+      const needsAIConnection = status === 409 || /openai|claude|gemini|deepseek|llave|api key/i.test(raw)
+      const message = needsAIConnection
+        ? 'Conecta la IA seleccionada en Ajustes y vuelve a intentar.'
         : (raw || 'No se pudo probar el agente')
       setMessages((current) => [...current, { role: 'assistant', content: `⚠︎ ${message}`, internal: true }])
       showToast('error', 'No se pudo probar', message)

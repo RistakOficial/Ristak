@@ -12,7 +12,6 @@ import {
   getDefaultConversationalModel,
   getKnownConversationalAIProvider,
   getKnownConversationalModel,
-  getConversationalModelLabel,
   type ConversationalAIProviderId
 } from '@/constants/conversationalAIProviders'
 import { useAccountCurrency } from '@/hooks'
@@ -56,7 +55,7 @@ const objectiveChoices: Array<Choice<ConversationalObjective>> = [
   { value: 'citas', label: 'Agendar citas', example: 'Lleva a la persona hasta que aparta día y hora. Como una recepcionista que llena la agenda.', Icon: Calendar },
   { value: 'ventas', label: 'Cerrar ventas', example: 'Lleva a la persona hasta que quiere pagar. Como un buen vendedor de piso.', Icon: ShoppingBag },
   { value: 'datos', label: 'Juntar datos', example: 'Pide lo que falta (nombre, correo, teléfono). Como llenar una ficha sin que se sienta interrogatorio.', Icon: ClipboardList },
-  { value: 'filtrar', label: 'Filtrar curiosos', example: 'Separa al que va en serio del que solo pregunta por ver. Como un cadenero amable.', Icon: Filter },
+  { value: 'filtrar', label: 'Calificar prospectos', example: 'Detecta quién cumple tus criterios y quién necesita otro camino, sin juzgar ni presionar.', Icon: Filter },
   { value: 'custom', label: 'Mi propia meta', example: 'Tú la escribes. Ejemplo: "que pida una cotización formal".', Icon: Wand2 }
 ]
 
@@ -68,15 +67,15 @@ const identityChoices: Array<Choice<AgentIdentityMode>> = [
 ]
 
 const persuasionChoices: Array<Choice<ConversationalPersuasionLevel>> = [
-  { value: 'low', label: 'Anfitrión', example: 'Atiende, resuelve y da precios. No empuja: cierra solo si se lo piden. Como un mesero que no te apura.', Icon: Coffee },
-  { value: 'medium', label: 'Estratega', example: 'Te entiende y te guía con tacto al siguiente paso, sin presionar. El punto medio.', Icon: Compass },
-  { value: 'high', label: 'Cerrador', example: 'Va con todo a cerrar, con criterio y sin sonar desesperado. Como tu mejor vendedor.', Icon: Target }
+  { value: 'low', label: 'Atención', example: 'Resuelve y orienta. Sólo propone avanzar cuando la persona lo pide claramente.', Icon: Coffee },
+  { value: 'medium', label: 'Guía', example: 'Entiende la situación y facilita el siguiente paso con tacto. Es la opción recomendada.', Icon: Compass },
+  { value: 'high', label: 'Proactivo', example: 'Detecta oportunidades y propone el siguiente paso cuando hay evidencia, sin presionar.', Icon: Target }
 ]
 
 const languageChoices: Array<Choice<ConversationalLanguageLevel>> = [
   { value: 'professional', label: 'Ejecutivo', example: 'Pulido y formal, pero humano. Para marcas premium y tratos importantes.', Icon: Briefcase },
   { value: 'intermediate', label: 'Cómplice', example: 'Natural y cercano, ni tieso ni vulgar. El punto dulce que le queda a casi todos.', Icon: Smile },
-  { value: 'colloquial', label: 'Callejero', example: 'Bien suelto y de la región, como mensaje entre cuates. Lo más relajado.', Icon: MessageCircle }
+  { value: 'colloquial', label: 'Casual', example: 'Relajado y de chat, adaptándose a la persona sin forzar modismos.', Icon: MessageCircle }
 ]
 
 const actionChoicesByObjective: Record<ConversationalObjective, Array<Choice<ConversationalSuccessAction>>> = {
@@ -133,9 +132,10 @@ interface Props {
   aiProvider?: ConversationalAIProviderId
   model?: string
   aiProviders?: ConversationalAIProviderStatus[]
+  onConnectProvider?: (providerId: ConversationalAIProviderId) => void
 }
 
-export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManual, creating = false, defaultName = '', aiProvider, model, aiProviders = [] }: Props) {
+export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManual, creating = false, defaultName = '', aiProvider, model, aiProviders = [], onConnectProvider }: Props) {
   const [stepIndex, setStepIndex] = useState(0)
   const [draft, setDraft] = useState<AgentWizardDraft>(() => buildInitialDraft(defaultName, { aiProvider, model }))
   const [calendars, setCalendars] = useState<CalendarRecord[]>([])
@@ -176,6 +176,24 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     return () => { alive = false }
   }, [isOpen, defaultName, aiProvider, model])
 
+  // La creación rápida usa automáticamente una conexión disponible. Elegir proveedor,
+  // modelo y detalles técnicos queda en el editor avanzado; aquí sólo bloqueamos si no
+  // existe ninguna IA conectada con la que el agente pueda operar de verdad.
+  useEffect(() => {
+    if (!isOpen || !aiProviders.length) return
+    setDraft((current) => {
+      const currentConnected = aiProviders.some((provider) => provider.id === current.aiProvider && provider.connected)
+      if (currentConnected) return current
+      const available = aiProviders.find((provider) => provider.connected)
+      if (!available) return current
+      return {
+        ...current,
+        aiProvider: available.id,
+        model: getKnownConversationalModel(available.id, available.defaultModel || getDefaultConversationalModel(available.id))
+      }
+    })
+  }, [isOpen, aiProviders])
+
   useEffect(() => {
     if (!isOpen) return
     let alive = true
@@ -194,18 +212,18 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     const showPayment = isCitasBooking(draft) || isVentasCharging(draft)
     const showGoalUrl = draft.successAction === 'send_goal_url' && (draft.objective === 'citas' || draft.objective === 'ventas')
     const showCompletion = ['book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link'].includes(draft.successAction)
+    const needsAISetup = aiProviders.length > 0 && !aiProviders.some((provider) => provider.connected)
     return [
-      'welcome', 'name', 'ai',
-      'identity', 'persuasion', 'language', 'instructions',
-      'delay', 'delivery', 'notifications',
-      'objective', 'action',
+      'welcome', 'name',
+      ...(needsAISetup ? ['ai'] as StepId[] : []),
+      'objective', 'identity', 'action',
       ...(showCalendar ? ['calendar'] as StepId[] : []),
       ...(showPayment ? ['payment'] as StepId[] : []),
       ...(showGoalUrl ? ['goalUrl'] as StepId[] : []),
       ...(showCompletion ? ['completion'] as StepId[] : []),
-      'data', 'handoff', 'scope', 'recap', 'test'
+      'data', 'handoff', 'instructions', 'scope', 'recap', 'test'
     ]
-  }, [draft.objective, draft.successAction])
+  }, [draft.objective, draft.successAction, aiProviders])
 
   // Si la lista de pasos se acorta (p.ej. cambió la acción), no dejes el índice fuera de rango.
   useEffect(() => {
@@ -226,7 +244,6 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
   const providerConnectionKnown = aiProviders.length > 0
   const selectedProviderConnected = providerConnectionKnown ? Boolean(selectedProviderStatus?.connected) : true
   const selectedModelValue = getKnownConversationalModel(selectedProviderId, draft.model || getDefaultConversationalModel(selectedProviderId))
-  const selectedModelLabel = getConversationalModelLabel(selectedProviderId, selectedModelValue)
   const selectedModelOptions = selectedProvider.modelGroups.map((group) => ({
     label: group.label,
     options: group.options.map((option) => ({ value: option.value, label: option.label }))
@@ -316,12 +333,6 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
     if (draft.objective === 'filtrar') return `¿Quién debería atender al ${leadLowerLabel} filtrado?`
     return '¿Quién debería completar el objetivo?'
   })()
-  const responseDelaySummary = (() => {
-    if (responseDelay.mode === 'fixed') return `${responseDelay.fixedValue} ${responseDelay.fixedUnit === 'minutes' ? 'min' : 'seg'}`
-    if (responseDelay.mode === 'random') return `${responseDelay.minValue}-${responseDelay.maxValue} ${responseDelay.rangeUnit === 'minutes' ? 'min' : 'seg'}`
-    return 'Sin espera'
-  })()
-
   const cobroRecap = (() => {
     if (isCitasBooking(draft)) return draft.askDeposit ? `Anticipo de ${money(draft.depositAmount)}` : 'Sin anticipo'
     if (isVentasCharging(draft)) return draft.paymentMode === 'deposit' ? `Anticipo de ${money(draft.depositAmount)}` : 'Pago completo'
@@ -355,10 +366,10 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
           {step === 'welcome' && (
             <>
               <h2 className={styles.title}>Vamos a crear tu asistente 🎉</h2>
-              <p className={styles.help}>Te voy a hacer <strong>unas preguntas rapiditas</strong>, una por una, con ejemplos. No hay respuestas malas y todo lo puedes cambiar después. ¡Hasta un niño lo arma!</p>
+              <p className={styles.help}>Te voy a preguntar sólo <strong>qué debe lograr, cómo debe atender y dónde están sus límites</strong>. La IA, el modelo, los tiempos y los mensajes ya llevan una configuración profesional que puedes afinar después.</p>
               <div className={styles.welcomeList}>
                 <div className={styles.welcomeItem}><Sparkles size={16} /> Le pones nombre y le dices qué debe lograr.</div>
-                <div className={styles.welcomeItem}><Sparkles size={16} /> Eliges qué tan vendedor y cómo habla.</div>
+                <div className={styles.welcomeItem}><Sparkles size={16} /> Eliges cómo cumple la meta y cuándo debe pedir ayuda.</div>
                 <div className={styles.welcomeItem}><Sparkles size={16} /> Listo: empieza a atender tus chats.</div>
               </div>
               {onSkipToManual && (
@@ -400,7 +411,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                     const status = aiProviders.find((item) => item.id === provider.id)
                     const connected = providerConnectionKnown ? Boolean(status?.connected) : true
                     return (
-                      <option key={provider.id} value={provider.id} disabled={!connected}>
+                      <option key={provider.id} value={provider.id}>
                         {provider.label}{providerConnectionKnown ? ` · ${connected ? 'Conectado' : 'No conectado'}` : ''}
                       </option>
                     )
@@ -411,6 +422,11 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                     ? `${selectedProvider.label} queda guardado sólo para este agente.`
                     : `Conecta ${selectedProvider.label} antes de usarlo en este agente.`}
                 </p>
+                {!selectedProviderConnected && onConnectProvider && (
+                  <Button variant="secondary" onClick={() => onConnectProvider(selectedProviderId)}>
+                    Conectar {selectedProvider.label}
+                  </Button>
+                )}
               </div>
               <div className={styles.field}>
                 <label className={styles.label}>Modelo</label>
@@ -708,7 +724,7 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
             <>
               <h2 className={styles.title}>{draft.objective === 'ventas' ? '¿Qué enlace de compra va a mandar?' : '¿Qué enlace de agenda va a mandar?'}</h2>
               <p className={styles.help}>
-                Pega el link que la IA debe mandar cuando la persona ya está lista. Luego podrás afinar tracking en el editor.
+                Pega el link que la IA debe mandar cuando la persona ya está lista. Ristak agrega automáticamente el seguimiento necesario.
               </p>
               <input
                 className={styles.input}
@@ -716,15 +732,6 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
                 placeholder={draft.objective === 'ventas' ? 'https://tu-sitio.com/comprar' : 'https://tu-sitio.com/agendar'}
                 onChange={(e) => patch({ goalUrl: e.target.value })}
               />
-              <div className={styles.field}>
-                <label className={styles.label}>Código para reconocer el enlace</label>
-                <input
-                  className={styles.input}
-                  value={draft.trackingParam}
-                  placeholder="ristak_goal_id"
-                  onChange={(e) => patch({ trackingParam: e.target.value })}
-                />
-              </div>
             </>
           )}
 
@@ -835,21 +842,21 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
 
           {step === 'instructions' && (
             <>
-              <h2 className={styles.title}>Personalización y capacitación del asistente</h2>
-              <p className={styles.help}>Aquí van las reglas del negocio que <strong>siempre</strong> debe obedecer: qué no decir, qué datos pedir, cuándo frenar y qué promesas evitar. Esto se suma sobre el prompt de fábrica de Ristak; ese prompt interno no se edita desde aquí.</p>
+              <h2 className={styles.title}>¿Qué reglas especiales debe respetar?</h2>
+              <p className={styles.help}>Escríbelas como se las explicarías a una persona nueva de tu equipo. Ristak las convierte en reglas operativas y mantiene por encima la seguridad, los datos reales y las acciones confirmadas.</p>
               <textarea
                 className={styles.textarea}
                 value={draft.extraInstructions}
                 rows={6}
-                placeholder={'Ejemplo:\n- No des el valor ni rangos hasta saber qué servicio quiere, cuál es su problema y qué resultado busca\n- Si pregunta precio sin contexto, pide primero que explique su caso\n- Para agendar cita, primero deben decir si tienen estado clínico; si no, NO los agendas\n- Pide nombre completo y servicio de interés antes de pasar a humano'}
+                placeholder={'Ejemplo:\n- Responde primero las preguntas directas\n- No prometas resultados garantizados\n- Si falta información real, dilo y pasa el caso al equipo\n- Para agendar, confirma que el horario realmente le funciona'}
                 onChange={(e) => patch({ extraInstructions: e.target.value })}
               />
               <div className={styles.exampleList} aria-label="Ejemplos de personalización y capacitación">
                 <span className={styles.exampleListTitle}>Ejemplos que sí van aquí:</span>
                 <ul>
-                  <li>No des precio hasta conocer el problema o reto completo.</li>
+                  <li>Usa trato de usted y mensajes muy breves.</li>
                   <li>No prometas resultados garantizados ni tiempos que no estén confirmados.</li>
-                  <li>Si falta nombre, servicio o teléfono, pídelo antes de pasar a humano.</li>
+                  <li>Si preguntan por una excepción comercial, pasa el chat al equipo.</li>
                 </ul>
               </div>
             </>
@@ -861,14 +868,8 @@ export function AgentCreationWizard({ isOpen, onClose, onComplete, onSkipToManua
               <p className={styles.help}>Revísalo de un vistazo. Si algo no te late, regresa y cámbialo. Después podrás afinar todo en el editor.</p>
               <div className={styles.recapList}>
                 <RecapRow label="Se llama" value={draft.name.trim() || '—'} />
-                <RecapRow label="IA" value={`${selectedProvider.label} · ${selectedModelLabel}`} />
                 <RecapRow label="Su misión" value={draft.objective === 'custom' ? (draft.customObjective.trim() || 'Meta propia') : labelOf(objectiveChoices, draft.objective)} />
                 <RecapRow label="Habla como" value={draft.identityMode === 'user' ? (draft.identityUserName || 'Persona del equipo') : draft.identityMode === 'custom' ? (draft.identityCustomName.trim() || 'Nombre propio') : labelOf(identityChoices, draft.identityMode)} />
-                <RecapRow label="Estilo de venta" value={labelOf(persuasionChoices, draft.persuasionLevel)} />
-                <RecapRow label="Forma de hablar" value={labelOf(localizedLanguageChoices, draft.languageLevel)} />
-                <RecapRow label="Espera" value={responseDelaySummary} />
-                <RecapRow label="Mensajes" value={humanMessagesEnabled ? 'En globitos' : 'Todo junto'} />
-                <RecapRow label="Notificaciones" value={draft.hideAttendedNotifications ? 'Silenciadas mientras atiende' : 'Activas mientras atiende'} />
                 <RecapRow label="Al estar listo" value={labelOf(actionChoices, draft.successAction)} />
                 {isCitasBooking(draft) && (
                   <RecapRow label="Calendario" value={calendars.find((c) => c.id === draft.calendarId)?.name || 'El que tenga hueco'} />

@@ -1699,6 +1699,13 @@ const CONVERSATIONAL_AGENT_STATE_COLUMNS = [
   'last_answered_inbound_message_id',
   'last_reply_at',
   'channel',
+  'inbound_processing_message_id',
+  'inbound_processing_status',
+  'inbound_processing_claim_token',
+  'inbound_processing_lease_until_at',
+  'inbound_processing_started_at',
+  'inbound_processing_attempt_count',
+  'inbound_processing_last_error',
   'follow_up_base_message_id',
   'follow_up_sent_count',
   'follow_up_last_sent_at',
@@ -1706,9 +1713,16 @@ const CONVERSATIONAL_AGENT_STATE_COLUMNS = [
   'activated_at',
   'activation_source',
   'activated_by',
+  'assignment_source',
+  'assigned_at',
+  'assigned_by',
   'updated_by',
   'agent_id',
   'closing_context_json',
+  'intelligence_state_json',
+  'intelligence_policy_hash',
+  'intelligence_source',
+  'intelligence_updated_at',
   'created_at',
   'updated_at'
 ]
@@ -1784,6 +1798,13 @@ async function ensureConversationalAgentStateIdentity() {
             last_answered_inbound_message_id TEXT,
             last_reply_at DATETIME,
             channel TEXT DEFAULT 'whatsapp',
+            inbound_processing_message_id TEXT,
+            inbound_processing_status TEXT,
+            inbound_processing_claim_token TEXT,
+            inbound_processing_lease_until_at DATETIME,
+            inbound_processing_started_at DATETIME,
+            inbound_processing_attempt_count INTEGER DEFAULT 0,
+            inbound_processing_last_error TEXT,
             follow_up_base_message_id TEXT,
             follow_up_sent_count INTEGER DEFAULT 0,
             follow_up_last_sent_at DATETIME,
@@ -1791,9 +1812,16 @@ async function ensureConversationalAgentStateIdentity() {
             activated_at DATETIME,
             activation_source TEXT,
             activated_by TEXT,
+            assignment_source TEXT,
+            assigned_at DATETIME,
+            assigned_by TEXT,
             updated_by TEXT,
             agent_id TEXT,
             closing_context_json TEXT,
+            intelligence_state_json TEXT,
+            intelligence_policy_hash TEXT,
+            intelligence_source TEXT,
+            intelligence_updated_at DATETIME,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
@@ -1811,7 +1839,22 @@ async function ensureConversationalAgentStateIdentity() {
     }
   }
 
-  await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_state_contact_agent_unique ON conversational_agent_state(contact_id, agent_id) WHERE agent_id IS NOT NULL').catch(() => undefined)
+  // La identidad del runtime es contacto + agente + canal. El índice anterior
+  // (contacto + agente) hacía que WhatsApp, Instagram y correo compartieran
+  // silencios, claims y cierres aunque fueran conversaciones independientes.
+  await db.run('DROP INDEX IF EXISTS idx_conv_agent_state_contact_agent_unique').catch(() => undefined)
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET channel = 'whatsapp'
+    WHERE channel IS NULL OR TRIM(channel) = ''
+  `).catch(() => undefined)
+  await db.run(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_state_contact_agent_channel_unique
+    ON conversational_agent_state(contact_id, agent_id, channel)
+    WHERE agent_id IS NOT NULL
+  `).catch((err) => {
+    logger.warn(`No se pudo crear la identidad por canal del estado conversacional: ${err.message}`)
+  })
 }
 
 // Inicializar tablas
@@ -5475,7 +5518,7 @@ async function initTables() {
         default_calendar_id TEXT,
         closing_strategy_mode TEXT DEFAULT 'system',
         closing_strategy_custom TEXT,
-        persuasion_level TEXT DEFAULT 'high',
+        persuasion_level TEXT DEFAULT 'medium',
         language_level TEXT DEFAULT 'intermediate',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -5489,7 +5532,7 @@ async function initTables() {
       ['hide_attended_notifications', 'INTEGER'],
       ['closing_strategy_mode', "TEXT DEFAULT 'system'"],
       ['closing_strategy_custom', 'TEXT'],
-      ['persuasion_level', "TEXT DEFAULT 'high'"],
+      ['persuasion_level', "TEXT DEFAULT 'medium'"],
       ['language_level', "TEXT DEFAULT 'intermediate'"]
     ]) {
       try {
@@ -5530,7 +5573,7 @@ async function initTables() {
         default_calendar_id TEXT,
         closing_strategy_mode TEXT DEFAULT 'system',
         closing_strategy_custom TEXT,
-        persuasion_level TEXT DEFAULT 'high',
+        persuasion_level TEXT DEFAULT 'medium',
         language_level TEXT DEFAULT 'intermediate',
         contact_scope TEXT DEFAULT 'all',
         contact_scope_cutoff_at DATETIME,
@@ -5556,7 +5599,7 @@ async function initTables() {
       ['reply_delivery_config', 'TEXT'],
       ['follow_up_config', 'TEXT'],
       ['goal_workflow_config', 'TEXT'],
-      ['persuasion_level', "TEXT DEFAULT 'high'"],
+      ['persuasion_level', "TEXT DEFAULT 'medium'"],
       ['language_level', "TEXT DEFAULT 'intermediate'"],
       ['contact_scope', "TEXT DEFAULT 'all'"],
       ['contact_scope_cutoff_at', 'DATETIME']
@@ -5586,6 +5629,13 @@ async function initTables() {
         last_answered_inbound_message_id TEXT,
         last_reply_at DATETIME,
         channel TEXT DEFAULT 'whatsapp',
+        inbound_processing_message_id TEXT,
+        inbound_processing_status TEXT,
+        inbound_processing_claim_token TEXT,
+        inbound_processing_lease_until_at DATETIME,
+        inbound_processing_started_at DATETIME,
+        inbound_processing_attempt_count INTEGER DEFAULT 0,
+        inbound_processing_last_error TEXT,
         follow_up_base_message_id TEXT,
         follow_up_sent_count INTEGER DEFAULT 0,
         follow_up_last_sent_at DATETIME,
@@ -5593,9 +5643,16 @@ async function initTables() {
         activated_at DATETIME,
         activation_source TEXT,
         activated_by TEXT,
+        assignment_source TEXT,
+        assigned_at DATETIME,
+        assigned_by TEXT,
         updated_by TEXT,
         agent_id TEXT,
         closing_context_json TEXT,
+        intelligence_state_json TEXT,
+        intelligence_policy_hash TEXT,
+        intelligence_source TEXT,
+        intelligence_updated_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (contact_id) REFERENCES contacts(id) ON DELETE CASCADE
@@ -5611,14 +5668,28 @@ async function initTables() {
 	      ['agent_id', 'TEXT'],
 	      ['channel', "TEXT DEFAULT 'whatsapp'"],
 	      ['last_answered_inbound_message_id', 'TEXT'],
+      ['inbound_processing_message_id', 'TEXT'],
+      ['inbound_processing_status', 'TEXT'],
+      ['inbound_processing_claim_token', 'TEXT'],
+      ['inbound_processing_lease_until_at', 'DATETIME'],
+      ['inbound_processing_started_at', 'DATETIME'],
+      ['inbound_processing_attempt_count', 'INTEGER DEFAULT 0'],
+      ['inbound_processing_last_error', 'TEXT'],
       ['closing_context_json', 'TEXT'],
+      ['intelligence_state_json', 'TEXT'],
+      ['intelligence_policy_hash', 'TEXT'],
+      ['intelligence_source', 'TEXT'],
+      ['intelligence_updated_at', 'DATETIME'],
       ['follow_up_base_message_id', 'TEXT'],
       ['follow_up_sent_count', 'INTEGER DEFAULT 0'],
       ['follow_up_last_sent_at', 'DATETIME'],
       ['paused_until_at', 'DATETIME'],
       ['activated_at', 'DATETIME'],
       ['activation_source', 'TEXT'],
-      ['activated_by', 'TEXT']
+      ['activated_by', 'TEXT'],
+      ['assignment_source', 'TEXT'],
+      ['assigned_at', 'DATETIME'],
+      ['assigned_by', 'TEXT']
     ]) {
       try {
         if (usePostgres) {
@@ -5631,6 +5702,17 @@ async function initTables() {
 	      }
 	    }
 	    await ensureConversationalAgentStateIdentity()
+	    await db.run(`
+	      UPDATE conversational_agent_state
+	      SET assignment_source = CASE
+	            WHEN activation_source = 'manual' OR updated_by IN ('user', 'human', 'manual') THEN 'manual'
+	            ELSE 'legacy'
+	          END,
+	          assigned_at = COALESCE(assigned_at, activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
+	          assigned_by = COALESCE(assigned_by, updated_by, 'system')
+	      WHERE agent_id IS NOT NULL
+	        AND (assignment_source IS NULL OR TRIM(assignment_source) = '')
+	    `).catch(() => undefined)
 	    await db.run(`
 	      UPDATE conversational_agent_state
       SET activated_at = COALESCE(activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
@@ -5657,13 +5739,18 @@ async function initTables() {
       CREATE TABLE IF NOT EXISTS conversational_agent_events (
         id TEXT PRIMARY KEY,
         contact_id TEXT,
+        agent_id TEXT,
         event_type TEXT NOT NULL,
         detail_json TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `)
+    await ensureTableColumns('conversational_agent_events', [
+      ['agent_id', 'TEXT']
+    ])
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_contact ON conversational_agent_events(contact_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_type ON conversational_agent_events(event_type, created_at)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_events_agent ON conversational_agent_events(agent_id, created_at)')
 
     await db.run(`
       CREATE TABLE IF NOT EXISTS conversational_agent_goal_links (
@@ -5675,6 +5762,9 @@ async function initTables() {
         target_url TEXT NOT NULL,
         sent_url TEXT NOT NULL,
         tracking_param TEXT NOT NULL DEFAULT 'ristak_goal_id',
+        confirmation_token_hash TEXT,
+        confirmation_expires_at DATETIME,
+        confirmation_used_at DATETIME,
         external_object_id TEXT,
         external_status TEXT,
         metadata_json TEXT,
@@ -5685,9 +5775,56 @@ async function initTables() {
         FOREIGN KEY (agent_id) REFERENCES conversational_agents(id) ON DELETE SET NULL
       )
     `)
+    await ensureTableColumns('conversational_agent_goal_links', [
+      ['confirmation_token_hash', 'TEXT'],
+      ['confirmation_expires_at', 'DATETIME'],
+      ['confirmation_used_at', 'DATETIME']
+    ])
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_contact ON conversational_agent_goal_links(contact_id, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_status ON conversational_agent_goal_links(status, created_at)')
     await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_goal_links_external ON conversational_agent_goal_links(external_object_id)')
+    await db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_conv_agent_goal_links_token_hash ON conversational_agent_goal_links(confirmation_token_hash)')
+
+    // Gobernanza de la inteligencia: cada cambio del formulario produce una política
+    // compilada, auditable y reversible. Nunca guarda credenciales ni prompts privados
+    // de otros negocios; esta base pertenece a una sola instalación/cuenta.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_policy_versions (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        policy_hash TEXT NOT NULL,
+        config_snapshot_json TEXT NOT NULL,
+        compiled_policy_json TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'form',
+        is_active INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(agent_id, version),
+        FOREIGN KEY (agent_id) REFERENCES conversational_agents(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_policy_versions_active ON conversational_agent_policy_versions(agent_id, is_active, version)')
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_policy_versions_hash ON conversational_agent_policy_versions(agent_id, policy_hash)')
+
+    // El aprendizaje es una PROPUESTA versionada. Sólo un usuario autenticado puede
+    // aprobarla; reglas críticas, precios, permisos y secretos jamás se autoaplican.
+    await db.run(`
+      CREATE TABLE IF NOT EXISTS conversational_agent_learning_versions (
+        id TEXT PRIMARY KEY,
+        agent_id TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        snapshot_hash TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'proposed',
+        snapshot_json TEXT NOT NULL,
+        base_policy_hash TEXT,
+        reviewed_by TEXT,
+        reviewed_at DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(agent_id, version),
+        FOREIGN KEY (agent_id) REFERENCES conversational_agents(id) ON DELETE CASCADE
+      )
+    `)
+    await db.run('CREATE INDEX IF NOT EXISTS idx_conv_agent_learning_versions_status ON conversational_agent_learning_versions(agent_id, status, version)')
 
     const userOptionalColumns = [
       ['first_name', 'TEXT'],

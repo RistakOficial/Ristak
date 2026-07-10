@@ -38,10 +38,7 @@ router.post('/appointment/showed', verifyInboundWebhookSignature, handleAppointm
 router.post('/whatsapp/attribution', verifyInboundWebhookSignature, handleWhatsAppAttributionWebhook)
 router.post('/conversation', verifyInboundWebhookSignature, handleConversationWebhook)
 router.post('/conversational-agent/goal', handleConversationalAgentGoalWebhook)
-router.post('/conversational-agent/goal/:goalId', (req, res, next) => {
-  req.query.goalId = req.params.goalId
-  return handleConversationalAgentGoalWebhook(req, res, next)
-})
+router.post('/conversational-agent/goal/:goalId', handleConversationalAgentGoalWebhook)
 router.post('/whatsapp-api/ycloud', handleYCloudWhatsAppApiWebhook)
 router.post('/invoice', verifyInboundWebhookSignature, handleInvoiceWebhook)
 router.get('/meta', verifyMetaSocialWebhook)

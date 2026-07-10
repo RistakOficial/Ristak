@@ -14,6 +14,7 @@ import {
   listConversationalAgents,
   getConversationalAgent,
   getConversationalAgentMetrics,
+  buildConversationalAgentRuntimeConfig,
   createConversationalAgent,
   updateConversationalAgent,
   deleteConversationalAgent,
@@ -35,6 +36,16 @@ import { runConversationalAgentPreview } from '../agents/conversational/runner.j
 import {
   buildClosingStrategyTemplateParameters
 } from '../agents/conversational/prompt.js'
+import {
+  compileConversationalAgentPolicy,
+  generateConversationalLearningVersion,
+  getConversationalPolicyVersion,
+  listConversationalLearningVersions,
+  listConversationalPolicyVersions,
+  recordConversationalPolicyVersion,
+  reviewConversationalLearningVersion,
+  summarizeCompiledPolicy
+} from '../agents/conversational/intelligence/index.js'
 
 function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}, accountLocale = {}) {
   const promptParameters = businessProfile?.configured
@@ -65,9 +76,12 @@ function buildBusinessPromptStateFromProfile(businessProfile, agentConfig = {}, 
     conditions: businessProfile?.importantConditions || conditions || promptParameters.CONDICIONES_IMPORTANTES,
     accountLocale
   })
+  // El perfil fallback construido desde la descripción libre también es utilizable.
+  // OpenAI mejora la extracción, pero no puede ser un requisito global si el agente
+  // usa Claude, Gemini o DeepSeek.
   const ready = Boolean(
     businessProfile?.configured &&
-    extractionStatus === 'ready' &&
+    ['ready', 'needs_openai'].includes(extractionStatus) &&
     visibleParameters.ADAPTACION_CONVERSACIONAL_DEL_NEGOCIO
   )
   return {
@@ -100,6 +114,23 @@ async function assertBusinessPromptReady() {
   error.statusCode = 409
   error.code = 'CONVERSATIONAL_BUSINESS_PROMPT_NOT_READY'
   error.businessPromptStatus = promptState.businessPromptStatus
+  throw error
+}
+
+async function compileAgentPolicy(input = {}, base = {}) {
+  const [businessProfile, effectiveConfig] = await Promise.all([
+    getBusinessProfileSnapshot().catch(() => null),
+    Promise.resolve(buildConversationalAgentRuntimeConfig(input, base))
+  ])
+  return compileConversationalAgentPolicy(effectiveConfig, { businessProfile })
+}
+
+function assertCompiledPolicyValid(policy, { enabled = true } = {}) {
+  if (!enabled || policy?.validation?.valid !== false) return
+  const error = new Error(policy.validation.errors[0]?.message || 'La configuración del agente tiene reglas incompletas o contradictorias.')
+  error.statusCode = 400
+  error.code = 'CONVERSATIONAL_AGENT_POLICY_INVALID'
+  error.policyValidation = policy.validation
   throw error
 }
 
@@ -164,10 +195,19 @@ export async function deleteAIProvider(req, res) {
 
 export async function handleGoalWebhook(req, res) {
   try {
+    const confirmationToken = String(
+      req.get?.('x-ristak-goal-token') ||
+      req.query?.ristak_goal_token ||
+      req.query?.confirmation_token ||
+      req.body?.ristak_goal_token ||
+      req.body?.confirmation_token ||
+      ''
+    ).trim()
     const result = await completeConversationGoalLinkFromWebhook({
+      ...(req.body || {}),
       ...(req.query || {}),
-      ...(req.body || {})
-    })
+      ...(req.params || {})
+    }, { confirmationToken })
 
     res.json({
       success: true,
@@ -358,8 +398,20 @@ export async function createAgent(req, res) {
     if (req.body?.enabled !== false) {
       await assertBusinessPromptReady()
     }
+    const candidatePolicy = await compileAgentPolicy(req.body || {})
+    assertCompiledPolicyValid(candidatePolicy, { enabled: req.body?.enabled !== false })
     const agent = await createConversationalAgent(req.body || {})
-    res.status(201).json({ success: true, data: agent })
+    const policy = await compileAgentPolicy(agent)
+    const policyVersion = await recordConversationalPolicyVersion({
+      agentId: agent.id,
+      configSnapshot: agent,
+      compiledPolicy: policy,
+      source: 'form'
+    })
+    res.status(201).json({
+      success: true,
+      data: { ...agent, compiledPolicy: summarizeCompiledPolicy(policy), policyVersion: policyVersion.version }
+    })
   } catch (error) {
     logger.error('Error creando agente conversacional:', error)
     res.status(error.statusCode || 500).json({
@@ -367,6 +419,7 @@ export async function createAgent(req, res) {
       error: error.message || 'Error al crear el agente',
       code: error.code,
       businessPromptStatus: error.businessPromptStatus,
+      policyValidation: error.policyValidation,
       conflicts: error.conflicts,
       limit: error.limit
     })
@@ -378,8 +431,26 @@ export async function updateAgent(req, res) {
     if (req.body?.enabled === true) {
       await assertBusinessPromptReady()
     }
+    const current = await getConversationalAgent(req.params?.agentId)
+    if (!current) {
+      return res.status(404).json({ success: false, error: 'Agente conversacional no encontrado' })
+    }
+    const policy = await compileAgentPolicy(req.body || {}, current)
+    assertCompiledPolicyValid(policy, {
+      enabled: req.body?.enabled === undefined ? current.enabled : req.body.enabled !== false
+    })
     const agent = await updateConversationalAgent(req.params?.agentId, req.body || {})
-    res.json({ success: true, data: agent })
+    const persistedPolicy = await compileAgentPolicy(agent)
+    const policyVersion = await recordConversationalPolicyVersion({
+      agentId: agent.id,
+      configSnapshot: agent,
+      compiledPolicy: persistedPolicy,
+      source: 'form'
+    })
+    res.json({
+      success: true,
+      data: { ...agent, compiledPolicy: summarizeCompiledPolicy(persistedPolicy), policyVersion: policyVersion.version }
+    })
   } catch (error) {
     logger.error('Error actualizando agente conversacional:', error)
     res.status(error.statusCode || 500).json({
@@ -387,7 +458,88 @@ export async function updateAgent(req, res) {
       error: error.message || 'Error al actualizar el agente',
       code: error.code,
       businessPromptStatus: error.businessPromptStatus,
+      policyValidation: error.policyValidation,
       conflicts: error.conflicts
+    })
+  }
+}
+
+export async function getAgentGovernance(req, res) {
+  try {
+    const agent = await getConversationalAgent(req.params?.agentId)
+    if (!agent) return res.status(404).json({ success: false, error: 'Agente conversacional no encontrado' })
+    const [policyVersions, learningVersions] = await Promise.all([
+      listConversationalPolicyVersions(agent.id),
+      listConversationalLearningVersions(agent.id)
+    ])
+    res.json({ success: true, data: { agentId: agent.id, policyVersions, learningVersions } })
+  } catch (error) {
+    logger.error('Error cargando gobernanza del agente conversacional:', error)
+    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al cargar versiones del agente' })
+  }
+}
+
+export async function generateAgentLearning(req, res) {
+  try {
+    const agent = await getConversationalAgent(req.params?.agentId)
+    if (!agent) return res.status(404).json({ success: false, error: 'Agente conversacional no encontrado' })
+    const activePolicy = (await listConversationalPolicyVersions(agent.id, { limit: 1 }))[0]
+    const learning = await generateConversationalLearningVersion({
+      agentId: agent.id,
+      basePolicyHash: activePolicy?.policyHash || ''
+    })
+    res.status(201).json({ success: true, data: learning })
+  } catch (error) {
+    logger.error('Error generando aprendizaje conversacional:', error)
+    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al analizar el aprendizaje del agente', code: error.code })
+  }
+}
+
+export async function reviewAgentLearning(req, res) {
+  try {
+    const learning = await reviewConversationalLearningVersion({
+      agentId: req.params?.agentId,
+      learningId: req.params?.learningId,
+      decision: req.body?.decision,
+      reviewedBy: req.user?.id || req.user?.userId || null
+    })
+    res.json({ success: true, data: learning })
+  } catch (error) {
+    logger.error('Error revisando aprendizaje conversacional:', error)
+    res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Error al revisar el aprendizaje del agente', code: error.code })
+  }
+}
+
+export async function rollbackAgentPolicy(req, res) {
+  try {
+    const agentId = req.params?.agentId
+    const current = await getConversationalAgent(agentId)
+    if (!current) return res.status(404).json({ success: false, error: 'Agente conversacional no encontrado' })
+    const target = await getConversationalPolicyVersion(agentId, req.params?.versionId)
+    if (!target) return res.status(404).json({ success: false, error: 'Versión de política no encontrada' })
+    if (target.configSnapshot?.enabled) await assertBusinessPromptReady()
+
+    const candidatePolicy = await compileAgentPolicy(target.configSnapshot || {}, current)
+    assertCompiledPolicyValid(candidatePolicy, { enabled: target.configSnapshot?.enabled !== false })
+    const agent = await updateConversationalAgent(agentId, target.configSnapshot || {})
+    const policy = await compileAgentPolicy(agent)
+    const policyVersion = await recordConversationalPolicyVersion({
+      agentId,
+      configSnapshot: agent,
+      compiledPolicy: policy,
+      source: 'rollback'
+    })
+    res.json({
+      success: true,
+      data: { ...agent, compiledPolicy: summarizeCompiledPolicy(policy), policyVersion: policyVersion.version, rolledBackFrom: target.version }
+    })
+  } catch (error) {
+    logger.error('Error revirtiendo la política conversacional:', error)
+    res.status(error.statusCode || 500).json({
+      success: false,
+      error: error.message || 'Error al revertir la configuración del agente',
+      code: error.code,
+      policyValidation: error.policyValidation
     })
   }
 }

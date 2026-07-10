@@ -2,66 +2,71 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   complianceGuardApplies,
-  ensureCorrectedGuardQuestion,
+  ensureCorrectedGuardReply,
   replyMightViolate,
   enforceComplianceGuard
 } from '../src/agents/conversational/complianceGuard.js'
 
-test('el guardián aplica sólo cuando la biblia pesada está activa', () => {
-  // Biblia pesada = persuasión media/alta + lenguaje Cómplice/Callejero.
-  assert.equal(complianceGuardApplies({ persuasionLevel: 'medium', languageLevel: 'intermediate' }), true)
-  assert.equal(complianceGuardApplies({ persuasionLevel: 'high', languageLevel: 'colloquial' }), true)
-  // Guion ligero = Anfitrión (baja) o Ejecutivo (professional): NO aplica (dar precio es por diseño).
-  assert.equal(complianceGuardApplies({ persuasionLevel: 'low', languageLevel: 'intermediate' }), false)
-  assert.equal(complianceGuardApplies({ persuasionLevel: 'high', languageLevel: 'professional' }), false)
-  assert.equal(complianceGuardApplies({ persuasionLevel: 'medium', languageLevel: 'professional' }), false)
-  // Guion custom: no aplica (no es la biblia).
-  assert.equal(complianceGuardApplies({ persuasionLevel: 'high', languageLevel: 'colloquial', closingStrategyMode: 'custom' }), false)
+test('el guardián sólo aplica cuando el negocio configuró una condición explícita', () => {
+  assert.equal(complianceGuardApplies({ persuasionLevel: 'high', languageLevel: 'colloquial' }), false)
+  assert.equal(complianceGuardApplies({
+    persuasionLevel: 'low',
+    languageLevel: 'professional',
+    extraInstructions: 'No des precios hasta que la persona confirme qué plan busca.'
+  }), true)
+  assert.equal(complianceGuardApplies({
+    closingStrategyMode: 'custom',
+    closingStrategyCustom: 'No menciones el costo antes de validar su presupuesto.'
+  }), true)
+  assert.equal(complianceGuardApplies({
+    extraInstructions: 'No reveles el valor hasta que confirme el servicio.'
+  }), true)
+  assert.equal(complianceGuardApplies({
+    extraInstructions: 'Responde los precios con claridad cuando te los pregunten.'
+  }), false)
 })
 
-test('pre-filtro determinista: una pregunta corta sin precio no gasta IA', () => {
+test('el pre-filtro sólo detecta importes; una explicación larga ya no se castiga', () => {
   assert.equal(replyMightViolate('claro, para qué la necesitas?'), false)
-  assert.equal(replyMightViolate('a ver, cuéntame qué te está pasando'), false)
-  assert.equal(replyMightViolate(''), false)
-  // Con precio / dinero: sí podría violar.
+  assert.equal(replyMightViolate('a'.repeat(250)), false)
+  assert.equal(replyMightViolate('ofrecemos consultas y seguimiento personalizado'), false)
   assert.equal(replyMightViolate('la consulta cuesta $1,200'), true)
   assert.equal(replyMightViolate('son 800 pesos por sesión'), true)
-  // Texto largo (posible pitch): sí podría violar.
-  assert.equal(replyMightViolate('a'.repeat(250)), true)
 })
 
-test('la reescritura del guardián siempre vuelve con pregunta clara', () => {
+test('la corrección conserva una respuesta útil y sólo usa fallback si aún revela dinero', () => {
   assert.equal(
-    ensureCorrectedGuardQuestion('si me dices qué traes, te digo si te conviene esa opción'),
-    'para decirte bien, qué estás buscando exactamente?'
+    ensureCorrectedGuardReply('sí manejamos esa opción; necesito confirmar qué plan buscas.'),
+    'sí manejamos esa opción; necesito confirmar qué plan buscas.'
   )
   assert.equal(
-    ensureCorrectedGuardQuestion('claro, qué estás buscando?'),
-    'claro, qué estás buscando?'
+    ensureCorrectedGuardReply('la consulta cuesta $1,200'),
+    'para darte el dato que sí aplica, qué opción estás considerando?'
   )
   assert.equal(
-    ensureCorrectedGuardQuestion(''),
-    'para decirte bien, qué estás buscando exactamente?'
+    ensureCorrectedGuardReply(''),
+    'para darte el dato que sí aplica, qué opción estás considerando?'
   )
 })
 
-test('sin runtime de validación: fail-open (no reescribe, deja pasar)', async () => {
+test('sin condición configurada deja pasar el precio aunque exista runtime', async () => {
   const out = await enforceComplianceGuard({
-    reply: 'la consulta cuesta $1,200 y el seguimiento $800',
-    messages: [{ role: 'user', content: 'costos' }],
-    config: { persuasionLevel: 'medium', languageLevel: 'intermediate' },
-    runtime: null
+    reply: 'la consulta cuesta $1,200',
+    messages: [{ role: 'user', content: 'cuánto cuesta la consulta?' }],
+    config: { persuasionLevel: 'high', languageLevel: 'intermediate' },
+    runtime: { modelProvider: {} }
   })
   assert.equal(out.changed, false)
   assert.match(out.reply, /1,200/)
 })
 
-test('config de guion ligero: el guardián no toca la respuesta aunque traiga precio', async () => {
+test('con condición explícita pero sin runtime conserva fail-open', async () => {
   const out = await enforceComplianceGuard({
     reply: 'la consulta cuesta $1,200',
-    messages: [{ role: 'user', content: 'costos' }],
-    config: { persuasionLevel: 'low', languageLevel: 'intermediate' }, // Anfitrión: da precios por diseño
-    runtime: { modelProvider: {} }
+    messages: [{ role: 'user', content: 'cuánto cuesta?' }],
+    config: { extraInstructions: 'No des precios hasta confirmar qué servicio busca.' },
+    runtime: null
   })
   assert.equal(out.changed, false)
+  assert.match(out.reply, /1,200/)
 })

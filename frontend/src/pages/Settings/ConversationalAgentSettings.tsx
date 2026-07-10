@@ -73,7 +73,6 @@ import styles from './AIAgentSettings.module.css'
 
 const AUTOSAVE_DELAY_MS = 900
 const DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE = '/ai-agent/conversational'
-const DEFAULT_AI_AGENT_GENERAL_PATH = '/ai-agent/general'
 
 const buildConversationalAgentPath = (agentId?: string | null, routeBase = DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE) => (
   agentId ? `${routeBase}/${encodeURIComponent(agentId)}` : routeBase
@@ -87,28 +86,28 @@ const objectiveOptions: Array<{ value: ConversationalObjective; label: string; d
   { value: 'custom', label: 'Objetivo propio', description: 'Escribe tú la meta. Ejemplo: que pida una propuesta formal.' }
 ]
 
-// Persuasión: qué tanto empuja el agente al cierre. Se monta sobre el guion de fábrica.
+// Iniciativa: cuánto guía hacia el siguiente paso sin sacrificar claridad ni consentimiento.
 const persuasionLevelTabs: Array<{ value: ConversationalPersuasionLevel; label: string; description: string }> = [
-  { value: 'low', label: 'Anfitrión', description: 'Atiende, resuelve y da precios claros. Cero presión: sólo agenda o cobra si la persona lo pide con todas sus letras.' },
-  { value: 'medium', label: 'Estratega', description: 'Lee, descubre lo esencial y guía con tacto hacia el siguiente paso, sin presionar.' },
-  { value: 'high', label: 'Cerrador', description: 'Tu guion de fábrica al 100: puro pull, estatus y cierre con criterio.' }
+  { value: 'low', label: 'Atención', description: 'Resuelve y orienta; sólo propone avanzar cuando la persona lo pide claramente.' },
+  { value: 'medium', label: 'Guía', description: 'Entiende la situación y facilita el siguiente paso con tacto. Recomendado.' },
+  { value: 'high', label: 'Proactivo', description: 'Detecta oportunidades y propone avanzar cuando hay evidencia, sin presionar.' }
 ]
 const persuasionLevelHelp: Record<ConversationalPersuasionLevel, string> = {
-  low: 'Modo asesor práctico: informa increíble y deja respirar. Avanza sólo cuando la persona lo pide explícito.',
-  medium: 'Punto medio: acompaña y guía con mano ligera, prioriza resolver antes que cerrar.',
-  high: 'Máxima intensidad de cierre, tal cual el guion de fábrica que ya tienes configurado.'
+  low: 'Prioriza responder y deja respirar. Avanza sólo cuando la persona lo pide explícitamente.',
+  medium: 'Acompaña y guía con mano ligera, siempre resolviendo antes de proponer.',
+  high: 'Propone el siguiente paso con más iniciativa, pero sólo cuando hay señales suficientes y sin presión.'
 }
 
 // Lenguaje: el registro con el que habla. Fuerza la calibración del guion.
 const languageLevelTabs: Array<{ value: ConversationalLanguageLevel; label: string; description: string }> = [
   { value: 'professional', label: 'Ejecutivo', description: 'Pulido, formal y cuidado, pero siempre humano. Para marcas premium y tratos serios.' },
   { value: 'intermediate', label: 'Cómplice', description: 'Natural y cercano, ni acartonado ni vulgar. El punto dulce (recomendado).' },
-  { value: 'colloquial', label: 'Callejero', description: 'Suelto y bien regional, como mensaje entre cuates. Lo más libre.' }
+  { value: 'colloquial', label: 'Casual', description: 'Relajado y de chat, adaptándose a la persona sin forzar modismos.' }
 ]
 const languageLevelHelp: Record<ConversationalLanguageLevel, string> = {
   professional: 'Sube la pulcritud: frases completas, sin abreviaciones ni modismos corrientes.',
   intermediate: 'Deja que el agente calibre el tono al interlocutor y al giro del negocio, como hoy.',
-  colloquial: 'Baja el registro: recortes, modismos locales y ritmo informal de la región.'
+  colloquial: 'Usa un ritmo informal y natural; los modismos sólo aparecen si la persona ya los usa.'
 }
 
 const agentIdentityModeOptions: Array<{ value: AgentIdentityMode; label: string; description: string }> = [
@@ -3441,7 +3440,6 @@ interface AgentActivationConflictModalState {
 
 export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsProps> = ({
   routeBase = DEFAULT_CONVERSATIONAL_AGENT_ROUTE_BASE,
-  generalConfigPath = DEFAULT_AI_AGENT_GENERAL_PATH,
   className = ''
 }) => {
   const navigate = useNavigate()
@@ -3516,23 +3514,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
   useEffect(() => {
     let cancelled = false
     const load = async () => {
-      if (openAIAvailability.loading) return
-      if (!openAIAvailability.configured) {
-        setConfig(null)
-        setAgents([])
-        setAIProviders([])
-        setMetrics(null)
-        setCalendars([])
-        setProducts([])
-        setProductsLoading(false)
-        setTriggerLinks([])
-        setTriggerLinksLoading(false)
-        setFilterOptions(undefined)
-        setSelectedAgentId(null)
-        setLoading(false)
-        return
-      }
-
       setLoading(true)
       setProductsLoading(true)
       setTriggerLinksLoading(true)
@@ -3579,7 +3560,7 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     return () => {
       cancelled = true
     }
-  }, [businessProfileVersion, openAIAvailability.configured, openAIAvailability.loading, showToast])
+  }, [businessProfileVersion, showToast])
 
   useEffect(() => {
     const timers = saveTimersRef.current
@@ -4042,44 +4023,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     )
   }
 
-  if (openAIAvailability.loading) {
-    return (
-      <div className={rootClassName}>
-        <Card>
-          <p className={styles.helper}>Revisando OpenAI...</p>
-        </Card>
-      </div>
-    )
-  }
-
-  if (!openAIAvailability.configured) {
-    return (
-      <div className={rootClassName}>
-        <Card padding="md" className={styles.conversationSettingsCard}>
-          <div className={styles.header}>
-            <div className={styles.headerLeft}>
-              <div className={styles.iconBox}>
-                <KeyRound size={22} />
-              </div>
-              <div>
-                <h2 className={styles.title}>Conecta OpenAI primero</h2>
-                <p className={styles.description}>
-                  Chatbot, sus pruebas y sus respuestas quedan bloqueados hasta que guardes un token válido.
-                </p>
-              </div>
-            </div>
-            <div className={styles.headerActions}>
-              <Button onClick={() => navigate(generalConfigPath)}>
-                <KeyRound size={16} />
-                Configurar token
-              </Button>
-            </div>
-          </div>
-        </Card>
-      </div>
-    )
-  }
-
   if (selectedAgent) {
     return (
       <div className={rootClassName}>
@@ -4332,8 +4275,6 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
           })}
         </div>
       )}
-      {renderProviderModal()}
-      {renderActivationConflictModal()}
       <AgentCreationWizard
         isOpen={wizardOpen}
         onClose={() => setWizardOpen(false)}
@@ -4344,7 +4285,10 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
         aiProvider={getKnownConversationalAIProvider(config?.aiProvider)}
         model={getKnownConversationalModel(getKnownConversationalAIProvider(config?.aiProvider), config?.model || getDefaultConversationalModel(getKnownConversationalAIProvider(config?.aiProvider)))}
         aiProviders={aiProviders}
+        onConnectProvider={openProviderModal}
       />
+      {renderProviderModal()}
+      {renderActivationConflictModal()}
       <Modal
         isOpen={scopePrompt}
         onClose={() => setScopePrompt(false)}

@@ -2460,114 +2460,143 @@ La API conserva endpoints separados:
 - `/api/ai-agent`: asistente interno.
 - `/api/conversational-agent`: agentes conversacionales.
 
-En la seccion Chatbot, el formulario manual agrupa la configuracion en cinco
-bloques: personalidad e instrucciones, operacion tecnica del chat, objetivo y
-cierre, reglas de atencion, y entrada/salida. El wizard de nuevo asistente cubre
-las decisiones principales de esos bloques: proveedor/modelo de IA, identidad,
-persuasion, lenguaje, personalizacion y capacitacion del asistente
-(`extraInstructions`), tiempos de respuesta, mensajes en partes, notificaciones
-mientras el agente atiende, objetivo, quien cumple la meta, cierre posterior
-cuando lo cumple la IA o un enlace, datos requeridos, reglas de pase a equipo y
-alcance de contactos. El alcance "solo contactos nuevos desde hoy" sella el
-instante exacto en que se crea o cambia el asistente a ese alcance; desde ese
-momento en adelante puede tomar contactos nuevos, pero no toma contactos que ya
-existian antes de ese corte. Cuando el proveedor es OpenAI, el modelo default
-del sistema es `gpt-5.4-mini` (mostrado en UI como GPT-5.4 Mini); las conexiones
-nuevas de OpenAI y los agentes sin modelo explicito deben caer en ese default.
-Al crear o publicar un agente que atiende "cualquier chat", los estados legacy
-sin `agent_id` anteriores al agente no deben heredarse como bloqueos de ese
-agente. Si una cuenta ya tenia un estado heredado `skipped`, `human`, `paused`,
-`completed` o `discarded` mas viejo que el agente, el runtime debe soltar esa
-herencia antes del matching automatico para que el agente nuevo pueda tomar el
-chat; los bloqueos manuales creados despues de asignar ese agente siguen
-respetandose.
-Los estados de conversacion son por agente (`agent_id`), no globales del
-contacto: pausar, omitir, completar o pasar a humano con un agente no debe
-bloquear automaticamente a otro agente distinto. "Reiniciar omisiones" tambien
-opera solo sobre el agente seleccionado y no debe tocar estados de otros agentes
-asociados al mismo contacto. Las superficies de control (`/movil` e `ios/app`)
-no deben mostrar un agente/control global tipo "Todos" para prender o apagar la
-familia completa: el usuario controla solo el agente individual seleccionado, y
-el runtime interno se repara automaticamente si un agente publicado lo necesita.
-Un estado `completed` no debe dejar el contacto muerto para siempre: si el mismo
-agente ya cumplio su objetivo y despues entra un mensaje nuevo distinto al ultimo
-inbound contestado, el runtime debe limpiar la señal de cierre, reabrir la
-conversacion como `active` y registrar `agent_reopened`. Excepcion: los cierres
-terminales de traspaso humano (`ready_for_human`, `ready_to_schedule` y
-`ready_to_buy`) no se reabren solos con mensajes nuevos, porque ya son una cola
-para que un humano tome la conversacion. El mensaje ya contestado no se
-reprocesa, y los estados `human`, `paused` o `skipped` siguen bloqueando hasta
-que el usuario los cambie explicitamente.
-El alcance de contactos tambien vive por agente: `all` permite tomar contactos
-viejos y nuevos, mientras `new_only` sella `contact_scope_cutoff_at` al configurar
-ese agente y solo permite contactos creados desde ese instante en adelante.
+### Configuracion y experiencia del usuario
 
-El modal del wizard debe mantenerse responsivo en pantallas bajas: la ventana no
-debe ocupar casi todo el alto disponible y el contenido de cada paso debe
-scrollear internamente conservando el progreso y las acciones visibles.
-La prueba del asistente debe usar la misma configuracion efectiva que usara el
-runtime real: en el wizard, un borrador nuevo parte de los defaults de creacion
-y no puede heredar campos del primer agente existente; en el editor de un agente
-guardado, antes de probar se guarda el borrador pendiente, se manda el `agentId`
-y el backend resuelve el agente por ese ID aplicando el borrador encima. La
-prueba no debe pasar por un agente distinto ni por un autosave pendiente. La
-prueba del editor ignora la espera inicial de respuesta configurada en "cuanto
-debe esperar antes de contestar" y devuelve `responseDelayMs: 0` para que el
-tester responda inmediato; el chat real publicado si conserva esa espera antes
-de contestar. Esa espera ocurre antes de llamar al modelo: si el contacto manda
-mas mensajes durante la ventana, el runtime recarga el ultimo inbound y OpenAI
-interpreta el historial completo, en vez de generar una respuesta vieja y
-cancelarla despues.
-Cuando el agente divide una respuesta en globos, cada globo posterior vuelve a
-revisar si ya entro otro mensaje del contacto antes de enviarse. Si el contacto
-interrumpe, el runtime detiene los globos restantes, no marca el inbound anterior
-como completamente contestado y agenda una nueva corrida; esa nueva corrida
-vuelve a pasar por la ventana de espera previa al modelo y OpenAI recibe tanto
-lo que el agente ya alcanzo a decir como los mensajes nuevos del contacto.
-Antes de llamar al modelo, el runtime tambien evalua una decision simple de
-suficiencia para traspasos a humano (`ready_for_human`): si la persona ya dio
-contexto real, ya acepto el siguiente paso propuesto y no faltan datos minimos
-obvios como nombre cuando el agente lo pide, el sistema marca la conversacion
-como lista para humano sin otra ronda de preguntas. El guion de cierre se trata
-como evidencia, no como checklist infinito: un "quiero cita" frio sigue
-bloqueado, pero un caso con motivo real y aceptacion explicita no debe seguir
-recibiendo preguntas redundantes. En ese caso el runtime envia una frase corta
-de avance, registra `conversation_decision_ready`, completa `ready_for_human`,
-notifica al humano y detiene al bot.
+El wizard de un agente nuevo pide primero decisiones de producto: mision,
+identidad, forma de cumplir la meta, datos indispensables, reglas de pase a una
+persona, condiciones de entrada/salida, alcance y prueba. Si ya existe un
+proveedor de IA conectado, no vuelve a preguntarle al usuario por proveedor,
+modelo, retrasos, division de mensajes ni otros detalles tecnicos. Esos ajustes
+siguen disponibles en el editor avanzado, pero no son requisito para publicar un
+agente util. `extraInstructions` contiene reglas y limites del negocio, no un
+prompt tecnico que el usuario tenga que programar.
 
-Las reglas finas de entrada/salida y acciones extra de cierre se ajustan desde
-el formulario manual avanzado. `extraInstructions` es la superficie editable de
-personalizacion del asistente: reglas del negocio, limites, datos que debe
-pedir, casos especificos y comportamiento que siempre debe respetar, salvo los
-limites de seguridad e integridad. El prompt avanzado de fabrica vive interno:
-no se muestra, no se edita desde la UI y las APIs de configuracion ignoran
-intentos de guardar `closingStrategyCustom`. La fabrica vigente fuerza pull
-conversacional, curiosidad genuina, anti-molde, anti-asuncion y no soltar precio
-de inmediato sin sacar contexto y construir valor, incluso cuando el contacto
-pide un costo especifico. Los datos estrictamente necesarios para avanzar deben
-vivir en `requiredData`. Si `extraInstructions` condiciona
-precio/valor/costo/cotizacion (por ejemplo,
-"no des precio hasta conocer el problema o reto"), el prompt activa un bloqueo
-explicito: una pregunta directa por precio no desbloquea montos, rangos,
-descuentos, promociones ni links de pago hasta cumplir esa condicion; el agente
-debe pedir el contexto faltante de uno en uno y despues usar precios reales. El
-guardian de cumplimiento que reescribe aperturas riesgosas tambien debe devolver
-una pregunta visible y clara; no basta con una frase condicional tipo "si me
-dices..." cuando el contacto pidio precio o informacion en frio.
+El formulario se compila en una politica tipada con jerarquia fija: seguridad y
+licencia, resultados reales de herramientas, objetivo verificable, reglas del
+negocio y, al final, tono e hipotesis. La compilacion detecta configuraciones
+incompletas, contradicciones, intentos de fingir humanidad o de inventar datos.
+Una politica invalida no puede publicarse. Cada alta, cambio o rollback guarda
+una version en `conversational_agent_policy_versions`; las rutas autenticadas de
+gobernanza permiten listar versiones y revertir una configuracion anterior.
 
-El runtime tambien aplica candados despues de que el modelo genera la respuesta,
-porque el prompt por si solo no es suficiente en produccion. Si una respuesta
-visible promete que un equipo, asesor o humano seguira el caso y el modelo no
-ejecuto `mark_ready_to_advance` ni `send_to_human`, el runtime fuerza
-`ready_for_human` con estado `human`, notifica prioridad y registra
-`runtime_human_handoff_forced`; asi la promesa no queda falsa ni el bot sigue
-platicando como si nada. Si el modelo intenta `stay_silent` ante una pregunta de
-agenda, horario, confirmacion o proceso que requiere criterio humano, el runtime
-cambia la salida por una frase breve de traspaso y hace el mismo pase real a
-humano. Para persuasiones media y alta, si la respuesta revela un precio o valor
-mientras en ese mismo mensaje todavia esta pidiendo contexto de calificacion, el
-runtime elimina el monto y deja una pregunta corta para calificar; Anfitrion
-(`low`) conserva su comportamiento directo de dar precio cuando aplique.
+El alcance `new_only` sella `contact_scope_cutoff_at`; no adopta contactos
+anteriores al corte. Los estados legacy no se heredan como bloqueos de un agente
+nuevo, pero una pausa, omision o asignacion manual real conserva su procedencia.
+Las superficies de control manejan agentes individuales, nunca un pseudoagente
+global "Todos".
+
+### Runtime modular de inteligencia
+
+El runtime no depende de una sola "biblia" de cierre. Cada turno recorre modulos
+separados en `backend/src/agents/conversational/intelligence/`:
+
+1. `configCompiler`: valida y compila objetivo, reglas, permisos y evidencia de
+   exito.
+2. `knowledge`: recupera del perfil estructurado y contexto de capacitacion solo
+   los fragmentos relacionados con la pregunta. Si no hay coincidencia, devuelve
+   `found=false`; el generador debe consultar tools reales, pedir aclaracion o
+   transferir, nunca rellenar el hueco.
+3. `assessment`: actualiza intencion, hechos, hipotesis, contradicciones,
+   calificacion, objeciones, riesgos y probabilidades. Usa salida estructurada del
+   proveedor y un fallback determinista reproducible.
+4. `strategyPlanner`: elige una sola accion siguiente: responder, aclarar,
+   profundizar, recopilar un dato, resolver objecion, proponer, ejecutar tool,
+   esperar, dar seguimiento, descartar o transferir.
+5. `context` y `handoff`: construyen contexto interno y un resumen de traspaso
+   separado entre hechos, hipotesis, acciones y pendientes.
+6. `stateRepository`: persiste el estado tipado en la conversacion.
+7. `learning`, `governance` y `evaluation`: agregan resultados por agente,
+   proponen mejoras versionadas y ejecutan escenarios reproducibles.
+
+Las probabilidades y etiquetas frio/tibio/caliente son orientativas y nunca se
+envian al contacto. Una hipotesis no se convierte en hecho. Los atributos
+sensibles no se infieren; si aparecen explicitamente en el turno pueden ayudar a
+responder el mensaje actual, pero se eliminan o redactan antes de persistir la
+memoria estructurada. Datos autorizados del contacto (por ejemplo nombre, correo
+o telefono) siguen viviendo en su perfil CRM y se consultan con tools, sin
+copiar memoria entre cuentas.
+
+El conocimiento base de la cuenta proviene de `ai_business_profile` y su
+`source_context`; productos, precios, calendarios y slots se consultan en sus
+servicios reales. El recuperador conserva hash/version de la fuente y no incluye
+campos con nombres de secrets, tokens o llaves.
+
+### Estado, concurrencia y seguimiento
+
+Un estado conversacional se identifica por `contact_id + agent_id + channel`.
+WhatsApp, Instagram, Messenger, SMS, webchat, correo y comentarios no comparten
+accidentalmente pausas, señales ni memoria. Cada inbound se reclama de forma
+atomica con token y lease; una ejecucion vigente bloquea duplicados, mientras un
+error o lease vencido permite reintentar el mismo mensaje. La recuperacion de
+pendientes pagina todos los claims fallidos/vencidos, sin un tope global que
+abandone conversaciones viejas.
+
+Una conversacion `completed` solo se reabre con un inbound nuevo cuando el mismo
+agente sigue publicado y todavia cumple entrada, salida y alcance. Los handoffs,
+pausas, omisiones y asignaciones manuales no se borran con heuristicas de edad.
+
+Los seguimientos usan el mismo assessment y planner del chat en vivo. Antes de
+enviar revisan el ultimo punto abierto, opt-out, estado, ventana del canal,
+mensajes nuevos y numero de intento. Si la inteligencia decide `wait` o detecta
+que debe detenerse, registra `follow_up_suppressed`; no manda un "solo paso por
+aqui" generico ni ejecuta herramientas de cierre desde el modo seguimiento.
+
+### Generacion, preview y entrega
+
+OpenAI, Claude, Gemini y DeepSeek pueden ejecutar el agente si su conexion esta
+configurada; las rutas conversacionales no exigen OpenAI globalmente. El
+generador recibe la politica, conocimiento relevante, assessment y estrategia,
+pero no puede convertir una intencion del modelo en un efecto real.
+
+La prueba del wizard/editor usa el mismo compilador, assessment, planner,
+generador, tools en `dryRun` y guardianes del runtime. Devuelve tambien el estado
+interno (etapa, temperatura y siguiente movimiento) para mostrarlo solo al
+usuario que configura el agente. `responseDelayMs` es cero en preview; el chat
+publicado conserva su espera. Si entran mensajes durante esa espera o entre
+globos, el runtime recarga contexto, detiene partes obsoletas y vuelve a ejecutar
+el turno mas reciente.
+
+### Herramientas y verdad operativa
+
+El agente solo recibe la tool de cierre correspondiente a su `successAction`.
+Cada tool valida sus propias precondiciones y sella en `ctx.actions[].outcome` si
+el resultado fue `ok`, `error` o `simulated`. El estado final usa ese outcome y
+la base de datos, nunca un booleano escrito por el modelo.
+
+- Citas: requieren un horario real ofrecido y confirmado explicitamente; el slot
+  se revalida y un fallo de calendario cierra en seguro.
+- Pago: producto, precio, monto, concepto y moneda deben coincidir con workflow o
+  catalogo real. Crear/enviar link deja la compra `pending`; solo un pago real la
+  completa. Un supuesto comprobante del modelo no sirve como evidencia.
+- Handoff: `send_to_human` registra transferencia, pero no infla la meta como
+  conversion. El resumen estructurado evita que la persona repita su historia.
+- Meta por URL: el enlace visible contiene solo el ID de seguimiento. El
+  `callbackUrl` interno lleva un token aleatorio; la base guarda unicamente su
+  SHA-256. El webhook exige token vigente de un solo uso, ID externo, status
+  exitoso y coincidencia estricta de calendario/producto/precio/monto/moneda.
+
+El precio se bloquea unicamente cuando el negocio escribio una condicion literal
+en sus reglas (por ejemplo, "no dar precio hasta confirmar X"). El nivel de
+iniciativa no crea por si solo un bloqueo de precio. Tampoco se fuerza un handoff
+por regex de texto ni se transforma un silencio transitorio en una transferencia
+permanente: las tools y el estado real mandan.
+
+### Aprendizaje, metricas y seguridad
+
+Los eventos nuevos guardan `agent_id`, de modo que un snapshot de aprendizaje no
+mezcla agentes ni toma eventos legacy sin propietario. Las propuestas se guardan
+en `conversational_agent_learning_versions` como `proposed`; un usuario
+autenticado debe aprobarlas o rechazarlas. Solo una version `approved` entra como
+contexto asesor y nunca sustituye politica, permisos, precios, seguridad ni
+resultados de tools. Se puede marcar `reverted` sin borrar el historial.
+
+Las metricas separan metas completadas, handoffs, citas, links de pago,
+seguimientos enviados/suprimidos, errores de herramientas, tasa de respuesta y
+assessments. Un estado `human` con señal `ready_for_human` cuenta como traspaso,
+no como exito. Las evaluaciones deterministas cubren mensajes frios, interes sin
+compromiso, preguntas directas, objeciones, desconfianza, ambiguedad,
+contradicciones, descalificacion, riesgo de cancelacion, opt-out, fallos de tools,
+aislamiento, conocimiento ausente y memoria sensible.
 
 Reglas:
 

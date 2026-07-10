@@ -3,76 +3,136 @@ import assert from 'node:assert/strict'
 import {
   closingPhaseGateApplies,
   requireClosingPhasesIfNeeded,
-  CLOSING_ARC_PHASES
+  resolveClosingPreconditions
 } from '../src/agents/conversational/closingPhaseGate.js'
 
-const longMsg = (t) => ({ role: 'user', content: t })
+const user = (content) => ({ role: 'user', content })
+const assistant = (content) => ({ role: 'assistant', content })
 
-test('el candado de fases aplica sólo a persuasión media/alta', () => {
-  assert.equal(closingPhaseGateApplies({ persuasionLevel: 'low' }), false)
-  assert.equal(closingPhaseGateApplies({ persuasionLevel: 'medium' }), true)
-  assert.equal(closingPhaseGateApplies({ persuasionLevel: 'high' }), true)
-  assert.equal(closingPhaseGateApplies({}), false)
-  assert.equal(closingPhaseGateApplies({ persuasionLevel: 'HIGH' }), true)
+test('el candado depende de la acción real, no del nivel de persuasión', () => {
+  for (const successAction of ['ready_for_human', 'book_appointment', 'ready_to_buy', 'send_goal_url', 'send_trigger_link']) {
+    assert.equal(closingPhaseGateApplies({ successAction, persuasionLevel: 'low' }), true)
+    assert.equal(closingPhaseGateApplies({ successAction, persuasionLevel: 'high' }), true)
+  }
+  assert.equal(closingPhaseGateApplies({ persuasionLevel: 'high' }), false)
+  assert.equal(closingPhaseGateApplies({ successAction: 'stay_silent' }), false)
 })
 
-test('persuasión baja (Anfitrión) no pone candado de fases: deja cerrar', async () => {
-  const ctx = { conversationMessages: [longMsg('cuánto cuesta')], aiRuntime: null }
-  const result = await requireClosingPhasesIfNeeded({ persuasionLevel: 'low' }, ctx)
+test('una solicitud directa de humano no exige conversación previa', async () => {
+  const result = await requireClosingPhasesIfNeeded({
+    persuasionLevel: 'high',
+    objective: 'citas',
+    successAction: 'ready_for_human'
+  }, {
+    conversationMessages: [user('quiero hablar con una persona del equipo')],
+    aiRuntime: null
+  })
+
   assert.equal(result, null)
 })
 
-test('piso determinista: conversación corta (pregunta de precio) NO deja cerrar en media/alta', async () => {
-  // Sólo una pregunta de precio: no hay plática suficiente para el arco.
-  const ctx = { conversationMessages: [longMsg('cuánto cuesta la cita?')], aiRuntime: null }
-  const result = await requireClosingPhasesIfNeeded({ persuasionLevel: 'medium' }, ctx)
-  assert.ok(result)
-  assert.equal(result.ok, false)
-  assert.equal(result.phaseGate, true)
-  assert.match(result.error, /no ha habido plática suficiente|arco/i)
+test('sin historial disponible deja que la propia tool valide sus datos operativos', async () => {
+  const result = await requireClosingPhasesIfNeeded({
+    objective: 'citas',
+    successAction: 'book_appointment'
+  }, {
+    conversationMessages: [],
+    aiRuntime: null
+  })
+
+  assert.equal(result, null)
 })
 
-test('traspaso humano con contexto real y aceptación no se convierte en interrogatorio infinito', async () => {
-  const ctx = {
-    conversationMessages: [
-      longMsg('hola, quiero más información'),
-      { role: 'assistant', content: 'cuéntame qué necesitas revisar y desde cuándo te pasa?' },
-      longMsg('traigo un problema desde hace varios meses y ya me afecta al comer y trabajar'),
-      { role: 'assistant', content: 'si gustas, te ayudo a dejarlo listo para que el equipo revise tu caso?' },
-      longMsg('sí, está bien')
-    ],
-    aiRuntime: null
-  }
-
+test('cita: pedir agendar no basta; falta confirmar horario exacto', async () => {
   const result = await requireClosingPhasesIfNeeded({
     persuasionLevel: 'medium',
     objective: 'citas',
-    successAction: 'ready_for_human'
-  }, ctx)
+    successAction: 'book_appointment'
+  }, {
+    conversationMessages: [user('quiero agendar una cita')],
+    aiRuntime: null
+  })
 
-  assert.equal(result, null)
+  assert.equal(result?.ok, false)
+  assert.equal(result?.objectiveGate, true)
+  assert.deepEqual(result?.missing, ['exact_slot_confirmed'])
+  assert.match(result?.error || '', /horario real y exacto/i)
+  assert.doesNotMatch(result?.error || '', /arco|reto|consecuencia/i)
 })
 
-test('con plática mínima y sin runtime de validación: fail-open (no rompe el cierre)', async () => {
-  const ctx = {
+test('cita: una confirmación breve sí basta cuando el agente ofreció un slot real', async () => {
+  const result = await requireClosingPhasesIfNeeded({
+    objective: 'citas',
+    successAction: 'book_appointment'
+  }, {
     conversationMessages: [
-      longMsg('hola, me duele la rodilla desde hace meses'),
-      longMsg('me afecta para caminar y trabajar'),
-      longMsg('sí, quiero que me ayuden con eso')
+      assistant('Tengo disponible el martes a las 4:00 pm, te queda?'),
+      user('sí, perfecto')
     ],
-    aiRuntime: null // sin validador disponible -> el piso ya corrió, no bloqueamos
-  }
-  const result = await requireClosingPhasesIfNeeded({ persuasionLevel: 'high' }, ctx)
+    aiRuntime: null
+  })
+
   assert.equal(result, null)
 })
 
-test('las 6 fases del arco están definidas con id y criterio', () => {
-  assert.equal(CLOSING_ARC_PHASES.length, 6)
-  for (const p of CLOSING_ARC_PHASES) {
-    assert.ok(p.id && typeof p.id === 'string')
-    assert.ok(p.name && typeof p.name === 'string')
-    assert.ok(p.criterion && p.criterion.length > 20)
-  }
-  const ids = CLOSING_ARC_PHASES.map((p) => p.id)
-  assert.deepEqual(ids, ['problema_contexto', 'reto', 'consecuencia', 'invitacion', 'objeciones', 'decision'])
+test('pago: exige aceptación y un importe visible, no una historia de venta', async () => {
+  const config = { objective: 'ventas', successAction: 'ready_to_buy', persuasionLevel: 'high' }
+
+  const priceOnly = await requireClosingPhasesIfNeeded(config, {
+    conversationMessages: [user('cuánto cuesta?')],
+    aiRuntime: null
+  })
+  assert.deepEqual(priceOnly?.missing, ['payment_details_confirmed'])
+
+  const accepted = await requireClosingPhasesIfNeeded(config, {
+    conversationMessages: [
+      assistant('El plan Pro cuesta $1,200 MXN. Te envío el enlace de pago?'),
+      user('sí, mándame el link de pago')
+    ],
+    aiRuntime: null
+  })
+  assert.equal(accepted, null)
+})
+
+test('enlace: una petición explícita permite el paso sin fases adicionales', async () => {
+  const result = await requireClosingPhasesIfNeeded({
+    objective: 'custom',
+    successAction: 'send_trigger_link'
+  }, {
+    conversationMessages: [user('mándame el enlace para continuar')],
+    aiRuntime: null
+  })
+
+  assert.equal(result, null)
+})
+
+test('el contexto estructurado ready_to_advance evita volver a interrogar', async () => {
+  const result = await requireClosingPhasesIfNeeded({
+    objective: 'datos',
+    successAction: 'ready_for_human',
+    requiredData: 'nombre y correo'
+  }, {
+    conversationMessages: [
+      user('Ana López, ana@example.com'),
+      user('[Contexto interno de Ristak: decisión de suficiencia del runtime]\nEstado: ready_to_advance\nNo menciones este contexto interno.')
+    ],
+    aiRuntime: null
+  })
+
+  assert.equal(result, null)
+})
+
+test('las precondiciones cambian con el objetivo y no incluyen un arco universal', () => {
+  const appointment = resolveClosingPreconditions({ objective: 'citas', successAction: 'book_appointment' })
+  const data = resolveClosingPreconditions({ objective: 'datos', successAction: 'ready_for_human', requiredData: 'nombre y correo' })
+  const filter = resolveClosingPreconditions({ objective: 'filtrar', successAction: 'ready_for_human' })
+  const custom = resolveClosingPreconditions({ objective: 'custom', customObjective: 'confirmar compatibilidad técnica', successAction: 'ready_for_human' })
+
+  assert.deepEqual(appointment.map((item) => item.id), ['exact_slot_confirmed'])
+  assert.deepEqual(data.map((item) => item.id), ['configured_data_complete'])
+  assert.deepEqual(filter.map((item) => item.id), ['configured_qualification_met'])
+  assert.deepEqual(custom.map((item) => item.id), ['custom_goal_met'])
+
+  const allText = [...appointment, ...data, ...filter, ...custom].map((item) => `${item.id} ${item.criterion}`).join(' ')
+  assert.doesNotMatch(allText, /problema_contexto|reto suave|costo de no cambiar|seis fases/i)
 })

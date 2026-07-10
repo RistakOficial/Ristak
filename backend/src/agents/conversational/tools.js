@@ -11,6 +11,7 @@ import { createSinglePaymentLink } from '../../services/paymentFlowService.js'
 import { getBusinessProfileSnapshot } from '../../services/aiAgentService.js'
 import { buildTriggerLinkPublicUrl, getTriggerLink } from '../../services/triggerLinksService.js'
 import { getAccountTimezone, normalizeDateOnlyInTimezone } from '../../utils/dateUtils.js'
+import { getAccountCurrency } from '../../utils/accountLocale.js'
 import {
   setConversationSignal,
   recordConversationalAgentEvent,
@@ -24,6 +25,12 @@ import {
 import { sendConversationalAgentPriorityNotification } from '../../services/pushNotificationsService.js'
 import { logger } from '../../utils/logger.js'
 import { requireClosingPhasesIfNeeded } from './closingPhaseGate.js'
+import {
+  findVerifiedPaymentEvidence,
+  revalidateAppointmentSlot,
+  validatePaymentRequestAgainstCatalog,
+  verifyAppointmentConfirmationEvidence
+} from './actionEvidence.js'
 
 /**
  * Tools del agente conversacional. Se crean por ejecución con una factory
@@ -38,7 +45,22 @@ import { requireClosingPhasesIfNeeded } from './closingPhaseGate.js'
  */
 
 function pushAction(ctx, type, detail = {}) {
-  ctx.actions.push({ type, ...detail })
+  const action = { type, ...detail }
+  ctx.actions.push(action)
+  return action
+}
+
+function settleAction(action, status, detail = {}) {
+  if (!action) return null
+  const normalizedStatus = ['ok', 'error', 'simulated'].includes(status) ? status : 'error'
+  action.outcome = {
+    status: normalizedStatus,
+    ok: normalizedStatus !== 'error',
+    simulated: normalizedStatus === 'simulated',
+    actionCompleted: normalizedStatus === 'ok',
+    ...detail
+  }
+  return action.outcome
 }
 
 function resolveAdvanceSignal(config) {
@@ -111,13 +133,42 @@ function formatDepositRequirement(deposit = {}, accountLocale = {}) {
   return amount > 0 ? `${amount} ${currency}` : 'monto pendiente de configurar'
 }
 
-function rejectMissingDepositIfNeeded(config = {}, comprobanteValidado, accountLocale = {}) {
+async function rejectMissingDepositIfNeeded(ctx, config = {}, comprobanteValidado, accountLocale = {}) {
   const deposit = getDepositRequirement(config)
-  if (!deposit || comprobanteValidado === true) return null
+  if (!deposit) return null
   const paymentLabel = getDepositRequirementLabel(config)
+  if (ctx.dryRun && comprobanteValidado === true) {
+    return null
+  }
+  if (!ctx.dryRun) {
+    const accountCurrency = String(accountLocale?.currency || await getAccountCurrency().catch(() => '')).trim().toUpperCase()
+    const sales = config.goalWorkflow?.sales || {}
+    const verification = await findVerifiedPaymentEvidence({
+      database: db,
+      contactId: ctx.contactId,
+      agentId: config.id || ctx.agentId || null,
+      accountCurrency,
+      requirement: {
+        ...deposit,
+        currency: deposit.currency || accountCurrency,
+        primaryLabel: sales.productName || null,
+        labels: [sales.productName, sales.priceName].filter(Boolean)
+      }
+    })
+    if (verification.ok) {
+      ctx.verifiedPaymentEvidence = verification.evidence
+      return null
+    }
+  }
   return {
     ok: false,
-    error: `Falta validar el ${paymentLabel} (${formatDepositRequirement(deposit, accountLocale)}). Pide foto o archivo del comprobante y sólo avanza cuando el comprobante coincida con el monto configurado.`
+    actionCompleted: false,
+    paymentEvidenceRequired: true,
+    transferRequired: !ctx.dryRun,
+    claimedProofIgnored: !ctx.dryRun && comprobanteValidado === true,
+    error: ctx.dryRun
+      ? `Falta validar el ${paymentLabel} (${formatDepositRequirement(deposit, accountLocale)}). En vivo se exigirá un pago confirmado o registro real; una foto o un booleano de la IA no bastan.`
+      : `No existe un pago confirmado o registro verificable del ${paymentLabel} (${formatDepositRequirement(deposit, accountLocale)}). No se ejecutó la acción. No afirmes que el comprobante fue validado; solicita que el equipo registre el pago o pasa la conversación a una persona.`
   }
 }
 
@@ -468,12 +519,12 @@ export function createConversationalTools(ctx) {
     execute: async ({ calendarId, startTime, title, notes, comprobanteValidado, anticipoValidado }) => {
       const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
       if (phaseError) return phaseError
-      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
+      const depositError = await rejectMissingDepositIfNeeded(ctx, config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
       const start = new Date(startTime)
       if (Number.isNaN(start.getTime())) {
-        return { ok: false, error: 'startTime inválido: usa exactamente un slot devuelto por get_free_slots' }
+        return { ok: false, actionCompleted: false, error: 'startTime inválido: usa exactamente un slot devuelto por get_free_slots. No se agendó nada.' }
       }
 
       // Idempotencia: si ya existe una cita próxima activa del contacto en ese
@@ -489,7 +540,9 @@ export function createConversationalTools(ctx) {
         const sameSlot = Math.abs(new Date(existing.start_time).getTime() - start.getTime()) < 60000
         return {
           ok: false,
+          actionCompleted: false,
           alreadyBooked: true,
+          verifiedExistingAction: true,
           error: sameSlot
             ? 'Esa cita ya quedó agendada; no la dupliques. Confirma a la persona con los datos existentes.'
             : 'El contacto ya tiene una cita próxima activa. Confírmale la cita existente o sugiere reagendar con un humano.',
@@ -504,7 +557,7 @@ export function createConversationalTools(ctx) {
       }
 
       const calendar = await db.get('SELECT id, name, slot_duration FROM calendars WHERE id = ?', [calendarId])
-      if (!calendar) return { ok: false, error: 'Calendario no encontrado: usa list_calendars para obtener el ID real' }
+      if (!calendar) return { ok: false, actionCompleted: false, error: 'Calendario no encontrado: usa list_calendars para obtener el ID real. No se agendó nada.' }
 
       // Candado funcional anti-cita-inventada: el horario debe ser un slot REAL del
       // calendario (dentro del horario de atención, en el futuro y no bloqueado).
@@ -514,41 +567,32 @@ export function createConversationalTools(ctx) {
       // importar en qué turno se ofreció el slot (revalidación al momento de agendar).
       const startMs = start.getTime()
       const businessTimezone = await getAccountTimezone()
+      const confirmationEvidence = await verifyAppointmentConfirmationEvidence({
+        database: db,
+        contactId: ctx.contactId,
+        startTime: start.toISOString(),
+        timezone: businessTimezone,
+        dryRun: ctx.dryRun
+      })
+      if (!confirmationEvidence.ok) return confirmationEvidence
+
       const slotWindowStart = normalizeDateOnlyInTimezone(new Date(startMs - 24 * 60 * 60 * 1000).toISOString(), businessTimezone)
       const slotWindowEnd = normalizeDateOnlyInTimezone(new Date(startMs + 24 * 60 * 60 * 1000).toISOString(), businessTimezone)
-      // Fail-OPEN: distinguimos "no hay ese slot" de "no pude consultar". Si la consulta
-      // de disponibilidad falla (hipo transitorio de BD), NO afirmamos que el horario es
-      // inválido; dejamos que el chequeo de empalme de abajo y createAppointment sean la
-      // red de seguridad. El candado anti-cita-inventada sólo aplica cuando SÍ pudimos leer.
-      let availability = null
-      try {
-        availability = await getLocalFreeSlots(calendarId, slotWindowStart, slotWindowEnd, null, {
-          ignoreAppointmentConflicts: true
-        })
-      } catch (slotLookupError) {
-        logger.warn(`[Agente conversacional] No se pudo revalidar disponibilidad del slot (${slotLookupError?.message || slotLookupError}); se continúa sin bloquear.`)
-        availability = null
-      }
-      if (Array.isArray(availability)) {
-        const bookableSlotMsList = []
-        for (const day of availability) {
-          for (const iso of (Array.isArray(day?.slots) ? day.slots : [])) {
-            const ms = new Date(iso).getTime()
-            if (Number.isFinite(ms)) bookableSlotMsList.push(ms)
-          }
+      const slotValidation = await revalidateAppointmentSlot({
+        calendarId,
+        requestedStartTime: start.toISOString(),
+        windowStart: slotWindowStart,
+        windowEnd: slotWindowEnd,
+        lookupSlots: getLocalFreeSlots
+      })
+      if (!slotValidation.ok) {
+        if (slotValidation.availabilityCheckFailed) {
+          logger.warn(`[Agente conversacional] Revalidación de slot bloqueada: ${slotValidation.technicalError || slotValidation.error}`)
         }
-        const matchedSlotMs = bookableSlotMsList.find((ms) => Math.abs(ms - startMs) < 60000)
-        if (matchedSlotMs === undefined) {
-          return {
-            ok: false,
-            invalidSlot: true,
-            error: 'Ese horario no es un slot real del calendario (puede estar fuera del horario de atención, en el pasado o inventado). Consulta get_free_slots para ese día y ofrece SÓLO un horario que devuelva la herramienta; no inventes horas ni las des por hecho.'
-          }
-        }
-        // Snap al slot exacto para no arrastrar la deriva (hasta 59s) si el modelo mandó
-        // el ISO con segundos desalineados. Así la cita cae justo en el slot ofrecido.
-        start.setTime(matchedSlotMs)
+        return slotValidation
       }
+      // Snap al slot exacto para no arrastrar deriva de segundos del modelo.
+      start.setTime(new Date(slotValidation.matchedStartTime).getTime())
 
       const durationMinutes = Number(calendar.slot_duration) > 0 ? Number(calendar.slot_duration) : 60
       const end = new Date(start.getTime() + durationMinutes * 60000)
@@ -567,6 +611,7 @@ export function createConversationalTools(ctx) {
         if (conflict) {
           return {
             ok: false,
+            actionCompleted: false,
             overlapBlocked: true,
             error: 'Ese horario ya tiene una cita. Esta configuración no permite empalmar citas; usa get_free_slots y ofrece otro horario libre.',
             existingAppointment: {
@@ -583,55 +628,118 @@ export function createConversationalTools(ctx) {
       const contact = await db.get('SELECT full_name, phone FROM contacts WHERE id = ?', [ctx.contactId])
       const finalTitle = title || `Cita - ${contact?.full_name || contact?.phone || 'Contacto'}`
 
-      pushAction(ctx, 'book_appointment', {
+      const action = pushAction(ctx, 'book_appointment', {
         calendarId, startTime: start.toISOString(), endTime: end.toISOString(), title: finalTitle,
+        confirmationEvidence: confirmationEvidence.evidenceVerified
+          ? {
+              messageId: confirmationEvidence.confirmationMessageId || null,
+              offerMessageId: confirmationEvidence.offerMessageId || null
+            }
+          : { simulated: true },
         effect: { liveEffect: 'AGENDARÍA UNA CITA REAL y marcaría el objetivo como CUMPLIDO', marksObjectiveCompleted: true }
       })
       if (ctx.dryRun) {
+        settleAction(action, 'simulated', {
+          actionCompleted: false,
+          wouldMarkObjectiveCompleted: true,
+          calendarId,
+          startTime: start.toISOString()
+        })
         return { ok: true, simulated: true, wouldMarkObjectiveCompleted: true, appointment: { calendarId, title: finalTitle, startTime: start.toISOString(), endTime: end.toISOString() } }
       }
 
-      const result = await invokeController(createAppointment, {
-        body: {
-          calendarId,
-          contactId: ctx.contactId,
-          title: finalTitle,
-          startTime: start.toISOString(),
-          endTime: end.toISOString(),
-          notes: notes || 'Agendada por el agente conversacional'
+      let toolResult
+      try {
+        const result = await invokeController(createAppointment, {
+          body: {
+            calendarId,
+            contactId: ctx.contactId,
+            title: finalTitle,
+            startTime: start.toISOString(),
+            endTime: end.toISOString(),
+            notes: notes || 'Agendada por el agente conversacional'
+          }
+        })
+        toolResult = toToolResult(result, (data) => ({
+          id: data?.id,
+          title: data?.title,
+          startTime: data?.startTime || data?.start_time,
+          endTime: data?.endTime || data?.end_time,
+          status: data?.appointmentStatus || data?.appointment_status || data?.status
+        }))
+        if (result.statusCode >= 400 || !toolResult.ok || !toolResult.data?.id) {
+          const errorResult = {
+            ok: false,
+            actionCompleted: false,
+            transferRequired: result.statusCode >= 500,
+            statusCode: result.statusCode,
+            error: `No se pudo agendar la cita y no debes afirmar que quedó confirmada.${toolResult.error ? ` ${toolResult.error}` : ''}`
+          }
+          settleAction(action, 'error', {
+            statusCode: result.statusCode,
+            error: errorResult.error,
+            transferRequired: errorResult.transferRequired
+          })
+          return errorResult
         }
-      })
-      const toolResult = toToolResult(result, (data) => ({
-        id: data?.id,
-        title: data?.title,
-        startTime: data?.startTime || data?.start_time,
-        endTime: data?.endTime || data?.end_time,
-        status: data?.appointmentStatus || data?.appointment_status || data?.status
-      }))
+      } catch (error) {
+        logger.error(`[Agente conversacional] Falló la creación real de la cita: ${error.message}`)
+        const errorResult = {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          error: 'No se pudo crear la cita. No se agendó nada y no debes afirmar lo contrario; pasa la conversación a una persona.'
+        }
+        settleAction(action, 'error', {
+          error: errorResult.error,
+          transferRequired: true
+        })
+        return errorResult
+      }
 
+      let completionSyncWarning = false
       if (toolResult.ok) {
         const technicalSummary = `${finalTitle} · ${start.toISOString()}`
-        await setConversationSignal(ctx.contactId, 'appointment_booked', {
-          reason: 'Cita agendada por el agente',
-          actionSummarySource: technicalSummary,
-          originalSummary: technicalSummary,
-          status: 'completed',
-          agentId: config.id || ''
-        })
-        await applyAgentCompletionAction(config, ctx.contactId)
-        await notifyHumanPriority(ctx, {
-          reason: 'Cita agendada por el agente',
-          summary: technicalSummary,
-          signal: 'appointment_booked'
-        })
-        await recordConversationalAgentEvent({
-          contactId: ctx.contactId,
-          eventType: 'appointment_booked',
-          detail: { appointmentId: toolResult.data?.id, startTime: start.toISOString(), calendarId }
-        })
-        await applyAgentSuccessExtras(config, ctx.contactId)
+        try {
+          await setConversationSignal(ctx.contactId, 'appointment_booked', {
+            reason: 'Cita agendada por el agente',
+            actionSummarySource: technicalSummary,
+            originalSummary: technicalSummary,
+            status: 'completed',
+            agentId: config.id || ''
+          })
+          await applyAgentCompletionAction(config, ctx.contactId)
+          await notifyHumanPriority(ctx, {
+            reason: 'Cita agendada por el agente',
+            summary: technicalSummary,
+            signal: 'appointment_booked'
+          })
+          await recordConversationalAgentEvent({
+            contactId: ctx.contactId,
+            eventType: 'appointment_booked',
+            detail: { appointmentId: toolResult.data?.id, startTime: start.toISOString(), calendarId }
+          })
+          await applyAgentSuccessExtras(config, ctx.contactId)
+        } catch (error) {
+          completionSyncWarning = true
+          logger.error(`[Agente conversacional] La cita ${toolResult.data?.id} sí se creó, pero falló la sincronización del cierre: ${error.message}`)
+        }
       }
-      return toolResult
+      settleAction(action, 'ok', {
+        appointmentId: toolResult.data?.id || null,
+        calendarId,
+        startTime: start.toISOString(),
+        appointmentCreated: true,
+        objectiveCompleted: !completionSyncWarning,
+        completionSyncWarning
+      })
+      return {
+        ...toolResult,
+        actionCompleted: true,
+        ...(completionSyncWarning
+          ? { completionSyncWarning: true, note: 'La cita sí fue creada. No la repitas; el cierre interno necesita revisión humana.' }
+          : {})
+      }
     }
   })
 
@@ -664,37 +772,78 @@ export function createConversationalTools(ctx) {
       // real, reto, consecuencia, invitación, objeciones, decisión), no palabras vacías.
       const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
       if (phaseError) return phaseError
-      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
+      const depositError = await rejectMissingDepositIfNeeded(ctx, config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
       const signal = resolveAdvanceSignal(config)
-      pushAction(ctx, 'mark_ready_to_advance', {
+      const action = pushAction(ctx, 'mark_ready_to_advance', {
         signal, intencionDetectada, urgencia, extras: config.successExtras || [],
         effect: { liveEffect: 'MARCARÍA el objetivo como CUMPLIDO y pasaría el chat a un humano (el bot deja de responder)', marksObjectiveCompleted: true }
       })
-      if (ctx.dryRun) return { ok: true, simulated: true, signal, wouldMarkObjectiveCompleted: true, wouldNotifyHuman: true }
+      if (ctx.dryRun) {
+        settleAction(action, 'simulated', {
+          actionCompleted: false,
+          signal,
+          wouldMarkObjectiveCompleted: true,
+          wouldNotifyHuman: true
+        })
+        return { ok: true, simulated: true, signal, wouldMarkObjectiveCompleted: true, wouldNotifyHuman: true }
+      }
 
-      await setConversationSignal(ctx.contactId, signal, {
-        reason: `${intencionDetectada} (urgencia ${urgencia})`,
-        summary: resumen,
-        status: 'completed',
-        agentId: config.id || ''
-      })
-      await applyAgentCompletionAction(config, ctx.contactId)
-      await notifyHumanPriority(ctx, {
+      try {
+        await setConversationSignal(ctx.contactId, signal, {
+          reason: `${intencionDetectada} (urgencia ${urgencia})`,
+          summary: resumen,
+          status: 'completed',
+          agentId: config.id || ''
+        })
+      } catch (error) {
+        logger.error(`[Agente conversacional] No se pudo registrar el objetivo cumplido: ${error.message}`)
+        const errorResult = {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          error: 'No se pudo registrar el objetivo como cumplido. No afirmes que se transfirió ni que terminó; requiere revisión humana.'
+        }
+        settleAction(action, 'error', { error: errorResult.error, transferRequired: true })
+        return errorResult
+      }
+
+      const postCommitWarnings = []
+      const runPostCommitStep = async (label, callback) => {
+        try {
+          await callback()
+        } catch (error) {
+          postCommitWarnings.push(label)
+          logger.warn(`[Agente conversacional] Objetivo ${signal} sí quedó registrado, pero falló ${label}: ${error.message}`)
+        }
+      }
+      await runPostCommitStep('completion_action', () => applyAgentCompletionAction(config, ctx.contactId))
+      await runPostCommitStep('priority_notification', () => notifyHumanPriority(ctx, {
         reason: intencionDetectada,
         summary: resumen,
         signal
-      })
+      }))
       // Telemetría separable: distingue "objetivo cumplido (pasa a humano)" de un
       // simple signal_set, para poder auditar falsos cierres en reportería.
-      await recordConversationalAgentEvent({
+      await runPostCommitStep('objective_event', () => recordConversationalAgentEvent({
         contactId: ctx.contactId,
         eventType: 'objective_completed',
         detail: { agentId: config.id || ctx.agentId || null, signal, kind: 'ready_for_human', intencionDetectada, urgencia, siguientePaso: siguientePaso || null }
+      }))
+      await runPostCommitStep('success_extras', () => applyAgentSuccessExtras(config, ctx.contactId))
+      settleAction(action, 'ok', {
+        signal,
+        objectiveCompleted: true,
+        ...(postCommitWarnings.length ? { warnings: postCommitWarnings } : {})
       })
-      await applyAgentSuccessExtras(config, ctx.contactId)
-      return { ok: true, signal, note: 'Objetivo registrado (pasa a humano). Cierra con una frase mínima o no respondas más.' }
+      return {
+        ok: true,
+        actionCompleted: true,
+        signal,
+        ...(postCommitWarnings.length ? { postCommitWarning: true } : {}),
+        note: 'Objetivo registrado (pasa a humano). Cierra con una frase mínima o no respondas más.'
+      }
     }
   })
 
@@ -708,41 +857,116 @@ export function createConversationalTools(ctx) {
       dueDate: z.string().nullable().describe('Fecha límite de pago YYYY-MM-DD opcional'),
       channel: z.enum(['email', 'whatsapp', 'sms', 'all']).describe('Canal confirmado para enviar el link'),
       confirm: z.boolean().describe('true sólo cuando la persona ya aprobó explícitamente el cobro'),
-      comprobanteValidado: z.boolean().nullable().optional().describe('true sólo si el negocio pidió pago previo y el contacto ya mandó comprobante válido'),
-      anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy de comprobanteValidado')
+      comprobanteValidado: z.boolean().nullable().optional().describe('Campo legacy ignorado: un booleano de la IA nunca valida un pago'),
+      anticipoValidado: z.boolean().nullable().optional().describe('Alias legacy ignorado')
     }),
-    execute: async ({ amount, currency, concept, dueDate, channel, confirm, comprobanteValidado, anticipoValidado }) => {
+    execute: async ({ amount, currency, concept, dueDate, channel, confirm }) => {
       if (!confirm) {
-        return { ok: false, error: 'Falta confirmación explícita. Resume monto, concepto y canal, y pide aprobación antes de crear el link.' }
+        return { ok: false, actionCompleted: false, error: 'Falta confirmación explícita. Resume monto, concepto y canal, y pide aprobación antes de crear el link. No se creó ni envió nada.' }
       }
       const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
       if (phaseError) return phaseError
-      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
-      if (depositError) return depositError
+
+      // El link es el mecanismo para cobrar el pago completo o el anticipo. No exigimos
+      // un comprobante previo para crearlo; sí amarramos el cobro al workflow/catálogo.
+      const accountCurrency = String(
+        ctx.accountLocale?.currency || await getAccountCurrency().catch(() => '')
+      ).trim().toUpperCase()
+      const paymentValidation = await validatePaymentRequestAgainstCatalog({
+        database: db,
+        config,
+        accountCurrency,
+        amount,
+        currency,
+        concept
+      })
+      if (!paymentValidation.ok) return paymentValidation
+      const trustedPayment = paymentValidation.trusted
 
       const contact = await getPaymentContact(ctx.contactId)
-      if (!contact) return { ok: false, error: 'Contacto no encontrado' }
+      if (!contact) return { ok: false, actionCompleted: false, error: 'Contacto no encontrado. No se creó ni envió ningún link.' }
 
-      pushAction(ctx, 'create_payment_link', {
-        amount, currency: currency || null, concept, channel,
+      const action = pushAction(ctx, 'create_payment_link', {
+        amount: trustedPayment.amount,
+        currency: trustedPayment.currency,
+        concept: trustedPayment.concept,
+        catalogEvidence: {
+          source: trustedPayment.source,
+          productId: trustedPayment.productId,
+          priceId: trustedPayment.priceId
+        },
+        channel,
         effect: { liveEffect: 'ENVIARÍA un link de pago real (la venta sigue PENDIENTE hasta que se pague)', marksObjectiveCompleted: false }
       })
       if (ctx.dryRun) {
-        return { ok: true, simulated: true, amount, currency: currency || null, concept, channel }
+        settleAction(action, 'simulated', {
+          actionCompleted: false,
+          amount: trustedPayment.amount,
+          currency: trustedPayment.currency,
+          channel,
+          wouldCreateAndSendLink: true
+        })
+        return {
+          ok: true,
+          simulated: true,
+          amount: trustedPayment.amount,
+          currency: trustedPayment.currency,
+          concept: trustedPayment.concept,
+          channel,
+          catalogEvidence: trustedPayment.source
+        }
       }
 
       try {
         const result = await createSinglePaymentLink({
           contact,
-          amount,
-          currency: currency || undefined,
-          description: concept,
-          concept,
-          title: concept,
+          amount: trustedPayment.amount,
+          currency: trustedPayment.currency,
+          description: trustedPayment.concept,
+          concept: trustedPayment.concept,
+          title: trustedPayment.concept,
           dueDate: dueDate || undefined,
           channels: buildPaymentChannels(channel),
           source: 'conversational_agent'
         })
+
+        const resultCurrency = String(result?.currency || '').trim().toUpperCase()
+        const resultAmount = Number(result?.amount)
+        const sent = Boolean(result?.invoiceId && result?.paymentLink && result?.sendMethod !== 'none' && result?.status !== 'draft')
+        const canonicalMatch = Math.abs(resultAmount - trustedPayment.amount) < 0.005 && resultCurrency === trustedPayment.currency
+        if (!sent || !canonicalMatch) {
+          await recordConversationalAgentEvent({
+            contactId: ctx.contactId,
+            eventType: 'payment_link_failed',
+            detail: {
+              reason: !sent ? 'link_not_sent' : 'canonical_payment_mismatch',
+              invoiceId: result?.invoiceId || null,
+              expectedAmount: trustedPayment.amount,
+              expectedCurrency: trustedPayment.currency,
+              actualAmount: result?.amount || null,
+              actualCurrency: result?.currency || null
+            }
+          }).catch(() => undefined)
+          const errorResult = {
+            ok: false,
+            actionCompleted: false,
+            transferRequired: true,
+            invoiceCreated: Boolean(result?.invoiceId),
+            error: result?.invoiceId
+              ? 'El cobro pudo crear un borrador, pero no hay evidencia de que el link correcto se haya enviado. No afirmes que se envió; pasa la conversación a una persona.'
+              : 'No se pudo crear ni enviar el link de pago. No afirmes lo contrario; pasa la conversación a una persona.'
+          }
+          settleAction(action, 'error', {
+            error: errorResult.error,
+            invoiceId: result?.invoiceId || null,
+            invoiceCreated: errorResult.invoiceCreated,
+            deliveryConfirmed: false,
+            canonicalMatch,
+            transferRequired: true
+          })
+          return errorResult
+        }
+
         await recordConversationalAgentEvent({
           contactId: ctx.contactId,
           // (AI-004) Distingue link reutilizado (idempotencia) de uno nuevo.
@@ -757,9 +981,23 @@ export function createConversationalTools(ctx) {
             status: result.status,
             ...(result.reused ? { reused: true } : {})
           }
+        }).catch((error) => {
+          logger.warn(`[Agente conversacional] El link ${result.invoiceId} sí se envió, pero falló su telemetría: ${error.message}`)
+        })
+        settleAction(action, 'ok', {
+          invoiceId: result.invoiceId,
+          amount: result.amount,
+          currency: result.currency,
+          sendMethod: result.sendMethod,
+          linkAvailable: true,
+          deliveryConfirmed: !result.reused,
+          priorEquivalentLinkFound: Boolean(result.reused),
+          reused: Boolean(result.reused),
+          objectiveCompleted: false
         })
         return {
           ok: true,
+          actionCompleted: true,
           invoiceId: result.invoiceId,
           paymentLink: result.paymentLink,
           sendMethod: result.sendMethod,
@@ -775,9 +1013,25 @@ export function createConversationalTools(ctx) {
         await recordConversationalAgentEvent({
           contactId: ctx.contactId,
           eventType: 'payment_link_failed',
-          detail: { error: error.message, amount, currency: currency || null, concept }
+          detail: {
+            error: error.message,
+            amount: trustedPayment.amount,
+            currency: trustedPayment.currency,
+            concept: trustedPayment.concept
+          }
+        }).catch(() => undefined)
+        const errorResult = {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          error: 'No se pudo crear ni enviar el link de pago. No afirmes que se envió; pasa la conversación a una persona.'
+        }
+        settleAction(action, 'error', {
+          error: errorResult.error,
+          deliveryConfirmed: false,
+          transferRequired: true
         })
-        return { ok: false, error: error.message }
+        return errorResult
       }
     }
   })
@@ -798,7 +1052,7 @@ export function createConversationalTools(ctx) {
       }
       const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
       if (phaseError) return phaseError
-      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
+      const depositError = await rejectMissingDepositIfNeeded(ctx, config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
       const goalConfig = getConfiguredGoalUrl(config)
@@ -809,11 +1063,17 @@ export function createConversationalTools(ctx) {
       }
       const linkContext = getGoalLinkContext(config, goalConfig)
 
-      pushAction(ctx, 'send_goal_url', {
+      const action = pushAction(ctx, 'send_goal_url', {
         objective: config.objective, intencionDetectada, targetUrl,
         effect: { liveEffect: 'ENVIARÍA el enlace configurado (el objetivo sigue PENDIENTE hasta la confirmación con ID real)', marksObjectiveCompleted: false }
       })
       if (ctx.dryRun) {
+        settleAction(action, 'simulated', {
+          actionCompleted: false,
+          linkPrepared: false,
+          deliveryConfirmed: false,
+          objectiveCompleted: false
+        })
         return {
           ok: true,
           simulated: true,
@@ -824,22 +1084,48 @@ export function createConversationalTools(ctx) {
         }
       }
 
-      const link = await createConversationGoalLink({
-        contactId: ctx.contactId,
-        agentId: config.id || ctx.agentId || null,
-        objective: config.objective,
-        targetUrl,
-        trackingParam,
-        linkParams: linkContext.linkParams,
-        metadata: {
-          expected: linkContext.expected,
-          intencionDetectada,
-          resumen
+      let link
+      try {
+        link = await createConversationGoalLink({
+          contactId: ctx.contactId,
+          agentId: config.id || ctx.agentId || null,
+          objective: config.objective,
+          targetUrl,
+          trackingParam,
+          linkParams: linkContext.linkParams,
+          metadata: {
+            expected: linkContext.expected,
+            intencionDetectada,
+            resumen
+          }
+        })
+      } catch (error) {
+        logger.error(`[Agente conversacional] No se pudo preparar el enlace del objetivo: ${error.message}`)
+        const errorResult = {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          error: 'No se pudo preparar el enlace del objetivo. No afirmes que se envió; pasa la conversación a una persona.'
         }
+        settleAction(action, 'error', {
+          error: errorResult.error,
+          linkPrepared: false,
+          deliveryConfirmed: false,
+          transferRequired: true
+        })
+        return errorResult
+      }
+
+      settleAction(action, 'ok', {
+        goalId: link.id,
+        linkPrepared: true,
+        deliveryConfirmed: false,
+        objectiveCompleted: false
       })
 
       return {
         ok: true,
+        actionCompleted: true,
         goalId: link.id,
         sentUrl: link.sentUrl,
         trackingParam: link.trackingParam,
@@ -865,7 +1151,7 @@ export function createConversationalTools(ctx) {
       }
       const phaseError = await requireClosingPhasesIfNeeded(config, ctx)
       if (phaseError) return phaseError
-      const depositError = rejectMissingDepositIfNeeded(config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
+      const depositError = await rejectMissingDepositIfNeeded(ctx, config, comprobanteValidado === true || anticipoValidado === true, ctx.accountLocale)
       if (depositError) return depositError
 
       const configuredLink = getConfiguredTriggerLink(config)
@@ -898,11 +1184,50 @@ export function createConversationalTools(ctx) {
       const publicUrl = link.publicUrl || buildTriggerLinkPublicUrl(link, baseUrl)
       const sentUrl = buildContactTriggerLinkUrl(publicUrl, ctx.contactId)
 
+      const action = pushAction(ctx, 'send_trigger_link', {
+        objective: config.objective,
+        intencionDetectada,
+        triggerLinkId: link.id,
+        triggerLinkPublicId: link.publicId || null,
+        effect: { liveEffect: 'ENVIARÍA el enlace de disparo (el objetivo se cumple sólo cuando el contacto lo toque)', marksObjectiveCompleted: false }
+      })
+
       // (AI-005) Idempotencia: si ya se envió un enlace de disparo a este contacto hace
       // poco, no repetimos el efecto (evita que el agente lo reenvíe en bucle).
-      if (!ctx.dryRun && await hasRecentConversationalAgentEvent({ contactId: ctx.contactId, eventType: 'trigger_link_sent' })) {
+      let alreadySent = false
+      if (!ctx.dryRun) {
+        try {
+          alreadySent = await hasRecentConversationalAgentEvent({ contactId: ctx.contactId, eventType: 'trigger_link_sent' })
+        } catch (error) {
+          logger.warn(`[Agente conversacional] No se pudo verificar idempotencia del enlace de disparo: ${error.message}`)
+          const errorResult = {
+            ok: false,
+            actionCompleted: false,
+            transferRequired: true,
+            error: 'No se pudo comprobar si el enlace ya había sido enviado. No lo reenvíes a ciegas; pasa la conversación a una persona.'
+          }
+          settleAction(action, 'error', {
+            error: errorResult.error,
+            linkPrepared: false,
+            deliveryConfirmed: false,
+            transferRequired: true
+          })
+          return errorResult
+        }
+      }
+      if (alreadySent) {
+        settleAction(action, 'ok', {
+          actionCompleted: false,
+          alreadySent: true,
+          triggerLinkId: link.id,
+          linkPrepared: true,
+          priorSendEventFound: true,
+          deliveryConfirmed: false,
+          objectiveCompleted: false
+        })
         return {
           ok: true,
+          actionCompleted: false,
           alreadySent: true,
           triggerLinkId: link.id,
           triggerLinkPublicId: link.publicId || null,
@@ -911,14 +1236,7 @@ export function createConversationalTools(ctx) {
           note: 'Ya enviaste este enlace hace poco. NO lo reenvíes salvo que el cliente lo pida explícitamente.'
         }
       }
-
-      pushAction(ctx, 'send_trigger_link', {
-        objective: config.objective,
-        intencionDetectada,
-        triggerLinkId: link.id,
-        triggerLinkPublicId: link.publicId || null,
-        effect: { liveEffect: 'ENVIARÍA el enlace de disparo (el objetivo se cumple sólo cuando el contacto lo toque)', marksObjectiveCompleted: false }
-      })
+      let telemetryWarning = false
       if (!ctx.dryRun) {
         await recordConversationalAgentEvent({
           contactId: ctx.contactId,
@@ -931,11 +1249,24 @@ export function createConversationalTools(ctx) {
             triggerLinkPublicId: link.publicId || null,
             triggerLinkName: link.name
           }
+        }).catch((error) => {
+          telemetryWarning = true
+          logger.warn(`[Agente conversacional] El enlace de disparo sí quedó preparado, pero falló su telemetría: ${error.message}`)
         })
       }
 
+      settleAction(action, ctx.dryRun ? 'simulated' : 'ok', {
+        actionCompleted: !ctx.dryRun,
+        triggerLinkId: link.id,
+        linkPrepared: !ctx.dryRun,
+        deliveryConfirmed: false,
+        objectiveCompleted: false,
+        ...(telemetryWarning ? { warnings: ['trigger_link_event'] } : {})
+      })
+
       return {
         ok: true,
+        actionCompleted: !ctx.dryRun,
         simulated: Boolean(ctx.dryRun),
         triggerLinkId: link.id,
         triggerLinkPublicId: link.publicId || null,
@@ -954,20 +1285,53 @@ export function createConversationalTools(ctx) {
       resumen: z.string().describe('Resumen breve de la situación')
     }),
     execute: async ({ motivo, resumen }) => {
-      pushAction(ctx, 'send_to_human', {
+      const action = pushAction(ctx, 'send_to_human', {
         motivo,
         effect: { liveEffect: 'PASARÍA el chat a un humano (el bot deja de responder). NO marca el objetivo como cumplido.', marksObjectiveCompleted: false }
       })
-      if (ctx.dryRun) return { ok: true, simulated: true, signal: 'ready_for_human', wouldNotifyHuman: true, wouldMarkObjectiveCompleted: false }
+      if (ctx.dryRun) {
+        settleAction(action, 'simulated', {
+          actionCompleted: false,
+          signal: 'ready_for_human',
+          wouldNotifyHuman: true,
+          objectiveCompleted: false
+        })
+        return { ok: true, simulated: true, signal: 'ready_for_human', wouldNotifyHuman: true, wouldMarkObjectiveCompleted: false }
+      }
 
-      await setConversationSignal(ctx.contactId, 'ready_for_human', {
-        reason: motivo,
-        summary: resumen,
-        status: 'human',
-        agentId: config.id || ''
+      try {
+        await setConversationSignal(ctx.contactId, 'ready_for_human', {
+          reason: motivo,
+          summary: resumen,
+          status: 'human',
+          agentId: config.id || ''
+        })
+      } catch (error) {
+        logger.error(`[Agente conversacional] No se pudo transferir la conversación: ${error.message}`)
+        const errorResult = {
+          ok: false,
+          actionCompleted: false,
+          transferRequired: true,
+          error: 'No se pudo registrar la transferencia. No afirmes que un humano ya tomó el chat; requiere revisión manual.'
+        }
+        settleAction(action, 'error', { error: errorResult.error, transferRequired: true })
+        return errorResult
+      }
+
+      let notificationWarning = false
+      try {
+        await notifyHumanPriority(ctx, { reason: motivo, summary: resumen, signal: 'ready_for_human' })
+      } catch (error) {
+        notificationWarning = true
+        logger.warn(`[Agente conversacional] El handoff sí quedó registrado, pero falló la notificación: ${error.message}`)
+      }
+      settleAction(action, 'ok', {
+        signal: 'ready_for_human',
+        transferredToHuman: true,
+        objectiveCompleted: false,
+        ...(notificationWarning ? { warnings: ['priority_notification'] } : {})
       })
-      await notifyHumanPriority(ctx, { reason: motivo, summary: resumen, signal: 'ready_for_human' })
-      return { ok: true, signal: 'ready_for_human', note: 'Un humano seguirá la conversación. Si hace falta, cierra con una frase breve y natural (ej. que en un momento le confirmas).' }
+      return { ok: true, actionCompleted: true, signal: 'ready_for_human', note: 'Un humano seguirá la conversación. Si hace falta, cierra con una frase breve y natural (ej. que en un momento le confirmas).' }
     }
   })
 
@@ -980,20 +1344,47 @@ export function createConversationalTools(ctx) {
       nivelDeRiesgo: z.enum(['bajo', 'medio', 'alto']).describe('Nivel de riesgo percibido')
     }),
     execute: async ({ motivo, resumen, nivelDeRiesgo }) => {
-      ctx.suppressReply = true
-      pushAction(ctx, 'discard_conversation', {
+      const action = pushAction(ctx, 'discard_conversation', {
         motivo, nivelDeRiesgo,
         effect: { liveEffect: 'DESCARTARÍA la conversación (el bot deja de responder). NO marca el objetivo como cumplido.', marksObjectiveCompleted: false }
       })
-      if (ctx.dryRun) return { ok: true, simulated: true, signal: 'discarded' }
+      if (ctx.dryRun) {
+        ctx.suppressReply = true
+        settleAction(action, 'simulated', {
+          actionCompleted: false,
+          signal: 'discarded',
+          wouldSuppressReply: true,
+          objectiveCompleted: false
+        })
+        return { ok: true, simulated: true, signal: 'discarded' }
+      }
 
-      await setConversationSignal(ctx.contactId, 'discarded', {
-        reason: `${motivo} (riesgo ${nivelDeRiesgo})`,
-        summary: resumen,
-        status: 'discarded',
-        agentId: config.id || ''
+      try {
+        await setConversationSignal(ctx.contactId, 'discarded', {
+          reason: `${motivo} (riesgo ${nivelDeRiesgo})`,
+          summary: resumen,
+          status: 'discarded',
+          agentId: config.id || ''
+        })
+      } catch (error) {
+        logger.error(`[Agente conversacional] No se pudo descartar la conversación: ${error.message}`)
+        const errorResult = {
+          ok: false,
+          actionCompleted: false,
+          error: 'No se pudo registrar el descarte. No afirmes que la conversación quedó cerrada.'
+        }
+        settleAction(action, 'error', { error: errorResult.error })
+        return errorResult
+      }
+
+      ctx.suppressReply = true
+      settleAction(action, 'ok', {
+        signal: 'discarded',
+        conversationDiscarded: true,
+        replySuppressed: true,
+        objectiveCompleted: false
       })
-      return { ok: true, signal: 'discarded', note: 'Conversación descartada. No respondas nada más.' }
+      return { ok: true, actionCompleted: true, signal: 'discarded', note: 'Conversación descartada. No respondas nada más.' }
     }
   })
 

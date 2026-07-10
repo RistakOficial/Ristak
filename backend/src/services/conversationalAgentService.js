@@ -1,10 +1,12 @@
-import { randomUUID } from 'crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
 import { db } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
 import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
 import { DEFAULT_TIMEZONE, getAccountTimezone } from '../utils/dateUtils.js'
+import { getAccountCurrency } from '../utils/accountLocale.js'
 import { coalescedTimestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { buildTagMatchKeys, resolveTagIds, tagNamesForIds } from './contactTagsService.js'
 import { getOpenAIApiKey } from './aiAgentService.js'
@@ -14,6 +16,7 @@ import {
   normalizeConversationalAIProvider
 } from './conversationalAIProviderService.js'
 import { getConversationalAgentMaxAgents } from './licenseService.js'
+import { normalizeConversationIntelligenceState } from '../agents/conversational/intelligence/contracts.js'
 
 /**
  * Servicio del agente conversacional: runtime interno, estado por
@@ -54,7 +57,7 @@ const VALID_AGENT_IDENTITY_MODES = new Set(['business', 'user', 'custom', 'agent
 // Lenguaje: registro con el que habla (intermedio = calibración natural por defecto).
 const VALID_PERSUASION_LEVELS = new Set(['low', 'medium', 'high'])
 const VALID_LANGUAGE_LEVELS = new Set(['professional', 'intermediate', 'colloquial'])
-const DEFAULT_PERSUASION_LEVEL = 'high'
+const DEFAULT_PERSUASION_LEVEL = 'medium'
 const DEFAULT_LANGUAGE_LEVEL = 'intermediate'
 
 export function normalizeConversationalPersuasionLevel(value, fallback = DEFAULT_PERSUASION_LEVEL) {
@@ -84,6 +87,16 @@ export function buildNewContactScopeCutoffAt({ referenceDate = new Date() } = {}
 const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
 const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed', 'discarded'])
 const CONVERSATION_PAUSE_DURATION_MS = 24 * 60 * 60 * 1000
+export const CONVERSATIONAL_INBOUND_PROCESSING_LEASE_MS = 10 * 60 * 1000
+const EXPLICIT_ASSIGNMENT_SOURCES = new Set(['automatic', 'manual'])
+const CONVERSATION_STATE_CHANNEL_ALIASES = new Map([
+  ['wa', 'whatsapp'],
+  ['ig', 'instagram'],
+  ['fb', 'messenger'],
+  ['facebook', 'messenger'],
+  ['mail', 'email']
+])
+const conversationStateChannelContext = new AsyncLocalStorage()
 const DEFAULT_CONVERSATIONAL_AGENT_MODEL = getDefaultConversationalModelForProvider(DEFAULT_CONVERSATIONAL_AI_PROVIDER)
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const COMPLETION_SUMMARY_MODEL = CHEAPEST_OPENAI_MODEL
@@ -1104,6 +1117,9 @@ const GOAL_WORKFLOW_SALES_PAYMENT_MODES = new Set(['full_payment', 'deposit'])
 const GOAL_WORKFLOW_COMPLETION_MODES = new Set(['notify_only', 'assign_user'])
 export const CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH = '/webhook/conversational-agent/goal'
 export const DEFAULT_GOAL_TRACKING_PARAM = 'ristak_goal_id'
+export const CONVERSATIONAL_GOAL_TOKEN_QUERY_PARAM = 'ristak_goal_token'
+const CONVERSATIONAL_GOAL_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const CONVERSATIONAL_GOAL_TOKEN_BYTES = 32
 
 const DEFAULT_GOAL_WORKFLOW_CONFIG = {
   appointments: {
@@ -1317,8 +1333,44 @@ function getPublicWebhookBaseUrl() {
   return String(process.env.RENDER_EXTERNAL_URL || PUBLIC_URL || 'http://localhost:3002').replace(/\/+$/, '')
 }
 
-export function getConversationalGoalWebhookUrl() {
-  return new URL(CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH, `${getPublicWebhookBaseUrl()}/`).toString()
+export function getConversationalGoalWebhookUrl(goalId = '', confirmationToken = '') {
+  const cleanGoalId = String(goalId || '').trim()
+  const url = new URL(
+    cleanGoalId
+      ? `${CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH}/${encodeURIComponent(cleanGoalId)}`
+      : CONVERSATIONAL_AGENT_GOAL_WEBHOOK_PATH,
+    `${getPublicWebhookBaseUrl()}/`
+  )
+  const cleanConfirmationToken = String(confirmationToken || '').trim()
+  if (cleanGoalId && cleanConfirmationToken) {
+    url.searchParams.set(CONVERSATIONAL_GOAL_TOKEN_QUERY_PARAM, cleanConfirmationToken)
+  }
+  return url.toString()
+}
+
+function hashConversationGoalToken(token) {
+  return createHash('sha256').update(String(token || ''), 'utf8').digest('hex')
+}
+
+function createConversationGoalToken() {
+  const token = randomBytes(CONVERSATIONAL_GOAL_TOKEN_BYTES).toString('base64url')
+  return {
+    token,
+    hash: hashConversationGoalToken(token),
+    expiresAt: new Date(Date.now() + CONVERSATIONAL_GOAL_TOKEN_TTL_MS).toISOString()
+  }
+}
+
+function conversationGoalTokenMatches(storedHash, suppliedToken) {
+  const cleanStoredHash = String(storedHash || '').trim().toLowerCase()
+  const cleanSuppliedToken = String(suppliedToken || '').trim()
+  if (!/^[a-f0-9]{64}$/.test(cleanStoredHash) || !cleanSuppliedToken || cleanSuppliedToken.length > 256) {
+    return false
+  }
+
+  const expected = Buffer.from(cleanStoredHash, 'hex')
+  const received = Buffer.from(hashConversationGoalToken(cleanSuppliedToken), 'hex')
+  return expected.length === received.length && timingSafeEqual(expected, received)
 }
 
 function normalizeGoalLinkParams(params = {}) {
@@ -1350,6 +1402,61 @@ function normalizeGoalLinkObjective(value) {
   return 'custom'
 }
 
+function compactExpectedGoalReference(input = {}) {
+  const source = input && typeof input === 'object' ? input : {}
+  const amount = normalizeNullableAmount(source.amount)
+  return {
+    calendarId: String(source.calendarId || '').trim().slice(0, 160),
+    productId: String(source.productId || '').trim().slice(0, 160),
+    priceId: String(source.priceId || '').trim().slice(0, 160),
+    productName: String(source.productName || '').trim().slice(0, 240),
+    priceName: String(source.priceName || '').trim().slice(0, 160),
+    amount,
+    currency: String(source.currency || '').trim().slice(0, 12).toUpperCase()
+  }
+}
+
+async function resolveGoalLinkMetadata({ agentId, objective, metadata }) {
+  const source = metadata && typeof metadata === 'object' ? metadata : {}
+  const suppliedExpected = compactExpectedGoalReference(source.expected)
+  let configuredExpected = {}
+
+  if (agentId) {
+    const agent = await getConversationalAgent(String(agentId)).catch(() => null)
+    if (agent?.goalWorkflow) {
+      if (objective === 'citas') {
+        configuredExpected = {
+          calendarId: agent.goalWorkflow.appointments?.calendarId || agent.defaultCalendarId || ''
+        }
+      } else if (objective === 'ventas') {
+        const sales = agent.goalWorkflow.sales || {}
+        configuredExpected = {
+          productId: sales.productId,
+          priceId: sales.priceId,
+          productName: sales.productName,
+          priceName: sales.priceName,
+          amount: sales.amount,
+          currency: sales.currency || await getAccountCurrency()
+        }
+      }
+    }
+  }
+
+  const normalizedConfigured = compactExpectedGoalReference(configuredExpected)
+  const presentEntries = (value) => Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== '' && entry !== null && entry !== undefined)
+  )
+  const expected = {
+    ...presentEntries(suppliedExpected),
+    ...presentEntries(normalizedConfigured)
+  }
+
+  return {
+    ...source,
+    expected
+  }
+}
+
 function mapGoalLinkRow(row) {
   if (!row) return null
   return {
@@ -1361,6 +1468,8 @@ function mapGoalLinkRow(row) {
     targetUrl: row.target_url,
     sentUrl: row.sent_url,
     trackingParam: row.tracking_param || DEFAULT_GOAL_TRACKING_PARAM,
+    confirmationExpiresAt: row.confirmation_expires_at || null,
+    confirmationUsedAt: row.confirmation_used_at || null,
     externalObjectId: row.external_object_id || null,
     externalStatus: row.external_status || null,
     metadata: parseJsonField(row.metadata_json, {}),
@@ -1390,20 +1499,29 @@ export async function createConversationGoalLink({
   const cleanTargetUrl = normalizeGoalUrl(targetUrl)
   const cleanLinkParams = normalizeGoalLinkParams(linkParams)
   const sentUrl = buildTrackedGoalUrl(cleanTargetUrl, cleanTrackingParam, id, cleanLinkParams)
-  const cleanMetadata = metadata && typeof metadata === 'object' ? metadata : {}
+  const cleanAgentId = agentId ? String(agentId).trim() : null
+  const cleanMetadata = await resolveGoalLinkMetadata({
+    agentId: cleanAgentId,
+    objective: cleanObjective,
+    metadata
+  })
+  const confirmation = createConversationGoalToken()
 
   await db.run(`
     INSERT INTO conversational_agent_goal_links (
-      id, contact_id, agent_id, objective, status, target_url, sent_url, tracking_param, metadata_json
-    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+      id, contact_id, agent_id, objective, status, target_url, sent_url, tracking_param,
+      confirmation_token_hash, confirmation_expires_at, metadata_json
+    ) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
   `, [
     id,
     cleanContactId,
-    agentId ? String(agentId) : null,
+    cleanAgentId,
     cleanObjective,
     cleanTargetUrl,
     sentUrl,
     cleanTrackingParam,
+    confirmation.hash,
+    confirmation.expiresAt,
     JSON.stringify(cleanMetadata)
   ])
 
@@ -1412,7 +1530,7 @@ export async function createConversationGoalLink({
     eventType: 'goal_url_created',
     detail: {
       goalId: id,
-      agentId: agentId || null,
+      agentId: cleanAgentId,
       objective: cleanObjective,
       trackingParam: cleanTrackingParam,
       targetUrl: cleanTargetUrl,
@@ -1423,14 +1541,15 @@ export async function createConversationGoalLink({
   return {
     id,
     contactId: cleanContactId,
-    agentId: agentId || null,
+    agentId: cleanAgentId,
     objective: cleanObjective,
     status: 'pending',
     targetUrl: cleanTargetUrl,
     sentUrl,
     trackingParam: cleanTrackingParam,
     linkParams: cleanLinkParams,
-    callbackUrl: getConversationalGoalWebhookUrl()
+    callbackUrl: getConversationalGoalWebhookUrl(id, confirmation.token),
+    confirmationExpiresAt: confirmation.expiresAt
   }
 }
 
@@ -1466,6 +1585,35 @@ function normalizeComparableId(value) {
   return String(value || '').trim().toLowerCase()
 }
 
+const SUCCESSFUL_GOAL_STATUSES = {
+  citas: new Set(['scheduled', 'confirmed', 'booked', 'completed', 'complete']),
+  ventas: new Set(['paid', 'approved', 'succeeded', 'successful', 'settled', 'completed', 'complete']),
+  custom: new Set(['approved', 'confirmed', 'succeeded', 'successful', 'completed', 'complete'])
+}
+
+function assertSuccessfulGoalStatus(objective, externalStatus) {
+  const cleanStatus = String(externalStatus || '').trim().toLowerCase()
+  const allowed = SUCCESSFUL_GOAL_STATUSES[objective] || SUCCESSFUL_GOAL_STATUSES.custom
+  if (!cleanStatus || !allowed.has(cleanStatus)) {
+    throw Object.assign(
+      new Error('La confirmación no trae un estado exitoso permitido para este objetivo'),
+      { statusCode: 409 }
+    )
+  }
+  return cleanStatus
+}
+
+function throwExpectedGoalReferenceError(label, missing = false) {
+  const feminine = label === 'moneda'
+  const expectedLabel = `${feminine ? 'la' : 'el'} ${label} esperad${feminine ? 'a' : 'o'}`
+  throw Object.assign(
+    new Error(missing
+      ? `La confirmación no incluyó ${expectedLabel}`
+      : `La confirmación no corresponde a ${expectedLabel}`),
+    { statusCode: 409 }
+  )
+}
+
 function validateExpectedGoalReference(expected = {}, received = {}) {
   const checks = [
     ['calendarId', 'calendario'],
@@ -1475,22 +1623,37 @@ function validateExpectedGoalReference(expected = {}, received = {}) {
   for (const [key, label] of checks) {
     const expectedValue = normalizeComparableId(expected[key])
     const receivedValue = normalizeComparableId(received[key])
-    if (expectedValue && receivedValue && expectedValue !== receivedValue) {
-      const error = new Error(`La confirmación no corresponde al ${label} esperado`)
-      error.statusCode = 409
-      error.expected = { [key]: expected[key] }
-      error.received = { [key]: received[key] }
-      throw error
+    if (!expectedValue) continue
+    if (!receivedValue) throwExpectedGoalReferenceError(label, true)
+    if (expectedValue !== receivedValue) throwExpectedGoalReferenceError(label)
+  }
+
+  const expectedAmount = normalizeNullableAmount(expected.amount)
+  if (expectedAmount !== null) {
+    const receivedAmount = normalizeNullableAmount(received.amount)
+    if (receivedAmount === null) throwExpectedGoalReferenceError('importe', true)
+    if (Math.abs(expectedAmount - receivedAmount) > 0.000001) {
+      throwExpectedGoalReferenceError('importe')
     }
+  }
+
+  const expectedCurrency = String(expected.currency || '').trim().toUpperCase()
+  if (expectedCurrency) {
+    const receivedCurrency = String(received.currency || '').trim().toUpperCase()
+    if (!receivedCurrency) throwExpectedGoalReferenceError('moneda', true)
+    if (expectedCurrency !== receivedCurrency) throwExpectedGoalReferenceError('moneda')
   }
 }
 
 export async function completeConversationGoalLink(goalId, {
+  confirmationToken = '',
   externalObjectId = '',
   externalStatus = '',
   calendarId = '',
   productId = '',
   priceId = '',
+  amount = null,
+  currency = '',
   metadata = {}
 } = {}) {
   const cleanGoalId = String(goalId || '').trim()
@@ -1503,18 +1666,30 @@ export async function completeConversationGoalLink(goalId, {
     throw Object.assign(new Error('No encontramos ese objetivo pendiente'), { statusCode: 404 })
   }
 
-  const mapped = conversationSignalForGoalObjective(row.objective)
-  if (row.status === 'completed') {
-    return {
-      ...mapGoalLinkRow(row),
-      alreadyCompleted: true,
-      signal: mapped.signal,
-      callbackUrl: getConversationalGoalWebhookUrl()
-    }
+  if (!row.confirmation_token_hash) {
+    throw Object.assign(
+      new Error('Este enlace anterior no admite confirmación segura; genera y envía uno nuevo'),
+      { statusCode: 409 }
+    )
+  }
+  if (!conversationGoalTokenMatches(row.confirmation_token_hash, confirmationToken)) {
+    throw Object.assign(new Error('La confirmación del objetivo no está autorizada'), { statusCode: 401 })
+  }
+  if (row.confirmation_used_at || row.status !== 'pending') {
+    throw Object.assign(new Error('Esta confirmación ya fue utilizada'), { statusCode: 409 })
   }
 
+  const expirationMs = new Date(row.confirmation_expires_at).getTime()
+  if (!Number.isFinite(expirationMs) || Date.now() >= expirationMs) {
+    throw Object.assign(new Error('La confirmación del objetivo expiró; genera y envía un enlace nuevo'), { statusCode: 410 })
+  }
+
+  const mapped = conversationSignalForGoalObjective(row.objective)
   const cleanExternalObjectId = String(externalObjectId || '').trim().slice(0, 240)
-  const cleanExternalStatus = String(externalStatus || '').trim().slice(0, 120)
+  if (!cleanExternalObjectId) {
+    throw Object.assign(new Error('La confirmación requiere un ID externo real'), { statusCode: 400 })
+  }
+  const cleanExternalStatus = assertSuccessfulGoalStatus(row.objective, externalStatus).slice(0, 120)
   const cleanMetadata = metadata && typeof metadata === 'object' ? metadata : {}
   const previousMetadata = parseJsonField(row.metadata_json, {})
   const expected = previousMetadata.expected && typeof previousMetadata.expected === 'object'
@@ -1523,7 +1698,9 @@ export async function completeConversationGoalLink(goalId, {
   const receivedReference = {
     calendarId: String(calendarId || '').trim().slice(0, 160),
     productId: String(productId || '').trim().slice(0, 160),
-    priceId: String(priceId || '').trim().slice(0, 160)
+    priceId: String(priceId || '').trim().slice(0, 160),
+    amount: normalizeNullableAmount(amount),
+    currency: String(currency || '').trim().slice(0, 12).toUpperCase()
   }
   validateExpectedGoalReference(expected, receivedReference)
   const nextMetadata = {
@@ -1532,21 +1709,35 @@ export async function completeConversationGoalLink(goalId, {
     receivedReference
   }
 
-  await db.run(`
+  const completedAt = new Date().toISOString()
+  const update = await db.run(`
     UPDATE conversational_agent_goal_links
     SET status = 'completed',
         external_object_id = ?,
         external_status = ?,
         metadata_json = ?,
-        completed_at = CURRENT_TIMESTAMP,
-        updated_at = CURRENT_TIMESTAMP
+        confirmation_used_at = ?,
+        completed_at = ?,
+        updated_at = ?
     WHERE id = ?
+      AND status = 'pending'
+      AND confirmation_used_at IS NULL
+      AND confirmation_token_hash = ?
+      AND confirmation_expires_at > ?
   `, [
-    cleanExternalObjectId || null,
-    cleanExternalStatus || null,
+    cleanExternalObjectId,
+    cleanExternalStatus,
     JSON.stringify(nextMetadata),
-    cleanGoalId
+    completedAt,
+    completedAt,
+    completedAt,
+    cleanGoalId,
+    row.confirmation_token_hash,
+    completedAt
   ])
+  if (Number(update?.changes || update?.rowCount || 0) !== 1) {
+    throw Object.assign(new Error('Esta confirmación ya no está disponible'), { statusCode: 409 })
+  }
 
   const technicalSummary = cleanExternalObjectId
     ? `ID de ${mapped.objectLabel}: ${cleanExternalObjectId}`
@@ -1593,8 +1784,7 @@ export async function completeConversationGoalLink(goalId, {
 
   return {
     ...(await getConversationGoalLink(cleanGoalId)),
-    signal: mapped.signal,
-    callbackUrl: getConversationalGoalWebhookUrl()
+    signal: mapped.signal
   }
 }
 
@@ -1658,17 +1848,58 @@ const EXTERNAL_OBJECT_WEBHOOK_KEYS = [
   'orderId',
   'order_id',
   'invoiceId',
-  'invoice_id',
-  'id'
+  'invoice_id'
 ]
 
 const EXTERNAL_STATUS_WEBHOOK_KEYS = ['status', 'state', 'eventStatus', 'event_status', 'paymentStatus', 'payment_status']
 
 const CALENDAR_WEBHOOK_KEYS = ['calendarId', 'calendar_id', 'calendar', 'calendarRef', 'calendar_ref']
 const PRODUCT_WEBHOOK_KEYS = ['productId', 'product_id', 'product', 'productRef', 'product_ref', 'itemId', 'item_id', 'sku']
-const PRICE_WEBHOOK_KEYS = ['priceId', 'price_id', 'price', 'priceRef', 'price_ref', 'variantId', 'variant_id']
+const PRICE_WEBHOOK_KEYS = ['priceId', 'price_id', 'priceRef', 'price_ref', 'variantId', 'variant_id']
+const AMOUNT_WEBHOOK_KEYS = ['amount', 'total', 'paidAmount', 'paid_amount', 'amountPaid', 'amount_paid', 'priceAmount', 'price_amount']
+const CURRENCY_WEBHOOK_KEYS = ['currency', 'currencyCode', 'currency_code']
+const GOAL_TOKEN_WEBHOOK_KEYS = [
+  CONVERSATIONAL_GOAL_TOKEN_QUERY_PARAM,
+  'confirmationToken',
+  'confirmation_token',
+  'goalToken',
+  'goal_token',
+  'token'
+]
+const GOAL_TOKEN_WEBHOOK_KEY_SET = new Set(GOAL_TOKEN_WEBHOOK_KEYS.map((key) => key.toLowerCase()))
 
-export async function completeConversationGoalLinkFromWebhook(payload = {}) {
+function extractTopLevelGoalToken(source = {}) {
+  for (const key of GOAL_TOKEN_WEBHOOK_KEYS) {
+    const value = source[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  return ''
+}
+
+function sanitizeGoalWebhookMetadata(value, seen = new Set(), depth = 0) {
+  if (value === null || value === undefined) return value
+  if (depth > 12) return null
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return null
+    seen.add(value)
+    const clean = value.map((entry) => sanitizeGoalWebhookMetadata(entry, seen, depth + 1))
+    seen.delete(value)
+    return clean
+  }
+  if (typeof value !== 'object') return value
+  if (seen.has(value)) return null
+
+  seen.add(value)
+  const clean = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (GOAL_TOKEN_WEBHOOK_KEY_SET.has(String(key).toLowerCase())) continue
+    clean[key] = sanitizeGoalWebhookMetadata(entry, seen, depth + 1)
+  }
+  seen.delete(value)
+  return clean
+}
+
+export async function completeConversationGoalLinkFromWebhook(payload = {}, { confirmationToken = '' } = {}) {
   const source = payload && typeof payload === 'object' ? payload : {}
   const goalId = extractPayloadValue(source, GOAL_ID_WEBHOOK_KEYS) || extractGoalIdValue(source)
   if (!goalId) {
@@ -1676,12 +1907,15 @@ export async function completeConversationGoalLinkFromWebhook(payload = {}) {
   }
 
   return completeConversationGoalLink(goalId, {
+    confirmationToken: String(confirmationToken || '').trim() || extractTopLevelGoalToken(source),
     externalObjectId: extractPayloadValue(source, EXTERNAL_OBJECT_WEBHOOK_KEYS),
     externalStatus: extractPayloadValue(source, EXTERNAL_STATUS_WEBHOOK_KEYS),
     calendarId: extractPayloadValue(source, CALENDAR_WEBHOOK_KEYS),
     productId: extractPayloadValue(source, PRODUCT_WEBHOOK_KEYS),
     priceId: extractPayloadValue(source, PRICE_WEBHOOK_KEYS),
-    metadata: source
+    amount: extractPayloadValue(source, AMOUNT_WEBHOOK_KEYS),
+    currency: extractPayloadValue(source, CURRENCY_WEBHOOK_KEYS),
+    metadata: sanitizeGoalWebhookMetadata(source)
   })
 }
 
@@ -2115,11 +2349,17 @@ async function backfillLegacyConversationStatesToPrimaryAgent({ includeHistorica
   await db.run(`
     UPDATE conversational_agent_state
     SET agent_id = ?,
+        assignment_source = COALESCE(NULLIF(assignment_source, ''), 'legacy'),
+        assigned_at = COALESCE(assigned_at, activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
+        assigned_by = COALESCE(assigned_by, updated_by, 'migration'),
         activated_at = COALESCE(activated_at, created_at, updated_at, CURRENT_TIMESTAMP),
         activation_source = COALESCE(activation_source, 'automatic'),
         activated_by = COALESCE(activated_by, updated_by, 'system'),
         updated_at = CURRENT_TIMESTAMP
     WHERE (agent_id IS NULL OR agent_id = '')
+      AND (assignment_source IS NULL OR assignment_source = '' OR assignment_source = 'legacy')
+      AND COALESCE(activation_source, '') <> 'manual'
+      AND COALESCE(updated_by, '') NOT IN ('user', 'human', 'manual')
       AND (
         signal IS NOT NULL
         OR last_reply_at IS NOT NULL
@@ -2231,7 +2471,9 @@ function stateLastActivity(row) {
 }
 
 function isCompletedAgentState(row) {
-  return row?.status === 'completed' || (Boolean(row?.signal) && row.signal !== 'discarded')
+  // Una señal de handoff puede ser ready_for_human con status=human; eso es una
+  // transferencia, no una meta cumplida. El estado explícito es la fuente de verdad.
+  return row?.status === 'completed'
 }
 
 function isDiscardedAgentState(row) {
@@ -2275,6 +2517,16 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
     errorEvents: toMetricNumber(eventSummary.error_events),
     assignedEvents: toMetricNumber(eventSummary.assigned_events),
     replyEvents: toMetricNumber(eventSummary.reply_events),
+    appointmentEvents: toMetricNumber(eventSummary.appointment_events),
+    paymentLinkEvents: toMetricNumber(eventSummary.payment_link_events),
+    goalCompletionEvents: toMetricNumber(eventSummary.goal_completion_events),
+    followUpSentEvents: toMetricNumber(eventSummary.follow_up_sent_events),
+    followUpSuppressedEvents: toMetricNumber(eventSummary.follow_up_suppressed_events),
+    humanHandoffEvents: toMetricNumber(eventSummary.human_handoff_events),
+    toolFailureEvents: toMetricNumber(eventSummary.tool_failure_events),
+    intelligenceAssessmentEvents: toMetricNumber(eventSummary.intelligence_assessment_events),
+    responseRate: 0,
+    toolFailureRate: 0,
     successRate: 0,
     byAgent: []
   }
@@ -2335,6 +2587,13 @@ export function buildConversationalAgentMetrics({ agents = [], stateRows = [], e
   totals.successRate = closedConversations > 0
     ? Math.round((totals.completedConversations / closedConversations) * 100)
     : 0
+  const answeredConversations = (stateRows || []).filter((row) => Boolean(row.last_reply_at)).length
+  totals.responseRate = totals.totalTrackedConversations > 0
+    ? Math.round((answeredConversations / totals.totalTrackedConversations) * 100)
+    : 0
+  totals.toolFailureRate = totals.replyEvents + totals.toolFailureEvents > 0
+    ? Math.round((totals.toolFailureEvents / (totals.replyEvents + totals.toolFailureEvents)) * 100)
+    : 0
   totals.byAgent = Array.from(metricsByAgent.values())
     .sort((a, b) => (b.assignedConversations - a.assignedConversations) || (b.completedConversations - a.completedConversations))
 
@@ -2357,6 +2616,19 @@ export async function getConversationalAgentMetrics() {
         SUM(CASE WHEN event_type = 'signal_set' THEN 1 ELSE 0 END) AS success_events,
         SUM(CASE WHEN event_type = 'agent_assigned' THEN 1 ELSE 0 END) AS assigned_events,
         SUM(CASE WHEN event_type = 'reply_sent' THEN 1 ELSE 0 END) AS reply_events,
+        SUM(CASE WHEN event_type = 'appointment_booked' THEN 1 ELSE 0 END) AS appointment_events,
+        SUM(CASE WHEN event_type IN ('payment_link_created', 'payment_link_reused') THEN 1 ELSE 0 END) AS payment_link_events,
+        SUM(CASE WHEN event_type IN ('goal_url_completed', 'purchase_completed') THEN 1 ELSE 0 END) AS goal_completion_events,
+        SUM(CASE WHEN event_type = 'follow_up_sent' THEN 1 ELSE 0 END) AS follow_up_sent_events,
+        SUM(CASE WHEN event_type = 'follow_up_suppressed' THEN 1 ELSE 0 END) AS follow_up_suppressed_events,
+        SUM(CASE WHEN event_type IN ('human_handoff', 'runtime_human_handoff_forced') THEN 1 ELSE 0 END) AS human_handoff_events,
+        SUM(CASE
+          WHEN LOWER(event_type) LIKE '%tool%failed%'
+            OR LOWER(event_type) LIKE '%calendar%error%'
+            OR event_type = 'payment_link_failed'
+          THEN 1 ELSE 0
+        END) AS tool_failure_events,
+        SUM(CASE WHEN event_type = 'conversation_intelligence_updated' THEN 1 ELSE 0 END) AS intelligence_assessment_events,
         SUM(CASE
           WHEN event_type = 'error'
             OR LOWER(event_type) LIKE '%error%'
@@ -2905,7 +3177,15 @@ export async function deleteConversationalAgent(agentId) {
   const current = await getConversationalAgent(agentId)
   if (!current) return false
   await db.run('DELETE FROM conversational_agents WHERE id = ?', [agentId])
-  await db.run('UPDATE conversational_agent_state SET agent_id = NULL WHERE agent_id = ?', [agentId]).catch(() => {})
+  await db.run(`
+    UPDATE conversational_agent_state
+    SET agent_id = NULL,
+        assignment_source = 'released',
+        assigned_by = 'agent_deleted',
+        updated_by = 'agent_deleted',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE agent_id = ?
+  `, [agentId]).catch(() => {})
   await recordConversationalAgentEvent({ eventType: 'agent_deleted', detail: { agentId, name: current.name } })
   return true
 }
@@ -3546,15 +3826,10 @@ export function contactIsOutOfScopeForAgent(agent, ctx) {
   return created < cut // el contacto nació ANTES del corte → este agente lo ignora
 }
 
-export function isStaleInheritedConversationStateForAgent(state, agent = null) {
+export function isUnverifiedConversationAssignment(state) {
   if (!state?.agentId) return false
-  const stateCreatedAt = state.createdAt || state.activatedAt || null
-  const agentCreatedAt = agent?.createdAt || state.agentCreatedAt || null
-  if (!stateCreatedAt || !agentCreatedAt) return false
-  const stateCreated = parseTimestampMsUtc(stateCreatedAt)
-  const agentCreated = parseTimestampMsUtc(agentCreatedAt)
-  if (!Number.isFinite(stateCreated) || !Number.isFinite(agentCreated)) return false
-  return stateCreated < agentCreated
+  const source = String(state.assignmentSource || '').trim().toLowerCase()
+  return !EXPLICIT_ASSIGNMENT_SOURCES.has(source)
 }
 
 export async function matchAgentForMessage({ contactId, messageText = '', channel = 'whatsapp', excludeAgentId = null, excludeAgentIds = [], ruleContext = null } = {}) {
@@ -3808,12 +4083,22 @@ function mapStateRow(row) {
     lastInboundMessageId: row.last_inbound_message_id || null,
     lastAnsweredInboundMessageId: row.last_answered_inbound_message_id || null,
     lastReplyAt: row.last_reply_at || null,
+    inboundProcessingMessageId: row.inbound_processing_message_id || null,
+    inboundProcessingStatus: row.inbound_processing_status || null,
+    inboundProcessingClaimToken: row.inbound_processing_claim_token || null,
+    inboundProcessingLeaseUntilAt: row.inbound_processing_lease_until_at || null,
+    inboundProcessingStartedAt: row.inbound_processing_started_at || null,
+    inboundProcessingAttemptCount: Math.max(0, Number(row.inbound_processing_attempt_count) || 0),
+    inboundProcessingLastError: row.inbound_processing_last_error || null,
     followUpBaseMessageId: row.follow_up_base_message_id || null,
     followUpSentCount: Math.max(0, Number(row.follow_up_sent_count) || 0),
     followUpLastSentAt: row.follow_up_last_sent_at || null,
     activatedAt: row.activated_at || null,
     activationSource: row.activation_source || null,
     activatedBy: row.activated_by || null,
+    assignmentSource: row.assignment_source || null,
+    assignedAt: row.assigned_at || null,
+    assignedBy: row.assigned_by || null,
     updatedBy: row.updated_by || null,
     agentId: row.agent_id || null,
     agentName: row.agent_name || null,
@@ -3823,6 +4108,13 @@ function mapStateRow(row) {
       ? (toBoolean(row.agent_hide_attended_notifications) || toBoolean(row.agent_hide_attended))
       : null,
     closingContext: normalizeStoredAdvancedClosingContext(row.closing_context_json || '{}'),
+    intelligence: normalizeConversationIntelligenceState(parseJsonField(row.intelligence_state_json, {}), {
+      objective: row.agent_objective || 'custom',
+      channel: row.channel || 'whatsapp'
+    }),
+    intelligencePolicyHash: row.intelligence_policy_hash || null,
+    intelligenceSource: row.intelligence_source || null,
+    intelligenceUpdatedAt: row.intelligence_updated_at || null,
     createdAt: row.created_at || null,
     updatedAt: row.updated_at || null
   }
@@ -3831,6 +4123,29 @@ function mapStateRow(row) {
 function normalizeConversationStateAgentId(agentId) {
   const clean = String(agentId || '').trim()
   return clean || null
+}
+
+function normalizeConversationStateChannel(channel, fallback = 'whatsapp') {
+  const raw = String(channel || '').trim().toLowerCase().replace(/[\s-]+/g, '_')
+  if (!raw) return fallback
+  return CONVERSATION_STATE_CHANNEL_ALIASES.get(raw) || raw
+}
+
+function normalizeOptionalConversationStateChannel(channel) {
+  if (channel === null || channel === undefined || String(channel).trim() === '') {
+    const contextualChannel = conversationStateChannelContext.getStore()?.channel
+    return contextualChannel ? normalizeConversationStateChannel(contextualChannel) : null
+  }
+  return normalizeConversationStateChannel(channel)
+}
+
+export function runWithConversationStateChannel(channel, callback) {
+  if (typeof callback !== 'function') {
+    throw new TypeError('runWithConversationStateChannel requiere una función')
+  }
+  return conversationStateChannelContext.run({
+    channel: normalizeConversationStateChannel(channel)
+  }, callback)
 }
 
 function conversationStateSortSql() {
@@ -3845,9 +4160,13 @@ function conversationStateSortSql() {
   `
 }
 
-async function loadConversationStateRow(contactId, { agentId = null } = {}) {
+async function loadConversationStateRow(contactId, { agentId = null, channel = null } = {}) {
   if (!contactId) return null
   const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
+  const channelFilter = cleanChannel
+    ? " AND COALESCE(NULLIF(s.channel, ''), 'whatsapp') = ?"
+    : ''
   if (cleanAgentId) {
     return db.get(`
       SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
@@ -3856,9 +4175,9 @@ async function loadConversationStateRow(contactId, { agentId = null } = {}) {
              a.hide_attended_notifications AS agent_hide_attended_notifications
       FROM conversational_agent_state s
       LEFT JOIN conversational_agents a ON a.id = s.agent_id
-      WHERE s.contact_id = ? AND s.agent_id = ?
+      WHERE s.contact_id = ? AND s.agent_id = ?${channelFilter}
       LIMIT 1
-    `, [contactId, cleanAgentId])
+    `, [contactId, cleanAgentId, ...(cleanChannel ? [cleanChannel] : [])])
   }
 
   return db.get(`
@@ -3868,10 +4187,10 @@ async function loadConversationStateRow(contactId, { agentId = null } = {}) {
            a.hide_attended_notifications AS agent_hide_attended_notifications
     FROM conversational_agent_state s
     LEFT JOIN conversational_agents a ON a.id = s.agent_id
-    WHERE s.contact_id = ?
+    WHERE s.contact_id = ?${channelFilter}
     ORDER BY ${conversationStateSortSql()}
     LIMIT 1
-  `, [contactId])
+  `, [contactId, ...(cleanChannel ? [cleanChannel] : [])])
 }
 
 async function loadConversationStateRowById(stateId) {
@@ -3981,12 +4300,31 @@ async function expirePausedConversationStates() {
   return stateIds.length
 }
 
-export async function assignAgentToConversation(contactId, agentId, { activationSource = 'automatic', updatedBy = 'system' } = {}) {
+export async function assignAgentToConversation(contactId, agentId, {
+  activationSource = 'automatic',
+  assignmentSource = activationSource,
+  updatedBy = 'system',
+  channel = null
+} = {}) {
   const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
   if (cleanAgentId) {
-    const state = await ensureConversationState(contactId, { agentId: cleanAgentId })
-    const assignments = ['agent_id = ?', "status = 'active'", 'paused_until_at = NULL', 'updated_by = ?']
-    const params = [cleanAgentId, updatedBy]
+    const state = await ensureConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
+    const cleanAssignmentSource = normalizeConversationActivationSource(assignmentSource, updatedBy)
+    const assignments = [
+      'agent_id = ?',
+      "status = 'active'",
+      'paused_until_at = NULL',
+      'assignment_source = ?',
+      'assigned_at = CURRENT_TIMESTAMP',
+      'assigned_by = ?',
+      'updated_by = ?'
+    ]
+    const params = [cleanAgentId, cleanAssignmentSource, String(updatedBy || 'system').trim() || 'system', updatedBy]
+    if (cleanChannel) {
+      assignments.push('channel = ?')
+      params.push(cleanChannel)
+    }
     appendActivationAssignments(assignments, params, { activationSource, updatedBy })
     assignments.push('updated_at = CURRENT_TIMESTAMP')
     params.push(state.id)
@@ -3995,41 +4333,46 @@ export async function assignAgentToConversation(contactId, agentId, { activation
       SET ${assignments.join(', ')}
       WHERE id = ?
     `, params)
-    return getConversationState(contactId, { agentId: cleanAgentId })
+    return getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
   }
 
-  const state = await getConversationState(contactId)
+  const state = await getConversationState(contactId, { channel: cleanChannel })
   if (!state?.id) return null
   await db.run(`
     UPDATE conversational_agent_state
     SET agent_id = NULL,
+        assignment_source = 'released',
+        assigned_by = ?,
         updated_by = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [updatedBy, state.id])
-  return getConversationState(contactId)
+  `, [String(updatedBy || 'system').trim() || 'system', updatedBy, state.id])
+  return getConversationState(contactId, { channel: cleanChannel })
 }
 
-export async function releaseAgentFromConversation(contactId, agentId, { updatedBy = 'agent' } = {}) {
+export async function releaseAgentFromConversation(contactId, agentId, { updatedBy = 'agent', channel = null } = {}) {
   const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
   if (!contactId || !cleanAgentId) return null
-  const state = await getConversationState(contactId, { agentId: cleanAgentId })
+  const state = await getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
   if (!state?.id) return null
 
   await db.run(`
     UPDATE conversational_agent_state
     SET agent_id = NULL,
+        assignment_source = 'released',
+        assigned_by = ?,
         updated_by = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
-  `, [updatedBy, state.id])
+  `, [String(updatedBy || 'agent').trim() || 'agent', updatedBy, state.id])
 
-  return getConversationState(contactId)
+  return getConversationState(contactId, { channel: cleanChannel })
 }
 
-export async function getConversationState(contactId, { agentId = null } = {}) {
+export async function getConversationState(contactId, { agentId = null, channel = null } = {}) {
   if (!contactId) return null
-  const row = await loadConversationStateRow(contactId, { agentId })
+  const row = await loadConversationStateRow(contactId, { agentId, channel })
   if (isExpiredPausedStateRow(row)) {
     await activateExpiredPause(row)
     const nextRow = await loadConversationStateRowById(row.id)
@@ -4038,9 +4381,13 @@ export async function getConversationState(contactId, { agentId = null } = {}) {
   return mapStateRow(row)
 }
 
-export async function listConversationStatesForContact(contactId) {
+export async function listConversationStatesForContact(contactId, { channel = null } = {}) {
   if (!contactId) return []
   await expirePausedConversationStates()
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
+  const channelFilter = cleanChannel
+    ? " AND COALESCE(NULLIF(s.channel, ''), 'whatsapp') = ?"
+    : ''
   const rows = await db.all(`
     SELECT s.*, a.name AS agent_name, a.enabled AS agent_enabled,
            a.created_at AS agent_created_at,
@@ -4048,9 +4395,9 @@ export async function listConversationStatesForContact(contactId) {
            a.hide_attended_notifications AS agent_hide_attended_notifications
     FROM conversational_agent_state s
     LEFT JOIN conversational_agents a ON a.id = s.agent_id
-    WHERE s.contact_id = ?
+    WHERE s.contact_id = ?${channelFilter}
     ORDER BY ${conversationStateSortSql()}
-  `, [contactId]).catch(() => [])
+  `, [contactId, ...(cleanChannel ? [cleanChannel] : [])]).catch(() => [])
   return rows.map(mapStateRow)
 }
 
@@ -4093,40 +4440,59 @@ export async function updateConversationClosingContext(contactId, patch = {}, { 
   return { context, changedKeys }
 }
 
-export async function ensureConversationState(contactId, { agentId = null } = {}) {
+export async function ensureConversationState(contactId, { agentId = null, channel = null } = {}) {
   if (!contactId) return null
   const cleanAgentId = normalizeConversationStateAgentId(agentId)
-  const existing = await getConversationState(contactId, { agentId: cleanAgentId })
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
+  const stateChannel = cleanChannel || 'whatsapp'
+  const existing = await getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
   if (existing) return existing
   if (cleanAgentId) {
+    const channelFilter = cleanChannel
+      ? " AND COALESCE(NULLIF(s.channel, ''), 'whatsapp') = ?"
+      : ''
     const claimableLegacyState = await db.get(`
-      SELECT id
+      SELECT id, channel
       FROM conversational_agent_state s
       WHERE s.contact_id = ?
         AND s.agent_id IS NULL
         AND s.status = 'active'
+        ${channelFilter}
       ORDER BY ${conversationStateSortSql()}
       LIMIT 1
-    `, [contactId]).catch(() => null)
+    `, [contactId, ...(cleanChannel ? [cleanChannel] : [])]).catch(() => null)
     if (claimableLegacyState?.id) {
+      const adoptedChannel = cleanChannel || normalizeConversationStateChannel(claimableLegacyState.channel)
       await db.run(`
         UPDATE conversational_agent_state
         SET agent_id = ?,
+            channel = ?,
+            assignment_source = COALESCE(assignment_source, 'legacy'),
+            assigned_at = COALESCE(assigned_at, CURRENT_TIMESTAMP),
+            assigned_by = COALESCE(assigned_by, 'system'),
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
           AND agent_id IS NULL
-      `, [cleanAgentId, claimableLegacyState.id])
-      return getConversationState(contactId, { agentId: cleanAgentId })
+      `, [cleanAgentId, adoptedChannel, claimableLegacyState.id])
+      return getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
     }
   }
   const id = `cas_${randomUUID()}`
   await db.run(`
-    INSERT INTO conversational_agent_state (id, contact_id, agent_id, status, activated_at, activation_source, activated_by)
-    VALUES (?, ?, ?, 'active', ?, ?, ?)
+    INSERT INTO conversational_agent_state (
+      id, contact_id, agent_id, channel, status,
+      assignment_source, assigned_at, assigned_by,
+      activated_at, activation_source, activated_by
+    )
+    VALUES (?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)
   `, [
     id,
     contactId,
     cleanAgentId,
+    stateChannel,
+    cleanAgentId ? 'legacy' : null,
+    null,
+    cleanAgentId ? 'system' : null,
     null,
     null,
     null
@@ -4134,7 +4500,201 @@ export async function ensureConversationState(contactId, { agentId = null } = {}
     const duplicate = /unique|duplicate|constraint/i.test(String(error?.message || ''))
     if (!duplicate) throw error
   })
-  return getConversationState(contactId, { agentId: cleanAgentId })
+  return getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
+}
+
+function dbMutationCount(result) {
+  return Math.max(0, Number(result?.changes ?? result?.rowCount) || 0)
+}
+
+function processingLeaseIso({ nowMs = Date.now(), leaseMs = CONVERSATIONAL_INBOUND_PROCESSING_LEASE_MS } = {}) {
+  const cleanNowMs = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now()
+  const cleanLeaseMs = Math.max(1000, Number(leaseMs) || CONVERSATIONAL_INBOUND_PROCESSING_LEASE_MS)
+  return {
+    nowMs: cleanNowMs,
+    nowIso: new Date(cleanNowMs).toISOString(),
+    leaseUntilIso: new Date(cleanNowMs + cleanLeaseMs).toISOString()
+  }
+}
+
+/**
+ * Reclama un inbound con compare-and-set. Un claim vivo bloquea a otras
+ * instancias; un claim fallido o con lease vencido puede tomarlo de nuevo.
+ */
+export async function claimConversationInboundMessage(contactId, messageId, {
+  agentId = null,
+  channel = 'whatsapp',
+  nowMs = Date.now(),
+  leaseMs = CONVERSATIONAL_INBOUND_PROCESSING_LEASE_MS,
+  claimToken = `caic_${randomUUID()}`
+} = {}) {
+  const cleanMessageId = String(messageId || '').trim()
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  const cleanChannel = normalizeConversationStateChannel(channel)
+  const cleanClaimToken = String(claimToken || '').trim() || `caic_${randomUUID()}`
+  if (!contactId || !cleanMessageId || !cleanAgentId) {
+    return { claimed: false, reason: 'missing_identity', claimToken: null, state: null }
+  }
+
+  const state = await ensureConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
+  if (!state?.id) return { claimed: false, reason: 'missing_state', claimToken: null, state: null }
+  const lease = processingLeaseIso({ nowMs, leaseMs })
+  const result = await db.run(`
+    UPDATE conversational_agent_state
+    SET last_inbound_message_id = ?,
+        inbound_processing_message_id = ?,
+        inbound_processing_status = 'processing',
+        inbound_processing_claim_token = ?,
+        inbound_processing_lease_until_at = ?,
+        inbound_processing_started_at = ?,
+        inbound_processing_attempt_count = CASE
+          WHEN inbound_processing_message_id = ?
+            THEN COALESCE(inbound_processing_attempt_count, 0) + 1
+          ELSE 1
+        END,
+        inbound_processing_last_error = NULL,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND status = 'active'
+      AND (signal IS NULL OR signal = '')
+      AND (last_answered_inbound_message_id IS NULL OR last_answered_inbound_message_id <> ?)
+      AND NOT (
+        COALESCE(inbound_processing_message_id, '') = ?
+        AND COALESCE(inbound_processing_status, '') = 'completed'
+      )
+      AND (
+        inbound_processing_status IS NULL
+        OR inbound_processing_status = ''
+        OR inbound_processing_status = 'failed'
+        OR (
+          inbound_processing_status = 'processing'
+          AND (
+            inbound_processing_lease_until_at IS NULL
+            OR inbound_processing_lease_until_at <= ?
+          )
+        )
+        OR (
+          inbound_processing_status = 'completed'
+          AND (inbound_processing_message_id IS NULL OR inbound_processing_message_id <> ?)
+        )
+      )
+  `, [
+    cleanMessageId,
+    cleanMessageId,
+    cleanClaimToken,
+    lease.leaseUntilIso,
+    lease.nowIso,
+    cleanMessageId,
+    state.id,
+    cleanMessageId,
+    cleanMessageId,
+    lease.nowIso,
+    cleanMessageId
+  ])
+
+  const nextState = await getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
+  if (dbMutationCount(result) > 0) {
+    return {
+      claimed: true,
+      reason: 'claimed',
+      claimToken: cleanClaimToken,
+      leaseUntilAt: lease.leaseUntilIso,
+      state: nextState
+    }
+  }
+
+  let reason = 'claim_conflict'
+  if (!nextState || nextState.status !== 'active' || nextState.signal) reason = 'state_not_runnable'
+  else if (nextState.lastAnsweredInboundMessageId === cleanMessageId) reason = 'already_answered'
+  else if (
+    nextState.inboundProcessingMessageId === cleanMessageId &&
+    nextState.inboundProcessingStatus === 'completed'
+  ) reason = 'already_completed'
+  else if (nextState.inboundProcessingStatus === 'processing') {
+    const leaseUntilMs = Date.parse(nextState.inboundProcessingLeaseUntilAt || '')
+    if (Number.isFinite(leaseUntilMs) && leaseUntilMs > lease.nowMs) reason = 'lease_active'
+  }
+
+  return { claimed: false, reason, claimToken: null, state: nextState }
+}
+
+export async function completeConversationInboundMessage(contactId, messageId, {
+  agentId = null,
+  channel = 'whatsapp',
+  claimToken = '',
+  answered = false
+} = {}) {
+  const cleanMessageId = String(messageId || '').trim()
+  const cleanClaimToken = String(claimToken || '').trim()
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  const cleanChannel = normalizeConversationStateChannel(channel)
+  if (!contactId || !cleanMessageId || !cleanClaimToken || !cleanAgentId) {
+    return { completed: false, state: null }
+  }
+  const state = await getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
+  if (!state?.id) return { completed: false, state: null }
+
+  const replyAssignments = answered
+    ? `,
+        last_answered_inbound_message_id = ?,
+        last_reply_at = CURRENT_TIMESTAMP,
+        activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP),
+        activation_source = COALESCE(activation_source, 'automatic'),
+        activated_by = COALESCE(activated_by, 'agent')`
+    : ''
+  const params = answered ? [cleanMessageId] : []
+  params.push(state.id, cleanMessageId, cleanClaimToken)
+  const result = await db.run(`
+    UPDATE conversational_agent_state
+    SET inbound_processing_status = 'completed',
+        inbound_processing_claim_token = NULL,
+        inbound_processing_lease_until_at = NULL,
+        inbound_processing_last_error = NULL${replyAssignments},
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND inbound_processing_message_id = ?
+      AND inbound_processing_claim_token = ?
+      AND inbound_processing_status = 'processing'
+  `, params)
+
+  return {
+    completed: dbMutationCount(result) > 0,
+    state: await getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
+  }
+}
+
+export async function failConversationInboundMessage(contactId, messageId, {
+  agentId = null,
+  channel = 'whatsapp',
+  claimToken = '',
+  error = ''
+} = {}) {
+  const cleanMessageId = String(messageId || '').trim()
+  const cleanClaimToken = String(claimToken || '').trim()
+  const cleanAgentId = normalizeConversationStateAgentId(agentId)
+  const cleanChannel = normalizeConversationStateChannel(channel)
+  if (!contactId || !cleanMessageId || !cleanClaimToken || !cleanAgentId) {
+    return { failed: false, state: null }
+  }
+  const state = await getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
+  if (!state?.id) return { failed: false, state: null }
+  const cleanError = String(error || 'processing_failed').trim().slice(0, 2000) || 'processing_failed'
+  const result = await db.run(`
+    UPDATE conversational_agent_state
+    SET inbound_processing_status = 'failed',
+        inbound_processing_claim_token = NULL,
+        inbound_processing_lease_until_at = NULL,
+        inbound_processing_last_error = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND inbound_processing_message_id = ?
+      AND inbound_processing_claim_token = ?
+      AND inbound_processing_status = 'processing'
+  `, [cleanError, state.id, cleanMessageId, cleanClaimToken])
+  return {
+    failed: dbMutationCount(result) > 0,
+    state: await getConversationState(contactId, { agentId: cleanAgentId, channel: cleanChannel })
+  }
 }
 
 export async function setConversationStatus(contactId, status, {
@@ -4142,12 +4702,14 @@ export async function setConversationStatus(contactId, status, {
   clearSignal = false,
   pausedUntilAt = null,
   activationSource = '',
-  agentId = null
+  agentId = null,
+  channel = null
 } = {}) {
   if (!VALID_STATUSES.has(status)) {
     throw Object.assign(new Error(`Estado de conversación inválido: ${status}`), { statusCode: 400 })
   }
-  const state = await ensureConversationState(contactId, { agentId })
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
+  const state = await ensureConversationState(contactId, { agentId, channel: cleanChannel })
   if (!state?.id) return null
   const nextPausedUntilAt = status === 'paused' ? normalizePauseUntilAt(pausedUntilAt) : null
   const assignments = [
@@ -4158,6 +4720,15 @@ export async function setConversationStatus(contactId, status, {
   const params = [status, nextPausedUntilAt, updatedBy]
   if (shouldMarkConversationActivated({ status, updatedBy, activationSource })) {
     appendActivationAssignments(assignments, params, { activationSource, updatedBy })
+  }
+  const cleanUpdatedBy = String(updatedBy || '').trim().toLowerCase()
+  if (state.agentId && ['user', 'human', 'manual'].includes(cleanUpdatedBy)) {
+    assignments.push(
+      "assignment_source = 'manual'",
+      'assigned_at = COALESCE(assigned_at, CURRENT_TIMESTAMP)',
+      'assigned_by = ?'
+    )
+    params.push(String(updatedBy || 'user').trim() || 'user')
   }
   if (clearSignal) {
     assignments.push('signal = NULL', 'signal_reason = NULL', 'signal_summary = NULL', 'signal_at = NULL')
@@ -4177,7 +4748,10 @@ export async function setConversationStatus(contactId, status, {
     detail: { status, updatedBy, clearSignal, pausedUntilAt: nextPausedUntilAt, agentId: state.agentId || agentId || null }
   })
 
-  return getConversationState(contactId, { agentId: state.agentId || agentId || null })
+  return getConversationState(contactId, {
+    agentId: state.agentId || agentId || null,
+    channel: cleanChannel
+  })
 }
 
 export async function setConversationSignal(contactId, signal, {
@@ -4186,9 +4760,11 @@ export async function setConversationSignal(contactId, signal, {
   status = 'completed',
   actionSummarySource = '',
   originalSummary = '',
-  agentId = ''
+  agentId = '',
+  channel = null
 } = {}) {
-  const state = await ensureConversationState(contactId, { agentId })
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
+  const state = await ensureConversationState(contactId, { agentId, channel: cleanChannel })
   const currentState = state?.id
     ? await db.get('SELECT id, closing_context_json, channel, agent_id FROM conversational_agent_state WHERE id = ?', [state.id]).catch(() => null)
     : null
@@ -4244,11 +4820,12 @@ export async function setConversationSignal(contactId, signal, {
     detail
   })
 
-  return getConversationState(contactId, { agentId: effectiveAgentId })
+  return getConversationState(contactId, { agentId: effectiveAgentId, channel: cleanChannel })
 }
 
-export async function clearConversationSignal(contactId, { updatedBy = 'user', agentId = null } = {}) {
-  const state = await ensureConversationState(contactId, { agentId })
+export async function clearConversationSignal(contactId, { updatedBy = 'user', agentId = null, channel = null } = {}) {
+  const cleanChannel = normalizeOptionalConversationStateChannel(channel)
+  const state = await ensureConversationState(contactId, { agentId, channel: cleanChannel })
   if (!state?.id) return null
   // [Fase 0 — anti-ghosting] Al limpiar la señal, REACTIVAMOS el bot si había quedado
   // congelado por un cierre/pase automático (status 'completed' o 'human'). Antes se borraba
@@ -4271,7 +4848,10 @@ export async function clearConversationSignal(contactId, { updatedBy = 'user', a
     detail: { updatedBy, agentId: state.agentId || agentId || null, reactivated }
   })
 
-  return getConversationState(contactId, { agentId: state.agentId || agentId || null })
+  return getConversationState(contactId, {
+    agentId: state.agentId || agentId || null,
+    channel: cleanChannel
+  })
 }
 
 /**
@@ -4289,7 +4869,11 @@ export async function markHumanTakeoverIfActive(contactId, { updatedBy = 'human'
   logger.info(`[Agente conversacional] Humano tomó la conversación de ${contactId}; el agente deja de responder`)
   const updatedStates = []
   for (const state of activeStates) {
-    updatedStates.push(await setConversationStatus(contactId, 'human', { updatedBy, agentId: state.agentId || null }))
+    updatedStates.push(await setConversationStatus(contactId, 'human', {
+      updatedBy,
+      agentId: state.agentId || null,
+      channel: state.channel || 'whatsapp'
+    }))
   }
   return updatedStates[0] || states[0] || null
 }
@@ -4463,10 +5047,11 @@ export async function recordConversationalAgentEvent({ contactId = null, eventTy
   try {
     const detailJson = detail ? JSON.stringify(detail) : null
     const storedDetailJson = eventType === 'signal_set' ? detailJson : detailJson?.slice(0, 4000)
+    const agentId = String(detail?.agentId || detail?.agent_id || '').trim() || null
     await db.run(`
-      INSERT INTO conversational_agent_events (id, contact_id, event_type, detail_json)
-      VALUES (?, ?, ?, ?)
-    `, [`cae_${randomUUID()}`, contactId, eventType, storedDetailJson || null])
+      INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+      VALUES (?, ?, ?, ?, ?)
+    `, [`cae_${randomUUID()}`, contactId, agentId, eventType, storedDetailJson || null])
   } catch (error) {
     logger.warn(`[Agente conversacional] No se pudo registrar evento ${eventType}: ${error.message}`)
   }
