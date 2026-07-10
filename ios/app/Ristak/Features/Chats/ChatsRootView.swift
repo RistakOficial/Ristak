@@ -52,6 +52,9 @@ struct ChatsRootView: View {
             .task {
                 await bootstrap()
             }
+            .onChange(of: session.user?.id) {
+                refreshIdentityNamespace()
+            }
             .onChange(of: scenePhase) { _, phase in
                 viewModel.setScenePaused(phase != .active)
             }
@@ -106,6 +109,15 @@ struct ChatsRootView: View {
         }
 
         await viewModel.initialLoad()
+    }
+
+    private func refreshIdentityNamespace() {
+        viewModel.updateNamespace(
+            ChatAccountNamespace.make(
+                baseURL: session.baseURL,
+                userID: session.user?.id
+            )
+        )
     }
 
     /// Consume SOLO deep links de chat; el resto de destinos los navega el

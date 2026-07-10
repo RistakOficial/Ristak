@@ -10,6 +10,7 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
     let name: String
     let email: String
     let phone: String
+    let matchedPhone: String?
     let ltv: Double
     /// `"lead" | "appointment" | "customer"`.
     let status: String
@@ -53,7 +54,7 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
     let hasPrivateDm: Bool
 
     enum CodingKeys: String, CodingKey {
-        case id, createdAt, name, email, phone, ltv, status, lastPurchase
+        case id, createdAt, name, email, phone, matchedPhone, ltv, status, lastPurchase
         case purchases, successfulPaymentsCount
         case hasAppointments, hasShowedAppointment, hasAttendedAppointment
         case hasUpcomingConfirmedAppointmentBadge
@@ -79,6 +80,7 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
         name = container.flexibleString(forKey: .name) ?? ""
         email = container.flexibleString(forKey: .email) ?? ""
         phone = container.flexibleString(forKey: .phone) ?? ""
+        matchedPhone = container.flexibleString(forKey: .matchedPhone)
         ltv = container.flexibleDouble(forKey: .ltv) ?? 0
         status = container.flexibleString(forKey: .status) ?? "lead"
         lastPurchase = container.flexibleString(forKey: .lastPurchase)

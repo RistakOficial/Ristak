@@ -88,6 +88,18 @@ final class PaymentsHomeModel {
     // MARK: - Carga inicial
 
     func loadIfNeeded() async {
+        let performanceSpan = RistakObservability.begin(.paymentsLoad)
+        defer {
+            let outcome: RistakPerformanceOutcome
+            if accessDenied {
+                outcome = .unavailable
+            } else if recentError != nil {
+                outcome = .failed
+            } else {
+                outcome = .success
+            }
+            performanceSpan.finish(outcome: outcome, itemCount: recentPayments.count)
+        }
         // SWR: capacidades y recientes ya pintaron desde caché en `init`. Aquí
         // solo revalidamos contra la red (sin spinner si hubo caché).
         await refreshCapabilities()

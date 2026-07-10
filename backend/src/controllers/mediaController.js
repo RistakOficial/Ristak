@@ -18,6 +18,11 @@ import {
   uploadMediaAssetFromDataUrl
 } from '../services/mediaStorageService.js'
 import { logger } from '../utils/logger.js'
+import { prepareWhatsAppMediaForDirectUpload } from '../services/whatsappApiService.js'
+import {
+  createMediaUploadRequestHash,
+  runIdempotentMediaUpload
+} from '../services/mediaUploadSafetyService.js'
 
 const MAX_ARCHIVE_DOWNLOAD_ITEMS = Number(process.env.MEDIA_MAX_ARCHIVE_DOWNLOAD_ITEMS || 500)
 
@@ -126,20 +131,106 @@ function downloadInputError(message, status = 400, code = 'invalid_media_downloa
   return error
 }
 
-async function uploadInputFromRequest(req) {
+function cleanString(value = '') {
+  return String(value || '').trim()
+}
+
+export function directChatCompatibilityFromRequest(req = {}) {
+  // Este contrato se resuelve ANTES de multer. El body multipart todavía no
+  // existe en ese momento y jamás puede elevar después una subida normal a
+  // Chat ni heredar el límite general de 600 MB.
+  const module = cleanString(req.query?.module).toLowerCase()
+  const compatibility = cleanString(
+    req.query?.chatCompatibility || req.query?.chat_compatibility
+  ).toLowerCase()
+  const kind = cleanString(
+    req.query?.chatMediaKind || req.query?.chat_media_kind
+  ).toLowerCase()
+  return {
+    enabled: module === 'chat' && compatibility === 'whatsapp' &&
+      ['image', 'video', 'audio', 'document'].includes(kind),
+    kind
+  }
+}
+
+export function trustedUploadContextFromRequest(req = {}) {
   const body = req.body || {}
-  const common = {
-    businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
-    clientAccountId: body.clientAccountId || body.client_account_id || body.accountId || body.account_id || body.locationId || body.location_id || req.query?.clientAccountId || req.query?.client_account_id || req.query?.accountId || req.query?.account_id || req.query?.locationId || req.query?.location_id || null,
-    userId: body.userId || body.user_id || req.user?.userId || req.user?.id || null,
-    module: body.module || 'other',
-    moduleEntityId: body.moduleEntityId || body.module_entity_id || null,
-    isPublic: parseBoolean(body.isPublic ?? body.is_public, true),
-    deferStreamSync: parseBoolean(body.deferStreamSync ?? body.defer_stream_sync ?? req.query?.deferStreamSync ?? req.query?.defer_stream_sync, true),
-    clientUploadId: body.clientUploadId || body.client_upload_id || body.uploadSessionId || body.upload_session_id || req.get?.('x-ristak-upload-id') || null
+  const directChat = req.directChatUpload || directChatCompatibilityFromRequest(req)
+  if (!directChat.enabled) {
+    // Contrato administrativo legacy: Media/Sites sí puede seleccionar una
+    // cuenta/ruta explícita y ya está protegido por settings_media.
+    return {
+      businessId: body.businessId || body.business_id || req.query?.businessId || 'default',
+      clientAccountId: body.clientAccountId || body.client_account_id ||
+        body.accountId || body.account_id || body.locationId || body.location_id ||
+        req.query?.clientAccountId || req.query?.client_account_id ||
+        req.query?.accountId || req.query?.account_id ||
+        req.query?.locationId || req.query?.location_id || null,
+      userId: body.userId || body.user_id || req.user?.userId || req.user?.id || null,
+      module: body.module || 'other',
+      moduleEntityId: body.moduleEntityId || body.module_entity_id || null,
+      isPublic: parseBoolean(body.isPublic ?? body.is_public, true),
+      deferStreamSync: parseBoolean(
+        body.deferStreamSync ?? body.defer_stream_sync ??
+        req.query?.deferStreamSync ?? req.query?.defer_stream_sync,
+        true
+      ),
+      clientUploadId: body.clientUploadId || body.client_upload_id ||
+        body.uploadSessionId || body.upload_session_id ||
+        req.get?.('x-ristak-upload-id') || null
+    }
   }
 
+  return {
+    // Una instalación corresponde a un tenant. El cliente no puede inventar
+    // businessId/clientAccountId para abrir otra cuota o escribir en otra raíz.
+    businessId: cleanString(process.env.RISTAK_BUSINESS_ID) || 'default',
+    clientAccountId: null,
+    userId: req.user?.userId || req.user?.id || null,
+    module: 'chat',
+    moduleEntityId: body.moduleEntityId || body.module_entity_id || null,
+    isPublic: parseBoolean(body.isPublic ?? body.is_public, true),
+    deferStreamSync: parseBoolean(
+      body.deferStreamSync ?? body.defer_stream_sync ??
+      req.query?.deferStreamSync ?? req.query?.defer_stream_sync,
+      true
+    ),
+    clientUploadId: body.clientUploadId || body.client_upload_id ||
+      body.uploadSessionId || body.upload_session_id ||
+      req.get?.('x-ristak-upload-id') || null
+  }
+}
+
+export async function uploadInputFromRequest(req) {
+  const body = req.body || {}
+  const common = trustedUploadContextFromRequest(req)
+
   if (req.file?.path) {
+    const chatCompatibility = directChatCompatibilityFromRequest(req)
+    if (chatCompatibility.enabled) {
+      const buffer = await fs.readFile(req.file.path)
+      const prepared = await prepareWhatsAppMediaForDirectUpload({
+        buffer,
+        mimeType: req.file.mimetype,
+        filename: req.file.originalname,
+        kind: chatCompatibility.kind
+      })
+      return {
+        mode: 'buffer',
+        input: {
+          ...common,
+          buffer: prepared.buffer,
+          filename: prepared.filename,
+          mimeType: prepared.mimeType,
+          skipCompression: true,
+          metadata: {
+            ...(prepared.metadata || {}),
+            source: 'ios_direct_chat_upload'
+          }
+        }
+      }
+    }
+
     // No leemos el archivo a memoria: pasamos la ruta temporal en disco para que
     // el servicio transmita los archivos grandes/videos directo a Bunny (sin OOM).
     // El servicio se encarga de borrar el temporal al terminar.
@@ -178,19 +269,62 @@ async function uploadInputFromRequest(req) {
 }
 
 export async function uploadMediaHandler(req, res) {
+  const directChat = req.directChatUpload || directChatCompatibilityFromRequest(req)
+  let tempFileHandedOff = false
   try {
     logger.info('[MediaStorage] Subida iniciada')
-    const prepared = await uploadInputFromRequest(req)
-    const asset = prepared.mode === 'buffer'
-      ? await uploadMediaAsset(prepared.input)
-      : await uploadMediaAssetFromDataUrl(prepared.input)
+    const context = trustedUploadContextFromRequest(req)
+    const executeUpload = async () => {
+      const prepared = await uploadInputFromRequest(req)
+      // El storage es el único que puede entregar el temporal a un job diferido.
+      // El controller lo borra al salir salvo que reciba explícitamente el handoff.
+      prepared.input.onTempFileHandedOff = () => { tempFileHandedOff = true }
+      return prepared.mode === 'buffer'
+        ? uploadMediaAsset(prepared.input)
+        : uploadMediaAssetFromDataUrl(prepared.input)
+    }
+
+    let asset
+    if (context.clientUploadId) {
+      const requestHash = await createMediaUploadRequestHash({
+        descriptor: {
+          businessId: context.businessId,
+          userId: context.userId === null ? null : String(context.userId),
+          module: context.module,
+          moduleEntityId: context.moduleEntityId,
+          isPublic: context.isPublic,
+          deferStreamSync: context.deferStreamSync,
+          chatCompatibility: directChat.enabled ? 'whatsapp' : '',
+          chatMediaKind: directChat.kind || '',
+          filename: req.file?.originalname || req.body?.filename || req.body?.fileName || '',
+          mimeType: req.file?.mimetype || '',
+          size: req.file?.size || null
+        },
+        filePath: req.file?.path || '',
+        buffer: req.file?.buffer,
+        content: req.body?.fileBase64 || req.body?.file_base64 ||
+          req.body?.dataUrl || req.body?.content || ''
+      })
+      asset = await runIdempotentMediaUpload({
+        businessId: context.businessId,
+        clientUploadId: context.clientUploadId,
+        requestHash,
+        create: executeUpload
+      })
+    } else {
+      asset = await executeUpload()
+    }
     res.status(201).json({ success: true, data: asset })
   } catch (error) {
-    if (req.file?.path) {
-      await fs.rm(req.file.path, { force: true }).catch(() => undefined)
-    }
     logger.error(`[MediaStorage] Error subiendo archivo: ${error.message}`)
     sendError(res, error, 'Error subiendo archivo multimedia')
+  } finally {
+    // Si mediaStorage entregó el archivo a Bunny Stream diferido, ese job es su
+    // nuevo dueño. En cualquier otro caso el rm es seguro e idempotente, incluso
+    // cuando esta petición solo reprodujo una respuesta del ledger.
+    if (req.file?.path && !tempFileHandedOff) {
+      await fs.rm(req.file.path, { force: true }).catch(() => undefined)
+    }
   }
 }
 

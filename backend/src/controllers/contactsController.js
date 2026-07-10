@@ -16,7 +16,7 @@ import {
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
-import { buildContactSearchClause, buildContactSearchRank } from '../utils/searchText.js'
+import { buildContactSearchClause, buildContactSearchRank, normalizePhoneDigits } from '../utils/searchText.js'
 import { coalescedTimestampSortExpression, parseSortableTimestamp, timestampSortExpression } from '../utils/sqlTimestampSort.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
@@ -3647,11 +3647,127 @@ ${CONTACT_META_PROFILE_SELECT},
 export const searchContacts = async (req, res) => {
   try {
     const { q } = req.query
+    const pickerMode = isTruthyQueryValue(
+      req.query?.picker ?? req.query?.lightweight ?? req.query?.directory
+    )
 
-    if (!q) {
+    if (!q && !pickerMode) {
       return res.json({
         success: true,
         data: []
+      })
+    }
+
+    // Los selectores nativos de Nuevo chat / Citas / Pagos solo necesitan
+    // identidad básica. La búsqueda histórica de contactos calcula LTV,
+    // compras, citas/asistencias y además consulta proveedores para calentar
+    // avatares: correcto para el CRM, carísimo e innecesario para escoger una
+    // persona. Este modo es deliberadamente local y sin I/O externo para que el
+    // directorio responda en un solo query aun con proveedores lentos.
+    if (pickerMode) {
+      const trimmedQuery = cleanString(q)
+      const requestedLimit = Number(req.query?.limit)
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.min(Math.max(Math.round(requestedLimit), 1), 100)
+        : 60
+      const searchClause = trimmedQuery ? buildContactSearchClause('c', trimmedQuery) : null
+      const searchRank = trimmedQuery ? buildContactSearchRank('c', trimmedQuery) : null
+
+      // (ACL-002) El directorio ligero conserva exactamente la exclusión de
+      // contactos ocultos del endpoint completo.
+      const hiddenFilters = await getHiddenContactFilters()
+      const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
+      const conditions = ['c.deleted_at IS NULL']
+      if (searchClause) conditions.push(searchClause.condition)
+      if (hiddenCondition) conditions.push(hiddenCondition)
+
+      const orderBy = searchRank
+        ? `${searchRank.expression} DESC, c.updated_at DESC, c.created_at DESC, c.id DESC`
+        : 'c.updated_at DESC, c.created_at DESC, c.id DESC'
+      const params = [
+        ...(searchClause?.params ?? []),
+        ...(searchRank?.params ?? []),
+        limit
+      ]
+      const contacts = await db.all(
+        `SELECT
+          c.id,
+          c.full_name,
+          c.first_name,
+          c.last_name,
+          c.email,
+          c.phone,
+          c.created_at,
+          c.updated_at,
+          c.source,
+          c.preferred_whatsapp_phone_number_id
+        FROM contacts c
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY ${orderBy}
+        LIMIT ?`,
+        params
+      )
+      const contactIds = contacts.map(contact => cleanString(contact.id)).filter(Boolean)
+      const phoneRowsByContact = new Map(contactIds.map(id => [id, []]))
+      if (contactIds.length) {
+        const phoneRows = await db.all(
+          `SELECT id, contact_id, phone, label, is_primary, source, created_at, updated_at
+           FROM contact_phone_numbers
+           WHERE contact_id IN (${contactIds.map(() => '?').join(', ')})
+           ORDER BY is_primary DESC, created_at ASC, phone ASC`,
+          contactIds
+        ).catch(() => [])
+        phoneRows.forEach(row => {
+          const contactId = cleanString(row.contact_id)
+          if (!phoneRowsByContact.has(contactId)) return
+          phoneRowsByContact.get(contactId).push({
+            id: row.id,
+            phone: row.phone,
+            label: row.label || '',
+            isPrimary: Boolean(row.is_primary),
+            is_primary: Boolean(row.is_primary),
+            source: row.source || '',
+            createdAt: row.created_at || null,
+            updatedAt: row.updated_at || null
+          })
+        })
+      }
+      const queryDigits = normalizePhoneDigits(trimmedQuery)
+
+      return res.json({
+        success: true,
+        data: contacts.map(contact => {
+          const phones = buildContactPhonesForResponse({
+            ...contact,
+            phoneNumbers: phoneRowsByContact.get(cleanString(contact.id)) || []
+          })
+          const matchedPhone = queryDigits
+            ? phones.find(entry => normalizePhoneDigits(entry.phone).includes(queryDigits))?.phone || ''
+            : ''
+          return {
+            id: contact.id,
+            createdAt: contact.created_at,
+            name: getContactDisplayName(contact),
+            email: contact.email || '',
+            phone: contact.phone || '',
+            matchedPhone,
+            ltv: 0,
+            status: 'lead',
+            lastPurchase: null,
+            purchases: 0,
+            successfulPaymentsCount: 0,
+            hasAppointments: false,
+            hasShowedAppointment: false,
+            hasAttendedAppointment: false,
+            hasUpcomingConfirmedAppointmentBadge: false,
+            source: contact.source || null,
+            profilePhotoUrl: null,
+            preferredWhatsAppPhoneNumberId: contact.preferred_whatsapp_phone_number_id || '',
+            phones,
+            phoneNumbers: phones,
+            notes: ''
+          }
+        })
       })
     }
 

@@ -161,6 +161,21 @@ final class CalendarsViewModel {
 
     func bootstrap(appConfig: AppConfigStore) async {
         guard !bootstrapped else { return }
+        let performanceSpan = RistakObservability.begin(.calendarsLoad)
+        defer {
+            let outcome: RistakPerformanceOutcome
+            switch phase {
+            case .ready:
+                outcome = .success
+            case .accessDenied, .featureUnavailable:
+                outcome = .unavailable
+            case .error:
+                outcome = .failed
+            case .idle, .loading:
+                outcome = .cancelled
+            }
+            performanceSpan.finish(outcome: outcome, itemCount: rawEvents.count)
+        }
         bootstrapped = true
         applyTimeZone(appConfig.businessTimeZone)
         // SWR (#4): pinta al instante lo último que vio el usuario (calendarios +

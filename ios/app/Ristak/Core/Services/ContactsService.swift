@@ -123,6 +123,183 @@ struct ContactsService: Sendable {
         return try await client.get("/contacts/search", query: ["q": trimmed])
     }
 
+    /// Directorio mínimo para selectores de Nuevo chat / Citas / Pagos.
+    ///
+    /// A diferencia de `searchContacts`, el backend NO calcula LTV, compras,
+    /// citas ni consulta proveedores para refrescar fotos. Con query vacío
+    /// devuelve los contactos recientes, por lo que reemplaza el costoso
+    /// `fetchChats()` que antes corría cada vez que se abría un selector.
+    /// La respuesta se guarda cruda en el snapshot namespaceado por cuenta;
+    /// `cachedPickerContacts` la pinta al instante en aperturas posteriores.
+    @MainActor
+    func fetchPickerContacts(query: String = "", limit: Int = 60) async throws -> [ChatContact] {
+        let trimmed = Self.trimmedPickerQuery(query)
+        let cappedLimit = min(max(limit, 1), 100)
+        let span = RistakObservability.begin(.contactDirectory)
+        do {
+            let responseData = try await client.rawData(
+                "/contacts/search",
+                query: [
+                    "q": trimmed.isEmpty ? nil : trimmed,
+                    "picker": "true",
+                    "limit": String(cappedLimit),
+                ]
+            )
+            guard var contacts = Self.decodePickerContacts(responseData) else {
+                throw RistakAPIError.invalidResponse
+            }
+
+            var cacheData = responseData
+            if trimmed.isEmpty, contacts.isEmpty,
+               let legacyRecents = try? await ChatsService(client: client).fetchChats(
+                   limit: cappedLimit,
+                   warmProfilePictures: false
+               ),
+               !legacyRecents.isEmpty {
+                // Backends anteriores ignoran `picker=true` y contestan `[]`
+                // cuando `q` está vacío. Recuperamos recientes con el contrato
+                // anterior; un directorio realmente vacío solo paga un GET extra.
+                contacts = legacyRecents
+                cacheData = Self.encodePickerContacts(legacyRecents) ?? responseData
+            }
+
+            let cacheKey = Self.pickerCacheKey(trimmed)
+            if trimmed.isEmpty {
+                // Solo el directorio reciente cruza lanzamientos.
+                RistakSnapshotCache.shared.storeRaw(cacheData, for: cacheKey)
+            } else {
+                // Las consultas exactas contienen PII y pueden ser infinitas:
+                // LRU/TTL en RAM, nunca un archivo por cada tecla.
+                RistakSnapshotCache.shared.storeVolatileRaw(
+                    cacheData,
+                    for: cacheKey,
+                    ttl: Self.pickerQueryCacheTTL,
+                    maxEntries: Self.pickerQueryCacheLimit
+                )
+            }
+            span.finish(outcome: .success, itemCount: contacts.count)
+            return contacts
+        } catch {
+            span.finish(outcome: Task.isCancelled ? .cancelled : .failed)
+            throw error
+        }
+    }
+
+    /// Lectura síncrona desde memoria del último directorio exitoso. Para una
+    /// consulta que todavía no tenga snapshot exacto, filtra el directorio
+    /// reciente local: escribir empieza a dar resultados sin esperar red.
+    @MainActor
+    func cachedPickerContacts(query: String = "") -> [ChatContact] {
+        let trimmed = Self.trimmedPickerQuery(query)
+        if let exact = Self.decodeCachedPickerContacts(
+            for: Self.pickerCacheKey(trimmed),
+            volatile: !trimmed.isEmpty
+        ) {
+            return exact
+        }
+
+        guard !trimmed.isEmpty,
+              let recent = Self.decodeCachedPickerContacts(
+                  for: Self.pickerCacheKey(""),
+                  volatile: false
+              ) else {
+            return []
+        }
+        return ContactPickerDirectory.filter(recent, query: trimmed)
+    }
+
+    @MainActor
+    private static func decodeCachedPickerContacts(
+        for key: String,
+        volatile: Bool
+    ) -> [ChatContact]? {
+        let data = volatile
+            ? RistakSnapshotCache.shared.volatileRawData(for: key)
+            : RistakSnapshotCache.shared.rawData(for: key)
+        guard let data else { return nil }
+        return decodePickerContacts(data)
+    }
+
+    private static func decodePickerContacts(_ data: Data) -> [ChatContact]? {
+        try? RistakEnvelopeDecoder.unwrap(data, decoder: JSONDecoder())
+    }
+
+    private static func trimmedPickerQuery(_ query: String) -> String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Snapshot mínimo para el fallback contra instalaciones anteriores. La
+    /// forma usa las mismas claves tolerantes de `ChatContact`.
+    private static func encodePickerContacts(_ contacts: [ChatContact]) -> Data? {
+        let rows: [[String: Any]] = contacts.map { contact in
+            var row: [String: Any] = [
+                "id": contact.id,
+                "name": contact.name,
+                "email": contact.email,
+                "phone": contact.phone,
+                "preferredWhatsAppPhoneNumberId": contact.preferredWhatsAppPhoneNumberId,
+                "lastBusinessPhone": contact.lastBusinessPhone,
+                "lastBusinessPhoneNumberId": contact.lastBusinessPhoneNumberId,
+                "lastMessageChannel": contact.lastMessageChannel,
+                "lastMessageTransport": contact.lastMessageTransport,
+            ]
+            if let createdAt = contact.createdAt { row["createdAt"] = createdAt }
+            if let photo = contact.profilePhotoUrl { row["profilePhotoUrl"] = photo }
+            return row
+        }
+        guard JSONSerialization.isValidJSONObject(rows) else { return nil }
+        return try? JSONSerialization.data(withJSONObject: rows)
+    }
+
+    private static let pickerQueryCacheTTL: TimeInterval = 5 * 60
+    private static let pickerQueryCacheLimit = 24
+
+    private static func pickerCacheKey(_ query: String) -> String {
+        let folded = query
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: Locale(identifier: "es_MX"))
+            .lowercased()
+        guard !folded.isEmpty else { return "contacts:picker:recent" }
+
+        // FNV-1a estable: el término puede contener nombre/teléfono/correo y no
+        // debe aparecer en el nombre del archivo de caché. No es criptografía
+        // ni telemetría; solo una llave local namespaceada por cuenta.
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in folded.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return "contacts:picker:query:\(String(hash, radix: 16))"
+    }
+
+}
+
+/// Lógica pura del directorio compartida por los tres selectores y cubierta por
+/// unit tests. No conoce caché, red ni actores; solo normaliza texto/teléfonos.
+enum ContactPickerDirectory {
+    static func filter(_ contacts: [ChatContact], query: String) -> [ChatContact] {
+        let folded = query.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "es_MX")
+        ).lowercased()
+        let digits = query.filter(\.isNumber)
+        return contacts.filter { contact in
+            let searchable = [contact.name, contact.email]
+                .joined(separator: " ")
+                .folding(
+                    options: [.caseInsensitive, .diacriticInsensitive],
+                    locale: Locale(identifier: "es_MX")
+                )
+                .lowercased()
+            if searchable.contains(folded) { return true }
+            guard !digits.isEmpty else { return false }
+            let phones = ([contact.phone, contact.matchedPhone ?? ""] + contact.phones.map(\.phone))
+                .map { $0.filter(\.isNumber) }
+            return phones.contains { $0.contains(digits) }
+        }
+    }
+}
+
+extension ContactsService {
     // MARK: Custom fields
 
     /// `GET /api/contacts/custom-fields` — definiciones para editores y el

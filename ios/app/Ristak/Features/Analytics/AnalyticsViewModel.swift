@@ -277,6 +277,7 @@ final class AnalyticsViewModel {
     @discardableResult
     func reloadAll() async -> Bool {
         guard let range else { return false }
+        let performanceSpan = RistakObservability.begin(.analyticsLoad)
         accessDenied = false
         async let labelsLoad: Void = loadLabelsIfNeeded()
         async let metricsLoad: Bool = loadMetrics(range)
@@ -295,6 +296,10 @@ final class AnalyticsViewModel {
         let succeeded = metricsOK && chartOK && funnelOK && originOK
         lastRefreshFailed = !succeeded
         if succeeded { lastSuccessfulRefreshAt = Date() }
+        performanceSpan.finish(
+            outcome: accessDenied ? .unavailable : (succeeded ? .success : .failed),
+            itemCount: 4
+        )
         return succeeded
     }
 

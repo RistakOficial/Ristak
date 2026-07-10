@@ -76,6 +76,7 @@ struct InboxScreen: View {
                         Image(systemName: "plus")
                     }
                     .accessibilityLabel("Nuevo chat")
+                    .accessibilityIdentifier("ristak-inbox-new-chat")
                 }
             }
             .sheet(isPresented: $showsAgentHub) {
@@ -219,6 +220,7 @@ struct InboxScreen: View {
         // inicial. Evita `scrollTo` a una fila, que colapsa el header/search.
         .id(shell.chatsScrollTopSignal)
         .listStyle(.plain)
+        .accessibilityIdentifier("ristak-inbox-list")
         .refreshable {
             await viewModel.refreshNow()
         }
@@ -487,6 +489,7 @@ struct InboxScreen: View {
             FilterManagerSheet(viewModel: viewModel)
         case .newChat:
             NewChatSheet(viewModel: viewModel) { contact in
+                viewModel.registerNavigationSeed(contact)
                 onOpenChat(contact)
             }
         }

@@ -14,6 +14,20 @@ struct MessagingService: Sendable {
         self.client = client
     }
 
+    /// Hospeda el binario en el storage/CDN del tenant antes de mandar el
+    /// mensaje. El identificador estable evita subirlo dos veces al reintentar.
+    func prepareMediaReference(
+        _ media: EncodedChatMedia,
+        clientUploadID: String,
+        contactID: String? = nil
+    ) async throws -> ChatMediaSendReference {
+        try await ChatMediaUploadService(client: client).preferredReference(
+            for: media,
+            clientUploadID: clientUploadID,
+            contactID: contactID
+        )
+    }
+
     // MARK: WhatsApp (`/api/whatsapp-api/messages/*`)
 
     /// `POST /messages/text`.
@@ -32,7 +46,7 @@ struct MessagingService: Sendable {
         try await client.post("/whatsapp-api/messages/location", body: request)
     }
 
-    /// `POST /messages/image` — data URL base64 (timeout de media).
+    /// `POST /messages/image` — URL de CDN preferida; data URL solo legacy.
     func sendImage(_ request: ImageMessageSendRequest) async throws -> MessageSendResult {
         try await client.post("/whatsapp-api/messages/image", body: request, timeout: APIClient.mediaTimeout)
     }

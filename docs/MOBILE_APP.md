@@ -337,10 +337,39 @@ autoridad sobre texto, perfil y contadores. Los refresh por SSE, polling o
 foreground usan `/api/contacts/chats?warmProfilePictures=false` y conservan los
 avatares ya hidratados; la precarga remota de fotos se reserva para arranque frio
 y paginacion para que no convierta cada tick en una consulta lenta.
+Los selectores de `Nuevo chat`, `Nueva cita` y contacto para pagos comparten el
+directorio ligero `/api/contacts/search?picker=true`: al abrir pintan primero el
+ultimo snapshot de esa cuenta, revalidan en segundo plano y buscan en servidor
+despues de un debounce corto. No deben recargar la bandeja de chats para obtener
+contactos. El resultado fresco es autoritativo sobre contactos borrados u
+ocultos y debe incluir todos sus telefonos para no iniciar la conversacion con
+un numero distinto al que hizo match. El snapshot solo se habilita cuando existe
+un usuario verificado; nunca se persiste bajo un namespace compartido de
+`sin-usuario`, y las consultas exactas viven en un LRU temporal de memoria.
+
+El hilo pide primero `/api/contacts/:id/conversation` y presenta los mensajes en
+cuanto llega ese bloque primario; estado del agente, programados y otros datos
+secundarios no pueden mantener un spinner encima de un historial ya disponible.
+Para instalaciones anteriores conserva fallback a `/journey`, y los pickers
+conservan fallback al listado historico mientras termina un despliegue gradual.
+
 La preparacion de fotos, videos, audios y documentos corre fuera del hilo visual.
-Mientras se codifican, el composer muestra estado de preparacion y bloquea otro
-envio/adjunto; mantiene el maximo de 4 archivos y un tope acumulado de 40 MB
-binarios para evitar que el base64 congele o cierre la app por memoria.
+Mientras se prepara, el composer muestra estado y bloquea otro envio/adjunto;
+mantiene el maximo de 4 archivos y un tope acumulado de 40 MB binarios. La app
+sube el multipart desde un archivo temporal a `/api/media/upload` y manda al
+proveedor la referencia del asset/CDN; no duplica el body completo en RAM ni
+guarda el preview optimista como base64. Un backend legacy puede recibir data URL
+como fallback, pero esa conversion tambien ocurre fuera del `MainActor` y no se
+persiste en el snapshot local.
+
+La app registra intervalos cerrados de arranque, bandeja, directorio, hilo,
+agenda, pagos, analiticas y media con `OSLog`/signposts, y se suscribe a
+`MetricKit` para contar hangs, crashes y excepciones sin guardar nombres,
+telefonos, mensajes, URLs ni tokens. Un ring buffer local acotado conserva solo
+categorias y numeros sanitizados. `RistakTests` valida orden/promocion y estados
+iniciales; `RistakUITests` cubre arranque, busqueda, historial, cita y nuevo chat;
+`scripts/run-ios-chat-soak.sh` estresa 10,000-50,000 filas sinteticas y
+`scripts/run-ios-live-smoke.sh` abre las superficies reales de forma opt-in.
 El login nativo de `ios/app` debe conservar logo/colores de Ristak y no debe
 mostrar configuraciones tecnicas de servidor; al capturar el correo, la app
 detecta automaticamente la instalacion correcta antes de autenticar.

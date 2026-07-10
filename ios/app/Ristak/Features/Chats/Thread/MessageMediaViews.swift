@@ -213,13 +213,24 @@ struct ImageAttachmentView: View {
             .onTapGesture {
                 if remoteURL != nil || localImage != nil { showsViewer = true }
             }
-            .task(id: attachment.dataUrl ?? "") {
-                guard let dataUrl = attachment.dataUrl, localImage == nil else { return }
-                // El decode base64 + descompresión de un dataURL multi-MB (envío
-                // optimista) bloqueaba el hilo principal al aparecer la burbuja.
-                // Se hace fuera de main y se asigna de vuelta si la fila no recicló.
+            .task(id: localPreviewTaskID) {
+                guard localImage == nil else { return }
+                let previewData = attachment.localPreviewData
+                let dataURL = attachment.dataUrl
+                guard previewData != nil || dataURL != nil else { return }
+                // El binario optimista se decodifica fuera de main sin convertirlo
+                // primero a un String base64. `dataUrl` queda solo para mensajes
+                // legacy recibidos del servidor.
                 let decoded = await Task.detached(priority: .userInitiated) { () -> (UIImage, CGSize)? in
-                    guard let img = Self.decodeDataURL(dataUrl) else { return nil }
+                    let image: UIImage?
+                    if let previewData {
+                        image = UIImage(data: previewData)
+                    } else if let dataURL {
+                        image = Self.decodeDataURL(dataURL)
+                    } else {
+                        image = nil
+                    }
+                    guard let img = image else { return nil }
                     let prepared = img.preparingForDisplay() ?? img
                     return (prepared, Self.boundedSize(prepared.size))
                 }.value
@@ -231,6 +242,13 @@ struct ImageAttachmentView: View {
                 FullScreenImageViewer(remoteURL: remoteURL, localImage: localImage)
             }
             .accessibilityLabel(attachment.name ?? "Foto")
+    }
+
+    private var localPreviewTaskID: String {
+        if let data = attachment.localPreviewData {
+            return "binary:\(data.count):\(attachment.name ?? "")"
+        }
+        return attachment.dataUrl ?? ""
     }
 
     @ViewBuilder

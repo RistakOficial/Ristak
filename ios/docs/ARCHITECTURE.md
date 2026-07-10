@@ -179,26 +179,45 @@ que acaba de entrar.
 
 ## Media (doc 12)
 
-- Envíos de chat: base64 **data URL** en JSON (`imageDataUrl` etc.). Límites de
-  entrada: imagen 25MB (JPG/PNG/WebP/HEIC decodificable), video 25MB
+- Envíos nuevos: `MediaEncoder` conserva el binario preparado y
+  `ChatMediaUploadService` escribe un multipart temporal para subirlo con
+  `URLSession.upload(fromFile:)` a `/api/media/upload?module=chat`. La respuesta
+  aporta `mediaAssetId` y URL HTTPS de CDN para el endpoint de mensajería. El
+  data URL queda solamente como fallback de servidores legacy 404/403, se
+  genera fuera del `MainActor` y nunca se guarda como preview optimista.
+- Límites de entrada: imagen 25MB (JPG/PNG/WebP/HEIC decodificable), video 25MB
   (MP4/MOV), audio 16MB (envía m4a/AAC, el backend transcodifica), doc 20MB.
-  `MediaEncoder` reduce toda foto a un máximo de 1600 px, la convierte a JPEG
-  0.80 antes del base64 y centraliza límites/errores en español; no debe mandar
-  la foto completa de cámara para que el backend la reduzca después. El
-  backend conserva un preview M4A reproducible para API y QR y normaliza el
-  alias detectado `audio/x-m4a` a `audio/mp4` antes de guardarlo.
-- Reconciliación visible: `ConversationViewModel` conserva el `id`, fecha y data
-  URL del globo optimista; al llegar la fila del servidor absorbe status, WAMID y
-  URL remota dentro de esa misma burbuja y oculta la fila duplicada. Los polls no
-  deben cerrar/reabrir el preview ni provocar saltos del `ScrollView`.
+  `MediaEncoder` reduce toda foto a un máximo de 1600 px y la convierte a JPEG
+  0.80 antes de subirla. El backend conserva un preview M4A reproducible para
+  API y QR y normaliza `audio/x-m4a` a `audio/mp4` antes de guardarlo.
+- Reconciliación visible: `ConversationViewModel` conserva `id`, fecha y el
+  binario local no persistido del globo optimista; al llegar la fila del servidor
+  absorbe status, WAMID y URL remota dentro de esa misma burbuja y oculta la fila
+  duplicada. Los polls no deben cerrar/reabrir el preview ni provocar saltos del
+  `ScrollView`.
 - La codificación/lectura de foto, video, audio y documentos corre fuera del
   `MainActor`; mientras se prepara media el composer bloquea enviar/adjuntar.
-  El tray admite hasta 4 adjuntos y un máximo acumulado de 40 MB binarios para
-  evitar picos de memoria por base64.
+  El tray admite hasta 4 adjuntos y un máximo acumulado de 40 MB binarios. El
+  multipart se transmite desde disco para no coexistir con otra copia completa
+  en memoria.
 - Render: URLs de media públicas (CDN) — `ImageLoader` con caché en memoria y
   disco. Visor pantalla completa con zoom, player audio con velocidades y
   scrubber alineado a los extremos sin parecer recortado, QuickLook para
   documentos, mapa para ubicación.
+
+## Rendimiento y diagnostico
+
+- `RistakObservability` usa `OSLog`, signposts y `MetricKit` para arranque,
+  bandeja, contactos, conversación, calendarios, pagos, analíticas y media.
+  Solo acepta operaciones cerradas, resultados, duración y conteos; no acepta
+  texto libre ni identidad de clientes.
+- `RistakDiagnosticRingBuffer` conserva hasta 200 eventos / 256 KiB con
+  protección de archivo. Resume payloads MetricKit y diagnósticos de crash,
+  hang, CPU y disco sin persistir los payloads o call stacks crudos.
+- `RistakTests` y `RistakUITests` son targets del scheme compartido. La suite UI
+  default es sintética y no usa red; el soak configurable cubre 10k-50k filas.
+  El smoke de `RootView` real es opt-in y usa únicamente la sesión que ya exista
+  en el destino, sin inyectar ni imprimir credenciales.
 
 ## Navegación / shell
 
@@ -252,6 +271,10 @@ sheets del sistema), nunca para comunicar selección.
   -destination 'id=BFC68803-AC13-45B2-8664-BA6C99AAA6A1' build`
   (iPhone 17 Pro sim; iPad: `id=88C0E42B-1FAC-4470-8EF8-87A1B0064A25`).
   Usa `-derivedDataPath` propio si compilas en paralelo con otros agentes.
+- Unit/UI: `ios/app/scripts/run-ios-ui-tests.sh`. Carga prolongada:
+  `RISTAK_SOAK_CHAT_COUNT=10000 RISTAK_SOAK_ITERATIONS=250
+  ios/app/scripts/run-ios-chat-soak.sh`. Superficie real opt-in:
+  `ios/app/scripts/run-ios-live-smoke.sh`.
 - Login: la app resuelve tenant por correo contra el portal central y no muestra
   campo manual de servidor. El override directo queda reservado para pruebas
   internas, fuera de la UI de usuario.

@@ -55,7 +55,7 @@ final class ConversationViewModel {
     }
 
     var contactPhone: String? {
-        let phone = contactDetail?.phone ?? seedContact?.phone ?? ""
+        let phone = seedContact?.matchedPhone ?? contactDetail?.phone ?? seedContact?.phone ?? ""
         return phone.isEmpty ? nil : phone
     }
 
@@ -235,6 +235,14 @@ final class ConversationViewModel {
 
     func loadInitial() async {
         guard !hasLoadedOnce else { return }
+        let performanceSpan = RistakObservability.begin(.conversationInitialLoad)
+        var performanceOutcome: RistakPerformanceOutcome = .failed
+        defer {
+            performanceSpan.finish(
+                outcome: performanceOutcome,
+                itemCount: combinedMessages.count
+            )
+        }
         // Caché instantánea (Round 6 #4): pinta los últimos mensajes guardados
         // al instante; el spinner solo aparece si NO hay nada cacheado. Luego se
         // revalida contra la red (merge identity-preserving con ids estables).
@@ -255,15 +263,23 @@ final class ConversationViewModel {
         do {
             try await loadConversation(reset: true)
             hasLoadedOnce = true
+            performanceOutcome = .success
         } catch let error as RistakAPIError {
             if error.isAccessDenied {
                 accessDenied = true
+                performanceOutcome = .unavailable
             } else if error.kind == .featureUnavailable {
                 // Silencioso en cargas: se queda el vacío estándar.
                 hasLoadedOnce = true
+                performanceOutcome = .unavailable
             } else {
                 loadErrorMessage = error.message
+                if error.kind == .network || error.kind == .starting || error.kind == .notConfigured {
+                    performanceOutcome = .unavailable
+                }
             }
+        } catch is CancellationError {
+            performanceOutcome = .cancelled
         } catch {
             loadErrorMessage = "No se pudo cargar la conversación."
         }
@@ -334,9 +350,6 @@ final class ConversationViewModel {
         async let markersTask = fetchMarkersIfNeeded(needsMarkers)
 
         let events = try await eventsTask
-        let scheduled = await scheduledTask
-        let freshMarkers = await markersTask
-
         let appBaseURL = await journeyService.currentBaseURL()
         let fresh = ChatJourneyParser.buildMessages(contactId: contactID, events: events, appBaseURL: appBaseURL)
         var freshContexts = ConversationTimelineBuilder.buildCommentContexts(from: events)
@@ -353,9 +366,19 @@ final class ConversationViewModel {
             freshContexts.merge(commentContexts) { fresh, _ in fresh }
         }
 
-        // Aplica los markers (ya resueltos en paralelo) ANTES del pintado de
-        // mensajes: así `rebuildTimeline` los construye una sola vez con todo
-        // dentro. Un no-op (mismos markers que los cacheados) no reasigna nada.
+        // Primer pintado: los mensajes visibles no deben esperar al journey
+        // completo ni a programados. En un contacto sin caché esta suspensión
+        // permite que SwiftUI pinte el hilo apenas responde `/conversation`.
+        applyServerMessages(merged, contexts: freshContexts)
+        hasOlderMessages = !oldestPageExhausted && serverMessages.count >= JourneyService.defaultMessageLimit
+        await Task.yield()
+
+        // Los datos secundarios ya estaban en vuelo en paralelo. Se aplican
+        // después del primer frame para que pagos/citas/programados completen el
+        // timeline sin bloquear la conversación principal.
+        let scheduled = await scheduledTask
+        let freshMarkers = await markersTask
+
         if needsMarkers, let markers = freshMarkers {
             lastFullJourneyFetch = Date()
             if markers != activityMarkers {
@@ -364,10 +387,7 @@ final class ConversationViewModel {
             }
         }
 
-        applyServerMessages(merged, contexts: freshContexts)
         applyScheduled(scheduled)
-        hasOlderMessages = !oldestPageExhausted && serverMessages.count >= JourneyService.defaultMessageLimit
-
         rebuildTimeline()
     }
 
@@ -549,8 +569,8 @@ final class ConversationViewModel {
             }
             if var serverAttachment = server.attachment {
                 if let localAttachment = optimistic.attachment {
-                    if let dataUrl = localAttachment.dataUrl, !dataUrl.isEmpty {
-                        serverAttachment.dataUrl = dataUrl
+                    if let previewData = localAttachment.localPreviewData {
+                        serverAttachment.localPreviewData = previewData
                     }
                     if serverAttachment.name?.isEmpty != false { serverAttachment.name = localAttachment.name }
                     if serverAttachment.mimeType?.isEmpty != false { serverAttachment.mimeType = localAttachment.mimeType }
@@ -1122,7 +1142,7 @@ final class ConversationViewModel {
             optimistic.messageType = media.kind.rawValue
             optimistic.attachment = ChatAttachment(
                 type: attachmentKind(for: media.kind),
-                dataUrl: media.kind == .image ? media.dataUrl : nil,
+                localPreviewData: media.kind == .image ? media.binaryData : nil,
                 name: media.filename,
                 mimeType: media.mimeType,
                 durationMs: media.durationMs,
@@ -1131,6 +1151,11 @@ final class ConversationViewModel {
             appendOptimistic(optimistic, restore: FailedSendPayload(text: messageCaption, attachment: draft))
 
             do {
+                let mediaReference = try await messagingService.prepareMediaReference(
+                    media,
+                    clientUploadID: "ios-chat-\(draft.id)",
+                    contactID: contactID
+                )
                 let result: MessageSendResult
                 switch media.kind {
                 case .image:
@@ -1139,7 +1164,9 @@ final class ConversationViewModel {
                             to: phone,
                             from: selectedWhatsAppPhone?.phoneNumber,
                             contactId: contactID,
-                            imageDataUrl: media.dataUrl,
+                            imageDataUrl: mediaReference.legacyDataURL,
+                            imageUrl: mediaReference.publicURL,
+                            imageMediaAssetId: mediaReference.mediaAssetID,
                             caption: messageCaption.isEmpty ? nil : messageCaption,
                             externalId: externalId,
                             transport: transport,
@@ -1152,7 +1179,9 @@ final class ConversationViewModel {
                             to: phone,
                             from: selectedWhatsAppPhone?.phoneNumber,
                             contactId: contactID,
-                            videoDataUrl: media.dataUrl,
+                            videoDataUrl: mediaReference.legacyDataURL,
+                            videoUrl: mediaReference.publicURL,
+                            videoMediaAssetId: mediaReference.mediaAssetID,
                             caption: messageCaption.isEmpty ? nil : messageCaption,
                             externalId: externalId,
                             transport: transport,
@@ -1165,7 +1194,9 @@ final class ConversationViewModel {
                             to: phone,
                             from: selectedWhatsAppPhone?.phoneNumber,
                             contactId: contactID,
-                            audioDataUrl: media.dataUrl,
+                            audioDataUrl: mediaReference.legacyDataURL,
+                            audioUrl: mediaReference.publicURL,
+                            audioMediaAssetId: mediaReference.mediaAssetID,
                             durationMs: media.durationMs,
                             voice: true,
                             externalId: externalId,
@@ -1179,7 +1210,9 @@ final class ConversationViewModel {
                             to: phone,
                             from: selectedWhatsAppPhone?.phoneNumber,
                             contactId: contactID,
-                            documentDataUrl: media.dataUrl,
+                            documentDataUrl: mediaReference.legacyDataURL,
+                            documentUrl: mediaReference.publicURL,
+                            documentMediaAssetId: mediaReference.mediaAssetID,
                             filename: media.filename,
                             mimeType: media.mimeType,
                             caption: messageCaption.isEmpty ? nil : messageCaption,
@@ -1268,12 +1301,19 @@ final class ConversationViewModel {
         appendOptimistic(optimistic, restore: FailedSendPayload(text: "", attachment: voiceDraft))
 
         do {
+            let mediaReference = try await messagingService.prepareMediaReference(
+                encoded,
+                clientUploadID: "ios-chat-\(voiceDraft.id)",
+                contactID: contactID
+            )
             if selectedChannel == .sms {
                 let result = try await messagingService.sendHighLevelMessage(
                     HighLevelMessageSendRequest(
                         contactId: contactID,
                         channel: "sms_qr",
-                        audioDataUrl: encoded.dataUrl,
+                        audioDataUrl: mediaReference.legacyDataURL,
+                        audioUrl: mediaReference.publicURL,
+                        audioMediaAssetId: mediaReference.mediaAssetID,
                         durationMs: preview.durationMs,
                         externalId: externalId
                     )
@@ -1285,7 +1325,9 @@ final class ConversationViewModel {
                         to: phone,
                         from: selectedWhatsAppPhone?.phoneNumber,
                         contactId: contactID,
-                        audioDataUrl: encoded.dataUrl,
+                        audioDataUrl: mediaReference.legacyDataURL,
+                        audioUrl: mediaReference.publicURL,
+                        audioMediaAssetId: mediaReference.mediaAssetID,
                         durationMs: preview.durationMs,
                         voice: true,
                         externalId: externalId,
@@ -1297,9 +1339,8 @@ final class ConversationViewModel {
                 // Guarda el m4a original indexado por la URL (opus) que asigna el
                 // servidor: iOS no reproduce opus, así que la burbuja saliente
                 // reproducirá ESTE m4a local en su lugar.
-                if let remote = result.audio?.bestUrl ?? result.localMedia?.bestUrl,
-                   let m4a = VoiceNoteLocalStore.decodeBase64DataURL(encoded.dataUrl) {
-                    VoiceNoteLocalStore.store(m4aData: m4a, forRemoteURL: remote)
+                if let remote = result.audio?.bestUrl ?? result.localMedia?.bestUrl {
+                    VoiceNoteLocalStore.store(m4aData: encoded.binaryData, forRemoteURL: remote)
                 }
             }
             scheduleServerReconciliation()
@@ -1336,11 +1377,18 @@ final class ConversationViewModel {
         clearComposerAfterSend()
 
         do {
+            let mediaReference = try await messagingService.prepareMediaReference(
+                media,
+                clientUploadID: "ios-chat-\(restoreDraft.id)",
+                contactID: contactID
+            )
             let result = try await messagingService.sendMetaSocialAudio(
                 MetaSocialAudioSendRequest(
                     contactId: contactID,
                     platform: platform,
-                    audioDataUrl: media.dataUrl,
+                    audioDataUrl: mediaReference.legacyDataURL,
+                    audioUrl: mediaReference.publicURL,
+                    audioMediaAssetId: mediaReference.mediaAssetID,
                     durationMs: media.durationMs,
                     externalId: externalId,
                     replyToMessageId: reply?.id,
@@ -1397,7 +1445,7 @@ final class ConversationViewModel {
         if let first = drafts.first {
             optimistic.attachment = ChatAttachment(
                 type: attachmentKind(for: first.kind),
-                dataUrl: first.kind == .image ? first.media.dataUrl : nil,
+                localPreviewData: first.kind == .image ? first.media.binaryData : nil,
                 name: first.filename,
                 mimeType: first.media.mimeType
             )
@@ -1410,19 +1458,35 @@ final class ConversationViewModel {
         }
 
         do {
+            var mediaReferences: [ChatMediaSendReference] = []
+            mediaReferences.reserveCapacity(drafts.count)
+            for draft in drafts {
+                mediaReferences.append(try await messagingService.prepareMediaReference(
+                    draft.media,
+                    clientUploadID: "ios-chat-\(draft.id)",
+                    contactID: contactID
+                ))
+            }
+            let uploadedURLs = mediaReferences.compactMap(\.publicURL)
+            let uploadedAssetIDs = mediaReferences.compactMap(\.mediaAssetID)
+            let legacyAttachments = zip(drafts, mediaReferences).compactMap { draft, reference in
+                reference.legacyDataURL.map {
+                    HighLevelAttachmentDataUrl(
+                        dataUrl: $0,
+                        filename: draft.filename,
+                        mimeType: draft.media.mimeType,
+                        kind: draft.kind.rawValue
+                    )
+                }
+            }
             let result = try await messagingService.sendHighLevelMessage(
                 HighLevelMessageSendRequest(
                     contactId: contactID,
                     channel: "sms_qr",
                     message: text.isEmpty ? nil : text,
-                    attachmentDataUrls: drafts.isEmpty ? nil : drafts.map {
-                        HighLevelAttachmentDataUrl(
-                            dataUrl: $0.media.dataUrl,
-                            filename: $0.filename,
-                            mimeType: $0.media.mimeType,
-                            kind: $0.kind.rawValue
-                        )
-                    },
+                    attachments: uploadedURLs.isEmpty ? nil : uploadedURLs,
+                    attachmentMediaAssetIds: uploadedAssetIDs.isEmpty ? nil : uploadedAssetIDs,
+                    attachmentDataUrls: legacyAttachments.isEmpty ? nil : legacyAttachments,
                     externalId: externalId
                 )
             )

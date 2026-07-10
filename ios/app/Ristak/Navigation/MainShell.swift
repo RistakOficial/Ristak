@@ -212,6 +212,7 @@ struct MainShell: View {
         // `ShellScrollTracking.swift`): bajar oculta, subir muestra al instante.
         .toolbar(hideTabBar ? .hidden : .visible, for: .tabBar)
         .animation(.smooth(duration: 0.28), value: hideTabBar)
+        .accessibilityIdentifier("ristak-main-shell")
         .onChange(of: tabs) { _, newTabs in
             // Si la sección activa deja de estar permitida, saltar a la
             // primera permitida (paridad RN `App.tsx:1289-1297`).

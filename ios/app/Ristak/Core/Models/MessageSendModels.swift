@@ -172,6 +172,7 @@ struct ImageMessageSendRequest: Encodable, Sendable {
     var contactId: String?
     var imageDataUrl: String?
     var imageUrl: String?
+    var imageMediaAssetId: String?
     /// Se recorta a 1024 chars server-side; admite `{{variables}}`.
     var caption: String?
     var externalId: String?
@@ -185,6 +186,7 @@ struct ImageMessageSendRequest: Encodable, Sendable {
         contactId: String? = nil,
         imageDataUrl: String? = nil,
         imageUrl: String? = nil,
+        imageMediaAssetId: String? = nil,
         caption: String? = nil,
         externalId: String? = MessageExternalIdFactory.image(),
         transport: WhatsAppSendTransport? = .api,
@@ -196,6 +198,7 @@ struct ImageMessageSendRequest: Encodable, Sendable {
         self.contactId = contactId
         self.imageDataUrl = imageDataUrl
         self.imageUrl = imageUrl
+        self.imageMediaAssetId = imageMediaAssetId
         self.caption = caption
         self.externalId = externalId
         self.transport = transport
@@ -211,6 +214,7 @@ struct DocumentMessageSendRequest: Encodable, Sendable {
     var contactId: String?
     var documentDataUrl: String?
     var documentUrl: String?
+    var documentMediaAssetId: String?
     var filename: String?
     var mimeType: String?
     var caption: String?
@@ -225,6 +229,7 @@ struct DocumentMessageSendRequest: Encodable, Sendable {
         contactId: String? = nil,
         documentDataUrl: String? = nil,
         documentUrl: String? = nil,
+        documentMediaAssetId: String? = nil,
         filename: String? = nil,
         mimeType: String? = nil,
         caption: String? = nil,
@@ -238,6 +243,7 @@ struct DocumentMessageSendRequest: Encodable, Sendable {
         self.contactId = contactId
         self.documentDataUrl = documentDataUrl
         self.documentUrl = documentUrl
+        self.documentMediaAssetId = documentMediaAssetId
         self.filename = filename
         self.mimeType = mimeType
         self.caption = caption
@@ -255,6 +261,7 @@ struct VideoMessageSendRequest: Encodable, Sendable {
     var contactId: String?
     var videoDataUrl: String?
     var videoUrl: String?
+    var videoMediaAssetId: String?
     var caption: String?
     var externalId: String?
     var transport: WhatsAppSendTransport?
@@ -267,6 +274,7 @@ struct VideoMessageSendRequest: Encodable, Sendable {
         contactId: String? = nil,
         videoDataUrl: String? = nil,
         videoUrl: String? = nil,
+        videoMediaAssetId: String? = nil,
         caption: String? = nil,
         externalId: String? = MessageExternalIdFactory.video(),
         transport: WhatsAppSendTransport? = .api,
@@ -278,6 +286,7 @@ struct VideoMessageSendRequest: Encodable, Sendable {
         self.contactId = contactId
         self.videoDataUrl = videoDataUrl
         self.videoUrl = videoUrl
+        self.videoMediaAssetId = videoMediaAssetId
         self.caption = caption
         self.externalId = externalId
         self.transport = transport
@@ -296,6 +305,7 @@ struct AudioMessageSendRequest: Encodable, Sendable {
     var contactId: String?
     var audioDataUrl: String?
     var audioUrl: String?
+    var audioMediaAssetId: String?
     var durationMs: Double?
     var voice: Bool
     var externalId: String?
@@ -309,6 +319,7 @@ struct AudioMessageSendRequest: Encodable, Sendable {
         contactId: String? = nil,
         audioDataUrl: String? = nil,
         audioUrl: String? = nil,
+        audioMediaAssetId: String? = nil,
         durationMs: Double? = nil,
         voice: Bool = true,
         externalId: String? = MessageExternalIdFactory.audio(),
@@ -321,6 +332,7 @@ struct AudioMessageSendRequest: Encodable, Sendable {
         self.contactId = contactId
         self.audioDataUrl = audioDataUrl
         self.audioUrl = audioUrl
+        self.audioMediaAssetId = audioMediaAssetId
         self.durationMs = durationMs
         self.voice = voice
         self.externalId = externalId
@@ -454,6 +466,7 @@ struct MetaSocialAudioSendRequest: Encodable, Sendable {
     var platform: MetaSocialPlatform
     var audioDataUrl: String?
     var audioUrl: String?
+    var audioMediaAssetId: String?
     var durationMs: Double?
     var externalId: String?
     var replyToMessageId: String?
@@ -464,6 +477,7 @@ struct MetaSocialAudioSendRequest: Encodable, Sendable {
         platform: MetaSocialPlatform,
         audioDataUrl: String? = nil,
         audioUrl: String? = nil,
+        audioMediaAssetId: String? = nil,
         durationMs: Double? = nil,
         externalId: String? = MessageExternalIdFactory.metaAudio(),
         replyToMessageId: String? = nil,
@@ -473,6 +487,7 @@ struct MetaSocialAudioSendRequest: Encodable, Sendable {
         self.platform = platform
         self.audioDataUrl = audioDataUrl
         self.audioUrl = audioUrl
+        self.audioMediaAssetId = audioMediaAssetId
         self.durationMs = durationMs
         self.externalId = externalId
         self.replyToMessageId = replyToMessageId
@@ -608,9 +623,12 @@ struct HighLevelMessageSendRequest: Encodable, Sendable {
     var message: String?
     /// URLs públicas ya hospedadas.
     var attachments: [String]?
+    /// IDs emitidos por `/media/upload`; el backend los valida contra el tenant.
+    var attachmentMediaAssetIds: [String]?
     var attachmentDataUrls: [HighLevelAttachmentDataUrl]?
     var audioDataUrl: String?
     var audioUrl: String?
+    var audioMediaAssetId: String?
     var durationMs: Double?
     var fromNumber: String?
     var toNumber: String?
@@ -625,9 +643,11 @@ struct HighLevelMessageSendRequest: Encodable, Sendable {
         channel: String,
         message: String? = nil,
         attachments: [String]? = nil,
+        attachmentMediaAssetIds: [String]? = nil,
         attachmentDataUrls: [HighLevelAttachmentDataUrl]? = nil,
         audioDataUrl: String? = nil,
         audioUrl: String? = nil,
+        audioMediaAssetId: String? = nil,
         durationMs: Double? = nil,
         fromNumber: String? = nil,
         toNumber: String? = nil,
@@ -640,9 +660,11 @@ struct HighLevelMessageSendRequest: Encodable, Sendable {
         self.channel = channel
         self.message = message
         self.attachments = attachments
+        self.attachmentMediaAssetIds = attachmentMediaAssetIds
         self.attachmentDataUrls = attachmentDataUrls
         self.audioDataUrl = audioDataUrl
         self.audioUrl = audioUrl
+        self.audioMediaAssetId = audioMediaAssetId
         self.durationMs = durationMs
         self.fromNumber = fromNumber
         self.toNumber = toNumber

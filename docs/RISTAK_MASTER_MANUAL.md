@@ -764,8 +764,27 @@ profundidad cargada. Los refresh vivos de bandeja mandan
 poll/SSE; el calentamiento de fotos se reserva para arranque frio y paginacion.
 La codificacion de fotos, videos, audios y documentos corre fuera del hilo
 visual, el composer bloquea enviar mientras prepara y el tray conserva el limite
-de 4 adjuntos con tope acumulado de 40 MB binarios para evitar picos de memoria
-por base64.
+de 4 adjuntos con tope acumulado de 40 MB binarios. La app sube el multipart
+desde archivo temporal a Media Storage/CDN y envia la referencia del asset; no
+duplica el body completo en memoria ni persiste el preview optimista como base64.
+Cada subida usa `clientUploadId` y el backend reserva una llave idempotente antes
+de comprimir para que reintentos concurrentes reproduzcan el mismo asset.
+
+Los selectores iOS de nuevo chat, cita y pagos usan
+`/contacts/search?picker=true`: hidratan inmediatamente el snapshot de la cuenta,
+revalidan sin bloquear y no vuelven a pedir la bandeja de chats. El backend
+omite agregados de pagos/citas y calentamiento de avatares, limita el ranking
+costoso a un conjunto de candidatos y devuelve todos los telefonos del contacto.
+El cache de queries exactas es LRU en memoria; solo los recientes se guardan en
+disco y la persistencia queda deshabilitada hasta tener usuario verificado.
+
+El hilo iOS muestra el bloque de `/contacts/:id/conversation` en cuanto llega;
+agente, programados y datos secundarios no pueden taparlo con un spinner. Para
+despliegues graduales conserva fallback a `/journey`. La salud se mide con
+signposts `OSLog` y `MetricKit`; un ring local acotado guarda solo categoria,
+resultado, duracion y conteos sanitizados. La suite incluye unit tests de
+promocion de filas/estado inicial, XCUITest sin red, smoke real opt-in y soak de
+10,000-50,000 filas.
 
 Cuando llega una push de chat o el usuario abre `/movil` desde esa notificacion,
 el cliente debe priorizar el hilo afectado sobre la bandeja completa. La push web

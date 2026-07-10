@@ -95,6 +95,27 @@ const WHATSAPP_VIDEO_UPLOAD_ROOT = join(__dirname, '../../uploads/whatsapp-video
 const WHATSAPP_VIDEO_PUBLIC_PATH = '/uploads/whatsapp-videos'
 const MAX_WHATSAPP_VIDEO_INPUT_BYTES = 25 * 1024 * 1024
 const MAX_WHATSAPP_VIDEO_OUTPUT_BYTES = 16 * 1024 * 1024
+const FFMPEG_MAX_CONCURRENCY = Math.min(
+  4,
+  Math.max(1, Number(process.env.WHATSAPP_FFMPEG_MAX_CONCURRENCY || 2) || 2)
+)
+const FFMPEG_MAX_QUEUE = Math.min(
+  20,
+  Math.max(1, Number(process.env.WHATSAPP_FFMPEG_MAX_QUEUE || 6) || 6)
+)
+const FFMPEG_QUEUE_TIMEOUT_MS = Math.max(
+  1_000,
+  Number(process.env.WHATSAPP_FFMPEG_QUEUE_TIMEOUT_MS || 15_000) || 15_000
+)
+const FFMPEG_PROCESS_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.WHATSAPP_FFMPEG_PROCESS_TIMEOUT_MS || 60_000) || 60_000
+)
+const WHATSAPP_VIDEO_TRANSCODE_BUDGET_MS = Math.max(
+  15_000,
+  Number(process.env.WHATSAPP_VIDEO_TRANSCODE_BUDGET_MS || 90_000) || 90_000
+)
+const FFMPEG_STDERR_LIMIT = 16 * 1024
 const WHATSAPP_VIDEO_MIME_TYPE = 'video/mp4'
 const WHATSAPP_VOICE_NOTE_MIME_TYPE = 'audio/ogg; codecs=opus'
 const CHAT_AUDIO_PLAYBACK_MIME_TYPE = 'audio/mp4'
@@ -110,6 +131,8 @@ const WHATSAPP_PROFILE_PICTURE_BACKFILL_QR_BATCH_LIMIT = 8
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_LIMIT = 3
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_TITLE_MAX = 20
 const WHATSAPP_INTERACTIVE_REPLY_BUTTON_ID_MAX = 256
+let activeFfmpegProcesses = 0
+const ffmpegWaitQueue = []
 
 async function getBusinessDayKey() {
   const timezone = await getAccountTimezone().catch(() => DEFAULT_TIMEZONE)
@@ -831,34 +854,126 @@ function normalizeVoiceNoteMimeType({ mimeType, params } = {}) {
   return cleanMimeType
 }
 
-function runFfmpeg(args = [], options = {}) {
+function ffmpegError(message, status = 503, code = 'ffmpeg_unavailable') {
+  const error = new Error(message)
+  error.status = status
+  error.code = code
+  return error
+}
+
+function releaseFfmpegSlot() {
+  activeFfmpegProcesses = Math.max(0, activeFfmpegProcesses - 1)
+  while (ffmpegWaitQueue.length) {
+    const waiter = ffmpegWaitQueue.shift()
+    if (!waiter || waiter.cancelled) continue
+    clearTimeout(waiter.timer)
+    activeFfmpegProcesses += 1
+    waiter.resolve(releaseFfmpegSlot)
+    return
+  }
+}
+
+function acquireFfmpegSlot() {
+  if (activeFfmpegProcesses < FFMPEG_MAX_CONCURRENCY) {
+    activeFfmpegProcesses += 1
+    return Promise.resolve(releaseFfmpegSlot)
+  }
+  if (ffmpegWaitQueue.length >= FFMPEG_MAX_QUEUE) {
+    return Promise.reject(ffmpegError(
+      'El servidor está preparando demasiados archivos al mismo tiempo. Espera unos segundos e intenta otra vez.',
+      503,
+      'ffmpeg_queue_full'
+    ))
+  }
+
   return new Promise((resolve, reject) => {
-    const binary = process.env.FFMPEG_PATH || 'ffmpeg'
-    const child = spawn(binary, args)
-    let stderr = ''
-    const unavailableMessage = cleanString(options.unavailableMessage) ||
-      'El audio salió en un formato que WhatsApp no acepta y este servidor no pudo adaptarlo. Intenta grabarlo otra vez.'
-    const failureMessage = cleanString(options.failureMessage) ||
-      'No se pudo preparar el audio para WhatsApp. Intenta grabarlo otra vez.'
+    const waiter = { resolve, reject, cancelled: false, timer: null }
+    waiter.timer = setTimeout(() => {
+      waiter.cancelled = true
+      reject(ffmpegError(
+        'El servidor sigue ocupado preparando otros archivos. Intenta otra vez en unos segundos.',
+        503,
+        'ffmpeg_queue_timeout'
+      ))
+    }, FFMPEG_QUEUE_TIMEOUT_MS)
+    ffmpegWaitQueue.push(waiter)
+  })
+}
 
-    child.stderr.on('data', chunk => {
-      stderr += chunk.toString()
-    })
+async function runFfmpeg(args = [], options = {}) {
+  const release = await acquireFfmpegSlot()
+  try {
+    const deadlineRemaining = Number(options.deadlineMs) - Date.now()
+    const requestedTimeout = Number(options.timeoutMs || FFMPEG_PROCESS_TIMEOUT_MS)
+    const timeoutMs = Number.isFinite(deadlineRemaining)
+      ? Math.min(requestedTimeout, deadlineRemaining)
+      : requestedTimeout
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1_000) {
+      throw ffmpegError(
+        cleanString(options.timeoutMessage) || 'El archivo tardó demasiado en prepararse. Elige uno más corto.',
+        422,
+        'ffmpeg_timeout'
+      )
+    }
 
-    child.on('error', () => {
-      reject(new Error(unavailableMessage))
-    })
+    return await new Promise((resolve, reject) => {
+      const binary = process.env.FFMPEG_PATH || 'ffmpeg'
+      const child = spawn(binary, ['-nostdin', ...args], {
+        stdio: ['ignore', 'ignore', 'pipe']
+      })
+      let stderr = ''
+      let settled = false
+      let timedOut = false
+      let timeout = null
+      const unavailableMessage = cleanString(options.unavailableMessage) ||
+        'El audio salió en un formato que WhatsApp no acepta y este servidor no pudo adaptarlo. Intenta grabarlo otra vez.'
+      const failureMessage = cleanString(options.failureMessage) ||
+        'No se pudo preparar el audio para WhatsApp. Intenta grabarlo otra vez.'
 
-    child.on('close', code => {
-      if (code === 0) {
-        resolve()
-        return
+      const finish = (error = null) => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        if (error) reject(error)
+        else resolve()
       }
 
-      const detail = stderr.trim().slice(0, 240)
-      reject(new Error(detail || failureMessage))
+      timeout = setTimeout(() => {
+        timedOut = true
+        child.kill('SIGKILL')
+      }, timeoutMs)
+
+      child.stderr.on('data', chunk => {
+        if (stderr.length < FFMPEG_STDERR_LIMIT) {
+          stderr += chunk.toString().slice(0, FFMPEG_STDERR_LIMIT - stderr.length)
+        }
+      })
+
+      child.on('error', () => {
+        finish(ffmpegError(unavailableMessage, 503, 'ffmpeg_unavailable'))
+      })
+
+      child.on('close', code => {
+        if (timedOut) {
+          finish(ffmpegError(
+            cleanString(options.timeoutMessage) || 'El archivo tardó demasiado en prepararse. Elige uno más corto.',
+            422,
+            'ffmpeg_timeout'
+          ))
+          return
+        }
+        if (code === 0) {
+          finish()
+          return
+        }
+
+        const detail = stderr.trim().slice(0, 240)
+        finish(ffmpegError(detail || failureMessage, 422, 'ffmpeg_conversion_failed'))
+      })
     })
-  })
+  } finally {
+    release()
+  }
 }
 
 async function convertVideoToWhatsAppMp4({ buffer, extension }) {
@@ -870,6 +985,7 @@ async function convertVideoToWhatsAppMp4({ buffer, extension }) {
     { maxDimension: 720, crf: 35, audioBitrate: '64k', label: '720_crf35' },
     { maxDimension: 480, crf: 38, audioBitrate: '48k', label: '480_crf38' }
   ]
+  const deadlineMs = Date.now() + WHATSAPP_VIDEO_TRANSCODE_BUDGET_MS
 
   try {
     await fs.writeFile(inputPath, buffer)
@@ -911,7 +1027,9 @@ async function convertVideoToWhatsAppMp4({ buffer, extension }) {
         outputPath
       ], {
         unavailableMessage: 'El video salió en un formato que WhatsApp no acepta y este servidor no pudo adaptarlo. Intenta grabarlo otra vez.',
-        failureMessage: 'No se pudo preparar el video para WhatsApp. Intenta grabarlo otra vez.'
+        failureMessage: 'No se pudo preparar el video para WhatsApp. Intenta grabarlo otra vez.',
+        timeoutMessage: 'El video tardó demasiado en prepararse. Graba uno más corto o envíalo como documento.',
+        deadlineMs
       })
 
       const converted = await fs.readFile(outputPath)
@@ -1067,6 +1185,121 @@ async function prepareWhatsAppVoiceAudio(parsed) {
     extension: 'ogg',
     compression: 'original_ogg_opus'
   }
+}
+
+/**
+ * Normaliza binarios multipart de la app nativa antes de persistirlos en el
+ * CDN. Es la misma tubería estricta que antes solo se ejecutaba después de
+ * decodificar un data URL: imagen optimizada, video MP4 H.264 y voz OGG/Opus.
+ * Los documentos se conservan byte por byte.
+ */
+export async function prepareWhatsAppMediaForDirectUpload({
+  buffer,
+  mimeType = '',
+  filename = '',
+  kind = ''
+} = {}) {
+  if (!Buffer.isBuffer(buffer) || !buffer.length) {
+    throw new Error('El archivo está vacío.')
+  }
+
+  const cleanKind = cleanString(kind).toLowerCase()
+  const normalizedMimeType = cleanMimeType(mimeType)
+
+  if (cleanKind === 'image') {
+    const extension = IMAGE_EXTENSION_BY_MIME[normalizedMimeType]
+    if (!extension) throw new Error('La foto debe ser JPG, PNG o WebP.')
+    if (buffer.length > MAX_WHATSAPP_IMAGE_INPUT_BYTES) {
+      throw new Error('La foto pesa demasiado. Toma otra foto más ligera o recórtala antes de enviarla.')
+    }
+    const prepared = await prepareWhatsAppApiImageBuffer({ buffer, mimeType: normalizedMimeType })
+    return {
+      ...prepared,
+      filename: `whatsapp-image.${prepared.extension}`,
+      metadata: {
+        whatsappApiCompatible: true,
+        whatsappImageCompression: prepared.compression,
+        originalMimeType: normalizedMimeType,
+        originalFilename: sanitizeDocumentFilename(filename, normalizedMimeType)
+      }
+    }
+  }
+
+  if (cleanKind === 'video') {
+    const extension = VIDEO_EXTENSION_BY_MIME[normalizedMimeType]
+    if (!extension) {
+      throw new Error('El video debe ser MP4, MOV, WebM o 3GP para poder prepararlo para WhatsApp.')
+    }
+    if (buffer.length > MAX_WHATSAPP_VIDEO_INPUT_BYTES) {
+      throw new Error('El video pesa demasiado. Graba uno más corto para poder comprimirlo y enviarlo por WhatsApp.')
+    }
+    const prepared = await convertVideoToWhatsAppMp4({ buffer, extension })
+    return {
+      buffer: prepared.buffer,
+      mimeType: WHATSAPP_VIDEO_MIME_TYPE,
+      extension: 'mp4',
+      filename: 'whatsapp-video.mp4',
+      metadata: {
+        whatsappApiCompatible: true,
+        whatsappVideoCompression: prepared.compression,
+        originalMimeType: normalizedMimeType,
+        originalFilename: sanitizeDocumentFilename(filename, normalizedMimeType)
+      }
+    }
+  }
+
+  if (cleanKind === 'audio') {
+    const extension = AUDIO_EXTENSION_BY_MIME[normalizedMimeType]
+    if (!extension) {
+      throw new Error('WhatsApp no acepta este formato de audio. Graba otra vez o usa un audio compatible.')
+    }
+    if (buffer.length > MAX_WHATSAPP_AUDIO_BYTES) {
+      throw new Error('El audio pesa demasiado. Graba uno más corto para poder enviarlo por WhatsApp.')
+    }
+    const params = cleanString(mimeType).toLowerCase().split(';').slice(1).join(';')
+    const prepared = await prepareWhatsAppVoiceAudio({
+      buffer,
+      mimeType: normalizedMimeType,
+      params,
+      extension
+    })
+    return {
+      ...prepared,
+      filename: `whatsapp-audio.${prepared.extension}`,
+      metadata: {
+        whatsappApiCompatible: true,
+        whatsappVoiceNote: true,
+        whatsappAudioCompression: prepared.compression,
+        originalMimeType: normalizedMimeType,
+        originalFilename: sanitizeDocumentFilename(filename, normalizedMimeType)
+      }
+    }
+  }
+
+  if (cleanKind === 'document') {
+    const allowed = DOCUMENT_EXTENSION_BY_MIME[normalizedMimeType] ||
+      VIDEO_EXTENSION_BY_MIME[normalizedMimeType] ||
+      AUDIO_EXTENSION_BY_MIME[normalizedMimeType]
+    if (!allowed) {
+      throw new Error('El archivo debe ser PDF, Word, Excel, PowerPoint, TXT, CSV, audio o video compatible.')
+    }
+    if (buffer.length > MAX_WHATSAPP_DOCUMENT_BYTES) {
+      throw new Error('El documento pesa demasiado. Elige uno de menos de 20 MB para poder enviarlo por WhatsApp.')
+    }
+    return {
+      buffer,
+      mimeType: normalizedMimeType,
+      extension: getDocumentSendExtension(normalizedMimeType),
+      filename: sanitizeDocumentFilename(filename, normalizedMimeType),
+      metadata: {
+        whatsappApiCompatible: true,
+        whatsappDocument: true,
+        originalMimeType: normalizedMimeType
+      }
+    }
+  }
+
+  throw new Error('El tipo de archivo de chat no es válido.')
 }
 
 async function prepareChatAudioPlaybackPreview(parsed) {

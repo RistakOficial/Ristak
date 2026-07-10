@@ -1,6 +1,6 @@
 import Foundation
 
-/// Journey / hilo de conversación (`GET /api/contacts/:id/journey`, doc 04).
+/// Journey / hilo de conversación (`GET /api/contacts/:id/conversation`, doc 04).
 /// - Hilo de chat: `chatMessagesOnly=true&includeBusinessMessages=true&
 ///   refreshExternalStatuses=false&messageLimit=100` + cursor `beforeMessageDate`.
 /// - Journey completo (markers de pagos/citas + panel Info):
@@ -22,16 +22,34 @@ struct JourneyService: Sendable {
         limit: Int = JourneyService.defaultMessageLimit,
         beforeMessageDate: String? = nil
     ) async throws -> [JourneyEvent] {
-        try await client.get(
-            "/contacts/\(contactId)/journey",
-            query: [
-                "includeBusinessMessages": "true",
-                "refreshExternalStatuses": "false",
-                "chatMessagesOnly": "true",
-                "messageLimit": String(limit),
-                "beforeMessageDate": beforeMessageDate,
-            ]
-        )
+        let query: [String: String?] = [
+            "includeBusinessMessages": "true",
+            "refreshExternalStatuses": "false",
+            "chatMessagesOnly": "true",
+            "messageLimit": String(limit),
+            "beforeMessageDate": beforeMessageDate,
+        ]
+        do {
+            // Contrato dedicado de chat. Hoy comparte el parser del journey en
+            // backend, pero mantiene el hilo fuera de la ruta pesada de
+            // atribución y permite optimizarlo sin alterar Contacto > Historial.
+            return try await client.get(
+                "/contacts/\(contactId)/conversation",
+                query: query
+            )
+        } catch let error as RistakAPIError where Self.canUseLegacyConversationFallback(error) {
+            // La app móvil puede hablar con instalaciones que aún no publican
+            // la ruta dedicada. Un 404 de contrato vuelve al journey anterior;
+            // auth, licencia, red y 5xx nunca se esconden con otro request.
+            return try await client.get(
+                "/contacts/\(contactId)/journey",
+                query: query
+            )
+        }
+    }
+
+    static func canUseLegacyConversationFallback(_ error: RistakAPIError) -> Bool {
+        error.status == 404 || error.kind == .notFound
     }
 
     /// Página de mensajes ya parseados con `buildMessagesFromJourney`.

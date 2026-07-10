@@ -41,6 +41,21 @@ xcrun devicectl device process launch --device <UDID> com.ristak.app
 - El login nativo no expone configuración avanzada ni campo manual de servidor:
   la detección de cuenta por correo es el único flujo visible para usuarios.
 
+### Pruebas de calidad y carga
+
+```bash
+ios/app/scripts/run-ios-ui-tests.sh
+RISTAK_SOAK_CHAT_COUNT=10000 RISTAK_SOAK_ITERATIONS=250 \
+  ios/app/scripts/run-ios-chat-soak.sh
+ios/app/scripts/run-ios-live-smoke.sh
+```
+
+La suite UI normal y el soak usan fixtures sintéticos, no requieren sesión y no
+tocan la red. El smoke real es opt-in y solo reutiliza la sesión/configuración
+que ya exista en el destino; no recibe credenciales por argumentos ni entorno.
+Puedes cambiar el simulador con `RISTAK_IOS_DESTINATION` y cada script deja su
+`.xcresult` bajo el directorio temporal para inspección.
+
 ## Arquitectura
 
 Ver [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Contratos exactos de API,
@@ -115,6 +130,12 @@ solo en capa flotante; copy en español.
   deep links de notificación (chat/cita/pago), refresh al recibir push en
   foreground, Notification Service Extension para avatar/media en iOS, SSE
   `chat-events` + `payment-events` con reconexión.
+- **Rendimiento cotidiano**: directorio cache-first para nuevo chat, citas y
+  pagos; historial primario visible antes de cargar datos secundarios; adjuntos
+  por multipart directo a storage/CDN con fallback legacy fuera del hilo visual.
+- **Calidad operativa**: signposts `OSLog`, suscripción `MetricKit`, ring local
+  sanitizado, unit tests, XCUITest sin red, smoke real opt-in y soak de
+  10,000-50,000 filas mediante scripts en `ios/app/scripts/`.
 
 ## Pendientes / brechas conocidas
 

@@ -6,7 +6,7 @@ import UIKit
 /// (paridad mobile/ `sendCameraShare`, App.tsx L3443): con una foto o video ya
 /// capturado, el usuario busca y selecciona uno o varios contactos, agrega un
 /// mensaje opcional y lo manda a cada uno por WhatsApp
-/// (`MessagingService.sendImage` / `sendVideo` con el data URL base64).
+/// (`MessagingService.sendImage` / `sendVideo` con una URL de CDN).
 @MainActor
 @Observable
 final class CameraShareViewModel: Identifiable {
@@ -104,12 +104,31 @@ final class CameraShareViewModel: Identifiable {
         let media = self.media
         let messaging = self.messaging
         let recipients = selected
+        let mediaReference: ChatMediaSendReference
+
+        do {
+            // Una sola subida sirve para todos los destinatarios. Antes la misma
+            // foto/video base64 viajaba completa N veces desde el teléfono.
+            mediaReference = try await messaging.prepareMediaReference(
+                media,
+                clientUploadID: "ios-camera-\(id.uuidString.lowercased())"
+            )
+        } catch {
+            alertMessage = error.localizedDescription
+            return false
+        }
 
         let succeeded = await withTaskGroup(of: Bool.self) { group in
             for contact in recipients {
                 group.addTask {
                     do {
-                        try await Self.sendMedia(messaging, to: contact, media: media, caption: caption)
+                        try await Self.sendMedia(
+                            messaging,
+                            to: contact,
+                            media: media,
+                            reference: mediaReference,
+                            caption: caption
+                        )
                         return true
                     } catch {
                         return false
@@ -141,6 +160,7 @@ final class CameraShareViewModel: Identifiable {
         _ messaging: MessagingService,
         to contact: ChatContact,
         media: EncodedChatMedia,
+        reference: ChatMediaSendReference,
         caption: String
     ) async throws {
         let from = contact.lastBusinessPhone.isEmpty ? nil : contact.lastBusinessPhone
@@ -154,7 +174,9 @@ final class CameraShareViewModel: Identifiable {
                     to: contact.phone,
                     from: from,
                     contactId: contact.id,
-                    videoDataUrl: media.dataUrl,
+                    videoDataUrl: reference.legacyDataURL,
+                    videoUrl: reference.publicURL,
+                    videoMediaAssetId: reference.mediaAssetID,
                     caption: captionValue,
                     phoneNumberId: phoneNumberId
                 )
@@ -165,7 +187,9 @@ final class CameraShareViewModel: Identifiable {
                     to: contact.phone,
                     from: from,
                     contactId: contact.id,
-                    imageDataUrl: media.dataUrl,
+                    imageDataUrl: reference.legacyDataURL,
+                    imageUrl: reference.publicURL,
+                    imageMediaAssetId: reference.mediaAssetID,
                     caption: captionValue,
                     phoneNumberId: phoneNumberId
                 )

@@ -45,6 +45,9 @@ struct ChatAttachment: Sendable, Equatable {
     var type: Kind
     var url: String?
     var dataUrl: String?
+    /// Preview binario exclusivamente local para burbujas optimistas. No forma
+    /// parte del contrato del servidor ni de `ChatThreadSnapshotCache`.
+    var localPreviewData: Data?
     var name: String?
     var mimeType: String?
     var isGif: Bool
@@ -56,6 +59,7 @@ struct ChatAttachment: Sendable, Equatable {
         type: Kind,
         url: String? = nil,
         dataUrl: String? = nil,
+        localPreviewData: Data? = nil,
         name: String? = nil,
         mimeType: String? = nil,
         isGif: Bool = false,
@@ -66,6 +70,7 @@ struct ChatAttachment: Sendable, Equatable {
         self.type = type
         self.url = url
         self.dataUrl = dataUrl
+        self.localPreviewData = localPreviewData
         self.name = name
         self.mimeType = mimeType
         self.isGif = isGif

@@ -1,7 +1,8 @@
 import Foundation
 
 // Contrato exacto: docs/research/12-media.md (+ ARCHITECTURE.md §Media).
-// Los envíos de chat viajan como data URL base64 en JSON — no hay multipart.
+// iOS conserva los bytes originales y los sube como multipart a media storage.
+// `dataUrl` existe solamente como compatibilidad con backends legacy.
 
 /// Tipo de media de chat.
 enum ChatMediaKind: String, Sendable, CaseIterable {
@@ -74,14 +75,16 @@ enum ChatMediaLimits {
 /// Resultado de codificar un archivo para enviarlo por chat.
 struct EncodedChatMedia: Sendable {
     let kind: ChatMediaKind
-    /// `data:<mime>;base64,<...>` — listo para `imageDataUrl`/`videoDataUrl`/etc.
-    let dataUrl: String
+    /// Binario preparado localmente. Evita inflarlo ~33% a base64 antes de que
+    /// realmente sea necesario y permite subirlo como multipart.
+    let binaryData: Data
     let mimeType: String
     let filename: String
     /// Bytes del binario original (sin overhead base64).
     let sizeBytes: Int
     /// Solo audio: duración medida por el cliente.
     let durationMs: Double?
+
 }
 
 /// Errores de preparación de media, con los mensajes EXACTOS en español del

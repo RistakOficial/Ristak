@@ -106,6 +106,10 @@ final class ContactInfoViewModel {
 
     /// Tope de eventos del journey que se guardan en caché (los más recientes).
     private static let maxJourneyCacheEvents = 200
+    /// El panel de historial no necesita descargar miles de mensajes para su
+    /// primer pintado: el backend conserva todos los hitos de negocio y acota
+    /// únicamente los mensajes recientes de cada canal.
+    private static let initialJourneyMessageLimit = 200
     private var contactCacheHydrated = false
     private var journeyCacheHydrated = false
     /// La carga (revalidación) inicial corre una sola vez por pantalla.
@@ -277,6 +281,7 @@ final class ContactInfoViewModel {
                 query: [
                     "includeBusinessMessages": "true",
                     "refreshExternalStatuses": "false",
+                    "messageLimit": String(Self.initialJourneyMessageLimit),
                 ]
             )
             guard let events = ChatSnapshotDecoding.decode([JourneyEvent].self, from: data) else {

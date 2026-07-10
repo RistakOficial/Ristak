@@ -47,6 +47,7 @@ const BUNNY_FILE_UPLOAD_BASE_TIMEOUT_MS = Math.max(
   Number(process.env.BUNNY_FILE_UPLOAD_TIMEOUT_MS || 0) || 0
 )
 const BUNNY_FILE_UPLOAD_MAX_TIMEOUT_MS = 30 * 60_000
+const BUNNY_FILE_DELETE_TIMEOUT_MS = 30_000
 // Solo necesitamos los primeros bytes para detectar el tipo real del archivo.
 const MEDIA_HEADER_SAMPLE_BYTES = 64 * 1024
 
@@ -103,6 +104,8 @@ const MIME_EXTENSION = {
   'video/mp4': 'mp4',
   'video/quicktime': 'mov',
   'video/webm': 'webm',
+  'video/3gpp': '3gp',
+  'video/3gp': '3gp',
   'audio/mpeg': 'mp3',
   'audio/mp4': 'm4a',
   'audio/aac': 'aac',
@@ -110,6 +113,7 @@ const MIME_EXTENSION = {
   'audio/webm': 'webm',
   'audio/wav': 'wav',
   'audio/x-wav': 'wav',
+  'audio/amr': 'amr',
   'application/pdf': 'pdf',
   'application/msword': 'doc',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
@@ -1567,12 +1571,36 @@ async function deleteFromBunny({ config, objectPath }) {
   if (!objectPath || !config.bunnyConfigured) return
   const response = await fetch(bunnyObjectUrl(config, objectPath), {
     method: 'DELETE',
-    headers: { AccessKey: config.bunnyStorageApiKey }
+    headers: { AccessKey: config.bunnyStorageApiKey },
+    signal: AbortSignal.timeout(BUNNY_FILE_DELETE_TIMEOUT_MS)
   })
 
   if (!response.ok && response.status !== 404) {
     const detail = await response.text().catch(() => '')
     throw new Error(`Bunny rechazó la eliminación (${response.status}): ${detail.slice(0, 180) || response.statusText}`)
+  }
+}
+
+async function cleanupUnpersistedMediaArtifacts({
+  config,
+  bunnyPaths = [],
+  localPaths = [],
+  streamVideoIds = []
+} = {}) {
+  const results = await Promise.allSettled([
+    ...[...new Set(bunnyPaths.filter(Boolean))].map(objectPath =>
+      deleteFromBunny({ config, objectPath })
+    ),
+    ...[...new Set(localPaths.filter(Boolean))].map(localPath =>
+      fs.rm(localPath, { force: true })
+    ),
+    ...[...new Set(streamVideoIds.filter(Boolean))].map(videoId =>
+      deleteBunnyStreamVideo(config, videoId)
+    )
+  ])
+  const failed = results.filter(result => result.status === 'rejected')
+  if (failed.length) {
+    logger.warn(`[MediaStorage] ${failed.length} artefacto(s) no pudieron limpiarse después de una subida fallida.`)
   }
 }
 
@@ -1913,6 +1941,8 @@ export async function uploadMediaAsset(input = {}) {
   const tempFilePath = cleanString(input.filePath)
   const hasTempFile = Boolean(tempFilePath)
   let tempFileHandedOff = false
+  let mediaAssetPersisted = false
+  let pendingArtifactCleanup = null
 
   try {
     let originalBuffer = null
@@ -1991,7 +2021,10 @@ export async function uploadMediaAsset(input = {}) {
         moduleEntityId,
         isPublic,
         clientUploadId,
-        onTempFileHandedOff: () => { tempFileHandedOff = true }
+        onTempFileHandedOff: () => {
+          tempFileHandedOff = true
+          input.onTempFileHandedOff?.()
+        }
       })
       return asset
     }
@@ -2044,6 +2077,13 @@ export async function uploadMediaAsset(input = {}) {
       subFolder
     }) : ''
 
+    pendingArtifactCleanup = {
+      config,
+      bunnyPaths: [],
+      localPaths: [],
+      streamVideoIds: []
+    }
+
     let storageProvider = 'local'
     let publicUrl = buildAppPublicUrl(`/media/assets/${id}/file`)
     let deferredStreamSync = null
@@ -2066,8 +2106,10 @@ export async function uploadMediaAsset(input = {}) {
     }
 
     if (config.provider === 'bunny' && config.bunnyConfigured) {
+      pendingArtifactCleanup.bunnyPaths.push(objectPath)
       await uploadToBunny({ config, objectPath, buffer: processed.buffer, mimeType: finalMimeType })
       if (thumbnail) {
+        pendingArtifactCleanup.bunnyPaths.push(thumbnailPath)
         await uploadToBunny({ config, objectPath: thumbnailPath, buffer: thumbnail.buffer, mimeType: thumbnail.mimeType })
         metadata.variants.thumbnail = {
           path: thumbnailPath,
@@ -2083,10 +2125,13 @@ export async function uploadMediaAsset(input = {}) {
       if (config.provider === 'bunny' && config.requireBunny) {
         throw errorWithStatus(`Bunny.net está activo pero falta configuración: ${config.missingEnvironment.join(', ')}`, 503, 'bunny_not_configured')
       }
+      const expectedLocalPath = join(LOCAL_MEDIA_ROOT, objectPath)
+      pendingArtifactCleanup.localPaths.push(expectedLocalPath)
       const localPath = await saveLocalFile({ objectPath, buffer: processed.buffer })
       metadata.localPath = localPath
       metadata.localFallback = true
       if (thumbnail) {
+        pendingArtifactCleanup.localPaths.push(join(LOCAL_MEDIA_ROOT, thumbnailPath))
         const localThumbPath = await saveLocalFile({ objectPath: thumbnailPath, buffer: thumbnail.buffer })
         metadata.variants.thumbnail = {
           path: thumbnailPath,
@@ -2117,6 +2162,8 @@ export async function uploadMediaAsset(input = {}) {
         deferredStreamSync = streamSyncInput
       } else {
         metadata.stream = await syncVideoToBunnyStream(streamSyncInput)
+        const streamVideoId = cleanString(metadata.stream?.videoId)
+        if (streamVideoId) pendingArtifactCleanup.streamVideoIds.push(streamVideoId)
       }
     }
 
@@ -2149,6 +2196,7 @@ export async function uploadMediaAsset(input = {}) {
       isPublic,
       metadata
     })
+    mediaAssetPersisted = true
 
     await refreshQuotaUsage(businessId)
     if (deferredStreamSync) {
@@ -2157,6 +2205,11 @@ export async function uploadMediaAsset(input = {}) {
     logger.info(`[MediaStorage] Archivo listo: ${id} (${finalMediaType}, ${quotaSize} bytes)`)
 
     return await getMediaAsset(id)
+  } catch (error) {
+    if (!mediaAssetPersisted && pendingArtifactCleanup) {
+      await cleanupUnpersistedMediaArtifacts(pendingArtifactCleanup)
+    }
+    throw error
   } finally {
     if (hasTempFile && !tempFileHandedOff) {
       await fs.rm(tempFilePath, { force: true }).catch(() => undefined)
@@ -2225,7 +2278,17 @@ async function finalizeStreamingMediaUpload({
     variants: {}
   }
 
+  let mediaAssetPersisted = false
+  const pendingArtifactCleanup = {
+    config,
+    bunnyPaths: [],
+    localPaths: [],
+    streamVideoIds: []
+  }
+
+  try {
   if (config.provider === 'bunny' && config.bunnyConfigured) {
+    pendingArtifactCleanup.bunnyPaths.push(objectPath)
     await uploadFileToBunny({ config, objectPath, filePath: tempFilePath, size: sizeBytes, mimeType: finalMimeType })
     storageProvider = 'bunny'
     publicUrl = bunnyPublicUrl(config, objectPath)
@@ -2234,6 +2297,7 @@ async function finalizeStreamingMediaUpload({
     if (config.provider === 'bunny' && config.requireBunny) {
       throw errorWithStatus(`Bunny.net está activo pero falta configuración: ${config.missingEnvironment.join(', ')}`, 503, 'bunny_not_configured')
     }
+    pendingArtifactCleanup.localPaths.push(join(LOCAL_MEDIA_ROOT, objectPath))
     const localPath = await saveLocalFileFromPath({ objectPath, filePath: tempFilePath })
     metadata.localPath = localPath
     metadata.localFallback = true
@@ -2264,6 +2328,8 @@ async function finalizeStreamingMediaUpload({
       deferredStreamSync = { ...streamSyncInput, cleanupFilePath: tempFilePath }
     } else {
       metadata.stream = await syncVideoToBunnyStream(streamSyncInput)
+      const streamVideoId = cleanString(metadata.stream?.videoId)
+      if (streamVideoId) pendingArtifactCleanup.streamVideoIds.push(streamVideoId)
     }
   }
 
@@ -2296,6 +2362,7 @@ async function finalizeStreamingMediaUpload({
     isPublic,
     metadata
   })
+  mediaAssetPersisted = true
 
   await refreshQuotaUsage(businessId)
   // Leemos el asset ANTES de agendar la sync diferida: así, una vez que el temporal
@@ -2309,6 +2376,12 @@ async function finalizeStreamingMediaUpload({
   logger.info(`[MediaStorage] Archivo listo (streaming): ${id} (${finalMediaType}, ${sizeBytes} bytes)`)
 
   return asset
+  } catch (error) {
+    if (!mediaAssetPersisted) {
+      await cleanupUnpersistedMediaArtifacts(pendingArtifactCleanup)
+    }
+    throw error
+  }
 }
 
 export async function uploadMediaAssetFromDataUrl(input = {}) {

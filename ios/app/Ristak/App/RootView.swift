@@ -25,14 +25,19 @@ struct RootView: View {
             case .booting:
                 RistakBootSplashView()
                     .transition(.opacity)
+                    .accessibilityIdentifier("ristak-boot-splash")
 
             case .loggedOut:
                 LoginView()
                     .transition(.opacity)
+                    .accessibilityIdentifier("ristak-login-root")
+                    .reportsRistakUIReady()
 
             case .active:
                 MainShell()
                     .transition(.opacity)
+                    .accessibilityIdentifier("ristak-main-root")
+                    .reportsRistakUIReady()
             }
         }
         .animation(.easeInOut(duration: 0.28), value: session.phase)

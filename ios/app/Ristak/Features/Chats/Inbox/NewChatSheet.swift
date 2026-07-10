@@ -13,6 +13,7 @@ struct NewChatSheet: View {
     @State private var isSearching = false
     @State private var searchTask: Task<Void, Never>?
     @State private var showNewContact = false
+    private let contactsService = ContactsService()
 
     var body: some View {
         SheetScaffold(title: "Nuevo chat", subtitle: "Busca un contacto para escribirle") {
@@ -53,8 +54,11 @@ struct NewChatSheet: View {
         }
         .onChange(of: searchText) {
             searchTask?.cancel()
+            // Primer pintado local en el mismo gesto. Si ya abrimos el
+            // directorio antes, teclear filtra memoria; la red solo reconcilia.
+            results = cachedResults(for: searchText)
             searchTask = Task {
-                try? await Task.sleep(nanoseconds: 240_000_000)
+                try? await Task.sleep(nanoseconds: 90_000_000)
                 guard !Task.isCancelled else { return }
                 await runSearch()
             }
@@ -69,6 +73,7 @@ struct NewChatSheet: View {
             }
             .presentationDetents([.medium, .large])
         }
+        .accessibilityIdentifier("ristak-new-chat-sheet")
     }
 
     // MARK: - Filas de la lista
@@ -169,6 +174,7 @@ struct NewChatSheet: View {
                 .font(.body)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
+                .accessibilityIdentifier("ristak-new-chat-search")
 
             if !searchText.isEmpty {
                 Button {
@@ -190,8 +196,94 @@ struct NewChatSheet: View {
     }
 
     private func runSearch() async {
-        isSearching = true
-        results = await viewModel.newChatResults(query: searchText)
+        let requestedQuery = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cached = cachedResults(for: requestedQuery)
+        results = cached
+
+        // Con un carácter el filtro local es más rápido y evita disparar scans
+        // inútiles. Query vacío sí refresca el directorio reciente.
+        guard requestedQuery.isEmpty || requestedQuery.count >= 2 else {
+            isSearching = false
+            return
+        }
+
+        isSearching = cached.isEmpty
+        do {
+            let fresh = try await contactsService.fetchPickerContacts(query: requestedQuery)
+            guard !Task.isCancelled,
+                  requestedQuery == searchText.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            results = authoritativeContacts(fresh, preservingAvatarsFrom: cached)
+        } catch {
+            // SWR: una falla de red conserva el directorio ya visible.
+        }
+        guard requestedQuery == searchText.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
         isSearching = false
+    }
+
+    private func cachedResults(for query: String) -> [ChatContact] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let folded = trimmed.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "es_MX")
+        ).lowercased()
+        let digits = trimmed.filter(\.isNumber)
+        let localRows = trimmed.isEmpty
+            ? Array(viewModel.rows.prefix(60))
+            : viewModel.rows.filter { contact in
+                let text = [ChatRowSignals.displayName(contact), contact.email]
+                    .joined(separator: " ")
+                    .folding(
+                        options: [.caseInsensitive, .diacriticInsensitive],
+                        locale: Locale(identifier: "es_MX")
+                    )
+                    .lowercased()
+                let phones = ([contact.phone, contact.matchedPhone ?? ""] + contact.phones.map(\.phone))
+                    .map { $0.filter(\.isNumber) }
+                return text.contains(folded)
+                    || (!digits.isEmpty && phones.contains { $0.contains(digits) })
+            }
+        return mergeContacts(localRows, contactsService.cachedPickerContacts(query: trimmed))
+    }
+
+    /// Mantiene el orden útil de chats recientes, actualiza duplicados con la
+    /// fila fresca y conserva un avatar cacheado si la ruta ligera no trae foto.
+    private func mergeContacts(_ first: [ChatContact], _ second: [ChatContact]) -> [ChatContact] {
+        var merged: [ChatContact] = []
+        var indexByID: [String: Int] = [:]
+        for contact in first + second where !contact.id.isEmpty {
+            if let index = indexByID[contact.id] {
+                merged[index] = ChatInboxPaginator.preservingHydratedAvatar(
+                    old: merged[index],
+                    fresh: contact
+                )
+            } else {
+                indexByID[contact.id] = merged.count
+                merged.append(contact)
+            }
+        }
+        return Array(merged.prefix(100))
+    }
+
+    /// Una respuesta fresca del directorio es autoritativa sobre membresía:
+    /// contactos eliminados u ocultados ya no pueden sobrevivir por venir de la
+    /// bandeja/caché local. Solo heredamos el avatar de la fila previa cuando el
+    /// endpoint ligero no incluye foto.
+    private func authoritativeContacts(
+        _ fresh: [ChatContact],
+        preservingAvatarsFrom cached: [ChatContact]
+    ) -> [ChatContact] {
+        let cachedByID = Dictionary(cached.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var seen = Set<String>()
+        var result: [ChatContact] = []
+        result.reserveCapacity(min(fresh.count, 100))
+        for contact in fresh where !contact.id.isEmpty && seen.insert(contact.id).inserted {
+            if let old = cachedByID[contact.id] {
+                result.append(ChatInboxPaginator.preservingHydratedAvatar(old: old, fresh: contact))
+            } else {
+                result.append(contact)
+            }
+            if result.count == 100 { break }
+        }
+        return result
     }
 }

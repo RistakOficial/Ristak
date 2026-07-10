@@ -46,6 +46,7 @@ struct LoginView: View {
         }
         .background(RistakTheme.bg)
         .animation(.easeInOut(duration: 0.2), value: viewModel.errorMessage)
+        .accessibilityIdentifier("ristak-login-screen")
     }
 
     // MARK: - Marca
@@ -103,6 +104,7 @@ struct LoginView: View {
                 .focused($focusedField, equals: .email)
                 .onSubmit { focusedField = .password }
                 .loginFieldStyle()
+                .accessibilityIdentifier("ristak-login-email")
 
             SecureField("Contraseña", text: $viewModel.password)
                 .textContentType(.password)
@@ -110,6 +112,7 @@ struct LoginView: View {
                 .focused($focusedField, equals: .password)
                 .onSubmit { submit() }
                 .loginFieldStyle()
+                .accessibilityIdentifier("ristak-login-password")
         }
     }
 
@@ -131,6 +134,7 @@ struct LoginView: View {
         .buttonStyle(.glassProminent)
         .controlSize(.large)
         .disabled(!viewModel.canSubmit)
+        .accessibilityIdentifier("ristak-login-submit")
     }
 
     // MARK: - Acciones

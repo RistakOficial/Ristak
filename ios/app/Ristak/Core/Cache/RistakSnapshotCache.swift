@@ -57,6 +57,9 @@ final class RistakSnapshotCache {
 
     /// Snapshot en memoria: clave original → `Data` JSON. Lectura instantánea.
     @ObservationIgnored private var memory: [String: Data] = [:]
+    /// Entradas efímeras (p. ej. queries de buscador): nunca pisan disco y se
+    /// podan por TTL/LRU durante la propia sesión.
+    @ObservationIgnored private var volatileMemory: [String: VolatileEntry] = [:]
     /// Namespace saneado activo (`nil` = sin configurar).
     @ObservationIgnored private var currentNamespace: String?
     /// Directorio de la cuenta activa en disco.
@@ -64,22 +67,38 @@ final class RistakSnapshotCache {
     /// Escrituras pendientes por clave (para coalescer ráfagas).
     @ObservationIgnored private var pendingWrites: [String: Task<Void, Never>] = [:]
 
+    private struct VolatileEntry {
+        var data: Data
+        var expiresAt: Date
+        var lastAccessedAt: Date
+    }
+
     private init() {}
 
     // MARK: - Namespace
 
     /// Namespace estable por cuenta: `"<host>.<userId>"` (paridad con
     /// `ChatAccountNamespace`). Se sanea al configurar.
-    static func namespace(baseURL: URL?, userID: String?) -> String {
-        let host = baseURL?.host ?? "sin-servidor"
-        let user = (userID?.isEmpty == false) ? userID! : "sin-usuario"
+    nonisolated static func namespace(baseURL: URL?, userID: String?) -> String? {
+        guard let host = baseURL?.host, !host.isEmpty else { return nil }
+        let user = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !user.isEmpty else { return nil }
         return "\(host).\(user)"
     }
 
     /// Apunta la caché a la cuenta activa. Si el namespace cambia, LIMPIA la
     /// memoria (evita mezclar tenants) y prepara el directorio en disco.
     /// Idempotente: reconfigurar al mismo namespace no hace nada.
-    func configure(namespace rawNamespace: String) {
+    func configure(namespace rawNamespace: String?) {
+        guard let rawNamespace else {
+            guard currentNamespace != nil || !memory.isEmpty || !volatileMemory.isEmpty else { return }
+            cancelPendingWrites()
+            memory.removeAll()
+            volatileMemory.removeAll()
+            currentNamespace = nil
+            namespaceDir = nil
+            return
+        }
         let sanitized = Self.sanitize(rawNamespace)
         guard sanitized != currentNamespace else { return }
 
@@ -91,6 +110,7 @@ final class RistakSnapshotCache {
         // Namespace nuevo: descartar la memoria del anterior.
         cancelPendingWrites()
         memory.removeAll()
+        volatileMemory.removeAll()
     }
 
     // MARK: - Precarga en memoria (arranque)
@@ -99,7 +119,7 @@ final class RistakSnapshotCache {
     /// UNA pasada (una lectura de directorio + lectura de cada archivo, fuera
     /// del `@MainActor`). Llamar en el arranque ANTES de pintar el shell.
     func preloadIntoMemory() async {
-        guard let dir = namespaceDir else { return }
+        guard let dir = namespaceDir, let expectedNamespace = currentNamespace else { return }
 
         let loaded: [String: Data] = await Task.detached(priority: .userInitiated) {
             var result: [String: Data] = [:]
@@ -139,6 +159,10 @@ final class RistakSnapshotCache {
             return result
         }.value
 
+        // Un logout/cambio de cuenta puede ocurrir mientras el disco se lee. El
+        // lote viejo jamás se mezcla en el namespace que quedó activo después.
+        guard expectedNamespace == currentNamespace, dir == namespaceDir else { return }
+
         // Preserva cualquier `store()` ocurrido durante la precarga: la memoria
         // fresca gana sobre lo leído de disco.
         for (key, data) in loaded where memory[key] == nil {
@@ -160,6 +184,20 @@ final class RistakSnapshotCache {
         memory[key]
     }
 
+    /// Lectura de una entrada efímera con TTL deslizante solo en su timestamp
+    /// LRU. Expirada se elimina inmediatamente y nunca llega a disco.
+    func volatileRawData(for key: String) -> Data? {
+        guard var entry = volatileMemory[key] else { return nil }
+        let now = Date()
+        guard entry.expiresAt > now else {
+            volatileMemory[key] = nil
+            return nil
+        }
+        entry.lastAccessedAt = now
+        volatileMemory[key] = entry
+        return entry.data
+    }
+
     /// ¿Hay una entrada cacheada para `key`?
     func contains(_ key: String) -> Bool {
         memory[key] != nil
@@ -177,13 +215,40 @@ final class RistakSnapshotCache {
 
     /// Guarda `Data` JSON crudo (para quien ya tiene el `Data` de la respuesta).
     func storeRaw(_ data: Data, for key: String) {
+        guard currentNamespace != nil else { return }
         memory[key] = data
         scheduleWrite(key: key, data: data)
+    }
+
+    /// Guarda datos solo en RAM bajo un LRU acotado. Se usa para resultados de
+    /// búsqueda: acelera volver a una consulta sin conservar historial con PII
+    /// indefinidamente ni crear un archivo por cada tecla.
+    func storeVolatileRaw(
+        _ data: Data,
+        for key: String,
+        ttl: TimeInterval = 5 * 60,
+        maxEntries: Int = 24
+    ) {
+        guard currentNamespace != nil, ttl > 0, maxEntries > 0 else { return }
+        let now = Date()
+        volatileMemory = volatileMemory.filter { $0.value.expiresAt > now }
+        volatileMemory[key] = VolatileEntry(
+            data: data,
+            expiresAt: now.addingTimeInterval(ttl),
+            lastAccessedAt: now
+        )
+        while volatileMemory.count > maxEntries,
+              let oldestKey = volatileMemory.min(by: {
+                  $0.value.lastAccessedAt < $1.value.lastAccessedAt
+              })?.key {
+            volatileMemory[oldestKey] = nil
+        }
     }
 
     /// Borra una entrada (memoria + disco).
     func remove(_ key: String) {
         memory[key] = nil
+        volatileMemory[key] = nil
         pendingWrites[key]?.cancel()
         pendingWrites[key] = nil
         guard let dir = namespaceDir else { return }
@@ -200,6 +265,7 @@ final class RistakSnapshotCache {
     func reset() {
         cancelPendingWrites()
         memory.removeAll()
+        volatileMemory.removeAll()
         if let dir = namespaceDir {
             let fm = FileManager.default
             // Renombra el directorio a un path ÚNICO antes de retornar (rename de

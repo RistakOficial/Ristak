@@ -54,6 +54,7 @@ import { applyMercadoPagoPaymentPlanAction, updateMercadoPagoPaymentPlanSchedule
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js';
 import { coalescedTimestampSortExpression, parseSortableTimestamp } from '../utils/sqlTimestampSort.js';
 import { buildConversationalAgentMessageMetadata } from '../utils/conversationalAgentMessageMetadata.js';
+import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js';
 
 const normalizeGhlInvoiceMode = (mode) => mode === 'test' ? 'test' : 'live';
 const INACTIVE_INVOICE_SCHEDULE_STATUSES = new Set([
@@ -2687,9 +2688,11 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
     channel,
     message,
     attachments,
+    attachmentMediaAssetIds,
     attachmentDataUrls,
     audioDataUrl,
     audioUrl,
+    audioMediaAssetId,
     durationMs,
     fromNumber,
     toNumber,
@@ -2703,13 +2706,34 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
   const text = cleanString(message);
   const emailSubject = cleanString(subject);
   const emailHtml = cleanString(html);
-  const attachmentUrls = Array.isArray(attachments)
+  const legacyAttachmentUrls = Array.isArray(attachments)
     ? attachments.map(item => cleanString(item)).filter(Boolean)
+    : [];
+  const suppliedAttachmentAssetIds = attachmentMediaAssetIds || payload?.attachment_media_asset_ids;
+  const mediaAssetIds = Array.isArray(suppliedAttachmentAssetIds)
+    ? suppliedAttachmentAssetIds.map(item => cleanString(item)).filter(Boolean)
     : [];
 
   if (!channelConfig) {
     throw createHighLevelChatError('Ese canal no está permitido para enviar desde el chat.');
   }
+
+  const attachmentUrls = [];
+  const referenceCount = Math.max(legacyAttachmentUrls.length, mediaAssetIds.length);
+  for (let index = 0; index < referenceCount; index += 1) {
+    const reference = await resolveOutboundChatMediaReference({
+      mediaAssetId: mediaAssetIds[index],
+      legacyUrl: legacyAttachmentUrls[index],
+      expectedMediaTypes: ['image', 'video', 'audio', 'document', 'other']
+    });
+    if (reference?.url) attachmentUrls.push(reference.url);
+  }
+
+  const voiceReference = await resolveOutboundChatMediaReference({
+    mediaAssetId: audioMediaAssetId || payload?.audio_media_asset_id,
+    legacyUrl: audioUrl,
+    expectedMediaTypes: ['audio']
+  });
 
   const preparedFileAttachments = await prepareHighLevelFileAttachments({
     attachmentDataUrls,
@@ -2717,7 +2741,7 @@ export async function sendHighLevelConversationMessageCore(payload = {}, { req, 
   });
   const voiceAttachment = await prepareHighLevelVoiceAttachment({
     audioDataUrl,
-    audioUrl,
+    audioUrl: voiceReference?.url,
     durationMs,
     req
   });

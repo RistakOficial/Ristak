@@ -5,6 +5,7 @@ import { buildPhoneMatchCandidates, normalizePhoneDigits, normalizePhoneForStora
 import { logger } from '../utils/logger.js'
 import { acquireDistributedLock, releaseDistributedLock, renewDistributedLock } from '../utils/distributedLock.js'
 import { waitForWhatsAppQrDripSlot } from './whatsappQrDripService.js'
+import { downloadSafeOutboundMediaUrl } from './outboundMediaReferenceService.js'
 
 const QR_CONSENT_TEXT = 'Acepto que esta conexión usa WhatsApp Web por QR y no la API oficial de Meta. Entiendo que puede desconectarse, fallar o poner en riesgo el número. Ristak podrá usarla para mensajes configurados cuando QR sea el canal principal, o como respaldo si hay WhatsApp API conectada y yo activo ese respaldo.'
 const CONNECT_TIMEOUT_MS = 20000
@@ -334,7 +335,7 @@ function getAudioDurationSeconds(durationMs) {
   return Math.max(1, Math.round(value / 1000))
 }
 
-function buildQrMediaPayload({ dataUrl, url, label }) {
+async function buildQrMediaPayload({ dataUrl, url, label }) {
   const parsedDataUrl = parseMediaDataUrl(dataUrl)
   if (parsedDataUrl?.buffer?.length) {
     return {
@@ -346,11 +347,12 @@ function buildQrMediaPayload({ dataUrl, url, label }) {
 
   const cleanUrl = cleanString(url)
   if (!cleanUrl) throw new Error(`Falta el archivo para mandar ${label} por QR`)
+  const downloaded = await downloadSafeOutboundMediaUrl(cleanUrl)
 
   return {
-    content: { url: cleanUrl },
-    mimeType: '',
-    sourceUrl: cleanUrl
+    content: downloaded.buffer,
+    mimeType: downloaded.mimeType,
+    sourceUrl: downloaded.url
   }
 }
 
@@ -3236,7 +3238,7 @@ export async function sendWhatsAppQrImageMessage({ phoneNumberId, from, to, imag
   }
   if (!toPhone) throw new Error('Falta el número destino')
 
-  const media = buildQrMediaPayload({
+  const media = await buildQrMediaPayload({
     dataUrl: imageDataUrl,
     url: imageUrl,
     label: 'la foto'
@@ -3295,7 +3297,7 @@ export async function sendWhatsAppQrVideoMessage({ phoneNumberId, from, to, vide
   }
   if (!toPhone) throw new Error('Falta el número destino')
 
-  const media = buildQrMediaPayload({
+  const media = await buildQrMediaPayload({
     dataUrl: videoDataUrl,
     url: videoUrl,
     label: 'el video'
@@ -3356,7 +3358,7 @@ export async function sendWhatsAppQrAudioMessage({ phoneNumberId, from, to, audi
   }
   if (!toPhone) throw new Error('Falta el número destino')
 
-  const media = buildQrMediaPayload({
+  const media = await buildQrMediaPayload({
     dataUrl: audioDataUrl,
     url: audioUrl,
     label: 'el audio'
@@ -3437,7 +3439,7 @@ export async function sendWhatsAppQrDocumentMessage({ phoneNumberId, from, to, d
   }
   if (!toPhone) throw new Error('Falta el número destino')
 
-  const media = buildQrMediaPayload({
+  const media = await buildQrMediaPayload({
     dataUrl: documentDataUrl,
     url: documentUrl,
     label: 'el documento'

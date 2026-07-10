@@ -90,6 +90,7 @@ struct AppointmentContactPickerView: View {
     @State private var searching = false
     @State private var loadingRecents = true
     @State private var showNewContact = false
+    private let contactsService = ContactsService()
 
     /// Avatar de fila (40pt). El separador arranca alineado al texto: avatar +
     /// gap `Spacing.sm` (12) = 52pt, idéntico en todas las filas del listado.
@@ -101,7 +102,7 @@ struct AppointmentContactPickerView: View {
     }
 
     private var visibleContacts: [ChatContact] {
-        trimmedQuery.count >= 2 ? results : recentChats
+        trimmedQuery.isEmpty ? recentChats : results
     }
 
     var body: some View {
@@ -173,21 +174,53 @@ struct AppointmentContactPickerView: View {
         .listStyle(.plain)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "Buscar contacto")
         .task {
-            recentChats = (try? await ChatsService().fetchChats(limit: 25)) ?? []
+            // SWR: el último directorio exitoso se pinta desde memoria antes
+            // de salir a red. Ya no se reconstruye la bandeja de chats completa
+            // cada vez que alguien toca «Nueva cita».
+            let cached = contactsService.cachedPickerContacts()
+            recentChats = cached
+            loadingRecents = cached.isEmpty
+            if !trimmedQuery.isEmpty, results.isEmpty {
+                results = filterContacts(cached, query: trimmedQuery)
+            }
+            if let fresh = try? await contactsService.fetchPickerContacts() {
+                recentChats = fresh
+                // Si el usuario ya empezó a escribir mientras llegaban los
+                // recientes, una consulta de 1 carácter debe aparecer ahora;
+                // las búsquedas remotas (>=2) conservan su propia respuesta.
+                if trimmedQuery.count == 1 {
+                    results = filterContacts(fresh, query: trimmedQuery)
+                    searching = false
+                }
+            }
             loadingRecents = false
         }
         .task(id: query) {
-            guard trimmedQuery.count >= 2 else {
+            let requestedQuery = trimmedQuery
+            guard !requestedQuery.isEmpty else {
                 results = []
                 searching = false
                 return
             }
-            searching = true
-            try? await Task.sleep(nanoseconds: 240_000_000)
+
+            let cached = contactsService.cachedPickerContacts(query: requestedQuery)
+            results = cached.isEmpty
+                ? filterContacts(recentChats, query: requestedQuery)
+                : cached
+            guard requestedQuery.count >= 2 else {
+                searching = false
+                return
+            }
+
+            searching = results.isEmpty
+            try? await Task.sleep(nanoseconds: 90_000_000)
             guard !Task.isCancelled else { return }
-            let found = (try? await ContactsService().searchContacts(query: trimmedQuery)) ?? []
-            guard !Task.isCancelled else { return }
-            results = found
+            if let found = try? await contactsService.fetchPickerContacts(query: requestedQuery),
+               !Task.isCancelled,
+               requestedQuery == trimmedQuery {
+                results = found
+            }
+            guard requestedQuery == trimmedQuery else { return }
             searching = false
         }
         .sheet(isPresented: $showNewContact) {
@@ -226,6 +259,25 @@ struct AppointmentContactPickerView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private func filterContacts(_ contacts: [ChatContact], query: String) -> [ChatContact] {
+        let folded = query.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: Locale(identifier: "es_MX")
+        ).lowercased()
+        let digits = query.filter(\.isNumber)
+        return contacts.filter { contact in
+            let text = [contact.name, contact.email]
+                .joined(separator: " ")
+                .folding(
+                    options: [.caseInsensitive, .diacriticInsensitive],
+                    locale: Locale(identifier: "es_MX")
+                )
+                .lowercased()
+            return text.contains(folded)
+                || (!digits.isEmpty && contact.phone.filter(\.isNumber).contains(digits))
+        }
     }
 }
 

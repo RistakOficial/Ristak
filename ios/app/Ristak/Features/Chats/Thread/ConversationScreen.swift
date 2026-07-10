@@ -136,6 +136,7 @@ struct ConversationScreen: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
+            .accessibilityIdentifier("ristak-conversation-root")
     }
 
     private var bindableViewModel: Bindable<ConversationViewModel> {
@@ -146,19 +147,26 @@ struct ConversationScreen: View {
 
     @ViewBuilder
     private var content: some View {
-        if viewModel.accessDenied {
+        switch ConversationInitialPresentation.resolve(
+            accessDenied: viewModel.accessDenied,
+            loadErrorMessage: viewModel.loadErrorMessage,
+            hasLoadedOnce: viewModel.hasLoadedOnce,
+            isLoadingInitial: viewModel.isLoadingInitial,
+            timelineIsEmpty: viewModel.timeline.isEmpty
+        ) {
+        case .accessDenied:
             RistakEmptyState(
                 icon: "lock.fill",
                 title: "Sin acceso",
                 message: "No tienes acceso a esta sección."
             )
-        } else if let errorMessage = viewModel.loadErrorMessage, !viewModel.hasLoadedOnce {
+        case .error(let errorMessage):
             RistakErrorState(message: errorMessage) {
                 viewModel.retryInitialLoad()
             }
-        } else if viewModel.isLoadingInitial && !viewModel.hasLoadedOnce {
+        case .loading:
             RistakLoadingView(message: "Cargando conversación…")
-        } else {
+        case .content:
             threadContent
         }
     }
@@ -200,6 +208,7 @@ struct ConversationScreen: View {
                 .scrollTargetLayout()
             }
             .background { ChatWallpaperBackground() }
+            .accessibilityIdentifier("ristak-conversation-history")
             .defaultScrollAnchor(.bottom)
             // El teclado se cierra al arrastrar el hilo…
             .scrollDismissesKeyboard(.interactively)

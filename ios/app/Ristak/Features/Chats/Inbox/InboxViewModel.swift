@@ -62,7 +62,8 @@ final class InboxViewModel {
 
     private var appConfig: AppConfigStore?
     private weak var shell: ShellState?
-    private var namespace = ""
+    private var namespace: String?
+    private var directoryPrewarmNamespace: String?
     private var configured = false
 
     // MARK: Estado de datos
@@ -124,6 +125,9 @@ final class InboxViewModel {
     /// La última búsqueda al servidor falló por red → aviso «Sin conexión»
     /// (solo si además NO hubo coincidencias locales).
     private(set) var searchServerUnavailable = false
+    /// Contactos seleccionados desde el directorio ligero que todavía no existen
+    /// en la bandeja. Sin esto el hilo abre sin seed y pierde el `matchedPhone`.
+    private var navigationSeedContacts: [String: ChatContact] = [:]
 
     // MARK: Filtros
 
@@ -164,23 +168,78 @@ final class InboxViewModel {
 
     // MARK: - Configuración
 
-    func configure(appConfig: AppConfigStore, shell: ShellState, namespace: String) {
-        guard !configured else { return }
+    func configure(appConfig: AppConfigStore, shell: ShellState, namespace: String?) {
+        if configured {
+            updateNamespace(namespace)
+            return
+        }
         configured = true
         self.appConfig = appConfig
         self.shell = shell
-        self.namespace = namespace
-        localState.configure(namespace: namespace)
+        updateNamespace(namespace)
+    }
 
-        // Cache-first: pintar el snapshot guardado al instante (memoria del
-        // `RistakSnapshotCache`, ya precargado en el arranque → cero flash).
-        let cached = ChatInboxDiskCache.load()
-        if !cached.isEmpty {
-            rows = cached
-            isShowingCachedData = true
-            syncUnreadBadge()
-            prefetchAvatars(cached)
+    /// El arranque optimista puede entrar a Chat antes de que `/auth/verify`
+    /// devuelva el user id. Al llegar la identidad real, reapunta el estado local
+    /// y el snapshot sin recrear la pantalla ni quedarse en `sin-usuario`.
+    func updateNamespace(_ newNamespace: String?) {
+        let previous = namespace
+        guard previous != newNamespace else { return }
+        namespace = newNamespace
+        localState.configure(namespace: newNamespace)
+
+        if previous != nil, previous != newNamespace {
+            clearAccountScopedState()
         }
+        guard let newNamespace else { return }
+
+        // Cache-first: solo hidrata si la red del arranque optimista todavía no
+        // pintó filas. Si ya hay datos vivos, se guardan ahora que existe un
+        // namespace seguro en vez de regresarlos a un snapshot anterior.
+        if rows.isEmpty {
+            let cached = ChatInboxDiskCache.load()
+            if !cached.isEmpty {
+                rows = cached
+                isShowingCachedData = true
+                syncUnreadBadge()
+                prefetchAvatars(cached)
+            }
+        } else {
+            persistCacheSnapshot()
+        }
+
+        guard directoryPrewarmNamespace != newNamespace else { return }
+        directoryPrewarmNamespace = newNamespace
+        let directoryService = contactsService
+        Task(priority: .utility) {
+            _ = try? await directoryService.fetchPickerContacts()
+        }
+    }
+
+    private func clearAccountScopedState() {
+        rows = []
+        hasMore = false
+        isShowingCachedData = false
+        loadErrorMessage = nil
+        isAccessDenied = false
+        serverOffset = 0
+        loadedFetchKey = ""
+        appliedActivityKeys.removeAll()
+        appliedActivityOrder.removeAll()
+        pendingActivityByContactID.removeAll()
+        contactSuggestions = []
+        navigationSeedContacts.removeAll()
+        searchText = ""
+        searchServerUnavailable = false
+        selectedIDs = []
+        isSelecting = false
+        whatsAppStatus = nil
+        customLabels = .defaults
+        openAIConfigured = false
+        commentsFeatureEnabled = true
+        tagsCatalog = []
+        tagsLoaded = false
+        directoryPrewarmNamespace = nil
     }
 
     var isConfigured: Bool { configured }
@@ -228,6 +287,18 @@ final class InboxViewModel {
 
     func initialLoad() async {
         guard rows.isEmpty || isShowingCachedData else { return }
+        let performanceSpan = RistakObservability.begin(.chatInboxLoad)
+        defer {
+            let outcome: RistakPerformanceOutcome
+            if isAccessDenied {
+                outcome = .unavailable
+            } else if loadErrorMessage != nil {
+                outcome = .failed
+            } else {
+                outcome = .success
+            }
+            performanceSpan.finish(outcome: outcome, itemCount: rows.count)
+        }
         isInitialLoading = rows.isEmpty
         loadErrorMessage = nil
         isAccessDenied = false
@@ -479,50 +550,24 @@ final class InboxViewModel {
             }
         }
 
-        guard let index = rows.firstIndex(where: { $0.id == activity.contactID }) else {
-            // Un contacto fuera de la profundidad ya cargada necesita su fila
-            // completa del servidor; no se puede fabricar sin nombre/perfil.
-            return
-        }
+        // Reductor puro compartido con tests: un contacto fuera de la
+        // profundidad cargada espera su fila completa del servidor.
+        guard let reduction = ChatInboxActivityReducer.apply(
+            activity,
+            to: rows,
+            isDuplicate: isDuplicate
+        ) else { return }
 
-        var contact = rows[index]
-        let isOutbound = ChatRowSignals.isOutbound(activity.direction)
         activityRevision &+= 1
+        if rows != reduction.rows { rows = reduction.rows }
+        let contact = reduction.updatedContact
 
-        // Si el hilo esta visible, nunca prender un no-leido local. Esto se
-        // aplica incluso si el callback llega despues del mismo evento SSE.
-        if activity.conversationIsVisible {
-            contact.unreadCount = 0
-        } else if !isDuplicate, activity.isNew, !isOutbound {
-            contact.unreadCount = max(0, contact.unreadCount) + 1
-        }
-
-        let activityDate = RistakDateParsing.date(fromISO: activity.timestamp)
-        let currentDate = RistakDateParsing.date(fromISO: contact.lastMessageDate)
-        let isCurrentEnough: Bool
-        if let activityDate, let currentDate {
-            // Entradas SSE y fila REST usan reloj del servidor: un evento mas
-            // viejo, aunque sea por segundos, no puede pisar el preview nuevo.
-            isCurrentEnough = activityDate >= currentDate
-        } else {
-            isCurrentEnough = true
-        }
-
-        // Un envio local siempre es actividad vigente aunque el reloj del
-        // celular difiera del servidor. Para entradas SSE si respetamos la
-        // fecha autoritativa para no revivir eventos atrasados.
-        if activity.isNew, isOutbound || isCurrentEnough {
-            contact = applyingActivityFields(activity, to: contact)
-
-            rows.remove(at: index)
-            rows.insert(contact, at: 0)
+        if reduction.promoted {
             pendingActivityByContactID[activity.contactID] = PendingInboxActivity(
                 activity: activity,
                 unreadCount: contact.unreadCount,
                 receivedAt: activityClock.now
             )
-        } else if contact != rows[index] {
-            rows[index] = contact
         }
 
         persistCacheSnapshot()
@@ -535,26 +580,6 @@ final class InboxViewModel {
         // puede adivinar la ruta: se espera la reconciliacion REST filtrada.
         guard let activityID = activity.businessPhoneNumberID, !activityID.isEmpty else { return false }
         return activityID == selectedID
-    }
-
-    private func applyingActivityFields(
-        _ activity: ChatInboxActivity,
-        to source: ChatContact
-    ) -> ChatContact {
-        var contact = source
-        if let text = activity.text { contact.lastMessageText = text }
-        if !activity.messageType.isEmpty { contact.lastMessageType = activity.messageType }
-        if !activity.channel.isEmpty { contact.lastMessageChannel = activity.channel }
-        if !activity.transport.isEmpty { contact.lastMessageTransport = activity.transport }
-        if !activity.direction.isEmpty { contact.lastMessageDirection = activity.direction }
-        if let phone = activity.businessPhone, !phone.isEmpty {
-            contact.lastBusinessPhone = phone
-        }
-        if let phoneID = activity.businessPhoneNumberID, !phoneID.isEmpty {
-            contact.lastBusinessPhoneNumberId = phoneID
-        }
-        if !activity.timestamp.isEmpty { contact.lastMessageDate = activity.timestamp }
-        return contact
     }
 
     /// Reaplica promociones locales despues del merge REST sin volver a sumar
@@ -584,7 +609,10 @@ final class InboxViewModel {
             guard activityMatchesActivePhoneFilter(activity),
                   let index = result.firstIndex(where: { $0.id == activity.contactID }) else { continue }
 
-            var contact = applyingActivityFields(activity, to: result.remove(at: index))
+            var contact = ChatInboxActivityReducer.applyingFields(
+                activity,
+                to: result.remove(at: index)
+            )
             contact.unreadCount = activity.conversationIsVisible
                 ? 0
                 : max(contact.unreadCount, pending.unreadCount)
@@ -920,7 +948,12 @@ final class InboxViewModel {
     }
 
     func row(for contactID: String) -> ChatContact? {
-        rows.first { $0.id == contactID }
+        rows.first { $0.id == contactID } ?? navigationSeedContacts[contactID]
+    }
+
+    func registerNavigationSeed(_ contact: ChatContact) {
+        guard !contact.id.isEmpty else { return }
+        navigationSeedContacts[contact.id] = contact
     }
 
     // MARK: - Filas especiales

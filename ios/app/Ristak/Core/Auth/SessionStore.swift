@@ -72,6 +72,7 @@ final class SessionStore {
         guard let storedBaseURL, let storedToken, !storedToken.isEmpty else {
             await APIClient.shared.configure(baseURL: storedBaseURL, token: nil)
             guard expectedGeneration == sessionGeneration else { return }
+            RistakSnapshotCache.shared.configure(namespace: nil)
             phase = .loggedOut
             return
         }
@@ -269,6 +270,18 @@ final class SessionStore {
             )
             guard isCurrentSession(generation: expectedGeneration, token: token) else { return }
             if let verifiedUser = response.user {
+                // Si el snapshot de Keychain faltó/no decodificó, el arranque
+                // estuvo deliberadamente sin caché. Activarla solo después de
+                // conocer una identidad real evita el namespace compartido
+                // `sin-usuario` y deja disco listo antes de notificar a la UI.
+                RistakSnapshotCache.shared.configure(
+                    namespace: RistakSnapshotCache.namespace(
+                        baseURL: baseURL,
+                        userID: verifiedUser.id
+                    )
+                )
+                await RistakSnapshotCache.shared.preloadIntoMemory()
+                guard isCurrentSession(generation: expectedGeneration, token: token) else { return }
                 user = verifiedUser
                 persistCachedUser(verifiedUser)
             } else {
@@ -344,6 +357,10 @@ final class SessionStore {
         }
         user = nil
         phase = .loggedOut
+
+        // Un 401/licencia no borra el snapshot válido del usuario, pero sí lo
+        // desmonta de RAM: ninguna pantalla sin identidad puede leerlo/escribirlo.
+        RistakSnapshotCache.shared.configure(namespace: nil)
 
         let retainedBaseURL = keepBaseURL ? baseURL : nil
         await APIClient.shared.configure(baseURL: retainedBaseURL, token: nil)

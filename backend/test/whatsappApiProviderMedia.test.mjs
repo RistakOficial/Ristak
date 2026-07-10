@@ -730,3 +730,53 @@ test('envío API de video comprime a MP4 y manda media tipo video', async () => 
     })
   })
 })
+
+test('URLs públicas ya hospedadas llegan al proveedor sin re-subir base64', async () => {
+  await withYCloudProviderMediaCapture(async (captures) => {
+    const to = `+52154${Date.now().toString().slice(-8)}`
+    try {
+      await captures.openReplyWindow(to)
+
+      await sendWhatsAppApiImageMessage({
+        to,
+        imageUrl: 'https://cdn.example.test/chat/foto.jpg',
+        externalId: `direct-url-image-${randomUUID()}`,
+        allowQrFallback: false
+      })
+      await sendWhatsAppApiDocumentMessage({
+        to,
+        documentUrl: 'https://cdn.example.test/chat/contrato.pdf',
+        filename: 'contrato.pdf',
+        mimeType: 'application/pdf',
+        externalId: `direct-url-document-${randomUUID()}`,
+        allowQrFallback: false
+      })
+      await sendWhatsAppApiVideoMessage({
+        to,
+        videoUrl: 'https://cdn.example.test/chat/video.mp4',
+        externalId: `direct-url-video-${randomUUID()}`,
+        allowQrFallback: false
+      })
+      await sendWhatsAppApiAudioMessage({
+        to,
+        audioUrl: 'https://cdn.example.test/chat/nota.ogg',
+        voice: true,
+        durationMs: 1_200,
+        externalId: `direct-url-audio-${randomUUID()}`,
+        allowQrFallback: false
+      })
+
+      assert.equal(captures.uploads.length, 0)
+      assert.equal(captures.messages.length, 4)
+      assert.equal(captures.messages[0].image.link, 'https://cdn.example.test/chat/foto.jpg')
+      assert.equal(captures.messages[1].document.link, 'https://cdn.example.test/chat/contrato.pdf')
+      assert.equal(captures.messages[2].video.link, 'https://cdn.example.test/chat/video.mp4')
+      assert.equal(captures.messages[3].audio.link, 'https://cdn.example.test/chat/nota.ogg')
+      assert.equal(captures.messages[3].audio.voice, true)
+    } finally {
+      await db.run('DELETE FROM whatsapp_api_messages WHERE to_phone = ? OR phone = ?', [to, to])
+      await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+      await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+    }
+  })
+})

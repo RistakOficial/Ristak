@@ -19,17 +19,31 @@ import {
   serveMediaAssetFileHandler,
   syncMediaAssetStreamHandler,
   storageDiagnosticsHandler,
-  uploadMediaHandler
+  uploadMediaHandler,
+  directChatCompatibilityFromRequest
 } from '../controllers/mediaController.js'
 
 const router = express.Router()
 const requireMediaAccess = requireModuleAccess('settings_media')
 const requireMediaLicense = requireFeature('settings_media')
+const requireChatAccess = requireModuleAccess('chat')
 const maxUploadBytes = Number(process.env.MEDIA_MAX_UPLOAD_BYTES || 600 * 1024 * 1024)
+const maxChatUploadBytes = 25 * 1024 * 1024
 const upload = multer({
   dest: join(tmpdir(), 'ristak-media-uploads'),
   limits: {
     fileSize: maxUploadBytes
+  }
+})
+const chatUpload = multer({
+  dest: join(tmpdir(), 'ristak-media-uploads'),
+  limits: {
+    fileSize: maxChatUploadBytes,
+    files: 1,
+    fields: 8,
+    parts: 9,
+    fieldSize: 8 * 1024,
+    headerPairs: 64
   }
 })
 
@@ -41,7 +55,9 @@ function formatUploadLimit(bytes) {
 }
 
 function uploadSingleFile(req, res, next) {
-  upload.single('file')(req, res, (error) => {
+  const isDirectChatUpload = Boolean(req.directChatUpload?.enabled)
+  const parser = isDirectChatUpload ? chatUpload : upload
+  parser.single('file')(req, res, (error) => {
     if (!error) {
       next()
       return
@@ -50,7 +66,7 @@ function uploadSingleFile(req, res, next) {
     if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
       res.status(413).json({
         success: false,
-        error: `El archivo pesa demasiado. Límite máximo: ${formatUploadLimit(maxUploadBytes)}.`,
+        error: `El archivo pesa demasiado. Límite máximo: ${formatUploadLimit(isDirectChatUpload ? maxChatUploadBytes : maxUploadBytes)}.`,
         code: 'media_upload_too_large'
       })
       return
@@ -64,6 +80,29 @@ function uploadSingleFile(req, res, next) {
   })
 }
 
+// Las subidas que alimentan directamente un mensaje pertenecen al módulo
+// Chat, no a la pantalla administrativa de la biblioteca multimedia. El query
+// se evalúa antes de multer; el controller conserva ese mismo valor como
+// autoritativo para impedir que el body cambie de módulo después del gate.
+export function resolveMediaUploadModule(req = {}) {
+  return String(req.query?.module || req.body?.module || 'other').trim().toLowerCase()
+}
+
+export function requireMediaUploadAccess(req, res, next) {
+  if (req.directChatUpload?.enabled) {
+    return requireChatAccess(req, res, next)
+  }
+  return requireMediaLicense(req, res, (licenseError) => {
+    if (licenseError) return next(licenseError)
+    return requireMediaAccess(req, res, next)
+  })
+}
+
+export function classifyMediaUpload(req, _res, next) {
+  req.directChatUpload = directChatCompatibilityFromRequest(req)
+  next()
+}
+
 // Público: Bunny/CDN redirige; fallback local sirve el archivo sin sesión.
 router.get('/assets/:assetId/file', serveMediaAssetFileHandler)
 router.get('/assets/:assetId/thumbnail', (req, res, next) => {
@@ -73,7 +112,7 @@ router.get('/assets/:assetId/thumbnail', (req, res, next) => {
 
 router.use(requireAuth)
 
-router.post('/upload', requireMediaLicense, requireMediaAccess, uploadSingleFile, uploadMediaHandler)
+router.post('/upload', classifyMediaUpload, requireMediaUploadAccess, uploadSingleFile, uploadMediaHandler)
 router.get('/assets', requireMediaLicense, requireMediaAccess, listMediaAssetsHandler)
 router.get('/storage/usage', requireMediaLicense, requireMediaAccess, getStorageUsageHandler)
 router.get('/diagnostics', requireMediaLicense, requireMediaAccess, storageDiagnosticsHandler)

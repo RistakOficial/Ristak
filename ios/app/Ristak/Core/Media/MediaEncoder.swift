@@ -3,10 +3,9 @@ import UIKit
 import UniformTypeIdentifiers
 
 /// Prepara media local para los envíos de chat (doc 12): convierte a los
-/// formatos que el backend acepta, aplica límites por tipo y produce el
-/// data URL base64 que viaja en el JSON (`imageDataUrl`, `videoDataUrl`,
-/// `audioDataUrl`, `documentDataUrl`). Errores con los mensajes exactos en
-/// español del backend para validación local equivalente.
+/// formatos que el backend acepta, aplica límites por tipo y conserva el
+/// binario para subirlo directo a storage/CDN. El data URL se genera de forma
+/// diferida únicamente si la instalación todavía usa el contrato legacy.
 ///
 /// Reglas clave:
 /// - Imagen: JPG/PNG/WebP ≤25 MB. HEIC/HEIF (y cualquier otro formato
@@ -91,7 +90,7 @@ enum MediaEncoder {
         }
         return EncodedChatMedia(
             kind: .image,
-            dataUrl: dataURL(from: data, mimeType: mimeType),
+            binaryData: data,
             mimeType: mimeType,
             filename: filename,
             sizeBytes: data.count,
@@ -112,7 +111,7 @@ enum MediaEncoder {
         }
         return EncodedChatMedia(
             kind: .video,
-            dataUrl: dataURL(from: data, mimeType: mime),
+            binaryData: data,
             mimeType: mime,
             filename: url.lastPathComponent,
             sizeBytes: data.count,
@@ -137,7 +136,7 @@ enum MediaEncoder {
         }
         return EncodedChatMedia(
             kind: .audio,
-            dataUrl: dataURL(from: data, mimeType: mime),
+            binaryData: data,
             mimeType: mime,
             filename: url.lastPathComponent.isEmpty ? "nota-de-voz.m4a" : url.lastPathComponent,
             sizeBytes: data.count,
@@ -163,7 +162,7 @@ enum MediaEncoder {
         }
         return EncodedChatMedia(
             kind: .document,
-            dataUrl: dataURL(from: data, mimeType: mime),
+            binaryData: data,
             mimeType: mime,
             filename: sanitizedDocumentFilename(url.lastPathComponent, mimeType: mime),
             sizeBytes: data.count,

@@ -53,6 +53,33 @@ Installer/admin panel endpoints:
 
 The installer must send `Authorization: Bearer <INTERNAL_INSTALLER_TOKEN>` or `x-internal-installer-token`.
 
+## Direct chat uploads
+
+The native iOS client uploads new chat files with multipart to
+`POST /api/media/upload?module=chat&chatCompatibility=whatsapp&chatMediaKind=<kind>`.
+This path is authorized with the Chat module, not the administrative Media
+screen, and is limited to 25 MB before multipart parsing. Account and user
+identity come from the authenticated installation/session; multipart fields
+cannot select another business.
+
+Every request sends a stable `clientUploadId`. `media_upload_requests` reserves
+`(business_id, client_upload_id)` before compression, records a SHA-256 request
+hash and replays the completed asset for a matching retry. Concurrent requests
+wait for the same result; reusing the key with different bytes or destination is
+a conflict. Failed processing releases the lease for a controlled retry.
+
+The upload response includes the asset id and public URL. Messaging endpoints
+prefer `mediaAssetId`, resolve it server-side, require an active `module=chat`
+asset owned by the current installation and replace any client URL with the
+stored URL. Legacy raw URLs remain compatibility-only and must be public HTTPS;
+loopback, link-local, private/reserved IPs and unsafe DNS resolutions are
+rejected before Meta, HighLevel or the local QR transport can fetch them.
+
+Images, audio and video still pass through the WhatsApp compatibility pipeline,
+but conversions have bounded execution/concurrency. Temporary-file ownership is
+explicit: buffer compatibility paths clean their input in the controller, while
+file-stream paths leave cleanup to `mediaStorageService` after the final read.
+
 ## Processing
 
 - Images are compressed through the shared media compression service and get a WebP thumbnail when possible.

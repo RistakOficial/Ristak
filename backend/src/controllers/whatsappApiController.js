@@ -55,6 +55,7 @@ import { getAppConfig } from '../config/database.js'
 import { logger } from '../utils/logger.js'
 import { markHumanTakeoverByPhone, markHumanTakeoverIfActive } from '../services/conversationalAgentService.js'
 import { syncRegisteredIntegrationCronsForProvider } from '../jobs/integrationCronRegistry.js'
+import { resolveOutboundChatMediaReference } from '../services/outboundMediaReferenceService.js'
 
 const QR_CONNECTED_AVATAR_BACKFILL_DEBOUNCE_MS = 30 * 60 * 1000
 const qrConnectedAvatarBackfills = new Map()
@@ -73,6 +74,15 @@ function notifyHumanTakeover({ contactId, toPhone } = {}) {
 function cleanString(value) {
   if (value === null || value === undefined) return ''
   return String(value).trim()
+}
+
+async function resolveRequestChatMedia(req, { type, urlField, expectedMediaTypes }) {
+  const body = req.body || {}
+  return resolveOutboundChatMediaReference({
+    mediaAssetId: body[`${type}MediaAssetId`] || body.mediaAssetId,
+    legacyUrl: body[urlField],
+    expectedMediaTypes
+  })
 }
 
 function scheduleQrConnectedAvatarBackfill({ phoneNumberId } = {}) {
@@ -474,11 +484,16 @@ export async function sendMetaSocialTextMessageView(req, res) {
 
 export async function sendMetaSocialAudioMessageView(req, res) {
   try {
+    const media = await resolveRequestChatMedia(req, {
+      type: 'audio',
+      urlField: 'audioUrl',
+      expectedMediaTypes: ['audio']
+    })
     const data = await sendMetaSocialAudioMessage({
       contactId: req.body?.contactId,
       platform: req.body?.platform,
       audioDataUrl: req.body?.audioDataUrl,
-      audioUrl: req.body?.audioUrl,
+      audioUrl: media?.url,
       durationMs: req.body?.durationMs,
       externalId: req.body?.externalId,
       replyToMessageId: req.body?.replyToMessageId,
@@ -847,11 +862,16 @@ export async function listScheduledChatMessagesView(req, res) {
 
 export async function sendWhatsAppApiImageMessageView(req, res) {
   try {
+    const media = await resolveRequestChatMedia(req, {
+      type: 'image',
+      urlField: 'imageUrl',
+      expectedMediaTypes: ['image']
+    })
     const data = await sendWhatsAppApiImageMessage({
       to: req.body?.to,
       from: req.body?.from,
       imageDataUrl: req.body?.imageDataUrl,
-      imageUrl: req.body?.imageUrl,
+      imageUrl: media?.url,
       caption: req.body?.caption,
       externalId: req.body?.externalId,
       transport: req.body?.transport,
@@ -875,13 +895,18 @@ export async function sendWhatsAppApiImageMessageView(req, res) {
 
 export async function sendWhatsAppApiDocumentMessageView(req, res) {
   try {
+    const media = await resolveRequestChatMedia(req, {
+      type: 'document',
+      urlField: 'documentUrl',
+      expectedMediaTypes: ['document', 'audio', 'video', 'other']
+    })
     const data = await sendWhatsAppApiDocumentMessage({
       to: req.body?.to,
       from: req.body?.from,
       documentDataUrl: req.body?.documentDataUrl,
-      documentUrl: req.body?.documentUrl,
-      filename: req.body?.filename,
-      mimeType: req.body?.mimeType,
+      documentUrl: media?.url,
+      filename: media?.filename || req.body?.filename,
+      mimeType: media?.mimeType || req.body?.mimeType,
       caption: req.body?.caption,
       externalId: req.body?.externalId,
       transport: req.body?.transport,
@@ -905,11 +930,16 @@ export async function sendWhatsAppApiDocumentMessageView(req, res) {
 
 export async function sendWhatsAppApiVideoMessageView(req, res) {
   try {
+    const media = await resolveRequestChatMedia(req, {
+      type: 'video',
+      urlField: 'videoUrl',
+      expectedMediaTypes: ['video']
+    })
     const data = await sendWhatsAppApiVideoMessage({
       to: req.body?.to,
       from: req.body?.from,
       videoDataUrl: req.body?.videoDataUrl,
-      videoUrl: req.body?.videoUrl,
+      videoUrl: media?.url,
       caption: req.body?.caption,
       externalId: req.body?.externalId,
       transport: req.body?.transport,
@@ -933,11 +963,16 @@ export async function sendWhatsAppApiVideoMessageView(req, res) {
 
 export async function sendWhatsAppApiAudioMessageView(req, res) {
   try {
+    const media = await resolveRequestChatMedia(req, {
+      type: 'audio',
+      urlField: 'audioUrl',
+      expectedMediaTypes: ['audio']
+    })
     const data = await sendWhatsAppApiAudioMessage({
       to: req.body?.to,
       from: req.body?.from,
       audioDataUrl: req.body?.audioDataUrl,
-      audioUrl: req.body?.audioUrl,
+      audioUrl: media?.url,
       externalId: req.body?.externalId,
       durationMs: req.body?.durationMs,
       voice: req.body?.voice,

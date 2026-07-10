@@ -15,15 +15,20 @@ final class ChatLocalStateStore {
     private(set) var archivedIDs: Set<String> = []
     private(set) var mutedIDs: Set<String> = []
 
-    private var namespace: String = ""
+    private var namespace: String?
     private let defaults = UserDefaults.standard
 
     init() {}
 
     /// Configura el namespace de la cuenta activa y carga el estado guardado.
-    func configure(namespace: String) {
+    func configure(namespace: String?) {
         guard self.namespace != namespace else { return }
         self.namespace = namespace
+        guard namespace != nil else {
+            archivedIDs = []
+            mutedIDs = []
+            return
+        }
         archivedIDs = load(prefix: Self.archivedKeyPrefix)
         mutedIDs = load(prefix: Self.mutedKeyPrefix)
     }
@@ -62,25 +67,28 @@ final class ChatLocalStateStore {
 
     // MARK: - Persistencia
 
-    private func storageKey(prefix: String) -> String {
-        namespace.isEmpty ? prefix : "\(prefix).\(namespace)"
+    private func storageKey(prefix: String) -> String? {
+        namespace.map { "\(prefix).\($0)" }
     }
 
     private func load(prefix: String) -> Set<String> {
-        let stored = defaults.stringArray(forKey: storageKey(prefix: prefix)) ?? []
+        guard let key = storageKey(prefix: prefix) else { return [] }
+        let stored = defaults.stringArray(forKey: key) ?? []
         return Set(stored)
     }
 
     private func persist(_ ids: Set<String>, prefix: String) {
-        defaults.set(Array(ids).sorted(), forKey: storageKey(prefix: prefix))
+        guard let key = storageKey(prefix: prefix) else { return }
+        defaults.set(Array(ids).sorted(), forKey: key)
     }
 }
 
 /// Namespace estable por cuenta: host del tenant + id de usuario.
 enum ChatAccountNamespace {
-    static func make(baseURL: URL?, userID: String?) -> String {
-        let host = baseURL?.host ?? "sin-servidor"
-        let user = (userID?.isEmpty == false) ? userID! : "sin-usuario"
+    static func make(baseURL: URL?, userID: String?) -> String? {
+        guard let host = baseURL?.host, !host.isEmpty else { return nil }
+        let user = userID?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !user.isEmpty else { return nil }
         return "\(host)|\(user)"
     }
 }

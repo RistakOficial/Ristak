@@ -20,18 +20,20 @@ final class PaymentsContactPickerModel {
 
     private var searchTask: Task<Void, Never>?
     private let contactsService = ContactsService()
-    private let chatsService = ChatsService()
 
     func loadInitial() async {
+        applyCachedResults(query: query)
         await performSearch(query: query)
     }
 
     private func scheduleSearch() {
         searchTask?.cancel()
         let current = query
+        // Responde al teclado con el directorio en memoria; la petición no
+        // forma parte del primer pintado.
+        applyCachedResults(query: current)
         searchTask = Task { [weak self] in
-            // Debounce corto (paridad /movil: 90 ms).
-            try? await Task.sleep(nanoseconds: 120_000_000)
+            try? await Task.sleep(nanoseconds: 90_000_000)
             guard !Task.isCancelled else { return }
             await self?.performSearch(query: current)
         }
@@ -39,30 +41,40 @@ final class PaymentsContactPickerModel {
 
     private func performSearch(query: String) async {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        isLoading = true
+        applyCachedResults(query: trimmed)
+        guard trimmed.isEmpty || trimmed.count >= 2 else {
+            isLoading = false
+            return
+        }
+
+        isLoading = results.isEmpty
         errorMessage = nil
-        defer { isLoading = false }
+        defer {
+            if trimmed == self.query.trimmingCharacters(in: .whitespacesAndNewlines) {
+                isLoading = false
+            }
+        }
 
         do {
-            if trimmed.count < 2 {
-                // Contactos recientes de la bandeja (RN: `getChats('', 0, 60)`).
-                let recents = try await chatsService.fetchChats(query: "", limit: 60, offset: 0)
-                guard trimmed == self.query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-                results = recents.map { PickedPaymentContact(chatContact: $0) }
-            } else {
-                let found = try await contactsService.searchContacts(query: trimmed)
-                guard trimmed == self.query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-                results = found.map { PickedPaymentContact(chatContact: $0) }
-            }
+            let found = try await contactsService.fetchPickerContacts(query: trimmed)
+            guard !Task.isCancelled,
+                  trimmed == self.query.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            results = found.map { PickedPaymentContact(chatContact: $0) }
         } catch let error as RistakAPIError {
             guard !Task.isCancelled else { return }
-            results = []
-            errorMessage = error.message
+            if results.isEmpty { errorMessage = error.message }
         } catch {
             guard !Task.isCancelled else { return }
-            results = []
-            errorMessage = "No se pudieron cargar los contactos."
+            if results.isEmpty { errorMessage = "No se pudieron cargar los contactos." }
         }
+    }
+
+    private func applyCachedResults(query: String) {
+        let cached = contactsService.cachedPickerContacts(query: query)
+        if !cached.isEmpty || results.isEmpty {
+            results = cached.map { PickedPaymentContact(chatContact: $0) }
+        }
+        errorMessage = nil
     }
 }
 

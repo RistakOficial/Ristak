@@ -13,6 +13,8 @@ struct RistakApp: App {
     @State private var shellState: ShellState
 
     init() {
+        RistakObservability.bootstrap()
+
         let session = SessionStore()
         session.pushUnregisterHandler = {
             await PushRegistrar.shared.unregisterForLogout()
@@ -28,7 +30,18 @@ struct RistakApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            Group {
+                #if DEBUG
+                if let testConfiguration = RistakUITestConfiguration.current {
+                    RistakUITestHarnessView(configuration: testConfiguration)
+                        .reportsRistakUIReady()
+                } else {
+                    RootView()
+                }
+                #else
+                RootView()
+                #endif
+            }
                 .environment(session)
                 .environment(appConfig)
                 .environment(access)

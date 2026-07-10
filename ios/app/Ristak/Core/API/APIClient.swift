@@ -199,6 +199,27 @@ actor APIClient {
         return try decodeResponse(data)
     }
 
+    /// Upload desde archivo para multipart grande. `URLSession` lee el body del
+    /// disco y evita mantener otro `Data` completo además del draft en memoria.
+    func uploadFile<T: Decodable>(
+        _ path: String,
+        fileURL: URL,
+        contentType: String,
+        method: String = "POST",
+        query: [String: String?] = [:],
+        timeout: TimeInterval = APIClient.mediaTimeout
+    ) async throws -> T {
+        let data = try await performFileUpload(
+            method: method,
+            path: path,
+            query: query,
+            fileURL: fileURL,
+            contentType: contentType,
+            timeout: timeout
+        )
+        return try decodeResponse(data)
+    }
+
     /// Respuesta cruda (Data) con la misma tubería de errores/reintentos.
     func rawData(
         _ path: String,
@@ -409,6 +430,56 @@ actor APIClient {
             }
             throw error
         }
+    }
+
+    private func performFileUpload(
+        method: String,
+        path: String,
+        query: [String: String?],
+        fileURL: URL,
+        contentType: String,
+        timeout: TimeInterval
+    ) async throws -> Data {
+        let context = try requestContext()
+        var request = try buildRequest(
+            context: context,
+            method: method,
+            path: path,
+            query: query,
+            bodyData: nil,
+            contentType: nil,
+            timeout: timeout
+        )
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.upload(for: request, fromFile: fileURL)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let urlError as URLError where urlError.code == .cancelled {
+            throw CancellationError()
+        } catch {
+            throw RistakAPIError.network(error)
+        }
+
+        guard let http = response as? HTTPURLResponse else {
+            throw RistakAPIError.invalidResponse
+        }
+        if (200..<300).contains(http.statusCode) {
+            guard context.generation == configurationGeneration else {
+                throw CancellationError()
+            }
+            return data
+        }
+
+        let payload = try? decoder.decode(RistakAPIErrorPayload.self, from: data)
+        let error = RistakAPIError.from(status: http.statusCode, payload: payload, rawBody: data)
+        if context.generation == configurationGeneration {
+            fireHooks(for: error, method: method, path: path)
+        }
+        throw error
     }
 
     private func requestContext() throws -> RequestContext {
