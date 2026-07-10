@@ -160,8 +160,9 @@ carpeta asignada + lee (sin modificar) el resto.
   backend conserva un preview M4A reproducible para API y QR y normaliza el
   alias detectado `audio/x-m4a` a `audio/mp4` antes de guardarlo.
 - Render: URLs de media públicas (CDN) — `ImageLoader` con caché en memoria y
-  disco. Visor pantalla completa con zoom, player audio con velocidades,
-  QuickLook para documentos, mapa para ubicación.
+  disco. Visor pantalla completa con zoom, player audio con velocidades y
+  scrubber alineado a los extremos sin parecer recortado, QuickLook para
+  documentos, mapa para ubicación.
 
 ## Navegación / shell
 

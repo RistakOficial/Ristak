@@ -568,12 +568,14 @@ struct AudioMessageView: View {
         // inicio). Sin clipShape que recorte el círculo.
         let knobDiameter: CGFloat = 13
         let knobRadius = knobDiameter / 2
+        let endpointOverhang: CGFloat = 4
         return GeometryReader { proxy in
             let width = max(1, proxy.size.width)
-            // El centro de la ruedita viaja dentro de [radio, width - radio]: en
-            // progreso 0 el círculo queda tangente al borde interno de la pista y
-            // en 1 al opuesto, siempre entero.
-            let travel = max(1, width - knobDiameter)
+            // El círculo invade un poco el padding reservado en los extremos: en
+            // 0:00 no se ve adelantado sobre las primeras barras, pero sigue entero.
+            let startOffset = -endpointOverhang
+            let travel = max(1, width - knobDiameter + endpointOverhang * 2)
+            let startCenter = knobRadius - endpointOverhang
             let clamped = CGFloat(min(1, max(0, controller.progress)))
             ZStack(alignment: .leading) {
                 AudioWaveformView(progress: controller.progress)
@@ -581,10 +583,9 @@ struct AudioMessageView: View {
                     .fill(RistakTheme.accent)
                     .frame(width: knobDiameter, height: knobDiameter)
                     .shadow(color: .black.opacity(0.18), radius: 1, y: 0.5)
-                    // La onda vive en [0, width]; la ruedita (colocada a .leading,
-                    // x 0…13) se desplaza `travel * progreso`, cubriendo [0,13]…
-                    // [width-13, width]. Nunca sobresale de la pista inseteada.
-                    .offset(x: travel * clamped)
+                    // La onda vive en [0, width]; la ruedita usa el padding como
+                    // holgura visual para que 0:00 y el final no parezcan cortados.
+                    .offset(x: startOffset + travel * clamped)
             }
             .frame(height: proxy.size.height, alignment: .center)
             .contentShape(Rectangle())
@@ -592,9 +593,9 @@ struct AudioMessageView: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         isScrubbing.wrappedValue = true
-                        // Mapea el dedo dentro del área de recorrido (descontando
-                        // el radio) para que la ruedita lo siga con precisión.
-                        let localX = value.location.x - knobRadius
+                        // Mapea el dedo dentro del mismo recorrido visual que usa
+                        // la ruedita, incluyendo la holgura de los extremos.
+                        let localX = value.location.x - startCenter
                         seek(to: Double(max(0, min(1, localX / travel))))
                     }
                     .onEnded { _ in

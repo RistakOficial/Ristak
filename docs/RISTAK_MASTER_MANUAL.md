@@ -688,6 +688,8 @@ burbuja, visor o archivo compartido; `Image`/`URL(string:)` no deben recibir
 rutas sin host. En
 `/chat` desktop, las burbujas de media deben mostrar solo el contenido principal:
 foto/video completo, audio con icono/control del lado izquierdo o mapa completo.
+En iOS, el scrubber de las notas de voz usa holgura lateral para que la bolita en
+0:00 y al final no parezca adelantada ni recortada dentro del globo.
 La hora, etiqueta de transporte, vistos y razones de ruteo viven fuera/debajo de
 la burbuja para no crear columnas internas. Los errores de envio no se escriben
 dentro del globo: se muestran como icono externo con detalle en tooltip. En
