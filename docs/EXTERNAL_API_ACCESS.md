@@ -2,6 +2,11 @@
 
 Ristak exposes token-protected endpoints under `/api/external` for authorized external systems.
 
+This document covers the customer-facing external API and MCP exposed by an
+installed Ristak app. Internal support access for agents lives in Ristak
+Installer; use `docs/support-mcp-operations.md` when Raul asks to inspect a
+customer account, logs, chats, database rows, or production errors.
+
 ## Identity model
 
 - `App ID` identifies this Ristak instance and is safe to share with integration partners.

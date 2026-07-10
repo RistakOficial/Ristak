@@ -87,6 +87,18 @@
   controller debe llamar `syncRegisteredIntegrationCronsForProvider(...)` para
   prender/apagar el cron sin reiniciar el backend.
 
+## Soporte MCP / Installer — OBLIGATORIO
+
+- Si Raul pide revisar un cliente, error, chat, IA, logs o datos de una cuenta
+  instalada, lee **`docs/support-mcp-operations.md`** antes de diagnosticar solo
+  desde codigo local.
+- El MCP externo `/api/mcp` de esta app es para integraciones del cliente. El
+  soporte interno vive en **Ristak Installer** (`ristak-render-support` /
+  `npm run render:support`) y es la ruta para resolver cliente, Render, logs y DB
+  con llaves cifradas del Installer.
+- No metas secrets de soporte en este repo. Si falta el entorno local del
+  Installer, pide acceso; no inventes valores.
+
 ## Documentación — OBLIGATORIO
 
 - Antes de crear, mover o modificar documentación, lee **`docs/README.md`** y

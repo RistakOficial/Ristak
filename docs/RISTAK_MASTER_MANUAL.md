@@ -2347,6 +2347,11 @@ Incluye:
 Los tokens se tratan como secretos. La documentacion solo debe indicar nombres,
 ubicacion y uso, nunca valores.
 
+El soporte interno para revisar clientes instalados no usa este MCP externo. Los
+agentes deben entrar por el MCP/CLI de soporte de Ristak Installer, documentado
+en `docs/support-mcp-operations.md`, para resolver la instalacion, leer logs,
+inspeccionar schema y consultar filas read-only de la DB del cliente.
+
 ## App movil
 
 Ristak tiene tres rutas moviles activas:

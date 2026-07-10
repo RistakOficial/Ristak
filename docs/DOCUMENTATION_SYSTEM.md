@@ -51,6 +51,7 @@ decirlo explicitamente.
 | Deploy Render | `docs/DEPLOY-RENDER.md` |
 | Licencia central e Installer | `docs/LICENSING.md` |
 | API externa, OAuth, MCP | `docs/EXTERNAL_API_ACCESS.md` |
+| Soporte interno MCP para investigar clientes instalados via Installer | `docs/support-mcp-operations.md` |
 | Pixel/tracking/conversiones | `docs/TRACKING_PIXEL.md`, `docs/PIXEL_SETUP.md` y seccion Meta/pagos del manual |
 | Media/Bunny | `docs/MEDIA_STORAGE_BUNNY.md` |
 | Movil/web, Android `mobile/`, Apple `ios/app` y store release | `docs/MOBILE_APP.md`, `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`, `docs/MOBILE_STORE_RELEASES.md`, `mobile/README.md`, `ios/README.md` |
