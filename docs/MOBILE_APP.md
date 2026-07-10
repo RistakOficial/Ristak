@@ -272,10 +272,11 @@ siendo el ultimo mensaje entrante del contacto. Si despues llega un DM, responde
 en la publicacion requiere tocar `Responder en la publicacion` dentro del globo
 del comentario exacto.
 
-El fondo de la conversacion nativa usa una textura sutil detras de los globos y
-un parallax real con `expo-sensors`/`DeviceMotion`: la inclinacion del iPhone
-desplaza solo la textura unos pixeles; los mensajes, header y composer no deben
-moverse ni redimensionarse.
+El fondo de la conversacion nativa usa una textura sutil detras de los globos.
+La app Android de Play usa esa textura de forma estatica y no incluye
+`expo-sensors`/`DeviceMotion`, porque esos modulos agregan
+`android.permission.ACTIVITY_RECOGNITION` aunque la app no tenga funciones de
+salud. Los mensajes, header y composer no deben moverse ni redimensionarse.
 
 El avance por fases de esa paridad vive en
 `docs/MOBILE_NATIVE_PARITY_CHECKLIST.md`. Antes de retomar la migracion nativa,

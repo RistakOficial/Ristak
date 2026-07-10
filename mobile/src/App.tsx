@@ -35,7 +35,6 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { DeviceMotion } from 'expo-sensors';
 import {
   RecordingPresets,
   requestRecordingPermissionsAsync,
@@ -806,10 +805,7 @@ const CONVERSATION_COMPOSER_KEYBOARD_BOTTOM = 3;
 const CONVERSATION_AUDIO_WAVE_BAR_HEIGHTS = [7, 13, 9, 17, 11, 6, 15, 10, 18, 8, 14, 6, 16, 11, 7, 13, 9, 18, 10, 15, 6, 12];
 const CONVERSATION_AUDIO_PLAYBACK_SPEEDS = [1, 2, 4] as const;
 const CONVERSATION_AUDIO_MAX_MOBILE_RATE = 2;
-const CONVERSATION_PARALLAX_MAX_OFFSET = 13;
-const CHAT_WALLPAPER_PARALLAX_MAX_OFFSET = 13;
 const CHAT_WALLPAPER_PARALLAX_PADDING = 18;
-const CHAT_WALLPAPER_SENSOR_INTERVAL_MS = 110;
 const CONVERSATION_WALLPAPER_DOTS = [
   { left: '2%', top: '3%', size: 7, opacity: 0.28 },
   { left: '10%', top: '8%', size: 5, opacity: 0.2 },
@@ -2161,54 +2157,24 @@ function useChatWallpaperParallax(active = true) {
   const parallaxY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    let disposed = false;
-    let subscription: { remove: () => void } | null = null;
+    if (active) return undefined;
 
-    if (!active || Platform.OS === 'web') {
-      Animated.parallel([
-        Animated.timing(parallaxX, {
-          toValue: 0,
-          duration: 180,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-        Animated.timing(parallaxY, {
-          toValue: 0,
-          duration: 180,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }),
-      ]).start();
-      return undefined;
-    }
+    Animated.parallel([
+      Animated.timing(parallaxX, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(parallaxY, {
+        toValue: 0,
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
 
-    DeviceMotion.setUpdateInterval(CHAT_WALLPAPER_SENSOR_INTERVAL_MS);
-    void DeviceMotion.isAvailableAsync().then((available) => {
-      if (disposed || !available) return;
-      subscription = DeviceMotion.addListener((motion) => {
-        const gamma = Number(motion.rotation?.gamma || 0);
-        const beta = Number(motion.rotation?.beta || 0);
-        const nextX = Math.max(-CHAT_WALLPAPER_PARALLAX_MAX_OFFSET, Math.min(CHAT_WALLPAPER_PARALLAX_MAX_OFFSET, gamma * 9));
-        const nextY = Math.max(-CHAT_WALLPAPER_PARALLAX_MAX_OFFSET, Math.min(CHAT_WALLPAPER_PARALLAX_MAX_OFFSET, beta * -5));
-        Animated.timing(parallaxX, {
-          toValue: nextX,
-          duration: 140,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }).start();
-        Animated.timing(parallaxY, {
-          toValue: nextY,
-          duration: 140,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }).start();
-      });
-    }).catch(() => undefined);
-
-    return () => {
-      disposed = true;
-      subscription?.remove();
-    };
+    return undefined;
   }, [active, parallaxX, parallaxY]);
 
   return { parallaxX, parallaxY };
@@ -19816,40 +19782,6 @@ function NativeConversationScreen({
     if (!item.url) return;
     setContentFocusItem(item);
   }, []);
-
-  useEffect(() => {
-    let disposed = false;
-    let subscription: { remove: () => void } | null = null;
-    if (Platform.OS === 'web') return undefined;
-
-    DeviceMotion.setUpdateInterval(110);
-    void DeviceMotion.isAvailableAsync().then((available) => {
-      if (disposed || !available) return;
-      subscription = DeviceMotion.addListener((motion) => {
-        const gamma = Number(motion.rotation?.gamma || 0);
-        const beta = Number(motion.rotation?.beta || 0);
-        const nextX = Math.max(-CONVERSATION_PARALLAX_MAX_OFFSET, Math.min(CONVERSATION_PARALLAX_MAX_OFFSET, gamma * 9));
-        const nextY = Math.max(-CONVERSATION_PARALLAX_MAX_OFFSET, Math.min(CONVERSATION_PARALLAX_MAX_OFFSET, beta * -5));
-        Animated.timing(conversationParallaxX, {
-          toValue: nextX,
-          duration: 140,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }).start();
-        Animated.timing(conversationParallaxY, {
-          toValue: nextY,
-          duration: 140,
-          easing: Easing.out(Easing.cubic),
-          useNativeDriver: true,
-        }).start();
-      });
-    }).catch(() => undefined);
-
-    return () => {
-      disposed = true;
-      subscription?.remove();
-    };
-  }, [conversationParallaxX, conversationParallaxY]);
 
   useEffect(() => {
     onContactPatchRef.current = onContactPatch;
