@@ -15,6 +15,11 @@ import {
   sendWhatsAppApiVideoMessage,
   setYCloudFetchForTest
 } from '../src/services/whatsappApiService.js'
+import {
+  QR_CONSENT_TEXT,
+  resetWhatsAppQrServiceForTest,
+  setBaileysRuntimeForTest
+} from '../src/services/whatsappQrService.js'
 
 const ONE_PIXEL_PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC'
 const PDF_DATA_URL = 'data:application/pdf;base64,JVBERi0xLjQKJcTl8uXrp/Og0MTGCjEgMCBvYmoKPDwvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlIC9QYWdlcyAvQ291bnQgMD4+CmVuZG9iago='
@@ -84,6 +89,84 @@ function restoreMediaStorageEnv(snapshot) {
 
 function normalizeDigits(value = '') {
   return String(value || '').replace(/\D/g, '')
+}
+
+function createFakeQrRuntime(sentMessages = [], connectedJid) {
+  let messageIndex = 0
+
+  return {
+    DisconnectReason: {
+      loggedOut: 401,
+      badSession: 500,
+      connectionReplaced: 440,
+      restartRequired: 515
+    },
+    BufferJSON: {
+      replacer: (_key, value) => value,
+      reviver: (_key, value) => value
+    },
+    Browsers: {
+      macOS: (name) => ['macOS', name, 'Ristak']
+    },
+    initAuthCreds: () => ({
+      me: { id: connectedJid },
+      registered: true
+    }),
+    makeCacheableSignalKeyStore: (keys) => keys,
+    proto: {
+      Message: {
+        AppStateSyncKeyData: {
+          fromObject: (value) => value
+        }
+      }
+    },
+    makeWASocket: () => {
+      const listeners = new Map()
+      const emit = async (eventName, payload) => {
+        for (const handler of listeners.get(eventName) || []) {
+          await handler(payload)
+        }
+      }
+      const sock = {
+        user: { id: connectedJid },
+        ev: {
+          on: (eventName, handler) => {
+            const eventListeners = listeners.get(eventName) || []
+            eventListeners.push(handler)
+            listeners.set(eventName, eventListeners)
+          },
+          removeAllListeners: (eventName) => {
+            if (eventName) listeners.delete(eventName)
+            else listeners.clear()
+          }
+        },
+        ws: { close: () => {} },
+        onWhatsApp: async (...candidates) => candidates.map(candidate => ({
+          exists: true,
+          jid: `${normalizeDigits(candidate)}@s.whatsapp.net`
+        })),
+        sendMessage: async (jid, payload) => {
+          messageIndex += 1
+          const id = `qr_provider_media_msg_${messageIndex}`
+          sentMessages.push({ id, jid, payload })
+          await emit('messages.update', [{
+            key: { id, remoteJid: jid, fromMe: true },
+            update: { status: 3 }
+          }])
+          return {
+            key: { id, remoteJid: jid, fromMe: true },
+            message: payload
+          }
+        }
+      }
+
+      queueMicrotask(() => {
+        emit('connection.update', { connection: 'open' }).catch(() => undefined)
+      })
+
+      return sock
+    }
+  }
 }
 
 function forceLocalMediaStorageForProviderPreview() {
@@ -252,6 +335,106 @@ async function withYCloudProviderMediaCapture(callback) {
     }
   })
 }
+
+test('envío QR de imagen con dataUrl conserva preview interno en historial', async () => {
+  const previousMediaStorageEnv = snapshotMediaStorageEnv()
+  const sentMessages = []
+  const suffix = randomUUID()
+  const phone = `+52155${Date.now().toString().slice(-8)}`
+  const businessPhone = '+526561111111'
+  const connectedJid = `${normalizeDigits(businessPhone)}@s.whatsapp.net`
+  const phoneNumberId = `phone_qr_image_preview_${suffix}`
+  const externalId = `qr-image-preview-${suffix}`
+  let previewMediaAssetId = ''
+
+  try {
+    forceLocalMediaStorageForProviderPreview()
+    const mediaStorageService = await import('../src/services/mediaStorageService.js')
+    mediaStorageService.resetCentralStorageConfigCache()
+    resetWhatsAppQrServiceForTest()
+
+    await db.run(`
+      INSERT INTO whatsapp_api_phone_numbers (
+        id, provider, waba_id, phone_number, display_phone_number, verified_name,
+        is_default_sender, api_send_enabled, qr_send_enabled, qr_status, status
+      ) VALUES (?, 'qr', 'waba_qr_image_preview_test', ?, ?, 'QR Image Preview Test', 1, 0, 1, 'connected', 'CONNECTED')
+    `, [phoneNumberId, businessPhone, businessPhone])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_sessions (
+        id, phone_number_id, expected_phone, connected_phone, status,
+        consent_accepted, consent_text, consent_accepted_at, last_connected_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'connected', 1, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      `qr_${phoneNumberId}`,
+      phoneNumberId,
+      businessPhone,
+      businessPhone,
+      QR_CONSENT_TEXT
+    ])
+
+    await db.run(`
+      INSERT INTO whatsapp_qr_auth_state (phone_number_id, auth_key, value_json, updated_at)
+      VALUES (?, 'creds', ?, CURRENT_TIMESTAMP)
+    `, [
+      phoneNumberId,
+      JSON.stringify({
+        me: { id: connectedJid },
+        registered: true
+      })
+    ])
+
+    setBaileysRuntimeForTest(createFakeQrRuntime(sentMessages, connectedJid))
+
+    const response = await sendWhatsAppApiImageMessage({
+      to: phone,
+      from: businessPhone,
+      phoneNumberId,
+      imageDataUrl: ONE_PIXEL_PNG_DATA_URL,
+      caption: 'Foto por QR',
+      externalId,
+      transport: 'qr',
+      allowQrFallback: false,
+      skipQrSendProtection: true
+    })
+
+    assert.equal(sentMessages.length, 1)
+    assert.equal(sentMessages[0].payload.image instanceof Buffer, true)
+    assert.ok(response.localMessageId)
+    assert.match(response.image.link, /^\/media\/assets\/.+\/file$/)
+    previewMediaAssetId = response.image.previewMediaAssetId
+    assert.match(previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
+
+    const stored = await db.get(
+      `SELECT media_url, media_mime_type, media_filename, raw_payload_json
+       FROM whatsapp_api_messages
+       WHERE id = ?`,
+      [response.localMessageId]
+    )
+
+    assert.ok(stored)
+    assert.match(stored.media_url, /^\/media\/assets\/.+\/file$/)
+    assert.equal(stored.media_mime_type, 'image/jpeg')
+    assert.equal(stored.media_filename, 'whatsapp-image.jpg')
+    const raw = JSON.parse(stored.raw_payload_json)
+    assert.equal(raw.image.link, stored.media_url)
+    assert.equal(raw.image.publicUrl, stored.media_url)
+    assert.equal(raw.image.previewMediaAssetId, previewMediaAssetId)
+  } finally {
+    await db.run('DELETE FROM whatsapp_api_messages WHERE phone = ? OR to_phone = ? OR from_phone = ?', [phone, phone, businessPhone]).catch(() => undefined)
+    if (previewMediaAssetId) {
+      await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
+    }
+    await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [phone]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE phone = ?', [phone]).catch(() => undefined)
+    await db.run('DELETE FROM distributed_locks WHERE name = ?', [`whatsapp-qr-session:${phoneNumberId}`]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_auth_state WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_qr_sessions WHERE phone_number_id = ?', [phoneNumberId]).catch(() => undefined)
+    await db.run('DELETE FROM whatsapp_api_phone_numbers WHERE id = ?', [phoneNumberId]).catch(() => undefined)
+    resetWhatsAppQrServiceForTest()
+    restoreMediaStorageEnv(previousMediaStorageEnv)
+  }
+})
 
 test('envío API de imagen sube media al proveedor y conserva preview interno sin mandar link a yCloud', async () => {
   await withYCloudProviderMediaCapture(async (captures) => {

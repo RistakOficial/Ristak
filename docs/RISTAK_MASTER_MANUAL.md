@@ -832,6 +832,12 @@ del proveedor, Ristak debe guardar una copia de preview/reproduccion en
 WhatsApp no debe recibir ese link si el proveedor acepta media ID, pero el
 historial interno si lo necesita para pintar la burbuja del chat en vez de
 mostrar solo el nombre del archivo o un audio roto.
+Cuando una foto se envia directamente por WhatsApp QR/Baileys desde un archivo
+local o `dataUrl`, el envio puede usar el buffer privado de Baileys, pero el
+historial interno debe guardar una copia publica de preview en
+`mediaStorageService` y persistir `media_url`, MIME y nombre en
+`whatsapp_api_messages` para que `/chat`, `/movil` y las apps moviles la puedan
+abrir despues de recargar.
 Si el mismo numero tambien tiene WhatsApp QR/Baileys conectado, el eco saliente
 que WhatsApp Web emite para esa foto no debe crear una segunda burbuja `QR` con
 el texto generico `Foto`. El backend debe marcar los envios API originados por

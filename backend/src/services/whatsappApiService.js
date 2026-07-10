@@ -1540,6 +1540,22 @@ async function savePreparedMediaForChatPreview(media = {}, { type = '', mediaLab
   }
 }
 
+async function saveQrInlineImageForChatPreview(dataUrl = '') {
+  const cleanDataUrl = cleanString(dataUrl)
+  if (!cleanDataUrl) return null
+
+  try {
+    const preparedImage = await prepareWhatsAppImageForProviderUpload(cleanDataUrl)
+    return savePreparedMediaForChatPreview(preparedImage, {
+      type: 'image',
+      mediaLabel: 'foto de WhatsApp QR'
+    })
+  } catch (error) {
+    logger.warn(`[WhatsApp QR] No se pudo guardar preview de foto QR: ${error.message}`)
+    return null
+  }
+}
+
 function buildPreparedMediaDataUrl(media = {}) {
   if (!Buffer.isBuffer(media.buffer) || !media.buffer.length || !media.mimeType) return ''
   return `data:${media.mimeType};base64,${media.buffer.toString('base64')}`
@@ -9630,6 +9646,8 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
       externalId,
       skipQrSendProtection
     })
+    const qrPreviewImage = localMedia ? null : await saveQrInlineImageForChatPreview(imageDataUrl)
+    const qrPreviewImageUrl = cleanString(qrPreviewImage?.link || qrPreviewImage?.publicUrl || qrPreviewImage?.url || qrPreviewImage?.mediaUrl)
     const responseImage = isPlainObject(response.image) ? response.image : {}
     const qrMetadata = buildQrInlineMediaMetadata({
       dataUrl: imageDataUrl,
@@ -9638,16 +9656,28 @@ async function sendImageViaQrFallback({ fromPhone, toPhone, requestImage, imageD
       defaultBasename: 'whatsapp-image',
       type: 'image'
     })
+    const qrPreviewFilename = qrPreviewImage?.mimeType
+      ? `whatsapp-image.${inferWhatsAppMediaExtension(qrPreviewImage.mimeType)}`
+      : ''
     const mergedMetadata = mergeMediaMetadata(qrMetadata.metadata, requestImage?.metadata, responseImage.metadata)
     const finalImage = {
       ...(requestImage || {}),
       ...qrMetadata,
+      ...(qrPreviewImage ? {
+        mediaUrl: qrPreviewImage.mediaUrl || qrPreviewImageUrl,
+        publicUrl: qrPreviewImage.publicUrl || qrPreviewImageUrl,
+        url: qrPreviewImage.url || qrPreviewImageUrl,
+        previewMediaAssetId: qrPreviewImage.mediaAssetId,
+        previewStorage: qrPreviewImage.storage,
+        previewStorageProvider: qrPreviewImage.storageProvider
+      } : {}),
       ...responseImage,
-      link: cleanString(responseImage.link || requestImage?.link || localMediaUrl),
-      mimeType: cleanString(responseImage.mimeType || requestImage?.mimeType || qrMetadata.mimeType || localMedia?.mimeType),
-      filename: cleanString(responseImage.filename || requestImage?.filename || qrMetadata.filename || localMedia?.filename),
+      link: cleanString(responseImage.link || requestImage?.link || qrPreviewImageUrl || localMediaUrl),
+      mimeType: cleanString(qrPreviewImage?.mimeType || responseImage.mimeType || requestImage?.mimeType || qrMetadata.mimeType || localMedia?.mimeType),
+      filename: cleanString(responseImage.filename || requestImage?.filename || localMedia?.filename || qrPreviewFilename || qrMetadata.filename || qrPreviewImage?.filename),
       ...(requestImage?.caption || response.image?.caption ? { caption: requestImage?.caption || response.image?.caption } : {})
     }
+    if (finalImage.mimeType) finalImage.mimetype = finalImage.mimeType
     if (!finalImage.filename) delete finalImage.filename
     if (mergedMetadata) finalImage.metadata = mergedMetadata
 
