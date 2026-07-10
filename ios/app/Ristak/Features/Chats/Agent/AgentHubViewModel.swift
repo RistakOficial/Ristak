@@ -1,8 +1,8 @@
 import Foundation
 import SwiftUI
 
-/// ViewModel del Hub del agente conversacional (encender/apagar global,
-/// activar/pausar cada agente, reiniciar omisiones, entrar a editar). Gatea por
+/// ViewModel del Hub del agente conversacional (activar/pausar cada agente,
+/// reiniciar omisiones, entrar a editar). Gatea por
 /// disponibilidad de OpenAI igual que el web (`useAIAgentAvailability`).
 @MainActor
 @Observable
@@ -26,18 +26,13 @@ final class AgentHubViewModel {
     private(set) var config: ConversationalAgentConfig?
     private(set) var agents: [ConversationalAgentDef] = []
 
-    private(set) var globalSaving = false
     private(set) var savingAgentIDs: Set<String> = []
     private(set) var resettingAgentIDs: Set<String> = []
 
-    /// Override optimista mientras el POST viaja (revierte en fallo).
-    private var globalEnabledOverride: Bool?
     private var agentEnabledOverrides: [String: Bool] = [:]
 
     var alert: HubAlert?
 
-    var globalEnabled: Bool { globalEnabledOverride ?? config?.enabled ?? false }
-    var publishedCount: Int { agents.filter { isAgentEnabled($0) }.count }
     var businessPromptReady: Bool { config?.canEnable ?? true }
 
     func isAgentEnabled(_ agent: ConversationalAgentDef) -> Bool {
@@ -69,7 +64,6 @@ final class AgentHubViewModel {
             let (loadedConfig, loadedAgents) = try await (cfg, list)
             config = loadedConfig
             agents = loadedAgents.sorted { $0.position < $1.position }
-            globalEnabledOverride = nil
             agentEnabledOverrides.removeAll()
             phase = .ready
         } catch let error as RistakAPIError {
@@ -92,47 +86,26 @@ final class AgentHubViewModel {
         Task { await load() }
     }
 
-    // MARK: - Interruptor global
-
-    func setGlobalEnabled(_ enabled: Bool) {
-        guard !globalSaving else { return }
-        globalSaving = true
-        globalEnabledOverride = enabled
-        Task {
-            defer { globalSaving = false }
-            do {
-                config = try await ConversationalAgentService.saveConfig(.init(enabled: enabled))
-                globalEnabledOverride = nil
-            } catch {
-                globalEnabledOverride = nil // revierte al valor real de config
-                present(error, whenEnabling: enabled)
-            }
-        }
-    }
-
     // MARK: - Por agente
 
     func setAgentEnabled(_ agent: ConversationalAgentDef, enabled: Bool) {
         guard !savingAgentIDs.contains(agent.id) else { return }
         savingAgentIDs.insert(agent.id)
         agentEnabledOverrides[agent.id] = enabled
-        // Encender un agente con el global apagado también enciende el global
-        // (paridad web: hub hero / create / ConversationalAgentSettings).
-        let alsoEnableGlobal = enabled && !globalEnabled
-        if alsoEnableGlobal { globalEnabledOverride = true }
+        // Encender un agente con el runtime apagado por legado lo repara como
+        // detalle interno; la UI solo controla este agente.
+        let shouldEnableRuntime = enabled && !(config?.enabled ?? false)
         Task {
             defer { savingAgentIDs.remove(agent.id) }
             do {
                 let updated = try await ConversationalAgentService.updateAgent(id: agent.id, .init(enabled: enabled))
                 replaceAgent(updated)
                 agentEnabledOverrides[agent.id] = nil
-                if alsoEnableGlobal {
+                if shouldEnableRuntime {
                     config = try await ConversationalAgentService.saveConfig(.init(enabled: true))
-                    globalEnabledOverride = nil
                 }
             } catch {
                 agentEnabledOverrides[agent.id] = nil
-                if alsoEnableGlobal { globalEnabledOverride = nil }
                 present(error, whenEnabling: enabled)
             }
         }

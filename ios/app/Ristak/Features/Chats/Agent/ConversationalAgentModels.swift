@@ -1,10 +1,10 @@
 import Foundation
 
-// MARK: - Agente conversacional: config global + definiciones (doc 05 §6)
+// MARK: - Agente conversacional: runtime interno + definiciones (doc 05 §6)
 //
 // El agente conversacional (auto-respuesta por contacto) es un sistema DISTINTO
 // del "Asistente Personal AI" (`AIAgentService`, /api/ai-agent). Aquí modelamos
-// la CONFIG GLOBAL (`ConversationalAgentConfig`) y las DEFINICIONES de agente
+// el runtime interno (`ConversationalAgentConfig`) y las DEFINICIONES de agente
 // (`ConversationalAgentDef`) que el Hub del chat enciende/pausa/edita. El estado
 // POR CONVERSACIÓN (`ConversationAgentState`) y sus acciones viven en
 // `Core/Models/MessageSendModels.swift` + `AgentStateService`.
@@ -40,7 +40,7 @@ struct ConversationalBusinessPromptStatus: Decodable, Sendable, Equatable {
     }
 }
 
-// MARK: Config global — GET/POST /conversational-agent/config
+// MARK: Runtime interno — GET/POST /conversational-agent/config
 
 struct ConversationalAgentConfig: Decodable, Sendable, Equatable {
     let enabled: Bool

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Endpoints de gestión del agente conversacional (config global + definiciones).
+/// Endpoints de gestión del agente conversacional (runtime interno + definiciones).
 /// Complementa `AgentStateService` (estado por conversación). Todo el router
 /// `/api/conversational-agent` exige feature `conversational_ai` + módulo
 /// `ai_agent` + OpenAI conectado (409 `needsOpenAIConfig` si falta) — por eso el
@@ -8,7 +8,7 @@ import Foundation
 enum ConversationalAgentService {
     private static let base = "/conversational-agent"
 
-    /// `GET /config` → config global + estado del prompt del negocio.
+    /// `GET /config` → runtime interno + estado del prompt del negocio.
     static func config() async throws -> ConversationalAgentConfig {
         try await APIClient.shared.get("\(base)/config")
     }

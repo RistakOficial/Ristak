@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Hub del agente conversacional (se abre desde el botón robot de la bandeja).
-/// Encender/apagar el agente completo, activar/pausar cada agente, reiniciar
-/// omisiones y entrar a editar. Paridad con el "AI Agent Hub" del /movil.
+/// Activa/pausa cada agente real, reinicia omisiones y entra a editar.
+/// Paridad con el "AI Agent Hub" del /movil.
 struct AgentHubSheet: View {
     @State private var viewModel = AgentHubViewModel()
     @State private var editingAgent: ConversationalAgentDef?
@@ -62,61 +62,11 @@ struct AgentHubSheet: View {
 
     private var readyContent: some View {
         SettingsPanelScroll {
-            globalCard
             if !viewModel.businessPromptReady {
                 businessPromptNotice
             }
             agentsCard
         }
-    }
-
-    // MARK: - Interruptor global
-
-    private var globalCard: some View {
-        SectionCard {
-            HStack(spacing: RistakTheme.Spacing.sm) {
-                Image(systemName: "sparkles")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(RistakTheme.accent)
-                    .frame(width: 42, height: 42)
-                    .background(
-                        RoundedRectangle(cornerRadius: RistakTheme.Radius.small, style: .continuous)
-                            .fill(RistakTheme.accentSoft)
-                    )
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Agente conversacional")
-                        .font(.headline)
-                        .foregroundStyle(RistakTheme.textPrimary)
-                    Text(globalSubtitle)
-                        .font(.footnote)
-                        .foregroundStyle(RistakTheme.textDim)
-                }
-
-                Spacer(minLength: RistakTheme.Spacing.xs)
-
-                if viewModel.globalSaving {
-                    ProgressView().controlSize(.small)
-                }
-
-                Toggle("", isOn: Binding(
-                    get: { viewModel.globalEnabled },
-                    set: { viewModel.setGlobalEnabled($0) }
-                ))
-                .labelsHidden()
-                .tint(RistakTheme.accent)
-                .disabled(viewModel.globalSaving)
-                .accessibilityLabel("Encender el agente conversacional")
-            }
-        }
-    }
-
-    private var globalSubtitle: String {
-        if viewModel.globalEnabled {
-            let n = viewModel.publishedCount
-            return n == 1 ? "1 agente atendiendo chats" : "\(n) agentes atendiendo chats"
-        }
-        return "Apagado — ningún chat se responde solo."
     }
 
     private var businessPromptNotice: some View {

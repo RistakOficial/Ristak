@@ -3696,11 +3696,11 @@ export const ConversationalAgentSettings: React.FC<ConversationalAgentSettingsPr
     setAgents((current) => current.map((agent) => (agent.id === agentId ? { ...agent, ...patch } as ConversationalAgentDef : agent)))
     scheduleAgentSave(agentId)
     if (patch.enabled === true && config && !config.enabled) {
-      void handleGlobalChange({ enabled: true })
+      void handleRuntimeChange({ enabled: true })
     }
   }
 
-  const handleGlobalChange = async (patch: { enabled?: boolean }) => {
+  const handleRuntimeChange = async (patch: { enabled?: boolean }) => {
     if (patch.enabled === true && !businessPromptReady) {
       showToast('warning', 'Prompt interno pendiente', promptBlockerText)
       return

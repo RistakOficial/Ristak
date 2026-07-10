@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { Agent, Runner, OpenAIProvider } from '@openai/agents'
-import { db, getAppConfig, setAppConfig } from '../config/database.js'
+import { db } from '../config/database.js'
 import { PUBLIC_URL } from '../config/constants.js'
 import { CHEAPEST_OPENAI_MODEL } from '../config/openAIModels.js'
 import { logger } from '../utils/logger.js'
@@ -16,7 +16,7 @@ import {
 import { getConversationalAgentMaxAgents } from './licenseService.js'
 
 /**
- * Servicio del agente conversacional: configuración global, estado por
+ * Servicio del agente conversacional: runtime interno, estado por
  * conversación (contacto) y bitácora de eventos auditables.
  *
  * Estados por conversación:
@@ -87,7 +87,6 @@ const CONVERSATION_PAUSE_DURATION_MS = 24 * 60 * 60 * 1000
 const DEFAULT_CONVERSATIONAL_AGENT_MODEL = getDefaultConversationalModelForProvider(DEFAULT_CONVERSATIONAL_AI_PROVIDER)
 const AI_MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}$/
 const COMPLETION_SUMMARY_MODEL = CHEAPEST_OPENAI_MODEL
-export const CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY = 'conversational_agent_manual_disabled_at'
 export const CONVERSATIONAL_AGENT_ENTRY_CONFLICT_CODE = 'CONVERSATIONAL_AGENT_ENTRY_CONFLICT'
 export const CONVERSATIONAL_AGENT_LIMIT_REACHED_CODE = 'CONVERSATIONAL_AGENT_LIMIT_REACHED'
 const RESPONSE_DELAY_MODES = new Set(['none', 'fixed', 'random'])
@@ -310,13 +309,6 @@ export async function saveConversationalAgentConfig(input = {}) {
       next.persuasionLevel, next.languageLevel
     ])
   }
-
-  await setAppConfig(
-    CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY,
-    next.enabled ? null : new Date().toISOString()
-  ).catch((error) => {
-    logger.warn(`[Agente conversacional] No se pudo guardar bandera de apagado manual: ${error.message}`)
-  })
 
   await recordConversationalAgentEvent({
     contactId: null,
@@ -2107,7 +2099,7 @@ export function shouldMigrateLegacyConversationalAgentConfig(legacy) {
 }
 
 /**
- * Si todavía no hay agentes pero la config global vieja (de un solo agente)
+ * Si todavía no hay agentes pero la config legacy vieja (de un solo agente)
  * tiene reglas reales, crea el "Agente principal" a partir de ella.
  * La config default vacía no se migra, así una cuenta nueva empieza sin agentes.
  */
@@ -2217,15 +2209,11 @@ async function enableConversationalAgentRuntime({ reason = 'agent_published', ag
 }
 
 export async function ensureConversationalAgentRuntimeEnabledForPublishedAgents({ reason = 'published_agent_present' } = {}) {
-  // (AI-007) Kill switch real: el apagador global es autoritativo cuando existe
-  // marcador de apagado manual. Sin ese marcador, una instalación legacy con agentes
-  // publicados puede repararse para que el runtime vuelva a encender.
+  // El runtime base es solo compatibilidad interna: la verdad operativa es que
+  // exista al menos un agente individual publicado.
   await ensureAgentsMigration()
   const config = await getConversationalAgentConfig()
   if (config.enabled) return config
-
-  const manualDisabledAt = await getAppConfig(CONVERSATIONAL_AGENT_MANUAL_DISABLED_CONFIG_KEY).catch(() => null)
-  if (manualDisabledAt) return config
 
   const publishedAgent = await db.get('SELECT id FROM conversational_agents WHERE enabled = 1 LIMIT 1')
   if (!publishedAgent?.id) return config

@@ -1049,7 +1049,10 @@ humanos, y `clear_signal` para marcar avisos como vistos. En `/movil`/`ios/app`
 y `mobile/`, los banners y acciones de agente deben contar solo estados cuyo
 `agent_id` pertenezca a un agente configurado actualmente; los estados historicos
 o cacheados de agentes eliminados no deben mostrarse como "agentes asignados" ni
-habilitar acciones. El
+habilitar acciones. El hub del agente en `/movil` e `ios/app` no debe exponer un
+control "Todos"/"Apagar todos": el usuario controla solo el agente individual
+seleccionado, y el runtime interno se enciende automaticamente cuando un agente
+publicado lo requiere. El
 composer nativo manda texto por `/whatsapp-api/messages/text`,
 fotos por `/whatsapp-api/messages/image`, videos por
 `/whatsapp-api/messages/video`, documentos por

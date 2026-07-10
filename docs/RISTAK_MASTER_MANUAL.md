@@ -2299,7 +2299,10 @@ Los estados de conversacion son por agente (`agent_id`), no globales del
 contacto: pausar, omitir, completar o pasar a humano con un agente no debe
 bloquear automaticamente a otro agente distinto. "Reiniciar omisiones" tambien
 opera solo sobre el agente seleccionado y no debe tocar estados de otros agentes
-asociados al mismo contacto.
+asociados al mismo contacto. Las superficies de control (`/movil` e `ios/app`)
+no deben mostrar un agente/control global tipo "Todos" para prender o apagar la
+familia completa: el usuario controla solo el agente individual seleccionado, y
+el runtime interno se repara automaticamente si un agente publicado lo necesita.
 Un estado `completed` no debe dejar el contacto muerto para siempre: si el mismo
 agente ya cumplio su objetivo y despues entra un mensaje nuevo distinto al ultimo
 inbound contestado, el runtime debe limpiar la señal de cierre, reabrir la

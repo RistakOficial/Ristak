@@ -1480,8 +1480,8 @@ async function sendConversationalChannelTextMessage({
 
 async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpIndex, channel = 'whatsapp', agentId = null }) {
   const normalizedChannel = normalizeConversationalChannel(channel)
-  // (AI-007) Kill switch real: si el toggle global está apagado, el agente no
-  // dispara seguimientos aunque existan agentes publicados.
+  // El runtime base es compatibilidad interna: si quedó apagado por legado,
+  // se repara cuando existe un agente publicado que pueda atender.
   let config = await getConversationalAgentConfig()
   if (!config.enabled) {
     config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
@@ -1914,9 +1914,8 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
   try {
     if (!contactId || !messageId) return
 
-    // (AI-007) Kill switch real: antes de procesar/responder verificamos el
-    // toggle global. Si está apagado, el agente NO actúa aunque existan agentes
-    // publicados (la antigua re-habilitación silenciosa del runtime queda anulada).
+    // El runtime base es compatibilidad interna: si quedó apagado por legado,
+    // se repara cuando existe un agente publicado que pueda atender.
     let config = await getConversationalAgentConfig()
     if (!config.enabled) {
       config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
@@ -1926,7 +1925,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
     if (!config.enabled) {
       await recordConversationalAgentEvent({
         contactId,
-        eventType: 'run_skipped_global_disabled',
+        eventType: 'run_skipped_runtime_disabled',
         detail: { messageId, channel: normalizedChannel }
       }).catch(() => {})
       return
@@ -2396,8 +2395,8 @@ export async function recoverPendingConversationalAgentConversations({
   nowMs = Date.now(),
   maxAgeMs = PENDING_RECOVERY_MAX_AGE_MS
 } = {}) {
-  // (AI-007) Kill switch real: si el toggle global está apagado, no recuperamos
-  // ni reprogramamos conversaciones pendientes aunque existan agentes publicados.
+  // El runtime base es compatibilidad interna: si quedó apagado por legado,
+  // se repara antes de recuperar conversaciones de agentes publicados.
   let config = await getConversationalAgentConfig()
   if (!config.enabled) {
     config = await ensureConversationalAgentRuntimeEnabledForPublishedAgents({
@@ -2472,7 +2471,7 @@ export async function recoverPendingConversationalAgentConversations({
 }
 
 export async function resolveConversationalAgentPreviewRuntimeConfig({ configOverride = null, agentId = null } = {}) {
-  const globalConfig = await getConversationalAgentConfig()
+  const runtimeDefaults = await getConversationalAgentConfig()
   const hasConfigOverride = configOverride && typeof configOverride === 'object' && Object.keys(configOverride).length > 0
   let baseConfig = agentId ? await getConversationalAgent(agentId) : null
 
@@ -2481,15 +2480,15 @@ export async function resolveConversationalAgentPreviewRuntimeConfig({ configOve
   }
 
   const fallbackBase = buildConversationalAgentRuntimeConfig({}, {
-    aiProvider: globalConfig.aiProvider,
-    model: globalConfig.model
+    aiProvider: runtimeDefaults.aiProvider,
+    model: runtimeDefaults.model
   })
 
   const config = hasConfigOverride
     ? buildConversationalAgentRuntimeConfig(configOverride, baseConfig || fallbackBase)
     : (baseConfig || fallbackBase)
 
-  return { config, globalConfig }
+  return { config, runtimeDefaults }
 }
 
 export function getConversationalAgentPreviewResponseDelayMs() {
@@ -2502,8 +2501,8 @@ export function getConversationalAgentPreviewResponseDelayMs() {
  * se devuelven como lista para mostrarlas en la prueba.
  */
 export async function runConversationalAgentPreview({ messages = [], configOverride = null, agentId = null }) {
-  const { config, globalConfig } = await resolveConversationalAgentPreviewRuntimeConfig({ configOverride, agentId })
-  const aiProvider = normalizeConversationalAIProvider(config.aiProvider || globalConfig.aiProvider)
+  const { config, runtimeDefaults } = await resolveConversationalAgentPreviewRuntimeConfig({ configOverride, agentId })
+  const aiProvider = normalizeConversationalAIProvider(config.aiProvider || runtimeDefaults.aiProvider)
   const runtime = await resolveConversationalAIRuntime(aiProvider)
   const runtimeConfig = { ...config, aiProvider }
   const previewChannel = normalizeConversationalChannel(configOverride?.channel || configOverride?.testChannel || 'whatsapp')
@@ -2530,7 +2529,7 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
 
   const { agent, ctx, model } = await buildAgentForRun({
     config: runtimeConfig,
-    conversationModel: runtimeConfig.model || globalConfig.model,
+    conversationModel: runtimeConfig.model || runtimeDefaults.model,
     contactId: null,
     contactName: null,
     dryRun: true,

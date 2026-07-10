@@ -6919,7 +6919,7 @@ export const PhoneChat: React.FC = () => {
   const mutedChatIdSet = useMemo(() => new Set(mutedChatIds), [mutedChatIds])
   const starredMessageIdSet = useMemo(() => new Set(starredMessageIds), [starredMessageIds])
   const archivedChatCount = archivedChatIds.length
-  const agentEnabled = Boolean(openAIConfigured && agentConfig?.enabled)
+  const agentRuntimeEnabled = Boolean(openAIConfigured && agentConfig?.enabled)
   const knownAgentIdSet = useMemo(
     () => new Set(agentDefs.map((agent) => agent.id).filter(Boolean)),
     [agentDefs]
@@ -6930,6 +6930,9 @@ export const PhoneChat: React.FC = () => {
       .filter((state) => isStateForKnownConversationAgent(state, knownAgentIdSet)),
     [agentStateLists, knownAgentIdSet]
   )
+  const publishedAgentDefs = useMemo(() => agentDefs.filter((agent) => agent.enabled), [agentDefs])
+  const publishedAgentCount = publishedAgentDefs.length
+  const agentEnabled = Boolean(openAIConfigured && (agentRuntimeEnabled || publishedAgentCount > 0))
   const agentPriorityStates = useMemo(
     () => agentEnabled
       ? allAgentStates.filter((state) => (
@@ -6944,8 +6947,6 @@ export const PhoneChat: React.FC = () => {
     () => new Set(agentPriorityStates.map((state) => state.contactId)),
     [agentPriorityStates]
   )
-  const publishedAgentDefs = useMemo(() => agentDefs.filter((agent) => agent.enabled), [agentDefs])
-  const publishedAgentCount = publishedAgentDefs.length
   const aiAgentHubAgentFilters = useMemo(() => {
     if (!publishedAgentDefs.length || aiAgentHubStatusFilter === 'unassigned') return []
 
@@ -6962,10 +6963,13 @@ export const PhoneChat: React.FC = () => {
       count: visibleCounts.get(agent.id) || 0
     }))
   }, [publishedAgentDefs, allAgentStates, aiAgentHubStatusFilter, archivedChatIdSet])
-  const showAiAgentHubAgentSelector = Boolean(agentEnabled && publishedAgentCount > 1 && aiAgentHubStatusFilter !== 'unassigned')
-  const activeAiAgentHubAgentFilter = showAiAgentHubAgentSelector && aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)
+  const showAiAgentHubAgentSelector = Boolean(agentEnabled && aiAgentHubAgentFilters.length > 1)
+  const fallbackAiAgentHubAgentFilter = aiAgentHubStatusFilter === 'unassigned'
+    ? 'all'
+    : (aiAgentHubAgentFilters[0]?.id || (publishedAgentDefs.length === 1 ? publishedAgentDefs[0].id : 'all'))
+  const activeAiAgentHubAgentFilter = aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)
     ? aiAgentHubAgentFilter
-    : 'all'
+    : fallbackAiAgentHubAgentFilter
   const aiAgentHubSourceChats = useMemo(() => {
     const rows = new Map<string, ChatContact>()
     chats.forEach((contact) => {
@@ -7134,10 +7138,12 @@ export const PhoneChat: React.FC = () => {
   }, [agentEnabled])
 
   useEffect(() => {
-    if (aiAgentHubAgentFilter === 'all') return
-    if (showAiAgentHubAgentSelector && aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)) return
-    setAiAgentHubAgentFilter('all')
-  }, [aiAgentHubAgentFilter, aiAgentHubAgentFilters, showAiAgentHubAgentSelector])
+    const nextFilter = aiAgentHubAgentFilters.some((agent) => agent.id === aiAgentHubAgentFilter)
+      ? aiAgentHubAgentFilter
+      : (aiAgentHubAgentFilters[0]?.id || 'all')
+    if (aiAgentHubAgentFilter === nextFilter) return
+    setAiAgentHubAgentFilter(nextFilter)
+  }, [aiAgentHubAgentFilter, aiAgentHubAgentFilters])
 
   const listBaseChats = useMemo(
     () => chats.filter((contact) => {
@@ -10537,35 +10543,6 @@ export const PhoneChat: React.FC = () => {
     loadAgentEditorSupportData()
   }
 
-  const toggleAgentGlobalEnabled = async () => {
-    if (!openAIConfigured) {
-      showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
-      return
-    }
-
-    const nextEnabled = !agentEnabled
-
-    if (nextEnabled && publishedAgentCount === 0) {
-      showToast('warning', 'Sin agentes publicados', 'Publica al menos un agente para encender la inteligencia artificial.')
-      openAgentSelectorScreen()
-      return
-    }
-
-    const previousConfig = agentConfig
-    setAgentConfig((current) => current ? { ...current, enabled: nextEnabled } : current)
-    setAgentConfigSaving(true)
-
-    try {
-      const nextConfig = await conversationalAgentService.saveConfig({ enabled: nextEnabled })
-      setAgentConfig(nextConfig)
-    } catch (error: any) {
-      setAgentConfig(previousConfig)
-      showToast('error', 'Agente conversacional', error?.message || 'No se pudo cambiar el estado.')
-    } finally {
-      setAgentConfigSaving(false)
-    }
-  }
-
   const openSelectedAIAgentHubConfig = () => {
     if (!openAIConfigured) {
       showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
@@ -10586,11 +10563,6 @@ export const PhoneChat: React.FC = () => {
   }
 
   const toggleSelectedAIAgentHubAgent = async () => {
-    if (activeAiAgentHubAgentFilter === 'all') {
-      await toggleAgentGlobalEnabled()
-      return
-    }
-
     if (!openAIConfigured) {
       showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
       return
@@ -10602,13 +10574,13 @@ export const PhoneChat: React.FC = () => {
       return
     }
 
-    const nextAgentEnabled = !(agentEnabled && selectedAgent.enabled)
+    const nextAgentEnabled = !selectedAgent.enabled
     const previousConfig = agentConfig
     const previousAgent = selectedAgent
     const agentName = selectedAgent.name || 'Agente sin nombre'
 
     updateAgentDraft(selectedAgent.id, { enabled: nextAgentEnabled })
-    if (nextAgentEnabled && !agentEnabled) {
+    if (nextAgentEnabled && !agentRuntimeEnabled) {
       setAgentConfig((current) => current ? { ...current, enabled: true } : current)
     }
     setAgentConfigSaving(true)
@@ -10616,7 +10588,7 @@ export const PhoneChat: React.FC = () => {
     try {
       const [nextAgent, nextConfig] = await Promise.all([
         conversationalAgentService.updateAgent(selectedAgent.id, { enabled: nextAgentEnabled }),
-        nextAgentEnabled && !agentEnabled
+        nextAgentEnabled && !agentRuntimeEnabled
           ? conversationalAgentService.saveConfig({ enabled: true })
           : Promise.resolve(null)
       ])
@@ -10649,7 +10621,7 @@ export const PhoneChat: React.FC = () => {
     closeSwipeActions()
   }
 
-  const openAgentGlobalMenu = () => {
+  const openAgentHubMenu = () => {
     if (!openAIConfigured) {
       showToast('warning', 'OpenAI no está listo', openAIUnavailableMessage)
       return
@@ -14308,9 +14280,6 @@ export const PhoneChat: React.FC = () => {
   const renderAIAgentHubScreen = () => {
     if (!aiAgentHubOpen && !aiAgentHubClosing) return null
 
-    const agentCountLabel = publishedAgentCount === 1
-      ? '1 agente publicado'
-      : `${publishedAgentCount} agentes publicados`
     const emptyAgentHubTitle = aiAgentHubStatusFilter === 'paused'
       ? 'Sin chats pausados 24 horas'
       : aiAgentHubStatusFilter === 'skipped'
@@ -14334,40 +14303,34 @@ export const PhoneChat: React.FC = () => {
       ? 'Cuando el bot esté atendiendo una conversación activa, aparecerá aquí.'
       : agentEnabled
       ? 'Cuando un agente publicado atienda, pause, omita o cierre una conversación, aparecerá aquí.'
-      : 'Enciende la inteligencia artificial para ver los chats que tome.'
+      : 'Publica o enciende un agente para ver los chats que tome.'
     const aiAgentHubSearchPlaceholder = aiAgentHubStatusFilter === 'unassigned'
       ? 'Buscar chats sin agente asignado'
       : 'Buscar chats del agente'
-    const activeAIAgentHubRobotCount = agentEnabled ? publishedAgentCount : 0
     const selectedAIAgentHubAgentDef = activeAiAgentHubAgentFilter === 'all'
       ? null
       : agentDefs.find((agent) => agent.id === activeAiAgentHubAgentFilter) || null
-    const selectedAIAgentHubIsGlobal = activeAiAgentHubAgentFilter === 'all' || !selectedAIAgentHubAgentDef
-    const selectedAIAgentHubName = selectedAIAgentHubIsGlobal
-      ? 'Todos'
-      : selectedAIAgentHubAgentDef?.name || 'Agente sin nombre'
-    const selectedAIAgentHubActive = selectedAIAgentHubIsGlobal
-      ? agentEnabled
-      : Boolean(agentEnabled && selectedAIAgentHubAgentDef?.enabled)
-    const selectedAIAgentHubStatusLabel = selectedAIAgentHubIsGlobal
-      ? agentEnabled ? 'Encendida' : 'Apagada'
-      : !agentEnabled
-      ? 'Sistema apagado'
-      : selectedAIAgentHubAgentDef?.enabled
+    const selectedAIAgentHubName = selectedAIAgentHubAgentDef?.name || (
+      aiAgentHubStatusFilter === 'unassigned' ? 'Sin agente asignado' : 'Agente conversacional'
+    )
+    const selectedAIAgentHubActive = Boolean(openAIConfigured && selectedAIAgentHubAgentDef?.enabled)
+    const selectedAIAgentHubStatusLabel = selectedAIAgentHubAgentDef
+      ? selectedAIAgentHubAgentDef.enabled
       ? 'Encendida'
       : 'Apagada'
-    const selectedAIAgentHubSummary = selectedAIAgentHubIsGlobal
-      ? agentEnabled
-        ? `${agentCountLabel} atendiendo chats.`
-        : `${agentCountLabel}; toca encender para activarlos.`
-      : !agentEnabled
-      ? 'Todos los agentes están apagados; enciende este agente para activar el sistema.'
-      : selectedAIAgentHubAgentDef?.enabled
+      : publishedAgentCount > 0
+      ? 'Elige un agente'
+      : 'Sin agentes publicados'
+    const selectedAIAgentHubSummary = selectedAIAgentHubAgentDef
+      ? selectedAIAgentHubAgentDef.enabled
       ? `${selectedAIAgentHubName} atendiendo su bandeja.`
       : `${selectedAIAgentHubName} está apagado.`
-    const selectedAIAgentHubPowerLabel = selectedAIAgentHubIsGlobal
-      ? agentEnabled ? 'Apagar todos' : 'Encender todos'
-      : selectedAIAgentHubActive
+      : aiAgentHubStatusFilter === 'unassigned'
+      ? 'Estos chats todavía no tienen agente asignado.'
+      : publishedAgentCount > 0
+      ? 'Elige un agente para controlar su estado.'
+      : 'Crea y publica un agente para empezar a atender chats.'
+    const selectedAIAgentHubPowerLabel = selectedAIAgentHubActive
       ? `Apagar ${selectedAIAgentHubName}`
       : `Encender ${selectedAIAgentHubName}`
     const selectedAIAgentHubSkippedCount = selectedAIAgentHubAgentDef
@@ -14377,50 +14340,21 @@ export const PhoneChat: React.FC = () => {
       selectedAIAgentHubAgentDef && resettingAgentSkipsId === selectedAIAgentHubAgentDef.id
     )
     const selectedAIAgentHubRobot = (compact = false) => {
-      const shouldRenderCrowd = selectedAIAgentHubIsGlobal && activeAIAgentHubRobotCount > 1
-      if (!shouldRenderCrowd) {
-        return renderAgentRobotGlyph(selectedAIAgentHubActive, compact ? 'compact' : 'expanded', compact ? 40 : isWideChatDevice ? 110 : 90)
-      }
-
-      const robotSize = compact
-        ? activeAIAgentHubRobotCount <= 3 ? 24 : activeAIAgentHubRobotCount <= 6 ? 20 : 16
-        : activeAIAgentHubRobotCount <= 2 ? 40 : activeAIAgentHubRobotCount <= 4 ? 34 : activeAIAgentHubRobotCount <= 6 ? 30 : activeAIAgentHubRobotCount <= 10 ? 24 : 18
-
-      return (
-        <span className={`${styles.aiAgentHubRobotCrowd} ${compact ? styles.aiAgentHubRobotCrowdCompact : styles.aiAgentHubRobotCrowdExpanded}`} aria-hidden="true">
-          {Array.from({ length: activeAIAgentHubRobotCount }).map((_, index) => (
-            <span key={`ai-agent-crowd-${index}`} className={styles.aiAgentHubRobotCrowdItem}>
-              {renderAgentRobotGlyph(true, 'compact', robotSize)}
-            </span>
-          ))}
-        </span>
-      )
+      return renderAgentRobotGlyph(selectedAIAgentHubActive, compact ? 'compact' : 'expanded', compact ? 40 : isWideChatDevice ? 110 : 90)
     }
-    const renderAIAgentHubRosterAvatar = (agentId: string, active: boolean, isSelected: boolean) => {
-      if (agentId === 'all' && activeAIAgentHubRobotCount > 1) {
-        return selectedAIAgentHubRobot(true)
-      }
-
-      return renderAgentRobotGlyph(active, 'compact', isSelected ? 48 : 40)
-    }
+    const renderAIAgentHubRosterAvatar = (_agentId: string, active: boolean, isSelected: boolean) => (
+      renderAgentRobotGlyph(active, 'compact', isSelected ? 48 : 40)
+    )
     const visibleAIAgentHubOptions = showAiAgentHubAgentSelector
-      ? [
-          {
-            id: 'all',
-            name: 'Todos',
-            count: aiAgentHubStatusCounts[aiAgentHubStatusFilter] || 0,
-            active: agentEnabled
-          },
-          ...aiAgentHubAgentFilters.map((agent) => {
+      ? aiAgentHubAgentFilters.map((agent) => {
             const definition = agentDefs.find((item) => item.id === agent.id) || null
             return {
               id: agent.id,
               name: agent.name,
               count: agent.count,
-              active: Boolean(agentEnabled && definition?.enabled)
+              active: Boolean(openAIConfigured && definition?.enabled)
             }
           })
-        ]
       : []
 
     return (
@@ -14473,15 +14407,17 @@ export const PhoneChat: React.FC = () => {
               </div>
             )}
             <div className={styles.aiAgentHubActions}>
-              <button
-                type="button"
-                className={`${styles.aiAgentHubPowerButton} ${selectedAIAgentHubActive ? styles.aiAgentHubPowerButtonOn : ''}`}
-                onClick={toggleSelectedAIAgentHubAgent}
-                disabled={agentConfigSaving || (!selectedAIAgentHubIsGlobal && !selectedAIAgentHubAgentDef)}
-              >
-                {agentConfigSaving ? <Loader2 size={19} className={styles.spinIcon} /> : <Power size={19} />}
-                <span>{selectedAIAgentHubPowerLabel}</span>
-              </button>
+              {selectedAIAgentHubAgentDef && (
+                <button
+                  type="button"
+                  className={`${styles.aiAgentHubPowerButton} ${selectedAIAgentHubActive ? styles.aiAgentHubPowerButtonOn : ''}`}
+                  onClick={toggleSelectedAIAgentHubAgent}
+                  disabled={agentConfigSaving}
+                >
+                  {agentConfigSaving ? <Loader2 size={19} className={styles.spinIcon} /> : <Power size={19} />}
+                  <span>{selectedAIAgentHubPowerLabel}</span>
+                </button>
+              )}
               {selectedAIAgentHubAgentDef && (
                 <button
                   type="button"
@@ -21798,7 +21734,7 @@ export const PhoneChat: React.FC = () => {
                 {renderAgentRobotButton({
                   active: agentEnabled,
                   label: 'Agente conversacional',
-                  onClick: openAgentGlobalMenu
+                  onClick: openAgentHubMenu
                 })}
                 {agentEnabled && renderAgentStatusBubble()}
                 {renderChatHeaderActions()}
@@ -21810,7 +21746,7 @@ export const PhoneChat: React.FC = () => {
                   active: agentEnabled,
                   className: styles.tabletAgentInboxButton,
                   label: 'Abrir agente conversacional',
-                  onClick: openAgentGlobalMenu,
+                  onClick: openAgentHubMenu,
                   robotSize: 58
                 })}
                 {agentEnabled && renderAgentStatusBubble(styles.tabletAgentStatusBubble)}
