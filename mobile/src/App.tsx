@@ -18077,6 +18077,7 @@ type ContactInfoTimelineItem = {
   subtitle?: string;
   date: string;
   Icon: LucideIcon;
+  channelBadge?: 'facebook_comment' | 'instagram_comment';
   accent?: string;
   actionLabel?: string;
   actionUrl?: string;
@@ -18841,13 +18842,18 @@ function getContactJourneyItems(journey: JourneyEvent[], timezone: string, appBa
         };
       }
       if (type === 'meta_message') {
+        const isComment = isMetaCommentJourneyEvent(event);
+        const platform = getMetaMessagePlatformKey(event);
         return {
           id: `${type}-${event.date}-${index}`,
           type,
-          title: getMetaMessageTitle(event),
+          title: isComment ? 'Comentario' : getMetaMessageTitle(event),
           subtitle: getContactInfoJourneyDescription(event, timezone),
           date: event.date,
-          Icon: Sparkles,
+          Icon: isComment ? ImageIcon : Sparkles,
+          channelBadge: isComment
+            ? (platform === 'instagram' ? 'instagram_comment' as const : 'facebook_comment' as const)
+            : undefined,
           accent: CONTACT_INFO_THEME.success,
           actionLabel: adActionUrl ? 'Ver anuncio' : undefined,
           actionUrl: adActionUrl,
@@ -20842,6 +20848,11 @@ function ContactInfoTimelineRow({
         {!isLast ? <View style={styles.contactInfoTimelineConnectorBottom} /> : null}
         <View style={styles.contactInfoTimelineIcon}>
           <Icon size={phoneCompact(18)} color={item.accent || CONTACT_INFO_THEME.muted} strokeWidth={2.35} />
+          {item.channelBadge ? (
+            <View style={styles.contactInfoTimelineChannelBadge}>
+              <ChannelAvatarBadgeIcon kind={item.channelBadge} size={phoneCompact(17)} />
+            </View>
+          ) : null}
         </View>
       </View>
       <View style={styles.contactInfoTimelineCopy}>
@@ -24242,7 +24253,7 @@ const NativeMessageBubble = React.memo(function NativeMessageBubble({
         {message.isComment ? (
           <View style={styles.commentContext}>
             <View style={styles.commentContextLabel}>
-              <MessageCircle size={12} color={COLORS.accent} strokeWidth={2.5} />
+              <ImageIcon size={12} color={COLORS.accent} strokeWidth={2.5} />
               <Text style={styles.commentContextText}>
                 {message.commentReplyMode === 'public'
                   ? 'Respuesta pública al comentario'
@@ -35697,6 +35708,11 @@ function createAppStyles() {
     borderColor: CONTACT_INFO_THEME.border,
     backgroundColor: CONTACT_INFO_THEME.accentSoft,
     zIndex: 1,
+  },
+  contactInfoTimelineChannelBadge: {
+    position: 'absolute',
+    right: phoneCompact(-6),
+    bottom: phoneCompact(-6),
   },
   contactInfoTimelineRail: {
     width: phoneCompact(42),

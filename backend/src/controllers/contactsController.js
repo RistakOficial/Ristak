@@ -5943,7 +5943,12 @@ export const getContactJourney = async (req, res) => {
           reaction_target_provider_message_id: reactionTargetId,
           direction: msg.direction || 'inbound',
           status: msg.status || null,
-          transport: platform === 'instagram' ? 'instagram' : 'messenger',
+          // Un comentario público no viaja por Messenger. Conservamos el canal de
+          // distribución explícito para que las superficies móviles no lo pinten
+          // como DM: Facebook para comentarios de página e Instagram para media.
+          transport: isMetaCommentMessageType(msg.message_type)
+            ? (platform === 'instagram' ? 'instagram_comment' : 'facebook_comment')
+            : (platform === 'instagram' ? 'instagram' : 'messenger'),
           // Contexto de comentario (para etiquetar "comentó" y responder desde el inbox).
           comment_id: msg.comment_id || null,
           post_id: msg.post_id || null,

@@ -774,6 +774,8 @@ test('meta comment messages keep readable deleted text when the source post is g
     assert.ok(instagramMessage)
     assert.equal(facebookMessage.data.source, 'Facebook')
     assert.equal(instagramMessage.data.source, 'Instagram')
+    assert.equal(facebookMessage.data.transport, 'facebook_comment')
+    assert.equal(instagramMessage.data.transport, 'instagram_comment')
     assert.equal(facebookMessage.data.message_text, 'Comentario eliminado')
     assert.equal(instagramMessage.data.message_text, 'Comentario eliminado')
     assert.equal(facebookMessage.data.post_message, 'Publicación eliminada')

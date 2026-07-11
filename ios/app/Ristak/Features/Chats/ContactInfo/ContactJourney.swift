@@ -23,6 +23,7 @@ enum JourneyLoadPhase: Equatable {
 /// solo en el badge, doc 14 §2.4). El resto usa un SF Symbol tonal.
 enum ContactJourneyIcon: Equatable, Sendable {
     case channel(RistakChatChannel)
+    case socialComment(RistakChatChannel)
     case symbol(String)
 }
 
@@ -198,10 +199,11 @@ struct ContactJourneyBuilder: Sendable {
             )
         case "meta_message":
             let actionUrl = CJL.isAdAttributed(event) ? CJL.adActionUrl(from: data) : nil
+            let isComment = CJL.isMetaComment(event)
             return ContactJourneyItem(
-                id: id, type: type, title: CJL.metaTitle(event),
+                id: id, type: type, title: isComment ? "Comentario" : CJL.metaTitle(event),
                 subtitle: description(for: event), date: event.date,
-                icon: .channel(CJL.metaChannel(event)), accent: .positive,
+                icon: isComment ? .socialComment(CJL.metaCommentChannel(event)) : .channel(CJL.metaChannel(event)), accent: .positive,
                 actionLabel: actionUrl == nil ? nil : "Ver anuncio",
                 actionUrl: actionUrl
             )
@@ -646,6 +648,10 @@ private enum CJL {
         }
     }
 
+    static func metaCommentChannel(_ event: JourneyNode) -> RistakChatChannel {
+        metaPlatformKey(event) == "instagram" ? .instagram : .facebook
+    }
+
     static func isMetaMessage(_ event: JourneyNode) -> Bool {
         event.type == "meta_message" && !isOutbound(event)
     }
@@ -666,7 +672,7 @@ private enum CJL {
         if isMetaComment(event) {
             switch metaPlatformKey(event) {
             case "instagram": return "Comentario de Instagram"
-            case "messenger": return "Comentario de Messenger"
+            case "messenger": return "Comentario de Facebook"
             default: return "Comentario social"
             }
         }
@@ -1071,6 +1077,22 @@ struct ContactJourneyTimelineRow: View {
             // Badge de canal CRUDO: sin aro ni contenedor (color social solo aquí).
             ChannelBadgeView(channel: channel, size: iconSize - 4)
                 .frame(width: iconSize, height: iconSize)
+        case .socialComment(let channel):
+            ZStack(alignment: .bottomTrailing) {
+                RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                    .fill(RistakTheme.accentSoft)
+                    .frame(width: iconSize, height: iconSize)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
+                            .stroke(RistakTheme.border, lineWidth: 0.5)
+                    )
+                Image(systemName: "photo.on.rectangle.angled")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(item.accent.color)
+                ChannelBadgeView(channel: channel, size: 15)
+                    .offset(x: 2, y: 2)
+            }
+            .frame(width: iconSize, height: iconSize)
         case .symbol(let name):
             RoundedRectangle(cornerRadius: RistakTheme.Radius.control, style: .continuous)
                 .fill(RistakTheme.accentSoft)

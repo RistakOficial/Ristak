@@ -478,7 +478,9 @@ Capacidades:
   comentarios del mismo dia siguen contando como un solo punto de comentario.
   Los marcadores visuales de Messenger e Instagram deben diferenciar DM privado
   vs comentario con iconografia de plataforma y accion, no con el mismo glifo
-  generico para todo.
+  generico para todo. Un comentario usa como icono principal una publicacion y
+  muestra abajo el badge del canal real: Facebook para publicaciones de pagina e
+  Instagram para publicaciones de Instagram; nunca el badge de Messenger.
 - El historial conversacional del modal de contacto no debe tratar el Viaje del
   Cliente como si fuera chat completo. Para pintar burbujas usa
   `/contacts/:id/conversation`, de modo que reciba solo mensajes reales de

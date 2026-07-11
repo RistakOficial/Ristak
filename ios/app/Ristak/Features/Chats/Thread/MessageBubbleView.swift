@@ -361,7 +361,7 @@ struct MessageRowView: View, Equatable {
     private var commentContextBlock: some View {
         if message.isComment {
             VStack(alignment: .leading, spacing: RistakTheme.Spacing.xxs) {
-                Label(commentLabel, systemImage: "text.bubble")
+                Label(commentLabel, systemImage: "photo.on.rectangle.angled")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(RistakTheme.textDim)
 

@@ -4089,7 +4089,7 @@ function getJourneyEventLabel(event: JourneyEvent, leadLabel: string) {
   if (event.type === 'appointment_confirmation') return 'Confirmó la cita'
   if (event.type === 'payment') return 'Registró un pago'
   if (event.type === 'whatsapp_message') return 'WhatsApp'
-  if (event.type === 'meta_message') return getReadableValue(event.data?.source) || 'Meta'
+  if (event.type === 'meta_message') return isMetaCommentJourneyEvent(event) ? 'Comentario' : getReadableValue(event.data?.source) || 'Meta'
   return 'Actividad'
 }
 
@@ -4097,6 +4097,34 @@ const GENERIC_JOURNEY_SOURCES = new Set(['directo', 'desconocido', 'otro'])
 const MESSAGE_JOURNEY_EVENT_TYPES = new Set(['whatsapp_message', 'meta_message'])
 const WEB_JOURNEY_SOURCE_PATTERN = /(ristak_site|native_site|site|website|web|form|landing|pagina|página)/i
 const WHATSAPP_JOURNEY_SOURCE_PATTERN = /(whatsapp|waapi|ycloud|click_to_whatsapp|ctwa)/i
+const META_COMMENT_MESSAGE_TYPES = new Set(['comment', 'comment_reply_public', 'comment_reply_private'])
+
+function getMetaMessagePlatformKey(event?: JourneyEvent | null) {
+  const data = event?.data || {}
+  const platform = [data.source, data.social_platform, data.transport, data.channel]
+    .map(value => String(value || '').toLowerCase())
+    .join(' ')
+  if (/(instagram|(?:^|\s)ig(?:\s|$))/.test(platform)) return 'instagram'
+  if (/(messenger|facebook|\bfb\b)/.test(platform)) return 'messenger'
+  return 'meta'
+}
+
+function isMetaCommentJourneyEvent(event?: JourneyEvent | null) {
+  if (event?.type !== 'meta_message') return false
+  const data = event.data || {}
+  return Boolean(data.comment_id || META_COMMENT_MESSAGE_TYPES.has(String(data.message_type || '').trim().toLowerCase()))
+}
+
+function getMetaMessageSurfaceLabel(event?: JourneyEvent | null) {
+  if (isMetaCommentJourneyEvent(event)) {
+    return getMetaMessagePlatformKey(event) === 'instagram'
+      ? 'Comentario de Instagram'
+      : getMetaMessagePlatformKey(event) === 'messenger'
+        ? 'Comentario de Facebook'
+        : 'Comentario social'
+  }
+  return getReadableValue(event?.data?.source) || 'Meta'
+}
 
 function isGenericJourneySource(source?: string | null) {
   return GENERIC_JOURNEY_SOURCES.has(String(source || '').trim().toLowerCase())
@@ -4406,8 +4434,11 @@ function buildContactInfoJourney(
 }
 
 function getJourneyEventNetworkBadge(event: JourneyEvent) {
-  if (!isWhatsAppJourneyEvent(event) || !isAdAttributedJourneyEvent(event)) return null
-  const platform = getJourneyPlatformLabel(event) || 'Meta Ads'
+  const isMetaComment = event.type === 'meta_message' && isMetaCommentJourneyEvent(event)
+  if (!isMetaComment && (!isWhatsAppJourneyEvent(event) || !isAdAttributedJourneyEvent(event))) return null
+  const platform = isMetaComment
+    ? getMetaMessagePlatformKey(event) === 'instagram' ? 'Instagram' : 'Facebook'
+    : getJourneyPlatformLabel(event) || 'Meta Ads'
   const iconName = getJourneyPlatformIconName(platform) || 'meta-ads'
 
   return (
@@ -4420,6 +4451,7 @@ function getJourneyEventNetworkBadge(event: JourneyEvent) {
 function getJourneyEventIcon(event: JourneyEvent) {
   if (isWhatsAppJourneyEvent(event)) return <Icon name="whatsapp" size={15} />
   if (event.type === 'meta_message') {
+    if (isMetaCommentJourneyEvent(event)) return <ImageIcon size={15} />
     const platformIcon = getJourneyPlatformIconName(getJourneyPlatformLabel(event))
     return platformIcon ? <Icon name={platformIcon} size={15} /> : <Icon name="meta-ads" size={15} />
   }
@@ -4442,6 +4474,7 @@ function getJourneyEventIcon(event: JourneyEvent) {
 
 function getJourneyEventIconClass(event: JourneyEvent) {
   if (isWhatsAppJourneyEvent(event)) return styles.contactInfoTimelineIconWhatsapp
+  if (event.type === 'meta_message' && isMetaCommentJourneyEvent(event)) return styles.contactInfoTimelineIconVisit
   if (event.type === 'meta_message') return getJourneyPlatformClass(getJourneyPlatformLabel(event)) || styles.contactInfoTimelineIconMeta
 
   if (event.type === 'page_visit') return getJourneyPlatformClass(getJourneyPlatformLabel(event)) || styles.contactInfoTimelineIconVisit
@@ -4519,7 +4552,9 @@ function getJourneyEventDescription(event: JourneyEvent) {
   }
 
   if (event.type === 'meta_message') {
-    const source = getReadableValue(data.source) || 'Meta'
+    const source = isMetaCommentJourneyEvent(event)
+      ? getMetaMessageSurfaceLabel(event)
+      : getReadableValue(data.source) || 'Meta'
     const sender = getReadableValue(data.profile_name || data.username)
     const messageText = getReadableValue(data.message_text || data.message || data.body)
 
@@ -15945,7 +15980,7 @@ export const PhoneChat: React.FC = () => {
                     {message.isComment && (
                       <div className={styles.commentContext}>
                         <span className={styles.commentContextLabel}>
-                          <MessageCircle size={13} aria-hidden="true" />
+                          <ImageIcon size={13} aria-hidden="true" />
                           {message.commentReplyMode === 'public'
                             ? 'Respuesta pública al comentario'
                             : message.commentReplyMode === 'private'

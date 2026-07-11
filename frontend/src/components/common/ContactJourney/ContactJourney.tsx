@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Image as ImageIcon, MessageCircle } from 'lucide-react'
-import { FaFacebookMessenger, FaInstagram } from 'react-icons/fa'
+import { FaFacebook, FaFacebookMessenger, FaInstagram } from 'react-icons/fa'
 import { Icon } from '@/components/common'
 import { contactsService, type JourneyEvent } from '@/services/contactsService'
 import { formatCurrency, formatUrlParameter } from '@/utils/format'
@@ -527,6 +527,7 @@ const getMetaMessageDailyKind = (event?: JourneyEvent | null): 'comment' | 'mess
   isMetaCommentJourneyEvent(event) ? 'comment' : 'message'
 
 const getMetaMessageTitle = (event?: JourneyEvent | null): string => {
+  if (isMetaCommentJourneyEvent(event)) return 'Comentario'
   const platform = getMetaMessagePlatformKey(event)
   if (platform === 'instagram') return 'Instagram'
   if (platform === 'messenger') return 'Messenger'
@@ -538,7 +539,7 @@ const getMetaMessageSurfaceLabel = (event?: JourneyEvent | null): string => {
   if (isMetaCommentJourneyEvent(event)) {
     const platform = getMetaMessagePlatformKey(event)
     if (platform === 'instagram') return 'Comentario de Instagram'
-    if (platform === 'messenger') return 'Comentario de Messenger'
+    if (platform === 'messenger') return 'Comentario de Facebook'
     return 'Comentario social'
   }
 
@@ -589,7 +590,7 @@ const renderMetaMessageIcon = (event: JourneyEvent) => {
   const BrandIcon = platform === 'instagram'
     ? FaInstagram
     : platform === 'messenger'
-      ? FaFacebookMessenger
+      ? isComment ? FaFacebook : FaFacebookMessenger
       : null
 
   return (
@@ -602,9 +603,6 @@ const renderMetaMessageIcon = (event: JourneyEvent) => {
       {isComment || hasMetaMessageMedia(event)
         ? <ImageIcon className={styles.metaJourneyGlyphPrimary} size={18} strokeWidth={1.8} aria-hidden="true" />
         : <MessageCircle className={styles.metaJourneyGlyphPrimary} size={18} strokeWidth={1.8} aria-hidden="true" />}
-      {isComment && (
-        <MessageCircle className={styles.metaJourneyGlyphAction} size={10} strokeWidth={2} aria-hidden="true" />
-      )}
       <span className={styles.metaJourneyGlyphBrand} data-platform={platform} aria-hidden="true">
         {BrandIcon
           ? <BrandIcon />
