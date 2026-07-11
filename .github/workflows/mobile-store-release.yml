@@ -524,6 +524,10 @@ jobs:
           test -n "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"
           printf '%s' "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON" > "$RUNNER_TEMP/google-play-service-account.json"
           sudo gem install fastlane --no-document
+          PLAY_TRACK="${{ github.event.inputs.android_track }}"
+          if [ "$PLAY_TRACK" = "closed" ]; then
+            PLAY_TRACK="alpha"
+          fi
           RELEASE_STATUS="draft"
           if [ "$SUBMIT_FOR_REVIEW" = "true" ]; then
             RELEASE_STATUS="completed"
@@ -532,7 +536,7 @@ jobs:
             --json_key "$RUNNER_TEMP/google-play-service-account.json" \
             --package_name "$ANDROID_APP_PACKAGE_NAME" \
             --aab mobile/android/app/build/outputs/bundle/release/app-release.aab \
-            --track "${{ github.event.inputs.android_track }}" \
+            --track "$PLAY_TRACK" \
             --release_status "$RELEASE_STATUS" \
             --skip_upload_metadata true \
             --skip_upload_changelogs true \
