@@ -1,561 +1,249 @@
+import OpenAI from 'openai'
+import { zodTextFormat } from 'openai/helpers/zod'
+import { z } from 'zod'
+
 import { normalizeAgentReplyDelivery } from '../../services/conversationalAgentService.js'
+import { logger } from '../../utils/logger.js'
 
-const NATURAL_SHORT_MESSAGE_PATTERN = /^(va|ok|okay|listo|perfecto|sale|claro|sí|si|no|ya|hecho|de una)[.!?¡¿]*$/i
-const NATURAL_STANDALONE_REACTION_PATTERN = /^(?:ah+h?|ah+ ya|ah+ okaa?y|ok+a+y?|ok perfecto|va|sale|perfecto|listo|claro|órale|orale|uff|mmm(?: a ver)?|no+ manches|buen[ií]simo|déjame ver|dejame ver|ya te entend[ií]|ah ya te entend[ií])(?:[,.!?;:…]+)?$/i
-const LEADING_REACTION_SPLIT_PATTERN = /^((?:ah+\s+ok+a?y?|mmm(?:\s+a\s+ver)?|ok\s+perfecto)(?:[,.!?;:…]+|\.{2,}|…+)?|(?:ah+\s+ya|ah+h?|ok+a+y?|ok|va|sale|perfecto|listo|claro|órale|orale|uff|h[ií]jole|tsss|uy|ya)(?:[,.!?;:…]+|\.{2,}|…+))\s+(.+)$/i
-const INTENT_BRIDGE_PATTERN = /^(.{10,140}?)\s+((?:pa|para)\s+(?:entender(?:te|le)?|captar|ubicar|aterrizar|no\s+(?:marearte|llenarte|decirte)|darte|decirte)\b.+)$/i
-const SETUP_INTENT_HINT_PATTERN = /\b(?:pa|para|nom[aá]s|solo|s[oó]lo|digo|antes|as[ií]|déjame|dejame|entender(?:te|le)?|contexto|aire|marear(?:te)?|aterrizar|ubicar|captar|checar|revisar|decirte|darte|llenarte)\b/i
-const QUESTION_START_PATTERN = /^(?:hoy\s+|ahorita\s+|actualmente\s+|entonces\s+|ya\s+)?(?:c[oó]mo|qu[eé]|cu[aá]l|cu[aá]ndo|d[oó]nde|por\s+qu[eé]|qui[eé]n|cu[aá]nt[oa]s?|t[uú]|eres|me\s+dices|dime|cu[eé]ntame)\b/i
-const DEPENDENT_SETUP_MESSAGE_PATTERN = /^(?:(?:pues|mira|ok|va)\s+)?(?:eso\s+)?(?:depende(?:\s+de|\b)|depende\s+un\s+poco\b|va\s+a\s+depender\b|puede\s+depender\b|depender[ií]a\b|var[ií]a\s+seg[uú]n\b)/i
-const VISIBLE_LABEL_PATTERN = /^(?:globo|mensaje|parte)\s*#?\s*\d+\s*[:.)-]\s*/i
-const BREAK_TOKEN_PATTERN = /\s*\[BREAK\]\s*/gi
-const SIGNIFICANT_TOKEN_MIN_LENGTH = 4
+export const MESSAGE_SPLITTER_MODEL = 'gpt-5-nano'
+export const MESSAGE_SPLITTER_TIMEOUT_MS = 8_000
+export const MESSAGE_SPLITTER_MAX_BUBBLES = 6
 
-const PROTECTED_TOKEN_PATTERN = /https?:\/\/[^\s<>"']+|www\.[^\s<>"']+|[\w.+-]+@[\w.-]+\.[a-z]{2,}|\+?\d[\d\s().-]{6,}\d|\$\s?\d[\d,.]*(?:\s?(?:mxn|usd|pesos|dólares|dolares))?|\b\d{1,2}:\d{2}\s?(?:am|pm)?\b|\b[A-Z0-9]{4,}(?:-[A-Z0-9]{2,})+\b/gi
-const LEADING_OPENING_LETTER_PATTERN = /^([\s"'“”‘’([¿¡]*)(\p{L})/u
-const LEADING_OPENING_WORD_PATTERN = /^[\s"'“”‘’([¿¡]*([\p{L}][\p{L}\p{M}'’.-]*)/u
-const LEADING_PROTECTED_VALUE_PATTERN = /^(?:https?:\/\/|www\.|[\w.+-]+@|\+?\d|\$\s?\d)/i
-
-const LOWERCASEABLE_OPENING_WORDS = new Set([
-  'a', 'ah', 'ahh', 'ahi', 'ahora', 'ahorita', 'al', 'algo', 'antes', 'asi', 'aunque',
-  'buenisimo', 'cada', 'claro', 'como', 'con', 'confirmamos', 'cuando', 'cual', 'cuales',
-  'cuanto', 'cuantos', 'cuentame', 'de', 'del', 'depende', 'despues', 'dime', 'digo',
-  'donde', 'el', 'en', 'entonces', 'esa', 'ese', 'eso', 'esta', 'este', 'esto', 'hay',
-  'hoy', 'igual', 'la', 'las', 'le', 'les', 'listo', 'lo', 'los', 'luego', 'mas',
-  'me', 'mira', 'mmm', 'necesito', 'necesitamos', 'ni', 'no', 'nos', 'ok', 'okay',
-  'otra', 'otro', 'pa', 'para', 'pero', 'perfecto', 'podemos', 'podria', 'podrias',
-  'por', 'porque', 'primero', 'puede', 'puedes', 'pues', 'que', 'quedo', 'quieres',
-  'revisamos', 'sale', 'segundo', 'si', 'sin', 'solo', 'su', 'tambien', 'te', 'tercero',
-  'todavia', 'tu', 'un', 'una', 'va', 'vamos', 'ya', 'y'
-])
-const FORCED_CAPITAL_OPENING_WORDS = new Set([
-  'api', 'apple', 'bunny', 'chatgpt', 'clip', 'facebook', 'google', 'gohighlevel',
-  'highlevel', 'ia', 'ine', 'instagram', 'meta', 'mxn', 'openai', 'paypal', 'render',
-  'ristak', 'sat', 'stripe', 'tiktok', 'usd', 'whatsapp', 'ycloud'
-])
-const DATE_OPENING_WORDS = new Set([
-  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto',
-  'septiembre', 'setiembre', 'octubre', 'noviembre', 'diciembre',
-  'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo'
-])
-const COMMON_PROPER_NAME_OPENING_WORDS = new Set([
-  'adriana', 'alejandro', 'alejandra', 'ana', 'andrea', 'angel', 'angela', 'antonio',
-  'camila', 'carla', 'carlos', 'daniel', 'david', 'diego', 'eduardo', 'fernanda',
-  'francisco', 'gabriela', 'guadalupe', 'jesus', 'jorge', 'jose', 'juan', 'karla',
-  'laura', 'luis', 'manuel', 'maria', 'miguel', 'monica', 'oscar', 'pablo', 'paola',
-  'patricia', 'raul', 'ricardo', 'roberto', 'sofia', 'valeria', 'veronica'
-])
+const MESSAGE_SPLITTER_MAX_INPUT_CHARS = 4_000
+const MESSAGE_SPLITTER_MAX_OUTPUT_TOKENS = 2_048
 
 function cleanText(value) {
-  return String(value || '').replace(/\r\n/g, '\n').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim()
+  // No normalizar el interior: puede contener códigos, tablas, saltos o dobles
+  // espacios que deben llegar al cliente exactamente como los escribió el agente.
+  return String(value || '').trim()
 }
 
-function normalizeOpeningWord(value) {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9]+/g, '')
-}
-
-function startsWithUppercaseLetter(value) {
-  const [first = ''] = [...String(value || '')]
-  return first.toLocaleUpperCase('es-MX') === first && first.toLocaleLowerCase('es-MX') !== first
-}
-
-function isAllCapsWord(value) {
-  const letters = String(value || '').replace(/[^\p{L}]/gu, '')
-  return letters.length > 1 && letters.toLocaleUpperCase('es-MX') === letters && letters.toLocaleLowerCase('es-MX') !== letters
-}
-
-function hasInternalCapital(value) {
-  return /\p{Ll}\p{Lu}/u.test(String(value || ''))
-}
-
-function nextWordStartsUppercase(value) {
-  const match = String(value || '').match(/^\s+([\p{L}][\p{L}\p{M}'’.-]*)/u)
-  return Boolean(match && startsWithUppercaseLetter(match[1]))
-}
-
-function shouldPreserveOpeningCapitalOnLowercaseTurn(message) {
-  const clean = cleanText(message)
-  if (!clean || LEADING_PROTECTED_VALUE_PATTERN.test(clean)) return true
-
-  const match = clean.match(LEADING_OPENING_WORD_PATTERN)
-  if (!match) return true
-
-  const word = match[1]
-  if (!startsWithUppercaseLetter(word)) return false
-
-  const normalized = normalizeOpeningWord(word)
-  const rest = clean.slice(match[0].length)
-  if (!normalized) return true
-  if (LOWERCASEABLE_OPENING_WORDS.has(normalized)) return false
-  if (
-    FORCED_CAPITAL_OPENING_WORDS.has(normalized) ||
-    DATE_OPENING_WORDS.has(normalized) ||
-    COMMON_PROPER_NAME_OPENING_WORDS.has(normalized) ||
-    isAllCapsWord(word) ||
-    hasInternalCapital(word) ||
-    nextWordStartsUppercase(rest)
-  ) {
-    return true
-  }
-
-  return false
-}
-
-function uppercaseOpeningLetter(message) {
-  const clean = cleanText(message)
-  if (!clean || LEADING_PROTECTED_VALUE_PATTERN.test(clean)) return clean
-  return clean.replace(LEADING_OPENING_LETTER_PATTERN, (_, prefix, letter) => {
-    return `${prefix}${letter.toLocaleUpperCase('es-MX')}`
-  })
-}
-
-function lowercaseOpeningLetter(message) {
-  const clean = cleanText(message)
-  if (!clean || shouldPreserveOpeningCapitalOnLowercaseTurn(clean)) return clean
-  return clean.replace(LEADING_OPENING_LETTER_PATTERN, (_, prefix, letter) => {
-    return `${prefix}${letter.toLocaleLowerCase('es-MX')}`
-  })
-}
-
-function normalizeBubbleOpeningCasing(messages) {
-  return (Array.isArray(messages) ? messages : [])
-    .map((message, index) => index % 2 === 0
-      ? uppercaseOpeningLetter(message)
-      : lowercaseOpeningLetter(message))
-    .filter(Boolean)
-}
-
-function stripVisibleLabel(value) {
-  return cleanText(value).replace(VISIBLE_LABEL_PATTERN, '').trim()
-}
-
-function getProtectedTokens(text) {
-  return [...String(text || '').matchAll(PROTECTED_TOKEN_PATTERN)]
-    .map((match) => match[0].replace(/[),.;:!?]+$/g, ''))
-    .filter(Boolean)
-}
-
-function maskProtectedTokens(text) {
-  const tokens = getProtectedTokens(text)
-  let masked = String(text || '')
-  tokens.forEach((token, index) => {
-    masked = masked.split(token).join(`@@RISTAK_PROTECTED_${index}@@`)
-  })
-  return {
-    masked,
-    restore(value) {
-      let restored = String(value || '')
-      tokens.forEach((token, index) => {
-        restored = restored.split(`@@RISTAK_PROTECTED_${index}@@`).join(token)
-      })
-      return restored
-    }
-  }
-}
-
-function splitNaturalSegments(text) {
-  const { masked, restore } = maskProtectedTokens(text)
-  return masked
-    .split(/\n{2,}/)
-    .flatMap((paragraph) => paragraph.split(/(?=\n\s*(?:[-*]|\d+[.)])\s+)/g))
-    .flatMap((paragraph) => paragraph.match(/[^.!?;…]+[.!?;…]+(?:\s+|$)|[^.!?;…]+$/g) || [paragraph])
-    .map((segment) => cleanText(restore(segment)))
-    .filter(Boolean)
-}
-
-function splitExplicitBreaks(text) {
-  return String(text || '')
-    .split(BREAK_TOKEN_PATTERN)
-    .map((part) => cleanText(part))
-    .filter(Boolean)
-}
-
-function splitLongSegmentByWords(segment, maxLength) {
-  const words = cleanText(segment).split(/\s+/).filter(Boolean)
-  const parts = []
-  let current = ''
-
-  for (const word of words) {
-    const next = current ? `${current} ${word}` : word
-    if (next.length > maxLength && current) {
-      parts.push(current)
-      current = word
-    } else {
-      current = next
-    }
-  }
-
-  if (current) parts.push(current)
-  return parts
-}
-
-function splitLeadingReaction(segment) {
-  const clean = cleanText(segment)
-  const match = clean.match(LEADING_REACTION_SPLIT_PATTERN)
-  if (!match) return [clean].filter(Boolean)
-
-  const reaction = cleanText(match[1])
-  const rest = cleanText(match[2])
-  if (!reaction || !rest) return [clean].filter(Boolean)
-  return [reaction, rest]
-}
-
-function splitBridgeIntent(segment) {
-  const clean = cleanText(segment)
-  const match = clean.match(INTENT_BRIDGE_PATTERN)
-  if (!match) return [clean].filter(Boolean)
-
-  const first = cleanText(match[1])
-  const bridge = cleanText(match[2])
-  if (!first || !bridge) return [clean].filter(Boolean)
-  return [first, bridge]
-}
-
-function splitSetupQuestionIntent(segment) {
-  const clean = cleanText(segment)
-  if (!clean || !clean.includes('?')) return [clean].filter(Boolean)
-
-  const separators = [...clean.matchAll(/[,;:]\s+/g)]
-  for (const separator of separators) {
-    const index = separator.index ?? -1
-    if (index < 0) continue
-
-    const left = cleanText(clean.slice(0, index))
-    const right = cleanText(clean.slice(index + separator[0].length))
-    if (left.length < 8 || right.length < 8) continue
-    if (!right.endsWith('?')) continue
-    if (!SETUP_INTENT_HINT_PATTERN.test(left)) continue
-    if (!QUESTION_START_PATTERN.test(right)) continue
-
-    return [left, right]
-  }
-
-  return [clean]
-}
-
-function splitHumanBubbleFragments(message) {
-  return splitExplicitBreaks(message)
-    .flatMap((part) => String(part || '').split(/\n+/))
-    .flatMap((part) => splitLeadingReaction(part))
-    .flatMap((part) => splitBridgeIntent(part))
-    .flatMap((part) => splitSetupQuestionIntent(part))
-    .map(cleanText)
-    .filter(Boolean)
-}
-
-function splitTextConservatively(text, maxLength) {
-  const clean = cleanText(text)
-  if (!clean || clean.length <= maxLength) return clean ? [clean] : []
-
-  const parts = []
-  let current = ''
-
-  for (const segment of splitNaturalSegments(clean)) {
-    const subSegments = segment.length > maxLength
-      ? splitLongSegmentByWords(segment, maxLength)
-      : [segment]
-
-    for (const subSegment of subSegments) {
-      const next = current ? `${current} ${subSegment}` : subSegment
-      if (next.length > maxLength && current) {
-        parts.push(current)
-        current = subSegment
-      } else {
-        current = next
-      }
-    }
-  }
-
-  if (current) parts.push(current)
-  return parts.filter(Boolean)
-}
-
-function isMeaningfulShortMessage(message) {
-  const clean = cleanText(message)
-  return clean.length > 0 && clean.length <= 28 && (
-    NATURAL_SHORT_MESSAGE_PATTERN.test(clean) ||
-    NATURAL_STANDALONE_REACTION_PATTERN.test(clean)
-  )
-}
-
-function mergeShortMessages(messages, settings) {
-  const minLength = settings.minBubbleLength
-  const maxLength = settings.maxBubbleLength
-  const result = []
-
-  for (const message of messages) {
-    const clean = cleanText(message)
-    if (!clean) continue
-
-    if (clean.length < minLength && !isMeaningfulShortMessage(clean)) {
-      const previous = result[result.length - 1]
-      if (previous && `${previous} ${clean}`.length <= maxLength) {
-        result[result.length - 1] = `${previous} ${clean}`
-        continue
-      }
-    }
-
-    result.push(clean)
-  }
-
-  for (let index = 0; index < result.length - 1; index += 1) {
-    if (result[index].length >= minLength || isMeaningfulShortMessage(result[index])) continue
-    const next = `${result[index]} ${result[index + 1]}`
-    if (next.length <= maxLength) {
-      result.splice(index, 2, next)
-      index -= 1
-    }
-  }
-
-  return result
-}
-
-function isDependentSetupMessage(message) {
-  const clean = cleanText(message)
-  if (!clean || clean.length > 90) return false
-  return DEPENDENT_SETUP_MESSAGE_PATTERN.test(clean)
-}
-
-function isQuestionLikeMessage(message) {
-  const clean = cleanText(message)
-  if (!clean) return false
-  return clean.endsWith('?') || QUESTION_START_PATTERN.test(clean)
-}
-
-function mergeDependentSetupMessages(messages, settings) {
-  const maxLength = settings.maxBubbleLength
-  const result = []
-
-  for (let index = 0; index < messages.length; index += 1) {
-    const current = cleanText(messages[index])
-    if (!current) continue
-
-    const next = cleanText(messages[index + 1])
-    const merged = next ? `${current} ${next}`.trim() : current
-    if (
-      next &&
-      isDependentSetupMessage(current) &&
-      isQuestionLikeMessage(next) &&
-      merged.length <= maxLength
-    ) {
-      result.push(merged)
-      index += 1
-      continue
-    }
-
-    result.push(current)
-  }
-
-  return result
-}
-
-function limitBubbleCount(messages, maxBubbles) {
-  const parts = [...messages]
-  while (parts.length > maxBubbles) {
-    const last = parts.pop()
-    parts[parts.length - 1] = `${parts[parts.length - 1]} ${last}`.trim()
-  }
-  return parts
-}
-
-function mergeAtIndex(messages, index) {
-  if (index < 0 || index >= messages.length - 1) return messages
-  const next = [...messages]
-  next.splice(index, 2, `${next[index]} ${next[index + 1]}`.trim())
-  return next
-}
-
-function findMergeablePair(messages, settings, random = Math.random) {
-  const candidates = []
-  for (let index = 0; index < messages.length - 1; index += 1) {
-    const merged = `${messages[index]} ${messages[index + 1]}`.trim()
-    if (merged.length <= settings.maxBubbleLength || messages.length > settings.maxBubbles) {
-      candidates.push(index)
-    }
-  }
-  if (!candidates.length) return messages.length > 1 ? messages.length - 2 : -1
-  return candidates[Math.floor(random() * candidates.length)]
-}
-
-function naturalBubbleCap(text, settings) {
-  const max = Math.max(1, settings.maxBubbles)
-  const length = cleanText(text).length
-  if (length >= 900) return Math.min(max, 6)
-  if (length >= 620) return Math.min(max, 5)
-  if (length >= 280) return Math.min(max, 4)
-  if (length >= 130) return Math.min(max, 3)
-  return Math.min(max, 2)
-}
-
-function hasNaturalSplitSignal(text, segments = []) {
-  const clean = cleanText(text)
-  if (splitExplicitBreaks(clean).length > 1) return true
-  if (segments.length > 1) return true
-  if (/[.!…]\s*¿?[\wáéíóúñ]/i.test(clean)) return true
-  if (/[^\n?]{12,}\?\s+[^\n]{8,}/.test(clean)) return true
-  if (/\b(?:primero|luego|después|despues|ahora|entonces)\b/i.test(clean) && clean.length >= 110) return true
-  return false
-}
-
-function splitTextByHumanIntent(text, settings, random = Math.random) {
-  const clean = cleanText(text)
-  if (!clean) return []
-
-  const explicit = splitExplicitBreaks(clean)
-  let parts = explicit.length > 1
-    ? explicit
-    : splitNaturalSegments(clean)
-
-  parts = parts
-    .flatMap((part) => part.length > settings.maxBubbleLength ? splitLongSegmentByWords(part, settings.maxBubbleLength) : [part])
-    .map(cleanText)
-    .filter(Boolean)
-
-  if (!parts.length) return []
-
-  const mustSplitByLength = clean.length > settings.maxBubbleLength
-  const hasSplitSignal = hasNaturalSplitSignal(clean, parts)
-  if (!mustSplitByLength && !hasSplitSignal) {
-    return [clean]
-  }
-
-  const maxNaturalBubbles = naturalBubbleCap(clean, settings)
-  let minTarget = mustSplitByLength
-    ? Math.min(maxNaturalBubbles, Math.max(2, Math.ceil(clean.length / settings.maxBubbleLength)))
-    : (hasSplitSignal ? Math.min(2, maxNaturalBubbles) : 1)
-  minTarget = Math.max(1, Math.min(minTarget, maxNaturalBubbles))
-
-  let maxTarget = Math.min(parts.length, maxNaturalBubbles)
-  if (!mustSplitByLength && clean.length < settings.minMessageLengthToSplit && maxTarget > 1) {
-    maxTarget = Math.max(1, Math.min(maxTarget, 2))
-  }
-
-  const targetCount = settings.randomizeSplitting && maxTarget > minTarget
-    ? minTarget + Math.floor(random() * (maxTarget - minTarget + 1))
-    : maxTarget
-
-  while (parts.length > targetCount) {
-    const index = settings.randomizeSplitting
-      ? findMergeablePair(parts, settings, random)
-      : parts.length - 2
-    if (index < 0) break
-    parts = mergeAtIndex(parts, index)
-  }
-
-  parts = mergeShortMessages(parts, settings)
-  parts = mergeDependentSetupMessages(parts, settings)
-  parts = limitBubbleCount(parts, Math.min(settings.maxBubbles, 6))
-  return parts.map(cleanText).filter(Boolean)
-}
-
-function normalizeToken(value) {
-  return String(value || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^a-z0-9áéíóúñü@._+-]+/gi, ' ')
-    .trim()
-}
-
-function significantTokens(text) {
-  return normalizeToken(text)
-    .split(/\s+/)
-    .map((token) => token.trim())
-    .filter((token) => token.length >= SIGNIFICANT_TOKEN_MIN_LENGTH)
-}
-
-function contentLooksPreserved(original, messages) {
-  const output = messages.join(' ')
-  const originalTokens = significantTokens(original)
-  if (originalTokens.length < 8) return cleanText(output).length > 0
-
-  const outputTokens = new Set(significantTokens(output))
-  const covered = originalTokens.filter((token) => outputTokens.has(token)).length
-  return covered / originalTokens.length >= 0.7
-}
-
-function protectedTokensAreIntact(original, messages) {
-  const joined = messages.join(' ')
-  for (const token of getProtectedTokens(original)) {
-    if (!joined.includes(token)) return false
-    if (!messages.some((message) => message.includes(token))) return false
-  }
-  return true
-}
-
-function repairMessages(rawMessages, originalText, settings) {
-  const sourceMessages = (Array.isArray(rawMessages) ? rawMessages : [])
-    .map((message) => stripVisibleLabel(message))
-    .flatMap((message) => splitHumanBubbleFragments(message))
-    .filter(Boolean)
-
-  if (!sourceMessages.length) {
-    return { ok: false, reason: 'empty_messages', messages: [] }
-  }
-
-  if (!contentLooksPreserved(originalText, sourceMessages)) {
-    return { ok: false, reason: 'content_changed', messages: [] }
-  }
-
-  if (!protectedTokensAreIntact(originalText, sourceMessages)) {
-    return { ok: false, reason: 'protected_token_changed', messages: [] }
-  }
-
-  let repaired = sourceMessages.flatMap((message) => splitTextConservatively(message, settings.maxBubbleLength))
-  repaired = mergeShortMessages(repaired, settings)
-  repaired = mergeDependentSetupMessages(repaired, settings)
-  repaired = limitBubbleCount(repaired, settings.maxBubbles)
-  repaired = repaired.map(cleanText).filter(Boolean)
-
-  if (!repaired.length) {
-    return { ok: false, reason: 'empty_after_repair', messages: [] }
-  }
-
-  if (!protectedTokensAreIntact(originalText, repaired)) {
-    return { ok: false, reason: 'protected_token_changed_after_repair', messages: [] }
-  }
-
-  return { ok: true, reason: 'ok', messages: normalizeBubbleOpeningCasing(repaired) }
+function getMaxBubbles(settings = {}) {
+  const configured = Number(settings.maxBubbles)
+  if (!Number.isFinite(configured)) return MESSAGE_SPLITTER_MAX_BUBBLES
+  return Math.max(1, Math.min(MESSAGE_SPLITTER_MAX_BUBBLES, Math.round(configured)))
 }
 
 function fallbackResult(text, reason) {
   const clean = cleanText(text)
   return {
     messages: clean ? [clean] : [],
-    source: 'fallback',
+    source: clean ? 'fallback' : 'empty',
     reason
   }
 }
 
-export function splitMessageIntoBubblesFallback({ text, settings = {}, random = Math.random } = {}) {
+function getMinimumLengthToSplit(settings = {}) {
+  const configured = Number(settings.minMessageLengthToSplit)
+  return Number.isFinite(configured) ? Math.max(0, Math.round(configured)) : 120
+}
+
+function getMaxBubbleLength(settings = {}, originalText = '') {
+  const configured = Number(settings.maxBubbleLength)
+  const requested = Number.isFinite(configured) ? Math.max(1, Math.round(configured)) : 350
+  // Si el texto no cabe matemáticamente en el máximo de globos permitido,
+  // repartimos el excedente en vez de exigir una condición imposible.
+  return Math.max(requested, Math.ceil(String(originalText || '').length / getMaxBubbles(settings)))
+}
+
+function requiresMultipleBubbles(originalText, settings = {}) {
+  return getMaxBubbles(settings) > 1 && originalText.length >= getMinimumLengthToSplit(settings)
+}
+
+function buildMessageSplitterOutput(settings, originalText) {
+  const minimum = requiresMultipleBubbles(originalText, settings) ? 2 : 1
+  return z.object({
+    messages: z.array(z.string().min(1)).min(minimum).max(getMaxBubbles(settings))
+  })
+}
+
+function isAllowedOversizedToken(message, maxLength) {
+  return message.length > maxLength && !/\s/u.test(message.trim())
+}
+
+function validateAiMessages(rawMessages, originalText, settings) {
+  const messages = (Array.isArray(rawMessages) ? rawMessages : [])
+    .map((message) => String(message || '').trim())
+    .filter(Boolean)
+
+  if (!messages.length) {
+    return { ok: false, reason: 'empty_messages', messages: [] }
+  }
+
+  if (messages.length > getMaxBubbles(settings)) {
+    return { ok: false, reason: 'too_many_messages', messages: [] }
+  }
+
+  if (requiresMultipleBubbles(originalText, settings) && messages.length < 2) {
+    return { ok: false, reason: 'insufficient_messages', messages: [] }
+  }
+
+  // Reconstruimos cada globo como un tramo literal del texto original. La IA
+  // sólo puede escoger espacios/saltos donde cortar; nunca entrega texto propio.
+  const exactMessages = []
+  let cursor = 0
+  for (const message of messages) {
+    const index = originalText.indexOf(message, cursor)
+    const separator = index < 0 ? '' : originalText.slice(cursor, index)
+    if (index < 0 || separator.trim()) {
+      return { ok: false, reason: 'content_changed', messages: [] }
+    }
+    // Entre dos globos debe existir un espacio o salto real en el original.
+    // Así la IA jamás puede partir por la mitad una URL, correo, código o token.
+    if (exactMessages.length > 0 && !/\s/u.test(separator)) {
+      return { ok: false, reason: 'unsafe_cut_boundary', messages: [] }
+    }
+    exactMessages.push(originalText.slice(index, index + message.length))
+    cursor = index + message.length
+  }
+  if (originalText.slice(cursor).trim()) {
+    return { ok: false, reason: 'content_changed', messages: [] }
+  }
+
+  const maxLength = getMaxBubbleLength(settings, originalText)
+  if (exactMessages.some((message) => message.length > maxLength && !isAllowedOversizedToken(message, maxLength))) {
+    return { ok: false, reason: 'message_too_long', messages: [] }
+  }
+
+  return { ok: true, reason: 'exact_content_preserved', messages: exactMessages }
+}
+
+function buildSplitterInstructions(settings, originalText) {
+  const maxBubbles = getMaxBubbles(settings)
+  const minBubbles = requiresMultipleBubbles(originalText, settings) ? 2 : 1
+  const minLength = Math.max(1, Number(settings.minBubbleLength) || 20)
+  const maxLength = Math.max(minLength, getMaxBubbleLength(settings, originalText))
+
+  return [
+    'Eres un cortador de mensajes para chat. Recibes una respuesta final ya escrita y sólo decides dónde termina un globo y empieza el siguiente.',
+    'No analizas al cliente, no decides acciones, no respondes preguntas y no tienes herramientas.',
+    'Copia el texto exactamente: no cambies, agregues, borres, corrijas ni reordenes una sola palabra, letra, signo, número, URL, fecha, hora, precio, teléfono, correo o código.',
+    `Devuelve entre ${minBubbles} y ${maxBubbles} mensajes, en el mismo orden. La longitud objetivo por globo es ${minLength}-${maxLength} caracteres.`,
+    'Si hay dos o más ideas, reacciones, pasos, datos o preguntas, sepáralos como lo haría una persona en chat.',
+    minBubbles === 1
+      ? 'Devuelve un solo mensaje únicamente cuando el texto sea realmente breve y contenga una sola idea.'
+      : 'Este texto ya superó el umbral: debes devolver al menos dos mensajes.',
+    'Nunca escribas etiquetas como "globo 1", explicaciones, markdown ni marcadores como [BREAK].'
+  ].join('\n')
+}
+
+async function runWithTimeout(task, timeoutMs) {
+  let timeoutId
+  try {
+    return await Promise.race([
+      Promise.resolve().then(task),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error('splitter_timeout')), timeoutMs)
+      })
+    ])
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId)
+  }
+}
+
+async function runAiSplitter({
+  text,
+  settings,
+  apiKey,
+  aiSplitter,
+  openAIClient,
+  timeoutMs
+}) {
+  if (typeof aiSplitter === 'function') {
+    const raw = await runWithTimeout(
+      () => aiSplitter({ text, settings, model: MESSAGE_SPLITTER_MODEL }),
+      timeoutMs
+    )
+    return Array.isArray(raw) ? raw : raw?.messages
+  }
+
+  const client = openAIClient || new OpenAI({
+    apiKey,
+    timeout: timeoutMs,
+    maxRetries: 0
+  })
+
+  const response = await client.responses.parse({
+    model: MESSAGE_SPLITTER_MODEL,
+    instructions: buildSplitterInstructions(settings, text),
+    input: text,
+    reasoning: { effort: 'minimal' },
+    text: {
+      format: zodTextFormat(buildMessageSplitterOutput(settings, text), 'ristak_message_split'),
+      verbosity: 'low'
+    },
+    max_output_tokens: MESSAGE_SPLITTER_MAX_OUTPUT_TOKENS,
+    store: false
+  })
+
+  return response?.output_parsed?.messages
+}
+
+export function splitMessageIntoBubblesFallback({ text, settings = {} } = {}) {
   const clean = cleanText(text)
-  if (!clean) return { messages: [], source: 'empty', reason: 'empty_text' }
+  if (!clean) return fallbackResult('', 'empty_text')
 
   const delivery = normalizeAgentReplyDelivery(settings?.replyDelivery || settings)
   if (!delivery.splitMessagesEnabled) {
     return { messages: [clean], source: 'disabled', reason: 'split_disabled' }
   }
 
-  if (clean.length < delivery.minMessageLengthToSplit) {
-    const naturalParts = delivery.randomizeSplitting
-      ? splitTextByHumanIntent(clean, delivery, random)
-      : [clean]
-    if (naturalParts.length <= 1) {
-      return { messages: [clean], source: 'threshold', reason: 'below_min_length' }
-    }
-    const repairedShort = repairMessages(naturalParts, clean, delivery)
-    if (!repairedShort.ok) return fallbackResult(clean, repairedShort.reason)
-    return { messages: repairedShort.messages, source: 'fallback', reason: 'natural_short_split' }
+  if (!requiresMultipleBubbles(clean, delivery)) {
+    return { messages: [clean], source: 'threshold', reason: 'below_split_threshold' }
   }
 
-  const candidateParts = delivery.randomizeSplitting
-    ? splitTextByHumanIntent(clean, delivery, random)
-    : splitTextConservatively(clean, delivery.maxBubbleLength)
-  const repaired = repairMessages(candidateParts, clean, delivery)
-  if (!repaired.ok) return fallbackResult(clean, repaired.reason)
-  return { messages: repaired.messages, source: 'fallback', reason: 'safe_split' }
+  return fallbackResult(clean, 'safe_single_message')
+}
+
+export async function splitMessageIntoBubbles({
+  text,
+  settings = {},
+  apiKey = null,
+  aiSplitter = null,
+  openAIClient = null,
+  timeoutMs = MESSAGE_SPLITTER_TIMEOUT_MS,
+  log = logger
+} = {}) {
+  const clean = cleanText(text)
+  if (!clean) return fallbackResult('', 'empty_text')
+
+  const delivery = normalizeAgentReplyDelivery(settings?.replyDelivery || settings)
+  if (!delivery.splitMessagesEnabled) {
+    return { messages: [clean], source: 'disabled', reason: 'split_disabled' }
+  }
+
+  if (!requiresMultipleBubbles(clean, delivery)) {
+    return { messages: [clean], source: 'threshold', reason: 'below_split_threshold' }
+  }
+
+  if (clean.length > MESSAGE_SPLITTER_MAX_INPUT_CHARS) {
+    return fallbackResult(clean, 'input_too_long')
+  }
+
+  if (!apiKey && typeof aiSplitter !== 'function' && !openAIClient) {
+    return fallbackResult(clean, 'missing_openai_api_key')
+  }
+
+  try {
+    const rawMessages = await runAiSplitter({
+      text: clean,
+      settings: delivery,
+      apiKey,
+      aiSplitter,
+      openAIClient,
+      timeoutMs: Math.max(1, Number(timeoutMs) || MESSAGE_SPLITTER_TIMEOUT_MS)
+    })
+    const validated = validateAiMessages(rawMessages, clean, delivery)
+    if (!validated.ok) return fallbackResult(clean, validated.reason)
+
+    return {
+      messages: validated.messages,
+      source: 'ai',
+      reason: validated.reason,
+      model: MESSAGE_SPLITTER_MODEL
+    }
+  } catch (error) {
+    log.warn(`[Agente conversacional] Mini-IA de globitos falló; se enviará la respuesta completa: ${error.message}`)
+    return fallbackResult(clean, error.message || 'splitter_error')
+  }
 }

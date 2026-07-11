@@ -8,11 +8,14 @@ import { getAccountTimezone } from '../src/utils/dateUtils.js'
 import {
   assignAgentToConversation,
   buildConversationalAgentMetrics,
+  claimConversationalReplyDelivery,
+  checkpointConversationalReplyDelivery,
   completeConversationGoalLinkFromWebhook,
   createConversationalAgent,
   createConversationGoalLink,
   entryRulesMatch,
   getConversationalAgent,
+  getConversationalReplyDeliveryPlan,
   getConversationGoalLink,
   getConversationState,
   listConversationStates,
@@ -23,9 +26,11 @@ import {
   normalizeAgentGoalWorkflow,
   normalizeAgentReplyDelivery,
   normalizeConversationalSuccessAction,
+  getOrCreateConversationalReplyDeliveryPlan,
   recordConversationalAgentEvent,
   setConversationSignal,
   setConversationStatus,
+  settleConversationalReplyDelivery,
   shouldSuppressChatNotificationForConversationalAgent,
   updateConversationalAgent
 } from '../src/services/conversationalAgentService.js'
@@ -51,7 +56,11 @@ import {
   hydrateConversationalPreviewMessagesMedia,
   inferConversationalMediaKind
 } from '../src/agents/conversational/mediaContext.js'
-import { splitMessageIntoBubblesFallback } from '../src/agents/conversational/messageSplitter.js'
+import {
+  MESSAGE_SPLITTER_MODEL,
+  splitMessageIntoBubbles,
+  splitMessageIntoBubblesFallback
+} from '../src/agents/conversational/messageSplitter.js'
 import {
   resolveHighLevelMessageChannel,
   upsertHighLevelConversationMessage
@@ -1126,8 +1135,189 @@ test('envio real espera antes de cada globo posterior', async () => {
   ])
 })
 
+test('un retry reutiliza el plan durable y continúa sólo con los globos pendientes', async () => {
+  const suffix = randomUUID()
+  const contactId = `contacto-plan-${suffix}`
+  const agentId = `agente-plan-${suffix}`
+  const latest = { id: `mensaje-plan-${suffix}`, phone: '+526561111111' }
+  const sent = []
+  let splitterCalls = 0
+  let failBeforeSecondPart = true
+  let completed = 0
+  const replyDeliveryLedger = {
+    get: getConversationalReplyDeliveryPlan,
+    create: getOrCreateConversationalReplyDeliveryPlan,
+    claim: claimConversationalReplyDelivery,
+    checkpoint: checkpointConversationalReplyDelivery,
+    settle: settleConversationalReplyDelivery
+  }
+  const base = {
+    contactId,
+    phone: latest.phone,
+    latest,
+    agentConfig: {
+      id: agentId,
+      replyDelivery: {
+        mode: 'split',
+        splitMessagesEnabled: true,
+        delayBetweenBubblesEnabled: true,
+        minDelaySeconds: 2,
+        maxDelaySeconds: 2
+      }
+    },
+    reply: 'globo uno globo dos globo tres',
+    dependencies: {
+      replyDeliveryLedger,
+      splitter: async () => {
+        splitterCalls += 1
+        return { messages: ['globo uno', 'globo dos', 'globo tres'], source: 'ai', reason: 'exact_content_preserved' }
+      },
+      sendTextMessage: async ({ text, externalId }) => {
+        sent.push({ text, externalId })
+        return { id: `provider-${text.replaceAll(' ', '-')}` }
+      },
+      wait: async () => {
+        if (failBeforeSecondPart) {
+          failBeforeSecondPart = false
+          throw new Error('reinicio_antes_del_segundo_globo')
+        }
+      },
+      loadNewerInbound: async () => null,
+      recordEvent: async () => {},
+      markReplyComplete: async () => { completed += 1 }
+    }
+  }
+
+  try {
+    await assert.rejects(sendReplyParts(base), /reinicio_antes_del_segundo_globo/)
+    assert.deepEqual(sent.map((item) => item.text), ['globo uno'])
+
+    const retry = await sendReplyParts({
+      ...base,
+      reply: 'una redacción distinta que jamás debe reemplazar el primer plan',
+      dependencies: {
+        ...base.dependencies,
+        splitter: async () => { throw new Error('el retry no debe volver a dividir') }
+      }
+    })
+
+    assert.equal(splitterCalls, 1)
+    assert.deepEqual(sent.map((item) => item.text), ['globo uno', 'globo dos', 'globo tres'])
+    assert.equal(new Set(sent.map((item) => item.externalId)).size, 3)
+    assert.equal(retry.sentParts, 3)
+    assert.equal(retry.durableStatus, 'completed')
+    assert.equal(completed, 1)
+
+    const completedRetry = await sendReplyParts({
+      ...base,
+      dependencies: {
+        ...base.dependencies,
+        splitter: async () => { throw new Error('un plan completado tampoco se recalcula') },
+        sendTextMessage: async () => { throw new Error('un plan completado no se reenvía') }
+      }
+    })
+    assert.equal(completedRetry.resumed, true)
+    assert.equal(completedRetry.durableStatus, 'completed')
+    assert.equal(sent.length, 3)
+  } finally {
+    await db.run('DELETE FROM conversational_agent_events WHERE contact_id = ?', [contactId]).catch(() => {})
+  }
+})
+
+test('un fallo del splitter o de su telemetría nunca deja mudo al agente', async () => {
+  const sent = []
+  let completed = false
+  const original = 'Esta respuesta debe enviarse completa aunque falle la mini-IA.'
+  const result = await sendReplyParts({
+    contactId: 'contacto-fallback-globos',
+    phone: '+526561111111',
+    latest: { id: 'mensaje-fallback-globos', phone: '+526561111111' },
+    agentConfig: {
+      id: 'agente-fallback-globos',
+      replyDelivery: { mode: 'split', splitMessagesEnabled: true }
+    },
+    reply: original,
+    apiKey: 'sk-test',
+    dependencies: {
+      splitter: async () => { throw new Error('splitter_caido') },
+      sendTextMessage: async ({ text }) => { sent.push(text) },
+      loadNewerInbound: async () => null,
+      recordEvent: async () => { throw new Error('telemetria_caida') },
+      markReplyComplete: async () => { completed = true }
+    }
+  })
+
+  assert.deepEqual(sent, [original])
+  assert.deepEqual(result.parts, [original])
+  assert.equal(result.sentParts, 1)
+  assert.equal(completed, true)
+})
+
+test('un fallo aislado de telemetría conserva todos los globos ya validados', async () => {
+  const sent = []
+  const result = await sendReplyParts({
+    contactId: 'contacto-telemetria-globos',
+    phone: '+526561111111',
+    latest: { id: 'mensaje-telemetria-globos', phone: '+526561111111' },
+    agentConfig: {
+      id: 'agente-telemetria-globos',
+      replyDelivery: {
+        mode: 'split',
+        splitMessagesEnabled: true,
+        delayBetweenBubblesEnabled: false
+      }
+    },
+    reply: 'Primera idea. Segunda idea.',
+    dependencies: {
+      splitter: async () => ({
+        messages: ['Primera idea.', 'Segunda idea.'],
+        source: 'ai',
+        reason: 'exact_content_preserved'
+      }),
+      sendTextMessage: async ({ text }) => { sent.push(text) },
+      loadNewerInbound: async () => null,
+      recordEvent: async () => { throw new Error('telemetria_caida') },
+      markReplyComplete: async () => {}
+    }
+  })
+
+  assert.deepEqual(sent, ['Primera idea.', 'Segunda idea.'])
+  assert.equal(result.sentParts, 2)
+})
+
+test('si entra otro mensaje mientras la mini-IA divide no sale ni el primer globo viejo', async () => {
+  const sent = []
+  const newerInbound = { id: 'mensaje-nuevo-durante-splitter', message_text: 'y también manejan sábados?' }
+  const result = await sendReplyParts({
+    contactId: 'contacto-interrumpe-splitter',
+    phone: '+526561111111',
+    latest: { id: 'mensaje-base-splitter', phone: '+526561111111' },
+    agentConfig: {
+      id: 'agente-interrumpe-splitter',
+      replyDelivery: { mode: 'split', splitMessagesEnabled: true }
+    },
+    reply: 'Primera idea. Segunda idea.',
+    apiKey: 'sk-test',
+    dependencies: {
+      splitter: async () => ({
+        messages: ['Primera idea.', 'Segunda idea.'],
+        source: 'ai',
+        reason: 'exact_content_preserved'
+      }),
+      sendTextMessage: async ({ text }) => { sent.push(text) },
+      loadNewerInbound: async () => newerInbound,
+      recordEvent: async () => {}
+    }
+  })
+
+  assert.deepEqual(sent, [])
+  assert.equal(result.sentParts, 0)
+  assert.equal(result.interruptedBy, newerInbound)
+})
+
 test('si el contacto interrumpe entre globos se detienen los restantes y se devuelve el inbound', async () => {
   const sequence = []
+  let inboundChecks = 0
   const newerInbound = { id: 'waapi_msg_interrumpe_globos', message_text: 'también dónde están ubicados?' }
   const result = await sendReplyParts({
     contactId: 'contacto-interrumpe-globos',
@@ -1163,7 +1353,10 @@ test('si el contacto interrumpe entre globos se detienen los restantes y se devu
       wait: async (delayMs) => {
         sequence.push(`wait:${delayMs}`)
       },
-      loadNewerInbound: async () => newerInbound,
+      loadNewerInbound: async () => {
+        inboundChecks += 1
+        return inboundChecks === 1 ? null : newerInbound
+      },
       recordEvent: async (event) => {
         sequence.push(`event:${event.eventType}`)
       },
@@ -1237,86 +1430,53 @@ test('mantiene una sola respuesta cuando la entrega está en modo normal', () =>
   assert.deepEqual(parts, ['hola, te explico rápido. este mensaje podría dividirse, pero no debe.'])
 })
 
-test('parte respuestas largas respetando el máximo de segmentos', () => {
+test('la mini-IA barata parte respuestas largas sin cambiar el contenido', async () => {
   const longReply = [
     'va, ya te entendí. Lo primero es ubicar qué necesitas resolver ahorita y qué tan urgente se volvió para ti.',
     'También necesito saber si ya intentaste algo antes, porque eso cambia bastante la recomendación.',
     'Con esa información puedo decirte cuál sería el siguiente paso sin inventarte cosas ni darte vueltas.'
   ].join(' ')
 
-  const parts = splitReplyIntoParts(longReply, {
-    mode: 'split',
-    minMessageLengthToSplit: 1,
-    maxBubbleLength: 120,
-    maxBubbles: 6,
-    minDelaySeconds: 1,
-    maxDelaySeconds: 3
-  })
-
-  assert.ok(parts.length > 1)
-  assert.ok(parts.length <= 6)
-  assert.ok(parts.every((part) => part.trim().length > 0))
-  assert.equal(parts.join(' ').toLocaleLowerCase('es-MX'), longReply.toLocaleLowerCase('es-MX'))
-  assert.match(parts[0], /^Va/)
-})
-
-test('modo humano no fuerza globos cuando la respuesta corta es una sola idea', () => {
-  const result = splitMessageIntoBubblesFallback({
-    text: 'sí, mañana a las 5 está perfecto',
-    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 20, maxBubbleLength: 120, randomizeSplitting: true },
-    random: () => 0
-  })
-
-  assert.deepEqual(result.messages, ['Sí, mañana a las 5 está perfecto'])
-})
-
-test('modo humano fallback separa reaccion lectura puente y pregunta final', () => {
-  const original = 'ya.. entonces sí traes ese tema encima\npa entenderte bien y no decirte algo al aire, hoy cómo te llegan los pacientes?'
-  const result = splitMessageIntoBubblesFallback({
-    text: original,
-    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 240, randomizeSplitting: true },
-    random: () => 0.99
-  })
-
-  assert.deepEqual(result.messages, [
-    'Ya..',
-    'entonces sí traes ese tema encima',
-    'Pa entenderte bien y no decirte algo al aire',
-    'hoy cómo te llegan los pacientes?'
-  ])
-})
-
-test('modo humano fallback no corta depende de lo que necesitas antes del contexto', () => {
-  const original = 'depende de lo que necesites. tú eres médico o lo ves para alguien más?'
-  const result = splitMessageIntoBubblesFallback({
-    text: original,
-    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 160, randomizeSplitting: true },
-    random: () => 0.99
-  })
-
-  assert.deepEqual(result.messages, ['Depende de lo que necesites. tú eres médico o lo ves para alguien más?'])
-})
-
-test('modo humano puede llegar hasta seis globos sólo cuando el texto largo lo amerita', () => {
-  const longReply = [
-    'va, ya te entendí.',
-    'Primero revisamos qué estás intentando resolver ahorita.',
-    'Luego vemos qué ya probaste antes para no repetir lo mismo.',
-    'Después ubicamos qué dato real falta para darte una respuesta clara.',
-    'Con eso te digo cuál sería el siguiente paso sin inventarte nada.',
-    'Y si sí hace sentido, lo pasamos a revisión con alguien del equipo.'
-  ].join(' ')
-
-  const result = splitMessageIntoBubblesFallback({
+  let requestedModel = null
+  const result = await splitMessageIntoBubbles({
     text: longReply,
-    settings: { mode: 'split', splitMessagesEnabled: true, minMessageLengthToSplit: 1, maxBubbles: 6, minBubbleLength: 10, maxBubbleLength: 120, randomizeSplitting: true },
-    random: () => 0.99
+    settings: {
+      mode: 'split',
+      splitMessagesEnabled: true,
+      maxBubbleLength: 120,
+      maxBubbles: 6
+    },
+    aiSplitter: async ({ model }) => {
+      requestedModel = model
+      return {
+        messages: [
+          'va, ya te entendí. Lo primero es ubicar qué necesitas resolver ahorita y qué tan urgente se volvió para ti.',
+          'También necesito saber si ya intentaste algo antes, porque eso cambia bastante la recomendación.',
+          'Con esa información puedo decirte cuál sería el siguiente paso sin inventarte cosas ni darte vueltas.'
+        ]
+      }
+    }
   })
 
-  assert.ok(result.messages.length > 4)
-  assert.ok(result.messages.length <= 6)
-  assert.equal(result.messages.join(' ').toLocaleLowerCase('es-MX'), longReply.toLocaleLowerCase('es-MX'))
-  assert.match(result.messages[0], /^Va/)
+  assert.equal(requestedModel, MESSAGE_SPLITTER_MODEL)
+  assert.equal(result.source, 'ai')
+  assert.equal(result.messages.length, 3)
+  assert.equal(result.messages.join(' '), longReply)
+})
+
+test('si la mini-IA intenta cambiar el texto se manda completo y sin reescribir', async () => {
+  const first = 'sí, mañana a las 5 está perfecto y ya revisé todos los detalles necesarios para confirmar.'
+  const second = 'En cuanto quede registrado te mando la confirmación completa por este mismo chat.'
+  const original = `${first} ${second}`
+  const result = await splitMessageIntoBubbles({
+    text: original,
+    settings: { mode: 'split', splitMessagesEnabled: true, maxBubbles: 6 },
+    aiSplitter: async () => ({ messages: [`Sí${first.slice(2)}`, second] })
+  })
+
+  assert.equal(result.source, 'fallback')
+  assert.equal(result.reason, 'content_changed')
+  assert.deepEqual(result.messages, [original])
 })
 
 test('pausas entre globos se pueden apagar', () => {

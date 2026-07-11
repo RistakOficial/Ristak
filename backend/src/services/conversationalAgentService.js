@@ -103,6 +103,9 @@ const DEFAULT_SUCCESS_ACTION = 'ready_for_human'
 const VALID_STATUSES = new Set(['active', 'paused', 'human', 'skipped', 'completed'])
 const CONVERSATION_PAUSE_DURATION_MS = 24 * 60 * 60 * 1000
 export const CONVERSATIONAL_INBOUND_PROCESSING_LEASE_MS = 10 * 60 * 1000
+export const CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE = 'reply_delivery_plan_v1'
+export const CONVERSATIONAL_REPLY_DELIVERY_LEASE_MS = 10 * 60 * 1000
+export const CONVERSATIONAL_REPLY_DELIVERY_MAX_DETAIL_BYTES = 32 * 1024
 const EXPLICIT_ASSIGNMENT_SOURCES = new Set(['automatic', 'manual'])
 const CONVERSATION_STATE_CHANNEL_ALIASES = new Map([
   ['wa', 'whatsapp'],
@@ -6020,6 +6023,544 @@ function processingLeaseIso({ nowMs = Date.now(), leaseMs = CONVERSATIONAL_INBOU
     nowMs: cleanNowMs,
     nowIso: new Date(cleanNowMs).toISOString(),
     leaseUntilIso: new Date(cleanNowMs + cleanLeaseMs).toISOString()
+  }
+}
+
+const CONVERSATIONAL_REPLY_DELIVERY_TERMINAL_STATUSES = new Set([
+  'completed',
+  'interrupted',
+  'ambiguous'
+])
+const CONVERSATIONAL_REPLY_DELIVERY_SETTLE_STATUSES = new Set([
+  'completed',
+  'interrupted',
+  'pending',
+  'ambiguous'
+])
+
+function conversationalReplyDeliveryError(message, {
+  statusCode = 409,
+  code = 'CONVERSATIONAL_REPLY_DELIVERY_CONFLICT'
+} = {}) {
+  return Object.assign(new Error(message), { statusCode, code })
+}
+
+function normalizeConversationalReplyDeliveryIdentity({
+  contactId = '',
+  agentId = '',
+  channel = 'whatsapp',
+  sourceMessageId = '',
+  externalIdPrefix = 'convagent'
+} = {}) {
+  const identity = {
+    contactId: String(contactId || '').trim(),
+    agentId: String(agentId || '').trim(),
+    channel: normalizeConversationStateChannel(channel),
+    sourceMessageId: String(sourceMessageId || '').trim(),
+    externalIdPrefix: String(externalIdPrefix || '').trim() || 'convagent'
+  }
+  if (!identity.contactId || !identity.agentId || !identity.sourceMessageId) {
+    throw conversationalReplyDeliveryError('Falta la identidad durable de la respuesta conversacional', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_IDENTITY_MISSING'
+    })
+  }
+  return identity
+}
+
+export function buildConversationalReplyDeliveryPlanId(identity = {}) {
+  const normalized = normalizeConversationalReplyDeliveryIdentity(identity)
+  const digest = createHash('sha256')
+    .update([
+      normalized.contactId,
+      normalized.agentId,
+      normalized.channel,
+      normalized.sourceMessageId,
+      normalized.externalIdPrefix
+    ].join('\0'))
+    .digest('hex')
+  return `cae_reply_delivery_${digest.slice(0, 48)}`
+}
+
+function serializeConversationalReplyDeliveryDetail(detail) {
+  let detailJson
+  try {
+    detailJson = JSON.stringify(detail)
+  } catch {
+    throw conversationalReplyDeliveryError('El plan durable de respuesta no se puede serializar', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_PLAN'
+    })
+  }
+  if (Buffer.byteLength(detailJson, 'utf8') > CONVERSATIONAL_REPLY_DELIVERY_MAX_DETAIL_BYTES) {
+    throw conversationalReplyDeliveryError('El plan durable de respuesta excede el límite seguro', {
+      statusCode: 413,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_PLAN_TOO_LARGE'
+    })
+  }
+  return detailJson
+}
+
+function mapConversationalReplyDeliveryPlan(row, detailOverride = null) {
+  if (!row) return null
+  const detail = detailOverride || parseJsonField(row.detail_json, null)
+  if (!detail || typeof detail !== 'object' || Array.isArray(detail)) {
+    throw conversationalReplyDeliveryError('El plan durable de respuesta está corrupto', {
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_PLAN_CORRUPT'
+    })
+  }
+  return {
+    id: row.id,
+    contactId: row.contact_id,
+    agentId: row.agent_id,
+    eventType: row.event_type,
+    createdAt: row.created_at || null,
+    ...detail
+  }
+}
+
+async function readConversationalReplyDeliveryPlanRow(planId) {
+  return db.get(
+    `SELECT id, contact_id, agent_id, event_type, detail_json, created_at
+     FROM conversational_agent_events WHERE id = ?`,
+    [String(planId || '').trim()]
+  )
+}
+
+function assertConversationalReplyDeliveryPlanRow(row, identity = null) {
+  if (!row) return
+  if (row.event_type !== CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE) {
+    throw conversationalReplyDeliveryError('La identidad durable ya pertenece a otro tipo de evento')
+  }
+  const plan = mapConversationalReplyDeliveryPlan(row)
+  if (!Array.isArray(plan.parts) || plan.version !== 1) {
+    throw conversationalReplyDeliveryError('El plan durable de respuesta tiene una versión inválida', {
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_PLAN_CORRUPT'
+    })
+  }
+  if (identity && (
+    String(row.contact_id || '') !== identity.contactId ||
+    String(row.agent_id || '') !== identity.agentId ||
+    String(plan.contactId || '') !== identity.contactId ||
+    String(plan.agentId || '') !== identity.agentId ||
+    String(plan.channel || '') !== identity.channel ||
+    String(plan.sourceMessageId || '') !== identity.sourceMessageId ||
+    String(plan.externalIdPrefix || '') !== identity.externalIdPrefix
+  )) {
+    throw conversationalReplyDeliveryError('El plan durable ya existe con otra identidad')
+  }
+}
+
+/**
+ * Lee el plan por su ID o por la misma identidad usada para construirlo. Permite
+ * consultar antes de llamar al splitter: si ya existe, su corte guardado manda.
+ */
+export async function getConversationalReplyDeliveryPlan(planIdOrIdentity = {}) {
+  const identity = typeof planIdOrIdentity === 'string'
+    ? null
+    : normalizeConversationalReplyDeliveryIdentity(planIdOrIdentity)
+  const planId = typeof planIdOrIdentity === 'string'
+    ? String(planIdOrIdentity || '').trim()
+    : buildConversationalReplyDeliveryPlanId(identity)
+  if (!planId) return null
+  const row = await readConversationalReplyDeliveryPlanRow(planId)
+  if (!row) return null
+  assertConversationalReplyDeliveryPlanRow(row, identity)
+  return mapConversationalReplyDeliveryPlan(row)
+}
+
+function normalizeConversationalReplyDeliveryParts(parts, planId) {
+  if (!Array.isArray(parts) || parts.length < 1 || parts.length > 20) {
+    throw conversationalReplyDeliveryError('El plan durable requiere entre 1 y 20 partes', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_PARTS'
+    })
+  }
+  const digest = String(planId).replace(/^cae_reply_delivery_/, '')
+  return parts.map((value, index) => {
+    const text = String(value ?? '')
+    if (!text.trim()) {
+      throw conversationalReplyDeliveryError('El plan durable contiene una parte vacía', {
+        statusCode: 400,
+        code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_PARTS'
+      })
+    }
+    return {
+      index,
+      text,
+      externalId: `convreply_${digest}_${index + 1}`,
+      status: 'pending',
+      attempts: 0,
+      sendingAt: null,
+      sentAt: null,
+      providerMessageId: null,
+      lastError: null
+    }
+  })
+}
+
+function normalizeConversationalReplyDeliveryDelaySchedule(delaySchedule, partCount) {
+  if (delaySchedule === undefined || delaySchedule === null) {
+    return Array.from({ length: partCount }, () => 0)
+  }
+  if (!Array.isArray(delaySchedule) || delaySchedule.length !== partCount) {
+    throw conversationalReplyDeliveryError('Los tiempos del plan durable no coinciden con sus partes', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_DELAYS'
+    })
+  }
+  return delaySchedule.map((value) => {
+    const delayMs = Number(value)
+    if (!Number.isFinite(delayMs) || delayMs < 0 || delayMs > 60 * 60 * 1000) {
+      throw conversationalReplyDeliveryError('El plan durable contiene un tiempo de espera inválido', {
+        statusCode: 400,
+        code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_DELAYS'
+      })
+    }
+    return Math.round(delayMs)
+  })
+}
+
+function normalizeConversationalReplyDeliverySplitterMeta(value = {}) {
+  const meta = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
+  return {
+    source: String(meta.source || '').trim().slice(0, 120) || null,
+    reason: String(meta.reason || '').trim().slice(0, 1200) || null,
+    model: String(meta.model || '').trim().slice(0, 160) || null
+  }
+}
+
+/**
+ * Reserva el corte una sola vez. Dos procesos pueden calcular candidatos a la
+ * vez, pero ON CONFLICT hace que ambos terminen usando exactamente el primero.
+ * Se escribe directo para no sufrir el recorte de telemetría de 4,000 chars.
+ */
+export async function getOrCreateConversationalReplyDeliveryPlan(identityInput = {}, candidateInput = null) {
+  const identity = normalizeConversationalReplyDeliveryIdentity(identityInput)
+  const candidate = candidateInput && typeof candidateInput === 'object'
+    ? candidateInput
+    : identityInput
+  const planId = buildConversationalReplyDeliveryPlanId(identity)
+  const parts = normalizeConversationalReplyDeliveryParts(candidate.parts, planId)
+  const delaySchedule = normalizeConversationalReplyDeliveryDelaySchedule(candidate.delaySchedule, parts.length)
+  const reply = String(candidate.reply ?? parts.map((part) => part.text).join(''))
+  const lease = processingLeaseIso({ nowMs: candidate.nowMs, leaseMs: CONVERSATIONAL_REPLY_DELIVERY_LEASE_MS })
+  const detail = {
+    version: 1,
+    status: 'pending',
+    contactId: identity.contactId,
+    agentId: identity.agentId,
+    channel: identity.channel,
+    sourceMessageId: identity.sourceMessageId,
+    externalIdPrefix: identity.externalIdPrefix,
+    replyHash: createHash('sha256').update(reply).digest('hex'),
+    splitterMeta: normalizeConversationalReplyDeliverySplitterMeta(candidate.splitterMeta || candidate),
+    delaySchedule,
+    parts,
+    attempts: 0,
+    claimToken: null,
+    leaseUntilAt: null,
+    lastError: null,
+    plannedAt: lease.nowIso
+  }
+  const detailJson = serializeConversationalReplyDeliveryDetail(detail)
+  const insert = await db.run(
+    `INSERT INTO conversational_agent_events (id, contact_id, agent_id, event_type, detail_json)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO NOTHING`,
+    [planId, identity.contactId, identity.agentId, CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE, detailJson]
+  )
+  const row = await readConversationalReplyDeliveryPlanRow(planId)
+  if (!row) throw new Error('No se pudo crear el plan durable de respuesta')
+  assertConversationalReplyDeliveryPlanRow(row, identity)
+  const plan = mapConversationalReplyDeliveryPlan(row)
+  return {
+    created: dbMutationCount(insert) === 1,
+    candidateDiscarded: plan.replyHash !== detail.replyHash,
+    plan
+  }
+}
+
+async function compareAndSetConversationalReplyDeliveryPlan(row, nextDetail) {
+  const nextJson = serializeConversationalReplyDeliveryDetail(nextDetail)
+  const result = await db.run(
+    `UPDATE conversational_agent_events
+     SET detail_json = ?
+     WHERE id = ? AND event_type = ? AND detail_json = ?`,
+    [nextJson, row.id, CONVERSATIONAL_REPLY_DELIVERY_EVENT_TYPE, row.detail_json]
+  )
+  return dbMutationCount(result) === 1
+}
+
+function terminalConversationalReplyDeliveryClaim(plan) {
+  if (!CONVERSATIONAL_REPLY_DELIVERY_TERMINAL_STATUSES.has(plan.status)) return null
+  return {
+    claimed: false,
+    reason: plan.status,
+    completed: plan.status === 'completed',
+    interrupted: plan.status === 'interrupted',
+    ambiguous: plan.status === 'ambiguous',
+    claimToken: null,
+    plan
+  }
+}
+
+/**
+ * Reclama el envío con CAS. Si el lease expiró después de marcar una parte como
+ * `sending`, falla cerrado: el proveedor pudo aceptarla antes del crash y no se
+ * debe mandar otra vez a ciegas.
+ */
+export async function claimConversationalReplyDelivery(planId, {
+  nowMs = Date.now(),
+  leaseMs = CONVERSATIONAL_REPLY_DELIVERY_LEASE_MS,
+  claimToken = `card_${randomUUID()}`
+} = {}) {
+  const cleanPlanId = String(planId || '').trim()
+  const cleanClaimToken = String(claimToken || '').trim() || `card_${randomUUID()}`
+  if (!cleanPlanId) {
+    return { claimed: false, reason: 'missing_plan_id', claimToken: null, plan: null }
+  }
+  const lease = processingLeaseIso({ nowMs, leaseMs })
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const row = await readConversationalReplyDeliveryPlanRow(cleanPlanId)
+    if (!row) return { claimed: false, reason: 'missing_plan', claimToken: null, plan: null }
+    assertConversationalReplyDeliveryPlanRow(row)
+    const detail = parseJsonField(row.detail_json, {})
+    const plan = mapConversationalReplyDeliveryPlan(row)
+    const terminal = terminalConversationalReplyDeliveryClaim(plan)
+    if (terminal) return terminal
+
+    const leaseUntilMs = Date.parse(plan.leaseUntilAt || '')
+    const leaseActive = plan.status === 'processing' && Number.isFinite(leaseUntilMs) && leaseUntilMs > lease.nowMs
+    if (leaseActive) {
+      return { claimed: false, reason: 'lease_active', processing: true, claimToken: null, plan }
+    }
+
+    const sendingParts = plan.parts.filter((part) => part?.status === 'sending')
+    if (sendingParts.length) {
+      const next = {
+        ...detail,
+        status: 'ambiguous',
+        parts: plan.parts.map((part) => part?.status === 'sending'
+          ? {
+              ...part,
+              status: 'ambiguous',
+              lastError: 'delivery_lease_expired_after_send_started'
+            }
+          : part),
+        claimToken: null,
+        leaseUntilAt: null,
+        ambiguousAt: lease.nowIso,
+        ambiguousReason: 'delivery_lease_expired_after_send_started',
+        lastError: 'delivery_lease_expired_after_send_started'
+      }
+      if (await compareAndSetConversationalReplyDeliveryPlan(row, next)) {
+        return {
+          claimed: false,
+          reason: 'ambiguous',
+          ambiguous: true,
+          claimToken: null,
+          plan: mapConversationalReplyDeliveryPlan(row, next)
+        }
+      }
+      continue
+    }
+
+    if (!['pending', 'processing'].includes(plan.status)) {
+      throw conversationalReplyDeliveryError(`Estado inválido del plan durable: ${plan.status}`, {
+        code: 'CONVERSATIONAL_REPLY_DELIVERY_PLAN_CORRUPT'
+      })
+    }
+    const next = {
+      ...detail,
+      status: 'processing',
+      attempts: Math.max(0, Number(plan.attempts) || 0) + 1,
+      claimToken: cleanClaimToken,
+      leaseUntilAt: lease.leaseUntilIso,
+      claimedAt: lease.nowIso,
+      lastError: null
+    }
+    if (await compareAndSetConversationalReplyDeliveryPlan(row, next)) {
+      return {
+        claimed: true,
+        reason: 'claimed',
+        claimToken: cleanClaimToken,
+        leaseUntilAt: lease.leaseUntilIso,
+        plan: mapConversationalReplyDeliveryPlan(row, next)
+      }
+    }
+  }
+
+  const plan = await getConversationalReplyDeliveryPlan(cleanPlanId)
+  return { claimed: false, reason: 'claim_conflict', claimToken: null, plan }
+}
+
+/**
+ * Checkpoint estricto por parte. `partIndex` es base cero. Antes del request se
+ * guarda `sending`; después de una respuesta aceptada se guarda `sent` junto al
+ * ID canónico que devolvió el proveedor.
+ */
+export async function checkpointConversationalReplyDelivery(planId, claimToken, {
+  partIndex,
+  status,
+  providerMessageId = null,
+  error = '',
+  nowMs = Date.now(),
+  leaseMs = CONVERSATIONAL_REPLY_DELIVERY_LEASE_MS
+} = {}) {
+  const cleanPlanId = String(planId || '').trim()
+  const cleanClaimToken = String(claimToken || '').trim()
+  const cleanStatus = String(status || '').trim().toLowerCase()
+  const index = Number(partIndex)
+  if (!cleanPlanId || !cleanClaimToken || !Number.isInteger(index) || index < 0 || !['sending', 'sent'].includes(cleanStatus)) {
+    throw conversationalReplyDeliveryError('Checkpoint inválido del plan durable', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_CHECKPOINT'
+    })
+  }
+
+  const row = await readConversationalReplyDeliveryPlanRow(cleanPlanId)
+  if (!row) throw conversationalReplyDeliveryError('Se perdió el plan durable de respuesta')
+  assertConversationalReplyDeliveryPlanRow(row)
+  const detail = parseJsonField(row.detail_json, {})
+  const plan = mapConversationalReplyDeliveryPlan(row)
+  if (plan.status !== 'processing' || plan.claimToken !== cleanClaimToken) {
+    throw conversationalReplyDeliveryError('Otro proceso tomó el plan durable de respuesta')
+  }
+  if (index >= plan.parts.length) {
+    throw conversationalReplyDeliveryError('La parte indicada no existe en el plan durable', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_CHECKPOINT'
+    })
+  }
+  if (plan.parts.slice(0, index).some((part) => part?.status !== 'sent')) {
+    throw conversationalReplyDeliveryError('Las partes del plan durable deben enviarse en orden')
+  }
+
+  const currentPart = plan.parts[index]
+  if (currentPart.status === 'sent') {
+    return { checkpointed: false, reason: 'already_sent', plan }
+  }
+  if (cleanStatus === 'sending' && currentPart.status === 'sending') {
+    return { checkpointed: false, reason: 'already_sending', plan }
+  }
+  if (cleanStatus === 'sending' && currentPart.status !== 'pending') {
+    throw conversationalReplyDeliveryError(`No se puede iniciar una parte en estado ${currentPart.status}`)
+  }
+  if (cleanStatus === 'sent' && currentPart.status !== 'sending') {
+    throw conversationalReplyDeliveryError('Una parte debe quedar en sending antes de confirmarse como sent')
+  }
+
+  const lease = processingLeaseIso({ nowMs, leaseMs })
+  const nextPart = cleanStatus === 'sending'
+    ? {
+        ...currentPart,
+        status: 'sending',
+        attempts: Math.max(0, Number(currentPart.attempts) || 0) + 1,
+        sendingAt: lease.nowIso,
+        providerMessageId: null,
+        lastError: null
+      }
+    : {
+        ...currentPart,
+        status: 'sent',
+        sentAt: lease.nowIso,
+        providerMessageId: String(providerMessageId || '').trim().slice(0, 500) || null,
+        lastError: String(error || '').trim().slice(0, 1200) || null
+      }
+  const next = {
+    ...detail,
+    parts: plan.parts.map((part, partIndexValue) => partIndexValue === index ? nextPart : part),
+    leaseUntilAt: lease.leaseUntilIso,
+    lastCheckpointAt: lease.nowIso
+  }
+  if (!await compareAndSetConversationalReplyDeliveryPlan(row, next)) {
+    throw conversationalReplyDeliveryError('No se pudo guardar el avance durable de la respuesta')
+  }
+  return {
+    checkpointed: true,
+    reason: cleanStatus,
+    plan: mapConversationalReplyDeliveryPlan(row, next)
+  }
+}
+
+/**
+ * Libera o termina un claim. Sólo `pending` permite reintento; si todavía hay
+ * una parte `sending`, cualquier cierre no completado se convierte en
+ * `ambiguous` para impedir un reenvío potencialmente duplicado.
+ */
+export async function settleConversationalReplyDelivery(planId, claimToken, {
+  status = 'completed',
+  error = '',
+  interruptedByMessageId = null,
+  nowMs = Date.now()
+} = {}) {
+  const cleanPlanId = String(planId || '').trim()
+  const cleanClaimToken = String(claimToken || '').trim()
+  const requestedStatus = String(status || '').trim().toLowerCase()
+  if (!cleanPlanId || !cleanClaimToken || !CONVERSATIONAL_REPLY_DELIVERY_SETTLE_STATUSES.has(requestedStatus)) {
+    throw conversationalReplyDeliveryError('Cierre inválido del plan durable', {
+      statusCode: 400,
+      code: 'CONVERSATIONAL_REPLY_DELIVERY_INVALID_SETTLEMENT'
+    })
+  }
+
+  const row = await readConversationalReplyDeliveryPlanRow(cleanPlanId)
+  if (!row) throw conversationalReplyDeliveryError('Se perdió el plan durable de respuesta')
+  assertConversationalReplyDeliveryPlanRow(row)
+  const detail = parseJsonField(row.detail_json, {})
+  const plan = mapConversationalReplyDeliveryPlan(row)
+  if (plan.status === requestedStatus && CONVERSATIONAL_REPLY_DELIVERY_TERMINAL_STATUSES.has(plan.status)) {
+    return { settled: false, reason: `already_${plan.status}`, status: plan.status, plan }
+  }
+  if (plan.status !== 'processing' || plan.claimToken !== cleanClaimToken) {
+    throw conversationalReplyDeliveryError('Otro proceso tomó el plan durable de respuesta')
+  }
+  if (requestedStatus === 'completed' && plan.parts.some((part) => part?.status !== 'sent')) {
+    throw conversationalReplyDeliveryError('No se puede completar una respuesta con partes pendientes')
+  }
+
+  const lease = processingLeaseIso({ nowMs, leaseMs: CONVERSATIONAL_REPLY_DELIVERY_LEASE_MS })
+  const sendingParts = plan.parts.filter((part) => part?.status === 'sending')
+  const finalStatus = requestedStatus !== 'completed' && sendingParts.length
+    ? 'ambiguous'
+    : requestedStatus
+  const cleanError = String(error || '').trim().slice(0, 1200) || null
+  const next = {
+    ...detail,
+    status: finalStatus,
+    parts: finalStatus === 'ambiguous'
+      ? plan.parts.map((part) => part?.status === 'sending'
+        ? { ...part, status: 'ambiguous', lastError: cleanError || 'delivery_status_unknown_after_send_started' }
+        : part)
+      : plan.parts,
+    claimToken: null,
+    leaseUntilAt: null,
+    lastError: finalStatus === 'completed' || finalStatus === 'interrupted' ? null : cleanError,
+    ...(finalStatus === 'completed' ? { completedAt: lease.nowIso } : {}),
+    ...(finalStatus === 'interrupted'
+      ? {
+          interruptedAt: lease.nowIso,
+          interruptedByMessageId: String(interruptedByMessageId || '').trim().slice(0, 500) || null
+        }
+      : {}),
+    ...(finalStatus === 'pending' ? { releasedAt: lease.nowIso } : {}),
+    ...(finalStatus === 'ambiguous'
+      ? {
+          ambiguousAt: lease.nowIso,
+          ambiguousReason: cleanError || 'delivery_status_unknown_after_send_started'
+        }
+      : {})
+  }
+  if (!await compareAndSetConversationalReplyDeliveryPlan(row, next)) {
+    throw conversationalReplyDeliveryError('No se pudo cerrar el plan durable de respuesta')
+  }
+  return {
+    settled: true,
+    reason: finalStatus,
+    status: finalStatus,
+    plan: mapConversationalReplyDeliveryPlan(row, next)
   }
 }
 

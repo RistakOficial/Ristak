@@ -2820,9 +2820,33 @@ decide llamadas estructuradas a las tools
 que corresponden exactamente a las capacidades activadas. No ejecuta
 `assessment`, `strategyPlanner`, `turnPolicy`, `closingPhaseGate`,
 `complianceGuard`, reglas regex que decidan intención, bloqueen acciones o
-supriman respuestas, otra IA para dividir mensajes,
+supriman respuestas,
 `stay_silent`, `discard_conversation` ni `update_closing_context`. La separacion
-en globos, si esta activa, es determinista. `parallelToolCalls=false` impide
+en globos es la unica excepcion de posprocesamiento: si el dueño la activa, una
+mini-IA aislada con `gpt-5-nano` recibe solamente la respuesta final visible y
+devuelve cortes estructurados. Las respuestas menores a 120 caracteres salen en
+un solo globo sin otra llamada; las que superan ese umbral exigen de dos a seis.
+No recibe historial, contexto del negocio ni tools; no interpreta la intencion
+del cliente, no decide acciones y no puede agendar, cobrar, transferir ni
+suprimir la respuesta. Esta excepcion usa OpenAI aunque el proveedor principal
+del agente sea otro: solo se comparte la respuesta final visible y la llamada
+usa `store=false`. El backend comprueba que no cambie ninguna letra, numero,
+precio, fecha, hora, URL, telefono, correo o codigo, y solo acepta cortes en
+espacios o saltos reales para no romper un token. Si falta la llave OpenAI,
+excede ocho segundos, devuelve algo invalido o falla la mini-IA, se manda el
+texto original completo en un solo globo. Un fallo al guardar la telemetria
+nunca bloquea los globos ya validados. No hay reintentos de esa llamada
+secundaria.
+
+Antes del primer envio se guarda un plan durable por contacto, agente, canal,
+mensaje origen y tipo de respuesta. Ese plan fija texto, orden, pausas e IDs de
+cada globo; un retry reutiliza el primer plan y continua solo las partes
+pendientes, sin volver a pedir cortes ni duplicar lo ya confirmado. Cada parte
+pasa por `sending` y `sent` con compare-and-swap y lease. Si el proceso muere
+despues de iniciar un envio pero antes de confirmar su resultado, el plan queda
+`ambiguous` y no se reenvia a ciegas porque Meta no ofrece idempotencia real en
+ese punto. Si entra un mensaje nuevo, el plan viejo queda `interrupted` y sus
+partes pendientes no reviven. `parallelToolCalls=false` impide
 mutaciones paralelas en una misma vuelta del modelo y las acciones conservan
 idempotencia en servidor. Agendar, completar un objetivo o transferir reutiliza
 directamente el resumen factual estructurado de la tool: no levanta otra
@@ -2885,9 +2909,11 @@ configurada; las rutas conversacionales no exigen OpenAI globalmente. La
 `dryRun`, el mismo prompt blindado y el mismo limite de historial. Devuelve el
 manifiesto de capacidades y las acciones simuladas; no produce assessment,
 estrategia ni una decision de silencio. `responseDelayMs` es cero
-en preview; el chat publicado conserva su espera. Si entran mensajes durante esa
-espera o entre globos, el runtime recarga contexto, detiene partes obsoletas y
-vuelve a ejecutar el turno mas reciente.
+en preview; la previsualizacion y el chat publicado comparten la misma mini-IA
+de globos cuando el switch esta activo. El chat publicado conserva su espera. Si
+entran mensajes durante esa espera, mientras se calculan los cortes o entre
+globos, el runtime recarga contexto, detiene partes obsoletas y vuelve a ejecutar
+el turno mas reciente antes de enviar contenido viejo.
 
 ### Herramientas y verdad operativa
 

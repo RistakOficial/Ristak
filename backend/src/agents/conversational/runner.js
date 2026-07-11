@@ -34,6 +34,11 @@ import {
   claimConversationInboundMessage,
   completeConversationInboundMessage,
   failConversationInboundMessage,
+  getConversationalReplyDeliveryPlan,
+  getOrCreateConversationalReplyDeliveryPlan,
+  claimConversationalReplyDelivery,
+  checkpointConversationalReplyDelivery,
+  settleConversationalReplyDelivery,
   recoverPendingConversationalPaymentSourceBindings,
   recoverPendingConversationalPaymentReconciliations,
   runWithConversationStateChannel,
@@ -57,6 +62,7 @@ import { hasFeature } from '../../services/licenseService.js'
 import { createConversationalTools } from './tools.js'
 import { buildInputItems } from '../runner.js'
 import {
+  splitMessageIntoBubbles,
   splitMessageIntoBubblesFallback
 } from './messageSplitter.js'
 import {
@@ -2066,12 +2072,12 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
       latest,
       agentConfig,
       reply,
-      apiKey: runtime.apiKey,
+      apiKey: openAIFallbackApiKey,
       model,
       channel: normalizedChannel,
       externalIdPrefix: `convagent_followup${followUpIndex}`,
       dependencies: {
-        splitter: splitMessageIntoBubblesFallback,
+        splitter: splitMessageIntoBubbles,
         markReplyComplete: async ({ contactId: doneContactId, latest: doneLatest }) => {
           await db.run(`
             UPDATE conversational_agent_state
@@ -2104,6 +2110,22 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
           reason: 'newer_inbound_during_follow_up',
           newerMessageId: delivery.interruptedBy.id,
           sentParts: delivery.sentParts
+        }
+      }).catch(() => {})
+      return
+    }
+
+    if (delivery.inProgress) {
+      await recordConversationalAgentEvent({
+        contactId,
+        eventType: 'follow_up_suppressed',
+        detail: {
+          agentId: agentConfig.id,
+          baseMessageId,
+          followUpIndex,
+          channel: normalizedChannel,
+          runtimeMode: turn.runtimeMode,
+          reason: 'reply_delivery_already_in_progress'
         }
       }).catch(() => {})
       return
@@ -2145,6 +2167,27 @@ async function runScheduledFollowUp({ contactId, phone, baseMessageId, followUpI
     scheduleNextFollowUp({ contactId, phone, latest, state: nextState, agentConfig, reason: 'seguimiento enviado', channel: normalizedChannel })
 }
 
+const DEFAULT_REPLY_DELIVERY_LEDGER = Object.freeze({
+  get: getConversationalReplyDeliveryPlan,
+  create: getOrCreateConversationalReplyDeliveryPlan,
+  claim: claimConversationalReplyDelivery,
+  checkpoint: checkpointConversationalReplyDelivery,
+  settle: settleConversationalReplyDelivery
+})
+
+function getConversationalProviderMessageId(result) {
+  return String(
+    result?.localMessageId ||
+    result?.messageId ||
+    result?.id ||
+    result?.wamid ||
+    result?.data?.localMessageId ||
+    result?.data?.messageId ||
+    result?.data?.id ||
+    ''
+  ).trim() || null
+}
+
 export async function sendReplyParts({
   contactId,
   phone,
@@ -2158,98 +2201,102 @@ export async function sendReplyParts({
   dependencies = {}
 }) {
   const {
-    splitter = splitMessageIntoBubblesFallback,
+    splitter = splitMessageIntoBubbles,
     sendTextMessage = null,
     wait = sleep,
     loadNewerInbound = null,
     recordEvent = recordConversationalAgentEvent,
-    markReplyComplete = null
+    markReplyComplete = null,
+    replyDeliveryLedger = sendTextMessage ? null : DEFAULT_REPLY_DELIVERY_LEDGER
   } = dependencies || {}
 
   const normalizedChannel = normalizeConversationalChannel(channel || latest?.channel)
-  const splitResult = isEmailConversationalChannel(normalizedChannel)
-    ? { messages: [reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
-    : await splitter({
-      text: reply,
-      settings: agentConfig.replyDelivery,
-      apiKey
-    })
-  const parts = splitResult.messages
-  if (!parts.length) return { parts: [], sentParts: 0, interruptedBy: null }
-
-  const sendMessage = sendTextMessage || ((args) => sendConversationalChannelTextMessage({
-    ...args,
-    contactId,
-    latest,
-    phone,
-    channel: normalizedChannel,
-    commentReplyMode: getCommentReplyModeForAgent(agentConfig, normalizedChannel)
-  }))
-
+  const fallbackReply = String(reply || '').trim()
   const delivery = normalizeAgentReplyDelivery(agentConfig.replyDelivery)
-  const delaySchedule = buildReplyPartDelaySchedule(parts, { replyDelivery: delivery })
-  if (!isEmailConversationalChannel(normalizedChannel) && delivery.splitMessagesEnabled) {
-    await recordEvent({
-      contactId,
-      eventType: 'reply_splitter_result',
-      detail: {
-        messageId: latest.id,
-        agentId: agentConfig.id || null,
-        channel: normalizedChannel,
-        source: splitResult.source,
-        reason: splitResult.reason,
-        partCount: parts.length
-      }
-    })
+  const planIdentity = {
+    contactId,
+    agentId: agentConfig?.id || '',
+    channel: normalizedChannel,
+    sourceMessageId: latest?.id || '',
+    externalIdPrefix
   }
-
-  for (let index = 0; index < parts.length; index += 1) {
-    if (index > 0) {
-      const delayMs = delaySchedule[index] || 0
-      if (delayMs > 0) {
-        await recordEvent({
-          contactId,
-          eventType: 'reply_part_wait_started',
-          detail: { messageId: latest.id, agentId: agentConfig.id || null, partIndex: index + 1, partCount: parts.length, delayMs }
-        })
-        await wait(delayMs)
+  const durableLedger = replyDeliveryLedger && contactId && agentConfig?.id && latest?.id
+    ? replyDeliveryLedger
+    : null
+  let durablePlan = durableLedger ? await durableLedger.get(planIdentity) : null
+  let splitResult = durablePlan
+    ? {
+        messages: durablePlan.parts.map((part) => part.text),
+        source: durablePlan.splitterMeta?.source || 'durable_plan',
+        reason: durablePlan.splitterMeta?.reason || 'reused_durable_plan',
+        model: durablePlan.splitterMeta?.model || null
       }
+    : null
 
-      const newerInbound = await (loadNewerInbound
-        ? loadNewerInbound(contactId, latest.id)
-        : loadNewerInboundMessage(contactId, latest.id, normalizedChannel))
-      if (newerInbound) {
-        return { parts, sentParts: index, interruptedBy: newerInbound, delaySchedule }
+  if (!splitResult) {
+    try {
+      splitResult = isEmailConversationalChannel(normalizedChannel)
+        ? { messages: [fallbackReply].filter(Boolean), source: 'email', reason: 'email_single_message' }
+        : await splitter({
+          text: fallbackReply,
+          settings: agentConfig.replyDelivery,
+          apiKey
+        })
+    } catch (error) {
+      logger.warn(`[Agente conversacional] El divisor de globitos lanzó un error; se enviará la respuesta completa: ${error.message}`)
+      splitResult = {
+        messages: [fallbackReply].filter(Boolean),
+        source: 'fallback',
+        reason: error.message || 'splitter_exception'
       }
     }
-
-    await sendMessage({
-      channel: normalizedChannel,
-      to: phone || latest.phone,
-      from: latest.business_phone || undefined,
-      phoneNumberId: latest.business_phone_number_id || undefined,
-      text: parts[index],
-      externalId: `${externalIdPrefix}_${latest.id}${parts.length > 1 ? `_${index + 1}` : ''}`.slice(0, 120),
-      agentId: agentConfig.id || null
-    })
-
-    await recordEvent({
-      contactId,
-      eventType: parts.length > 1 ? 'reply_part_sent' : 'reply_single_sent',
-      detail: {
-        messageId: latest.id,
-        agentId: agentConfig.id || null,
-        channel: normalizedChannel,
-        partIndex: index + 1,
-        partCount: parts.length,
-        replyPreview: parts[index].slice(0, 180)
-      }
-    })
   }
 
-  if (typeof markReplyComplete === 'function') {
-    await markReplyComplete({ contactId, latest, parts, delaySchedule })
-  } else {
+  let parts = (Array.isArray(splitResult?.messages) ? splitResult.messages : [])
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+  if (!parts.length && fallbackReply) {
+    parts = [fallbackReply]
+    splitResult = { messages: parts, source: 'fallback', reason: 'empty_splitter_result' }
+  }
+  if (!parts.length) return { parts: [], sentParts: 0, interruptedBy: null }
+
+  let delaySchedule = durablePlan?.delaySchedule || buildReplyPartDelaySchedule(parts, { replyDelivery: delivery })
+  if (durableLedger && !durablePlan) {
+    const reserved = await durableLedger.create(planIdentity, {
+      reply: fallbackReply,
+      parts,
+      delaySchedule,
+      splitterMeta: {
+        source: splitResult.source,
+        reason: splitResult.reason,
+        model: splitResult.model || null
+      }
+    })
+    durablePlan = reserved.plan
+    parts = durablePlan.parts.map((part) => part.text)
+    delaySchedule = durablePlan.delaySchedule
+    splitResult = {
+      messages: parts,
+      source: durablePlan.splitterMeta?.source || splitResult.source,
+      reason: reserved.candidateDiscarded ? 'reused_concurrent_durable_plan' : (durablePlan.splitterMeta?.reason || splitResult.reason),
+      model: durablePlan.splitterMeta?.model || splitResult.model || null
+    }
+  }
+
+  const recordDeliveryEvent = async (event) => {
+    try {
+      await recordEvent(event)
+    } catch (error) {
+      logger.warn(`[Agente conversacional] No se pudo guardar telemetría de entrega: ${error.message}`)
+    }
+  }
+
+  const completeReply = async () => {
+    if (typeof markReplyComplete === 'function') {
+      await markReplyComplete({ contactId, latest, parts, delaySchedule })
+      return
+    }
     await db.run(`
       UPDATE conversational_agent_state
       SET last_reply_at = CURRENT_TIMESTAMP,
@@ -2264,7 +2311,174 @@ export async function sendReplyParts({
     `, [latest.id, contactId, agentConfig?.id || null, normalizedChannel])
   }
 
-  return { parts, sentParts: parts.length, interruptedBy: null, delaySchedule }
+  const sendMessage = sendTextMessage || ((args) => sendConversationalChannelTextMessage({
+    ...args,
+    contactId,
+    latest,
+    phone,
+    channel: normalizedChannel,
+    commentReplyMode: getCommentReplyModeForAgent(agentConfig, normalizedChannel)
+  }))
+
+  if (!isEmailConversationalChannel(normalizedChannel) && delivery.splitMessagesEnabled) {
+    await recordDeliveryEvent({
+      contactId,
+      eventType: 'reply_splitter_result',
+      detail: {
+        messageId: latest.id,
+        agentId: agentConfig.id || null,
+        channel: normalizedChannel,
+        source: splitResult.source,
+        reason: splitResult.reason,
+        partCount: parts.length,
+        splitterModel: splitResult.model || null
+      }
+    })
+  }
+
+  let deliveryClaim = null
+  if (durableLedger) {
+    deliveryClaim = await durableLedger.claim(durablePlan.id)
+    durablePlan = deliveryClaim.plan || durablePlan
+    const alreadyAttempted = durablePlan.parts.filter((part) => ['sent', 'ambiguous'].includes(part.status)).length
+    if (deliveryClaim.completed || durablePlan.status === 'completed') {
+      await completeReply()
+      return { parts, sentParts: parts.length, interruptedBy: null, delaySchedule, durableStatus: 'completed', resumed: true }
+    }
+    if (deliveryClaim.interrupted || durablePlan.status === 'interrupted') {
+      const interruptedById = durablePlan.interruptedByMessageId || null
+      const newerInbound = await Promise.resolve(loadNewerInbound
+        ? loadNewerInbound(contactId, latest.id)
+        : loadNewerInboundMessage(contactId, latest.id, normalizedChannel)).catch(() => null)
+      return {
+        parts,
+        sentParts: alreadyAttempted,
+        interruptedBy: newerInbound || (interruptedById ? { id: interruptedById } : { id: 'newer_inbound' }),
+        delaySchedule,
+        durableStatus: 'interrupted',
+        resumed: true
+      }
+    }
+    if (deliveryClaim.ambiguous || durablePlan.status === 'ambiguous') {
+      await recordDeliveryEvent({
+        contactId,
+        eventType: 'reply_delivery_ambiguous',
+        detail: {
+          messageId: latest.id,
+          agentId: agentConfig.id || null,
+          channel: normalizedChannel,
+          planId: durablePlan.id,
+          reason: durablePlan.ambiguousReason || deliveryClaim.reason || 'provider_delivery_unknown'
+        }
+      })
+      await completeReply()
+      return { parts, sentParts: alreadyAttempted, interruptedBy: null, delaySchedule, durableStatus: 'ambiguous', resumed: true }
+    }
+    if (!deliveryClaim.claimed) {
+      return {
+        parts,
+        sentParts: alreadyAttempted,
+        interruptedBy: null,
+        delaySchedule,
+        durableStatus: deliveryClaim.reason || 'in_progress',
+        inProgress: true
+      }
+    }
+  }
+
+  let sentParts = durablePlan?.parts.filter((part) => part.status === 'sent').length || 0
+  try {
+    for (let index = 0; index < parts.length; index += 1) {
+      const durablePart = durablePlan?.parts[index] || null
+      if (durablePart?.status === 'sent') continue
+
+      if (index > 0) {
+        const delayMs = delaySchedule[index] || 0
+        if (delayMs > 0) {
+          await recordDeliveryEvent({
+            contactId,
+            eventType: 'reply_part_wait_started',
+            detail: { messageId: latest.id, agentId: agentConfig.id || null, partIndex: index + 1, partCount: parts.length, delayMs }
+          })
+          await wait(delayMs)
+        }
+      }
+
+      // La mini-IA tarda unos segundos. Revalidamos incluso antes del primer globo
+      // para no enviar una respuesta vieja si el cliente escribió mientras partía.
+      const newerInbound = await (loadNewerInbound
+        ? loadNewerInbound(contactId, latest.id)
+        : loadNewerInboundMessage(contactId, latest.id, normalizedChannel))
+      if (newerInbound) {
+        if (durableLedger) {
+          await durableLedger.settle(durablePlan.id, deliveryClaim.claimToken, {
+            status: 'interrupted',
+            interruptedByMessageId: newerInbound.id || null
+          })
+        }
+        return { parts, sentParts, interruptedBy: newerInbound, delaySchedule, durableStatus: 'interrupted' }
+      }
+
+      if (durableLedger) {
+        const checkpoint = await durableLedger.checkpoint(durablePlan.id, deliveryClaim.claimToken, {
+          partIndex: index,
+          status: 'sending'
+        })
+        durablePlan = checkpoint.plan
+      }
+
+      const sendResult = await sendMessage({
+        channel: normalizedChannel,
+        to: phone || latest.phone,
+        from: latest.business_phone || undefined,
+        phoneNumberId: latest.business_phone_number_id || undefined,
+        text: parts[index],
+        externalId: durablePart?.externalId || `${externalIdPrefix}_${latest.id}_${index + 1}`.slice(0, 120),
+        agentId: agentConfig.id || null
+      })
+
+      if (durableLedger) {
+        const checkpoint = await durableLedger.checkpoint(durablePlan.id, deliveryClaim.claimToken, {
+          partIndex: index,
+          status: 'sent',
+          providerMessageId: getConversationalProviderMessageId(sendResult)
+        })
+        durablePlan = checkpoint.plan
+      }
+      sentParts += 1
+
+      await recordDeliveryEvent({
+        contactId,
+        eventType: parts.length > 1 ? 'reply_part_sent' : 'reply_single_sent',
+        detail: {
+          messageId: latest.id,
+          agentId: agentConfig.id || null,
+          channel: normalizedChannel,
+          partIndex: index + 1,
+          partCount: parts.length,
+          replyPreview: parts[index].slice(0, 180)
+        }
+      })
+    }
+  } catch (error) {
+    if (durableLedger && deliveryClaim?.claimed) {
+      await durableLedger.settle(durablePlan.id, deliveryClaim.claimToken, {
+        status: 'pending',
+        error: error.message || 'reply_delivery_failed'
+      }).catch((settleError) => {
+        logger.error(`[Agente conversacional] No se pudo cerrar el plan de entrega fallido: ${settleError.message}`)
+      })
+    }
+    throw error
+  }
+
+  if (durableLedger) {
+    const settled = await durableLedger.settle(durablePlan.id, deliveryClaim.claimToken, { status: 'completed' })
+    durablePlan = settled.plan
+  }
+  await completeReply()
+
+  return { parts, sentParts, interruptedBy: null, delaySchedule, durableStatus: durablePlan?.status || null }
 }
 
 function toolCallingV2OwnsTerminalState(actions = []) {
@@ -2289,6 +2503,7 @@ async function handleToolCallingV2InboundTurn({
   agentConfig,
   runtime,
   aiProvider,
+  splitterApiKey,
   channel,
   traceMessage,
   settleActiveClaim
@@ -2383,12 +2598,11 @@ async function handleToolCallingV2InboundTurn({
     latest,
     agentConfig,
     reply,
-    apiKey: runtime.apiKey,
+    apiKey: splitterApiKey,
     model,
     channel: normalizedChannel,
     dependencies: {
-      // El runtime v2 nunca dispara una segunda IA sólo para partir globos.
-      splitter: splitMessageIntoBubblesFallback,
+      splitter: splitMessageIntoBubbles,
       markReplyComplete: async () => {
         await settleActiveClaim({ status: 'completed', answered: true })
       }
@@ -2419,6 +2633,11 @@ async function handleToolCallingV2InboundTurn({
     })
     await settleActiveClaim({ status: 'completed', answered: false })
     return { sent: false, reason: 'newer_inbound_during_split_reply', turn }
+  }
+
+  if (delivery.inProgress) {
+    await settleActiveClaim({ status: 'completed', answered: false })
+    return { sent: false, reason: 'reply_delivery_already_in_progress', turn, delivery }
   }
 
   if (!delivery.parts.length) {
@@ -2601,12 +2820,12 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
       latest: syntheticLatest,
       agentConfig,
       reply,
-      apiKey: runtime.apiKey,
+      apiKey: openAIFallbackApiKey,
       model,
       channel: normalizedChannel,
       externalIdPrefix: 'convagent_payment_resume',
       dependencies: {
-        splitter: splitMessageIntoBubblesFallback,
+        splitter: splitMessageIntoBubbles,
         loadNewerInbound: () => loadNewerInboundMessage(cleanContactId, latest.id, normalizedChannel),
         recordEvent: (event) => recordEvent({
           ...event,
@@ -2632,6 +2851,9 @@ export async function resumeToolCallingV2AfterVerifiedPayment({
         reason: 'mensaje nuevo durante respuesta de pago verificado'
       })
       return { resumed: false, queued: true, reason: 'newer_inbound_during_delivery', turn }
+    }
+    if (delivery.inProgress) {
+      return { resumed: false, reason: 'reply_delivery_already_in_progress', turn, delivery }
     }
     if (!delivery.parts.length) throw new Error('La reanudación v2 produjo una respuesta vacía')
 
@@ -3035,6 +3257,7 @@ export async function handleInboundConversationalMessage({ contactId, phone, mes
           agentConfig,
           runtime,
           aiProvider,
+          splitterApiKey: openAIFallbackApiKey,
           channel: normalizedChannel,
           traceMessage,
           settleActiveClaim
@@ -3419,9 +3642,10 @@ export async function runConversationalAgentPreview({ messages = [], configOverr
   })
   const splitResult = isEmailConversationalChannel(previewChannel)
     ? { messages: [turn.reply].filter(Boolean), source: 'email', reason: 'email_single_message' }
-    : splitMessageIntoBubblesFallback({
+    : await splitMessageIntoBubbles({
         text: turn.reply,
-        settings: runtimeConfig.replyDelivery
+        settings: runtimeConfig.replyDelivery,
+        apiKey: openAIFallbackApiKey
       })
   const replyParts = splitResult.messages
 
