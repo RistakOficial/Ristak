@@ -66,6 +66,17 @@ export function normalizePhoneDigits(value) {
   return cleanSearchText(value, 120).replace(/\D/g, '')
 }
 
+/**
+ * Solo una consulta compuesta como teléfono puede seleccionar un número alterno
+ * para iniciar un chat. Nombres/correos con cifras ("Empresa 2468") siguen
+ * siendo búsquedas de texto y nunca deben cambiar el destinatario del mensaje.
+ */
+export function isPhoneSearchText(value, { minDigits = 7 } = {}) {
+  const cleaned = cleanSearchText(value, 120)
+  if (!cleaned || !/^[\d\s()+.\-/\u00a0]+$/.test(cleaned)) return false
+  return normalizePhoneDigits(cleaned).length >= Math.max(1, Number(minDigits) || 7)
+}
+
 export function containsPattern(value, maxLength = 500) {
   const normalized = normalizeSearchText(value, maxLength)
   return normalized ? `%${normalized}%` : ''

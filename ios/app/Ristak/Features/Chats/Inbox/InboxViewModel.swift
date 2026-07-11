@@ -102,6 +102,13 @@ final class InboxViewModel {
     }
     private let activityClock = ContinuousClock()
     private var pendingActivityByContactID: [String: PendingInboxActivity] = [:]
+    /// Eventos de chats que viven fuera de las páginas ya cargadas. Cada
+    /// contacto dispara como máximo una hidratación ligera en paralelo y las
+    /// ráfagas se reproducen en orden cuando llega su identidad.
+    private var unknownActivityBuffer = ChatUnknownActivityBuffer()
+    private var unknownContactResolutionTasks: [String: Task<Void, Never>] = [:]
+    private var unknownContactResolutionIDs: [String: UUID] = [:]
+    private var activitySessionGeneration: UInt64 = 0
     private var activityRevision: UInt64 = 0
     private static let pendingActivityLifetime: Duration = .seconds(60)
     private var realtimeTask: Task<Void, Never>?
@@ -128,6 +135,12 @@ final class InboxViewModel {
     /// Contactos seleccionados desde el directorio ligero que todavía no existen
     /// en la bandeja. Sin esto el hilo abre sin seed y pierde el `matchedPhone`.
     private var navigationSeedContacts: [String: ChatContact] = [:]
+    /// Índice ligero RAM por id. Permite resolver en el mismo frame un evento
+    /// de un chat viejo si ese contacto ya apareció en Nuevo chat/Citas/Pagos.
+    private var directoryContactByID: [String: ChatContact] = [:]
+    /// Sólo estos contactos pueden reutilizar un destino restaurado de disco.
+    /// Se llena exclusivamente con respuestas frescas de esta sesión.
+    private var validatedDestinationContactIDs: Set<String> = []
 
     // MARK: Filtros
 
@@ -208,15 +221,22 @@ final class InboxViewModel {
             persistCacheSnapshot()
         }
 
+        indexDirectoryContacts(contactsService.cachedPickerContacts())
         guard directoryPrewarmNamespace != newNamespace else { return }
         directoryPrewarmNamespace = newNamespace
         let directoryService = contactsService
-        Task(priority: .utility) {
-            _ = try? await directoryService.fetchPickerContacts()
+        Task(priority: .utility) { [weak self] in
+            guard let contacts = try? await directoryService.fetchPickerContacts() else { return }
+            self?.indexDirectoryContacts(contacts, validatesDestinations: true)
         }
     }
 
     private func clearAccountScopedState() {
+        activitySessionGeneration &+= 1
+        for task in unknownContactResolutionTasks.values { task.cancel() }
+        unknownContactResolutionTasks.removeAll()
+        unknownContactResolutionIDs.removeAll()
+        unknownActivityBuffer.removeAll()
         rows = []
         hasMore = false
         isShowingCachedData = false
@@ -229,6 +249,8 @@ final class InboxViewModel {
         pendingActivityByContactID.removeAll()
         contactSuggestions = []
         navigationSeedContacts.removeAll()
+        directoryContactByID.removeAll()
+        validatedDestinationContactIDs.removeAll()
         searchText = ""
         searchServerUnavailable = false
         selectedIDs = []
@@ -288,9 +310,21 @@ final class InboxViewModel {
     func initialLoad() async {
         guard rows.isEmpty || isShowingCachedData else { return }
         let performanceSpan = RistakObservability.begin(.chatInboxLoad)
-        defer {
+        let hadVisibleRows = !rows.isEmpty
+        if hadVisibleRows {
+            performanceSpan.finish(outcome: .success, itemCount: rows.count)
+        }
+        isInitialLoading = rows.isEmpty
+        loadErrorMessage = nil
+        isAccessDenied = false
+
+        async let contextTask: Void = loadSatelliteContext()
+        await reloadFromServer(showSpinner: rows.isEmpty)
+        if !hadVisibleRows {
             let outcome: RistakPerformanceOutcome
-            if isAccessDenied {
+            if Task.isCancelled {
+                outcome = .cancelled
+            } else if isAccessDenied {
                 outcome = .unavailable
             } else if loadErrorMessage != nil {
                 outcome = .failed
@@ -299,12 +333,6 @@ final class InboxViewModel {
             }
             performanceSpan.finish(outcome: outcome, itemCount: rows.count)
         }
-        isInitialLoading = rows.isEmpty
-        loadErrorMessage = nil
-        isAccessDenied = false
-
-        async let contextTask: Void = loadSatelliteContext()
-        await reloadFromServer(showSpinner: rows.isEmpty)
         await contextTask
         restorePersistedPhoneFilter()
     }
@@ -423,6 +451,7 @@ final class InboxViewModel {
             // Si el usuario cambió query/número mientras esta carga volaba,
             // descartar el lote (llega otro reload con los params nuevos).
             guard fetchKey == currentFetchKey else { return }
+            validateStoredDestinations(in: page)
             let isReplace = rows.isEmpty || isShowingCachedData || loadedFetchKey != fetchKey
             if isReplace {
                 if page.isEmpty, !rows.isEmpty || isShowingCachedData {
@@ -451,6 +480,7 @@ final class InboxViewModel {
                 if reconciled != rows { rows = reconciled }
                 serverOffset = max(serverOffset, page.count)
             }
+            resolveUnknownActivitiesFromLoadedRows()
             loadedFetchKey = fetchKey
             if loadErrorMessage != nil { loadErrorMessage = nil }
             if isAccessDenied { isAccessDenied = false }
@@ -506,8 +536,10 @@ final class InboxViewModel {
             let page = try await fetchPage(offset: serverOffset)
             // Descartar lotes si una recarga movió los params mientras tanto.
             guard fetchKey == currentFetchKey, fetchKey == loadedFetchKey else { return }
+            validateStoredDestinations(in: page)
             let appended = ChatInboxPaginator.appendPage(rows, page: page)
             rows = reconcilePendingActivities(in: appended, serverPage: page)
+            resolveUnknownActivitiesFromLoadedRows()
             prefetchAvatars(page)
             serverOffset += page.count
             hasMore = ChatInboxPaginator.hasMore(batchCount: page.count, limit: ChatsService.defaultPageSize)
@@ -539,30 +571,56 @@ final class InboxViewModel {
         guard configured, !activity.contactID.isEmpty else { return }
         guard activityMatchesActivePhoneFilter(activity) else { return }
 
+        let seed = navigationSeedContacts[activity.contactID]
+            ?? directoryContactByID[activity.contactID]
+        if applyResolvedActivity(activity, seedContact: seed) {
+            return
+        }
+
+        // El SSE no transporta nombre/teléfono. Para un chat fuera de las
+        // páginas cargadas resolvemos únicamente su identidad local (un query
+        // exacto), sin bloquear el stream ni enseñar un spinner global. El GET
+        // completo de page 0 que ya dispara el caller queda como respaldo.
+        enqueueUnknownActivity(activity)
+    }
+
+    @discardableResult
+    private func applyResolvedActivity(
+        _ activity: ChatInboxActivity,
+        seedContact: ChatContact?,
+        unreadFloor: Int? = nil,
+        serverAlreadyContainsActivity: Bool = false
+    ) -> Bool {
         let key = activity.deduplicationKey
-        let isDuplicate = appliedActivityKeys.contains(key)
-        if !isDuplicate {
+        let wasApplied = appliedActivityKeys.contains(key)
+        var sourceRows = rows
+        if let unreadFloor,
+           let index = sourceRows.firstIndex(where: { $0.id == activity.contactID }) {
+            sourceRows[index].unreadCount = max(sourceRows[index].unreadCount, unreadFloor)
+        }
+
+        guard let reduction = ChatInboxActivityReducer.apply(
+            activity,
+            to: sourceRows,
+            seedContact: seedContact,
+            isDuplicate: wasApplied || serverAlreadyContainsActivity
+        ) else { return false }
+
+        if !wasApplied {
             appliedActivityKeys.insert(key)
             appliedActivityOrder.append(key)
             if appliedActivityOrder.count > Self.activityDeduplicationLimit {
-                let expired = appliedActivityOrder.removeFirst()
-                appliedActivityKeys.remove(expired)
+                let expiredKey = appliedActivityOrder.removeFirst()
+                appliedActivityKeys.remove(expiredKey)
             }
         }
-
-        // Reductor puro compartido con tests: un contacto fuera de la
-        // profundidad cargada espera su fila completa del servidor.
-        guard let reduction = ChatInboxActivityReducer.apply(
-            activity,
-            to: rows,
-            isDuplicate: isDuplicate
-        ) else { return }
 
         activityRevision &+= 1
         if rows != reduction.rows { rows = reduction.rows }
         let contact = reduction.updatedContact
 
         if reduction.promoted {
+            navigationSeedContacts.removeValue(forKey: activity.contactID)
             pendingActivityByContactID[activity.contactID] = PendingInboxActivity(
                 activity: activity,
                 unreadCount: contact.unreadCount,
@@ -572,6 +630,134 @@ final class InboxViewModel {
 
         persistCacheSnapshot()
         syncUnreadBadge()
+        return true
+    }
+
+    private func enqueueUnknownActivity(_ activity: ChatInboxActivity) {
+        let result = unknownActivityBuffer.enqueue(activity)
+        guard result.accepted else { return }
+        if let evicted = result.evictedContactID {
+            unknownContactResolutionTasks[evicted]?.cancel()
+            unknownContactResolutionTasks[evicted] = nil
+            unknownContactResolutionIDs[evicted] = nil
+        }
+        guard unknownContactResolutionTasks[activity.contactID] == nil,
+              let expectedNamespace = namespace else { return }
+
+        let expectedGeneration = activitySessionGeneration
+        let contactID = activity.contactID
+        let service = contactsService
+        let operationID = UUID()
+        unknownContactResolutionIDs[contactID] = operationID
+        unknownContactResolutionTasks[contactID] = Task { [weak self] in
+            let fetched: ChatContact?
+            let requestSucceeded: Bool
+            do {
+                fetched = try await service.fetchPickerContact(id: contactID)
+                requestSucceeded = true
+            } catch {
+                fetched = nil
+                requestSucceeded = false
+            }
+            guard let self else { return }
+            guard self.unknownContactResolutionIDs[contactID] == operationID else { return }
+            self.unknownContactResolutionTasks[contactID] = nil
+            self.unknownContactResolutionIDs[contactID] = nil
+            guard self.namespace == expectedNamespace,
+                  self.activitySessionGeneration == expectedGeneration else { return }
+
+            guard let fetched else {
+                // Un resultado autoritativo vacío (oculto/eliminado) no fabrica
+                // una fila. Si fue un fallo de red, el refresh page 0 que corre
+                // en paralelo sigue siendo el respaldo.
+                if requestSucceeded {
+                    _ = self.unknownActivityBuffer.take(contactID: contactID)
+                }
+                return
+            }
+            self.indexDirectoryContacts([fetched], validatesDestinations: true)
+            self.resolveUnknownActivities(
+                contactID: contactID,
+                fetchedSeed: fetched,
+                serverRowAlreadyLoaded: self.rows.contains { $0.id == contactID }
+            )
+        }
+    }
+
+    private func resolveUnknownActivities(
+        contactID: String,
+        fetchedSeed: ChatContact,
+        serverRowAlreadyLoaded: Bool
+    ) {
+        guard let batch = unknownActivityBuffer.take(contactID: contactID) else { return }
+        let serverSnapshot = serverRowAlreadyLoaded
+            ? rows.first(where: { $0.id == contactID })
+            : nil
+        let unreadFloor = serverRowAlreadyLoaded
+            ? ChatInboxServerReconciliation.containedInboundCount(
+                in: batch.activities,
+                serverContact: serverSnapshot
+            )
+            : nil
+        for activity in batch.activities {
+            guard activityMatchesActivePhoneFilter(activity) else { continue }
+            _ = applyResolvedActivity(
+                activity,
+                seedContact: fetchedSeed,
+                unreadFloor: unreadFloor,
+                serverAlreadyContainsActivity: serverSnapshot.map {
+                    ChatInboxServerReconciliation.contains(activity, in: $0)
+                } ?? false
+            )
+        }
+    }
+
+    /// Si el refresh completo gana la carrera, reproduce el buffer sobre esa
+    /// fila autoritativa y cancela el GET ligero. El piso de no leídos evita
+    /// tanto perder una ráfaga como contarla dos veces.
+    private func resolveUnknownActivitiesFromLoadedRows() {
+        for contactID in unknownActivityBuffer.contactIDs {
+            guard let row = rows.first(where: { $0.id == contactID }) else { continue }
+            unknownContactResolutionTasks[contactID]?.cancel()
+            unknownContactResolutionTasks[contactID] = nil
+            unknownContactResolutionIDs[contactID] = nil
+            resolveUnknownActivities(
+                contactID: contactID,
+                fetchedSeed: row,
+                serverRowAlreadyLoaded: true
+            )
+        }
+    }
+
+    private func indexDirectoryContacts(
+        _ contacts: [ChatContact],
+        validatesDestinations: Bool = false
+    ) {
+        for contact in contacts where !contact.id.isEmpty {
+            directoryContactByID[contact.id] = contact
+        }
+        if validatesDestinations {
+            validateStoredDestinations(in: contacts)
+        }
+    }
+
+    private func validateStoredDestinations(in contacts: [ChatContact]) {
+        for contact in contacts where !contact.id.isEmpty {
+            guard let stored = localState.destinationPhone(for: contact.id) else { continue }
+            switch ChatNavigationDestinationResolver.validationStatus(
+                phone: stored,
+                contact: contact
+            ) {
+            case .valid:
+                validatedDestinationContactIDs.insert(contact.id)
+            case .invalid:
+                validatedDestinationContactIDs.remove(contact.id)
+                localState.setDestinationPhone(nil, for: contact.id)
+                navigationSeedContacts.removeValue(forKey: contact.id)
+            case .unknown:
+                validatedDestinationContactIDs.remove(contact.id)
+            }
+        }
     }
 
     private func activityMatchesActivePhoneFilter(_ activity: ChatInboxActivity) -> Bool {
@@ -602,7 +788,7 @@ final class InboxViewModel {
                 continue
             }
             if let server = serverPage.first(where: { $0.id == activity.contactID }),
-               serverAcknowledges(activity, in: server) {
+               ChatInboxServerReconciliation.contains(activity, in: server) {
                 pendingActivityByContactID.removeValue(forKey: activity.contactID)
                 continue
             }
@@ -620,25 +806,6 @@ final class InboxViewModel {
         }
 
         return result
-    }
-
-    private func serverAcknowledges(_ activity: ChatInboxActivity, in contact: ChatContact) -> Bool {
-        let directionMatches = ChatRowSignals.isOutbound(contact.lastMessageDirection)
-            == ChatRowSignals.isOutbound(activity.direction)
-        guard directionMatches else { return false }
-
-        let activityText = (activity.text ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let serverText = contact.lastMessageText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !activityText.isEmpty, activityText == serverText { return true }
-
-        let typeMatches = !activity.messageType.isEmpty
-            && contact.lastMessageType.caseInsensitiveCompare(activity.messageType) == .orderedSame
-        guard typeMatches,
-              let activityDate = RistakDateParsing.date(fromISO: activity.timestamp),
-              let serverDate = RistakDateParsing.date(fromISO: contact.lastMessageDate) else { return false }
-        return abs(serverDate.timeIntervalSince(activityDate)) <= 4 * 60
     }
 
     /// Refresh coalescido (nudge SSE / push foreground / tick de polling).
@@ -948,12 +1115,43 @@ final class InboxViewModel {
     }
 
     func row(for contactID: String) -> ChatContact? {
-        rows.first { $0.id == contactID } ?? navigationSeedContacts[contactID]
+        let authoritative = rows.first { $0.id == contactID }
+        let directory = directoryContactByID[contactID]
+        var persisted = localState.destinationPhone(for: contactID)
+        if let storedPhone = persisted,
+           let validationContact = [authoritative, directory]
+            .compactMap({ $0 })
+            .first(where: { !$0.phones.isEmpty }),
+           ChatNavigationDestinationResolver.validationStatus(
+            phone: storedPhone,
+            contact: validationContact
+           ) == .invalid {
+            localState.setDestinationPhone(nil, for: contactID)
+            validatedDestinationContactIDs.remove(contactID)
+            persisted = nil
+        }
+        return ChatNavigationDestinationResolver.resolve(
+            authoritativeRow: authoritative,
+            navigationSeed: navigationSeedContacts[contactID],
+            directorySeed: directory,
+            persistedPhone: persisted,
+            persistedPhoneIsValidated: validatedDestinationContactIDs.contains(contactID)
+        )
     }
 
     func registerNavigationSeed(_ contact: ChatContact) {
         guard !contact.id.isEmpty else { return }
         navigationSeedContacts[contact.id] = contact
+        directoryContactByID[contact.id] = contact
+        if let matchedPhone = contact.matchedPhone,
+           !matchedPhone.isEmpty,
+           ChatNavigationDestinationResolver.validationStatus(
+            phone: matchedPhone,
+            contact: contact
+           ) != .invalid {
+            localState.setDestinationPhone(matchedPhone, for: contact.id)
+            validatedDestinationContactIDs.insert(contact.id)
+        }
     }
 
     // MARK: - Filas especiales

@@ -6,10 +6,19 @@ import { join } from 'node:path'
 
 import {
   directChatCompatibilityFromRequest,
+  mediaUploadRequestDescriptor,
+  replaceMediaAssetHandler,
   trustedUploadContextFromRequest,
   uploadInputFromRequest
 } from '../src/controllers/mediaController.js'
-import { resolveMediaUploadModule } from '../src/routes/media.routes.js'
+import mediaRouter, { resolveMediaUploadModule } from '../src/routes/media.routes.js'
+import { db } from '../src/config/database.js'
+import {
+  resetCentralStorageConfigCache,
+  softDeleteMediaAsset,
+  uploadMediaAsset
+} from '../src/services/mediaStorageService.js'
+import { createMediaUploadRequestHash } from '../src/services/mediaUploadSafetyService.js'
 import { prepareWhatsAppMediaForDirectUpload } from '../src/services/whatsappApiService.js'
 
 async function withFakeFfmpeg(callback) {
@@ -125,6 +134,52 @@ test('la identidad y la cuota del upload directo de Chat provienen del servidor 
   }
 })
 
+test('Chat sin clientAccount conserva el SHA del ledger anterior al despliegue', async () => {
+  const request = {
+    query: {
+      module: 'chat',
+      chatCompatibility: 'whatsapp',
+      chatMediaKind: 'document'
+    },
+    body: {
+      moduleEntityId: 'contact-predeploy',
+      isPublic: 'true',
+      deferStreamSync: 'true'
+    },
+    file: {
+      originalname: 'contrato.pdf',
+      mimetype: 'application/pdf',
+      size: 24
+    },
+    user: { userId: 'user-predeploy' },
+    get: () => null
+  }
+  const directChat = directChatCompatibilityFromRequest(request)
+  request.directChatUpload = directChat
+  const context = trustedUploadContextFromRequest(request)
+  const nextDescriptor = mediaUploadRequestDescriptor(request, context, directChat)
+  const legacyDescriptor = {
+    businessId: context.businessId,
+    userId: String(context.userId),
+    module: context.module,
+    moduleEntityId: context.moduleEntityId,
+    isPublic: context.isPublic,
+    deferStreamSync: context.deferStreamSync,
+    chatCompatibility: 'whatsapp',
+    chatMediaKind: 'document',
+    filename: request.file.originalname,
+    mimeType: request.file.mimetype,
+    size: request.file.size
+  }
+  const bytes = Buffer.from('mismos bytes de un retry predeploy')
+
+  assert.equal(Object.hasOwn(nextDescriptor, 'clientAccountId'), false)
+  assert.equal(
+    await createMediaUploadRequestHash({ descriptor: nextDescriptor, buffer: bytes }),
+    await createMediaUploadRequestHash({ descriptor: legacyDescriptor, buffer: bytes })
+  )
+})
+
 test('Media/Sites conserva el ruteo administrativo multi-cuenta existente', () => {
   const context = trustedUploadContextFromRequest({
     query: {},
@@ -141,6 +196,134 @@ test('Media/Sites conserva el ruteo administrativo multi-cuenta existente', () =
   assert.equal(context.clientAccountId, 'location_admin')
   assert.equal(context.userId, 'legacy_admin_user')
   assert.equal(context.module, 'sites')
+})
+
+test('la huella idempotente distingue cuentas administrativas aunque compartan bytes y llave', async () => {
+  const request = {
+    query: {},
+    body: {
+      businessId: 'business_admin',
+      userId: 'legacy_admin_user',
+      module: 'sites',
+      clientUploadId: 'legacy-shared-upload-key'
+    },
+    file: {
+      originalname: 'hero.jpg',
+      mimetype: 'image/jpeg',
+      size: 12
+    },
+    get: () => null
+  }
+  const directChat = { enabled: false, kind: '' }
+  const firstContext = trustedUploadContextFromRequest({
+    ...request,
+    body: { ...request.body, clientAccountId: 'location_a' }
+  })
+  const secondContext = trustedUploadContextFromRequest({
+    ...request,
+    body: { ...request.body, clientAccountId: 'location_b' }
+  })
+  const bytes = Buffer.from('mismos bytes')
+  const firstHash = await createMediaUploadRequestHash({
+    descriptor: mediaUploadRequestDescriptor(request, firstContext, directChat),
+    buffer: bytes
+  })
+  const secondHash = await createMediaUploadRequestHash({
+    descriptor: mediaUploadRequestDescriptor(request, secondContext, directChat),
+    buffer: bytes
+  })
+
+  assert.notEqual(firstHash, secondHash)
+})
+
+test('PUT replace clasifica el multipart antes del parser y limpia el temporal al completar', async () => {
+  const replaceLayer = mediaRouter.stack.find(layer => (
+    layer.route?.path === '/assets/:assetId/replace' && layer.route?.methods?.put
+  ))
+  const middlewareNames = replaceLayer?.route?.stack?.map(layer => layer.handle?.name) || []
+  assert.ok(middlewareNames.indexOf('classifyMediaUpload') >= 0)
+  assert.ok(
+    middlewareNames.indexOf('classifyMediaUpload') < middlewareNames.indexOf('uploadSingleFile'),
+    `orden inesperado: ${middlewareNames.join(', ')}`
+  )
+
+  const previousProvider = process.env.MEDIA_STORAGE_PROVIDER
+  const previousRequireBunny = process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-direct-replace-'))
+  const filePath = join(folder, 'reemplazo.pdf')
+  const content = Buffer.from('%PDF-1.4\nreemplazo directo')
+  const accountId = `replace_account_${Date.now()}`
+  let currentAssetId = ''
+  let replacementAssetId = ''
+
+  process.env.MEDIA_STORAGE_PROVIDER = 'local'
+  process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'false'
+  resetCentralStorageConfigCache()
+
+  try {
+    const current = await uploadMediaAsset({
+      buffer: Buffer.from('documento anterior'),
+      filename: 'anterior.txt',
+      mimeType: 'text/plain',
+      module: 'sites',
+      businessId: 'default',
+      clientAccountId: accountId,
+      isPublic: true,
+      skipCompression: true
+    })
+    currentAssetId = current.id
+    await fs.writeFile(filePath, content)
+
+    const response = {
+      statusCode: 200,
+      body: null,
+      status(code) { this.statusCode = code; return this },
+      json(body) { this.body = body; return body }
+    }
+    const directChatUpload = {
+      enabled: true,
+      kind: 'document'
+    }
+    await replaceMediaAssetHandler({
+      params: { assetId: currentAssetId },
+      query: {
+        module: 'chat',
+        chatCompatibility: 'whatsapp',
+        chatMediaKind: 'document'
+      },
+      directChatUpload,
+      body: {
+        moduleEntityId: 'contact-replace',
+        clientUploadId: `replace-${Date.now()}`,
+        isPublic: 'true'
+      },
+      file: {
+        path: filePath,
+        size: content.length,
+        originalname: 'reemplazo.pdf',
+        mimetype: 'application/pdf'
+      },
+      user: { userId: 'replace-user' },
+      get: () => null
+    }, response)
+
+    assert.equal(response.statusCode, 200, JSON.stringify(response.body))
+    assert.equal(response.body?.success, true)
+    replacementAssetId = response.body?.data?.asset?.id || ''
+    assert.ok(replacementAssetId)
+    await assert.rejects(() => fs.access(filePath), error => error?.code === 'ENOENT')
+  } finally {
+    if (replacementAssetId) await softDeleteMediaAsset(replacementAssetId).catch(() => undefined)
+    if (currentAssetId) await softDeleteMediaAsset(currentAssetId).catch(() => undefined)
+    if (replacementAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [replacementAssetId]).catch(() => undefined)
+    if (currentAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [currentAssetId]).catch(() => undefined)
+    await fs.rm(folder, { recursive: true, force: true })
+    if (previousProvider === undefined) delete process.env.MEDIA_STORAGE_PROVIDER
+    else process.env.MEDIA_STORAGE_PROVIDER = previousProvider
+    if (previousRequireBunny === undefined) delete process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+    else process.env.MEDIA_STORAGE_REQUIRE_BUNNY = previousRequireBunny
+    resetCentralStorageConfigCache()
+  }
 })
 
 test('upload multipart de documento conserva bytes, idempotencia y metadata de chat', async () => {

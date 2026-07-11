@@ -64,6 +64,24 @@ final class RistakDiagnosticRingBufferTests: XCTestCase {
         XCTAssertFalse(snapshot.isEmpty)
     }
 
+    func testPushDiagnosticsPersistOnlyClosedMilestones() async throws {
+        let fixture = try makeFixtureURL()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+
+        let buffer = RistakDiagnosticRingBuffer(fileURL: fixture.file)
+        await buffer.append(.push(.apnsTokenReceived))
+        await buffer.append(.push(.backendRegistered))
+
+        let snapshot = await buffer.snapshot()
+        XCTAssertEqual(snapshot.map(\.pushMilestone), [
+            .apnsTokenReceived,
+            .backendRegistered,
+        ])
+        let persisted = String(decoding: try Data(contentsOf: fixture.file), as: UTF8.self)
+        XCTAssertFalse(persisted.contains("device-token"))
+        XCTAssertFalse(persisted.contains("contactId"))
+    }
+
     private func makeFixtureURL() throws -> (directory: URL, file: URL) {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("RistakDiagnosticTests-\(UUID().uuidString)")

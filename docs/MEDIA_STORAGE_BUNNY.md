@@ -24,6 +24,14 @@ Optional:
 - `BUNNY_STREAM_ENABLED=true`
 - `MEDIA_STORAGE_REQUIRE_BUNNY=true`
 - `INTERNAL_INSTALLER_TOKEN`
+- `MEDIA_UPLOAD_LEASE_MS` (tuning operativo; default mínimo 40 minutos)
+- `MEDIA_UPLOAD_HEARTBEAT_MS` (tuning operativo; default 5 minutos y siempre
+  menor que un tercio del lease)
+- `OUTBOUND_MEDIA_NAT64_PREFIXES` (lista CIDR separada por comas únicamente si
+  la red usa prefijos NAT64 privados; no es secret)
+
+Los tres últimos son opcionales y tienen comportamiento seguro sin configuración
+manual. Son parámetros de infraestructura del proceso, no ajustes por negocio.
 
 Do not store Bunny API keys in the database or committed files.
 
@@ -64,7 +72,12 @@ cannot select another business.
 
 Every request sends a stable `clientUploadId`. `media_upload_requests` reserves
 `(business_id, client_upload_id)` before compression, records a SHA-256 request
-hash and replays the completed asset for a matching retry. Concurrent requests
+hash (including the selected administrative account when applicable) and replays
+the completed asset for a matching retry. A v2 account-scoped hash is current;
+rows created before deployment can only replay after validating that their
+completed asset still belongs to the requested account. The lease is at least
+40 minutes and an `owner_token` heartbeat renews it while Storage/Stream work is
+alive. Concurrent requests
 wait for the same result; reusing the key with different bytes or destination is
 a conflict. Failed processing releases the lease for a controlled retry.
 
@@ -72,13 +85,24 @@ The upload response includes the asset id and public URL. Messaging endpoints
 prefer `mediaAssetId`, resolve it server-side, require an active `module=chat`
 asset owned by the current installation and replace any client URL with the
 stored URL. Legacy raw URLs remain compatibility-only and must be public HTTPS;
-loopback, link-local, private/reserved IPs and unsafe DNS resolutions are
-rejected before Meta, HighLevel or the local QR transport can fetch them.
+loopback, link-local, private/reserved IPs, NAT64/reserved IPv6 ranges and unsafe
+DNS resolutions are rejected before Meta, HighLevel or the local QR transport
+can fetch them. Standard NAT64 ranges are denied automatically; an installation
+behind a private network-specific translator declares its CIDR in
+`OUTBOUND_MEDIA_NAT64_PREFIXES` and should also enforce the same egress policy at
+the network boundary.
 
 Images, audio and video still pass through the WhatsApp compatibility pipeline,
 but conversions have bounded execution/concurrency. Temporary-file ownership is
 explicit: buffer compatibility paths clean their input in the controller, while
 file-stream paths leave cleanup to `mediaStorageService` after the final read.
+The replace route classifies direct-chat multipart before Multer as well, so the
+25 MB limit and temporary-file cleanup cannot be bypassed with `PUT`.
+
+`storage_settings.account_slug` remains the stable root for the configured
+installation account. Explicit administrative alternate accounts use their own
+normalized account root, and idempotent lookup never reuses a modern asset from
+another account.
 
 ## Processing
 

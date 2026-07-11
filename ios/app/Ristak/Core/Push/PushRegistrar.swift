@@ -141,6 +141,7 @@ final class PushRegistrar {
 
         isWorking = true
         registrationState = .registering
+        RistakObservability.recordPush(.registrationStarted)
         let expectedEpoch = registrationEpoch
         let task: Task<PushRegistrationOutcome, Never> = Task { @MainActor [weak self] in
             guard let self else {
@@ -287,6 +288,7 @@ final class PushRegistrar {
         lastOutcome = nil
         UserDefaults.standard.removeObject(forKey: Self.tokenDefaultsKey)
         UserDefaults.standard.removeObject(forKey: Self.successDateDefaultsKey)
+        RistakObservability.recordPush(.deviceUnregistered)
     }
 
     // MARK: - Internos
@@ -339,15 +341,22 @@ final class PushRegistrar {
         switch outcome {
         case .subscribed:
             registrationState = .registered
+            RistakObservability.recordPush(.backendRegistered)
             retryAttempt = 0
             retryTask?.cancel()
             retryTask = nil
         case .denied(let message):
             registrationState = .failed(message: message)
+            RistakObservability.recordPush(.permissionDenied)
             retryTask?.cancel()
             retryTask = nil
-        case .notConfigured(let message), .failed(let message):
+        case .notConfigured(let message):
             registrationState = .failed(message: message)
+            RistakObservability.recordPush(.configurationUnavailable)
+            scheduleAutomaticRetry()
+        case .failed(let message):
+            registrationState = .failed(message: message)
+            RistakObservability.recordPush(.backendRegistrationFailed)
             scheduleAutomaticRetry()
         }
         return outcome

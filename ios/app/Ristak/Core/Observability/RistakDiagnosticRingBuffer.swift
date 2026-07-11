@@ -7,6 +7,7 @@ struct RistakDiagnosticRecord: Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
         case lifecycle
         case performance
+        case push
         case metricPayload
         case metricDiagnostic
     }
@@ -16,11 +17,26 @@ struct RistakDiagnosticRecord: Codable, Equatable, Sendable {
         case contentReady
     }
 
+    enum PushMilestone: String, Codable, Sendable {
+        case delegateReady
+        case registrationStarted
+        case permissionDenied
+        case configurationUnavailable
+        case apnsTokenReceived
+        case apnsTokenFailed
+        case backendRegistered
+        case backendRegistrationFailed
+        case notificationReceived
+        case notificationOpened
+        case deviceUnregistered
+    }
+
     let schemaVersion: Int
     /// Instante UTC en milisegundos Unix. No es una fecha de negocio.
     let timestampMilliseconds: Int64
     let kind: Kind
     let lifecycleMilestone: LifecycleMilestone?
+    let pushMilestone: PushMilestone?
     let operation: RistakPerformanceOperation?
     let outcome: RistakPerformanceOutcome?
     let durationMilliseconds: Int?
@@ -35,6 +51,7 @@ struct RistakDiagnosticRecord: Codable, Equatable, Sendable {
         timestamp: Date,
         kind: Kind,
         lifecycleMilestone: LifecycleMilestone? = nil,
+        pushMilestone: PushMilestone? = nil,
         operation: RistakPerformanceOperation? = nil,
         outcome: RistakPerformanceOutcome? = nil,
         durationMilliseconds: Int? = nil,
@@ -49,6 +66,7 @@ struct RistakDiagnosticRecord: Codable, Equatable, Sendable {
         timestampMilliseconds = Int64(timestamp.timeIntervalSince1970 * 1_000)
         self.kind = kind
         self.lifecycleMilestone = lifecycleMilestone
+        self.pushMilestone = pushMilestone
         self.operation = operation
         self.outcome = outcome
         self.durationMilliseconds = Self.clamped(durationMilliseconds, maximum: 86_400_000)
@@ -85,6 +103,17 @@ struct RistakDiagnosticRecord: Codable, Equatable, Sendable {
             outcome: outcome,
             durationMilliseconds: durationMilliseconds,
             itemCount: itemCount
+        )
+    }
+
+    static func push(
+        _ milestone: PushMilestone,
+        timestamp: Date = Date()
+    ) -> RistakDiagnosticRecord {
+        RistakDiagnosticRecord(
+            timestamp: timestamp,
+            kind: .push,
+            pushMilestone: milestone
         )
     }
 

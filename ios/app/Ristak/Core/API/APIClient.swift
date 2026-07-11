@@ -364,6 +364,7 @@ actor APIClient {
         contentType: String?,
         timeout: TimeInterval
     ) async throws -> Data {
+        try assertNetworkAccessAllowedForTests()
         let maxStartupRetries = 2
         var attempt = 0
         let context = try requestContext()
@@ -440,6 +441,7 @@ actor APIClient {
         contentType: String,
         timeout: TimeInterval
     ) async throws -> Data {
+        try assertNetworkAccessAllowedForTests()
         let context = try requestContext()
         var request = try buildRequest(
             context: context,
@@ -480,6 +482,16 @@ actor APIClient {
             fireHooks(for: error, method: method, path: path)
         }
         throw error
+    }
+
+    /// El harness sintético declara red deshabilitada. Convertir esa bandera en
+    /// una barrera real hace fallar cualquier regresión que intente tocar API.
+    private func assertNetworkAccessAllowedForTests() throws {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["RISTAK_NETWORK_ACCESS"] == "disabled" {
+            throw RistakAPIError.network(URLError(.notConnectedToInternet))
+        }
+        #endif
     }
 
     private func requestContext() throws -> RequestContext {

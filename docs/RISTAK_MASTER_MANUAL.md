@@ -765,8 +765,18 @@ La app SwiftUI `ios/app` usa los metadatos minimos del SSE y de cada envio
 optimista para promover de inmediato la fila del contacto al inicio, incluso si
 el hilo esta cubriendo la bandeja en iPhone. Deduplica la misma actividad cuando
 llega por ambos caminos y luego reconcilia texto, perfil, contadores y orden
-contra REST; no fabrica una fila incompleta si el contacto aun no estaba en la
-profundidad cargada. Los refresh vivos de bandeja mandan
+contra REST. Si el usuario inicio el chat desde el directorio, conserva esa fila
+completa como seed y la inserta arriba con el primer envio aunque aun no estuviera
+en la primera pagina. Un SSE de un chat viejo fuera de la profundidad cargada
+consulta primero el indice ligero local y, si falta, resuelve solo ese contacto
+con `picker=true&contactId=<id>`; las rafagas se coalescen por contacto y el
+refresh completo queda como respaldo. La seleccion explicita de un telefono
+alterno se conserva por cuenta para no cambiar el destinatario al reabrir, pero
+se bloquea hasta validarla contra el inventario fresco y se elimina si ya no
+pertenece al contacto. Una pagina REST vieja no se considera ACK por el solo
+hecho de incluir la fila; cada actividad se compara con el estado/fecha del
+servidor y la señal de hilo visible gana al deduplicar. Los
+refresh vivos de bandeja mandan
 `warmProfilePictures=false` para no consultar proveedores externos en cada
 poll/SSE; el calentamiento de fotos se reserva para arranque frio y paginacion.
 La codificacion de fotos, videos, audios y documentos corre fuera del hilo
@@ -774,24 +784,36 @@ visual, el composer bloquea enviar mientras prepara y el tray conserva el limite
 de 4 adjuntos con tope acumulado de 40 MB binarios. La app sube el multipart
 desde archivo temporal a Media Storage/CDN y envia la referencia del asset; no
 duplica el body completo en memoria ni persiste el preview optimista como base64.
+Cuando el eco ya trae una URL HTTP(S) valida libera el binario local de la
+imagen; los `data:` legacy nunca entran al snapshot del hilo.
+La limpieza cubre tanto `attachment.url` como `attachment.dataUrl`, y una URL CDN
+elimina cualquier copia base64 paralela en memoria.
 Cada subida usa `clientUploadId` y el backend reserva una llave idempotente antes
-de comprimir para que reintentos concurrentes reproduzcan el mismo asset.
+de comprimir para que reintentos concurrentes reproduzcan el mismo asset; la
+reserva se renueva con heartbeat ligado al owner durante Storage/Stream y su
+identidad v2 incluye la cuenta. Una fila legacy solo se reproduce si el asset
+completado se valida nuevamente contra esa misma cuenta.
 
 Los selectores iOS de nuevo chat, cita y pagos usan
 `/contacts/search?picker=true`: hidratan inmediatamente el snapshot de la cuenta,
 revalidan sin bloquear y no vuelven a pedir la bandeja de chats. El backend
-omite agregados de pagos/citas y calentamiento de avatares, limita el ranking
-costoso a un conjunto de candidatos y devuelve todos los telefonos del contacto.
+omite agregados de pagos/citas y calentamiento de avatares, limita el payload y
+devuelve todos los telefonos del contacto. Solo una consulta con forma real de
+telefono puede producir `matchedPhone`; digitos dentro de un nombre no cambian
+el destinatario.
 El cache de queries exactas es LRU en memoria; solo los recientes se guardan en
 disco y la persistencia queda deshabilitada hasta tener usuario verificado.
+Las precargas y escrituras detached tambien llevan generacion de sesion, por lo
+que logout/relogin a la misma cuenta no puede revivir un snapshot anterior.
 
 El hilo iOS muestra el bloque de `/contacts/:id/conversation` en cuanto llega;
 agente, programados y datos secundarios no pueden taparlo con un spinner. Para
 despliegues graduales conserva fallback a `/journey`. La salud se mide con
-signposts `OSLog` y `MetricKit`; un ring local acotado guarda solo categoria,
-resultado, duracion y conteos sanitizados. La suite incluye unit tests de
-promocion de filas/estado inicial, XCUITest sin red, smoke real opt-in y soak de
-10,000-50,000 filas.
+`mxSignpost` agregado por `MetricKit` y eventos `OSLog`; un ring local acotado
+guarda solo categoria, resultado, duracion, conteos e hitos de push sanitizados.
+La suite incluye unit tests de promocion de filas/estado inicial, una carga del
+reductor real con 10,000 contactos, XCUITest sin red, smoke real opt-in y un
+soak UI sintetico de 10,000-50,000 filas.
 
 Cuando llega una push de chat o el usuario abre `/movil` desde esa notificacion,
 el cliente debe priorizar el hilo afectado sobre la bandeja completa. La push web

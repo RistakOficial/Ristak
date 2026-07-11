@@ -51,10 +51,13 @@ ios/app/scripts/run-ios-live-smoke.sh
 ```
 
 La suite UI normal y el soak usan fixtures sintéticos, no requieren sesión y no
-tocan la red. El smoke real es opt-in y solo reutiliza la sesión/configuración
+tocan la red; `APIClient` bloquea el transporte cuando el harness declara red
+deshabilitada. Los unit tests también ejercitan el reductor real del inbox con
+10,000 contactos y promociones repetidas. El smoke real es opt-in y solo reutiliza la sesión/configuración
 que ya exista en el destino; no recibe credenciales por argumentos ni entorno.
 Puedes cambiar el simulador con `RISTAK_IOS_DESTINATION` y cada script deja su
-`.xcresult` bajo el directorio temporal para inspección.
+`.xcresult` bajo el directorio temporal para inspección, con `DerivedData`
+aislado y validación de la ruta antes de limpiar un resultado anterior.
 
 ## Arquitectura
 
@@ -129,11 +132,13 @@ solo en capa flotante; copy en español.
 - **Push y realtime**: registro del token APNs en `/api/push/mobile-devices`,
   deep links de notificación (chat/cita/pago), refresh al recibir push en
   foreground, Notification Service Extension para avatar/media en iOS, SSE
-  `chat-events` + `payment-events` con reconexión.
+  `chat-events` + `payment-events` con reconexión. `OSLog` y el ring sanitizado
+  registran hitos de configuración/token/registro/recepción sin guardar secretos.
 - **Rendimiento cotidiano**: directorio cache-first para nuevo chat, citas y
-  pagos; historial primario visible antes de cargar datos secundarios; adjuntos
+  pagos; hidratación puntual/coalescida de un chat fuera de la página al llegar
+  SSE; historial primario visible antes de cargar datos secundarios; adjuntos
   por multipart directo a storage/CDN con fallback legacy fuera del hilo visual.
-- **Calidad operativa**: signposts `OSLog`, suscripción `MetricKit`, ring local
+- **Calidad operativa**: `mxSignpost` agregado por `MetricKit`, `OSLog`, ring local
   sanitizado, unit tests, XCUITest sin red, smoke real opt-in y soak de
   10,000-50,000 filas mediante scripts en `ios/app/scripts/`.
 

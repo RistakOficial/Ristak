@@ -10,6 +10,7 @@ final class RistakAppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         UNUserNotificationCenter.current().delegate = self
+        RistakObservability.recordPush(.delegateReady)
         return true
     }
 
@@ -17,6 +18,7 @@ final class RistakAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
     ) {
+        RistakObservability.recordPush(.apnsTokenReceived)
         Task { @MainActor in
             PushRegistrar.shared.handleDeviceToken(deviceToken)
         }
@@ -26,6 +28,7 @@ final class RistakAppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFailToRegisterForRemoteNotificationsWithError error: any Error
     ) {
+        RistakObservability.recordPush(.apnsTokenFailed)
         Task { @MainActor in
             PushRegistrar.shared.handleRegistrationError(error)
         }
@@ -39,6 +42,7 @@ extension RistakAppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
+        RistakObservability.recordPush(.notificationReceived)
         let userInfo = notification.request.content.userInfo
         await MainActor.run {
             NotificationRouter.shared.handleForegroundNotification(userInfo: userInfo)
@@ -51,6 +55,7 @@ extension RistakAppDelegate: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
+        RistakObservability.recordPush(.notificationOpened)
         let userInfo = response.notification.request.content.userInfo
         await MainActor.run {
             NotificationRouter.shared.handleNotificationTap(userInfo: userInfo)

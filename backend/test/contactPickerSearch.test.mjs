@@ -69,7 +69,7 @@ test('el directorio picker busca identidad y teléfono alterno sin métricas pes
     const byName = await runSearch({ picker: 'true', q: uniqueName, limit: '60' })
     assert.equal(byName.length, 1)
     assert.equal(byName[0].id, contactId)
-    assert.equal(byName[0].name, uniqueName)
+    assert.equal(byName[0].name.toLocaleLowerCase('es'), uniqueName.toLocaleLowerCase('es'))
     assert.equal(byName[0].ltv, 0)
     assert.equal(byName[0].purchases, 0)
     assert.equal(byName[0].profilePhotoUrl, null)
@@ -80,6 +80,15 @@ test('el directorio picker busca identidad y teléfono alterno sin métricas pes
     const byAlternatePhone = await runSearch({ picker: 'true', q: alternateDigits })
     assert.equal(byAlternatePhone.some(contact => contact.id === contactId), true)
     assert.equal(byAlternatePhone.find(contact => contact.id === contactId)?.matchedPhone, alternatePhone)
+
+    const nameWithDigits = `Empresa 2468 ${suffix.slice(0, 8)}`
+    await db.run('UPDATE contacts SET full_name = ? WHERE id = ?', [nameWithDigits, contactId])
+    const byNameWithDigits = await runSearch({ picker: 'true', q: 'Empresa 2468' })
+    assert.equal(
+      byNameWithDigits.find(contact => contact.id === contactId)?.matchedPhone,
+      '',
+      'los dígitos de un nombre no deben seleccionar un teléfono alterno como destinatario'
+    )
 
     const recents = await runSearch({ picker: 'true', limit: '1' })
     assert.equal(recents.length, 1)
@@ -146,6 +155,100 @@ test('el directorio limita una búsqueda de dos mil contactos sin inflar el payl
     assert.equal(result.length, 100)
     assert.equal(result[0].id, `${idPrefix}1999`)
     assert.equal(result.at(-1).id, `${idPrefix}1900`)
+  } catch (error) {
+    await db.exec('ROLLBACK').catch(() => undefined)
+    throw error
+  } finally {
+    await cleanup()
+  }
+})
+
+test('contactId exacto resuelve una fila fuera de recientes sin saltarse ocultos', async () => {
+  const suffix = randomUUID().replace(/-/g, '')
+  const idPrefix = `picker_exact_${suffix}_`
+  const targetId = `${idPrefix}target`
+  const targetPhoneId = `${idPrefix}phone`
+  const alternatePhone = `+52199${String(Date.now()).slice(-7)}`
+  const totalRecent = 105
+
+  const cleanup = async () => {
+    await db.run('DELETE FROM hidden_contact_filters WHERE filter_text = ?', [targetId]).catch(() => undefined)
+    await db.run('DELETE FROM contact_phone_numbers WHERE id = ?', [targetPhoneId]).catch(() => undefined)
+    await db.run('DELETE FROM contacts WHERE id LIKE ?', [`${idPrefix}%`]).catch(() => undefined)
+  }
+  await cleanup()
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (
+        id, full_name, email, phone, source, created_at, updated_at, deleted_at
+      ) VALUES (?, ?, ?, ?, 'exact_picker_test', ?, ?, NULL)`,
+      [
+        targetId,
+        `Objetivo exacto ${suffix}`,
+        `${suffix}.target@picker.invalid`,
+        `+52188${String(Date.now()).slice(-7)}`,
+        '2001-01-01T00:00:00.000Z',
+        '2001-01-01T00:00:00.000Z'
+      ]
+    )
+    await db.run(
+      `INSERT INTO contact_phone_numbers (
+        id, contact_id, phone, label, is_primary, source, created_at, updated_at
+      ) VALUES (?, ?, ?, 'Trabajo', 0, 'exact_picker_test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [targetPhoneId, targetId, alternatePhone]
+    )
+
+    await db.exec('BEGIN')
+    for (let start = 0; start < totalRecent; start += 35) {
+      const placeholders = []
+      const values = []
+      for (let index = start; index < Math.min(start + 35, totalRecent); index += 1) {
+        const padded = String(index).padStart(3, '0')
+        placeholders.push('(?, ?, ?, ?, ?, ?, ?, NULL)')
+        values.push(
+          `${idPrefix}${padded}`,
+          `Reciente exacto ${suffix} ${padded}`,
+          `${suffix}.${padded}.recent@picker.invalid`,
+          `+52277${String(Date.now()).slice(-4)}${padded}`,
+          'exact_picker_test',
+          '2096-01-01T00:00:00.000Z',
+          '2096-01-01T00:00:00.000Z'
+        )
+      }
+      await db.run(
+        `INSERT INTO contacts (
+          id, full_name, email, phone, source, created_at, updated_at, deleted_at
+        ) VALUES ${placeholders.join(', ')}`,
+        values
+      )
+    }
+    await db.exec('COMMIT')
+
+    const recents = await runSearch({ picker: 'true', limit: '100' })
+    assert.equal(recents.some(contact => contact.id === targetId), false)
+
+    const exact = await runSearch({
+      picker: 'true',
+      contactId: targetId,
+      q: 'consulta que no debe filtrar el id',
+      limit: '100'
+    })
+    assert.equal(exact.length, 1)
+    assert.equal(exact[0].id, targetId)
+    assert.equal(exact[0].phones.some(phone => phone.phone === alternatePhone), true)
+
+    assert.deepEqual(await runSearch({
+      picker: 'true',
+      contactId: `${idPrefix}unknown`
+    }), [])
+
+    await db.run(
+      `INSERT INTO hidden_contact_filters (filter_text, match_type, created_at)
+       VALUES (?, 'exact', CURRENT_TIMESTAMP)`,
+      [targetId]
+    )
+    assert.deepEqual(await runSearch({ picker: 'true', contactId: targetId }), [])
   } catch (error) {
     await db.exec('ROLLBACK').catch(() => undefined)
     throw error

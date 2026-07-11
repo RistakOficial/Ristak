@@ -144,4 +144,118 @@ final class ChatMediaUploadTests: XCTestCase {
 
         XCTAssertEqual(json["imageMediaAssetId"] as? String, "media-tenant-123")
     }
+
+    func testRemoteEchoReleasesLargeOptimisticImagePreview() {
+        let optimistic = ChatAttachment(
+            type: .image,
+            localPreviewData: Data(repeating: 0xA5, count: 2 * 1_024 * 1_024),
+            name: "foto.jpg",
+            mimeType: "image/jpeg"
+        )
+        let server = ChatAttachment(
+            type: .image,
+            url: "https://cdn.example.test/chat/foto.jpg"
+        )
+
+        let reconciled = ConversationViewModel.reconciledAttachment(
+            server: server,
+            optimistic: optimistic
+        )
+
+        XCTAssertNil(reconciled?.localPreviewData)
+        XCTAssertEqual(reconciled?.url, server.url)
+        XCTAssertEqual(reconciled?.name, optimistic.name)
+    }
+
+    func testOptimisticPreviewSurvivesUntilRemoteSourceExists() {
+        let preview = Data([0x01, 0x02, 0x03])
+        let optimistic = ChatAttachment(type: .image, localPreviewData: preview)
+        let server = ChatAttachment(type: .image)
+
+        let reconciled = ConversationViewModel.reconciledAttachment(
+            server: server,
+            optimistic: optimistic
+        )
+
+        XCTAssertEqual(reconciled?.localPreviewData, preview)
+    }
+
+    func testLegacyDataURLKeepsBinaryPreviewWithoutDuplicateBase64Copy() {
+        let preview = Data([0x01, 0x02, 0x03])
+        let optimistic = ChatAttachment(type: .image, localPreviewData: preview)
+        let server = ChatAttachment(
+            type: .image,
+            dataUrl: "data:image/jpeg;base64,AQID"
+        )
+
+        let reconciled = ConversationViewModel.reconciledAttachment(
+            server: server,
+            optimistic: optimistic
+        )
+
+        XCTAssertEqual(reconciled?.localPreviewData, preview)
+        XCTAssertNil(reconciled?.dataUrl)
+    }
+
+    func testLegacyDataURLInURLFieldKeepsPreviewAndIsStripped() {
+        let preview = Data([0x01, 0x02, 0x03])
+        let reconciled = ConversationViewModel.reconciledAttachment(
+            server: ChatAttachment(type: .image, url: "data:image/jpeg;base64,AQID"),
+            optimistic: ChatAttachment(type: .image, localPreviewData: preview)
+        )
+
+        XCTAssertEqual(reconciled?.localPreviewData, preview)
+        XCTAssertNil(reconciled?.url)
+    }
+
+    func testRemoteURLDropsParallelLegacyBase64Copy() {
+        let reconciled = ConversationViewModel.reconciledAttachment(
+            server: ChatAttachment(
+                type: .image,
+                url: "https://cdn.example.test/foto.jpg",
+                dataUrl: "data:image/jpeg;base64,AQID"
+            ),
+            optimistic: ChatAttachment(type: .image, localPreviewData: Data([0x01]))
+        )
+
+        XCTAssertNil(reconciled?.localPreviewData)
+        XCTAssertNil(reconciled?.dataUrl)
+    }
+
+    func testThreadSnapshotNeverPersistsBase64DataURL() {
+        XCTAssertNil(ChatThreadSnapshotCache.persistableDataURL(
+            "data:image/jpeg;base64,AQID"
+        ))
+        XCTAssertNil(ChatThreadSnapshotCache.persistableMediaURL(
+            "data:image/jpeg;base64,AQID"
+        ))
+        XCTAssertEqual(
+            ChatThreadSnapshotCache.persistableDataURL("https://cdn.example.test/foto.jpg"),
+            "https://cdn.example.test/foto.jpg"
+        )
+    }
+
+    func testSyntheticNetworkBarrierBlocksRequestsBeforeTransport() async throws {
+        let previous = ProcessInfo.processInfo.environment["RISTAK_NETWORK_ACCESS"]
+        setenv("RISTAK_NETWORK_ACCESS", "disabled", 1)
+        defer {
+            if let previous {
+                setenv("RISTAK_NETWORK_ACCESS", previous, 1)
+            } else {
+                unsetenv("RISTAK_NETWORK_ACCESS")
+            }
+        }
+
+        let client = APIClient()
+        await client.configure(
+            baseURL: URL(string: "https://network-must-not-run.invalid"),
+            token: "test-token"
+        )
+        do {
+            let _: Data = try await client.rawData("/health")
+            XCTFail("El harness sintético no debe abrir red.")
+        } catch let error as RistakAPIError {
+            XCTAssertEqual(error.kind, .network)
+        }
+    }
 }

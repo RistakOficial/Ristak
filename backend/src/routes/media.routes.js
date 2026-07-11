@@ -122,7 +122,7 @@ router.get('/assets/:assetId/stream/analytics', requireMediaLicense, requireMedi
 router.post('/assets/download', requireMediaLicense, requireMediaAccess, downloadMediaAssetsArchiveHandler)
 router.post('/assets/move', requireMediaLicense, requireMediaAccess, moveMediaAssetsHandler)
 router.delete('/assets/:assetId', requireMediaLicense, requireMediaAccess, deleteMediaAssetHandler)
-router.put('/assets/:assetId/replace', requireMediaLicense, requireMediaAccess, uploadSingleFile, replaceMediaAssetHandler)
+router.put('/assets/:assetId/replace', requireMediaLicense, requireMediaAccess, classifyMediaUpload, uploadSingleFile, replaceMediaAssetHandler)
 router.post('/assets/:assetId/retry', requireMediaLicense, requireMediaAccess, retryMediaAssetHandler)
 router.post('/assets/:assetId/stream/sync', requireMediaLicense, requireMediaAccess, syncMediaAssetStreamHandler)
 

@@ -13,6 +13,22 @@ enum ChatThreadSnapshotCache {
     /// Tope de mensajes cacheados por hilo (los más recientes).
     static let maxMessages = 100
 
+    /// Los data URLs son el fallback legacy de transporte, no un formato de
+    /// caché. Persistirlos duplica archivos en base64 y puede convertir 100
+    /// mensajes en decenas o cientos de MB. URLs normales se conservan por
+    /// compatibilidad con respuestas antiguas que usaron ese campo.
+    nonisolated static func persistableMediaURL(_ rawValue: String?) -> String? {
+        guard let rawValue else { return nil }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              !trimmed.lowercased().hasPrefix("data:") else { return nil }
+        return rawValue
+    }
+
+    nonisolated static func persistableDataURL(_ rawValue: String?) -> String? {
+        persistableMediaURL(rawValue)
+    }
+
     // MARK: - API
 
     @MainActor
@@ -32,9 +48,10 @@ enum ChatThreadSnapshotCache {
         // mensaje nuevo; luego se vuelve a main para escribir en la caché.
         let capped = messages.suffix(maxMessages).map(ThreadMessageDTO.init)
         let key = ChatSnapshotKey.thread(contactID)
+        guard let namespace = RistakSnapshotCache.shared.namespaceToken() else { return }
         Task.detached(priority: .utility) {
             guard let data = try? JSONEncoder().encode(capped) else { return }
-            await RistakSnapshotCache.shared.storeRaw(data, for: key)
+            await RistakSnapshotCache.shared.storeRaw(data, for: key, ifCurrent: namespace)
         }
     }
 
@@ -53,9 +70,10 @@ enum ChatThreadSnapshotCache {
     static func saveMarkers(_ markers: [ConversationActivityMarker], contactID: String) {
         let dtos = markers.map(ActivityMarkerDTO.init)
         let key = ChatSnapshotKey.threadMarkers(contactID)
+        guard let namespace = RistakSnapshotCache.shared.namespaceToken() else { return }
         Task.detached(priority: .utility) {
             guard let data = try? JSONEncoder().encode(dtos) else { return }
-            await RistakSnapshotCache.shared.storeRaw(data, for: key)
+            await RistakSnapshotCache.shared.storeRaw(data, for: key, ifCurrent: namespace)
         }
     }
 
@@ -79,9 +97,10 @@ enum ChatThreadSnapshotCache {
     static func save(_ states: [ConversationAgentState], contactID: String) {
         let dtos = states.map(AgentStateDTO.init)
         let key = ChatSnapshotKey.threadAgentStates(contactID)
+        guard let namespace = RistakSnapshotCache.shared.namespaceToken() else { return }
         Task.detached(priority: .utility) {
             guard let data = try? JSONEncoder().encode(dtos) else { return }
-            await RistakSnapshotCache.shared.storeRaw(data, for: key)
+            await RistakSnapshotCache.shared.storeRaw(data, for: key, ifCurrent: namespace)
         }
     }
 }
@@ -336,8 +355,8 @@ private struct AttachmentDTO: Codable, Sendable {
 
     init(_ attachment: ChatAttachment) {
         type = attachment.type.rawValue
-        url = attachment.url
-        dataUrl = attachment.dataUrl
+        url = ChatThreadSnapshotCache.persistableMediaURL(attachment.url)
+        dataUrl = ChatThreadSnapshotCache.persistableDataURL(attachment.dataUrl)
         name = attachment.name
         mimeType = attachment.mimeType
         isGif = attachment.isGif

@@ -10,7 +10,14 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
     let name: String
     let email: String
     let phone: String
-    let matchedPhone: String?
+    /// Destino exacto que hizo match en una búsqueda por teléfono. Es mutable
+    /// para reinyectar la selección local al reabrir el hilo sin reemplazar el
+    /// resto de la fila autoritativa que llegó de `/contacts/chats`.
+    var matchedPhone: String?
+    /// Un teléfono restaurado de disco no se puede usar hasta contrastarlo con
+    /// la ficha fresca del contacto. Evita enviar durante la ventana entre el
+    /// primer frame cacheado y la revalidación de red.
+    var destinationPhoneRequiresValidation: Bool
     let ltv: Double
     /// `"lead" | "appointment" | "customer"`.
     let status: String
@@ -81,6 +88,7 @@ struct ChatContact: Decodable, Identifiable, Sendable, Equatable {
         email = container.flexibleString(forKey: .email) ?? ""
         phone = container.flexibleString(forKey: .phone) ?? ""
         matchedPhone = container.flexibleString(forKey: .matchedPhone)
+        destinationPhoneRequiresValidation = false
         ltv = container.flexibleDouble(forKey: .ltv) ?? 0
         status = container.flexibleString(forKey: .status) ?? "lead"
         lastPurchase = container.flexibleString(forKey: .lastPurchase)

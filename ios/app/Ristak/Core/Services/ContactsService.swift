@@ -185,6 +185,25 @@ struct ContactsService: Sendable {
         }
     }
 
+    /// Resuelve una sola identidad ligera para un evento realtime cuyo chat no
+    /// está dentro de las páginas cargadas. Evita bajar la ficha pesada
+    /// (pagos/citas/atribución) o recargar toda la bandeja para poder promover
+    /// esa fila. No persiste el resultado: el refresh normal sigue siendo la
+    /// fuente autoritativa y lo incorporará a la primera página.
+    func fetchPickerContact(id: String) async throws -> ChatContact? {
+        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let contacts: [ChatContact] = try await client.get(
+            "/contacts/search",
+            query: [
+                "picker": "true",
+                "contactId": trimmed,
+                "limit": "1",
+            ]
+        )
+        return contacts.first { $0.id.caseInsensitiveCompare(trimmed) == .orderedSame }
+    }
+
     /// Lectura síncrona desde memoria del último directorio exitoso. Para una
     /// consulta que todavía no tenga snapshot exacto, filtra el directorio
     /// reciente local: escribir empieza a dar resultados sin esperar red.

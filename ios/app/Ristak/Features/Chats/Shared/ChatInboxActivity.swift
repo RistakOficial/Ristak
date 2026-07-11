@@ -57,4 +57,27 @@ struct ChatInboxActivity: Sendable, Equatable {
         isNew = event.isNew
         self.conversationIsVisible = conversationIsVisible
     }
+
+    /// La bandeja y el hilo pueden observar el mismo mensaje. Si cualquiera lo
+    /// vio con el hilo abierto, esa señal más fuerte debe ganar al coalescer el
+    /// evento para no encender un no-leído falso.
+    func withConversationVisible() -> ChatInboxActivity {
+        guard !conversationIsVisible else { return self }
+        return ChatInboxActivity(copying: self, conversationIsVisible: true)
+    }
+
+    private init(copying source: ChatInboxActivity, conversationIsVisible: Bool) {
+        contactID = source.contactID
+        messageID = source.messageID
+        text = source.text
+        messageType = source.messageType
+        channel = source.channel
+        transport = source.transport
+        direction = source.direction
+        timestamp = source.timestamp
+        businessPhone = source.businessPhone
+        businessPhoneNumberID = source.businessPhoneNumberID
+        isNew = source.isNew
+        self.conversationIsVisible = conversationIsVisible
+    }
 }

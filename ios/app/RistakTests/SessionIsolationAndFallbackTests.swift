@@ -25,6 +25,63 @@ final class SessionIsolationAndFallbackTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testDetachedSnapshotWriteCannotCrossSessionNamespace() {
+        let cache = RistakSnapshotCache.shared
+        cache.reset()
+        defer { cache.reset() }
+
+        cache.configure(namespace: "tenant-a.user-a")
+        let staleToken = cache.namespaceToken()
+        XCTAssertNotNil(staleToken)
+
+        cache.configure(namespace: "tenant-b.user-b")
+        cache.storeRaw(Data("old-account".utf8), for: "chat:thread:1", ifCurrent: staleToken!)
+        XCTAssertNil(cache.rawData(for: "chat:thread:1"))
+
+        let currentToken = cache.namespaceToken()
+        XCTAssertNotNil(currentToken)
+        cache.storeRaw(Data("current-account".utf8), for: "chat:thread:1", ifCurrent: currentToken!)
+        XCTAssertEqual(cache.rawData(for: "chat:thread:1"), Data("current-account".utf8))
+    }
+
+    @MainActor
+    func testDetachedSnapshotWriteCannotReturnAfterSameAccountRelogin() {
+        let cache = RistakSnapshotCache.shared
+        cache.reset()
+        defer { cache.reset() }
+
+        cache.configure(namespace: "tenant-a.same-user")
+        let staleToken = cache.namespaceToken()
+        XCTAssertNotNil(staleToken)
+
+        cache.reset()
+        cache.configure(namespace: "tenant-a.same-user")
+        cache.storeRaw(Data("stale-session".utf8), for: "chat:thread:1", ifCurrent: staleToken!)
+        XCTAssertNil(cache.rawData(for: "chat:thread:1"))
+
+        let currentToken = cache.namespaceToken()
+        XCTAssertNotNil(currentToken)
+        cache.storeRaw(Data("new-session".utf8), for: "chat:thread:1", ifCurrent: currentToken!)
+        XCTAssertEqual(cache.rawData(for: "chat:thread:1"), Data("new-session".utf8))
+    }
+
+    @MainActor
+    func testAlternateDestinationPhonePersistsPerAccount() {
+        let namespace = "test-destination-\(UUID().uuidString)"
+        let contactID = "contact-1"
+        let store = ChatLocalStateStore()
+        store.configure(namespace: namespace)
+        store.setDestinationPhone("+5215550002222", for: contactID)
+
+        store.configure(namespace: nil)
+        XCTAssertNil(store.destinationPhone(for: contactID))
+        store.configure(namespace: namespace)
+        XCTAssertEqual(store.destinationPhone(for: contactID), "+5215550002222")
+
+        store.setDestinationPhone(nil, for: contactID)
+    }
+
     func testConversationFallbackOnlyHandlesMissingDedicatedRoute() {
         let notFound = RistakAPIError(
             kind: .notFound,

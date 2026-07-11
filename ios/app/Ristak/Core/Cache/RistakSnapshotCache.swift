@@ -62,15 +62,26 @@ final class RistakSnapshotCache {
     @ObservationIgnored private var volatileMemory: [String: VolatileEntry] = [:]
     /// Namespace saneado activo (`nil` = sin configurar).
     @ObservationIgnored private var currentNamespace: String?
+    /// Cambia al abandonar o cambiar una sesión, incluso si luego vuelve a
+    /// iniciar la misma cuenta. Descarta encodes detached de la sesión previa.
+    @ObservationIgnored private var namespaceGeneration: UInt64 = 0
     /// Directorio de la cuenta activa en disco.
     @ObservationIgnored private var namespaceDir: URL?
     /// Escrituras pendientes por clave (para coalescer ráfagas).
     @ObservationIgnored private var pendingWrites: [String: Task<Void, Never>] = [:]
+    /// Identidad de cada commit. Una Task cancelada que termina tarde no puede
+    /// limpiar ni reemplazar el commit nuevo de la misma clave.
+    @ObservationIgnored private var pendingWriteIDs: [String: UUID] = [:]
 
     private struct VolatileEntry {
         var data: Data
         var expiresAt: Date
         var lastAccessedAt: Date
+    }
+
+    struct NamespaceToken: Equatable, Sendable {
+        fileprivate let namespace: String
+        fileprivate let generation: UInt64
     }
 
     private init() {}
@@ -92,6 +103,7 @@ final class RistakSnapshotCache {
     func configure(namespace rawNamespace: String?) {
         guard let rawNamespace else {
             guard currentNamespace != nil || !memory.isEmpty || !volatileMemory.isEmpty else { return }
+            namespaceGeneration &+= 1
             cancelPendingWrites()
             memory.removeAll()
             volatileMemory.removeAll()
@@ -102,6 +114,7 @@ final class RistakSnapshotCache {
         let sanitized = Self.sanitize(rawNamespace)
         guard sanitized != currentNamespace else { return }
 
+        namespaceGeneration &+= 1
         currentNamespace = sanitized
         let dir = Self.rootDirectory().appendingPathComponent(sanitized, isDirectory: true)
         namespaceDir = dir
@@ -120,6 +133,7 @@ final class RistakSnapshotCache {
     /// del `@MainActor`). Llamar en el arranque ANTES de pintar el shell.
     func preloadIntoMemory() async {
         guard let dir = namespaceDir, let expectedNamespace = currentNamespace else { return }
+        let expectedGeneration = namespaceGeneration
 
         let loaded: [String: Data] = await Task.detached(priority: .userInitiated) {
             var result: [String: Data] = [:]
@@ -161,7 +175,9 @@ final class RistakSnapshotCache {
 
         // Un logout/cambio de cuenta puede ocurrir mientras el disco se lee. El
         // lote viejo jamás se mezcla en el namespace que quedó activo después.
-        guard expectedNamespace == currentNamespace, dir == namespaceDir else { return }
+        guard expectedNamespace == currentNamespace,
+              expectedGeneration == namespaceGeneration,
+              dir == namespaceDir else { return }
 
         // Preserva cualquier `store()` ocurrido durante la precarga: la memoria
         // fresca gana sobre lo leído de disco.
@@ -182,6 +198,15 @@ final class RistakSnapshotCache {
     /// `Data` JSON crudo cacheado para `key` (para quien ya maneja `Data`).
     func rawData(for key: String) -> Data? {
         memory[key]
+    }
+
+    /// Captura la identidad exacta de la sesión que inició un trabajo detached.
+    func namespaceToken() -> NamespaceToken? {
+        guard let currentNamespace else { return nil }
+        return NamespaceToken(
+            namespace: currentNamespace,
+            generation: namespaceGeneration
+        )
     }
 
     /// Lectura de una entrada efímera con TTL deslizante solo en su timestamp
@@ -220,6 +245,18 @@ final class RistakSnapshotCache {
         scheduleWrite(key: key, data: data)
     }
 
+    /// Guarda solo si el encode todavía pertenece a la misma sesión que lo
+    /// inició. Evita escribir el hilo de A dentro del namespace de B.
+    func storeRaw(
+        _ data: Data,
+        for key: String,
+        ifCurrent token: NamespaceToken
+    ) {
+        guard currentNamespace == token.namespace,
+              namespaceGeneration == token.generation else { return }
+        storeRaw(data, for: key)
+    }
+
     /// Guarda datos solo en RAM bajo un LRU acotado. Se usa para resultados de
     /// búsqueda: acelera volver a una consulta sin conservar historial con PII
     /// indefinidamente ni crear un archivo por cada tecla.
@@ -251,11 +288,12 @@ final class RistakSnapshotCache {
         volatileMemory[key] = nil
         pendingWrites[key]?.cancel()
         pendingWrites[key] = nil
+        pendingWriteIDs[key] = nil
         guard let dir = namespaceDir else { return }
         let url = dir.appendingPathComponent(Self.encodeKey(key) + ".json")
-        Task.detached(priority: .utility) {
-            try? FileManager.default.removeItem(at: url)
-        }
+        // Operación de metadatos pequeña y síncrona: evita que un delete viejo
+        // aterrice después de un store nuevo para la misma clave.
+        try? FileManager.default.removeItem(at: url)
     }
 
     // MARK: - Limpieza (logout / cambio de cuenta)
@@ -263,6 +301,7 @@ final class RistakSnapshotCache {
     /// Limpieza total: memoria + escrituras pendientes + borra el directorio del
     /// namespace en disco. Llamar en logout / cambio de app.
     func reset() {
+        namespaceGeneration &+= 1
         cancelPendingWrites()
         memory.removeAll()
         volatileMemory.removeAll()
@@ -275,9 +314,14 @@ final class RistakSnapshotCache {
             // recién escrito de la nueva sesión).
             let graveyard = dir.deletingLastPathComponent()
                 .appendingPathComponent(".deleting-\(UUID().uuidString)", isDirectory: true)
-            let target = ((try? fm.moveItem(at: dir, to: graveyard)) != nil) ? graveyard : dir
-            Task.detached(priority: .utility) {
-                try? fm.removeItem(at: target)
+            if (try? fm.moveItem(at: dir, to: graveyard)) != nil {
+                Task.detached(priority: .utility) {
+                    try? fm.removeItem(at: graveyard)
+                }
+            } else {
+                // Si el rename atómico falla, borrar ahora. Nunca dejar un
+                // remove tardío apuntando al path que reutilizará el relogin.
+                try? fm.removeItem(at: dir)
             }
         }
         currentNamespace = nil
@@ -287,44 +331,108 @@ final class RistakSnapshotCache {
     /// Borra solo el disco del namespace activo (conserva memoria y config).
     /// Útil para un "Vaciar caché" sin desloguear.
     func clearDisk() {
+        namespaceGeneration &+= 1
         cancelPendingWrites()
         guard let dir = namespaceDir else { return }
-        Task.detached(priority: .utility) {
-            try? FileManager.default.removeItem(at: dir)
-            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let fm = FileManager.default
+        let graveyard = dir.deletingLastPathComponent()
+            .appendingPathComponent(".deleting-\(UUID().uuidString)", isDirectory: true)
+        if (try? fm.moveItem(at: dir, to: graveyard)) != nil {
+            Task.detached(priority: .utility) {
+                try? FileManager.default.removeItem(at: graveyard)
+            }
+        } else {
+            try? fm.removeItem(at: dir)
         }
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
     }
 
     // MARK: - Escritura debounced
 
     private func scheduleWrite(key: String, data: Data) {
         pendingWrites[key]?.cancel()
-        guard let dir = namespaceDir else { return }
+        guard let dir = namespaceDir,
+              let token = namespaceToken() else { return }
         let url = dir.appendingPathComponent(Self.encodeKey(key) + ".json")
+        let operationID = UUID()
+        let stagingURL = Self.rootDirectory()
+            .appendingPathComponent(".pending-\(operationID.uuidString).json")
+        pendingWriteIDs[key] = operationID
 
         pendingWrites[key] = Task { [weak self] in
             try? await Task.sleep(for: Self.writeDebounce)
             if Task.isCancelled { return }
-            await Self.writeToDisk(url: url, data: data)
-            self?.pendingWrites[key] = nil
+            let staged = await Self.stageWrite(url: stagingURL, data: data)
+            guard let self else {
+                try? FileManager.default.removeItem(at: stagingURL)
+                return
+            }
+            guard self.pendingWriteIDs[key] == operationID else {
+                try? FileManager.default.removeItem(at: stagingURL)
+                return
+            }
+            self.pendingWrites[key] = nil
+            self.pendingWriteIDs[key] = nil
+            guard staged,
+                  self.currentNamespace == token.namespace,
+                  self.namespaceGeneration == token.generation,
+                  self.namespaceDir == dir else {
+                try? FileManager.default.removeItem(at: stagingURL)
+                return
+            }
+
+            // El payload grande se escribió fuera de main. Sólo el rename
+            // atómico final ocurre dentro del actor, sin `await`: logout/reset
+            // no puede intercalarse entre validar la generación y el commit.
+            Self.commitStagedWrite(from: stagingURL, to: url)
         }
     }
 
     private func cancelPendingWrites() {
         for task in pendingWrites.values { task.cancel() }
         pendingWrites.removeAll()
+        pendingWriteIDs.removeAll()
     }
 
-    /// Escritura atómica fuera del `@MainActor`. Best-effort.
-    private static func writeToDisk(url: URL, data: Data) async {
+    /// Escribe a un path único fuera del `@MainActor`; todavía no toca el
+    /// archivo canónico de la sesión.
+    nonisolated private static func stageWrite(url: URL, data: Data) async -> Bool {
         await Task.detached(priority: .utility) {
             let fm = FileManager.default
-            try? fm.createDirectory(
-                at: url.deletingLastPathComponent(),
+            do {
+                try fm.createDirectory(
+                    at: url.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try data.write(to: url, options: .atomic)
+                return true
+            } catch {
+                try? fm.removeItem(at: url)
+                return false
+            }
+        }.value
+    }
+
+    /// Commit de metadatos corto y sin suspensión. Si ya existe el destino se
+    /// reemplaza dentro de la misma vuelta del actor.
+    private static func commitStagedWrite(from stagingURL: URL, to destinationURL: URL) {
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(
+                at: destinationURL.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
-            try? data.write(to: url, options: .atomic)
-        }.value
+            if fm.fileExists(atPath: destinationURL.path) {
+                _ = try fm.replaceItemAt(destinationURL, withItemAt: stagingURL)
+            } else {
+                try fm.moveItem(at: stagingURL, to: destinationURL)
+            }
+        } catch {
+            // Fallback todavía síncrono y protegido por el actor.
+            try? fm.removeItem(at: destinationURL)
+            try? fm.moveItem(at: stagingURL, to: destinationURL)
+            try? fm.removeItem(at: stagingURL)
+        }
     }
 
     // MARK: - Rutas y saneo

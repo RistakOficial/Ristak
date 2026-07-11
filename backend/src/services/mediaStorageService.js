@@ -507,24 +507,67 @@ async function highLevelClientAccountFallback() {
 
 async function resolveClientAccountContext(input = {}) {
   const metadataAccount = input.metadata?.clientAccount || input.metadata?.client_account || {}
-  const accountId = firstCleanValue(
+  const requestedAccountId = firstCleanValue(
     input.clientAccountId,
     input.client_account_id,
     input.accountId,
     input.account_id,
     input.locationId,
-    input.location_id,
+    input.location_id
+  )
+  const metadataAccountId = firstCleanValue(
     metadataAccount.id,
     metadataAccount.clientAccountId,
-    metadataAccount.client_account_id,
+    metadataAccount.client_account_id
+  )
+  const configuredAccountId = firstCleanValue(
     process.env.RISTAK_CLIENT_ACCOUNT_ID,
     process.env.CLIENT_ACCOUNT_ID,
     process.env.GHL_LOCATION_ID,
     process.env.HIGHLEVEL_LOCATION_ID,
-    await highLevelClientAccountFallback(),
+    await highLevelClientAccountFallback()
+  )
+  const accountId = firstCleanValue(
+    requestedAccountId,
+    metadataAccountId,
+    configuredAccountId,
     input.businessId,
     DEFAULT_CLIENT_ACCOUNT_ID
   )
+
+  // Assets existentes ya traen su root/slug estable en metadata. Reemplazos y
+  // reintentos deben conservarlo cuando el request no seleccionó otra cuenta.
+  if (!requestedAccountId && (metadataAccount.rootPath || metadataAccount.slug)) {
+    return normalizeClientAccountContext({
+      ...metadataAccount,
+      id: metadataAccountId || accountId
+    })
+  }
+
+  // `storage_settings.account_slug` identifica la instalación principal y es
+  // deliberadamente global. Una ruta administrativa legacy sí puede seleccionar
+  // otra location/cuenta; esa cuenta usa su id técnico como root para que nunca
+  // termine mezclada bajo el slug principal. La cuenta configurada conserva el
+  // slug legible existente, por compatibilidad con todos sus objetos históricos.
+  const requestedNormalized = requestedAccountId
+    ? normalizeClientAccountId(requestedAccountId)
+    : ''
+  const configuredNormalized = configuredAccountId
+    ? normalizeClientAccountId(configuredAccountId)
+    : ''
+  const legacyDefaultNormalized = normalizeClientAccountId(
+    configuredAccountId || input.businessId || DEFAULT_CLIENT_ACCOUNT_ID
+  )
+  const isExplicitAlternateAccount = Boolean(
+    requestedNormalized && requestedNormalized !== (configuredNormalized || legacyDefaultNormalized)
+  )
+  if (isExplicitAlternateAccount) {
+    return normalizeClientAccountContext({
+      id: accountId,
+      slug: requestedNormalized,
+      label: requestedAccountId
+    })
+  }
 
   // El id sigue siendo el identificador técnico (para lógica/legacy/migración),
   // pero la carpeta raíz del cliente usa el slug legible: accounts/<slug>/…
@@ -1838,12 +1881,16 @@ async function insertMediaAsset(row) {
   )
 }
 
-async function findMediaAssetByClientUploadId({ businessId = 'default', clientUploadId = '' } = {}) {
+async function findMediaAssetByClientUploadId({
+  businessId = 'default',
+  clientUploadId = '',
+  clientAccount = null
+} = {}) {
   const cleanClientUploadId = normalizeClientUploadId(clientUploadId)
   if (!cleanClientUploadId) return null
 
   const metadataNeedle = `"clientUploadId":${JSON.stringify(cleanClientUploadId)}`
-  const row = await db.get(
+  const rows = await db.all(
     `SELECT *
      FROM media_assets
      WHERE business_id = ?
@@ -1851,10 +1898,25 @@ async function findMediaAssetByClientUploadId({ businessId = 'default', clientUp
        AND status != 'deleted'
        AND metadata_json LIKE ? ESCAPE '\\'
      ORDER BY created_at DESC
-     LIMIT 1`,
+     LIMIT 25`,
     [normalizeBusinessId(businessId), `%${escapeSqlLike(metadataNeedle)}%`]
   )
-  return mapAssetRow(row)
+  const assets = rows.map(mapAssetRow).filter(Boolean)
+  const expectedAccountId = cleanString(clientAccount?.id)
+  if (!expectedAccountId) return assets[0] || null
+
+  const exact = assets.find(asset => (
+    cleanString(asset.metadata?.clientAccount?.id || asset.metadata?.client_account?.id) === expectedAccountId
+  ))
+  if (exact) return exact
+
+  // Compatibilidad con assets muy antiguos que tenían clientUploadId pero aún
+  // no guardaban identidad de cuenta. Solo se reutilizan si no hay otro candidato
+  // con cuenta explícita; nunca se cruza un asset moderno entre dos locations.
+  const legacy = assets.filter(asset => !cleanString(
+    asset.metadata?.clientAccount?.id || asset.metadata?.client_account?.id
+  ))
+  return legacy.length === 1 && assets.length === 1 ? legacy[0] : null
 }
 
 async function saveLocalFile({ objectPath, buffer }) {
@@ -1989,7 +2051,11 @@ export async function uploadMediaAsset(input = {}) {
       input.metadata?.client_upload_id
     )
 
-    const existingAsset = await findMediaAssetByClientUploadId({ businessId, clientUploadId })
+    const existingAsset = await findMediaAssetByClientUploadId({
+      businessId,
+      clientUploadId,
+      clientAccount
+    })
     if (existingAsset) {
       logger.info(`[MediaStorage] Reutilizando subida existente por clientUploadId: ${existingAsset.id}`)
       return existingAsset
@@ -3095,14 +3161,45 @@ export async function softDeleteMediaAsset(assetId) {
 
 export async function replaceMediaAsset(assetId, input = {}) {
   const current = await getMediaAsset(assetId)
-  const currentAccount = current.metadata?.clientAccount || current.metadata?.client_account || {}
+  const currentAccount = {
+    ...(current.metadata?.clientAccount || current.metadata?.client_account || {})
+  }
+  const currentRootMatch = cleanString(current.bunnyPath).match(/^(accounts\/[^/]+)/)
+  if (!cleanString(currentAccount.rootPath) && currentRootMatch?.[1]) {
+    currentAccount.rootPath = currentRootMatch[1]
+  }
+  if (!cleanString(currentAccount.slug) && currentRootMatch?.[1]) {
+    currentAccount.slug = currentRootMatch[1].split('/')[1] || ''
+  }
+  const requestedClientAccountId = firstCleanValue(
+    input.clientAccountId,
+    input.client_account_id,
+    input.accountId,
+    input.account_id,
+    input.locationId,
+    input.location_id
+  )
+  const inputMetadata = input.metadata && typeof input.metadata === 'object'
+    ? input.metadata
+    : {}
+  const suppliedMetadataAccount = inputMetadata.clientAccount || inputMetadata.client_account || {}
+  const preservedAccount = Object.keys(suppliedMetadataAccount).length
+    ? suppliedMetadataAccount
+    : currentAccount
+  const nextMetadata = {
+    ...inputMetadata,
+    ...(!requestedClientAccountId && Object.keys(preservedAccount).length
+      ? { clientAccount: preservedAccount }
+      : {})
+  }
   const nextInput = {
     ...input,
     businessId: input.businessId || current.businessId,
-    clientAccountId: input.clientAccountId || input.client_account_id || input.accountId || input.account_id || input.locationId || input.location_id || currentAccount.id,
+    clientAccountId: requestedClientAccountId || undefined,
     module: input.module || current.module,
     moduleEntityId: input.moduleEntityId || current.moduleEntityId,
-    isPublic: input.isPublic !== undefined ? input.isPublic : current.isPublic
+    isPublic: input.isPublic !== undefined ? input.isPublic : current.isPublic,
+    metadata: nextMetadata
   }
   const next = input.fileBase64 || input.dataUrl || input.content
     ? await uploadMediaAssetFromDataUrl(nextInput)

@@ -59,6 +59,8 @@ struct RistakUITestHarnessView: View {
                     TextField("Buscar contactos", text: $query)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .submitLabel(.search)
+                        .onSubmit { searchIsFocused = false }
                         .focused($searchIsFocused)
                         .accessibilityIdentifier("synthetic-search")
 

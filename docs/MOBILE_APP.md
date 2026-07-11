@@ -386,9 +386,30 @@ ultimo snapshot de esa cuenta, revalidan en segundo plano y buscan en servidor
 despues de un debounce corto. No deben recargar la bandeja de chats para obtener
 contactos. El resultado fresco es autoritativo sobre contactos borrados u
 ocultos y debe incluir todos sus telefonos para no iniciar la conversacion con
-un numero distinto al que hizo match. El snapshot solo se habilita cuando existe
+un numero distinto al que hizo match. `matchedPhone` solo se usa cuando el texto
+es realmente un telefono; cifras dentro de un nombre no pueden cambiar el
+destinatario, y la eleccion explicita se conserva por contacto y cuenta para que
+cerrar/reabrir el hilo no regrese silenciosamente al telefono principal. Antes
+de reutilizar una eleccion restaurada se valida contra `phone + phones` frescos;
+si el inventario aun es solo cache, el composer no puede enviar por ese destino,
+y si el numero fue eliminado se borra la seleccion local. El
+primer envio a un contacto elegido desde el directorio inserta su fila arriba
+aunque aun no exista en la primera pagina REST. Si un SSE entrante pertenece a
+un chat fuera de las paginas cargadas, primero usa el indice ligero en RAM; si no
+existe, coalesce la rafaga y pide solo
+`/contacts/search?picker=true&contactId=<id>&limit=1`, sin bloquear el stream ni
+mostrar spinner. El refresh de la primera pagina queda como respaldo y el piso
+de no leidos evita perder o duplicar eventos cuando ambas respuestas compiten.
+Una fila REST solo reconoce eventos cuya fecha/identidad ya contiene; una pagina
+vieja no puede tragarse el delta nuevo. Si bandeja e hilo reciben el mismo SSE,
+`conversationIsVisible=true` gana y no enciende un no-leido falso.
+El snapshot solo se habilita cuando existe
 un usuario verificado; nunca se persiste bajo un namespace compartido de
 `sin-usuario`, y las consultas exactas viven en un LRU temporal de memoria.
+Los encodes detached del hilo capturan ademas una generacion de sesion: si el
+usuario cambia de cuenta antes de terminar, la escritura se descarta. Precarga y
+commit final a disco comparan la misma generacion, incluso tras salir y volver a
+entrar a la misma cuenta.
 
 El hilo pide primero `/api/contacts/:id/conversation` y presenta los mensajes en
 cuanto llega ese bloque primario; estado del agente, programados y otros datos
@@ -403,15 +424,22 @@ sube el multipart desde un archivo temporal a `/api/media/upload` y manda al
 proveedor la referencia del asset/CDN; no duplica el body completo en RAM ni
 guarda el preview optimista como base64. Un backend legacy puede recibir data URL
 como fallback, pero esa conversion tambien ocurre fuera del `MainActor` y no se
-persiste en el snapshot local.
+persiste en el snapshot local. Al llegar el eco con URL remota, la burbuja libera
+el binario local de la foto para evitar acumulacion de memoria en hilos largos;
+un `data:` base64 no cuenta como URL remota y se elimina de `url` y `dataUrl` en
+el DTO persistido. Si ya existe CDN, tampoco se conserva una copia base64
+paralela en RAM.
 
 La app registra intervalos cerrados de arranque, bandeja, directorio, hilo,
-agenda, pagos, analiticas y media con `OSLog`/signposts, y se suscribe a
-`MetricKit` para contar hangs, crashes y excepciones sin guardar nombres,
+agenda, pagos, analiticas y media con el handle de `MetricKit` y `mxSignpost`,
+por lo que siguen visibles en Instruments y se agregan como `MXSignpostMetric`.
+Tambien registra hitos cerrados de APNs/registro/recepcion con `OSLog`, y se
+suscribe a `MetricKit` para contar hangs, crashes y excepciones sin guardar nombres,
 telefonos, mensajes, URLs ni tokens. Un ring buffer local acotado conserva solo
 categorias y numeros sanitizados. `RistakTests` valida orden/promocion y estados
-iniciales; `RistakUITests` cubre arranque, busqueda, historial, cita y nuevo chat;
-`scripts/run-ios-chat-soak.sh` estresa 10,000-50,000 filas sinteticas y
+iniciales, incluida la logica real de promocion 250 veces sobre 10,000 filas;
+`RistakUITests` cubre arranque, busqueda, historial, cita y nuevo chat;
+`scripts/run-ios-chat-soak.sh` estresa 10,000-50,000 filas de un harness sintetico y
 `scripts/run-ios-live-smoke.sh` abre las superficies reales de forma opt-in.
 El login nativo de `ios/app` debe conservar logo/colores de Ristak y no debe
 mostrar configuraciones tecnicas de servidor; al capturar el correo, la app

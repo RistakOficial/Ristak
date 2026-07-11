@@ -30,13 +30,14 @@ final class RistakUITests: XCTestCase {
 
         let lastRow = element(in: app, identifier: "synthetic-chat-row-9999")
         XCTAssertTrue(
-            lastRow.waitForExistence(timeout: 5),
+            lastRow.waitForExistence(timeout: 2),
             "La búsqueda debe encontrar de inmediato un contacto al final de 10k filas."
         )
+        dismissKeyboard(in: app)
         lastRow.tap()
 
         XCTAssertTrue(
-            element(in: app, identifier: "synthetic-history").waitForExistence(timeout: 5),
+            element(in: app, identifier: "synthetic-history").waitForExistence(timeout: 2),
             "El historial debe abrir sin esperar una respuesta de red."
         )
 
@@ -44,7 +45,7 @@ final class RistakUITests: XCTestCase {
         XCTAssertTrue(schedule.exists)
         schedule.tap()
         XCTAssertTrue(
-            element(in: app, identifier: "synthetic-appointment").waitForExistence(timeout: 5)
+            element(in: app, identifier: "synthetic-appointment").waitForExistence(timeout: 2)
         )
     }
 
@@ -55,7 +56,7 @@ final class RistakUITests: XCTestCase {
         XCTAssertTrue(newChat.waitForExistence(timeout: 8))
         newChat.tap()
         XCTAssertTrue(
-            element(in: app, identifier: "synthetic-new-chat-sheet").waitForExistence(timeout: 5)
+            element(in: app, identifier: "synthetic-new-chat-sheet").waitForExistence(timeout: 2)
         )
     }
 
@@ -104,7 +105,7 @@ final class RistakUITests: XCTestCase {
         focusAndType(String(chatCount), into: search, app: app)
         XCTAssertTrue(
             element(in: app, identifier: "synthetic-chat-row-\(chatCount - 1)")
-                .waitForExistence(timeout: 5),
+                .waitForExistence(timeout: 2),
             "La lista debe seguir respondiendo después del soak."
         )
     }
@@ -186,6 +187,17 @@ final class RistakUITests: XCTestCase {
             "El campo de búsqueda debe obtener foco antes de escribir."
         )
         field.typeText(text)
+    }
+
+    private func dismissKeyboard(in app: XCUIApplication) {
+        guard app.keyboards.firstMatch.exists else { return }
+        let submitKey = app.keyboards.buttons["Search"]
+        XCTAssertTrue(submitKey.waitForExistence(timeout: 2))
+        submitKey.tap()
+        XCTAssertTrue(
+            app.keyboards.firstMatch.waitForNonExistence(timeout: 2),
+            "La búsqueda debe cerrar el teclado antes de abrir una fila."
+        )
     }
 
     private func element(

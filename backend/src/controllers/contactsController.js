@@ -16,7 +16,7 @@ import {
 import { getHiddenContactFilters, buildHiddenContactsCondition } from '../utils/hiddenContactsFilter.js'
 import { recordAudit } from '../utils/auditLog.js'
 import { nonTestPaymentCondition } from '../utils/paymentMode.js'
-import { buildContactSearchClause, buildContactSearchRank, normalizePhoneDigits } from '../utils/searchText.js'
+import { buildContactSearchClause, buildContactSearchRank, isPhoneSearchText, normalizePhoneDigits } from '../utils/searchText.js'
 import { coalescedTimestampSortExpression, parseSortableTimestamp, timestampSortExpression, timestampSortParameterExpression } from '../utils/sqlTimestampSort.js'
 import { normalizeTrafficSource, normalizeWhatsAppAttributionPlatform } from '../utils/trafficSourceNormalizer.js'
 import { loadFirstWhatsAppAttributions, buildContactAttributionFields } from '../services/contactSourceService.js'
@@ -3733,18 +3733,26 @@ export const searchContacts = async (req, res) => {
     // directorio responda en un solo query aun con proveedores lentos.
     if (pickerMode) {
       const trimmedQuery = cleanString(q)
+      const exactContactId = cleanString(req.query?.contactId || req.query?.contact_id)
       const requestedLimit = Number(req.query?.limit)
-      const limit = Number.isFinite(requestedLimit)
+      const limit = exactContactId
+        ? 1
+        : Number.isFinite(requestedLimit)
         ? Math.min(Math.max(Math.round(requestedLimit), 1), 100)
         : 60
-      const searchClause = trimmedQuery ? buildContactSearchClause('c', trimmedQuery) : null
-      const searchRank = trimmedQuery ? buildContactSearchRank('c', trimmedQuery) : null
+      const searchClause = !exactContactId && trimmedQuery
+        ? buildContactSearchClause('c', trimmedQuery)
+        : null
+      const searchRank = !exactContactId && trimmedQuery
+        ? buildContactSearchRank('c', trimmedQuery)
+        : null
 
       // (ACL-002) El directorio ligero conserva exactamente la exclusión de
       // contactos ocultos del endpoint completo.
       const hiddenFilters = await getHiddenContactFilters()
       const hiddenCondition = buildHiddenContactsCondition(hiddenFilters, 'c', false)
       const conditions = ['c.deleted_at IS NULL']
+      if (exactContactId) conditions.push('c.id = ?')
       if (searchClause) conditions.push(searchClause.condition)
       if (hiddenCondition) conditions.push(hiddenCondition)
 
@@ -3752,6 +3760,7 @@ export const searchContacts = async (req, res) => {
         ? `${searchRank.expression} DESC, c.updated_at DESC, c.created_at DESC, c.id DESC`
         : 'c.updated_at DESC, c.created_at DESC, c.id DESC'
       const params = [
+        ...(exactContactId ? [exactContactId] : []),
         ...(searchClause?.params ?? []),
         ...(searchRank?.params ?? []),
         limit
@@ -3799,7 +3808,9 @@ export const searchContacts = async (req, res) => {
           })
         })
       }
-      const queryDigits = normalizePhoneDigits(trimmedQuery)
+      const queryDigits = isPhoneSearchText(trimmedQuery)
+        ? normalizePhoneDigits(trimmedQuery)
+        : ''
 
       return res.json({
         success: true,

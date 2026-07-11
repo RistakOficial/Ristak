@@ -55,7 +55,22 @@ final class ConversationViewModel {
     }
 
     var contactPhone: String? {
-        let phone = seedContact?.matchedPhone ?? contactDetail?.phone ?? seedContact?.phone ?? ""
+        if let selected = seedContact?.matchedPhone,
+           !selected.isEmpty {
+            if let contactDetail {
+                if ChatNavigationDestinationResolver.validationStatus(
+                    phone: selected,
+                    contact: contactDetail
+                ) == .valid {
+                    return selected
+                }
+            } else if seedContact?.destinationPhoneRequiresValidation == true {
+                return nil
+            } else {
+                return selected
+            }
+        }
+        let phone = contactDetail?.phone ?? seedContact?.phone ?? ""
         return phone.isEmpty ? nil : phone
     }
 
@@ -237,11 +252,13 @@ final class ConversationViewModel {
         guard !hasLoadedOnce else { return }
         let performanceSpan = RistakObservability.begin(.conversationInitialLoad)
         var performanceOutcome: RistakPerformanceOutcome = .failed
-        defer {
+        var performanceSpanFinished = false
+        if !timeline.isEmpty {
             performanceSpan.finish(
-                outcome: performanceOutcome,
+                outcome: .success,
                 itemCount: combinedMessages.count
             )
+            performanceSpanFinished = true
         }
         // Caché instantánea (Round 6 #4): pinta los últimos mensajes guardados
         // al instante; el spinner solo aparece si NO hay nada cacheado. Luego se
@@ -282,6 +299,13 @@ final class ConversationViewModel {
             performanceOutcome = .cancelled
         } catch {
             loadErrorMessage = "No se pudo cargar la conversación."
+        }
+
+        if !performanceSpanFinished {
+            performanceSpan.finish(
+                outcome: performanceOutcome,
+                itemCount: combinedMessages.count
+            )
         }
 
         // Espera SIEMPRE el fetch del agente ya en vuelo (aunque la conversación
@@ -567,24 +591,54 @@ final class ConversationViewModel {
             if stable.providerMessageId?.isEmpty != false {
                 stable.providerMessageId = optimistic.providerMessageId
             }
-            if var serverAttachment = server.attachment {
-                if let localAttachment = optimistic.attachment {
-                    if let previewData = localAttachment.localPreviewData {
-                        serverAttachment.localPreviewData = previewData
-                    }
-                    if serverAttachment.name?.isEmpty != false { serverAttachment.name = localAttachment.name }
-                    if serverAttachment.mimeType?.isEmpty != false { serverAttachment.mimeType = localAttachment.mimeType }
-                    if serverAttachment.durationMs == nil { serverAttachment.durationMs = localAttachment.durationMs }
-                    if serverAttachment.size == nil { serverAttachment.size = localAttachment.size }
-                }
-                stable.attachment = serverAttachment
-            } else {
-                stable.attachment = optimistic.attachment
-            }
+            stable.attachment = Self.reconciledAttachment(
+                server: server.attachment,
+                optimistic: optimistic.attachment
+            )
             optimisticMessages[optimisticIndex] = stable
         }
 
         reconciledServerMessageIDs = consumedServerIDs
+    }
+
+    /// Conserva el preview binario únicamente mientras el servidor todavía no
+    /// devuelve una URL HTTP(S) remota. Un `data:` base64 no es remoto: ocupa
+    /// más memoria que el binario y no debe provocar que se conserve esa copia
+    /// inflada en vez del preview local.
+    nonisolated static func reconciledAttachment(
+        server: ChatAttachment?,
+        optimistic: ChatAttachment?
+    ) -> ChatAttachment? {
+        guard var merged = server else { return optimistic }
+        guard let optimistic else { return merged }
+
+        let hasRemoteSource: Bool = {
+            guard let raw = merged.url?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  let url = URL(string: raw),
+                  let scheme = url.scheme?.lowercased(),
+                  url.host?.isEmpty == false else { return false }
+            return scheme == "http" || scheme == "https"
+        }()
+        merged.localPreviewData = hasRemoteSource ? nil : optimistic.localPreviewData
+        if hasRemoteSource,
+           ChatThreadSnapshotCache.persistableDataURL(merged.dataUrl) == nil {
+            // Ya existe CDN: no retener además el fallback base64.
+            merged.dataUrl = nil
+        } else if optimistic.localPreviewData != nil {
+            if ChatThreadSnapshotCache.persistableMediaURL(merged.url) == nil {
+                merged.url = nil
+            }
+            if ChatThreadSnapshotCache.persistableDataURL(merged.dataUrl) == nil {
+                // El preview binario ya pinta la burbuja; no retener además el
+                // mismo archivo como String base64 (~33 % más grande).
+                merged.dataUrl = nil
+            }
+        }
+        if merged.name?.isEmpty != false { merged.name = optimistic.name }
+        if merged.mimeType?.isEmpty != false { merged.mimeType = optimistic.mimeType }
+        if merged.durationMs == nil { merged.durationMs = optimistic.durationMs }
+        if merged.size == nil { merged.size = optimistic.size }
+        return merged
     }
 
     private func rebuildCombined() {
@@ -767,6 +821,18 @@ final class ConversationViewModel {
     private func hydrateContactDetail() async {
         if let detail = try? await contactsService.fetchContact(id: contactID, warmProfilePictures: true) {
             contactDetail = detail
+            if var seed = seedContact,
+               let selected = seed.matchedPhone,
+               !selected.isEmpty {
+                if ChatNavigationDestinationResolver.validationStatus(
+                    phone: selected,
+                    contact: detail
+                ) != .valid {
+                    seed.matchedPhone = nil
+                }
+                seed.destinationPhoneRequiresValidation = false
+                seedContact = seed
+            }
         }
     }
 

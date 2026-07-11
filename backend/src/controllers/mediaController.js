@@ -18,9 +18,10 @@ import {
   uploadMediaAssetFromDataUrl
 } from '../services/mediaStorageService.js'
 import { logger } from '../utils/logger.js'
+import { db } from '../config/database.js'
 import { prepareWhatsAppMediaForDirectUpload } from '../services/whatsappApiService.js'
 import {
-  createMediaUploadRequestHash,
+  createMediaUploadRequestHashes,
   runIdempotentMediaUpload
 } from '../services/mediaUploadSafetyService.js'
 
@@ -201,6 +202,76 @@ export function trustedUploadContextFromRequest(req = {}) {
   }
 }
 
+export function mediaUploadRequestDescriptor(
+  req = {},
+  context = {},
+  directChat = {},
+  { includeClientAccount = true } = {}
+) {
+  const descriptor = {
+    businessId: context.businessId,
+    userId: context.userId === null || context.userId === undefined
+      ? null
+      : String(context.userId),
+    module: context.module,
+    moduleEntityId: context.moduleEntityId,
+    isPublic: context.isPublic,
+    deferStreamSync: context.deferStreamSync,
+    chatCompatibility: directChat.enabled ? 'whatsapp' : '',
+    chatMediaKind: directChat.kind || '',
+    filename: req.file?.originalname || req.body?.filename || req.body?.fileName || '',
+    mimeType: req.file?.mimetype || '',
+    size: req.file?.size || null
+  }
+  // Compatibilidad del ledger ya desplegado: las subidas de Chat no tenían
+  // clientAccountId en su descriptor. Omitir la propiedad cuando no existe
+  // conserva exactamente el SHA anterior; las rutas administrativas con cuenta
+  // explícita sí la incorporan para impedir replays entre locations.
+  if (includeClientAccount && cleanString(context.clientAccountId)) {
+    descriptor.clientAccountId = cleanString(context.clientAccountId)
+  }
+  return descriptor
+}
+
+function normalizedUploadAccountId(value = '') {
+  return cleanString(value)
+    .replace(/[^a-zA-Z0-9_.-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 120)
+}
+
+function accountIdFromUploadResponse(response = {}) {
+  return cleanString(
+    response?.metadata?.clientAccount?.id ||
+    response?.metadata?.client_account?.id
+  )
+}
+
+async function compatibleReplayBelongsToAccount(response, row, expectedAccountId) {
+  const expected = normalizedUploadAccountId(expectedAccountId)
+  if (!expected) return false
+  let actual = accountIdFromUploadResponse(response)
+  if (!actual) {
+    const assetId = cleanString(row?.asset_id || response?.id)
+    const asset = assetId
+      ? await db.get(
+          `SELECT metadata_json
+           FROM media_assets
+           WHERE id = ? AND business_id = ?
+           LIMIT 1`,
+          [assetId, row?.business_id]
+        ).catch(() => null)
+      : null
+    try {
+      const metadata = asset?.metadata_json ? JSON.parse(asset.metadata_json) : {}
+      actual = cleanString(metadata?.clientAccount?.id || metadata?.client_account?.id)
+    } catch {
+      actual = ''
+    }
+  }
+  return normalizedUploadAccountId(actual) === expected
+}
+
 export async function uploadInputFromRequest(req) {
   const body = req.body || {}
   const common = trustedUploadContextFromRequest(req)
@@ -286,20 +357,14 @@ export async function uploadMediaHandler(req, res) {
 
     let asset
     if (context.clientUploadId) {
-      const requestHash = await createMediaUploadRequestHash({
-        descriptor: {
-          businessId: context.businessId,
-          userId: context.userId === null ? null : String(context.userId),
-          module: context.module,
-          moduleEntityId: context.moduleEntityId,
-          isPublic: context.isPublic,
-          deferStreamSync: context.deferStreamSync,
-          chatCompatibility: directChat.enabled ? 'whatsapp' : '',
-          chatMediaKind: directChat.kind || '',
-          filename: req.file?.originalname || req.body?.filename || req.body?.fileName || '',
-          mimeType: req.file?.mimetype || '',
-          size: req.file?.size || null
-        },
+      const descriptors = [mediaUploadRequestDescriptor(req, context, directChat)]
+      if (cleanString(context.clientAccountId)) {
+        descriptors.push(mediaUploadRequestDescriptor(req, context, directChat, {
+          includeClientAccount: false
+        }))
+      }
+      const [requestHash, ...compatibleRequestHashes] = await createMediaUploadRequestHashes({
+        descriptors,
         filePath: req.file?.path || '',
         buffer: req.file?.buffer,
         content: req.body?.fileBase64 || req.body?.file_base64 ||
@@ -309,6 +374,14 @@ export async function uploadMediaHandler(req, res) {
         businessId: context.businessId,
         clientUploadId: context.clientUploadId,
         requestHash,
+        compatibleRequestHashes,
+        validateCompatibleReplay: cleanString(context.clientAccountId)
+          ? (response, row) => compatibleReplayBelongsToAccount(
+              response,
+              row,
+              context.clientAccountId
+            )
+          : null,
         create: executeUpload
       })
     } else {
@@ -449,8 +522,10 @@ export async function moveMediaAssetsHandler(req, res) {
 }
 
 export async function replaceMediaAssetHandler(req, res) {
+  let tempFileHandedOff = false
   try {
     const prepared = await uploadInputFromRequest(req)
+    prepared.input.onTempFileHandedOff = () => { tempFileHandedOff = true }
     const result = prepared.mode === 'buffer'
       ? await replaceMediaAsset(req.params.assetId, prepared.input)
       : await replaceMediaAsset(req.params.assetId, {
@@ -460,10 +535,11 @@ export async function replaceMediaAssetHandler(req, res) {
         })
     res.json({ success: true, data: result })
   } catch (error) {
-    if (req.file?.path) {
+    sendError(res, error, 'Error reemplazando archivo multimedia')
+  } finally {
+    if (req.file?.path && !tempFileHandedOff) {
       await fs.rm(req.file.path, { force: true }).catch(() => undefined)
     }
-    sendError(res, error, 'Error reemplazando archivo multimedia')
   }
 }
 

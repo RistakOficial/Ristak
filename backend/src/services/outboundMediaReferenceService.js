@@ -41,25 +41,70 @@ function isBlockedIpv4(address) {
     a >= 224
 }
 
-function isBlockedIpv6(address) {
-  const clean = address.toLowerCase().replace(/^\[|\]$/g, '').split('%')[0]
-  const mapped = clean.match(/(?:^|:)ffff:(\d+\.\d+\.\d+\.\d+)$/)
-  if (mapped) return isBlockedIpv4(mapped[1])
-
+function parseIpv6Groups(address) {
+  let clean = cleanString(address).toLowerCase().replace(/^\[|\]$/g, '').split('%')[0]
+  if (clean.includes('.')) {
+    try {
+      clean = new URL(`https://[${clean}]/`).hostname.replace(/^\[|\]$/g, '')
+    } catch {
+      return null
+    }
+  }
   const halves = clean.split('::')
-  if (halves.length > 2) return true
+  if (halves.length > 2) return null
   const left = halves[0] ? halves[0].split(':').filter(Boolean) : []
   const right = halves[1] ? halves[1].split(':').filter(Boolean) : []
   const missing = 8 - left.length - right.length
-  if (missing < 0 || (halves.length === 1 && missing !== 0)) return true
+  if (missing < 0 || (halves.length === 1 && missing !== 0)) return null
   const groups = [
     ...left,
     ...Array.from({ length: halves.length === 2 ? missing : 0 }, () => '0'),
     ...right
   ].map(group => Number.parseInt(group || '0', 16))
-  if (groups.length !== 8 || groups.some(group => !Number.isInteger(group) || group < 0 || group > 0xffff)) return true
+  if (groups.length !== 8 || groups.some(group => !Number.isInteger(group) || group < 0 || group > 0xffff)) return null
+  return groups
+}
 
-  const [first, second] = groups
+function groupsMatchPrefix(groups, prefixGroups, prefixBits) {
+  const fullGroups = Math.floor(prefixBits / 16)
+  const remainingBits = prefixBits % 16
+  for (let index = 0; index < fullGroups; index += 1) {
+    if (groups[index] !== prefixGroups[index]) return false
+  }
+  if (!remainingBits) return true
+  const mask = (0xffff << (16 - remainingBits)) & 0xffff
+  return (groups[fullGroups] & mask) === (prefixGroups[fullGroups] & mask)
+}
+
+function matchesConfiguredNat64Prefix(groups) {
+  const configured = cleanString(process.env.OUTBOUND_MEDIA_NAT64_PREFIXES)
+  if (!configured) return false
+
+  return configured.split(',').some(value => {
+    const [address, rawBits] = cleanString(value).split('/')
+    const bits = Number(rawBits)
+    const prefixGroups = parseIpv6Groups(address)
+    if (!prefixGroups || !Number.isInteger(bits) || bits < 1 || bits > 128) return false
+    return groupsMatchPrefix(groups, prefixGroups, bits)
+  })
+}
+
+function isBlockedIpv6(address) {
+  const hadDottedIpv4 = cleanString(address).includes('.')
+  const groups = parseIpv6Groups(address)
+  if (!groups) return true
+
+  const [first, second, third, fourth] = groups
+  // Sólo 2000::/3 es unicast global. Mapped/translated IPv4, discard-only,
+  // site-local y otros rangos especiales quedan fuera y nunca deben salir.
+  if ((first & 0xe000) !== 0x2000) return true
+
+  if (matchesConfiguredNat64Prefix(groups)) return true
+
+  const embeddedTail = `${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`
+  const isIsatap = groups[4] === 0 && groups[5] === 0x5efe
+  if ((hadDottedIpv4 || isIsatap) && isBlockedIpv4(embeddedTail)) return true
+
   const allZeroPrefix = groups.slice(0, 6).every(group => group === 0)
   if (allZeroPrefix && (groups[6] !== 0 || groups[7] > 1)) {
     const embedded = `${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`
@@ -70,10 +115,27 @@ function isBlockedIpv6(address) {
     return isBlockedIpv4(embedded)
   }
 
+  const isNat64WellKnown = first === 0x0064 && second === 0xff9b &&
+    groups.slice(2, 6).every(group => group === 0)
+  const isNat64LocalUse = first === 0x0064 && second === 0xff9b && third === 0x0001
+  const isDiscardOnly = first === 0x0100 && second === 0 && third === 0 && fourth === 0
+  const isBenchmarking = first === 0x2001 && second === 0x0002 && third === 0
+  const isOrchid = first === 0x2001 && second >= 0x0010 && second <= 0x001f
+  const isIetfProtocolAssignment = first === 0x2001 && second <= 0x01ff
+  const isDocumentation3fff = first === 0x3fff && (second & 0xf000) === 0
+
   return groups.every(group => group === 0) ||
     (groups.slice(0, 7).every(group => group === 0) && groups[7] === 1) ||
+    isNat64WellKnown ||
+    isNat64LocalUse ||
+    isDiscardOnly ||
+    isBenchmarking ||
+    isOrchid ||
+    isIetfProtocolAssignment ||
+    isDocumentation3fff ||
     (first & 0xfe00) === 0xfc00 ||
     (first & 0xffc0) === 0xfe80 ||
+    (first & 0xffc0) === 0xfec0 ||
     (first & 0xff00) === 0xff00 ||
     (first === 0x2001 && second === 0x0db8) ||
     (first === 0x2001 && second === 0x0000) ||

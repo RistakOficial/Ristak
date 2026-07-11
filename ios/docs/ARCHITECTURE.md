@@ -207,15 +207,33 @@ que acaba de entrar.
 
 ## Rendimiento y diagnostico
 
-- `RistakObservability` usa `OSLog`, signposts y `MetricKit` para arranque,
+- `RistakObservability` usa el log handle de `MetricKit`, `mxSignpost` y `OSLog`
+  para arranque,
   bandeja, contactos, conversación, calendarios, pagos, analíticas y media.
   Solo acepta operaciones cerradas, resultados, duración y conteos; no acepta
-  texto libre ni identidad de clientes.
+  texto libre ni identidad de clientes. Los hitos de push distinguen delegate,
+  token APNs, registro backend, recepción y apertura sin registrar el token ni
+  el payload.
 - `RistakDiagnosticRingBuffer` conserva hasta 200 eventos / 256 KiB con
   protección de archivo. Resume payloads MetricKit y diagnósticos de crash,
   hang, CPU y disco sin persistir los payloads o call stacks crudos.
+- `RistakSnapshotCache` namespacea por cuenta y generación de sesión. Precarga,
+  encodes detached y commit atómico a disco validan esa generación; logout y
+  relogin al mismo namespace no pueden reinyectar ni reescribir datos viejos.
+- La bandeja resuelve un SSE de contacto fuera de las páginas con un índice RAM
+  o un picker exacto por `contactId`. El buffer está acotado y coalescido por
+  contacto; `conversationIsVisible` se fusiona con OR y cada evento sólo se da
+  por reconocido si la fila REST ya avanzó hasta él. El refresh completo
+  permanece como reconciliación autoritativa.
+- Los destinos alternos restaurados se validan contra la lista fresca de
+  teléfonos. Mientras sólo exista inventario cacheado, el hilo no puede usarlos
+  para enviar; un destino removido se borra del estado local.
 - `RistakTests` y `RistakUITests` son targets del scheme compartido. La suite UI
   default es sintética y no usa red; el soak configurable cubre 10k-50k filas.
+  Una prueba unitaria adicional ejecuta el reductor real del inbox 250 veces
+  sobre 10k contactos y fija un presupuesto de 8 s en simulador. La bandera de
+  red del harness se aplica dentro de `APIClient`, por lo que una regresión que
+  intente salir a red falla antes del transporte.
   El smoke de `RootView` real es opt-in y usa únicamente la sesión que ya exista
   en el destino, sin inyectar ni imprimir credenciales.
 
@@ -275,6 +293,8 @@ sheets del sistema), nunca para comunicar selección.
   `RISTAK_SOAK_CHAT_COUNT=10000 RISTAK_SOAK_ITERATIONS=250
   ios/app/scripts/run-ios-chat-soak.sh`. Superficie real opt-in:
   `ios/app/scripts/run-ios-live-smoke.sh`.
+  Los scripts exigen una ruta absoluta `.xcresult` y usan `DerivedData` aislado
+  para evitar colisiones o borrados ambiguos entre ejecuciones.
 - Login: la app resuelve tenant por correo contra el portal central y no muestra
   campo manual de servidor. El override directo queda reservado para pruebas
   internas, fuera de la UI de usuario.

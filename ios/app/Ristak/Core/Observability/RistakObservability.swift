@@ -63,8 +63,9 @@ struct RistakPerformanceSpan {
 enum RistakObservability {
     nonisolated static let subsystem = "com.ristak.app"
 
-    fileprivate nonisolated static let performanceLog = OSLog(
-        subsystem: subsystem,
+    /// El handle de MetricKit mantiene los intervalos visibles en Instruments y
+    /// además los agrega como `MXSignpostMetric` en el reporte diario.
+    fileprivate nonisolated static let performanceLog = MXMetricManager.makeLogHandle(
         category: "performance"
     )
     fileprivate nonisolated static let performanceLogger = Logger(
@@ -78,6 +79,10 @@ enum RistakObservability {
     private nonisolated static let lifecycleLogger = Logger(
         subsystem: subsystem,
         category: "lifecycle"
+    )
+    private nonisolated static let pushLogger = Logger(
+        subsystem: subsystem,
+        category: "push"
     )
 
     @MainActor private static var didBootstrap = false
@@ -110,7 +115,7 @@ enum RistakObservability {
         _ operation: RistakPerformanceOperation
     ) -> RistakPerformanceSpan {
         let signpostID = OSSignpostID(log: performanceLog)
-        os_signpost(
+        mxSignpost(
             .begin,
             log: performanceLog,
             name: operation.signpostName,
@@ -133,15 +138,14 @@ enum RistakObservability {
         let durationMilliseconds = Double(elapsedNanoseconds) / 1_000_000
         let safeItemCount = max(itemCount, 0)
 
-        os_signpost(
+        // Los valores se guardan en Logger/ring. El signpost de MetricKit se
+        // deja sin formato custom para conservar su snapshot CPU/memoria y
+        // evitar pasar un String Swift a un especificador C `%s`.
+        mxSignpost(
             .end,
             log: performanceLog,
             name: span.operation.signpostName,
-            signpostID: span.signpostID,
-            "outcome=%{public}s duration_ms=%{public}.2f items=%{public}d",
-            outcome.rawValue,
-            durationMilliseconds,
-            safeItemCount
+            signpostID: span.signpostID
         )
         performanceLogger.info(
             "operation=\(span.operation.rawValue, privacy: .public) outcome=\(outcome.rawValue, privacy: .public) duration_ms=\(durationMilliseconds, privacy: .public) items=\(safeItemCount, privacy: .public)"
@@ -157,6 +161,14 @@ enum RistakObservability {
     /// Snapshot sanitizado para soporte o pruebas. Nunca contiene texto libre.
     nonisolated static func recentDiagnostics() async -> [RistakDiagnosticRecord] {
         await RistakDiagnosticRingBuffer.shared.snapshot()
+    }
+
+    /// Evento cerrado de push. No acepta token, payload, contacto ni texto.
+    nonisolated static func recordPush(
+        _ milestone: RistakDiagnosticRecord.PushMilestone
+    ) {
+        pushLogger.notice("milestone=\(milestone.rawValue, privacy: .public)")
+        persist(.push(milestone))
     }
 
     fileprivate nonisolated static func persist(_ record: RistakDiagnosticRecord) {
