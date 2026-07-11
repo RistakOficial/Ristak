@@ -18,7 +18,7 @@ import {
   testWebhookAction,
   resolveAutomationMediaAssetId,
   resolveAutomationMediaSource,
-  resolveAutomationVoicePublicUrl
+  resolveAutomationAudioDelivery
 } from '../src/services/automationEngine.js'
 import { resetCentralStorageConfigCache, uploadMediaAssetFromDataUrl } from '../src/services/mediaStorageService.js'
 import {
@@ -157,13 +157,21 @@ test('las automatizaciones leen su audio administrado antes de entregarlo a cada
   }
 })
 
-test('una nota de voz administrada usa su URL pública solo si los bytes son OGG Opus válidos', () => {
-  const publicUrl = 'https://cdn.example.test/automations/nota.ogg'
-  const validDataUrl = `data:audio/ogg;base64,${Buffer.from('OggS-test-OpusHead-audio').toString('base64')}`
+test('una nota de voz propia fuerza Media ID y nunca reexpone su URL CDN al proveedor', () => {
+  const dataUrl = `data:audio/ogg;base64,${Buffer.from('OggS-test-OpusHead-audio').toString('base64')}`
+  const delivery = resolveAutomationAudioDelivery({ dataUrl, externalUrl: '' })
 
-  assert.equal(resolveAutomationVoicePublicUrl({ publicUrl, mimeType: 'audio/ogg', dataUrl: validDataUrl }), publicUrl)
-  assert.equal(resolveAutomationVoicePublicUrl({ publicUrl, mimeType: 'audio/ogg', dataUrl: 'data:audio/ogg;base64,T2dnUw==' }), '')
-  assert.equal(resolveAutomationVoicePublicUrl({ publicUrl, mimeType: 'audio/mpeg', dataUrl: validDataUrl }), '')
+  assert.equal(delivery.audioDataUrl, dataUrl)
+  assert.equal(delivery.audioUrl, undefined)
+})
+
+test('un audio externo conserva su URL para que el proveedor pueda descargarlo', () => {
+  const delivery = resolveAutomationAudioDelivery({
+    externalUrl: 'https://cdn.example.test/audio/externo.ogg'
+  })
+
+  assert.equal(delivery.audioDataUrl, undefined)
+  assert.equal(delivery.audioUrl, 'https://cdn.example.test/audio/externo.ogg')
 })
 
 test('testWebhookAction ejecuta el POST y devuelve salida mapeable', async () => {

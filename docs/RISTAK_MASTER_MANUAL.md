@@ -737,12 +737,11 @@ directo: WhatsApp API recibe un OGG real con códec Opus y la marca de voz; el
 transporte QR/Baileys usa además `ptt=true`. Messenger e Instagram no exponen un
 flag equivalente de PTT, por lo que una nota de voz se entrega como adjunto de
 audio reproducible. Cuando el archivo proviene del almacenamiento de Ristak,
-también se normaliza por la misma ruta M4A/AAC que el chat directo antes de que
-Meta lo descargue. Para WhatsApp API, una nota OGG/Opus ya validada y publicada
-por Ristak se manda mediante su URL HTTPS pública para que el proveedor descargue
-los bytes originales; no debe volver a subirse como multipart temporal. La subida
-de media queda como respaldo para audio externo, legado o sin validación, y en
-ese caso conserva `audio/ogg; codecs=opus` en vez de degradarlo a `audio/ogg`.
+WhatsApp API lo valida como OGG/Opus y lo sube al proveedor antes de mandarlo por
+Media ID: nunca delega de nuevo la descarga a una URL CDN, porque Meta/YCloud
+puede clasificar ese fetch como `application/octet-stream` aunque el asset sea
+válido. Los assets externos se conservan como enlaces HTTPS y entran a la misma
+normalización cuando se proporcionan como archivo.
 Las URLs públicas existen exclusivamente para que los proveedores puedan descargar
 el contenido; el endpoint/proxy mantiene MIME, `nosniff` y fuerza la descarga de
 tipos no seguros.

@@ -307,7 +307,8 @@ async function withYCloudProviderMediaCapture(callback) {
             apiKey: options.headers?.['X-API-Key'],
             filename: file?.name || '',
             mimeType: file?.type || '',
-            size: bytes.length
+            size: bytes.length,
+            bytes
           })
           return ycloudJsonResponse({ id: mediaId })
         }
@@ -627,6 +628,8 @@ test('envío API de audio sube nota de voz al proveedor y conserva preview inter
         assert.equal(captures.uploads[0].filename, 'whatsapp-audio.ogg')
         assert.equal(captures.uploads[0].mimeType, 'audio/ogg; codecs=opus')
         assert.ok(captures.uploads[0].size > 0)
+        assert.equal(captures.uploads[0].bytes.subarray(0, 4).toString('latin1'), 'OggS')
+        assert.ok(captures.uploads[0].bytes.includes(Buffer.from('OpusHead', 'ascii')))
 
         assert.equal(captures.messages.length, 1)
         assert.equal(captures.messages[0].type, 'audio')

@@ -3545,21 +3545,15 @@ export async function resolveAutomationMediaSource(mediaUrl = '') {
   }
 }
 
-function isOggOpusDataUrl(dataUrl = '') {
-  const match = str(dataUrl).match(/^data:audio\/ogg(?:;[^,]*)?;base64,([a-z0-9+/=\s]+)$/i)
-  if (!match) return false
-  try {
-    const buffer = Buffer.from(match[1].replace(/\s/g, ''), 'base64')
-    return buffer.subarray(0, 4).toString('latin1') === 'OggS' && buffer.includes(Buffer.from('OpusHead', 'ascii'))
-  } catch {
-    return false
+/**
+ * Los assets propios se envían como data URL para forzar subida por Media ID;
+ * una URL externa permanece como enlace porque Ristak no tiene sus bytes.
+ */
+export function resolveAutomationAudioDelivery({ dataUrl = '', externalUrl = '' } = {}) {
+  return {
+    audioDataUrl: str(dataUrl) || undefined,
+    audioUrl: str(externalUrl) || undefined
   }
-}
-
-export function resolveAutomationVoicePublicUrl({ publicUrl = '', mimeType = '', dataUrl = '' } = {}) {
-  if (!/^https:\/\//i.test(str(publicUrl))) return ''
-  if (str(mimeType).toLowerCase() !== 'audio/ogg') return ''
-  return isOggOpusDataUrl(dataUrl) ? str(publicUrl) : ''
 }
 
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
@@ -3591,23 +3585,16 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
     return sendWhatsAppApiVideoMessage({ to, from: fromPhone, videoDataUrl: dataUrl || undefined, videoUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
   } else if (block.type === 'audio' || block.type === 'voice') {
     const isVoiceNote = block.type === 'voice' || block.voiceNote !== false
-    // Los MP3 que se cargan al flujo se convierten antes a OGG/Opus y quedan en
-    // el CDN con MIME correcto. Mandar esa URL HTTPS validada evita que YCloud
-    // vuelva a interpretar un multipart temporal como octet-stream. Si el
-    // asset es viejo, externo o no pasó la validación, cae a la conversión y
-    // subida segura de siempre.
-    const publicVoiceUrl = isVoiceNote
-      ? resolveAutomationVoicePublicUrl({
-          publicUrl: media.publicUrl,
-          mimeType,
-          dataUrl: dataUrl || ''
-        })
-      : ''
+    // Aunque el asset propio ya sea un OGG/Opus válido, no se entrega por URL.
+    // Meta/YCloud vuelve a descargar enlaces externos y puede clasificar el
+    // binario como application/octet-stream. Pasar el data URL obliga a la
+    // tubería que valida/conserva OGG/Opus y lo sube al proveedor; el mensaje se
+    // envía por Media ID, que es el transporte estable para una nota de voz.
+    const audioDelivery = resolveAutomationAudioDelivery({ dataUrl, externalUrl })
     return sendWhatsAppApiAudioMessage({
       to,
       from: fromPhone,
-      audioDataUrl: dataUrl || undefined,
-      audioUrl: publicVoiceUrl || externalUrl || undefined,
+      ...audioDelivery,
       // Los bloques nuevos son explícitos. Los flujos viejos guardaban "audio"
       // como nota de voz por default; conservamos ese comportamiento.
       voice: isVoiceNote,
