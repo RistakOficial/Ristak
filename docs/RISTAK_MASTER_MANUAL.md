@@ -2510,6 +2510,13 @@ disparadores programados y jobs manuales/programados. Las notificaciones interna
 historicas no se borran, pero se les quitan las referencias a la automatizacion,
 nodo e inscripcion eliminados para evitar enlaces fantasma.
 
+Al cambiar entre automatizaciones dentro del editor visual, la ruta
+`/automations/:id` es frontera de estado: el editor se remonta por ID y limpia
+errores de carga, seleccion, modales, pruebas, registros, stats, paneles y estado
+de guardado antes de cargar la siguiente automatizacion. No debe ser necesario
+refrescar la pagina para abrir otra automatizacion ni para salir de un error de
+carga anterior.
+
 Los disparadores programados de una automatizacion tienen recuperacion acotada:
 si un reinicio o despliegue cruza su hora, el scheduler ejecuta la instancia
 perdida solo durante las siguientes 24 horas. `automation_schedule_runs` reclama

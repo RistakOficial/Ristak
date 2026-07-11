@@ -376,8 +376,10 @@ export const AutomationEditor: React.FC = () => {
   const refreshEnrollmentStats = useCallback(async () => {
     const current = automationRef.current
     if (!current) return
+    const statsAutomationId = current.id
     try {
-      const stats = await automationsService.getEnrollmentStats(current.id)
+      const stats = await automationsService.getEnrollmentStats(statsAutomationId)
+      if (automationRef.current?.id !== statsAutomationId) return
       setNodeStats(stats.byNode || {})
     } catch {
       // El contador es informativo; los errores completos viven en el modal de registros.
@@ -581,13 +583,35 @@ export const AutomationEditor: React.FC = () => {
 
   useEffect(() => {
     let cancelled = false
+    const resetRouteState = () => {
+      setLoadError(false)
+      setStatusBusy(false)
+      setSelectedNodeId(null)
+      setSelectedEdgeId(null)
+      setMultiSelectedIds(new Set())
+      setPicker(null)
+      setConfig(null)
+      configRef.current = null
+      setEmailEditor(null)
+      emailEditorRef.current = null
+      setSettingsOpen(false)
+      setRecordsTab(null)
+      setTestRunOpen(false)
+      setNodeStats({})
+      setEnrollmentsNode(null)
+      setPreviewOpen(false)
+      setNodeErrors({})
+      setSaveState('saved')
+    }
 
     const initFrom = (data: Automation) => {
       const safeFlow = normalizeEditorFlow(data.flow)
       const safeSettings = { ...defaultFlowSettings(), ...(safeFlow.settings || {}) }
+      setLoadError(false)
       setAutomation({ ...data, flow: safeFlow })
       setName(data.name)
       viewportRef.current = safeFlow.viewport
+      setConfigViewport(safeFlow.viewport)
       setFlowSettings(safeSettings)
       dispatch({ type: 'init', flow: { nodes: safeFlow.nodes, edges: safeFlow.edges } })
       savedContentSignatureRef.current = automationContentSignature(
@@ -600,10 +624,22 @@ export const AutomationEditor: React.FC = () => {
       setSaveState('saved')
     }
 
+    resetRouteState()
+
     // Sin parpadeo: si ya lo conocemos, se pinta al instante desde el caché
     // y se revalida en segundo plano (solo se aplica si aún no editas nada)
     const cached = automationsCache.automations.get(automationId)
-    if (cached) initFrom(cached)
+    if (cached) {
+      initFrom(cached)
+    } else {
+      setAutomation(null)
+      setName('')
+      viewportRef.current = DEFAULT_VIEWPORT
+      setConfigViewport(DEFAULT_VIEWPORT)
+      setFlowSettings(defaultFlowSettings())
+      dispatch({ type: 'init', flow: { nodes: [], edges: [] } })
+      savedContentSignatureRef.current = ''
+    }
 
     automationsService
       .getAutomation(automationId)
@@ -618,7 +654,10 @@ export const AutomationEditor: React.FC = () => {
         if (untouched && data.updatedAt !== cached.updatedAt) initFrom(data)
       })
       .catch(() => {
-        if (!cancelled && !cached) setLoadError(true)
+        if (!cancelled && !cached) {
+          setAutomation(null)
+          setLoadError(true)
+        }
       })
     return () => {
       cancelled = true

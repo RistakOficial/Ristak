@@ -136,7 +136,7 @@ const AutomationEditorRoute: React.FC = () => {
   const { automationId = '' } = useParams()
   const navigate = useNavigate()
   const [retryKey, setRetryKey] = useState(0)
-  const LazyAutomationEditor = useMemo(createAutomationEditor, [automationId, retryKey])
+  const LazyAutomationEditor = useMemo(createAutomationEditor, [retryKey])
   const goBack = () => navigate('/automations')
 
   return (
@@ -146,10 +146,10 @@ const AutomationEditorRoute: React.FC = () => {
       onRetry={() => setRetryKey((current) => current + 1)}
     >
       <Suspense
-        key={retryKey}
+        key={`${automationId}:${retryKey}`}
         fallback={<AutomationEditorLoading currentAutomationId={automationId} onBack={goBack} />}
       >
-        <LazyAutomationEditor />
+        <LazyAutomationEditor key={automationId || 'empty'} />
       </Suspense>
     </AutomationEditorBoundary>
   )
