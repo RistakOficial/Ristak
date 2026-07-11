@@ -42,6 +42,10 @@
 	<string>Ristak guarda en tu galería las imágenes que decides descargar.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Ristak accede a tus fotos para adjuntarlas en tus conversaciones.</string>
+	<key>NSUserActivityTypes</key>
+	<array>
+		<string>INSendMessageIntent</string>
+	</array>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
