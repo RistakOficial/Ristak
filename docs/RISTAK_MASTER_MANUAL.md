@@ -950,6 +950,12 @@ Los bloques historicos nunca deben incrementar no leidos ni disparar push,
 automatizaciones, confirmaciones o agente conversacional. WhatsApp decide que
 historial entrega a un nuevo dispositivo vinculado; Ristak debe importar todos
 los bloques recibidos, pero no puede fabricar mensajes que WhatsApp no envie.
+Para el enlace QR, el socket debe identificarse como un navegador real y logico
+(`Browsers.macOS('Google Chrome')`); el nombre generico `Desktop` puede ser
+rechazado con `428` antes de emitir un QR. Por estabilidad, Ristak deja que
+Baileys use la version compatible incluida en el paquete y solo acepta
+`WHATSAPP_WEB_VERSION` como override temporal de emergencia: no consulta ni
+fuerza la version mas nueva de WhatsApp Web en cada socket.
 
 WhatsApp API/YCloud ejecuta al conectar un sync de contactos, pagina el listado
 saliente disponible en `/whatsapp/messages` y reprocesa los eventos

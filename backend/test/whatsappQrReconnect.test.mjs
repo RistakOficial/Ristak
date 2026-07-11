@@ -242,25 +242,24 @@ test('shutdownWhatsAppQrService libera el lease QR del proceso durante deploy dr
   })
 })
 
-test('WhatsApp QR usa la versión viva de WhatsApp Web al crear el socket', async () => {
+test('WhatsApp QR deja la versión en manos de Baileys y usa un navegador lógico para vincular', async () => {
   const sockets = []
-  const latestVersion = [2, 3000, 1042401057]
   let fetchCalls = 0
 
   await withQrFixture({ status: 'connected' }, async () => {
     setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, {
-      fetchLatestWaWebVersion: async (options = {}) => {
+      fetchLatestWaWebVersion: async () => {
         fetchCalls += 1
-        assert.ok(options.signal)
-        return { version: latestVersion, isLatest: true }
+        return { version: [2, 3000, 1042401057], isLatest: true }
       }
     }))
 
     const result = await resumeWhatsAppQrSessions({ source: 'test' })
 
     assert.equal(result.resumed, 1)
-    assert.equal(fetchCalls, 1)
-    assert.deepEqual(sockets[0].options.version, latestVersion)
+    assert.equal(fetchCalls, 0)
+    assert.equal(Object.hasOwn(sockets[0].options, 'version'), false)
+    assert.deepEqual(sockets[0].options.browser, ['macOS', 'Google Chrome', 'Ristak'])
   })
 })
 
@@ -334,7 +333,7 @@ test('WhatsApp QR solicita y persiste el historial completo sin marcarlo como no
   })
 })
 
-test('WHATSAPP_WEB_VERSION tiene prioridad sobre la consulta viva', async () => {
+test('WHATSAPP_WEB_VERSION permite un override de emergencia sin consultar una versión viva', async () => {
   const sockets = []
   const previousVersion = process.env.WHATSAPP_WEB_VERSION
   let fetchCalls = 0
@@ -702,6 +701,63 @@ test('regenerar QR borra solo el auth rechazado y no vuelve a usar credenciales 
     assert.equal(sockets.length, 1)
     assert.equal(sockets[0].options.auth.creds.registered, false)
     assert.equal(session.status, 'connected')
+  })
+})
+
+test('un QR fresco conserva ese estado durante los reintentos 428 y no hereda la sesión anterior', async () => {
+  const sockets = []
+
+  await withQrFixture({ status: 'qr_repair_required' }, async ({ phoneNumberId }) => {
+    setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets, { authRegistered: false }))
+    setWhatsAppQrReconnectDelayForTest(0)
+
+    const starting = startWhatsAppQrConnection({
+      phoneNumberId,
+      acceptedRisk: true,
+      acceptedBy: 'test'
+    })
+
+    while (sockets.length < 1) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+
+    const closedUpdate = {
+      connection: 'close',
+      lastDisconnect: {
+        error: {
+          message: 'Connection Closed',
+          output: { statusCode: 428 }
+        }
+      }
+    }
+
+    await sockets[0].emit('connection.update', closedUpdate)
+    const initialSession = await starting
+    assert.equal(initialSession.status, 'reconnecting')
+
+    for (let index = 1; index <= 2; index += 1) {
+      while (sockets.length <= index) {
+        await new Promise(resolve => setTimeout(resolve, 5))
+      }
+      await sockets[index].emit('connection.update', closedUpdate)
+    }
+
+    while (sockets.length < 4) {
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+
+    const session = await db.get(
+      'SELECT status, last_error FROM whatsapp_qr_sessions WHERE phone_number_id = ?',
+      [phoneNumberId]
+    )
+    const auth = await db.get(
+      'SELECT 1 AS present FROM whatsapp_qr_auth_state WHERE phone_number_id = ? AND auth_key = ?',
+      [phoneNumberId, 'creds']
+    )
+
+    assert.equal(session.status, 'reconnecting')
+    assert.equal(session.last_error, null)
+    assert.equal(auth, null)
   })
 })
 

@@ -32,9 +32,6 @@ const QR_SESSION_LEASE_HEARTBEAT_MS = 30 * 1000
 const QR_SESSION_LEASE_RETRY_INTERVAL_MS = 1000
 const QR_SESSION_LEASE_RETRY_BUFFER_MS = 500
 const QR_SESSION_LEASE_MAX_WAIT_MS = QR_SESSION_LEASE_TTL_MS + 5000
-const WA_WEB_VERSION_FETCH_TIMEOUT_MS = 4000
-const WA_WEB_VERSION_CACHE_TTL_MS = 10 * 60 * 1000
-const WA_WEB_VERSION_FALLBACK_CACHE_TTL_MS = 60 * 1000
 const QR_ACK_STATUS = {
   ERROR: 0,
   PENDING: 1,
@@ -82,8 +79,6 @@ const qrRecentMessageAcks = new Map()
 const qrRecentRistakOutboundAttempts = new Map()
 let baileysRuntime = null
 let reconnectDelayOverrideForTest = null
-let whatsappWebVersionCache = null
-let whatsappWebVersionPromise = null
 const connectionOpenListeners = new Set()
 
 // Cache de mensajes enviados para responder reintentos de descifrado
@@ -102,10 +97,11 @@ function cacheSentQrMessage(response) {
   }
 }
 
-// Override de emergencia de la version de WhatsApp Web. Cuando WhatsApp
-// deprecia la version que Baileys trae integrada, TODAS las sesiones del mundo
-// con esa version caen a la vez con error 405 "Connection Failure". Con esta
-// variable se corrige sin esperar una release nueva de Baileys.
+// Override de emergencia de la version de WhatsApp Web. Por default dejamos
+// que Baileys elija la version compatible que trae integrada: consultar la
+// version mas nueva en cada socket puede adelantar el protocolo a los protobufs
+// del paquete y volver inestables sesiones sanas. Este override solo existe
+// para una contingencia puntual, mientras se publica una actualizacion del SDK.
 // Formato: WHATSAPP_WEB_VERSION="2,3000,1037641644"
 function getWhatsAppWebVersionOverride() {
   const raw = cleanString(process.env.WHATSAPP_WEB_VERSION)
@@ -144,89 +140,6 @@ function normalizeWhatsAppWebVersion(value) {
   if (!Array.isArray(value) || value.length !== 3) return null
   const parts = value.map(part => Number(part))
   return parts.every(part => Number.isInteger(part) && part >= 0) ? parts : null
-}
-
-function formatWhatsAppWebVersion(value) {
-  const version = normalizeWhatsAppWebVersion(value)
-  return version ? version.join('.') : ''
-}
-
-function sameWhatsAppWebVersion(left, right) {
-  const leftVersion = normalizeWhatsAppWebVersion(left)
-  const rightVersion = normalizeWhatsAppWebVersion(right)
-  return Boolean(leftVersion && rightVersion && leftVersion.every((part, index) => part === rightVersion[index]))
-}
-
-function getBaileysDefaultWebVersion(baileys = {}) {
-  return normalizeWhatsAppWebVersion(
-    baileys.defaultConnectionVersion ||
-    baileys.DEFAULT_CONNECTION_CONFIG?.version
-  )
-}
-
-async function fetchCurrentWhatsAppWebVersion(fetchLatestWaWebVersion) {
-  if (typeof fetchLatestWaWebVersion !== 'function') return null
-
-  const controller = typeof AbortController === 'function' ? new AbortController() : null
-  const timeout = controller
-    ? setTimeout(() => controller.abort(), WA_WEB_VERSION_FETCH_TIMEOUT_MS)
-    : null
-
-  try {
-    const result = await fetchLatestWaWebVersion(controller ? { signal: controller.signal } : {})
-    const version = normalizeWhatsAppWebVersion(result?.version)
-
-    if (result?.isLatest && version) {
-      return version
-    }
-
-    if (result?.error) {
-      logger.warn(`[WhatsApp QR] No se pudo leer la versión viva de WhatsApp Web: ${result.error.message || result.error}`)
-    }
-    return null
-  } catch (error) {
-    logger.warn(`[WhatsApp QR] No se pudo leer la versión viva de WhatsApp Web: ${error.message}`)
-    return null
-  } finally {
-    if (timeout) clearTimeout(timeout)
-  }
-}
-
-async function resolveWhatsAppWebVersion(baileys = {}) {
-  const override = getWhatsAppWebVersionOverride()
-  if (override) return override
-
-  const now = Date.now()
-  if (whatsappWebVersionCache?.expiresAt > now) {
-    return whatsappWebVersionCache.version
-  }
-
-  if (!whatsappWebVersionPromise) {
-    whatsappWebVersionPromise = (async () => {
-      const defaultVersion = getBaileysDefaultWebVersion(baileys)
-      const fetchedVersion = await fetchCurrentWhatsAppWebVersion(baileys.fetchLatestWaWebVersion)
-      const version = fetchedVersion || defaultVersion
-
-      if (!version) return null
-
-      const usingFetchedVersion = Boolean(fetchedVersion)
-      whatsappWebVersionCache = {
-        version,
-        expiresAt: Date.now() + (usingFetchedVersion ? WA_WEB_VERSION_CACHE_TTL_MS : WA_WEB_VERSION_FALLBACK_CACHE_TTL_MS)
-      }
-
-      if (usingFetchedVersion && !sameWhatsAppWebVersion(fetchedVersion, defaultVersion)) {
-        logger.info(`[WhatsApp QR] Usando versión viva de WhatsApp Web ${formatWhatsAppWebVersion(fetchedVersion)} para generar QR`)
-      }
-
-      return version
-    })()
-      .finally(() => {
-        whatsappWebVersionPromise = null
-      })
-  }
-
-  return whatsappWebVersionPromise
 }
 
 function nowIso() {
@@ -1612,7 +1525,6 @@ async function loadBaileys() {
       Browsers: baileys.Browsers || null,
       DEFAULT_CONNECTION_CONFIG: baileys.DEFAULT_CONNECTION_CONFIG || null,
       defaultConnectionVersion: baileys.DEFAULT_CONNECTION_CONFIG?.version || null,
-      fetchLatestWaWebVersion: baileys.fetchLatestWaWebVersion,
       initAuthCreds: baileys.initAuthCreds,
       makeCacheableSignalKeyStore: baileys.makeCacheableSignalKeyStore,
       downloadMediaMessage: baileys.downloadMediaMessage,
@@ -1635,8 +1547,6 @@ async function loadQrCode() {
 
 export function setBaileysRuntimeForTest(runtime = null) {
   baileysRuntime = runtime || null
-  whatsappWebVersionCache = null
-  whatsappWebVersionPromise = null
 }
 
 export function setWhatsAppQrReconnectDelayForTest(delayMs = null) {
@@ -1652,8 +1562,6 @@ export function resetWhatsAppQrServiceForTest() {
   }
   baileysRuntime = null
   reconnectDelayOverrideForTest = null
-  whatsappWebVersionCache = null
-  whatsappWebVersionPromise = null
   qrRecentMessageAcks.clear()
   qrRecentRistakOutboundAttempts.clear()
   connectionOpenListeners.clear()
@@ -2438,7 +2346,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     existing?.last_connected_at
   )
   const lease = await acquireQrSessionLease(phone.id, { waitForRelease: waitForLease, reason: leaseReason })
-  const webVersion = await resolveWhatsAppWebVersion(baileys)
+  const webVersionOverride = getWhatsAppWebVersionOverride()
 
   closeLiveSession(phone.id, { releaseLease: false })
 
@@ -2474,7 +2382,10 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       shouldSyncHistoryMessage: () => true,
       markOnlineOnConnect: false,
       qrTimeout: 60000,
-      browser: Browsers?.macOS ? Browsers.macOS('Desktop') : undefined,
+      // Para emitir QR Baileys necesita una identidad de navegador valida y
+      // logica. `Desktop` generico esta siendo rechazado por WhatsApp con 428;
+      // Chrome en macOS es una identidad estable y conserva syncFullHistory.
+      browser: Browsers?.macOS ? Browsers.macOS('Google Chrome') : undefined,
       // Estabilidad 24/7: ping de keep-alive frecuente, timeouts explicitos y
       // respuesta a reintentos de descifrado del receptor.
       keepAliveIntervalMs: 10000,
@@ -2482,7 +2393,7 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
       defaultQueryTimeoutMs: 60000,
       retryRequestDelayMs: 250,
       getMessage: async (key) => qrSentMessageCache.get(cleanString(key?.id)) || undefined,
-      ...(webVersion ? { version: webVersion } : {})
+      ...(webVersionOverride ? { version: webVersionOverride } : {})
     })
   } catch (error) {
     await releaseQrSessionLease(lease)
@@ -2787,7 +2698,12 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
         openSocket(phone, {
           requireConsent: false,
           reconnectAttempt: nextReconnectAttempt,
-          openDeferred: nextOpenDeferred
+          openDeferred: nextOpenDeferred,
+          // Un emparejamiento que el usuario acaba de regenerar debe seguir
+          // siendo fresco en cada socket de reintento. Si se pierde esta
+          // bandera, el historial de una sesión vieja vuelve a parecer auth
+          // válido y corta el QR nuevo al tercer 428.
+          freshPairing
         }).catch(nextOpenDeferred.reject)
       }, reconnectDelay)
 
