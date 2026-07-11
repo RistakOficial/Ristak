@@ -840,10 +840,6 @@ function parseVideoDataUrl(value = '') {
   return { buffer, mimeType, extension }
 }
 
-function audioNeedsWhatsAppConversion({ mimeType, params }) {
-  return !(mimeType === 'audio/ogg' && String(params || '').includes('opus'))
-}
-
 function audioNeedsChatPlaybackConversion({ mimeType } = {}) {
   const cleanMimeType = cleanMimeTypeValue(mimeType)
   return ![
@@ -1252,10 +1248,10 @@ async function convertAudioToChatPlaybackMp4({ buffer, extension }) {
 }
 
 async function prepareWhatsAppVoiceAudio(parsed) {
-  // Transcodifica si el formato no es opus, O si dice ser audio/ogg;opus pero los
-  // bytes NO son un OGG real (cliente con etiqueta mentirosa). Nunca se sube un
-  // buffer no-OGG bajo la etiqueta de nota de voz → mata el rechazo octet-stream.
-  if (audioNeedsWhatsAppConversion(parsed) || !isOggOpusBuffer(parsed.buffer)) {
+  // Los bytes mandan sobre el MIME declarado. Un OGG/Opus ya válido no debe
+  // recodificarse en cada ejecución del flujo; MP3/M4A/Vorbis o una etiqueta
+  // mentirosa sí pasan por ffmpeg antes de subirlos al proveedor.
+  if (!isOggOpusBuffer(parsed.buffer)) {
     return {
       buffer: await convertAudioToOggOpus(parsed),
       mimeType: WHATSAPP_VOICE_NOTE_MIME_TYPE,
@@ -12313,6 +12309,12 @@ export async function sendWhatsAppApiAudioMessage({
   let link = cleanAudioUrl
   let deliveryAudio = null
   let providerPreviewAudio = null
+  let providerAudio = null
+
+  const getPreparedProviderAudio = async () => {
+    if (!cleanString(audioDataUrl)) return null
+    return prepareWhatsAppAudioForProviderUpload(audioDataUrl)
+  }
 
   const getDeliveryAudio = async () => {
     if (!cleanString(audioDataUrl)) return null
@@ -12402,7 +12404,25 @@ export async function sendWhatsAppApiAudioMessage({
   }
   throwIfOfficialApiBlockedByReplyWindow(fallbackDecision)
 
-  if (!link) {
+  // El importador por URL de YCloud vuelve a subir el archivo y Meta ha
+  // demostrado en producción que puede reclasificar un OGG/Opus válido como
+  // application/octet-stream (131053). Para notas de voz con bytes disponibles,
+  // subimos nosotros el OGG con el MIME base `audio/ogg` y enviamos su Media ID.
+  // Meta Direct conserva la ruta oficial por link porque no usa el proxy YCloud.
+  const shouldUploadVoiceToYCloud = isVoiceNote &&
+    config.provider !== META_DIRECT_PROVIDER_NAME &&
+    Boolean(cleanString(audioDataUrl))
+
+  if (shouldUploadVoiceToYCloud) {
+    const prepared = await getPreparedProviderAudio()
+    providerAudio = await uploadPreparedMediaToYCloud({
+      config,
+      fromPhone,
+      media: prepared,
+      type: 'audio'
+    })
+    providerPreviewAudio = await getProviderPreviewAudio()
+  } else if (!link) {
     if (isVoiceNote) {
       const results = await Promise.all([
         getDeliveryAudio(),
@@ -12428,13 +12448,23 @@ export async function sendWhatsAppApiAudioMessage({
   }
 
   const requestAudio = {
-    link,
+    ...(providerAudio ? { id: providerAudio.id } : { link }),
     ...(isVoiceNote ? { voice: true } : {})
   }
   const storedAudio = {
     ...requestAudio,
-    deliveryUrl: link,
+    ...(link ? { deliveryUrl: link } : {}),
     asyncQrFallbackAllowed: Boolean(allowQrFallback),
+    ...(providerAudio ? {
+      mediaId: providerAudio.id,
+      providerMediaId: providerAudio.providerMediaId,
+      providerMediaExpiresAt: providerAudio.providerMediaExpiresAt,
+      providerMimeType: providerAudio.mimeType,
+      providerFilename: providerAudio.filename,
+      providerSize: providerAudio.size,
+      providerStorage: providerAudio.storage,
+      providerStorageProvider: providerAudio.storageProvider
+    } : {}),
     ...(deliveryAudio ? {
       deliveryMediaAssetId: deliveryAudio.mediaAssetId,
       deliveryMimeType: deliveryAudio.mimeType,

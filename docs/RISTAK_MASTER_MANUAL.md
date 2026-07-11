@@ -742,21 +742,19 @@ declarado ni en encontrar dos cadenas dentro del archivo. Messenger e Instagram
 no exponen un flag equivalente de PTT, por lo que una nota de voz se entrega como
 adjunto de audio reproducible. Tanto el chat de escritorio como el chat móvil
 envían la grabación por el canal activo de Instagram/Messenger, sin exigir un
-teléfono ni desviarla a WhatsApp. Cuando el archivo proviene del almacenamiento de Ristak,
-WhatsApp API lo entrega mediante su URL pública HTTPS ya normalizada y marca
-`voice=true`. Esta es también la ruta del chat nativo que ha confirmado entrega
-real. Las notas de voz no se vuelven a subir por Media ID de YCloud: ese proxy
-puede aceptar el upload y después hacer que Meta rechace el medio con `131053` al
-reclasificarlo como `application/octet-stream`. Si web, móvil o un flujo legacy
-entregan un `dataUrl`, el backend primero convierte/publica un OGG/Opus y después
-manda ese enlace. Antes de reutilizar la URL de un asset de Automatizaciones,
-el runtime valida que sus bytes sí sean OGG/Opus; un MP3/M4A legacy se convierte
-y publica de nuevo. En el mensaje interno de WhatsApp QR/Baileys se conserva
-`audio/ogg; codecs=opus`, pero el archivo público que descarga Meta debe responder
-con el MIME base exacto `audio/ogg`: Meta valida Opus inspeccionando los bytes y
-puede reclasificar como `application/octet-stream` un `Content-Type` HTTP que
-incluya el parámetro `codecs=opus`. Todo asset de voz administrado por Ristak usa
-para la entrega al proveedor el proxy público `/media/assets/:id/voice.ogg`:
+teléfono ni desviarla a WhatsApp. Para YCloud, Ristak convierte y valida los bytes
+como OGG/Opus, los sube al endpoint de media con el MIME base exacto `audio/ogg`
+y envía el Media ID resultante con `voice=true`. No se usa el importador de links
+de YCloud para notas de voz: en producción ese importador reclasificó como
+`application/octet-stream` un OGG/Opus válido y Meta devolvió `131053`. El chat
+nativo y Automatizaciones comparten esta misma ruta; los flujos externos primero
+descargan el archivo con los límites y protecciones de red y después lo preparan.
+Antes de reutilizar un asset de Automatizaciones, el runtime valida que sus bytes
+sí sean OGG/Opus; un MP3/M4A legacy se convierte antes del upload. En el mensaje
+interno de WhatsApp QR/Baileys se conserva `audio/ogg; codecs=opus`, mientras que
+los uploads y las respuestas HTTP para Meta usan `audio/ogg`: Meta comprueba Opus
+inspeccionando los bytes. Todo asset de voz administrado por Ristak conserva el
+proxy público `/media/assets/:id/voice.ogg` para reproducción y respaldo QR:
 valida los bytes, responde con `audio/ogg`, usa una URL terminada en `.ogg` y un
 `Content-Disposition` cuyo filename también termina en `.ogg`. Nunca debe
 conservar ahí la extensión original `.mp3`
@@ -765,8 +763,8 @@ Meta lo reclasifique como `application/octet-stream` y devuelva `131053`.
 YCloud conserva el envío por su cola asíncrona con filtros de desuscritos y
 bloqueados. Si Meta devuelve `131053` en el webhook, el claim atómico existente
 activa una sola vez el respaldo QR/PTT cuando esa sesión está lista, sin duplicar
-la nota. Meta Direct usa el mismo `audio.link` con `voice=true` a través de Graph
-API. Los assets externos se conservan como enlaces HTTPS.
+la nota. Meta Direct usa `audio.link` con `voice=true` a través de Graph API,
+porque no atraviesa el importador de YCloud.
 El bloque **Audio** conserva byte por byte los formatos normales que WhatsApp
 acepta (MP3/MPEG, M4A/MP4, AAC, AMR y OGG/Opus); WAV y WebM se normalizan a
 M4A/AAC reproducible, nunca a Opus/PTT. En WhatsApp API se envía sin `voice=true`

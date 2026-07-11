@@ -198,7 +198,7 @@ test('el bloque Audio conserva el MP3 original al subirlo a Automatizaciones', a
   }
 })
 
-test('una nota de voz propia usa la URL pública ya normalizada que sí entrega Meta', () => {
+test('una nota de voz propia conserva URL y bytes para subirla como Media ID en YCloud', () => {
   const dataUrl = `data:audio/ogg;base64,${Buffer.from('OggS-test-OpusHead-audio').toString('base64')}`
   const publicUrl = 'https://cdn.example.test/automations/nota-validada.ogg'
   const delivery = resolveAutomationAudioDelivery({
@@ -208,7 +208,7 @@ test('una nota de voz propia usa la URL pública ya normalizada que sí entrega 
     publicUrlVerified: true
   })
 
-  assert.equal(delivery.audioDataUrl, undefined)
+  assert.equal(delivery.audioDataUrl, dataUrl)
   assert.equal(delivery.audioUrl, publicUrl)
 })
 

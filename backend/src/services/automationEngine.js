@@ -3562,10 +3562,11 @@ export function resolveAutomationAudioDelivery({
     : ''
   const remoteUrl = str(externalUrl)
   return {
-    // Los assets propios ya fueron normalizados y publicados por Ristak. La
-    // ruta por URL es la misma que usan los chats nativos que sí llegan; evita
-    // que YCloud vuelva a subir el OGG y Meta lo reclasifique como octet-stream.
-    audioDataUrl: stablePublicUrl || remoteUrl ? undefined : (str(dataUrl) || undefined),
+    // Conserva también los bytes del asset administrado. YCloud necesita
+    // subir la nota como Media ID con `audio/ogg` base: su importador de links
+    // puede reclasificar el mismo OGG/Opus como application/octet-stream.
+    // Meta Direct y QR todavía pueden reutilizar la URL pública verificada.
+    audioDataUrl: str(dataUrl) || undefined,
     audioUrl: stablePublicUrl || remoteUrl || undefined
   }
 }
@@ -3713,6 +3714,7 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
       // Los bloques nuevos son explícitos. Los flujos viejos guardaban "audio"
       // como nota de voz por default; conservamos ese comportamiento.
       voice: isVoiceNote,
+      contactId: ctx.contact?.id,
       phoneNumberId,
       transport,
       allowQrFallback

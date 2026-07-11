@@ -36,7 +36,7 @@ test('DesktopChat envia voz y audio de Meta por sendMetaSocialAudio y conserva H
 
   assert.match(sendSource, /const sendVoiceThroughNativeMeta = Boolean\(voiceToSend && activeNativeMetaChannel\)/)
   assert.match(sendSource, /const nativeMetaAudioAttachment =[\s\S]*?getDraftAttachmentMessageType\(attachmentsToSend\[0\]\) === 'audio'/)
-  assert.match(sendSource, /whatsappApiService\.sendMetaSocialAudio\(\{\s*contactId: activeContact\.id,\s*platform: activeNativeMetaChannel,\s*audioDataUrl: nativeMetaAudio\.dataUrl,\s*durationMs: nativeMetaAudioDurationMs,\s*externalId: nativeMetaOptimisticId\s*\}\)/)
+  assert.match(sendSource, /whatsappApiService\.sendMetaSocialAudio\(\{\s*contactId: activeContact\.id,\s*platform: activeNativeMetaChannel,\s*audioDataUrl: nativeMetaAudio\.dataUrl,\s*durationMs: nativeMetaAudioDurationMs,\s*voice: Boolean\(sendVoiceThroughNativeMeta\),\s*externalId: nativeMetaOptimisticId\s*\}\)/)
   assert.match(sendSource, /voiceToSend && sendVoiceThroughHighLevel[\s\S]*?highLevelService\.sendConversationMessage\(\{[\s\S]*?audioDataUrl: voiceToSend\.dataUrl[\s\S]*?durationMs: voiceToSend\.durationMs/)
   assert.match(sendSource, /else if \(voiceToSend\) \{\s*const result = await whatsappApiService\.sendAudio\(/)
   assert.doesNotMatch(sendSource, /Messenger e Instagram nativo todav[ií]a no mandan archivos desde este chat/)

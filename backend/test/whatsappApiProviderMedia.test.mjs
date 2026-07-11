@@ -745,7 +745,7 @@ test('envío API de documento conserva metadata del archivo sin guardar URL prop
   })
 })
 
-test('envío API convierte un MP3 real, publica OGG/Opus decodificable y lo manda por enlace', async () => {
+test('envío API convierte un MP3 real, sube OGG/Opus decodificable y manda Media ID', async () => {
   await withRealMp3(async (audioDataUrl) => {
     await withYCloudProviderMediaCapture(async (captures) => {
       const suffix = randomUUID()
@@ -766,24 +766,39 @@ test('envío API convierte un MP3 real, publica OGG/Opus decodificable y lo mand
           durationMs: 1000
         })
 
-        assert.equal(captures.uploads.length, 0)
+        assert.equal(captures.uploads.length, 1)
+        assert.equal(captures.uploads[0].filename, 'whatsapp-audio.ogg')
+        assert.equal(captures.uploads[0].mimeType, 'audio/ogg')
+        assert.equal(captures.uploads[0].bytes.subarray(0, 4).toString('latin1'), 'OggS')
+        assert.ok(captures.uploads[0].bytes.includes(Buffer.from('OpusHead', 'ascii')))
+        assert.ok(captures.uploads[0].bytes.includes(Buffer.from('OpusTags', 'ascii')))
         assert.equal(captures.messages.length, 1)
         assert.equal(captures.messages[0].type, 'audio')
-        assert.equal(captures.messages[0].audio.id, undefined)
-        assert.match(captures.messages[0].audio.link, /^https:\/\/ristak\.test\/media\/assets\/.+\/file$/)
+        assert.equal(captures.messages[0].audio.id, captures.uploads[0].mediaId)
+        assert.equal(captures.messages[0].audio.link, undefined)
         assert.equal(captures.messages[0].audio.voice, true)
         assert.equal(captures.messages[0].filterUnsubscribed, true)
         assert.equal(captures.messages[0].filterBlocked, true)
 
-        deliveryMediaAssetId = response.audio.deliveryMediaAssetId
         previewMediaAssetId = response.audio.previewMediaAssetId
-        assert.match(deliveryMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
         assert.match(previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
-        assert.equal(response.audio.deliveryUrl, captures.messages[0].audio.link)
-        assert.equal(response.audio.deliveryMimeType, 'audio/ogg; codecs=opus')
+        assert.equal(response.audio.id, captures.uploads[0].mediaId)
+        assert.equal(response.audio.providerMediaId, captures.uploads[0].mediaId)
+        assert.equal(response.audio.providerMimeType, 'audio/ogg')
         assert.equal(response.audio.mimeType, 'audio/mpeg')
         assert.equal(response.audio.durationMs, 1000)
 
+        const { uploadMediaAsset } = await import('../src/services/mediaStorageService.js')
+        const proxyAsset = await uploadMediaAsset({
+          buffer: captures.uploads[0].bytes,
+          mimeType: 'audio/ogg; codecs=opus',
+          filename: 'grabacion-original.mp3',
+          module: 'chat',
+          isPublic: true,
+          skipCompression: true,
+          metadata: { whatsappVoiceNote: true }
+        })
+        deliveryMediaAssetId = proxyAsset.id
         const storedBytes = await readAndDecodeStoredOgg(deliveryMediaAssetId)
         assert.ok(storedBytes.length > 100)
         await db.run(
@@ -829,10 +844,10 @@ test('envío API convierte un MP3 real, publica OGG/Opus decodificable y lo mand
         assert.match(row.media_filename, /\.mp3$/)
         assert.equal(row.media_duration_ms, 1000)
         const raw = JSON.parse(row.raw_payload_json)
-        assert.equal(raw.audio.id, undefined)
-        assert.equal(raw.audio.deliveryUrl, captures.messages[0].audio.link)
+        assert.equal(raw.audio.id, captures.uploads[0].mediaId)
+        assert.equal(raw.audio.providerMimeType, 'audio/ogg')
         assert.equal(raw.audio.asyncQrFallbackAllowed, false)
-        assert.equal(raw.audio.deliveryMediaAssetId, deliveryMediaAssetId)
+        assert.equal(raw.audio.deliveryMediaAssetId, undefined)
         assert.equal(raw.audio.previewMediaAssetId, previewMediaAssetId)
       } finally {
         await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
@@ -1027,7 +1042,7 @@ test('un OGG falso con firmas de texto no pasa como nota de voz válida', async 
   })
 })
 
-test('envío API de nota de voz usa el enlace HTTPS ya validado y no re-sube el OGG al proveedor', async () => {
+test('envío API de nota de voz sube OGG con MIME base y manda Media ID al proveedor', async () => {
   await withFakeFfmpeg(async () => {
     await withYCloudProviderMediaCapture(async (captures) => {
       const suffix = randomUUID()
@@ -1048,15 +1063,19 @@ test('envío API de nota de voz usa el enlace HTTPS ya validado y no re-sube el 
           durationMs: 950
         })
 
-        assert.equal(captures.uploads.length, 0)
+        assert.equal(captures.uploads.length, 1)
+        assert.equal(captures.uploads[0].mimeType, 'audio/ogg')
+        assert.equal(captures.uploads[0].filename, 'whatsapp-audio.ogg')
         assert.equal(captures.messages.length, 1)
         assert.deepEqual(captures.messages[0].audio, {
-          link: 'https://cdn.example.test/automations/nota-validada.ogg',
+          id: captures.uploads[0].mediaId,
           voice: true
         })
         assert.equal(captures.messages[0].filterUnsubscribed, true)
         assert.equal(captures.messages[0].filterBlocked, true)
-        assert.equal(response.audio.link, 'https://cdn.example.test/automations/nota-validada.ogg')
+        assert.equal(response.audio.id, captures.uploads[0].mediaId)
+        assert.equal(response.audio.deliveryUrl, 'https://cdn.example.test/automations/nota-validada.ogg')
+        assert.equal(response.audio.providerMimeType, 'audio/ogg')
         assert.equal(response.audio.voice, true)
 
         const row = await db.get(
@@ -1065,7 +1084,9 @@ test('envío API de nota de voz usa el enlace HTTPS ya validado y no re-sube el 
         )
         assert.ok(row)
         const raw = JSON.parse(row.raw_payload_json)
-        assert.equal(raw.audio.link, 'https://cdn.example.test/automations/nota-validada.ogg')
+        assert.equal(raw.audio.id, captures.uploads[0].mediaId)
+        assert.equal(raw.audio.deliveryUrl, 'https://cdn.example.test/automations/nota-validada.ogg')
+        assert.equal(raw.audio.providerMimeType, 'audio/ogg')
         assert.equal(raw.audio.voice, true)
         assert.match(raw.audio.previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
         previewMediaAssetId = raw.audio.previewMediaAssetId
