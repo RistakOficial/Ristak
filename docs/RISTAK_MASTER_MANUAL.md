@@ -2562,7 +2562,11 @@ en `/{ig-comment-id}/replies`, Facebook publico acepta texto y una imagen, y las
 respuestas privadas usan el `comment_id` para mandar un unico mensaje inicial al
 comentarista por Messenger o Instagram DM. Las respuestas privadas a comentario
 cuentan como mensaje enviado para una espera posterior de respuesta; las
-respuestas publicas no abren una espera de DM.
+respuestas publicas no abren una espera de DM. Si una respuesta a comentario
+falla temporalmente y entra a reintento, la inscripcion debe conservar
+`platform`, `commentId`, `postId`, `mediaId`, `parentCommentId` y `permalink`;
+sin ese contexto el reintento ya no puede reconstruir el endpoint correcto de
+Meta y debe tratarse como bug del motor, no como configuracion del usuario.
 
 ## Jobs y crons
 

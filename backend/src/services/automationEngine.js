@@ -2323,6 +2323,20 @@ function addLog(enrollment, entry) {
   if (enrollment.log.length > 200) enrollment.log = enrollment.log.slice(-200)
 }
 
+function getPersistentRuntimeContext(ctx = {}, current = {}) {
+  return {
+    messageText: ctx.messageText || current.messageText || '',
+    channel: ctx.channel || current.channel || '',
+    businessPhoneNumberId: ctx.businessPhoneNumberId || current.businessPhoneNumberId || null,
+    platform: ctx.platform || current.platform || '',
+    commentId: ctx.commentId || current.commentId || null,
+    postId: ctx.postId || current.postId || null,
+    mediaId: ctx.mediaId || current.mediaId || null,
+    parentCommentId: ctx.parentCommentId || current.parentCommentId || null,
+    permalink: ctx.permalink || current.permalink || null
+  }
+}
+
 async function createEnrollment(automation, contact, ctx) {
   const id = makeId('enr')
   const enrollment = {
@@ -2336,9 +2350,7 @@ async function createEnrollment(automation, contact, ctx) {
     resumeAt: null,
     waitKind: null,
     context: {
-      messageText: ctx.messageText || '',
-      channel: ctx.channel || '',
-      businessPhoneNumberId: ctx.businessPhoneNumberId || null,
+      ...getPersistentRuntimeContext(ctx),
       triggerLinkId: ctx.triggerLinkId || null,
       triggerLinkPublicId: ctx.triggerLinkPublicId || null,
       triggerLinkName: ctx.triggerLinkName || null,
@@ -4556,7 +4568,12 @@ async function runFrom(flow, enrollment, startNodeId, ctx) {
       if (retryAttempts < RETRY_MAX_ATTEMPTS) {
         const nextAttempt = retryAttempts + 1
         const backoffMs = RETRY_BACKOFF_MS[Math.min(retryAttempts, RETRY_BACKOFF_MS.length - 1)]
-        enrollment.context = { ...enrollment.context, __retryAttempts: nextAttempt, __retryNodeId: node.id }
+        enrollment.context = {
+          ...enrollment.context,
+          ...getPersistentRuntimeContext(ctx, enrollment.context),
+          __retryAttempts: nextAttempt,
+          __retryNodeId: node.id
+        }
         enrollment.currentNodeId = node.id
         enrollment.status = 'waiting'
         enrollment.waitKind = WAIT_KIND_RETRY

@@ -61,6 +61,23 @@ async function withAppConfigValues(entries, callback) {
   }
 }
 
+async function withMetaConfigSnapshot(callback) {
+  const previousRows = await db.all('SELECT * FROM meta_config')
+  try {
+    await db.run('DELETE FROM meta_config')
+    return await callback()
+  } finally {
+    await db.run('DELETE FROM meta_config')
+    for (const row of previousRows) {
+      const columns = Object.keys(row)
+      await db.run(
+        `INSERT INTO meta_config (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
+        columns.map(column => row[column])
+      )
+    }
+  }
+}
+
 test('renderTemplate reemplaza variables del contacto y la conversación', () => {
   assert.equal(renderTemplate('Hola {{contact.first_name}}!', ctx), 'Hola María!')
   assert.equal(renderTemplate('Dijiste: {{conversation.last_message}}', ctx), 'Dijiste: Hola, quiero el precio por favor')
@@ -1041,6 +1058,104 @@ test('disparador de comentario de Facebook inscribe al contacto con plataforma F
 
   await runCase('facebook', 'facebook')
   await runCase('messenger', 'messenger_compat')
+})
+
+test('reintento de respuesta a comentario conserva contexto de Facebook', async () => {
+  const suffix = randomUUID()
+  const contactId = `rstk_contact_fb_comment_retry_${suffix}`
+  const automationId = `automation_fb_comment_retry_${suffix}`
+  const commentId = `comment_retry_${suffix}`
+  const postId = `post_retry_${suffix}`
+  const flow = {
+    nodes: [
+      {
+        id: 'start',
+        type: 'start',
+        label: 'Cuando...',
+        config: {
+          triggers: [
+            {
+              id: 'trigger-facebook-comment',
+              type: 'trigger-facebook-comment',
+              config: { allowedComments: 'all' }
+            }
+          ]
+        }
+      },
+      {
+        id: 'reply',
+        type: 'channel-comment-public-reply',
+        label: 'Responder comentario',
+        config: {
+          commentReplyTarget: 'facebook_public_comment',
+          replyType: 'public',
+          messageBlocks: [
+            { id: 'reply-text', type: 'text', compiledText: 'Test' }
+          ]
+        }
+      }
+    ],
+    edges: [
+      { id: 'edge-start-reply', sourceNodeId: 'start', targetNodeId: 'reply' }
+    ],
+    settings: {}
+  }
+
+  try {
+    await db.run(
+      `INSERT INTO contacts (id, phone, email, full_name, first_name, custom_fields)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        contactId,
+        `+1555${Date.now().toString().slice(-8)}`,
+        `fb-comment-retry-${suffix}@example.com`,
+        'Contacto Facebook Retry',
+        'Contacto',
+        '{}'
+      ]
+    )
+    await db.run(
+      `INSERT INTO automations (id, name, status, flow, published_flow, published_at)
+       VALUES (?, ?, 'published', ?, ?, CURRENT_TIMESTAMP)`,
+      [automationId, 'Test retry comentario Facebook', JSON.stringify(flow), JSON.stringify(flow)]
+    )
+
+    await withMetaConfigSnapshot(async () => {
+      await withAppConfigValues({ meta_facebook_comments_enabled: '1' }, async () => {
+        await handleAutomationEvent('comment-received', {
+          contactId,
+          platform: 'facebook',
+          messageText: 'precio',
+          commentId,
+          postId,
+          parentCommentId: postId,
+          permalink: 'https://facebook.test/reel/retry'
+        })
+      })
+    })
+
+    const enrollment = await db.get(
+      'SELECT * FROM automation_enrollments WHERE automation_id = ? AND contact_id = ?',
+      [automationId, contactId]
+    )
+    assert.ok(enrollment)
+    assert.equal(enrollment.status, 'waiting')
+    assert.equal(enrollment.wait_kind, 'retry')
+    assert.equal(enrollment.current_node_id, 'reply')
+
+    const storedContext = JSON.parse(enrollment.context)
+    assert.equal(storedContext.platform, 'facebook')
+    assert.equal(storedContext.commentId, commentId)
+    assert.equal(storedContext.postId, postId)
+    assert.equal(storedContext.parentCommentId, postId)
+    assert.equal(storedContext.permalink, 'https://facebook.test/reel/retry')
+    assert.equal(storedContext.__retryNodeId, 'reply')
+    assert.equal(storedContext.__retryAttempts, 1)
+  } finally {
+    await db.run('DELETE FROM automation_enrollments WHERE automation_id = ?', [automationId])
+    await db.run('DELETE FROM automations WHERE id = ?', [automationId])
+    await db.run('DELETE FROM contacts WHERE id = ?', [contactId])
+  }
 })
 
 test('acción de correo en automatizaciones envía email al contacto y registra salida', async () => {
