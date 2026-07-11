@@ -8,15 +8,16 @@ import styles from './Settings.module.css'
 const MOBILE_CHAT_PATH = PHONE_APP_HOME_PATH
 const MOBILE_APP_NAME = 'Ristak'
 const IOS_APP_STORE_URL = 'https://apps.apple.com/us/app/ristak/id6782473900'
+const ANDROID_PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.ristak.android'
 
-const iosSteps = [
+const mobileInstallSteps = [
   {
-    title: 'Abre App Store',
-    description: 'En el iPhone o iPad, abre el enlace oficial de Ristak en App Store.'
+    title: 'Abre la tienda de tu dispositivo',
+    description: 'En iPhone o iPad usa App Store; en Android usa Google Play.'
   },
   {
     title: 'Instala Ristak',
-    description: 'Toca Obtener o Actualizar para instalar la app nativa oficial.'
+    description: 'Toca Obtener, Instalar o Actualizar para descargar la app oficial.'
   },
   {
     title: 'Inicia sesión',
@@ -53,7 +54,7 @@ export const MobileAppSettings: React.FC = () => {
             <div>
               <h2 className={styles.panelTitle}>Aplicación móvil</h2>
               <p className={styles.panelDescription}>
-                Instala la app oficial de Ristak en iPhone o comparte el acceso web del chat móvil.
+                Instala la app oficial de Ristak en iPhone, iPad o Android; también puedes compartir el acceso web del chat móvil.
               </p>
             </div>
           </div>
@@ -72,14 +73,14 @@ export const MobileAppSettings: React.FC = () => {
                 <MessageCircle size={32} />
               </div>
               <div>
-                <h3 className={styles.sectionTitle}>iOS: App Store oficial</h3>
+                <h3 className={styles.sectionTitle}>Descarga la app oficial</h3>
                 <p className={styles.sectionDescription}>
-                  En iPhone y iPad manda al equipo directo a la ficha oficial de Ristak en App Store. El enlace web del chat queda como respaldo para abrir conversaciones desde navegador.
+                  En iPhone y iPad manda al equipo a App Store; en Android, a Google Play. El enlace web del chat queda como respaldo para abrir conversaciones desde navegador.
                 </p>
               </div>
               <div className={styles.mobileGuideNote}>
                 <strong>Importante</strong>
-                <span>Para iOS usa App Store. El enlace interno de Chat se conserva como acceso web/PWA de respaldo.</span>
+                <span>Usa la tienda oficial de cada dispositivo. El enlace interno de Chat se conserva como acceso web/PWA de respaldo.</span>
               </div>
             </div>
 
@@ -88,7 +89,24 @@ export const MobileAppSettings: React.FC = () => {
                 <Smartphone size={18} />
                 <div>
                   <h3>Enlaces de instalación</h3>
-                  <p>Usa App Store para iOS; conserva el chat web como respaldo.</p>
+                  <p>Usa App Store en iOS o Google Play en Android; conserva el chat web como respaldo.</p>
+                </div>
+              </div>
+
+              <div className={styles.mobileRouteField}>
+                <label>Google Play Android</label>
+                <div className={styles.mobileRouteValueRow}>
+                  <code className={styles.mobileRouteValue}>{ANDROID_PLAY_STORE_URL}</code>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => copyText(ANDROID_PLAY_STORE_URL, 'Enlace de Google Play')}
+                    aria-label="Copiar enlace de Google Play"
+                  >
+                    <Copy size={16} />
+                    Copiar
+                  </Button>
                 </div>
               </div>
 
@@ -164,6 +182,10 @@ export const MobileAppSettings: React.FC = () => {
                 <ExternalLink size={16} />
                 Abrir en App Store
               </a>
+              <a className={styles.mobilePreviewLink} href={ANDROID_PLAY_STORE_URL} target="_blank" rel="noopener noreferrer">
+                <ExternalLink size={16} />
+                Abrir en Google Play
+              </a>
             </div>
           </div>
         </div>
@@ -172,9 +194,9 @@ export const MobileAppSettings: React.FC = () => {
       <Card>
         <div className={styles.mobileStepsHeader}>
           <div>
-            <h3 className={styles.sectionTitle}>Cómo instalarla en iPhone o iPad</h3>
+            <h3 className={styles.sectionTitle}>Cómo instalarla en tu dispositivo</h3>
             <p className={styles.sectionDescription}>
-              Estos son los pasos que puede seguir cualquier persona del equipo desde App Store.
+              Estos son los pasos que puede seguir cualquier persona del equipo desde App Store o Google Play.
             </p>
           </div>
           <div className={styles.mobileStepsIcons} aria-hidden="true">
@@ -184,7 +206,7 @@ export const MobileAppSettings: React.FC = () => {
         </div>
 
         <ol className={styles.mobileStepList}>
-          {iosSteps.map((step, index) => (
+          {mobileInstallSteps.map((step, index) => (
             <li className={styles.mobileStepItem} key={step.title}>
               <span className={styles.mobileStepNumber}>{index + 1}</span>
               <div>

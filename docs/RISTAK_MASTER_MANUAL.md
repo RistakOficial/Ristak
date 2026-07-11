@@ -3152,6 +3152,10 @@ Ristak tiene tres rutas moviles activas:
    propietaria de la experiencia nativa Apple y usa el bundle oficial de App
    Store `com.ristak.app`.
 
+En **Configuración > Dispositivos móviles**, el equipo encuentra los enlaces
+oficiales de descarga: App Store para iPhone/iPad y Google Play para Android
+(`com.ristak.android`), además del acceso web/PWA de respaldo para el chat.
+
 Regla obligatoria para futuros cambios: si una feature, label, permiso, push,
 agenda, pago, filtro, login o contrato de API cambia la experiencia movil, la IA
 debe revisar las superficies que apliquen: `/movil`, `mobile/` y `ios/app`.
