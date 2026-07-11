@@ -439,6 +439,23 @@ function cleanMimeType(value = '') {
   return cleanString(value).split(';')[0].toLowerCase()
 }
 
+/**
+ * YCloud/Meta necesita conservar el codec en el multipart de una nota de voz.
+ * Quitar el parámetro y dejar solo `audio/ogg` vuelve ambiguo el archivo: OGG
+ * también puede contener codecs que WhatsApp no acepta. Para cualquier otro
+ * medio seguimos usando el MIME base, que es el contrato normal de subida.
+ */
+function normalizeYCloudUploadMimeType(value = '') {
+  const original = cleanString(value).toLowerCase()
+  if (
+    cleanMimeType(original) === 'audio/ogg' &&
+    /(?:^|;)\s*codecs\s*=\s*opus\s*(?:;|$)/.test(original)
+  ) {
+    return WHATSAPP_VOICE_NOTE_MIME_TYPE
+  }
+  return cleanMimeType(original)
+}
+
 function safeJson(value) {
   try {
     return JSON.stringify(value ?? null)
@@ -1069,8 +1086,12 @@ function isOggBuffer(buffer) {
     buffer.subarray(0, 4).toString('latin1') === 'OggS'
 }
 
+function isOggOpusBuffer(buffer) {
+  return isOggBuffer(buffer) && buffer.includes(Buffer.from('OpusHead', 'ascii'))
+}
+
 function assertOggOpusBuffer(buffer) {
-  if (!isOggBuffer(buffer)) {
+  if (!isOggOpusBuffer(buffer)) {
     throw new Error('El audio no quedó en formato de nota de voz de WhatsApp (OGG/Opus). Intenta grabarlo otra vez.')
   }
 }
@@ -1170,7 +1191,7 @@ async function prepareWhatsAppVoiceAudio(parsed) {
   // Transcodifica si el formato no es opus, O si dice ser audio/ogg;opus pero los
   // bytes NO son un OGG real (cliente con etiqueta mentirosa). Nunca se sube un
   // buffer no-OGG bajo la etiqueta de nota de voz → mata el rechazo octet-stream.
-  if (audioNeedsWhatsAppConversion(parsed) || !isOggBuffer(parsed.buffer)) {
+  if (audioNeedsWhatsAppConversion(parsed) || !isOggOpusBuffer(parsed.buffer)) {
     return {
       buffer: await convertAudioToOggOpus(parsed),
       mimeType: WHATSAPP_VOICE_NOTE_MIME_TYPE,
@@ -1707,7 +1728,7 @@ function mergeMediaMetadata(...values) {
 }
 
 async function uploadPreparedMediaToYCloud({ config, fromPhone, media, type } = {}) {
-  const uploadMimeType = cleanMimeType(media?.uploadMimeType || media?.mimeType)
+  const uploadMimeType = normalizeYCloudUploadMimeType(media?.uploadMimeType || media?.mimeType)
   const uploaded = await ycloudUploadWhatsAppMedia({
     apiKey: config?.apiKey,
     phoneNumber: fromPhone,
@@ -2163,7 +2184,7 @@ async function ycloudUploadWhatsAppMedia({ apiKey, phoneNumber, buffer, mimeType
   if (!cleanPhoneNumber) throw new Error('Falta el número emisor para subir media a WhatsApp')
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) throw new Error('El archivo para WhatsApp está vacío')
 
-  const normalizedMimeType = cleanMimeType(mimeType)
+  const normalizedMimeType = normalizeYCloudUploadMimeType(mimeType)
   const cleanFilename = cleanString(filename) || `whatsapp-media-${Date.now()}`
   const formData = new FormData()
   formData.append('file', new Blob([buffer], { type: normalizedMimeType || 'application/octet-stream' }), cleanFilename)
@@ -11694,7 +11715,10 @@ export async function sendWhatsAppApiAudioMessage({
   }
 
   const getProviderPreviewAudio = async () => {
-    if (link || !cleanString(audioDataUrl)) return null
+    // Si el audio ya tiene URL pública (como los assets de Automatizaciones),
+    // igual guardamos el preview M4A interno para que el historial de Ristak se
+    // reproduzca de forma consistente en web, móvil e iOS.
+    if (!cleanString(audioDataUrl)) return null
     if (!providerPreviewAudio) {
       providerPreviewAudio = await saveWhatsAppAudioPlaybackPreviewDataUrl(audioDataUrl, durationMs)
     }
@@ -11777,6 +11801,10 @@ export async function sendWhatsAppApiAudioMessage({
       media: prepared,
       type: 'audio'
     })
+  } else {
+    // La API entrega el OGG público directamente, pero el historial local sigue
+    // necesitando su preview M4A para reproducirse igual en todos los clientes.
+    providerPreviewAudio = await getProviderPreviewAudio()
   }
 
   if (cleanTransport !== 'qr' && link && !/^https:\/\//i.test(link)) {

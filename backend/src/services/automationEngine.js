@@ -3506,11 +3506,15 @@ export async function resolveAutomationMediaSource(mediaUrl = '') {
   const cleanMediaUrl = str(mediaUrl)
   const mediaAssetId = await resolveAutomationMediaAssetId(cleanMediaUrl)
   if (mediaAssetId) {
-    const { getMediaAssetDataUrl } = await import('./mediaStorageService.js')
-    const media = await getMediaAssetDataUrl(mediaAssetId)
+    const { getMediaAsset, getMediaAssetDataUrl } = await import('./mediaStorageService.js')
+    const [media, asset] = await Promise.all([
+      getMediaAssetDataUrl(mediaAssetId),
+      getMediaAsset(mediaAssetId)
+    ])
     return {
       dataUrl: media.dataUrl,
       externalUrl: '',
+      publicUrl: str(asset.publicUrl),
       mimeType: media.mimeType,
       filename: media.filename || '',
       mediaAssetId
@@ -3524,6 +3528,7 @@ export async function resolveAutomationMediaSource(mediaUrl = '') {
     return {
       dataUrl: `data:${row.content_type};base64,${row.content_base64}`,
       externalUrl: '',
+      publicUrl: '',
       mimeType: row.content_type || '',
       filename: row.filename || '',
       mediaAssetId: ''
@@ -3533,10 +3538,28 @@ export async function resolveAutomationMediaSource(mediaUrl = '') {
   return {
     dataUrl: '',
     externalUrl: cleanMediaUrl,
+    publicUrl: '',
     mimeType: '',
     filename: '',
     mediaAssetId: ''
   }
+}
+
+function isOggOpusDataUrl(dataUrl = '') {
+  const match = str(dataUrl).match(/^data:audio\/ogg(?:;[^,]*)?;base64,([a-z0-9+/=\s]+)$/i)
+  if (!match) return false
+  try {
+    const buffer = Buffer.from(match[1].replace(/\s/g, ''), 'base64')
+    return buffer.subarray(0, 4).toString('latin1') === 'OggS' && buffer.includes(Buffer.from('OpusHead', 'ascii'))
+  } catch {
+    return false
+  }
+}
+
+export function resolveAutomationVoicePublicUrl({ publicUrl = '', mimeType = '', dataUrl = '' } = {}) {
+  if (!/^https:\/\//i.test(str(publicUrl))) return ''
+  if (str(mimeType).toLowerCase() !== 'audio/ogg') return ''
+  return isOggOpusDataUrl(dataUrl) ? str(publicUrl) : ''
 }
 
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
@@ -3567,14 +3590,27 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
   } else if (block.type === 'video') {
     return sendWhatsAppApiVideoMessage({ to, from: fromPhone, videoDataUrl: dataUrl || undefined, videoUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
   } else if (block.type === 'audio' || block.type === 'voice') {
+    const isVoiceNote = block.type === 'voice' || block.voiceNote !== false
+    // Los MP3 que se cargan al flujo se convierten antes a OGG/Opus y quedan en
+    // el CDN con MIME correcto. Mandar esa URL HTTPS validada evita que YCloud
+    // vuelva a interpretar un multipart temporal como octet-stream. Si el
+    // asset es viejo, externo o no pasó la validación, cae a la conversión y
+    // subida segura de siempre.
+    const publicVoiceUrl = isVoiceNote
+      ? resolveAutomationVoicePublicUrl({
+          publicUrl: media.publicUrl,
+          mimeType,
+          dataUrl: dataUrl || ''
+        })
+      : ''
     return sendWhatsAppApiAudioMessage({
       to,
       from: fromPhone,
       audioDataUrl: dataUrl || undefined,
-      audioUrl: externalUrl || undefined,
+      audioUrl: publicVoiceUrl || externalUrl || undefined,
       // Los bloques nuevos son explícitos. Los flujos viejos guardaban "audio"
       // como nota de voz por default; conservamos ese comportamiento.
-      voice: block.type === 'voice' || block.voiceNote !== false,
+      voice: isVoiceNote,
       phoneNumberId,
       transport,
       allowQrFallback

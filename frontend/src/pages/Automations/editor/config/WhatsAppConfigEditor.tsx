@@ -8,7 +8,7 @@ import {
   Toggle,
   useCatalogOptions
 } from './configPrimitives'
-import { MessageBlocksEditor, messageBlockHelpers } from './MessageBlocksEditor'
+import { MessageBlocksEditor } from './MessageBlocksEditor'
 import { whatsappApiService } from '@/services/whatsappApiService'
 import {
   getWhatsAppStatusConnectionAvailability,
@@ -58,7 +58,6 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   const { options: numbers, loading: loadingNumbers } = useCatalogOptions('whatsappNumbers')
   const messageType = str(config.messageType) || 'text'
   const [whatsappAvailability, setWhatsappAvailability] = useState<WhatsAppConnectionAvailability>(defaultWhatsAppAvailability)
-  const [initialTextBlock] = useState<MessageBlock>(() => messageBlockHelpers.newBlock('text'))
   const qrOnlyConnected = whatsappAvailability.hasQrConnected && !whatsappAvailability.hasApiConnected
   const allowQrFallback = !qrOnlyConnected && config.sendViaQr === true
 
@@ -102,11 +101,11 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
   // Compatibilidad: si la config vieja solo tenía templateId, se ve como bloque
   const rawBlocks = Array.isArray(config.messageBlocks) ? (config.messageBlocks as MessageBlock[]) : []
   const normalBlocks = rawBlocks.filter(isNormalWhatsAppBlock)
-  // Un adjunto también es un mensaje válido. Antes usábamos la presencia de texto
-  // como condición para pintar el editor y eso volvía a insertar un bloque vacío
-  // cada vez que se intentaba enviar solamente una foto, video, audio o archivo.
-  const hasNormalMessageBlock = normalBlocks.some((block) => block.type !== 'delay')
-  const visibleNormalBlocks = hasNormalMessageBlock ? normalBlocks : [initialTextBlock, ...normalBlocks]
+  // Un flujo puede quedar deliberadamente sin bloques mientras el usuario el
+  // arma. Nunca inyectamos un texto de reemplazo: imagen, video, audio, nota de
+  // voz o archivo son mensajes válidos por sí solos y el bote de basura debe
+  // realmente dejar el editor vacío en WhatsApp, Messenger e Instagram.
+  const visibleNormalBlocks = normalBlocks
   const normalBlocksKey = rawBlocks.map((block) => `${block.id || ''}:${block.type}`).join('|')
   const templateMetaKey = `${str(config.templateId)}:${str(config.templateName)}`
   const templateBlocks =
@@ -127,16 +126,16 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
     if (messageType !== 'text') return
     const hasTemplateBlock = rawBlocks.some((block) => block.type === 'template')
     const hasTemplateMeta = Boolean(str(config.templateId) || str(config.templateName))
-    if (!hasTemplateBlock && hasNormalMessageBlock && !hasTemplateMeta) return
+    if (!hasTemplateBlock && !hasTemplateMeta) return
 
     onChange({
       ...config,
-      messageBlocks: hasNormalMessageBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
+      messageBlocks: normalBlocks,
       templateId: '',
       templateName: ''
     })
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [messageType, normalBlocksKey, templateMetaKey, hasNormalMessageBlock])
+  }, [messageType, normalBlocksKey, templateMetaKey])
 
   const setNormalBlocks = (messageBlocks: MessageBlock[]) => {
     set({
@@ -174,7 +173,7 @@ export const WhatsAppConfigEditor: React.FC<{ config: Config; onChange: (config:
     }
     set({
       messageType: next,
-      messageBlocks: hasNormalMessageBlock ? normalBlocks : [messageBlockHelpers.newBlock('text'), ...normalBlocks],
+      messageBlocks: normalBlocks,
       templateId: '',
       templateName: '',
       sendViaQr: false,

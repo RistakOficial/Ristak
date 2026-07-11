@@ -30,7 +30,7 @@ async function withFakeFfmpeg(callback) {
     "import fs from 'node:fs';",
     'const outputPath = process.argv[process.argv.length - 1];',
     "const output = outputPath.endsWith('.ogg')",
-    "  ? Buffer.from('OggS-direct-upload-opus')",
+    "  ? Buffer.from('OggS-direct-upload-OpusHead-audio')",
     "  : Buffer.from('direct-upload-h264-mp4');",
     'fs.writeFileSync(outputPath, output);',
     ''
