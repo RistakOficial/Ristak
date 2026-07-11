@@ -629,6 +629,13 @@ test('tres cierres 428 de una sesión guardada piden QR nuevo sin borrar credenc
   const sockets = []
 
   await withQrFixture({ status: 'connected' }, async ({ phoneNumberId }) => {
+    // Auth legado: el objeto es válido pero no trae `registered`. La sesión
+    // sí tiene teléfono/fecha de conexión, como las filas reales anteriores a
+    // Baileys 7, y debe entrar al flujo de reparación tras los 428.
+    await db.run(
+      'UPDATE whatsapp_qr_auth_state SET value_json = ? WHERE phone_number_id = ? AND auth_key = ?',
+      [JSON.stringify({ me: { id: CONNECTED_JID } }), phoneNumberId, 'creds']
+    )
     setBaileysRuntimeForTest(createFakeBaileysRuntime(sockets))
     setWhatsAppQrReconnectDelayForTest(0)
 

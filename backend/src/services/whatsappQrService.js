@@ -2413,7 +2413,7 @@ function closeLiveSession(phoneNumberId, { releaseLease = true } = {}) {
   }
 }
 
-async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, openDeferred = null, waitForLease = false, leaseReason = 'socket' } = {}) {
+async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, openDeferred = null, waitForLease = false, leaseReason = 'socket', freshPairing = false } = {}) {
   const existing = await getSessionRow(phone.id)
   if (requireConsent && Number(existing?.consent_accepted || 0) !== 1) {
     throw new Error('Primero acepta el riesgo de usar conexión por QR para este número')
@@ -2427,7 +2427,16 @@ async function openSocket(phone, { requireConsent = true, reconnectAttempt = 0, 
     makeCacheableSignalKeyStore
   } = baileys
   const { state, saveCreds } = await useQrDbAuthState(phone.id, baileys)
-  const startedWithRegisteredAuth = Boolean(state?.creds?.registered)
+  // Algunas sesiones antiguas guardadas por versiones previas de Baileys no
+  // incluyen `creds.registered`, aunque sí tienen identidad y una conexión
+  // previa comprobable. No debemos tratarlas como un QR nuevo y reintentarlas
+  // eternamente. `freshPairing` solo se activa después de que el usuario pidió
+  // borrar ese auth y generar un QR limpio.
+  const startedWithRegisteredAuth = !freshPairing && Boolean(
+    state?.creds?.registered ||
+    existing?.connected_phone ||
+    existing?.last_connected_at
+  )
   const lease = await acquireQrSessionLease(phone.id, { waitForRelease: waitForLease, reason: leaseReason })
   const webVersion = await resolveWhatsAppWebVersion(baileys)
 
@@ -2922,7 +2931,8 @@ export async function startWhatsAppQrConnection({ phoneNumberId, acceptedRisk, a
   // Una regeneración solicitada por el usuario es el único momento en que se
   // descartan credenciales recuperables que WhatsApp ya rechazó. No hacemos este
   // reset automático: así un fallo transitorio nunca desconecta un número sano.
-  if (requiresExplicitQrRepair(existing)) {
+  const freshPairing = requiresExplicitQrRepair(existing)
+  if (freshPairing) {
     await clearAuthState(phone.id)
   }
 
@@ -2939,7 +2949,11 @@ export async function startWhatsAppQrConnection({ phoneNumberId, acceptedRisk, a
   })
 
   try {
-    const { openPromise } = await openSocket(phone, { requireConsent: true, leaseReason: 'manual-connect' })
+    const { openPromise } = await openSocket(phone, {
+      requireConsent: true,
+      leaseReason: 'manual-connect',
+      freshPairing
+    })
     openPromise.catch(error => {
       logger.warn(`[WhatsApp QR] Conexión pendiente/fallida ${phone.id}: ${error.message}`)
     })
