@@ -12699,7 +12699,7 @@ function SettingsScreen({
     try {
       const definitions = await api.getCustomFieldDefinitions(false);
       if (!settingsMountedRef.current) return;
-      setCustomFields(Array.isArray(definitions) ? definitions.filter((definition) => !definition.archived) : []);
+      setCustomFields(Array.isArray(definitions) ? definitions.filter(isUserCustomFieldDefinition) : []);
     } catch (err) {
       if (!settingsMountedRef.current) return;
       setCustomFields([]);

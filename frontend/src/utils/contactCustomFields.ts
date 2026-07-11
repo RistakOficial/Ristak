@@ -74,6 +74,12 @@ const WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS = new Set([
   'whatsapp_api_source_url'
 ])
 
+const ACCOUNT_RESERVED_CUSTOM_FIELD_KEYS = new Set([
+  'business_name',
+  'nombre_del_negocio',
+  'nombre_de_negocio'
+])
+
 const normalizeCustomFieldToken = (value?: string | null) =>
   String(value || '')
     .trim()
@@ -93,6 +99,7 @@ export function isReservedContactCustomField(field?: ContactCustomFieldLike | nu
   ].map(normalizeCustomFieldToken).filter(Boolean)
 
   return tokens.some(token =>
+    ACCOUNT_RESERVED_CUSTOM_FIELD_KEYS.has(token) ||
     WHATSAPP_RESERVED_CUSTOM_FIELD_KEYS.has(token) ||
     token.startsWith('whatsapp_api_') ||
     token.includes('_ctwa_') ||

@@ -550,32 +550,19 @@ final class ContactInfoViewModel {
             && !definition.systemManaged
             && !definition.locked
             && definition.sourceType.lowercased() != "system"
+            && !isBusinessNameDefinition(definition)
     }
 
-    /// Oculta el campo `business_name` / "Nombre del negocio" de la lista de
-    /// campos personalizados (dato del negocio, no del contacto).
-    ///
-    /// El campo puede llegar de formas distintas según su origen: con clave
-    /// `business_name`/`business.name`, con label "Nombre del negocio", o como
-    /// valor huérfano cuya única señal es el `name`/`label` crudo (`business_name`
-    /// sin clave). Por eso normalizamos TODAS las señales (clave, fieldKey, label
-    /// y name — tanto de la definición como del valor) quitando mayúsculas,
-    /// espacios, guiones bajos y cualquier símbolo, y las comparamos contra las
-    /// variantes conocidas. Así se cubre cualquier combinación sin depender de
-    /// una coincidencia exacta con espacios.
-    private static func isHiddenSystemField(_ row: CustomFieldRow) -> Bool {
-        // Variantes normalizadas que identifican al "Nombre del negocio".
+    /// `business_name` pertenece al perfil de la cuenta, no a la ficha del
+    /// contacto. Algunas instalaciones legacy lo exponen sin banderas de sistema,
+    /// así que se reconoce también por clave, nombre o etiqueta normalizados.
+    private static func isBusinessNameDefinition(_ definition: ContactCustomFieldDefinition) -> Bool {
         let hiddenTokens: Set<String> = ["businessname", "nombredelnegocio", "nombredenegocio"]
         let tokens = [
-            row.definition?.key,
-            row.definition?.fieldKey,
-            row.definition?.label,
-            row.definition?.name,
-            row.value?.key,
-            row.value?.fieldKey,
-            row.value?.label,
-            row.value?.name,
-            row.label,
+            definition.key,
+            definition.fieldKey,
+            definition.label,
+            definition.name,
         ]
         .compactMap { normalizedFieldToken($0) }
         return tokens.contains { hiddenTokens.contains($0) }

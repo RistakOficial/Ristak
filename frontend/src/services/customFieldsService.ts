@@ -70,16 +70,32 @@ export interface SaveCustomFieldInput {
   syncTarget?: string
 }
 
-export const isSystemCustomFieldDefinition = (field?: Partial<CustomFieldDefinition> | null) => (
-  Boolean(
+const normalizeCustomFieldIdentity = (value?: string | null) => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9]/g, '')
+
+const SYSTEM_CUSTOM_FIELD_IDENTITIES = new Set([
+  'businessname',
+  'nombredelnegocio',
+  'nombredenegocio'
+])
+
+export const isSystemCustomFieldDefinition = (field?: Partial<CustomFieldDefinition> | null) => {
+  const identities = [field?.key, field?.fieldKey, field?.label, field?.name]
+    .map(normalizeCustomFieldIdentity)
+    .filter(Boolean)
+
+  return Boolean(
     field?.system ||
     field?.systemManaged ||
     field?.locked ||
     field?.editable === false ||
     field?.deletable === false ||
-    field?.sourceType === 'system'
+    field?.sourceType?.toLowerCase() === 'system' ||
+    identities.some((identity) => SYSTEM_CUSTOM_FIELD_IDENTITIES.has(identity))
   )
-)
+}
 
 export const customFieldsService = {
   listCatalog() {

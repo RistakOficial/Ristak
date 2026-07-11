@@ -309,31 +309,11 @@ const buildEditableFields = (
   fields: ContactCustomField[]
 ) => {
   const visibleDefinitions = definitions.filter(definition => !isHiddenDefinition(definition))
-  const usedValueIndexes = new Set<number>()
 
-  const definitionFields = visibleDefinitions.map((definition, index) => {
+  return visibleDefinitions.map((definition, index) => {
     const valueField = findMatchingValueField(fields, definition)
-    if (valueField) {
-      const valueIndex = fields.indexOf(valueField)
-      if (valueIndex >= 0) usedValueIndexes.add(valueIndex)
-    }
     return buildFieldFromDefinition(definition, valueField, index)
   })
-
-  const orphanFields = fields
-    .filter((field, index) => !usedValueIndexes.has(index) && !isReservedContactCustomField(field))
-    .map((field, index): EditableCustomField => ({
-      ...field,
-      id: field.id || field.definitionId || field.fieldKey || field.key || `orphan-custom-field-${index}`,
-      label: getContactCustomFieldDisplayLabel(field, index),
-      dataType: field.dataType || 'text',
-      options: normalizeOptions(field.options || []),
-      folderId: field.folderId || null,
-      folderName: field.folderName || null,
-      fieldGroup: field.fieldGroup || null
-    }))
-
-  return [...definitionFields, ...orphanFields]
 }
 
 const buildGroups = (

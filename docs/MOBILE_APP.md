@@ -892,7 +892,10 @@ La ficha revalida en segundo plano sin mostrar una pastilla o spinner de
 `Actualizando datos` encima del avatar. `Campos personalizados` usa como fuente
 autoritaria las definiciones activas creadas por el usuario: valores huérfanos,
 campos `system/systemManaged/locked` y metadatos de integraciones como
-`meta_social_*` nunca se convierten en filas visibles. La sección `Etiquetas`
+`meta_social_*` nunca se convierten en filas visibles. `business_name`,
+`business.name` y “Nombre del negocio” pertenecen al perfil de la cuenta y se
+ocultan tanto en Info del contacto como en Ajustes, incluso si una instalación
+legacy los entrega sin banderas de sistema. La sección `Etiquetas`
 permite buscar o crear una etiqueta y coloca inmediatamente debajo la acción
 `Meter a una automatización`, limitada a automatizaciones publicadas. En Ajustes
 móviles, `Campos personalizados` y `Etiquetas` permiten crear y eliminar sus

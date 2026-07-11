@@ -58,10 +58,13 @@ test('info de contacto solo muestra campos definidos por el usuario', () => {
   const rows = buildUserCustomFieldRows([
     { definitionId: 'history', key: 'clinical_history', label: 'Historia clínica', sourceType: 'manual' },
     { definitionId: 'meta', key: 'meta_social_sender_id', label: 'Meta Social Sender ID', sourceType: 'system', system: true },
+    { definitionId: 'business', key: 'business_name', label: 'Nombre del negocio', sourceType: 'manual' },
+    { definitionId: 'business-dot', fieldKey: 'business.name', label: 'Empresa', sourceType: 'manual' },
   ], [
     { definitionId: 'history', key: 'clinical_history', value: 'Alergia a penicilina' },
     { definitionId: 'meta', key: 'meta_social_sender_id', value: '178900000' },
     { key: 'database_internal_id', label: 'Database Internal ID', value: 'abc' },
+    { definitionId: 'business', key: 'business_name', value: 'Clínica Demo' },
   ]);
 
   assert.deepEqual(rows.map((row) => row.label), ['Historia clínica']);

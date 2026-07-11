@@ -855,7 +855,11 @@ En `Info del contacto`, `/movil`, `mobile/` e `ios/app` revalidan el detalle de
 forma silenciosa y no muestran un loader encima del avatar. La sección de campos
 personalizados se construye exclusivamente desde definiciones activas creadas o
 configuradas por el usuario; valores huérfanos y definiciones de sistema o de
-integraciones no se presentan aunque existan dentro del JSON del contacto. La
+integraciones no se presentan aunque existan dentro del JSON del contacto. El
+nombre del negocio (`business_name`, `business.name` o “Nombre del negocio”) es
+perfil de la cuenta —se administra en Configuración > Cuenta/Perfil del negocio—
+y nunca se presenta como campo personalizado del contacto, aunque un catálogo
+legacy omita sus banderas de sistema. La
 acción para inscribir en una automatización publicada vive inmediatamente debajo
 de Etiquetas. Los Ajustes móviles permiten crear y eliminar tanto definiciones
 de campos personalizados como etiquetas usando los endpoints canónicos de

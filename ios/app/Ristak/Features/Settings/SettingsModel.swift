@@ -144,7 +144,7 @@ final class SettingsModel {
         }
         if case .idle = customFields,
            let cached = cache.value([ContactCustomFieldDefinition].self, for: SettingsCacheKey.customFields) {
-            customFields = .loaded(cached)
+            customFields = .loaded(cached.filter(ContactInfoViewModel.isUserCreatedDefinition))
         }
     }
 

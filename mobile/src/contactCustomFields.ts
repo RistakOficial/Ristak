@@ -12,12 +12,29 @@ export type ContactCustomFieldValueLike = {
   value?: unknown;
 };
 
+const HIDDEN_ACCOUNT_FIELD_TOKENS = new Set([
+  'businessname',
+  'nombredelnegocio',
+  'nombredenegocio',
+]);
+
+function normalizedFieldToken(value?: string) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+export function isHiddenAccountCustomField(definition: ContactCustomFieldDefinition) {
+  return [definition.key, definition.fieldKey, definition.label, definition.name]
+    .map(normalizedFieldToken)
+    .some((token) => HIDDEN_ACCOUNT_FIELD_TOKENS.has(token));
+}
+
 export function isUserCustomFieldDefinition(definition: ContactCustomFieldDefinition) {
   return !definition.archived
     && !definition.system
     && !definition.systemManaged
     && !definition.locked
-    && definition.sourceType !== 'system';
+    && String(definition.sourceType || '').toLowerCase() !== 'system'
+    && !isHiddenAccountCustomField(definition);
 }
 
 function normalizedCandidates(values: Array<string | undefined>) {
