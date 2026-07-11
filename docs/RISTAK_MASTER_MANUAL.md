@@ -2540,6 +2540,10 @@ estatica: en pantallas muy amplias usa el ancho grande fijo, y en ventanas
 normales o chicas se compacta por breakpoint. No se expande ni se contrae al
 hover o al enfocar controles internos.
 
+El editor visual no ofrece una vista previa separada del flujo. El canvas es la
+representacion editable del recorrido; la validacion practica se hace con
+**Probar**, registros de ejecucion e historial de inscripciones.
+
 Regla de prueba desde el editor: el botón **Probar** usa la última versión
 guardada del flujo y no exige que la automatización esté publicada. Si hay
 cambios locales sin guardar, primero debe guardarse. Las inscripciones manuales

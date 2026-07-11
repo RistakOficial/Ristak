@@ -7,7 +7,6 @@ import {
   Check,
   CloudOff,
   Copy,
-  Eye,
   Loader2,
   MoreVertical,
   Pause,
@@ -22,7 +21,6 @@ import {
 import { cn } from '@/utils/cn'
 import {
   Button,
-  Modal,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -127,15 +125,6 @@ type EmailEditorSaveConfig = {
 }
 
 type EmailEditorState = EmailRichEditorRequest & Pick<ConfigState, 'nodeId' | 'triggerId' | 'committed'>
-
-interface PreviewStep {
-  key: string
-  icon: NodeDefinition['icon'] | typeof Zap
-  accent: string
-  title: string
-  detail?: string
-  branch?: boolean
-}
 
 type EditorFlow = Pick<Automation['flow'], 'nodes' | 'edges' | 'viewport' | 'settings'>
 
@@ -284,7 +273,6 @@ export const AutomationEditor: React.FC = () => {
 
   const [nodeErrors, setNodeErrors] = useState<Record<string, string[]>>({})
   const [saveState, setSaveState] = useState<SaveState>('saved')
-  const [previewOpen, setPreviewOpen] = useState(false)
   const [statusBusy, setStatusBusy] = useState(false)
 
   const viewportRef = useRef<AutomationViewport>({ x: 0, y: 0, zoom: 1 })
@@ -599,7 +587,6 @@ export const AutomationEditor: React.FC = () => {
       setTestRunOpen(false)
       setNodeStats({})
       setEnrollmentsNode(null)
-      setPreviewOpen(false)
       setNodeErrors({})
       setSaveState('saved')
     }
@@ -1545,61 +1532,6 @@ export const AutomationEditor: React.FC = () => {
     )
   }
 
-  // Pasos de la vista previa: recorre el flujo desde la tarjeta inicial
-  const previewSteps = useMemo<PreviewStep[]>(() => {
-    if (!previewOpen) return []
-    const steps: PreviewStep[] = []
-    const startNode = nodes.find(isStartNode)
-    if (!startNode) return steps
-
-    const triggers = getStartTriggers(startNode)
-    if (triggers.length === 0) {
-      steps.push({ key: 'no-trigger', icon: Zap, accent: 'green', title: 'Cuando...', detail: 'Inicio manual o externo' })
-    }
-    triggers.forEach((trigger) => {
-      const definition = getNodeDefinition(trigger.type)
-      steps.push({
-        key: `trigger-${trigger.id}`,
-        icon: definition?.icon || Zap,
-        accent: definition?.accent || 'green',
-        title: `Cuando: ${definition?.label || trigger.type}`,
-        detail: definition?.summary(trigger.config || {}).text
-      })
-    })
-
-    const visited = new Set<string>()
-    const walk = (nodeId: string, branchLabel: string | undefined, depth: number) => {
-      if (depth > 30 || visited.has(nodeId)) return
-      visited.add(nodeId)
-      const node = nodes.find((candidate) => candidate.id === nodeId)
-      if (!node) return
-      const definition = getNodeDefinition(node.type)
-      const summary = definition?.summary(node.config || {})
-      steps.push({
-        key: `step-${node.id}`,
-        icon: definition?.icon || Zap,
-        accent: definition?.accent || 'blue',
-        title: branchLabel ? `${branchLabel} → ${definition?.label || node.type}` : definition?.label || node.type,
-        detail: summary?.text || summary?.box,
-        branch: Boolean(branchLabel)
-      })
-      const outputs = node ? getNodeOutputs(node) : []
-      outputs.forEach((output) => {
-        const edge = edges.find(
-          (candidate) => candidate.sourceNodeId === nodeId && (candidate.sourceHandle || 'out') === output.id
-        )
-        if (edge) {
-          walk(edge.targetNodeId, outputs.length > 1 ? output.label : undefined, depth + 1)
-        }
-      })
-    }
-
-    const firstEdge = edges.find((edge) => edge.sourceNodeId === startNode.id)
-    if (firstEdge) walk(firstEdge.targetNodeId, undefined, 0)
-
-    return steps
-  }, [edges, nodes, previewOpen])
-
   // ------------------------------------------------------------------
   // Render
   // ------------------------------------------------------------------
@@ -1906,9 +1838,6 @@ export const AutomationEditor: React.FC = () => {
           >
             Guardar
           </Button>
-          <Button variant="secondary" size="sm" leftIcon={<Eye size={13} />} onClick={() => setPreviewOpen(true)}>
-            Vista previa
-          </Button>
 
           {status === 'published' && !hasDraftChanges ? (
             <Button
@@ -2109,34 +2038,6 @@ export const AutomationEditor: React.FC = () => {
           setFlowSettings(next)
         }}
       />
-
-      {/* ---------------------------- Vista previa -------------------------- */}
-      <Modal
-        isOpen={previewOpen}
-        onClose={() => setPreviewOpen(false)}
-        title="Vista previa del flujo"
-        size="md"
-      >
-        {previewSteps.length === 0 ? (
-          <p style={{ color: 'var(--color-text-tertiary)', fontSize: 13 }}>
-            Agrega un disparador y conecta pasos para ver el recorrido.
-          </p>
-        ) : (
-          <div className={styles.previewList}>
-            {previewSteps.map((step) => (
-              <div key={step.key} className={cn(styles.previewStep, step.branch && styles.previewStepBranch)}>
-                <span className={styles.pickerItemIcon} data-accent={step.accent}>
-                  <step.icon size={14} />
-                </span>
-                <span className={styles.previewStepText}>
-                  <span className={styles.previewStepTitle}>{step.title}</span>
-                  {step.detail && <span className={styles.previewStepDetail}>{step.detail}</span>}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </Modal>
     </div>
     </FlowVariablesContext.Provider>
     </VariableCategoriesContext.Provider>
