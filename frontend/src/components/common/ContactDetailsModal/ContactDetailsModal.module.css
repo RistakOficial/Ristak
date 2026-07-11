@@ -1055,6 +1055,10 @@
   margin-bottom: 0;
 }
 
+.contactOriginSection {
+  margin-bottom: 1.5rem;
+}
+
 .detailSectionTitle {
   font-family: var(--label-font);
   font-size: 0.8125rem;

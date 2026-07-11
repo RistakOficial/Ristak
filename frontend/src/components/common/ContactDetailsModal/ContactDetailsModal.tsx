@@ -2397,7 +2397,7 @@ export function ContactDetailsModal({
 
                 {/* Primera Atribución (Primer Toque) */}
                 {selectedContact.firstSession && (
-                  <div className={styles.detailSection}>
+                  <div className={`${styles.detailSection} ${styles.contactOriginSection}`}>
                     <h5 className={styles.detailSectionTitle}>
                       Primera Atribución (Primer Toque)
                     </h5>
@@ -2473,14 +2473,14 @@ export function ContactDetailsModal({
 
                 {/* Atribución (solo si NO hay firstSession) */}
                 {!selectedContact.firstSession && (selectedContact.source || resolvedAttribution.campaignName || resolvedAttribution.adsetName || resolvedAttribution.adName) && (
-                  <div className={styles.detailSection}>
+                  <div className={`${styles.detailSection} ${styles.contactOriginSection}`}>
                     <h5 className={styles.detailSectionTitle}>
                       De dónde llegó el contacto:
                     </h5>
                     <div className={styles.detailSectionContent}>
                       {selectedContact.source && (
                         <div className={styles.detailItem}>
-                          <Icon name="tag" size={16} />
+                          <Icon name="globe" size={16} />
                           <div>
                             <span className={styles.detailItemLabel}>Fuente:</span>
                             <span> {selectedContact.source}</span>
