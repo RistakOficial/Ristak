@@ -49,7 +49,9 @@ jobs:
           BRANCH=main
           VERSION="v1.0.${{ github.run_number }}"
           echo "tags=ghcr.io/${REPO_LC}:${CHANNEL},ghcr.io/${REPO_LC}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
-          echo "image=ghcr.io/${REPO_LC}:${CHANNEL}" >> "$GITHUB_OUTPUT"
+          # :stable es un alias mutable; el Installer debe desplegar el tag
+          # inmutable del commit para que builds simultaneos no se pisen.
+          echo "image=ghcr.io/${REPO_LC}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
 

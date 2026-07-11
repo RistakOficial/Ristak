@@ -191,9 +191,12 @@ docker run -p 10000:10000 -e DATABASE_URL=... -e JWT_SECRET=... ristak
 - `HEALTHCHECK` integrado contra `/health`.
 - Las tablas se crean/migran automáticamente al arrancar (igual que hoy).
 
-El workflow `.github/workflows/docker-image.yml` publica en GHCR:
-`main` → `ghcr.io/ristakoficial/ristak:stable`, `test` → `:beta` (más el tag del commit, que sirve
-para canal `custom` o rollbacks). El instalador elige la imagen vía `RISTAK_DOCKER_IMAGE*`.
+El workflow `.github/workflows/docker-image.yml` publica en GHCR el alias
+`ghcr.io/ristakoficial/ristak:stable` y un tag inmutable por commit. El Instalador puede
+mostrar el alias estable, pero al actualizar una instalación debe usar el tag del commit
+recibido por webhook: así dos builds simultáneos no pueden hacer que Render descargue una
+imagen distinta de la autorizada. Los pushes normales actualizan solo Test; En vivo requiere
+la promoción manual desde Installer. El instalador elige la imagen vía `RISTAK_DOCKER_IMAGE*`.
 
 ## Tests
 
