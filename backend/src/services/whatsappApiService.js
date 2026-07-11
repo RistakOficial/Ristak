@@ -63,6 +63,7 @@ import {
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const YCLOUD_API_BASE_URL = String(process.env.YCLOUD_API_BASE_URL || 'https://api.ycloud.com/v2').replace(/\/+$/, '')
+const YCLOUD_REQUEST_TIMEOUT_MS = 20_000
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v22.0'
 const META_GRAPH_BASE_URL = `https://graph.facebook.com/${META_GRAPH_VERSION}`
 const SOURCE_NAME = 'WhatsApp_API'
@@ -366,7 +367,9 @@ const CONFIG_KEYS = {
 }
 
 const HISTORY_DIRECTION_REPAIR_CONFIG_KEY = 'whatsapp_api_history_direction_repair_version'
-const HISTORY_DIRECTION_REPAIR_VERSION = '2026-07-11-ycloud-smb-echoes-backfill'
+const YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY = 'whatsapp_api_ycloud_history_backfill_state'
+export const YCLOUD_HISTORY_BACKFILL_VERSION = '2026-07-11-ycloud-smb-echoes-backfill'
+const HISTORY_DIRECTION_REPAIR_VERSION = YCLOUD_HISTORY_BACKFILL_VERSION
 
 function nowIso() {
   return new Date().toISOString()
@@ -2142,15 +2145,29 @@ async function ycloudRequest(path, { apiKey, method = 'GET', body, query } = {})
     }
   }
 
-  const response = await ycloudFetch(url.toString(), {
-    method,
-    headers: {
-      accept: 'application/json',
-      'X-API-Key': cleanApiKey,
-      ...(body ? { 'content-type': 'application/json' } : {})
-    },
-    body: body ? JSON.stringify(body) : undefined
-  })
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), YCLOUD_REQUEST_TIMEOUT_MS)
+  let response
+
+  try {
+    response = await ycloudFetch(url.toString(), {
+      method,
+      headers: {
+        accept: 'application/json',
+        'X-API-Key': cleanApiKey,
+        ...(body ? { 'content-type': 'application/json' } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal
+    })
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`YCloud no respondió ${path} en ${Math.round(YCLOUD_REQUEST_TIMEOUT_MS / 1000)} segundos`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
 
   const text = await response.text()
   let data = null
@@ -7861,6 +7878,148 @@ async function syncYCloudMessagesFromApi(apiKey, { businessPhoneHints = [], waba
     logger.warn('WhatsApp API: YCloud limito el listado de /whatsapp/messages a 100 paginas. Los mensajes entrantes historicos dependen del webhook whatsapp.smb.history.')
   }
 
+  return summary
+}
+
+async function syncYCloudMessagesPage(apiKey, {
+  query = {},
+  businessPhoneHints = [],
+  scopeName = 'all',
+  page = 1
+} = {}) {
+  const limit = 100
+  const cleanPage = Math.max(1, Number(page) || 1)
+  const data = await ycloudRequest('/whatsapp/messages', {
+    apiKey,
+    query: {
+      page: cleanPage,
+      limit,
+      includeTotal: true,
+      ...query
+    }
+  })
+  const items = extractYCloudPageItems(data)
+  const total = getYCloudPageTotal(data)
+  const stats = await syncYCloudMessageRecords(items, {
+    businessPhoneHints,
+    direction: 'outbound',
+    eventType: 'whatsapp.message.updated',
+    source: `ycloud_message_list_${scopeName}`
+  })
+  const completed = items.length < limit || (total !== null && cleanPage * limit >= total)
+
+  return {
+    ...stats,
+    page: cleanPage,
+    total,
+    records: items.length,
+    completed,
+    nextPage: completed ? null : cleanPage + 1
+  }
+}
+
+function parseYCloudHistoryBackfillState(value) {
+  const parsed = parseJsonValue(value, {})
+  if (!isPlainObject(parsed) || parsed.version !== HISTORY_DIRECTION_REPAIR_VERSION) {
+    return { page: 1, webhookUpdated: false, total: null }
+  }
+
+  return {
+    page: Math.max(1, Number(parsed.page) || 1),
+    webhookUpdated: parsed.webhookUpdated === true,
+    total: Number.isFinite(Number(parsed.total)) ? Number(parsed.total) : null
+  }
+}
+
+/**
+ * Sincroniza una porción corta del historial saliente de YCloud y guarda la
+ * siguiente página antes de devolver. Así el proceso se puede reanudar después
+ * de un deploy sin volver a recorrer todos los mensajes ya importados.
+ */
+export async function runYCloudHistoryBackfillBatch({ maxPages = 3 } = {}) {
+  const currentVersion = await getAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY).catch(() => '')
+  if (currentVersion === HISTORY_DIRECTION_REPAIR_VERSION) {
+    return { skipped: true, reason: 'already_repaired', completed: true, pages: 0, messages: 0 }
+  }
+
+  const config = await loadConfig({ includeSecrets: true })
+  if (!config.enabled || !config.apiKey) {
+    return { skipped: true, reason: 'ycloud_disconnected', completed: false, pages: 0, messages: 0 }
+  }
+
+  const state = parseYCloudHistoryBackfillState(
+    await getAppConfig(YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY).catch(() => '')
+  )
+  const businessPhoneHints = await getKnownBusinessPhoneHints(config)
+  const wabaIds = [config.wabaId].filter(Boolean)
+  const query = wabaIds[0] ? { 'filter.wabaId': wabaIds[0] } : {}
+  const pageLimit = Math.max(1, Math.min(Number(maxPages) || 1, 5))
+  let page = state.page
+  let webhookUpdated = state.webhookUpdated
+  let total = state.total
+  const summary = {
+    skipped: false,
+    completed: false,
+    pages: 0,
+    messages: 0,
+    created: 0,
+    updated: 0,
+    failed: 0,
+    pageStart: page,
+    pageEnd: page,
+    total
+  }
+
+  if (!webhookUpdated) {
+    const webhookSync = await refreshYCloudWebhookEndpoint(config)
+    if (webhookSync.skipped) {
+      throw new Error('YCloud no tiene una URL pública de webhook para actualizar los ecos de WhatsApp Business App')
+    }
+    webhookUpdated = true
+    await setAppConfig(YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY, safeJson({
+      version: HISTORY_DIRECTION_REPAIR_VERSION,
+      page,
+      webhookUpdated,
+      total,
+      updatedAt: nowIso()
+    }))
+  }
+
+  for (let index = 0; index < pageLimit; index += 1) {
+    const result = await syncYCloudMessagesPage(config.apiKey, {
+      query,
+      businessPhoneHints,
+      scopeName: wabaIds[0] ? `waba_${wabaIds[0]}` : 'all',
+      page
+    })
+    total = result.total ?? total
+    summary.pages += 1
+    summary.messages += result.messages
+    summary.created += result.created
+    summary.updated += result.updated
+    summary.failed += result.failed
+    summary.pageEnd = result.page
+    summary.total = total
+
+    if (result.completed) {
+      summary.completed = true
+      await setAppConfig(HISTORY_DIRECTION_REPAIR_CONFIG_KEY, HISTORY_DIRECTION_REPAIR_VERSION)
+      await setAppConfig(YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY, '')
+      logger.info(`WhatsApp API completó backfill YCloud: ${summary.messages} mensajes en páginas ${summary.pageStart}-${summary.pageEnd}.`)
+      return summary
+    }
+
+    page = result.nextPage
+  }
+
+  await setAppConfig(YCLOUD_HISTORY_BACKFILL_STATE_CONFIG_KEY, safeJson({
+    version: HISTORY_DIRECTION_REPAIR_VERSION,
+    page,
+    webhookUpdated,
+    total,
+    updatedAt: nowIso()
+  }))
+  logger.info(`WhatsApp API avanzó backfill YCloud: páginas ${summary.pageStart}-${summary.pageEnd}; continúa en ${page}.`)
   return summary
 }
 

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import {
   db,
+  getAppConfig,
   repairWhatsAppApiContactIdentityFromMessages,
   setAppConfig
 } from '../src/config/database.js'
@@ -17,6 +18,7 @@ import {
   getWhatsAppApiRequiredWebhookEvents,
   processYCloudWhatsAppWebhook,
   repairStoredYCloudHistoryMessageDirections,
+  runYCloudHistoryBackfillBatch,
   sendWhatsAppApiImageMessage,
   sendWhatsAppApiReactionMessage,
   sendWhatsAppApiTextMessage,
@@ -2498,6 +2500,98 @@ test('reparacion retroactiva corrige salientes guardados mal usando lista de YCl
     await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR phone = ?', [messageId, phone]).catch(() => undefined)
     await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [phone]).catch(() => undefined)
     await db.run('DELETE FROM contacts WHERE phone = ?', [phone]).catch(() => undefined)
+  }
+})
+
+test('backfill YCloud reanuda desde la siguiente pagina sin repetir el historial completo', async () => {
+  const id = randomUUID()
+  const phone = `+52986${Date.now().toString().slice(-7)}`
+  const businessPhone = '+526561000000'
+  const repairConfigKey = 'whatsapp_api_history_direction_repair_version'
+  const stateConfigKey = 'whatsapp_api_ycloud_history_backfill_state'
+  const keys = getWhatsAppApiConfigKeys()
+  const configKeys = [
+    keys.enabled,
+    keys.apiKey,
+    keys.senderPhone,
+    keys.wabaId,
+    keys.provider,
+    keys.webhookEndpointId,
+    keys.webhookUrl,
+    repairConfigKey,
+    stateConfigKey
+  ]
+  const requestedPages = []
+  let webhookPatches = 0
+
+  try {
+    await snapshotAppConfig(configKeys, async () => {
+      await initializeMasterKey()
+      await setAppConfig(keys.enabled, '1')
+      await setAppConfig(keys.apiKey, encrypt('ycloud_batch_secret'))
+      await setAppConfig(keys.senderPhone, businessPhone)
+      await setAppConfig(keys.wabaId, 'waba_ycloud_batch_test')
+      await setAppConfig(keys.provider, 'ycloud')
+      await setAppConfig(keys.webhookEndpointId, 'webhook_ycloud_batch_test')
+      await setAppConfig(keys.webhookUrl, 'https://example.test/webhook/whatsapp-api/ycloud')
+
+      const records = Array.from({ length: 101 }, (_, index) => ({
+        id: `ycloud_batch_${id}_${index + 1}`,
+        from: businessPhone,
+        to: phone,
+        wabaId: 'waba_ycloud_batch_test',
+        status: 'sent',
+        type: 'text',
+        text: { body: `Mensaje histórico ${index + 1}` },
+        createTime: '2024-06-10T08:09:10.000Z',
+        sendTime: '2024-06-10T08:09:10.000Z'
+      }))
+
+      setYCloudFetchForTest(async (url, options = {}) => {
+        const parsed = new URL(String(url))
+        const path = parsed.pathname.replace(/^\/v2/, '')
+        const method = String(options.method || 'GET').toUpperCase()
+
+        if (path === '/webhookEndpoints/webhook_ycloud_batch_test' && method === 'PATCH') {
+          webhookPatches += 1
+          return ycloudJsonResponse({
+            id: 'webhook_ycloud_batch_test',
+            url: 'https://example.test/webhook/whatsapp-api/ycloud',
+            status: 'active'
+          })
+        }
+        if (path === '/whatsapp/messages' && method === 'GET') {
+          const page = Number(parsed.searchParams.get('page'))
+          requestedPages.push(page)
+          return ycloudJsonResponse({
+            total: records.length,
+            items: page === 1 ? records.slice(0, 100) : records.slice(100)
+          })
+        }
+        return ycloudJsonResponse({ items: [], total: 0 })
+      })
+
+      const first = await runYCloudHistoryBackfillBatch({ maxPages: 1 })
+      assert.equal(first.completed, false)
+      assert.deepEqual(requestedPages, [1])
+      assert.equal(webhookPatches, 1)
+      assert.equal(JSON.parse(await getAppConfig(stateConfigKey)).page, 2)
+
+      const second = await runYCloudHistoryBackfillBatch({ maxPages: 1 })
+      assert.equal(second.completed, true)
+      assert.deepEqual(requestedPages, [1, 2])
+      assert.equal(webhookPatches, 1)
+      assert.equal(await getAppConfig(repairConfigKey), '2026-07-11-ycloud-smb-echoes-backfill')
+
+      const count = await db.get(
+        "SELECT COUNT(*) AS count FROM whatsapp_api_messages WHERE ycloud_message_id LIKE ?",
+        [`ycloud_batch_${id}_%`]
+      )
+      assert.equal(Number(count.count), 101)
+    })
+  } finally {
+    setYCloudFetchForTest(null)
+    await cleanup({ phone })
   }
 })
 

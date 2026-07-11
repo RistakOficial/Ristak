@@ -99,7 +99,6 @@ import {
   recoverPendingConversationGoalCompletionEffects,
   startConversationGoalEffectsRecoveryScheduler
 } from './services/conversationalAgentService.js'
-import { repairStoredYCloudHistoryMessageDirections } from './services/whatsappApiService.js'
 import {
   classifyDeployDrainRequest,
   isHealthRequest
@@ -521,12 +520,6 @@ async function startRuntimeServices() {
         logger.info(`[WhatsApp] Plantillas default preparadas y enviadas a revisión: ${result.submitted}`)
       }
     }
-  )
-
-  runStartupDrainTask(
-    'startup:ycloud-history-repair',
-    repairStoredYCloudHistoryMessageDirections,
-    'No se pudo recalcular historial WhatsApp API afectado'
   )
 
   runStartupDrainTask(

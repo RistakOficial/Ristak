@@ -952,8 +952,13 @@ estados, atribucion y payload crudo. El webhook YCloud debe suscribirse a
 `whatsapp.smb.message.echoes`: ese es el evento que refleja los mensajes que el
 negocio envia desde WhatsApp Business o un dispositivo companion. Cada
 instalacion actualiza esa suscripcion y ejecuta una importacion saliente
-idempotente una vez por version; si YCloud o el webhook fallan, no marca el
-backfill como terminado para reintentarlo en el siguiente arranque. WhatsApp
+idempotente por lotes mediante el cron de integracion `whatsapp-api-history-backfill`.
+El cron solo corre con YCloud conectado, guarda la siguiente pagina en
+`whatsapp_api_ycloud_history_backfill_state` y retoma despues de deploys o
+reinicios sin volver a recorrer el historial completo. Cada lote esta acotado
+para no bloquear el arranque ni el drenado de Render; solo al llegar a la ultima
+pagina marca la version como terminada. Si YCloud o el webhook fallan, conserva
+el punto y reintenta en el siguiente tick mientras la integracion siga activa. WhatsApp
 Cloud API directo no ofrece un
 endpoint Graph para descargar retroactivamente toda la cuenta: en ese proveedor
 la fuente historica disponible son webhooks/relay y ecos de coexistencia desde

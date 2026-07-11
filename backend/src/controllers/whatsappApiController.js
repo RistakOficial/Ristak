@@ -193,6 +193,7 @@ export async function connectWhatsAppApiView(req, res) {
       webhookUrl: getWebhookUrl(req)
     })
     await ensureDefaultTemplatesForWhatsAppApi(req)
+    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-api-connected' })
 
     res.json({ success: true, data: await getWhatsAppApiStatus() })
   } catch (error) {
@@ -208,6 +209,7 @@ export async function refreshWhatsAppApiView(req, res) {
   try {
     await refreshWhatsAppApi()
     await ensureDefaultTemplatesForWhatsAppApi(req)
+    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-api-refreshed' })
     res.json({ success: true, data: await getWhatsAppApiStatus() })
   } catch (error) {
     logger.error(`Error actualizando WhatsApp_API: ${error.message}`)
@@ -302,6 +304,7 @@ export async function restoreWhatsAppPhoneNumberContactsView(req, res) {
 export async function disconnectWhatsAppApiView(req, res) {
   try {
     const data = await disconnectWhatsAppApi()
+    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-api-disconnected' })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error desconectando WhatsApp_API: ${error.message}`)
@@ -396,6 +399,7 @@ export async function handleMetaDirectWebhookRelayView(req, res) {
 export async function setWhatsAppActiveProviderView(req, res) {
   try {
     const data = await setWhatsAppActiveProvider({ provider: req.body?.provider })
+    await syncRegisteredIntegrationCronsForProvider('whatsapp-api', { reason: 'whatsapp-api-provider-changed' })
     res.json({ success: true, data })
   } catch (error) {
     logger.error(`Error cambiando proveedor WhatsApp: ${error.message}`)

@@ -1,4 +1,5 @@
 import { db, getAppConfig } from '../config/database.js'
+import { YCLOUD_HISTORY_BACKFILL_VERSION } from './whatsappApiService.js'
 
 const PAYMENT_SETTINGS_CONFIG_KEY = 'payments_settings'
 const GOOGLE_CALENDAR_CONFIG_KEY = 'google_calendar_service_account_config'
@@ -198,6 +199,21 @@ export async function isWhatsAppQrConnected() {
     LIMIT 1
   `).catch(() => null)
   return Boolean(row?.id)
+}
+
+export async function isWhatsAppApiHistoryBackfillPending() {
+  const raw = await getAppConfigRows([
+    'whatsapp_api_enabled',
+    'whatsapp_api_ycloud_api_key_encrypted',
+    'whatsapp_api_provider',
+    'whatsapp_api_history_direction_repair_version'
+  ])
+  const provider = cleanString(raw.whatsapp_api_provider).toLowerCase()
+
+  return (!provider || provider === 'ycloud') &&
+    enabledFlag(raw.whatsapp_api_enabled, true) &&
+    Boolean(cleanString(raw.whatsapp_api_ycloud_api_key_encrypted)) &&
+    cleanString(raw.whatsapp_api_history_direction_repair_version) !== YCLOUD_HISTORY_BACKFILL_VERSION
 }
 
 export async function isEmailInboundConnected() {

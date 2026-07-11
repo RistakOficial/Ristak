@@ -7,6 +7,7 @@ import {
   isMetaConnected,
   isRebillConnected,
   isStripeConnected,
+  isWhatsAppApiHistoryBackfillPending,
   isWhatsAppQrConnected
 } from '../services/integrationConnectionStateService.js'
 import { startConektaPaymentPlansCron, stopConektaPaymentPlansCron } from './conektaPaymentPlans.cron.js'
@@ -18,6 +19,7 @@ import { startMetaSyncCron, stopMetaSyncCron } from './metaSync.cron.js'
 import { startMetaVersionCron, stopMetaVersionCron } from './metaVersionCron.js'
 import { startRebillPaymentPlansCron, stopRebillPaymentPlansCron } from './rebillPaymentPlans.cron.js'
 import { startStripePaymentPlansCron, stopStripePaymentPlansCron } from './stripePaymentPlans.cron.js'
+import { startWhatsAppApiHistoryBackfillCron, stopWhatsAppApiHistoryBackfillCron } from './whatsappApiHistoryBackfill.cron.js'
 import { startWhatsAppQrWatchdogCron, stopWhatsAppQrWatchdogCron } from './whatsappQrWatchdog.cron.js'
 import {
   registerIntegrationCron,
@@ -101,6 +103,15 @@ export function registerIntegrationCrons() {
     isEnabled: isRebillConnected,
     start: startRebillPaymentPlansCron,
     stop: stopRebillPaymentPlansCron
+  })
+
+  registerIntegrationCron({
+    name: 'whatsapp-api-history-backfill',
+    label: 'WhatsApp API historial YCloud',
+    provider: 'whatsapp-api',
+    isEnabled: isWhatsAppApiHistoryBackfillPending,
+    start: startWhatsAppApiHistoryBackfillCron,
+    stop: stopWhatsAppApiHistoryBackfillCron
   })
 
   registerIntegrationCron({

@@ -13,6 +13,7 @@ import {
   isMetaConnected,
   isRebillConnected,
   isStripeConnected,
+  isWhatsAppApiHistoryBackfillPending,
   isWhatsAppQrConnected
 } from '../src/services/integrationConnectionStateService.js'
 import {
@@ -31,6 +32,7 @@ const APP_CONFIG_WHERE = `
      OR config_key LIKE 'clip_%'
      OR config_key LIKE 'mercadopago_%'
      OR config_key LIKE 'rebill_%'
+     OR config_key IN ('whatsapp_api_enabled', 'whatsapp_api_ycloud_api_key_encrypted', 'whatsapp_api_provider', 'whatsapp_api_history_direction_repair_version')
 `
 
 function uniqueId(prefix) {
@@ -112,7 +114,18 @@ test('detectores de crons de integración solo se activan con conexión local v�
     assert.equal(await isEmailInboundConnected(), false)
     assert.equal(await isMercadoPagoConnected(), false)
     assert.equal(await isRebillConnected(), false)
+    assert.equal(await isWhatsAppApiHistoryBackfillPending(), false)
     assert.equal(await isWhatsAppQrConnected(), false)
+
+    await setAppConfig('whatsapp_api_enabled', '1')
+    await setAppConfig('whatsapp_api_ycloud_api_key_encrypted', 'encrypted_ycloud_cron_gate')
+    await setAppConfig('whatsapp_api_provider', 'ycloud')
+    assert.equal(await isWhatsAppApiHistoryBackfillPending(), true)
+    await setAppConfig('whatsapp_api_provider', 'meta_direct')
+    assert.equal(await isWhatsAppApiHistoryBackfillPending(), false)
+    await setAppConfig('whatsapp_api_provider', 'ycloud')
+    await setAppConfig('whatsapp_api_history_direction_repair_version', '2026-07-11-ycloud-smb-echoes-backfill')
+    assert.equal(await isWhatsAppApiHistoryBackfillPending(), false)
 
     await setAppConfig('google_calendar_service_account_config', {
       connectionMode: 'oauth',
