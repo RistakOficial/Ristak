@@ -3231,6 +3231,17 @@ la ultima agenda con aviso y bloquea cambios de fecha hasta tener timezone
 valida. Pagos bloquea creacion si no puede confirmar moneda y zona horaria, y
 mantiene features avanzadas en fail-closed.
 
+El bootstrap Android precarga a memoria los snapshots de la sesion antes de
+montar el shell (maximo 180 archivos, 32 MiB y 45 dias). Asi Chats, Calendario,
+Pagos, Analiticas y Ajustes pintan el ultimo estado de esa cuenta de inmediato y
+revalidan sin dejar una pantalla vacia: Pagos conserva el gating conocido de
+licencia/pasarelas/HighLevel, productos y recibidos por rango; Analiticas separa
+KPIs, grafica, embudo y origen por rango/scope; Ajustes conserva sus catalogos.
+Cada respuesta fresca exitosa, incluyendo una lista vacia, reemplaza la copia
+local. El snapshot nunca concede permisos nuevos ni autoriza mutaciones: ACL,
+moneda, zona horaria y licencias definitivas siguen verificandose contra el
+backend y un `401`/`license_blocked` limpia la sesion.
+
 El arranque offline Android conserva la ultima ACL verificada solo para el mismo
 servidor y token. Sin esa evidencia no monta modulos; al volver a primer plano y
 periodicamente revalida la sesion. `401`/`license_blocked` limpian sesion y cache,

@@ -182,12 +182,20 @@ hidratacion inicial, pero despues de hidratarse una respuesta autoritativa vacia
 si debe persistir `[]` para retirar mensajes fantasma.
 
 Arranque offline-first de Android: antes de pedir datos frescos al servidor,
-`mobile/` debe hidratar desde la copia local en disco la configuracion del shell,
-labels visibles, bandeja de chats y conversaciones ya abiertas. Esa copia vive en
-`expo-file-system` bajo el namespace del servidor/cuenta conectada; `SecureStore`
-queda solo para token/base URL y preferencias chicas. El primer render no debe
-mostrar un spinner circular ni vaciar la pantalla si ya hay datos guardados: se
-pinta la ultima sesion conocida y luego se revalida en segundo plano. El task
+`mobile/` precarga desde la copia local en disco a RAM los snapshots recientes
+del namespace servidor/sesion y solo despues expone el shell. La precarga queda
+acotada a 180 archivos, 32 MiB y 45 dias; una entrada corrupta o vencida se
+descarta sin impedir abrir la app. Cubre configuracion y labels del shell,
+bandeja y conversaciones, bootstrap/rangos de calendario, catalogos del chat,
+capacidad de Pagos (plan, pasarelas y HighLevel), productos, pagos recientes,
+impuestos, Analiticas (KPIs, grafica, embudo, origen y numeros) y paneles de
+Ajustes. Cada pantalla pinta el ultimo estado correspondiente a su rango o
+scope exacto y lo revalida en segundo plano; un timeout no la vacia ni oculta
+flujos que ya estaban verificados. Una respuesta fresca exitosa, incluso `[]`,
+es autoritativa y reemplaza el snapshot. Esa copia vive en `expo-file-system`
+bajo el namespace del servidor/cuenta conectada; `SecureStore` queda solo para
+token/base URL y preferencias chicas. El primer render no debe mostrar un
+spinner circular ni vaciar la pantalla si ya hay datos guardados. El task
 `ristak-inbox-refresh` puede refrescar la bandeja cacheada cuando Android le da
 ventana de background, pero es best-effort; la fuente de verdad sigue siendo el
 backend al reconectar. Si ese refresh responde correctamente con cero chats,

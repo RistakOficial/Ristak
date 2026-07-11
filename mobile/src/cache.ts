@@ -17,6 +17,16 @@ let dirReady: Promise<void> | null = null;
 let cacheEpoch = 0;
 const activeWrites = new Set<Promise<void>>();
 let cacheClearing: Promise<void> | null = null;
+const memory = new Map<string, unknown>();
+
+// The Android app has several independent screens. Reading one file each time a
+// tab mounts was still fast, but it was visible as a short empty state on a cold
+// launch. Keep the same bounded, account-scoped preload model as the iOS app:
+// load recent snapshots once during bootstrap and make every later read a RAM
+// lookup while the network revalidates in the background.
+const MAX_PRELOADED_ENTRIES = 180;
+const MAX_PRELOADED_BYTES = 32 * 1024 * 1024;
+const MAX_CACHE_AGE_MS = 45 * 24 * 60 * 60 * 1000;
 
 function sanitize(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, '_').slice(0, 120) || 'default';
@@ -29,6 +39,7 @@ export function setCacheNamespace(rawNamespace: string): void {
   if (nextNamespace === namespace) return;
   namespace = nextNamespace;
   cacheEpoch += 1;
+  memory.clear();
 }
 
 async function ensureDir(): Promise<void> {
@@ -52,9 +63,96 @@ function pathFor(key: string, scopedNamespace = namespace): string {
   return `${CACHE_ROOT}${sanitize(`${scopedNamespace}__${key}`)}.json`;
 }
 
+function memoryKeyFor(key: string, scopedNamespace = namespace): string {
+  return pathFor(key, scopedNamespace);
+}
+
+type CacheFileInfo = {
+  exists: boolean;
+  size?: number;
+  modificationTime?: number;
+};
+
+function readEnvelope(raw: string): unknown {
+  if (!raw) return undefined;
+  const parsed = JSON.parse(raw) as { v?: unknown };
+  return parsed && Object.prototype.hasOwnProperty.call(parsed, 'v') ? parsed.v : undefined;
+}
+
+/**
+ * Synchronous read from the already-preloaded cache. Use it in a component's
+ * initial state so the first paint never waits for an effect or a disk read.
+ */
+export function peekCache<T>(key: string, fallback: T): T {
+  const memoryKey = memoryKeyFor(key);
+  return memory.has(memoryKey) ? memory.get(memoryKey) as T : fallback;
+}
+
+/** Whether the active namespace has an authoritative value, including `[]`. */
+export function hasCachedValue(key: string): boolean {
+  return memory.has(memoryKeyFor(key));
+}
+
+/**
+ * Preloads a bounded set of the active account's newest snapshots into RAM.
+ * It is intentionally called during bootstrap, before the shell is rendered;
+ * stale or invalid files are fail-soft and never delay login on a network call.
+ */
+export async function preloadCache(expectedNamespace = ''): Promise<void> {
+  if (!CACHE_ROOT || cacheClearing) return;
+  const requiredNamespace = expectedNamespace ? sanitize(expectedNamespace) : namespace;
+  if (requiredNamespace !== namespace) return;
+  const preloadEpoch = cacheEpoch;
+
+  try {
+    await ensureDir();
+    if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+    const files = await FileSystem.readDirectoryAsync(CACHE_ROOT);
+    const prefix = `${sanitize(requiredNamespace)}__`;
+    const now = Date.now();
+    const entries = (await Promise.all(files.map(async (filename) => {
+      if (!filename.startsWith(prefix) || !filename.endsWith('.json')) return null;
+      const path = `${CACHE_ROOT}${filename}`;
+      const info = await FileSystem.getInfoAsync(path) as CacheFileInfo;
+      if (!info.exists) return null;
+      return {
+        path,
+        size: Math.max(0, Number(info.size) || 0),
+        modifiedAt: Math.max(0, Number(info.modificationTime) || 0) * 1000,
+      };
+    }))).filter((entry): entry is { path: string; size: number; modifiedAt: number } => Boolean(entry));
+
+    entries.sort((left, right) => right.modifiedAt - left.modifiedAt);
+    let loadedBytes = 0;
+    for (const [index, entry] of entries.entries()) {
+      const expired = entry.modifiedAt > 0 && now - entry.modifiedAt > MAX_CACHE_AGE_MS;
+      const overBudget = index >= MAX_PRELOADED_ENTRIES || loadedBytes + entry.size > MAX_PRELOADED_BYTES;
+      if (expired || overBudget) {
+        void FileSystem.deleteAsync(entry.path, { idempotent: true }).catch(() => undefined);
+        continue;
+      }
+      try {
+        const value = readEnvelope(await FileSystem.readAsStringAsync(entry.path));
+        if (value === undefined) continue;
+        if (preloadEpoch !== cacheEpoch || requiredNamespace !== namespace || cacheClearing) return;
+        // A foreground write can win while preload is reading. Never replace
+        // that fresher in-memory value with an older disk snapshot.
+        if (!memory.has(entry.path)) memory.set(entry.path, value);
+        loadedBytes += entry.size;
+      } catch {
+        // A corrupt snapshot is disposable; fresh network data will replace it.
+        void FileSystem.deleteAsync(entry.path, { idempotent: true }).catch(() => undefined);
+      }
+    }
+  } catch {
+    // Offline-first is an enhancement, never a reason to block the shell.
+  }
+}
+
 export async function readCache<T>(key: string, fallback: T): Promise<T> {
   if (!CACHE_ROOT || cacheClearing) return fallback;
   const targetPath = pathFor(key);
+  if (memory.has(targetPath)) return memory.get(targetPath) as T;
   const readEpoch = cacheEpoch;
   try {
     await ensureDir();
@@ -64,8 +162,10 @@ export async function readCache<T>(key: string, fallback: T): Promise<T> {
     const raw = await FileSystem.readAsStringAsync(targetPath);
     if (readEpoch !== cacheEpoch) return fallback;
     if (!raw) return fallback;
-    const parsed = JSON.parse(raw) as { v?: T };
-    return parsed && parsed.v !== undefined ? (parsed.v as T) : fallback;
+    const value = readEnvelope(raw);
+    if (value === undefined) return fallback;
+    memory.set(targetPath, value);
+    return value as T;
   } catch {
     return fallback;
   }
@@ -80,6 +180,7 @@ export function writeCache<T>(key: string, value: T, debounceMs = 450): void {
   const scopedKey = `${namespace}__${key}`;
   const targetPath = pathFor(key);
   const writeEpoch = cacheEpoch;
+  memory.set(targetPath, value);
   const existing = pendingWrites.get(scopedKey);
   if (existing) clearTimeout(existing);
   const timer = setTimeout(() => {
@@ -127,6 +228,9 @@ export async function writeCacheNow<T>(key: string, value: T, expectedNamespace 
         || (!expectedNamespace && namespace !== requiredNamespace)
       ) return;
       await FileSystem.writeAsStringAsync(targetPath, JSON.stringify({ v: value }));
+      if (namespace === requiredNamespace && writeEpoch === cacheEpoch) {
+        memory.set(targetPath, value);
+      }
     } catch {
       // Best-effort.
     }
@@ -143,6 +247,7 @@ export async function removeCache(key: string): Promise<void> {
   if (!CACHE_ROOT) return;
   const scopedKey = `${namespace}__${key}`;
   const targetPath = pathFor(key);
+  memory.delete(targetPath);
   const pending = pendingWrites.get(scopedKey);
   if (pending) {
     clearTimeout(pending);
@@ -161,6 +266,7 @@ export async function clearAllCache(): Promise<void> {
   if (cacheClearing) return cacheClearing;
   const clearing = (async () => {
     cacheEpoch += 1;
+    memory.clear();
     pendingWrites.forEach((timer) => clearTimeout(timer));
     pendingWrites.clear();
     await Promise.allSettled([...activeWrites]);

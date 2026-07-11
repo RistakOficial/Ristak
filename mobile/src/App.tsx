@@ -134,13 +134,19 @@ import {
   writeAuthToken,
   writeJsonValue,
 } from './storage';
-import { readCache, writeCache, clearAllCache, setCacheNamespace } from './cache';
+import { hasCachedValue, peekCache, preloadCache, readCache, writeCache, clearAllCache, setCacheNamespace } from './cache';
 import {
+  analyticsChartCacheKey,
+  analyticsFunnelCacheKey,
+  analyticsMetricsCacheKey,
+  analyticsOriginCacheKey,
   CHAT_LIST_PAGE_SIZE,
   CONVERSATION_MESSAGE_CACHE_LIMIT,
+  MOBILE_CACHE_KEYS,
   NATIVE_INBOX_CACHE_KEY,
   NATIVE_INBOX_CACHE_LIMIT,
   conversationCacheKey,
+  paymentRecentCacheKey,
 } from './cacheKeys';
 import { registerInboxBackgroundTask, unregisterInboxBackgroundTask } from './background';
 import { GlobalImageViewer, openImageViewer, openInAppBrowser } from './mediaViewer';
@@ -1048,6 +1054,14 @@ type MobileChatSettings = {
   selectedWhatsAppPhoneId: string;
 };
 
+type NativeChatFilterCatalogSnapshot = {
+  customFilters?: PhoneChatCustomFilterPreset[];
+  tags?: ContactTag[];
+  customFields?: ContactCustomFieldDefinition[];
+  whatsappStatus?: WhatsAppApiStatus | null;
+  integrationsStatus?: IntegrationsStatus | null;
+};
+
 const DEFAULT_MOBILE_CHAT_SETTINGS: MobileChatSettings = {
   aiAgentEnabled: true,
   aiReplySuggestionsEnabled: false,
@@ -1381,6 +1395,14 @@ export default function RistakNativeApp() {
     }
 
     const cachedUser = getCachedVerifiedUser(cachedUserRecord, storedBaseUrl, storedToken);
+    // iOS preloads every recent account snapshot before it exposes the shell.
+    // Do the same here: all screen initializers can now synchronously paint
+    // their last known state instead of queuing one disk read per tab.
+    const sessionNamespace = getSessionCacheNamespace(storedBaseUrl, storedToken);
+    if (sessionNamespace) {
+      setCacheNamespace(sessionNamespace);
+      await preloadCache(sessionNamespace);
+    }
     commitSession({ baseUrl: storedBaseUrl, token: storedToken, user: cachedUser });
     setScreen('shell');
 
@@ -1524,6 +1546,7 @@ export default function RistakNativeApp() {
     }
     licenseAlertShownRef.current = false;
     unauthorizedAlertShownRef.current = false;
+    setCacheNamespace(getSessionCacheNamespace(response.baseUrl, response.token) || 'default');
     commitSession({ baseUrl: response.baseUrl, token: response.token, user: response.user });
     setScreen('shell');
   };
@@ -1609,8 +1632,12 @@ function PhoneShell({
   const [notificationContactId, setNotificationContactId] = useState('');
   const [pendingChatDraft, setPendingChatDraft] = useState<PendingChatDraft | null>(null);
   const [contactToolContext, setContactToolContext] = useState<{ section: PhoneSection; contact: ChatContact; key: string } | null>(null);
-  const [mobileAppConfig, setMobileAppConfig] = useState<Record<string, ConfigValue>>({});
-  const [customLabels, setCustomLabels] = useState<CustomLabels>(DEFAULT_CUSTOM_LABELS);
+  const [mobileAppConfig, setMobileAppConfig] = useState<Record<string, ConfigValue>>(() => (
+    peekCache<Record<string, ConfigValue>>(SHELL_APP_CONFIG_CACHE_KEY, {})
+  ));
+  const [customLabels, setCustomLabels] = useState<CustomLabels>(() => (
+    cleanAnalyticsLabels(peekCache<CustomLabels>(SHELL_CUSTOM_LABELS_CACHE_KEY, DEFAULT_CUSTOM_LABELS))
+  ));
   const [nativeThemeState, setNativeThemeState] = useState(() => ({
     tone: activeNativeThemeTone,
     background: getNativePhoneThemeBackground(activeNativeThemeTone),
@@ -2599,6 +2626,7 @@ function ChatScreen({
   onNavigateToContactTool?: (contact: ChatContact, section: PhoneSection) => void;
 }) {
   const { width: chatViewportWidth } = useWindowDimensions();
+  const cachedFilterCatalog = peekCache<NativeChatFilterCatalogSnapshot>(MOBILE_CACHE_KEYS.chatFilterCatalog, {});
   const [query, setQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ChatFilterId>('all');
   const [visibleFilterIds, setVisibleFilterIds] = useState<ChatFilterId[]>(DEFAULT_CHAT_FILTER_IDS);
@@ -2618,12 +2646,14 @@ function ChatScreen({
   const [contactQuery, setContactQuery] = useState('');
   const [contactResults, setContactResults] = useState<ChatContact[]>([]);
   const [contactsLoading, setContactsLoading] = useState(false);
-  const [chatTags, setChatTags] = useState<ContactTag[]>([]);
+  const [chatTags, setChatTags] = useState<ContactTag[]>(() => cachedFilterCatalog.tags || []);
   const [chatTagsLoading, setChatTagsLoading] = useState(false);
-  const [customChatFilters, setCustomChatFiltersState] = useState<PhoneChatCustomFilterPreset[]>([]);
-  const [chatCustomFields, setChatCustomFields] = useState<ContactCustomFieldDefinition[]>([]);
-  const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null);
-  const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(null);
+  const [customChatFilters, setCustomChatFiltersState] = useState<PhoneChatCustomFilterPreset[]>(() => (
+    normalizePhoneChatCustomFilterPresets(cachedFilterCatalog.customFilters)
+  ));
+  const [chatCustomFields, setChatCustomFields] = useState<ContactCustomFieldDefinition[]>(() => cachedFilterCatalog.customFields || []);
+  const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(() => cachedFilterCatalog.whatsappStatus || null);
+  const [integrationsStatus, setIntegrationsStatus] = useState<IntegrationsStatus | null>(() => cachedFilterCatalog.integrationsStatus || null);
   const [filterCatalogLoading, setFilterCatalogLoading] = useState(false);
   const [filterManagerMode, setFilterManagerMode] = useState<'list' | 'editor'>('list');
   const [editingCustomChatFilterId, setEditingCustomChatFilterId] = useState('');
@@ -2645,11 +2675,16 @@ function ChatScreen({
   const canUseCanonicalInboxCache = !settings.selectedWhatsAppPhoneId || settings.selectedWhatsAppPhoneId === 'all';
   const currentChatListScopeKey = `${query.trim()}|phone:${canUseCanonicalInboxCache ? 'all' : settings.selectedWhatsAppPhoneId}`;
   const canonicalInboxScopeKey = '|phone:all';
-  const cachedCanonicalInbox = canUseCanonicalInboxCache ? nativeInboxCache.get(api) || [] : [];
+  const cachedCanonicalInbox = canUseCanonicalInboxCache
+    ? nativeInboxCache.get(api) || peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, [])
+    : [];
+  const hasCanonicalInboxSnapshot = canUseCanonicalInboxCache && (
+    Boolean(nativeInboxCache.get(api)?.length) || hasCachedValue(NATIVE_INBOX_CACHE_KEY)
+  );
   // Hidratar desde la caché en memoria: ChatScreen se desmonta al cambiar de
   // sección y sin esto cada regreso pinta vacío -> spinner -> lista (flash).
   const [chats, setChats] = useState<ChatContact[]>(() => cachedCanonicalInbox);
-  const [inboxCacheHydrated, setInboxCacheHydrated] = useState(() => Boolean(cachedCanonicalInbox.length));
+  const [inboxCacheHydrated, setInboxCacheHydrated] = useState(() => hasCanonicalInboxSnapshot);
   const initialBusinessTimezone = normalizeRequiredBusinessTimezone(initialAccountTimezone);
   const initialCurrency = normalizeRequiredCurrencyCode(initialAccountCurrency);
   const [businessTimezone, setBusinessTimezone] = useState(initialBusinessTimezone);
@@ -2657,7 +2692,7 @@ function ChatScreen({
   const [accountCurrency, setAccountCurrency] = useState(initialCurrency || DEFAULT_ACCOUNT_CURRENCY);
   const [accountCurrencyReady, setAccountCurrencyReady] = useState(Boolean(initialCurrency));
   const [refreshing, setRefreshing] = useState(false);
-  const [loading, setLoading] = useState(() => !cachedCanonicalInbox.length);
+  const [loading, setLoading] = useState(() => !hasCanonicalInboxSnapshot);
   const [chatsLoadingMore, setChatsLoadingMore] = useState(false);
   const [chatsHasMore, setChatsHasMore] = useState(true);
   const [chatListOffset, setChatListOffset] = useState(0);
@@ -2673,7 +2708,7 @@ function ChatScreen({
   const cameraSendLockedRef = useRef(false);
   const chatListGenerationRef = useRef(0);
   const chatListLoadedQueryRef = useRef('');
-  const chatListLoadedScopeRef = useRef(cachedCanonicalInbox.length ? canonicalInboxScopeKey : '');
+  const chatListLoadedScopeRef = useRef(hasCanonicalInboxSnapshot ? canonicalInboxScopeKey : '');
   const chatMountedRef = useRef(true);
   const chatsRef = useRef(chats);
   const chatRealtimeRefreshTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2701,13 +2736,13 @@ function ChatScreen({
       setInboxCacheHydrated(true);
       return undefined;
     }
-    if (nativeInboxCache.get(api)?.length) {
+    if (nativeInboxCache.get(api)?.length || hasCachedValue(NATIVE_INBOX_CACHE_KEY)) {
       setInboxCacheHydrated(true);
       return undefined;
     }
     let alive = true;
     void readCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, []).then((cached) => {
-      if (!alive || !cached.length) return;
+      if (!alive) return;
       nativeInboxCache.set(api, cached);
       setChats((current) => (current.length ? current : cached));
       setLoading(false);
@@ -3090,11 +3125,19 @@ function ChatScreen({
       ]);
       const config = unwrapConfigResponse(configResponse);
       if (!chatMountedRef.current) return;
-      setCustomChatFiltersState(normalizePhoneChatCustomFilterPresets(config[PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY]));
-      setChatTags(Array.isArray(tags) ? tags : []);
-      setChatCustomFields(Array.isArray(fields) ? fields.filter((field) => !field.archived) : []);
-      setWhatsappStatus(status);
-      setIntegrationsStatus(integrations);
+      const nextCatalog: NativeChatFilterCatalogSnapshot = {
+        customFilters: normalizePhoneChatCustomFilterPresets(config[PHONE_CHAT_CUSTOM_FILTERS_CONFIG_KEY]),
+        tags: Array.isArray(tags) ? tags : [],
+        customFields: Array.isArray(fields) ? fields.filter((field) => !field.archived) : [],
+        whatsappStatus: status,
+        integrationsStatus: integrations,
+      };
+      setCustomChatFiltersState(nextCatalog.customFilters || []);
+      setChatTags(nextCatalog.tags || []);
+      setChatCustomFields(nextCatalog.customFields || []);
+      setWhatsappStatus(nextCatalog.whatsappStatus || null);
+      setIntegrationsStatus(nextCatalog.integrationsStatus || null);
+      writeCache(MOBILE_CACHE_KEYS.chatFilterCatalog, nextCatalog);
     } finally {
       if (chatMountedRef.current) {
         setFilterCatalogLoading(false);
@@ -4516,18 +4559,41 @@ function PaymentsSection({
   onOpenChatDraft: (draft: PendingChatDraft) => void;
   onInitialContactConsumed?: (key: string) => void;
 }) {
+  const cachedPaymentContext = peekCache<{ currency?: string; timezone?: string }>(
+    MOBILE_CACHE_KEYS.paymentAccountContext,
+    {},
+  );
+  const initialPaymentCurrency = normalizeRequiredCurrencyCode(cachedPaymentContext.currency);
+  const initialPaymentTimezone = normalizeRequiredBusinessTimezone(cachedPaymentContext.timezone);
+  const initialPaymentContextReady = Boolean(initialPaymentCurrency && initialPaymentTimezone);
+  const initialRecentPaymentRange = initialPaymentContextReady
+    ? getRecentPaymentRange('30d', initialPaymentTimezone)
+    : { startDate: '', endDate: '' };
+  const initialRecentPaymentCacheKey = paymentRecentCacheKey(
+    '30d',
+    initialRecentPaymentRange.startDate,
+    initialRecentPaymentRange.endDate,
+  );
+  const initialPaymentAccess = peekCache<MobilePaymentAccess>(
+    MOBILE_CACHE_KEYS.paymentAccess,
+    DEFAULT_MOBILE_PAYMENT_ACCESS,
+  );
   const [view, setView] = useState<PaymentView>('select');
-  const [accountCurrency, setAccountCurrency] = useState('');
-  const [accountContextLoading, setAccountContextLoading] = useState(true);
+  const [accountCurrency, setAccountCurrency] = useState(initialPaymentCurrency);
+  const [accountContextLoading, setAccountContextLoading] = useState(!initialPaymentContextReady);
   const [accountContextError, setAccountContextError] = useState('');
-  const [businessTimezone, setBusinessTimezone] = useState('');
+  const [businessTimezone, setBusinessTimezone] = useState(initialPaymentTimezone);
   const [pendingPaymentMode, setPendingPaymentMode] = useState<Exclude<PaymentView, 'select' | 'products'> | null>(null);
   const [paymentContactQuery, setPaymentContactQuery] = useState('');
-  const [paymentContactResults, setPaymentContactResults] = useState<ChatContact[]>([]);
+  const [paymentContactResults, setPaymentContactResults] = useState<ChatContact[]>(() => (
+    peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, [])
+  ));
   const [paymentContactsLoading, setPaymentContactsLoading] = useState(false);
   const [paymentContact, setPaymentContact] = useState<ChatContact | null>(null);
   const [paymentContactLocked, setPaymentContactLocked] = useState(false);
-  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [products, setProducts] = useState<ProductItem[]>(() => (
+    peekCache<ProductItem[]>(MOBILE_CACHE_KEYS.paymentProducts, [])
+  ));
   const [productsLoading, setProductsLoading] = useState(false);
   const [productsRefreshing, setProductsRefreshing] = useState(false);
   const [productsError, setProductsError] = useState('');
@@ -4543,19 +4609,23 @@ function PaymentsSection({
   const [customRecentDraftEndDate, setCustomRecentDraftEndDate] = useState('');
   const [customRecentRangeOpen, setCustomRecentRangeOpen] = useState(false);
   const [customRecentRangeError, setCustomRecentRangeError] = useState('');
-  const [recentPayments, setRecentPayments] = useState<TransactionItem[]>([]);
+  const [recentPayments, setRecentPayments] = useState<TransactionItem[]>(() => (
+    peekCache<TransactionItem[]>(initialRecentPaymentCacheKey, [])
+  ));
   const [recentPaymentsLoading, setRecentPaymentsLoading] = useState(false);
   const [recentPaymentsRefreshing, setRecentPaymentsRefreshing] = useState(false);
   const [recentPaymentsError, setRecentPaymentsError] = useState('');
   const [selectedRecentPaymentId, setSelectedRecentPaymentId] = useState<string | null>(null);
-  const [paymentAccess, setPaymentAccess] = useState<MobilePaymentAccess>(DEFAULT_MOBILE_PAYMENT_ACCESS);
-  const [paymentAccessLoading, setPaymentAccessLoading] = useState(true);
+  const [paymentAccess, setPaymentAccess] = useState<MobilePaymentAccess>(initialPaymentAccess);
+  const [paymentAccessLoading, setPaymentAccessLoading] = useState(() => !hasCachedValue(MOBILE_CACHE_KEYS.paymentAccess));
   const handledInitialPaymentContactKeyRef = useRef('');
+  const paymentContextRef = useRef({ currency: initialPaymentCurrency, timezone: initialPaymentTimezone });
   const customerLabel = customLabels.customer || DEFAULT_CUSTOM_LABELS.customer;
   const customerLowerLabel = formatMobileCrmLabelLower(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
 
   const loadAccountContext = useCallback(async () => {
-    setAccountContextLoading(true);
+    const hadCachedContext = Boolean(paymentContextRef.current.currency && paymentContextRef.current.timezone);
+    if (!hadCachedContext) setAccountContextLoading(true);
     setAccountContextError('');
     try {
       const configResponse = await api.getConfig([ACCOUNT_CURRENCY_CONFIG_KEY, 'account_timezone']);
@@ -4564,12 +4634,16 @@ function PaymentsSection({
       const timezone = normalizeRequiredBusinessTimezone(config.account_timezone);
       if (!currency) throw new Error('No pude leer la moneda configurada de la cuenta.');
       if (!timezone) throw new Error('No pude confirmar la zona horaria configurada de la cuenta.');
+      paymentContextRef.current = { currency, timezone };
       setAccountCurrency(currency);
       setBusinessTimezone(timezone);
+      writeCache(MOBILE_CACHE_KEYS.paymentAccountContext, { currency, timezone });
     } catch (error) {
-      setAccountCurrency('');
-      setBusinessTimezone('');
-      setAccountContextError(error instanceof Error ? error.message : 'No pude cargar la configuración de pagos.');
+      if (!hadCachedContext) {
+        setAccountCurrency('');
+        setBusinessTimezone('');
+        setAccountContextError(error instanceof Error ? error.message : 'No pude cargar la configuración de pagos.');
+      }
     } finally {
       setAccountContextLoading(false);
     }
@@ -4577,11 +4651,13 @@ function PaymentsSection({
 
   const loadProducts = useCallback(async ({ refresh = false }: { refresh?: boolean } = {}) => {
     if (refresh) setProductsRefreshing(true);
-    else setProductsLoading(true);
+    else if (!hasCachedValue(MOBILE_CACHE_KEYS.paymentProducts)) setProductsLoading(true);
     setProductsError('');
     try {
       const productsResponse = await api.getProducts();
-      setProducts(Array.isArray(productsResponse.products) ? productsResponse.products : []);
+      const nextProducts = Array.isArray(productsResponse.products) ? productsResponse.products : [];
+      setProducts(nextProducts);
+      writeCache(MOBILE_CACHE_KEYS.paymentProducts, nextProducts);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'No se pudieron cargar los productos.';
       setProductsError(message);
@@ -4592,23 +4668,50 @@ function PaymentsSection({
   }, [api]);
 
   const loadPaymentAccess = useCallback(async () => {
-    setPaymentAccessLoading(true);
+    const hasCachedAccess = hasCachedValue(MOBILE_CACHE_KEYS.paymentAccess);
+    if (!hasCachedAccess) setPaymentAccessLoading(true);
     try {
       const [licenseResponse, integrationsResponse] = await Promise.all([
         api.getLicenseStatus().catch(() => null),
         api.getIntegrationsStatus().catch(() => null),
       ]);
-      setPaymentAccess(resolveMobilePaymentAccess(licenseResponse, integrationsResponse));
+      // Connected gateways determine whether plans/subscriptions exist. A
+      // timeout there must preserve the last verified capability snapshot,
+      // never flash the account back to "manual only".
+      if (integrationsResponse) {
+        const nextAccess = resolveMobilePaymentAccess(licenseResponse, integrationsResponse);
+        setPaymentAccess(nextAccess);
+        writeCache(MOBILE_CACHE_KEYS.paymentAccess, nextAccess);
+      } else if (!hasCachedAccess) {
+        setPaymentAccess(DEFAULT_MOBILE_PAYMENT_ACCESS);
+      }
     } catch {
-      setPaymentAccess(DEFAULT_MOBILE_PAYMENT_ACCESS);
+      if (!hasCachedAccess) setPaymentAccess(DEFAULT_MOBILE_PAYMENT_ACCESS);
     } finally {
       setPaymentAccessLoading(false);
     }
   }, [api]);
 
+  const recentPaymentRange = useMemo(() => (
+    getRecentPaymentRange(recentPaymentsPeriod, businessTimezone, customRecentStartDate, customRecentEndDate)
+  ), [businessTimezone, customRecentEndDate, customRecentStartDate, recentPaymentsPeriod]);
+  const recentPaymentCacheKey = useMemo(() => paymentRecentCacheKey(
+    recentPaymentsPeriod,
+    recentPaymentRange.startDate,
+    recentPaymentRange.endDate,
+  ), [recentPaymentRange.endDate, recentPaymentRange.startDate, recentPaymentsPeriod]);
+
   const loadRecentPayments = useCallback(async () => {
-    const { startDate, endDate } = getRecentPaymentRange(recentPaymentsPeriod, businessTimezone, customRecentStartDate, customRecentEndDate);
-    if (recentPayments.length) setRecentPaymentsRefreshing(true);
+    const { startDate, endDate } = recentPaymentRange;
+    const hasCachedRecentPayments = hasCachedValue(recentPaymentCacheKey);
+    const cachedRecentPayments = peekCache<TransactionItem[]>(recentPaymentCacheKey, []);
+    // A period has its own snapshot. Never show the previous period while the
+    // new one is revalidating; an authoritative cached [] is valid too.
+    setRecentPayments(cachedRecentPayments);
+    setSelectedRecentPaymentId((current) => (
+      current && cachedRecentPayments.some((payment) => getTransactionId(payment) === current) ? current : null
+    ));
+    if (hasCachedRecentPayments) setRecentPaymentsRefreshing(true);
     else setRecentPaymentsLoading(true);
     setRecentPaymentsError('');
     try {
@@ -4617,20 +4720,21 @@ function PaymentsSection({
         .filter((transaction) => getPaymentAmount(transaction) > 0 && SUCCESS_PAYMENT_STATUSES.has(normalizeProbe(transaction.status)))
         .sort((left, right) => getPaymentSortTime(right) - getPaymentSortTime(left));
       setRecentPayments(receivedPayments);
+      writeCache(recentPaymentCacheKey, receivedPayments);
       setSelectedRecentPaymentId((current) => (
         current && receivedPayments.some((payment) => getTransactionId(payment) === current) ? current : null
       ));
     } catch (err) {
-      // Surface the failure instead of showing an empty list that looks like
-      // "no payments", so the user knows to retry.
-      setRecentPayments([]);
-      setSelectedRecentPaymentId(null);
-      setRecentPaymentsError(err instanceof Error ? err.message : 'No se pudieron cargar los pagos recientes.');
+      if (!hasCachedRecentPayments) {
+        setRecentPayments([]);
+        setSelectedRecentPaymentId(null);
+        setRecentPaymentsError(err instanceof Error ? err.message : 'No se pudieron cargar los pagos recientes.');
+      }
     } finally {
       setRecentPaymentsLoading(false);
       setRecentPaymentsRefreshing(false);
     }
-  }, [api, businessTimezone, customRecentEndDate, customRecentStartDate, recentPayments.length, recentPaymentsPeriod]);
+  }, [api, recentPaymentCacheKey, recentPaymentRange]);
 
   useEffect(() => {
     void loadAccountContext();
@@ -4716,7 +4820,7 @@ function PaymentsSection({
     setPaymentContact(null);
     setPaymentContactLocked(false);
     setPaymentContactQuery('');
-    setPaymentContactResults([]);
+    setPaymentContactResults(peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, []));
     setPendingPaymentMode(resolvedMode);
   };
 
@@ -5609,9 +5713,13 @@ function PaymentFormView({
   const customerWithPlainArticle = formatMobileCrmLabelWithDefiniteArticle(customerLabel, DEFAULT_CUSTOM_LABELS.customer, 'none');
   const [selectedContact, setSelectedContact] = useState<ChatContact | null>(initialContact);
   const [contactQuery, setContactQuery] = useState('');
-  const [contactResults, setContactResults] = useState<ChatContact[]>([]);
+  const [contactResults, setContactResults] = useState<ChatContact[]>(() => (
+    peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, [])
+  ));
   const [contactSearching, setContactSearching] = useState(false);
-  const [products, setProducts] = useState<ProductItem[]>([]);
+  const [products, setProducts] = useState<ProductItem[]>(() => (
+    peekCache<ProductItem[]>(MOBILE_CACHE_KEYS.paymentProducts, [])
+  ));
   const [productsLoading, setProductsLoading] = useState(false);
   const [chargeType, setChargeType] = useState<'custom' | 'product'>('custom');
   const [selectedProductId, setSelectedProductId] = useState('');
@@ -5680,9 +5788,12 @@ function PaymentFormView({
   const [subscriptionCollectionMode, setSubscriptionCollectionMode] = useState<NativeSubscriptionCollectionMode>('authorization_link');
   // Tax / IVA — optional, driven entirely by the account's payment settings.
   // When taxes are disabled the toggle never shows and the amount is untouched.
-  const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(DEFAULT_MOBILE_TAX_SETTINGS);
-  const [includeIVA, setIncludeIVA] = useState(false);
-  const [taxCalculationMode, setTaxCalculationMode] = useState<'exclusive' | 'inclusive'>('exclusive');
+  const cachedPaymentTaxes = peekCache<PaymentTaxSettings>(MOBILE_CACHE_KEYS.paymentSettings, DEFAULT_MOBILE_TAX_SETTINGS);
+  const [paymentTaxes, setPaymentTaxes] = useState<PaymentTaxSettings>(cachedPaymentTaxes);
+  const [includeIVA, setIncludeIVA] = useState(Boolean(cachedPaymentTaxes.enabled));
+  const [taxCalculationMode, setTaxCalculationMode] = useState<'exclusive' | 'inclusive'>(
+    cachedPaymentTaxes.calculationMode === 'inclusive' ? 'inclusive' : 'exclusive',
+  );
   useEffect(() => {
     let cancelled = false;
     api.getPaymentSettings()
@@ -5692,11 +5803,14 @@ function PaymentFormView({
         setPaymentTaxes(taxes);
         setTaxCalculationMode(taxes.calculationMode === 'inclusive' ? 'inclusive' : 'exclusive');
         setIncludeIVA(Boolean(taxes.enabled));
+        writeCache(MOBILE_CACHE_KEYS.paymentSettings, taxes);
       })
       .catch(() => {
         if (cancelled) return;
-        setPaymentTaxes(DEFAULT_MOBILE_TAX_SETTINGS);
-        setIncludeIVA(false);
+        if (!hasCachedValue(MOBILE_CACHE_KEYS.paymentSettings)) {
+          setPaymentTaxes(DEFAULT_MOBILE_TAX_SETTINGS);
+          setIncludeIVA(false);
+        }
       });
     return () => { cancelled = true; };
   }, [api]);
@@ -5784,13 +5898,16 @@ function PaymentFormView({
 
   useEffect(() => {
     let cancelled = false;
-    setProductsLoading(true);
+    if (!hasCachedValue(MOBILE_CACHE_KEYS.paymentProducts)) setProductsLoading(true);
     api.getProducts(100)
       .then((response) => {
-        if (!cancelled) setProducts(Array.isArray(response.products) ? response.products : []);
+        if (cancelled) return;
+        const nextProducts = Array.isArray(response.products) ? response.products : [];
+        setProducts(nextProducts);
+        writeCache(MOBILE_CACHE_KEYS.paymentProducts, nextProducts);
       })
       .catch(() => {
-        if (!cancelled) setProducts([]);
+        if (!cancelled && !hasCachedValue(MOBILE_CACHE_KEYS.paymentProducts)) setProducts([]);
       })
       .finally(() => {
         if (!cancelled) setProductsLoading(false);
@@ -7785,17 +7902,44 @@ function CalendarSection({
   initialContactKey?: string;
   onInitialContactConsumed?: (key: string) => void;
 }) {
-  const initialToday = useMemo(() => todayDateOnlyInBusinessTimezone(), []);
+  const cachedCalendarBootstrap = peekCache<CalendarBootstrapCache>(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY, {});
+  const cachedCalendarTimezone = normalizeRequiredBusinessTimezone(cachedCalendarBootstrap.timezone);
+  const cachedCalendars = unwrapCalendars(cachedCalendarBootstrap.calendars || []);
+  const cachedSelectedCalendarId = String(cachedCalendarBootstrap.selectedCalendarId || '').trim();
+  const initialCalendarTimezone = cachedCalendarTimezone || resolveBusinessTimezone();
+  const initialToday = useMemo(
+    () => todayDateOnlyInBusinessTimezone(initialCalendarTimezone),
+    [initialCalendarTimezone],
+  );
+  const initialCalendarId = cachedSelectedCalendarId
+    || getCalendarKey(cachedCalendars.find(calendarIsActive) || cachedCalendars[0]);
+  const initialCalendarMonthRange = getBusinessMonthRange(initialToday);
+  const initialCalendarEventsKey = [
+    initialCalendarId || 'none',
+    initialCalendarTimezone,
+    initialCalendarMonthRange.gridStart,
+    initialCalendarMonthRange.gridEnd,
+  ].join('|');
+  const cachedCalendarEventsByRange = peekCache<Record<string, CalendarEventItem[]>>(
+    CALENDAR_EVENTS_CACHE_STORAGE_KEY,
+    {},
+  );
+  const hasCalendarBootstrapSnapshot = hasCachedValue(CALENDAR_BOOTSTRAP_CACHE_STORAGE_KEY)
+    && Boolean(cachedCalendarTimezone);
+  const hasCalendarEventsSnapshot = hasCachedValue(CALENDAR_EVENTS_CACHE_STORAGE_KEY)
+    && Object.prototype.hasOwnProperty.call(cachedCalendarEventsByRange, initialCalendarEventsKey);
   const { width: viewportWidth } = useWindowDimensions();
-  const [businessTimezone, setBusinessTimezone] = useState(resolveBusinessTimezone());
+  const [businessTimezone, setBusinessTimezone] = useState(initialCalendarTimezone);
   const [calendarView, setCalendarView] = useState<CalendarViewMode>('month');
   const [currentMonthDateOnly, setCurrentMonthDateOnly] = useState(initialToday);
   const [selectedDateOnly, setSelectedDateOnly] = useState(initialToday);
-  const [calendars, setCalendars] = useState<CalendarItem[]>([]);
-  const [selectedCalendarId, setSelectedCalendarId] = useState('');
-  const [calendarReady, setCalendarReady] = useState(false);
-  const [events, setEvents] = useState<CalendarEventItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [calendars, setCalendars] = useState<CalendarItem[]>(cachedCalendars);
+  const [selectedCalendarId, setSelectedCalendarId] = useState(initialCalendarId);
+  const [calendarReady, setCalendarReady] = useState(hasCalendarBootstrapSnapshot);
+  const [events, setEvents] = useState<CalendarEventItem[]>(() => (
+    cachedCalendarEventsByRange[initialCalendarEventsKey] || []
+  ));
+  const [loading, setLoading] = useState(() => !(hasCalendarBootstrapSnapshot || hasCalendarEventsSnapshot));
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [calendarBootstrapError, setCalendarBootstrapError] = useState('');
@@ -7809,7 +7953,9 @@ function CalendarSection({
   const appointmentSaveLockRef = useRef(false);
   const appointmentCreateIntentRef = useRef<{ signature: string; clientRequestId: string } | null>(null);
   const [contactQuery, setContactQuery] = useState('');
-  const [contactResults, setContactResults] = useState<ChatContact[]>([]);
+  const [contactResults, setContactResults] = useState<ChatContact[]>(() => (
+    peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, [])
+  ));
   const [contactsLoading, setContactsLoading] = useState(false);
   const [pendingAppointmentDefaults, setPendingAppointmentDefaults] = useState<PendingAppointmentDefaults | null>(null);
   const [pendingAppointmentLinks, setPendingAppointmentLinks] = useState<string[]>([]);
@@ -8273,7 +8419,13 @@ function CalendarSection({
       return;
     }
 
-    if (!silent) setLoading(true);
+    const cachedEventsByRange = peekCache<Record<string, CalendarEventItem[]>>(
+      CALENDAR_EVENTS_CACHE_STORAGE_KEY,
+      {},
+    );
+    const hasCachedEventsForRange = hasCachedValue(CALENDAR_EVENTS_CACHE_STORAGE_KEY)
+      && Object.prototype.hasOwnProperty.call(cachedEventsByRange, calendarEventCacheKey);
+    if (!silent && !hasCachedEventsForRange) setLoading(true);
     setError('');
     try {
       if (!Number.isFinite(eventRangeTimestamps.startTime) || !Number.isFinite(eventRangeTimestamps.endTime)) {
@@ -8328,7 +8480,7 @@ function CalendarSection({
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    if (!hasCalendarBootstrapSnapshot) setLoading(true);
     setError('');
     loadCalendars()
       .catch((err) => {
@@ -8482,7 +8634,7 @@ function CalendarSection({
       title: selectedCalendar?.eventTitle || selectedCalendar?.event_title || '',
     });
     setContactQuery('');
-    setContactResults([]);
+    setContactResults(peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, []));
     openSheet('contactPicker');
   }, [calendarContextUsable, openSheet, selectedCalendar, selectedCalendarKey]);
 
@@ -8632,7 +8784,7 @@ function CalendarSection({
     }
     setPendingAppointmentDefaults(null);
     setContactQuery('');
-    setContactResults([]);
+    setContactResults(peekCache<ChatContact[]>(NATIVE_INBOX_CACHE_KEY, []));
     openSheet('contactPicker');
   }, [calendarContextUsable, openSheet]);
 
@@ -11554,6 +11706,41 @@ function AnalyticsSection({
   customLabels?: CustomLabels;
   hasWebAnalyticsAccess?: boolean;
 }) {
+  const cachedAnalyticsContext = peekCache<{ timezone?: string; currency?: string }>(
+    MOBILE_CACHE_KEYS.analyticsAccountContext,
+    {},
+  );
+  const cachedShellConfig = peekCache<Record<string, ConfigValue>>(SHELL_APP_CONFIG_CACHE_KEY, {});
+  const initialAnalyticsTimezone = normalizeRequiredBusinessTimezone(
+    cachedAnalyticsContext.timezone || cachedShellConfig.account_timezone,
+  );
+  const initialAnalyticsCurrency = normalizeRequiredCurrencyCode(
+    cachedAnalyticsContext.currency || cachedShellConfig.account_currency,
+  );
+  const initialAnalyticsContextReady = Boolean(initialAnalyticsTimezone && initialAnalyticsCurrency);
+  const initialAnalyticsRange = initialAnalyticsContextReady
+    ? getTodayRange(30, initialAnalyticsTimezone)
+    : { startDate: '', endDate: '' };
+  const initialAnalyticsMetricsKey = analyticsMetricsCacheKey(
+    initialAnalyticsRange.startDate,
+    initialAnalyticsRange.endDate,
+  );
+  const initialAnalyticsChartKey = analyticsChartCacheKey(
+    initialAnalyticsRange.startDate,
+    initialAnalyticsRange.endDate,
+    'revenue-spend',
+    'all',
+  );
+  const initialAnalyticsFunnelKey = analyticsFunnelCacheKey(
+    initialAnalyticsRange.startDate,
+    initialAnalyticsRange.endDate,
+    'all',
+  );
+  const initialAnalyticsOriginKey = analyticsOriginCacheKey(
+    initialAnalyticsRange.startDate,
+    initialAnalyticsRange.endDate,
+    hasWebAnalyticsAccess,
+  );
   const [period, setPeriod] = useState<AnalyticsPeriod>('30d');
   const [periodMenuOpen, setPeriodMenuOpen] = useState(false);
   const [customRangeOpen, setCustomRangeOpen] = useState(false);
@@ -11566,20 +11753,30 @@ function AnalyticsSection({
   const [financialScope, setFinancialScope] = useState<DashboardFunnelScope>('all');
   const [funnelScope, setFunnelScope] = useState<DashboardFunnelScope>('all');
   const [originTab, setOriginTab] = useState<AnalyticsOriginTab>(hasWebAnalyticsAccess ? 'traffic' : 'leads');
-  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
-  const [chartData, setChartData] = useState<AnalyticsChartPoint[]>([]);
-  const [funnelData, setFunnelData] = useState<DashboardFunnelRow[]>([]);
-  const [originData, setOriginData] = useState<OriginDistributionData>(EMPTY_ORIGIN_DATA);
-  const [detectedPhones, setDetectedPhones] = useState<WhatsAppApiPhoneNumber[]>([]);
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(() => (
+    peekCache<DashboardMetrics | null>(initialAnalyticsMetricsKey, null)
+  ));
+  const [chartData, setChartData] = useState<AnalyticsChartPoint[]>(() => (
+    peekCache<AnalyticsChartPoint[]>(initialAnalyticsChartKey, [])
+  ));
+  const [funnelData, setFunnelData] = useState<DashboardFunnelRow[]>(() => (
+    peekCache<DashboardFunnelRow[]>(initialAnalyticsFunnelKey, [])
+  ));
+  const [originData, setOriginData] = useState<OriginDistributionData>(() => (
+    peekCache<OriginDistributionData>(initialAnalyticsOriginKey, EMPTY_ORIGIN_DATA)
+  ));
+  const [detectedPhones, setDetectedPhones] = useState<WhatsAppApiPhoneNumber[]>(() => (
+    peekCache<WhatsAppApiPhoneNumber[]>(MOBILE_CACHE_KEYS.analyticsPhones, [])
+  ));
   const [labels, setLabels] = useState<CustomLabels>(() => cleanAnalyticsLabels(customLabels));
-  const [businessTimezone, setBusinessTimezone] = useState('');
-  const [accountCurrency, setAccountCurrency] = useState('');
-  const [accountContextLoading, setAccountContextLoading] = useState(true);
+  const [businessTimezone, setBusinessTimezone] = useState(initialAnalyticsTimezone);
+  const [accountCurrency, setAccountCurrency] = useState(initialAnalyticsCurrency);
+  const [accountContextLoading, setAccountContextLoading] = useState(!initialAnalyticsContextReady);
   const [accountContextError, setAccountContextError] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [chartLoading, setChartLoading] = useState(true);
-  const [funnelLoading, setFunnelLoading] = useState(true);
-  const [originLoading, setOriginLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !hasCachedValue(initialAnalyticsMetricsKey));
+  const [chartLoading, setChartLoading] = useState(() => !hasCachedValue(initialAnalyticsChartKey));
+  const [funnelLoading, setFunnelLoading] = useState(() => !hasCachedValue(initialAnalyticsFunnelKey));
+  const [originLoading, setOriginLoading] = useState(() => !hasCachedValue(initialAnalyticsOriginKey));
   const [chartError, setChartError] = useState('');
   const [funnelError, setFunnelError] = useState('');
   const [originError, setOriginError] = useState('');
@@ -11587,6 +11784,7 @@ function AnalyticsSection({
   const [error, setError] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const analyticsOverviewGenerationRef = useRef(0);
+  const analyticsContextRef = useRef({ timezone: initialAnalyticsTimezone, currency: initialAnalyticsCurrency });
 
   const activePeriod = ANALYTICS_PERIOD_OPTIONS.find((option) => option.id === period) || ANALYTICS_PERIOD_OPTIONS[0];
   const defaultCustomRange = useMemo(
@@ -11634,12 +11832,16 @@ function AnalyticsSection({
 
   useEffect(() => {
     let cancelled = false;
-    setAccountContextLoading(true);
+    const hadCachedContext = Boolean(analyticsContextRef.current.timezone && analyticsContextRef.current.currency);
+    if (!hadCachedContext) setAccountContextLoading(true);
     setAccountContextError('');
 
     void api.getCustomLabels()
       .then((labelsResponse) => {
-        if (!cancelled) setLabels(cleanAnalyticsLabels(labelsResponse));
+        if (cancelled) return;
+        const nextLabels = cleanAnalyticsLabels(labelsResponse);
+        setLabels(nextLabels);
+        writeCache(SHELL_CUSTOM_LABELS_CACHE_KEY, nextLabels);
       })
       .catch(() => undefined);
 
@@ -11662,15 +11864,19 @@ function AnalyticsSection({
         if (!timezone || !currency) {
           throw new Error('La cuenta no devolvi\u00f3 una zona horaria y moneda v\u00e1lidas.');
         }
+        analyticsContextRef.current = { timezone, currency };
         setBusinessTimezone(timezone);
         setAccountCurrency(currency);
+        writeCache(MOBILE_CACHE_KEYS.analyticsAccountContext, { timezone, currency });
       })
       .catch((contextError) => {
         if (cancelled) return;
         console.warn('[RistakNative][analytics] account context failed', contextError);
-        setBusinessTimezone('');
-        setAccountCurrency('');
-        setAccountContextError('No pudimos confirmar la zona horaria y moneda de tu cuenta. Reintenta para mostrar cifras correctas.');
+        if (!hadCachedContext) {
+          setBusinessTimezone('');
+          setAccountCurrency('');
+          setAccountContextError('No pudimos confirmar la zona horaria y moneda de tu cuenta. Reintenta para mostrar cifras correctas.');
+        }
       })
       .finally(() => {
         if (cancelled) return;
@@ -11684,8 +11890,20 @@ function AnalyticsSection({
 
   const loadOverview = useCallback(async () => {
     const generation = ++analyticsOverviewGenerationRef.current;
-    setLoading(true);
-    setOriginLoading(true);
+    const metricsCacheKey = analyticsMetricsCacheKey(range.startDate, range.endDate);
+    const originCacheKey = analyticsOriginCacheKey(range.startDate, range.endDate, hasWebAnalyticsAccess);
+    const hasCachedMetrics = hasCachedValue(metricsCacheKey);
+    const hasCachedOrigin = hasCachedValue(originCacheKey);
+    // Repaint the exact range before the request. A dashboard range is never
+    // allowed to borrow the previous range's numbers while it refreshes.
+    if (hasCachedMetrics) setMetrics(peekCache<DashboardMetrics | null>(metricsCacheKey, null));
+    else setMetrics(null);
+    if (hasCachedOrigin) setOriginData(peekCache<OriginDistributionData>(originCacheKey, EMPTY_ORIGIN_DATA));
+    else setOriginData({ ...EMPTY_ORIGIN_DATA });
+    if (!hasCachedMetrics) setLoading(true);
+    else setLoading(false);
+    if (!hasCachedOrigin) setOriginLoading(true);
+    else setOriginLoading(false);
     setError('');
     setOriginError('');
 
@@ -11699,15 +11917,18 @@ function AnalyticsSection({
       if (generation !== analyticsOverviewGenerationRef.current) return;
       if (metricsResult.status === 'fulfilled') {
         setMetrics(metricsResult.value);
+        writeCache(metricsCacheKey, metricsResult.value);
       } else {
         console.warn('[RistakNative][analytics] metrics failed', metricsResult.reason);
-        setMetrics(null);
-        setError(metricsResult.reason instanceof Error ? metricsResult.reason.message : 'No se pudieron cargar los indicadores.');
+        if (!hasCachedMetrics) {
+          setMetrics(null);
+          setError(metricsResult.reason instanceof Error ? metricsResult.reason.message : 'No se pudieron cargar los indicadores.');
+        }
       }
 
       if (originResult.status === 'fulfilled') {
         const originResponse = originResult.value;
-        setOriginData({
+        const nextOrigin = {
           ...EMPTY_ORIGIN_DATA,
           ...originResponse,
           traffic: {
@@ -11715,26 +11936,34 @@ function AnalyticsSection({
             ...(originResponse?.traffic || {}),
           },
           whatsappNumbers: originResponse?.whatsappNumbers || [],
-        });
+        };
+        setOriginData(nextOrigin);
+        writeCache(originCacheKey, nextOrigin);
       } else {
         console.warn('[RistakNative][analytics] origin failed', originResult.reason);
-        setOriginError(originResult.reason instanceof Error ? originResult.reason.message : 'No se pudo cargar el origen de los resultados.');
+        if (!hasCachedOrigin) {
+          setOriginError(originResult.reason instanceof Error ? originResult.reason.message : 'No se pudo cargar el origen de los resultados.');
+        }
       }
 
       if (whatsappResult.status === 'fulfilled') {
-        setDetectedPhones((whatsappResult.value?.phoneNumbers || []).filter((phone) => (
+        const nextPhones = (whatsappResult.value?.phoneNumbers || []).filter((phone) => (
           Boolean(phone.id || phone.phone_number || phone.display_phone_number || phone.qr_connected_phone)
-        )));
+        ));
+        setDetectedPhones(nextPhones);
+        writeCache(MOBILE_CACHE_KEYS.analyticsPhones, nextPhones);
       } else {
         console.warn('[RistakNative][analytics] WhatsApp phone lookup failed', whatsappResult.reason);
       }
     } catch (err) {
       if (generation !== analyticsOverviewGenerationRef.current) return;
       console.warn('[RistakNative][analytics] loadOverview failed', err);
-      setMetrics(null);
       const fallbackMessage = err instanceof Error ? err.message : 'No se pudieron cargar las analíticas.';
-      setError(fallbackMessage);
-      setOriginError(fallbackMessage);
+      if (!hasCachedMetrics) {
+        setMetrics(null);
+        setError(fallbackMessage);
+      }
+      if (!hasCachedOrigin) setOriginError(fallbackMessage);
     } finally {
       if (generation !== analyticsOverviewGenerationRef.current) return;
       setLoading(false);
@@ -11766,20 +11995,31 @@ function AnalyticsSection({
       return;
     }
     let active = true;
+    const chartCacheKey = analyticsChartCacheKey(
+      range.startDate,
+      range.endDate,
+      chartView,
+      chartView === 'revenue-spend' ? financialScope : 'none',
+    );
+    const hasCachedChart = hasCachedValue(chartCacheKey);
+    setChartData(peekCache<AnalyticsChartPoint[]>(chartCacheKey, []));
 
     const loadChart = async () => {
-      setChartLoading(true);
+      if (!hasCachedChart) setChartLoading(true);
+      else setChartLoading(false);
       setChartError('');
 
       try {
         if (chartView === 'revenue-spend') {
           const response = await api.getFinancialOverview(range.startDate, range.endDate, financialScope);
           if (!active) return;
-          setChartData((response || []).map((item) => ({
+          const nextChart = (response || []).map((item) => ({
             label: item.label,
             value: item.value || 0,
             value2: item.value2 || 0,
-          })));
+          }));
+          setChartData(nextChart);
+          writeCache(chartCacheKey, nextChart);
           return;
         }
 
@@ -11814,12 +12054,17 @@ function AnalyticsSection({
           response = combineAnalyticsSeries(attendances, sales);
         }
 
-        if (active) setChartData(response);
+        if (active) {
+          setChartData(response);
+          writeCache(chartCacheKey, response);
+        }
       } catch (chartLoadError) {
         console.warn('[RistakNative][analytics] loadChart failed', chartLoadError);
         if (active) {
-          setChartData([]);
-          setChartError(chartLoadError instanceof Error ? chartLoadError.message : 'No se pudo cargar esta gráfica.');
+          if (!hasCachedChart) {
+            setChartData([]);
+            setChartError(chartLoadError instanceof Error ? chartLoadError.message : 'No se pudo cargar esta gráfica.');
+          }
         }
       } finally {
         if (active) setChartLoading(false);
@@ -11841,18 +12086,27 @@ function AnalyticsSection({
       return;
     }
     let active = true;
-    setFunnelLoading(true);
+    const funnelCacheKey = analyticsFunnelCacheKey(range.startDate, range.endDate, funnelScope);
+    const hasCachedFunnel = hasCachedValue(funnelCacheKey);
+    setFunnelData(peekCache<DashboardFunnelRow[]>(funnelCacheKey, []));
+    if (!hasCachedFunnel) setFunnelLoading(true);
+    else setFunnelLoading(false);
     setFunnelError('');
 
     api.getFunnelData(range.startDate, range.endDate, funnelScope, hasWebAnalyticsAccess)
       .then((response) => {
-        if (active) setFunnelData(Array.isArray(response) ? response : []);
+        if (!active) return;
+        const nextFunnel = Array.isArray(response) ? response : [];
+        setFunnelData(nextFunnel);
+        writeCache(funnelCacheKey, nextFunnel);
       })
       .catch((funnelLoadError) => {
         console.warn('[RistakNative][analytics] loadFunnel failed', funnelLoadError);
         if (active) {
-          setFunnelData([]);
-          setFunnelError(funnelLoadError instanceof Error ? funnelLoadError.message : 'No se pudo cargar el embudo.');
+          if (!hasCachedFunnel) {
+            setFunnelData([]);
+            setFunnelError(funnelLoadError instanceof Error ? funnelLoadError.message : 'No se pudo cargar el embudo.');
+          }
         }
       })
       .finally(() => {
@@ -12561,31 +12815,52 @@ function SettingsScreen({
   const customersLabel = customLabels.customers || DEFAULT_CUSTOM_LABELS.customers;
   const customerLowerLabel = formatMobileCrmLabelLower(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
   const customersLowerLabel = formatMobileCrmLabelLower(customersLabel, DEFAULT_CUSTOM_LABELS.customers);
+  const initialSettingsAppConfig = {
+    ...peekCache<Record<string, ConfigValue>>(SHELL_APP_CONFIG_CACHE_KEY, {}),
+    ...peekCache<Record<string, ConfigValue>>(MOBILE_CACHE_KEYS.settingsAppConfig, {}),
+  };
+  const initialSettingsUserConfig = peekCache<Record<string, ConfigValue>>(MOBILE_CACHE_KEYS.settingsUserConfig, {});
+  const initialAIAgentConfig = peekCache<AIAgentConfigStatus | null>(MOBILE_CACHE_KEYS.settingsAIAgent, null);
+  const initialAIBusinessContext = normalizeBusinessContextDraft(initialAIAgentConfig?.businessContext);
   const [activePanel, setActivePanel] = useState<SettingsPanel>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !(
+    hasCachedValue(MOBILE_CACHE_KEYS.settingsAppConfig)
+    || hasCachedValue(MOBILE_CACHE_KEYS.settingsUserConfig)
+    || hasCachedValue(SHELL_APP_CONFIG_CACHE_KEY)
+  ));
   const [error, setError] = useState('');
-  const [appConfig, setAppConfig] = useState<Record<string, ConfigValue>>({});
-  const [userConfig, setUserConfigState] = useState<Record<string, ConfigValue>>({});
+  const [appConfig, setAppConfig] = useState<Record<string, ConfigValue>>(() => initialSettingsAppConfig);
+  const [userConfig, setUserConfigState] = useState<Record<string, ConfigValue>>(() => initialSettingsUserConfig);
   const [savingKey, setSavingKey] = useState<string | null>(null);
-  const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>([]);
+  const [templates, setTemplates] = useState<WhatsAppApiTemplate[]>(() => (
+    peekCache<WhatsAppApiTemplate[]>(MOBILE_CACHE_KEYS.settingsTemplates, [])
+  ));
   const [templatesLoading, setTemplatesLoading] = useState(false);
   const [templatesError, setTemplatesError] = useState('');
-  const [customFields, setCustomFields] = useState<ContactCustomFieldDefinition[]>([]);
+  const [customFields, setCustomFields] = useState<ContactCustomFieldDefinition[]>(() => (
+    peekCache<ContactCustomFieldDefinition[]>(MOBILE_CACHE_KEYS.settingsCustomFields, [])
+  ));
   const [customFieldsLoading, setCustomFieldsLoading] = useState(false);
   const [customFieldsError, setCustomFieldsError] = useState('');
-  const [settingsTags, setSettingsTags] = useState<ContactTag[]>([]);
+  const [settingsTags, setSettingsTags] = useState<ContactTag[]>(() => (
+    peekCache<ContactTag[]>(MOBILE_CACHE_KEYS.settingsTags, [])
+  ));
   const [newCustomFieldName, setNewCustomFieldName] = useState('');
   const [newTagName, setNewTagName] = useState('');
   const [catalogBusyId, setCatalogBusyId] = useState<string | null>(null);
-  const [calendars, setCalendars] = useState<CalendarItem[]>([]);
+  const [calendars, setCalendars] = useState<CalendarItem[]>(() => (
+    peekCache<CalendarItem[]>(MOBILE_CACHE_KEYS.settingsCalendars, [])
+  ));
   const [calendarsLoading, setCalendarsLoading] = useState(false);
-  const [aiAgentConfig, setAiAgentConfig] = useState<AIAgentConfigStatus | null>(null);
+  const [aiAgentConfig, setAiAgentConfig] = useState<AIAgentConfigStatus | null>(initialAIAgentConfig);
   const [aiAgentLoading, setAiAgentLoading] = useState(false);
-  const [businessContextDraft, setBusinessContextDraft] = useState('');
-  const [savedBusinessContext, setSavedBusinessContext] = useState('');
+  const [businessContextDraft, setBusinessContextDraft] = useState(initialAIBusinessContext);
+  const [savedBusinessContext, setSavedBusinessContext] = useState(initialAIBusinessContext);
   const [businessContextSaving, setBusinessContextSaving] = useState(false);
   const [businessContextMessage, setBusinessContextMessage] = useState('');
-  const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(null);
+  const [whatsappStatus, setWhatsappStatus] = useState<WhatsAppApiStatus | null>(() => (
+    peekCache<WhatsAppApiStatus | null>(MOBILE_CACHE_KEYS.settingsWhatsAppStatus, null)
+  ));
   const [whatsappLoading, setWhatsappLoading] = useState(false);
   const [whatsappError, setWhatsappError] = useState('');
   const [settingDefaultPhoneId, setSettingDefaultPhoneId] = useState<string | null>(null);
@@ -12599,7 +12874,10 @@ function SettingsScreen({
   }, []);
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const hasSettingsSnapshot = hasCachedValue(MOBILE_CACHE_KEYS.settingsAppConfig)
+      || hasCachedValue(MOBILE_CACHE_KEYS.settingsUserConfig)
+      || hasCachedValue(SHELL_APP_CONFIG_CACHE_KEY);
+    if (!hasSettingsSnapshot) setLoading(true);
     setError('');
     try {
       const [appConfig, userConfig] = await Promise.all([
@@ -12610,7 +12888,10 @@ function SettingsScreen({
       const nextAppConfig = unwrapConfigResponse(appConfig);
       setAppConfig(nextAppConfig);
       onAppConfigPatch?.(nextAppConfig);
-      setUserConfigState(unwrapConfigResponse(userConfig));
+      const nextUserConfig = unwrapConfigResponse(userConfig);
+      setUserConfigState(nextUserConfig);
+      writeCache(MOBILE_CACHE_KEYS.settingsAppConfig, nextAppConfig);
+      writeCache(MOBILE_CACHE_KEYS.settingsUserConfig, nextUserConfig);
     } catch (err) {
       if (!settingsMountedRef.current) return;
       setError(err instanceof Error ? err.message : 'No se pudieron cargar los ajustes.');
@@ -12624,7 +12905,7 @@ function SettingsScreen({
   }, [load]);
 
   const loadAIAgentStatus = useCallback(async () => {
-    setAiAgentLoading(true);
+    if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsAIAgent)) setAiAgentLoading(true);
     try {
       const status = await api.getAIAgentConfig();
       if (!settingsMountedRef.current) return;
@@ -12634,11 +12915,14 @@ function SettingsScreen({
       setAiAgentConfig(status);
       setBusinessContextDraft(context);
       setSavedBusinessContext(context);
+      writeCache(MOBILE_CACHE_KEYS.settingsAIAgent, status);
     } catch {
       if (!settingsMountedRef.current) return;
-      setAiAgentConfig(null);
-      setBusinessContextDraft('');
-      setSavedBusinessContext('');
+      if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsAIAgent)) {
+        setAiAgentConfig(null);
+        setBusinessContextDraft('');
+        setSavedBusinessContext('');
+      }
     } finally {
       if (settingsMountedRef.current) setAiAgentLoading(false);
     }
@@ -12652,13 +12936,14 @@ function SettingsScreen({
       setAiAgentConfig(status);
       setBusinessContextDraft(context);
       setSavedBusinessContext(context);
+      writeCache(MOBILE_CACHE_KEYS.settingsAIAgent, status);
     } else {
       await loadAIAgentStatus();
     }
   }, [api, loadAIAgentStatus]);
 
   const loadTemplates = useCallback(async () => {
-    setTemplatesLoading(true);
+    if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsTemplates)) setTemplatesLoading(true);
     setTemplatesError('');
     try {
       const response = await api.getWhatsAppTemplates(null);
@@ -12667,51 +12952,67 @@ function SettingsScreen({
       // Fall back to the templates surfaced by the WhatsApp status payload when
       // the templates endpoint returns none, matching /movil.
       const statusItems = (whatsappStatus as { templates?: { items?: typeof responseItems } } | null)?.templates?.items;
-      setTemplates(responseItems.length ? responseItems : (Array.isArray(statusItems) ? statusItems : []));
+      const nextTemplates = responseItems.length ? responseItems : (Array.isArray(statusItems) ? statusItems : []);
+      setTemplates(nextTemplates);
+      writeCache(MOBILE_CACHE_KEYS.settingsTemplates, nextTemplates);
     } catch (err) {
       if (!settingsMountedRef.current) return;
-      setTemplates([]);
-      setTemplatesError(err instanceof Error ? err.message : 'No se pudieron cargar las plantillas.');
+      if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsTemplates)) {
+        setTemplates([]);
+        setTemplatesError(err instanceof Error ? err.message : 'No se pudieron cargar las plantillas.');
+      }
     } finally {
       if (settingsMountedRef.current) setTemplatesLoading(false);
     }
   }, [api, whatsappStatus]);
 
   const loadWhatsAppStatus = useCallback(async (refresh = false) => {
-    setWhatsappLoading(true);
+    if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsWhatsAppStatus)) setWhatsappLoading(true);
     setWhatsappError('');
     try {
       const status = refresh ? await api.refreshWhatsAppStatus() : await api.getWhatsAppStatus();
       if (!settingsMountedRef.current) return;
       setWhatsappStatus(status);
+      writeCache(MOBILE_CACHE_KEYS.settingsWhatsAppStatus, status);
     } catch (err) {
       if (!settingsMountedRef.current) return;
-      setWhatsappStatus(null);
-      setWhatsappError(err instanceof Error ? err.message : 'No se pudieron cargar los números de WhatsApp.');
+      if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsWhatsAppStatus)) {
+        setWhatsappStatus(null);
+        setWhatsappError(err instanceof Error ? err.message : 'No se pudieron cargar los números de WhatsApp.');
+      }
     } finally {
       if (settingsMountedRef.current) setWhatsappLoading(false);
     }
   }, [api]);
 
   const loadCustomFields = useCallback(async () => {
-    setCustomFieldsLoading(true);
+    if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsCustomFields)) setCustomFieldsLoading(true);
     setCustomFieldsError('');
     try {
       const definitions = await api.getCustomFieldDefinitions(false);
       if (!settingsMountedRef.current) return;
-      setCustomFields(Array.isArray(definitions) ? definitions.filter(isUserCustomFieldDefinition) : []);
+      const nextFields = Array.isArray(definitions) ? definitions.filter(isUserCustomFieldDefinition) : [];
+      setCustomFields(nextFields);
+      writeCache(MOBILE_CACHE_KEYS.settingsCustomFields, nextFields);
     } catch (err) {
       if (!settingsMountedRef.current) return;
-      setCustomFields([]);
-      setCustomFieldsError(err instanceof Error ? err.message : 'No se pudieron cargar los campos personalizados.');
+      if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsCustomFields)) {
+        setCustomFields([]);
+        setCustomFieldsError(err instanceof Error ? err.message : 'No se pudieron cargar los campos personalizados.');
+      }
     } finally {
       if (settingsMountedRef.current) setCustomFieldsLoading(false);
     }
   }, [api]);
 
   const loadSettingsTags = useCallback(async () => {
-    try { setSettingsTags((await api.getContactTags()).filter((tag) => !tag.isSystem)); }
-    catch { setSettingsTags([]); }
+    try {
+      const nextTags = (await api.getContactTags()).filter((tag) => !tag.isSystem);
+      setSettingsTags(nextTags);
+      writeCache(MOBILE_CACHE_KEYS.settingsTags, nextTags);
+    } catch {
+      if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsTags)) setSettingsTags([]);
+    }
   }, [api]);
 
   const loadPushPermissionStatus = useCallback(async () => {
@@ -12721,15 +13022,17 @@ function SettingsScreen({
   }, []);
 
   const loadCalendars = useCallback(async () => {
-    setCalendarsLoading(true);
+    if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsCalendars)) setCalendarsLoading(true);
     try {
       const response = await api.getCalendars();
       if (!settingsMountedRef.current) return;
       const nextCalendars = Array.isArray(response) ? response : response.calendars || [];
-      setCalendars(nextCalendars.filter((calendar) => calendar.isActive !== false));
+      const activeCalendars = nextCalendars.filter((calendar) => calendar.isActive !== false);
+      setCalendars(activeCalendars);
+      writeCache(MOBILE_CACHE_KEYS.settingsCalendars, activeCalendars);
     } catch {
       if (!settingsMountedRef.current) return;
-      setCalendars([]);
+      if (!hasCachedValue(MOBILE_CACHE_KEYS.settingsCalendars)) setCalendars([]);
     } finally {
       if (settingsMountedRef.current) setCalendarsLoading(false);
     }
@@ -12758,13 +13061,21 @@ function SettingsScreen({
   const saveAppPreference = async (key: string, value: ConfigValue) => {
     const previous = appConfig[key] ?? null;
     setSavingKey(key);
-    setAppConfig((current) => ({ ...current, [key]: value }));
+    setAppConfig((current) => {
+      const next = { ...current, [key]: value };
+      writeCache(MOBILE_CACHE_KEYS.settingsAppConfig, next);
+      return next;
+    });
     onAppConfigPatch?.({ [key]: value });
     try {
       await api.setConfig(key, value);
     } catch (err) {
       if (!settingsMountedRef.current) return;
-      setAppConfig((current) => ({ ...current, [key]: previous }));
+      setAppConfig((current) => {
+        const next = { ...current, [key]: previous };
+        writeCache(MOBILE_CACHE_KEYS.settingsAppConfig, next);
+        return next;
+      });
       onAppConfigPatch?.({ [key]: previous });
       Alert.alert('No se guardó el ajuste', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
@@ -12775,12 +13086,20 @@ function SettingsScreen({
   const saveUserPreference = async (key: string, value: ConfigValue) => {
     const previous = userConfig[key] ?? null;
     setSavingKey(key);
-    setUserConfigState((current) => ({ ...current, [key]: value }));
+    setUserConfigState((current) => {
+      const next = { ...current, [key]: value };
+      writeCache(MOBILE_CACHE_KEYS.settingsUserConfig, next);
+      return next;
+    });
     try {
       await api.setUserConfig(key, value);
     } catch (err) {
       if (!settingsMountedRef.current) return;
-      setUserConfigState((current) => ({ ...current, [key]: previous }));
+      setUserConfigState((current) => {
+        const next = { ...current, [key]: previous };
+        writeCache(MOBILE_CACHE_KEYS.settingsUserConfig, next);
+        return next;
+      });
       Alert.alert('No se guardó el ajuste', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
       if (settingsMountedRef.current) setSavingKey((current) => (current === key ? null : current));
@@ -12860,7 +13179,10 @@ function SettingsScreen({
       setBusinessContextDraft(next);
       setSavedBusinessContext(next);
       setBusinessContextMessage('Guardado.');
-      if (result.status) setAiAgentConfig(result.status);
+      if (result.status) {
+        setAiAgentConfig(result.status);
+        writeCache(MOBILE_CACHE_KEYS.settingsAIAgent, result.status);
+      }
       return true;
     } catch (err) {
       if (!settingsMountedRef.current) return false;
@@ -12916,6 +13238,7 @@ function SettingsScreen({
     try {
       const status = await api.setDefaultWhatsAppPhoneNumber(phone.id);
       setWhatsappStatus(status);
+      writeCache(MOBILE_CACHE_KEYS.settingsWhatsAppStatus, status);
     } catch (err) {
       Alert.alert('No se cambió el número principal', err instanceof Error ? err.message : 'Intenta otra vez.');
     } finally {
@@ -21285,12 +21608,17 @@ function NativeConversationScreen({
   onToggleMute: (contact: ChatContact) => void;
   pendingDraft?: PendingChatDraft | null;
 }) {
-  const [messages, setMessages] = useState<ChatMessage[]>(() => getConversationMessageMemCache(api, contact.id));
-  const [conversationCacheHydrated, setConversationCacheHydrated] = useState(() => Boolean(getConversationMessageMemCache(api, contact.id).length));
+  const cachedConversationMessages = getConversationMessageMemCache(api, contact.id).length
+    ? getConversationMessageMemCache(api, contact.id)
+    : peekCache<ChatMessage[]>(conversationCacheKey(contact.id), []);
+  const hasCachedConversationSnapshot = Boolean(getConversationMessageMemCache(api, contact.id).length)
+    || hasCachedValue(conversationCacheKey(contact.id));
+  const [messages, setMessages] = useState<ChatMessage[]>(() => cachedConversationMessages);
+  const [conversationCacheHydrated, setConversationCacheHydrated] = useState(() => hasCachedConversationSnapshot);
   const [journeyEvents, setJourneyEvents] = useState<JourneyEvent[]>([]);
   const [localActivityMarkers, setLocalActivityMarkers] = useState<ConversationActivityMarker[]>([]);
   const [completionNotice, setCompletionNotice] = useState<NativeConversationSuccessNotice | null>(null);
-  const [loading, setLoading] = useState(() => !getConversationMessageMemCache(api, contact.id).length);
+  const [loading, setLoading] = useState(() => !hasCachedConversationSnapshot);
   const [olderMessagesLoading, setOlderMessagesLoading] = useState(false);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -21469,7 +21797,10 @@ function NativeConversationScreen({
     scheduledMessagesLastLoadedAtRef.current = 0;
     setOlderMessagesLoading(false);
     setPaymentLinkDraftPreview(null);
-    setConversationCacheHydrated(Boolean(getConversationMessageMemCache(api, contact.id).length));
+    setConversationCacheHydrated(
+      Boolean(getConversationMessageMemCache(api, contact.id).length)
+      || hasCachedValue(conversationCacheKey(contact.id)),
+    );
   }, [api, contact.id]);
 
   useEffect(() => () => {
@@ -21721,13 +22052,13 @@ function NativeConversationScreen({
   // en frío) leemos la última conversación guardada y la pintamos al instante
   // mientras loadConversation trae los mensajes nuevos.
   useEffect(() => {
-    if (getConversationMessageMemCache(api, contact.id).length) {
+    if (getConversationMessageMemCache(api, contact.id).length || hasCachedValue(conversationCacheKey(contact.id))) {
       setConversationCacheHydrated(true);
       return undefined;
     }
     let alive = true;
     void readCache<ChatMessage[]>(conversationCacheKey(contact.id), []).then((cached) => {
-      if (!alive || !cached.length) return;
+      if (!alive) return;
       setConversationMessageMemCache(api, contact.id, cached);
       setMessages((current) => (current.length ? current : cached));
       setLoading(false);

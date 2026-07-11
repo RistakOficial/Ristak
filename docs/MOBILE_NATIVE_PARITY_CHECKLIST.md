@@ -248,8 +248,9 @@ Si dudas si algo debe existir, vuelve al codigo original. No confies en memoria.
     marcar como leidos via API y archivar/restaurar seleccionados.
 - [x] Replicar pull to refresh y copy visible.
   - Avance: la lista nativa ya usa pull to refresh, textos de loading/error y
-    vacios equivalentes de primer pase. Aun falta el estado cache-refresh exacto
-    de `/movil` cuando se muestra cache y actualiza en segundo plano.
+    vacios equivalentes de primer pase. La bandeja hidrata el snapshot
+    precargado y revalida sin borrar filas; una respuesta corta o vacia sigue
+    siendo autoritativa para retirar fantasmas.
 - [x] Replicar recepcion viva de chat.
   - Avance: `mobile/` escucha `/api/chat-events/stream` con bearer, aplica el
     timestamp/direccion/canal/unread y promueve la fila local antes del REST;
