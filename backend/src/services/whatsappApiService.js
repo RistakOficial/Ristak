@@ -443,13 +443,17 @@ function cleanMimeType(value = '') {
 }
 
 /**
- * Meta acepta `audio/ogg` y comprueba que el contenedor use Opus leyendo los
- * bytes. El parámetro HTTP `codecs=opus` se conserva para Baileys, pero no debe
- * viajar en el Content-Type del multipart de YCloud/Meta: su procesador puede
- * reclasificarlo como application/octet-stream y responder 131053.
+ * YCloud sigue el contrato de media de WhatsApp: para OGG exige declarar Opus
+ * en el MIME y documenta que `audio/ogg` sin codec no está soportado. El resto
+ * de formatos sí usa su MIME base, sin parámetros arbitrarios heredados.
  */
 function normalizeYCloudUploadMimeType(value = '') {
-  return cleanMimeType(value)
+  const raw = cleanString(value).toLowerCase()
+  const base = cleanMimeType(raw)
+  if (base === 'audio/ogg' && /(?:^|;)\s*codecs\s*=\s*"?opus"?(?:;|$)/i.test(raw)) {
+    return WHATSAPP_VOICE_NOTE_MIME_TYPE
+  }
+  return base
 }
 
 function safeJson(value) {
@@ -1163,10 +1167,27 @@ export async function convertAudioToOggOpus({ buffer, extension }) {
   try {
     await fs.writeFile(inputPath, buffer)
     await runFfmpeg([
+      '-nostdin',
       '-y',
       '-i',
       inputPath,
+      // Toma una sola pista de audio y elimina por completo capítulos/tags del
+      // archivo fuente. Así Meta recibe siempre una nota canónica y no un OGG
+      // que todavía arrastre semántica de MP3/M4A (iTunSMPB, TSS, portada,
+      // título, etc.).
+      '-map',
+      '0:a:0',
+      '-map_metadata',
+      '-1',
+      // FFmpeg 6 conserva los tags de la pista aunque se elimine la metadata
+      // global; esta segunda regla limpia específicamente el stream de audio.
+      '-map_metadata:s:a:0',
+      '-1',
+      '-map_chapters',
+      '-1',
       '-vn',
+      '-sn',
+      '-dn',
       '-ac',
       '1',
       '-ar',
@@ -1175,10 +1196,20 @@ export async function convertAudioToOggOpus({ buffer, extension }) {
       'libopus',
       '-b:a',
       '32k',
+      '-vbr',
+      'on',
+      '-compression_level',
+      '10',
+      '-frame_duration',
+      '20',
+      '-mapping_family',
+      '0',
       // `voip` es el modo Opus que WhatsApp usa para notas de voz (PTT); optimiza
       // voz y produce el OGG/Opus que Meta/YCloud/Baileys aceptan de verdad.
       '-application',
       'voip',
+      '-f',
+      'ogg',
       outputPath
     ], {
       failureMessage: 'No se pudo preparar el audio para WhatsApp. Intenta grabarlo otra vez.',
@@ -1248,23 +1279,15 @@ async function convertAudioToChatPlaybackMp4({ buffer, extension }) {
 }
 
 async function prepareWhatsAppVoiceAudio(parsed) {
-  // Los bytes mandan sobre el MIME declarado. Un OGG/Opus ya válido no debe
-  // recodificarse en cada ejecución del flujo; MP3/M4A/Vorbis o una etiqueta
-  // mentirosa sí pasan por ffmpeg antes de subirlos al proveedor.
-  if (!isOggOpusBuffer(parsed.buffer)) {
-    return {
-      buffer: await convertAudioToOggOpus(parsed),
-      mimeType: WHATSAPP_VOICE_NOTE_MIME_TYPE,
-      extension: 'ogg',
-      compression: 'whatsapp_ogg_opus'
-    }
-  }
-
+  // No reutilizamos ni siquiera un OGG/Opus ya válido. La validación estructural
+  // evita archivos rotos, pero no garantiza que venga limpio de metadata o con
+  // los parámetros exactos de una nota PTT. Regenerarlo en esta frontera da el
+  // mismo binario canónico a Automatizaciones, chat directo, Meta y Baileys.
   return {
-    buffer: parsed.buffer,
-    mimeType: normalizeVoiceNoteMimeType(parsed) || parsed.mimeType,
+    buffer: await convertAudioToOggOpus(parsed),
+    mimeType: WHATSAPP_VOICE_NOTE_MIME_TYPE,
     extension: 'ogg',
-    compression: 'original_ogg_opus'
+    compression: 'whatsapp_ogg_opus'
   }
 }
 
@@ -12407,7 +12430,7 @@ export async function sendWhatsAppApiAudioMessage({
   // El importador por URL de YCloud vuelve a subir el archivo y Meta ha
   // demostrado en producción que puede reclasificar un OGG/Opus válido como
   // application/octet-stream (131053). Para notas de voz con bytes disponibles,
-  // subimos nosotros el OGG con el MIME base `audio/ogg` y enviamos su Media ID.
+  // subimos nosotros el OGG con `audio/ogg; codecs=opus` y enviamos su Media ID.
   // Meta Direct conserva la ruta oficial por link porque no usa el proxy YCloud.
   const shouldUploadVoiceToYCloud = isVoiceNote &&
     config.provider !== META_DIRECT_PROVIDER_NAME &&

@@ -104,6 +104,37 @@ async function withRealMp3(callback) {
   }
 }
 
+async function withTaggedOggOpus(callback) {
+  const folder = await fs.mkdtemp(join(tmpdir(), 'ristak-tagged-ogg-opus-'))
+  const inputPath = join(folder, 'input.ogg')
+  const sourceMarker = `ristak-source-metadata-${randomUUID()}`
+  try {
+    await execFile(ffmpegPath, [
+      '-v', 'error',
+      '-f', 'lavfi',
+      '-i', 'sine=frequency=440:duration=1',
+      '-ac', '1',
+      '-ar', '48000',
+      '-c:a', 'libopus',
+      '-b:a', '32k',
+      '-application', 'voip',
+      '-metadata', `title=${sourceMarker}`,
+      '-metadata', 'TSS=Logic Pro X 10.7.1',
+      inputPath
+    ])
+    const input = await fs.readFile(inputPath)
+    assert.ok(input.includes(Buffer.from(sourceMarker)), 'el fixture debe contener metadata heredada')
+    assert.ok(input.includes(Buffer.from('OpusHead', 'ascii')))
+    return await callback({
+      audioDataUrl: `data:audio/ogg;codecs=opus;base64,${input.toString('base64')}`,
+      input,
+      sourceMarker
+    })
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true })
+  }
+}
+
 function createPcmWavBuffer() {
   const sampleRate = 8_000
   const samples = 2_000
@@ -768,7 +799,7 @@ test('envío API convierte un MP3 real, sube OGG/Opus decodificable y manda Medi
 
         assert.equal(captures.uploads.length, 1)
         assert.equal(captures.uploads[0].filename, 'whatsapp-audio.ogg')
-        assert.equal(captures.uploads[0].mimeType, 'audio/ogg')
+        assert.equal(captures.uploads[0].mimeType, 'audio/ogg; codecs=opus')
         assert.equal(captures.uploads[0].bytes.subarray(0, 4).toString('latin1'), 'OggS')
         assert.ok(captures.uploads[0].bytes.includes(Buffer.from('OpusHead', 'ascii')))
         assert.ok(captures.uploads[0].bytes.includes(Buffer.from('OpusTags', 'ascii')))
@@ -784,7 +815,7 @@ test('envío API convierte un MP3 real, sube OGG/Opus decodificable y manda Medi
         assert.match(previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
         assert.equal(response.audio.id, captures.uploads[0].mediaId)
         assert.equal(response.audio.providerMediaId, captures.uploads[0].mediaId)
-        assert.equal(response.audio.providerMimeType, 'audio/ogg')
+        assert.equal(response.audio.providerMimeType, 'audio/ogg; codecs=opus')
         assert.equal(response.audio.mimeType, 'audio/mpeg')
         assert.equal(response.audio.durationMs, 1000)
 
@@ -845,7 +876,7 @@ test('envío API convierte un MP3 real, sube OGG/Opus decodificable y manda Medi
         assert.equal(row.media_duration_ms, 1000)
         const raw = JSON.parse(row.raw_payload_json)
         assert.equal(raw.audio.id, captures.uploads[0].mediaId)
-        assert.equal(raw.audio.providerMimeType, 'audio/ogg')
+        assert.equal(raw.audio.providerMimeType, 'audio/ogg; codecs=opus')
         assert.equal(raw.audio.asyncQrFallbackAllowed, false)
         assert.equal(raw.audio.deliveryMediaAssetId, undefined)
         assert.equal(raw.audio.previewMediaAssetId, previewMediaAssetId)
@@ -853,6 +884,55 @@ test('envío API convierte un MP3 real, sube OGG/Opus decodificable y manda Medi
         await db.run('DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?', ['ycloud_provider_message_1', to, to])
         for (const mediaAssetId of [previewMediaAssetId, deliveryMediaAssetId]) {
           if (mediaAssetId) await db.run('DELETE FROM media_assets WHERE id = ?', [mediaAssetId]).catch(() => undefined)
+        }
+        await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
+        await db.run('DELETE FROM contacts WHERE phone = ?', [to])
+      }
+    })
+  })
+})
+
+test('envío API regenera OGG/Opus válido y elimina metadata antes de subirlo', async () => {
+  await withTaggedOggOpus(async ({ audioDataUrl, input, sourceMarker }) => {
+    await withYCloudProviderMediaCapture(async (captures) => {
+      const to = `+52157${Date.now().toString().slice(-8)}`
+      const externalId = `provider-canonical-voice-${randomUUID()}`
+      let previewMediaAssetId = ''
+
+      try {
+        await captures.openReplyWindow(to)
+        const response = await sendWhatsAppApiAudioMessage({
+          to,
+          audioDataUrl,
+          voice: true,
+          externalId,
+          publicBaseUrl: 'https://ristak.test',
+          allowQrFallback: false,
+          durationMs: 1000
+        })
+
+        assert.equal(captures.uploads.length, 1)
+        const uploaded = captures.uploads[0]
+        assert.equal(uploaded.filename, 'whatsapp-audio.ogg')
+        assert.equal(uploaded.mimeType, 'audio/ogg; codecs=opus')
+        assert.equal(uploaded.bytes.subarray(0, 4).toString('latin1'), 'OggS')
+        assert.ok(uploaded.bytes.includes(Buffer.from('OpusHead', 'ascii')))
+        assert.ok(uploaded.bytes.includes(Buffer.from('OpusTags', 'ascii')))
+        assert.notDeepEqual(uploaded.bytes, input, 'un OGG válido también debe pasar por la normalización canónica')
+        assert.equal(uploaded.bytes.includes(Buffer.from(sourceMarker)), false)
+        assert.equal(uploaded.bytes.includes(Buffer.from('Logic Pro X 10.7.1')), false)
+
+        assert.equal(captures.messages.length, 1)
+        assert.equal(captures.messages[0].audio.id, uploaded.mediaId)
+        assert.equal(captures.messages[0].audio.voice, true)
+        previewMediaAssetId = response.audio.previewMediaAssetId
+      } finally {
+        await db.run(
+          'DELETE FROM whatsapp_api_messages WHERE ycloud_message_id = ? OR to_phone = ? OR phone = ?',
+          ['ycloud_provider_message_1', to, to]
+        )
+        if (previewMediaAssetId) {
+          await db.run('DELETE FROM media_assets WHERE id = ?', [previewMediaAssetId]).catch(() => undefined)
         }
         await db.run('DELETE FROM whatsapp_api_contacts WHERE phone = ?', [to])
         await db.run('DELETE FROM contacts WHERE phone = ?', [to])
@@ -1042,7 +1122,7 @@ test('un OGG falso con firmas de texto no pasa como nota de voz válida', async 
   })
 })
 
-test('envío API de nota de voz sube OGG con MIME base y manda Media ID al proveedor', async () => {
+test('envío API de nota de voz sube OGG con MIME Opus y manda Media ID al proveedor', async () => {
   await withFakeFfmpeg(async () => {
     await withYCloudProviderMediaCapture(async (captures) => {
       const suffix = randomUUID()
@@ -1064,7 +1144,7 @@ test('envío API de nota de voz sube OGG con MIME base y manda Media ID al prove
         })
 
         assert.equal(captures.uploads.length, 1)
-        assert.equal(captures.uploads[0].mimeType, 'audio/ogg')
+        assert.equal(captures.uploads[0].mimeType, 'audio/ogg; codecs=opus')
         assert.equal(captures.uploads[0].filename, 'whatsapp-audio.ogg')
         assert.equal(captures.messages.length, 1)
         assert.deepEqual(captures.messages[0].audio, {
@@ -1075,7 +1155,7 @@ test('envío API de nota de voz sube OGG con MIME base y manda Media ID al prove
         assert.equal(captures.messages[0].filterBlocked, true)
         assert.equal(response.audio.id, captures.uploads[0].mediaId)
         assert.equal(response.audio.deliveryUrl, 'https://cdn.example.test/automations/nota-validada.ogg')
-        assert.equal(response.audio.providerMimeType, 'audio/ogg')
+        assert.equal(response.audio.providerMimeType, 'audio/ogg; codecs=opus')
         assert.equal(response.audio.voice, true)
 
         const row = await db.get(
@@ -1086,7 +1166,7 @@ test('envío API de nota de voz sube OGG con MIME base y manda Media ID al prove
         const raw = JSON.parse(row.raw_payload_json)
         assert.equal(raw.audio.id, captures.uploads[0].mediaId)
         assert.equal(raw.audio.deliveryUrl, 'https://cdn.example.test/automations/nota-validada.ogg')
-        assert.equal(raw.audio.providerMimeType, 'audio/ogg')
+        assert.equal(raw.audio.providerMimeType, 'audio/ogg; codecs=opus')
         assert.equal(raw.audio.voice, true)
         assert.match(raw.audio.previewMediaAssetId, /^rstk_media_[A-Za-z0-9]{20}$/)
         previewMediaAssetId = raw.audio.previewMediaAssetId
