@@ -3497,6 +3497,48 @@ export async function resolveAutomationMediaAssetId(mediaUrl = '') {
   return mediaAssetId
 }
 
+/**
+ * Lee un adjunto administrado por Ristak como data URL. Así WhatsApp, Messenger
+ * e Instagram pueden aplicar la misma normalización que el chat directo antes
+ * de entregarlo al proveedor. Las URLs externas se conservan como links.
+ */
+export async function resolveAutomationMediaSource(mediaUrl = '') {
+  const cleanMediaUrl = str(mediaUrl)
+  const mediaAssetId = await resolveAutomationMediaAssetId(cleanMediaUrl)
+  if (mediaAssetId) {
+    const { getMediaAssetDataUrl } = await import('./mediaStorageService.js')
+    const media = await getMediaAssetDataUrl(mediaAssetId)
+    return {
+      dataUrl: media.dataUrl,
+      externalUrl: '',
+      mimeType: media.mimeType,
+      filename: media.filename || '',
+      mediaAssetId
+    }
+  }
+
+  const assetMatch = /\/api\/automations\/assets\/([\w-]+)/.exec(cleanMediaUrl)
+  if (assetMatch) {
+    const row = await db.get('SELECT * FROM automation_assets WHERE id = ?', [assetMatch[1]])
+    if (!row) throw new Error('El archivo adjunto ya no existe')
+    return {
+      dataUrl: `data:${row.content_type};base64,${row.content_base64}`,
+      externalUrl: '',
+      mimeType: row.content_type || '',
+      filename: row.filename || '',
+      mediaAssetId: ''
+    }
+  }
+
+  return {
+    dataUrl: '',
+    externalUrl: cleanMediaUrl,
+    mimeType: '',
+    filename: '',
+    mediaAssetId: ''
+  }
+}
+
 /** Envía un bloque adjunto: si es un archivo subido a Ristak se manda como
     data URL (el servicio de WhatsApp lo publica); si es URL externa, directo */
 async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport = 'api', allowQrFallback = true, ctx }) {
@@ -3514,23 +3556,11 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
   let mimeType
 
   const mediaUrl = str(block.url)
-  const { getMediaAssetDataUrl } = await import('./mediaStorageService.js')
-  const mediaAssetId = await resolveAutomationMediaAssetId(mediaUrl)
-  const assetMatch = /\/api\/automations\/assets\/([\w-]+)/.exec(mediaUrl)
-  if (mediaAssetId) {
-    const media = await getMediaAssetDataUrl(mediaAssetId)
-    dataUrl = media.dataUrl
-    mimeType = media.mimeType
-    filename = media.filename || filename
-  } else if (assetMatch) {
-    const row = await db.get('SELECT * FROM automation_assets WHERE id = ?', [assetMatch[1]])
-    if (!row) throw new Error('El archivo adjunto ya no existe')
-    dataUrl = `data:${row.content_type};base64,${row.content_base64}`
-    mimeType = row.content_type
-    filename = row.filename || filename
-  } else {
-    externalUrl = mediaUrl
-  }
+  const media = await resolveAutomationMediaSource(mediaUrl)
+  dataUrl = media.dataUrl || null
+  externalUrl = media.externalUrl || null
+  mimeType = media.mimeType || undefined
+  filename = media.filename || filename
 
   if (block.type === 'image') {
     return sendWhatsAppApiImageMessage({ to, from: fromPhone, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
@@ -3996,14 +4026,21 @@ async function sendMetaSocialBlocks(node, ctx, platform) {
       )
       if (seconds > 0) await sleep(seconds * 1000)
     } else if (['image', 'video', 'audio', 'voice', 'file'].includes(block.type) && str(block.url)) {
-      const attachmentUrl = publicAutomationMediaUrl(block.url, ctx)
+      const renderedMediaUrl = renderTemplate(str(block.url), ctx, { preserveUnknown: true }).trim()
+      const attachmentUrl = publicAutomationMediaUrl(renderedMediaUrl, ctx)
       const mimeType = await automationMediaMimeType(block)
       const externalId = nextExternalId()
       if (block.type === 'audio' || block.type === 'voice') {
+        // Meta no tiene un equivalente a `ptt`. Su representación correcta de
+        // una nota de voz es un attachment de audio. Si el archivo es nuestro,
+        // lo entregamos como data URL para que use exactamente la misma tubería
+        // del chat directo (preview M4A/AAC público y reproducible).
+        const media = await resolveAutomationMediaSource(renderedMediaUrl)
         await sendMetaSocialAudioMessage({
           contactId: ctx.contact?.id,
           platform,
-          audioUrl: attachmentUrl,
+          audioDataUrl: media.dataUrl || undefined,
+          audioUrl: media.dataUrl ? undefined : attachmentUrl,
           externalId
         })
       } else {

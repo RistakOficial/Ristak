@@ -263,6 +263,9 @@ test('WhatsApp QR aplica pausas automáticas a todos los tipos de mensaje QR', a
     })
 
     assert.equal(sentMessages.length, 5)
+    assert.equal(sentMessages[2].payload.audio instanceof Buffer, true)
+    assert.equal(sentMessages[2].payload.mimetype, 'audio/ogg; codecs=opus')
+    assert.equal(sentMessages[2].payload.ptt, true)
     assert.equal(sentMessages[4].payload.video instanceof Buffer, true)
     assert.equal(sentMessages[4].payload.mimetype, 'video/mp4')
     assert.equal(sentMessages[4].payload.caption, 'Video')

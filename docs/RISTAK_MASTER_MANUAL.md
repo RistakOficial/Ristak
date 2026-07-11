@@ -722,6 +722,13 @@ admite caption dentro del payload de adjunto. Los assets cargados en
 automatizaciones se resuelven desde su URL pública CDN al asset interno antes de
 enviar. Así una foto WebP ya cargada se manda por la misma ruta de conversión a
 JPEG compatible que usa el chat normal; no se reenvía el WebP crudo a WhatsApp.
+Las notas de voz de Automatizaciones pasan por la misma preparación del chat
+directo: WhatsApp API recibe un OGG real con códec Opus y la marca de voz; el
+transporte QR/Baileys usa además `ptt=true`. Messenger e Instagram no exponen un
+flag equivalente de PTT, por lo que una nota de voz se entrega como adjunto de
+audio reproducible. Cuando el archivo proviene del almacenamiento de Ristak,
+también se normaliza por la misma ruta M4A/AAC que el chat directo antes de que
+Meta lo descargue.
 Las URLs públicas existen exclusivamente para que los proveedores puedan descargar
 el contenido; el endpoint/proxy mantiene MIME, `nosniff` y fuerza la descarga de
 tipos no seguros.

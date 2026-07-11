@@ -16,8 +16,10 @@ import {
   processScheduledContactEnrollments,
   enrollContactManually,
   testWebhookAction,
-  resolveAutomationMediaAssetId
+  resolveAutomationMediaAssetId,
+  resolveAutomationMediaSource
 } from '../src/services/automationEngine.js'
+import { resetCentralStorageConfigCache, uploadMediaAssetFromDataUrl } from '../src/services/mediaStorageService.js'
 import {
   connectEmail,
   setEmailMxResolverForTest,
@@ -115,6 +117,41 @@ test('los adjuntos de automatización resuelven la URL pública CDN al asset int
     assert.equal(await resolveAutomationMediaAssetId('https://files.example.test/foto.webp'), '')
   } finally {
     await db.run('DELETE FROM media_assets WHERE id = ?', [assetId])
+  }
+})
+
+test('las automatizaciones leen su audio administrado antes de entregarlo a cada canal', async () => {
+  const previousProvider = process.env.MEDIA_STORAGE_PROVIDER
+  const previousRequireBunny = process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+  const payload = Buffer.from('audio-de-automatizacion').toString('base64')
+  let assetId = ''
+
+  process.env.MEDIA_STORAGE_PROVIDER = 'local'
+  process.env.MEDIA_STORAGE_REQUIRE_BUNNY = 'false'
+  resetCentralStorageConfigCache()
+
+  try {
+    const asset = await uploadMediaAssetFromDataUrl({
+      fileBase64: `data:audio/mp4;base64,${payload}`,
+      filename: 'nota.m4a',
+      module: 'automations',
+      isPublic: true,
+      skipCompression: true
+    })
+    assetId = asset.id
+
+    const source = await resolveAutomationMediaSource(asset.publicUrl)
+    assert.equal(source.mediaAssetId, assetId)
+    assert.equal(source.externalUrl, '')
+    assert.equal(source.mimeType, 'audio/mp4')
+    assert.equal(source.dataUrl, `data:audio/mp4;base64,${payload}`)
+  } finally {
+    if (assetId) await db.run('DELETE FROM media_assets WHERE id = ?', [assetId]).catch(() => undefined)
+    if (previousProvider === undefined) delete process.env.MEDIA_STORAGE_PROVIDER
+    else process.env.MEDIA_STORAGE_PROVIDER = previousProvider
+    if (previousRequireBunny === undefined) delete process.env.MEDIA_STORAGE_REQUIRE_BUNNY
+    else process.env.MEDIA_STORAGE_REQUIRE_BUNNY = previousRequireBunny
+    resetCentralStorageConfigCache()
   }
 })
 
