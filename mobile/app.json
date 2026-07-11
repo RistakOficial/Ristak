@@ -22,6 +22,9 @@
         "ACCESS_FINE_LOCATION",
         "RECORD_AUDIO"
       ],
+      "blockedPermissions": [
+        "android.permission.ACTIVITY_RECOGNITION"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#050505",
         "foregroundImage": "./assets/ristak-night-mode-icon.png",
