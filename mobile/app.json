@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "Ristak Native",
+    "name": "Ristak",
     "slug": "ristak-native-mobile",
     "version": "1.0.0",
     "description": "Android React Native mobile client for Ristak.",
@@ -26,8 +26,8 @@
         "android.permission.ACTIVITY_RECOGNITION"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#050505",
-        "foregroundImage": "./assets/ristak-night-mode-icon.png",
+        "backgroundColor": "#ffffff",
+        "foregroundImage": "./assets/ristak-light-mode-icon.png",
         "monochromeImage": "./assets/ristak-monochrome-icon.png"
       },
       "predictiveBackGestureEnabled": false
@@ -55,19 +55,11 @@
           "image": "./assets/ristak-light-mode-icon.png",
           "imageWidth": 160,
           "resizeMode": "contain",
-          "dark": {
-            "backgroundColor": "#050506",
-            "image": "./assets/ristak-night-mode-icon.png"
-          },
           "android": {
             "backgroundColor": "#ffffff",
             "image": "./assets/ristak-light-mode-icon.png",
             "imageWidth": 160,
-            "resizeMode": "contain",
-            "dark": {
-              "backgroundColor": "#050506",
-              "image": "./assets/ristak-night-mode-icon.png"
-            }
+            "resizeMode": "contain"
           }
         }
       ],

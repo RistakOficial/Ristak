@@ -652,9 +652,11 @@ el panel embebido dentro de Chat repite el mismo guard y no puede saltarse el
 El icono público de la app móvil usa el isotipo de Ristak. iOS usa variantes
 nativas por apariencia: `AppIcon-light-1024.png` para modo claro,
 `AppIcon-dark-1024.png` para modo oscuro y `AppIcon-tinted-1024.png` alineado al
-icono claro mientras no exista un asset tinted dedicado. Android usa el icono
-claro como launcher base y mantiene recursos `mipmap-night-*` para el icono
-oscuro cuando el sistema/launcher respeta recursos nocturnos.
+icono claro mientras no exista un asset tinted dedicado. Android muestra siempre
+el isotipo claro oficial en el launcher, independiente del modo del sistema: el
+tema de la app se decide al abrir Ristak y no debe cambiar su identidad en la
+pantalla de inicio. El nombre visible de la app Android es exactamente
+`Ristak`, nunca `Ristak Native`.
 
 Los assets nativos y PWA deben mantenerse sincronizados para que el icono sea
 consistente en App Store, Play Store, Android launcher y "Agregar a pantalla de
@@ -678,7 +680,8 @@ inicio":
 - App nativa Android Expo (`mobile/`): `mobile/assets/ristak-light-mode-icon.png`,
   `mobile/assets/ristak-night-mode-icon.png` y
   `mobile/assets/ristak-monochrome-icon.png` alimentan `mobile/app.json` para
-  Android. La pantalla `BootScreen` y el login nativo usan los WebP
+  Android. El launcher adaptativo y el splash inicial usan el asset claro; la
+  pantalla `BootScreen` y el login nativo usan los WebP
   transparentes `mobile/assets/ristak-*-mode-sin-fondo.webp`, generados desde
   los logos oficiales de modo claro/noche. En `mobile/` si debe verse marca al
   cargar; en `/movil` la carga web sigue sin logo ni nombre visible.
