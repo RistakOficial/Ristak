@@ -187,7 +187,7 @@ struct SettingsRootView: View {
     private func iconTint(for panel: SettingsPanel) -> Color {
         switch panel {
         case .numbers, .chats: return RistakTheme.pos
-        case .customFields: return RistakTheme.warn
+        case .customFields, .tags: return RistakTheme.warn
         case .notifications: return RistakTheme.neg
         case .templates, .agent, .appearance, .privacy: return RistakTheme.textDim
         }
@@ -205,6 +205,8 @@ struct SettingsRootView: View {
             return appConfig.chatSortMode == .recent ? "Recientes" : "No leídas"
         case .customFields:
             return model.customFieldsMeta
+        case .tags:
+            return model.tagsMeta
         case .appearance:
             return SettingsThemeMeta.label(for: appConfig, systemScheme: colorScheme)
         case .privacy:
@@ -242,6 +244,8 @@ struct SettingsRootView: View {
             SettingsChatListPanel()
         case .customFields:
             SettingsCustomFieldsPanel()
+        case .tags:
+            SettingsTagsPanel()
         case .appearance:
             SettingsAppearancePanel()
         case .privacy:

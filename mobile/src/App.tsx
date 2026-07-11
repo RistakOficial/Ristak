@@ -232,6 +232,7 @@ import type {
   ConfigValue,
   ContactCustomFieldDefinition,
   ContactTag,
+  ContactAutomationSummary,
   CustomLabels,
   ConversationHistoryCursor,
   ConversationAgentState,
@@ -270,6 +271,7 @@ import type {
   WhatsAppApiStatus,
   WhatsAppNumberOriginDatum,
 } from './types';
+import { buildUserCustomFieldRows, isUserCustomFieldDefinition } from './contactCustomFields';
 
 type NativeThemeTone = 'light' | 'dark';
 type NativeColorPalette = {
@@ -582,7 +584,7 @@ type PhoneChatConditionEvalContext = {
 type PaymentView = 'select' | 'single' | 'partial' | 'subscription' | 'products';
 type RecentPaymentsPeriod = 'today' | '7d' | '30d' | '90d' | 'custom';
 type ProductFormMode = 'create' | 'edit' | null;
-type SettingsPanel = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'privacy' | 'notifications' | null;
+type SettingsPanel = 'numbers' | 'templates' | 'agent' | 'chats' | 'custom-fields' | 'tags' | 'appearance' | 'privacy' | 'notifications' | null;
 type BusinessVoiceState = 'idle' | 'recording' | 'processing';
 type ConversationDraftAttachment = {
   id: string;
@@ -12461,6 +12463,7 @@ function getSettingsPanelTitle(panel: SettingsPanel) {
   if (panel === 'agent') return AI_AGENT_CHAT_DISPLAY_NAME;
   if (panel === 'chats') return 'Lista de chats';
   if (panel === 'custom-fields') return 'Campos personalizados';
+  if (panel === 'tags') return 'Etiquetas';
   if (panel === 'appearance') return 'Apariencia';
   if (panel === 'privacy') return 'Privacidad';
   if (panel === 'notifications') return 'Notificaciones';
@@ -12520,6 +12523,10 @@ function SettingsScreen({
   const [customFields, setCustomFields] = useState<ContactCustomFieldDefinition[]>([]);
   const [customFieldsLoading, setCustomFieldsLoading] = useState(false);
   const [customFieldsError, setCustomFieldsError] = useState('');
+  const [settingsTags, setSettingsTags] = useState<ContactTag[]>([]);
+  const [newCustomFieldName, setNewCustomFieldName] = useState('');
+  const [newTagName, setNewTagName] = useState('');
+  const [catalogBusyId, setCatalogBusyId] = useState<string | null>(null);
   const [calendars, setCalendars] = useState<CalendarItem[]>([]);
   const [calendarsLoading, setCalendarsLoading] = useState(false);
   const [aiAgentConfig, setAiAgentConfig] = useState<AIAgentConfigStatus | null>(null);
@@ -12652,6 +12659,11 @@ function SettingsScreen({
     }
   }, [api]);
 
+  const loadSettingsTags = useCallback(async () => {
+    try { setSettingsTags((await api.getContactTags()).filter((tag) => !tag.isSystem)); }
+    catch { setSettingsTags([]); }
+  }, [api]);
+
   const loadPushPermissionStatus = useCallback(async () => {
     const status = await getNativePushPermissionStatus();
     if (!settingsMountedRef.current) return;
@@ -12684,9 +12696,10 @@ function SettingsScreen({
     if (activePanel === 'numbers') void loadWhatsAppStatus();
     if (activePanel === 'templates') void loadTemplates();
     if (activePanel === 'custom-fields') void loadCustomFields();
+    if (activePanel === 'tags') void loadSettingsTags();
     if (activePanel === 'agent') void loadAIAgentStatus();
     if (activePanel === 'notifications') void loadPushPermissionStatus();
-  }, [activePanel, loadAIAgentStatus, loadCustomFields, loadPushPermissionStatus, loadTemplates, loadWhatsAppStatus]);
+  }, [activePanel, loadAIAgentStatus, loadCustomFields, loadPushPermissionStatus, loadSettingsTags, loadTemplates, loadWhatsAppStatus]);
 
   const getAppBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(appConfig[key], fallback);
   const getUserBoolean = (key: string, fallback: boolean) => coerceConfigBoolean(userConfig[key], fallback);
@@ -12902,6 +12915,7 @@ function SettingsScreen({
       { id: 'agent', title: AI_AGENT_CHAT_DISPLAY_NAME, description: 'Chat fijo y sugerencias.', meta: aiReady ? (aiAgentChatEnabled ? 'Activo' : 'Apagado') : 'Sin OpenAI', Icon: Bot, tone: 'neutral' },
       { id: 'chats', title: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: customFields.length ? `${customFields.length}` : 'Todos', Icon: ListChecks, tone: 'gold' },
+      { id: 'tags', title: 'Etiquetas', description: 'Crea y elimina etiquetas del CRM.', meta: settingsTags.length ? `${settingsTags.length}` : 'Crear', Icon: Tag, tone: 'gold' },
       { id: 'appearance', title: 'Apariencia', description: 'Claro, noche, sistema u horario.', meta: getThemeMeta(themePreference, nativeThemeTone), Icon: Sun, tone: 'neutral' },
       { id: 'privacy', title: 'Privacidad', description: 'Controla vistos de WhatsApp, Messenger e Instagram.', meta: sendReadReceipts ? 'Vistos activos' : 'Vistos apagados', Icon: CheckCheck, tone: 'neutral' },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: pushPermissionLabel, Icon: Bell, tone: 'red' },
@@ -13129,6 +13143,17 @@ function SettingsScreen({
 
   const renderCustomFields = () => (
     <>
+      <View style={styles.settingsCard}>
+        <Text style={styles.settingsFieldTitle}>Crear campo personalizado</Text>
+        <TextInput value={newCustomFieldName} onChangeText={setNewCustomFieldName} placeholder="Ej. Historia clínica" placeholderTextColor={COLORS.muted} style={styles.settingsTextInput} />
+        <SettingsActionCard Icon={Plus} actionIcon={Plus} title="Agregar campo" subtitle="Aparecerá en la info de todos los contactos." actionLabel="Crear" busy={catalogBusyId === 'new-field'} onPress={async () => {
+          const name = newCustomFieldName.trim(); if (!name) return;
+          setCatalogBusyId('new-field');
+          try { await api.createCustomFieldDefinition(name); setNewCustomFieldName(''); await loadCustomFields(); }
+          catch (err) { Alert.alert('Campos personalizados', err instanceof Error ? err.message : 'No se pudo crear el campo.'); }
+          finally { setCatalogBusyId(null); }
+        }} />
+      </View>
       {customFieldsError ? <SettingsAlert message={customFieldsError} /> : null}
       {customFieldsLoading ? <SettingsInlineLoading label="Cargando campos..." /> : null}
       {!customFieldsLoading && customFields.length ? (
@@ -13145,7 +13170,20 @@ function SettingsScreen({
                       <Text numberOfLines={1} style={styles.customFieldTitle}>{definition.label || definition.name || `Campo ${index + 1}`}</Text>
                       <Text numberOfLines={1} style={styles.customFieldSubtitle}>{definition.dataType || 'text'}</Text>
                     </View>
-                    <Check size={17} color={COLORS.accent} strokeWidth={2.8} />
+                    {definition.deletable !== false ? (
+                      <Pressable accessibilityRole="button" disabled={Boolean(catalogBusyId)} onPress={() => {
+                        const id = definition.definitionId || ''; if (!id) return;
+                        Alert.alert('Eliminar campo', `Se borrará “${definition.label || definition.name}” y sus datos en todos los contactos.`, [
+                          { text: 'Cancelar', style: 'cancel' },
+                          { text: 'Eliminar', style: 'destructive', onPress: () => {
+                            setCatalogBusyId(id);
+                            void api.deleteCustomFieldDefinition(id).then(loadCustomFields).catch((err) => Alert.alert('Campos personalizados', err instanceof Error ? err.message : 'No se pudo eliminar el campo.')).finally(() => setCatalogBusyId(null));
+                          } },
+                        ]);
+                      }} style={styles.settingsDeleteButton}>
+                        {catalogBusyId === definition.definitionId ? <ActivityIndicator color={COLORS.danger} /> : <Trash2 size={17} color={COLORS.danger} />}
+                      </Pressable>
+                    ) : null}
                   </View>
                 ))}
               </View>
@@ -13154,6 +13192,39 @@ function SettingsScreen({
         </View>
       ) : null}
       {!customFieldsLoading && !customFields.length && !customFieldsError ? <SettingsEmptyState label="Todavía no hay campos personalizados guardados." /> : null}
+    </>
+  );
+
+  const renderTags = () => (
+    <>
+      <View style={styles.settingsCard}>
+        <Text style={styles.settingsFieldTitle}>Crear etiqueta</Text>
+        <TextInput value={newTagName} onChangeText={setNewTagName} placeholder="Ej. Seguimiento" placeholderTextColor={COLORS.muted} style={styles.settingsTextInput} />
+        <SettingsActionCard Icon={Plus} actionIcon={Plus} title="Agregar etiqueta" subtitle="Quedará disponible en todos los contactos." actionLabel="Crear" busy={catalogBusyId === 'new-tag'} onPress={async () => {
+          const name = newTagName.trim(); if (!name) return;
+          setCatalogBusyId('new-tag');
+          try { await api.createContactTag(name); setNewTagName(''); await loadSettingsTags(); }
+          catch (err) { Alert.alert('Etiquetas', err instanceof Error ? err.message : 'No se pudo crear la etiqueta.'); }
+          finally { setCatalogBusyId(null); }
+        }} />
+      </View>
+      <View style={styles.settingsCard}>
+        {settingsTags.map((tag) => (
+          <View key={tag.id} style={styles.customFieldRow}>
+            <View style={styles.customFieldCopy}><Text style={styles.customFieldTitle}>{tag.name}</Text></View>
+            <Pressable accessibilityRole="button" disabled={Boolean(catalogBusyId)} onPress={() => Alert.alert('Eliminar etiqueta', `Se quitará “${tag.name}” de todos los contactos.`, [
+              { text: 'Cancelar', style: 'cancel' },
+              { text: 'Eliminar', style: 'destructive', onPress: () => {
+                setCatalogBusyId(tag.id);
+                void api.deleteContactTag(tag.id).then(loadSettingsTags).catch((err) => Alert.alert('Etiquetas', err instanceof Error ? err.message : 'No se pudo eliminar la etiqueta.')).finally(() => setCatalogBusyId(null));
+              } },
+            ])} style={styles.settingsDeleteButton}>
+              {catalogBusyId === tag.id ? <ActivityIndicator color={COLORS.danger} /> : <Trash2 size={17} color={COLORS.danger} />}
+            </Pressable>
+          </View>
+        ))}
+        {!settingsTags.length ? <SettingsEmptyState label="Todavía no hay etiquetas creadas." /> : null}
+      </View>
     </>
   );
 
@@ -13297,6 +13368,7 @@ function SettingsScreen({
     if (activePanel === 'agent') return renderAgent();
     if (activePanel === 'chats') return renderChats();
     if (activePanel === 'custom-fields') return renderCustomFields();
+    if (activePanel === 'tags') return renderTags();
     if (activePanel === 'appearance') return renderAppearance();
     if (activePanel === 'privacy') return renderPrivacy();
     if (activePanel === 'notifications') return renderNotifications();
@@ -18015,24 +18087,6 @@ function getComposerChannelOptions(
   return options;
 }
 
-function getContactCustomFieldRows(contact: ChatContact) {
-  return (contact.customFields || [])
-    .map((field, index) => {
-      const rawValue = field.value;
-      const value = Array.isArray(rawValue)
-        ? rawValue.join(', ')
-        : rawValue === null || rawValue === undefined
-          ? ''
-          : String(rawValue);
-      return {
-        id: field.id || field.fieldId || field.field_id || `field-${index}`,
-        label: field.label || field.name || 'Campo',
-        value,
-      };
-    })
-    .filter((field) => field.value.trim());
-}
-
 function formatContactMoney(value: number, accountCurrency: string) {
   const amount = Number.isFinite(value) ? value : 0;
   const currency = accountCurrency.trim().toUpperCase();
@@ -20117,15 +20171,19 @@ function NativeContactDetailScreen({
   appBaseUrl = '',
   businessPhones = [],
   contact,
+  contactAutomations = [],
+  customFieldDefinitions = [],
+  tags = [],
   customLabels = DEFAULT_CUSTOM_LABELS,
   error,
   journeyEvents,
   journeyMessages,
-  loading,
   saving,
   timezone,
   onAppointment,
+  onAddTag,
   onBack,
+  onEnrollAutomation,
   onPayment,
   onSearchChat,
   onSave,
@@ -20134,18 +20192,22 @@ function NativeContactDetailScreen({
   appBaseUrl?: string;
   businessPhones?: WhatsAppApiPhoneNumber[];
   contact: ChatContact;
+  contactAutomations?: ContactAutomationSummary[];
+  customFieldDefinitions?: ContactCustomFieldDefinition[];
+  tags?: ContactTag[];
   customLabels?: CustomLabels;
   error?: string;
   journeyEvents: JourneyEvent[];
   journeyMessages: ChatMessage[];
-  loading?: boolean;
   saving?: boolean;
   timezone: string;
   onAppointment: () => void;
+  onAddTag: () => void;
   onBack: () => void;
+  onEnrollAutomation: (automation: ContactAutomationSummary) => Promise<void>;
   onPayment: () => void;
   onSearchChat: () => void;
-  onSave: (patch: Partial<ChatContact>) => void;
+  onSave: (patch: Partial<ChatContact>) => Promise<void>;
 }) {
   const [nameDraft, setNameDraft] = useState(getContactName(contact));
   const [phoneDraft, setPhoneDraft] = useState(contact.phone || '');
@@ -20157,6 +20219,11 @@ function NativeContactDetailScreen({
   const [ourNumberOpen, setOurNumberOpen] = useState(false);
   const [changingOurNumberId, setChangingOurNumberId] = useState<string | null>(null);
   const [contentFocusItem, setContentFocusItem] = useState<NativeContentFocusItem | null>(null);
+  const [automationPickerOpen, setAutomationPickerOpen] = useState(false);
+  const [automationBusyId, setAutomationBusyId] = useState<string | null>(null);
+  const [editingCustomField, setEditingCustomField] = useState<ReturnType<typeof buildUserCustomFieldRows>[number] | null>(null);
+  const [customFieldDraft, setCustomFieldDraft] = useState('');
+  const [customFieldSaving, setCustomFieldSaving] = useState(false);
   const customerLabel = customLabels.customer || DEFAULT_CUSTOM_LABELS.customer;
   const leadLabel = customLabels.lead || DEFAULT_CUSTOM_LABELS.lead;
   const customerJourneyLabel = formatMobileCrmLabelWithDefiniteArticle(customerLabel, DEFAULT_CUSTOM_LABELS.customer);
@@ -20191,7 +20258,7 @@ function NativeContactDetailScreen({
     links: archiveItems.filter((item) => item.tab === 'links').length,
   }), [archiveItems]);
   const visibleArchiveItems = useMemo(() => archiveItems.filter((item) => item.tab === archiveTab), [archiveItems, archiveTab]);
-  const customFields = getContactCustomFieldRows(contact);
+  const customFields = buildUserCustomFieldRows(customFieldDefinitions, contact.customFields || []);
   const revenueTotal = successfulPayments.reduce((sum, payment) => sum + payment.amount, 0);
   const displayedRevenue = Number(contact.ltv || 0) || revenueTotal;
   const paymentsCount = payments.length || Number(contact.purchases || 0) || successfulPayments.length;
@@ -20300,9 +20367,7 @@ function NativeContactDetailScreen({
         <ChevronLeft size={phoneCompact(34)} color={CONTACT_INFO_THEME.text} strokeWidth={2.8} />
       </Pressable>
       <ContactInfoText numberOfLines={1} style={styles.contactInfoLightHeaderTitle}>{title}</ContactInfoText>
-      <View style={styles.contactInfoLightHeaderSpacer}>
-        {loading ? <ActivityIndicator color={CONTACT_INFO_THEME.accent} /> : null}
-      </View>
+      <View style={styles.contactInfoLightHeaderSpacer} />
     </View>
   );
 
@@ -20683,8 +20748,34 @@ function NativeContactDetailScreen({
         ) : null}
 
         <View style={styles.contactInfoLightSection}>
+          <ContactInfoText style={styles.contactInfoSectionHeadingLight}>ETIQUETAS</ContactInfoText>
+          <View style={styles.contactInfoTagWrapLight}>
+            {(contact.tags || []).map((tagId) => {
+              const tag = tags.find((item) => item.id === tagId);
+              return tag ? <View key={tag.id} style={styles.contactInfoTagPillLight}><ContactInfoText style={styles.contactInfoTagPillTextLight}>{tag.name}</ContactInfoText></View> : null;
+            })}
+            {!(contact.tags || []).some((tagId) => tags.some((item) => item.id === tagId)) ? <ContactInfoText style={styles.contactInfoLightEmpty}>Este chat aún no tiene etiquetas.</ContactInfoText> : null}
+          </View>
+          <Pressable onPress={onAddTag} style={styles.contactInfoAddTagButtonLight}>
+            <Plus size={phoneCompact(17)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.5} />
+            <ContactInfoText style={styles.contactInfoAddTagTextLight}>Agregar etiqueta</ContactInfoText>
+          </Pressable>
+          <Pressable onPress={() => setAutomationPickerOpen(true)} style={styles.contactInfoAutomationButtonLight}>
+            <Repeat2 size={phoneCompact(19)} color={CONTACT_INFO_THEME.accent} strokeWidth={2.4} />
+            <View style={styles.contactInfoAutomationCopyLight}>
+              <ContactInfoText style={styles.contactInfoAutomationTitleLight}>Meter a una automatización</ContactInfoText>
+              <ContactInfoText style={styles.contactInfoAutomationSubtitleLight}>Inscribe al contacto en una secuencia publicada.</ContactInfoText>
+            </View>
+            <ChevronRight size={phoneCompact(18)} color={CONTACT_INFO_THEME.muted} strokeWidth={2.4} />
+          </Pressable>
+        </View>
+
+        <View style={styles.contactInfoLightSection}>
           <ContactInfoText style={styles.contactInfoSectionHeadingLight}>CAMPOS PERSONALIZADOS</ContactInfoText>
-          {customFields.length ? customFields.map((field) => renderRow(field.id, FileText, field.label, field.value)) : <ContactInfoText style={styles.contactInfoLightEmpty}>No hay campos personalizados guardados para este contacto.</ContactInfoText>}
+          {customFields.length ? customFields.map((field) => renderRow(field.id, FileText, field.label, field.value || 'Sin dato', null, () => {
+            setEditingCustomField(field);
+            setCustomFieldDraft(field.value);
+          })) : <ContactInfoText style={styles.contactInfoLightEmpty}>No hay campos personalizados creados en Ajustes.</ContactInfoText>}
         </View>
 
         <View style={styles.contactInfoLightSection}>
@@ -20703,6 +20794,64 @@ function NativeContactDetailScreen({
           onClose={() => setOurNumberOpen(false)}
           onSelect={selectBusinessPhone}
         />
+        <BottomActionSheet
+          open={automationPickerOpen}
+          title="Meter a una automatización"
+          subtitle={getContactName(contact)}
+          onClose={() => setAutomationPickerOpen(false)}
+        >
+          <ScrollView contentContainerStyle={styles.sheetActionList}>
+            {contactAutomations.map((automation) => (
+              <SheetActionRow
+                key={automation.id}
+                Icon={Repeat2}
+                title={automation.name}
+                subtitle="Publicada"
+                busy={automationBusyId === automation.id}
+                disabled={Boolean(automationBusyId)}
+                onPress={() => {
+                  setAutomationBusyId(automation.id);
+                  void onEnrollAutomation(automation).then(() => setAutomationPickerOpen(false)).finally(() => setAutomationBusyId(null));
+                }}
+              />
+            ))}
+            {!contactAutomations.length ? <Text style={styles.contactPickerEmpty}>No hay automatizaciones publicadas.</Text> : null}
+          </ScrollView>
+        </BottomActionSheet>
+        <BottomActionSheet
+          open={Boolean(editingCustomField)}
+          title={editingCustomField?.label || 'Campo personalizado'}
+          subtitle="Info del contacto"
+          onClose={() => setEditingCustomField(null)}
+        >
+          <View style={styles.sheetFormBody}>
+            <TextInput
+              value={customFieldDraft}
+              onChangeText={setCustomFieldDraft}
+              placeholder="Escribe el dato"
+              placeholderTextColor={COLORS.muted}
+              multiline
+              style={styles.sheetTextArea}
+            />
+            <Pressable disabled={customFieldSaving} onPress={() => {
+              const field = editingCustomField;
+              if (!field) return;
+              setCustomFieldSaving(true);
+              void onSave({
+                customFields: [{
+                  definitionId: field.definition.definitionId,
+                  key: field.definition.key,
+                  fieldKey: field.definition.fieldKey,
+                  label: field.label,
+                  dataType: field.definition.dataType,
+                  value: customFieldDraft,
+                }],
+              }).then(() => setEditingCustomField(null)).finally(() => setCustomFieldSaving(false));
+            }} style={styles.sheetPrimaryButton}>
+              {customFieldSaving ? <ActivityIndicator color={COLORS.white} /> : <Text style={styles.sheetPrimaryButtonText}>Guardar dato</Text>}
+            </Pressable>
+          </View>
+        </BottomActionSheet>
       </View>
     </AppFrame>
   );
@@ -21030,9 +21179,10 @@ function NativeConversationScreen({
   const [contactInfoOpen, setContactInfoOpen] = useState(false);
   const [contactInfo, setContactInfo] = useState<ChatContact | null>(null);
   const [contactInfoJourneyEvents, setContactInfoJourneyEvents] = useState<JourneyEvent[] | null>(null);
-  const [contactInfoLoading, setContactInfoLoading] = useState(false);
   const [contactInfoSaving, setContactInfoSaving] = useState(false);
   const [contactInfoError, setContactInfoError] = useState('');
+  const [contactInfoCustomFields, setContactInfoCustomFields] = useState<ContactCustomFieldDefinition[]>([]);
+  const [contactInfoAutomations, setContactInfoAutomations] = useState<ContactAutomationSummary[]>([]);
   const [chatTags, setChatTags] = useState<ContactTag[]>([]);
   const [chatTagsLoading, setChatTagsLoading] = useState(false);
   const [tagQuery, setTagQuery] = useState('');
@@ -23008,11 +23158,12 @@ function NativeConversationScreen({
     setContactInfo((current) => current?.id === contact.id ? current : contact);
     setContactInfoJourneyEvents([]);
     setContactInfoError('');
-    setContactInfoLoading(true);
     try {
-      const [detailsResult, journeyResult] = await Promise.allSettled([
+      const [detailsResult, journeyResult, fieldsResult, automationsResult] = await Promise.allSettled([
         api.getContact(contact.id),
         api.getContactJourney(contact.id),
+        api.getCustomFieldDefinitions(false),
+        api.getContactAutomations(),
       ]);
 
       if (detailsResult.status === 'fulfilled') {
@@ -23022,6 +23173,14 @@ function NativeConversationScreen({
 
       if (journeyResult.status === 'fulfilled' && Array.isArray(journeyResult.value)) {
         setContactInfoJourneyEvents(journeyResult.value);
+      }
+
+      if (fieldsResult.status === 'fulfilled') {
+        setContactInfoCustomFields(fieldsResult.value.filter(isUserCustomFieldDefinition));
+      }
+
+      if (automationsResult.status === 'fulfilled') {
+        setContactInfoAutomations((automationsResult.value.automations || []).filter((automation) => automation.status === 'published'));
       }
 
       if (detailsResult.status === 'rejected' && journeyResult.status === 'rejected') {
@@ -23034,7 +23193,7 @@ function NativeConversationScreen({
     } catch (err) {
       setContactInfoError(err instanceof Error ? err.message : 'No se pudo cargar todo el detalle. Te muestro lo que ya está guardado.');
     } finally {
-      setContactInfoLoading(false);
+      // La ficha conserva el contenido anterior mientras revalida en silencio.
     }
   };
 
@@ -23088,10 +23247,12 @@ function NativeConversationScreen({
         accountCurrency={accountCurrency}
         appBaseUrl={appBaseUrl}
         businessPhones={businessPhones}
+        contactAutomations={contactInfoAutomations}
+        customFieldDefinitions={contactInfoCustomFields}
+        tags={chatTags}
         customLabels={customLabels}
         journeyEvents={contactInfoJourneyEvents ?? journeyEvents}
         journeyMessages={messages}
-        loading={contactInfoLoading}
         saving={contactInfoSaving}
         error={contactInfoError}
         timezone={timezone}
@@ -23099,7 +23260,20 @@ function NativeConversationScreen({
           setContactInfoOpen(false);
           setTimeout(() => navigateToContactTool(contact, 'calendar'), 0);
         }}
+        onAddTag={() => {
+          setTagQuery('');
+          openSheet('tag');
+        }}
         onBack={() => setContactInfoOpen(false)}
+        onEnrollAutomation={async (automation) => {
+          try {
+            await api.enrollContactInAutomation(automation.id, (contactInfo || contact).id);
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
+          } catch (err) {
+            Alert.alert('Automatización', err instanceof Error ? err.message : 'No se pudo agregar el contacto.');
+            throw err;
+          }
+        }}
         onPayment={() => {
           setContactInfoOpen(false);
           setTimeout(() => navigateToContactTool(contact, 'payments'), 0);
@@ -27224,6 +27398,26 @@ function createAppStyles() {
     backgroundColor: elevatedSurface,
     padding: 16,
     gap: 14,
+  },
+  settingsTextInput: {
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: 14,
+    backgroundColor: COLORS.panelSoft,
+    color: COLORS.text,
+    paddingHorizontal: 12,
+    fontSize: 15,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  settingsDeleteButton: {
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 12,
+    backgroundColor: COLORS.panelSoft,
   },
   settingsFieldTitle: {
     color: COLORS.text,
@@ -35325,6 +35519,57 @@ function createAppStyles() {
     paddingHorizontal: phoneCompact(18),
     paddingVertical: phoneCompact(17),
   },
+  contactInfoTagWrapLight: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: phoneCompact(7),
+  },
+  contactInfoTagPillLight: {
+    borderRadius: phoneCompact(999),
+    backgroundColor: CONTACT_INFO_THEME.accentSoft,
+    paddingHorizontal: phoneCompact(10),
+    paddingVertical: phoneCompact(6),
+  },
+  contactInfoTagPillTextLight: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(13),
+    fontWeight: '800',
+  },
+  contactInfoAddTagButtonLight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(7),
+    paddingVertical: phoneCompact(12),
+  },
+  contactInfoAddTagTextLight: {
+    color: CONTACT_INFO_THEME.accent,
+    fontSize: phoneCompact(15),
+    fontWeight: '800',
+  },
+  contactInfoAutomationButtonLight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: phoneCompact(10),
+    paddingTop: phoneCompact(13),
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: CONTACT_INFO_THEME.border,
+  },
+  contactInfoAutomationCopyLight: {
+    flex: 1,
+    minWidth: 0,
+    gap: phoneCompact(2),
+  },
+  contactInfoAutomationTitleLight: {
+    color: CONTACT_INFO_THEME.text,
+    fontSize: phoneCompact(15),
+    fontWeight: '800',
+  },
+  contactInfoAutomationSubtitleLight: {
+    color: CONTACT_INFO_THEME.muted,
+    fontSize: phoneCompact(12),
+    lineHeight: phoneCompact(16),
+    fontWeight: '600',
+  },
   contactInfoMediaFallback: {
     flex: 1,
     alignItems: 'center',
@@ -35881,6 +36126,23 @@ function createAppStyles() {
     fontSize: 15,
     lineHeight: 20,
     fontWeight: '700',
+  },
+  sheetFormBody: {
+    gap: 12,
+    padding: 16,
+    paddingBottom: sheetFormBottomInset,
+  },
+  sheetPrimaryButton: {
+    minHeight: 50,
+    borderRadius: 16,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sheetPrimaryButtonText: {
+    color: COLORS.white,
+    fontSize: 16,
+    fontWeight: '900',
   },
   templatesSheetBody: {
     minHeight: 160,

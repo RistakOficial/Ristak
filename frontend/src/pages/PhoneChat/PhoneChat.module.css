@@ -3162,6 +3162,83 @@
   text-transform: uppercase;
 }
 
+.contactInfoTagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 10px;
+  color: var(--phone-chat-muted);
+}
+
+.contactInfoTagPill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: var(--phone-chat-control-rest);
+  color: var(--phone-chat-text);
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.contactInfoManageButton,
+.contactInfoAutomationButton {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  border: 0;
+  color: var(--phone-chat-accent);
+  background: transparent;
+  text-align: left;
+}
+
+.contactInfoManageButton {
+  padding: 8px 0 12px;
+  font-weight: 750;
+}
+
+.contactInfoAutomationButton {
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--phone-chat-border);
+}
+
+.contactInfoAutomationButton span {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.contactInfoAutomationButton strong { color: var(--phone-chat-text); }
+.contactInfoAutomationButton small { color: var(--phone-chat-muted); }
+
+.contactAutomationList {
+  display: grid;
+  gap: 4px;
+}
+
+.contactAutomationList button,
+.contactAutomationLoading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 58px;
+  padding: 10px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--phone-chat-border);
+  color: var(--phone-chat-text);
+  background: transparent;
+  text-align: left;
+}
+
+.contactAutomationList button span {
+  display: grid;
+  flex: 1;
+  gap: 3px;
+}
+
+.contactAutomationList small,
+.contactAutomationList p { color: var(--phone-chat-muted); }
+
 .contactInfoMetrics {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

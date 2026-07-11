@@ -8,6 +8,7 @@ import type {
   ChatMessage,
   ConfigValue,
   ContactTag,
+  ContactAutomationsOverview,
   ContactCustomFieldDefinition,
   CustomLabels,
   AIAgentTranscriptionResult,
@@ -705,6 +706,10 @@ export class RistakApiClient {
       method: 'POST',
       body: JSON.stringify({ name }),
     });
+  }
+
+  deleteContactTag(tagId: string) {
+    return this.request(`/contact-tags/${tagId}`, { method: 'DELETE' });
   }
 
   addContactTag(contactId: string, tagId: string) {
@@ -1447,6 +1452,29 @@ export class RistakApiClient {
       params: {
         includeArchived: includeArchived ? 'true' : undefined,
       },
+    });
+  }
+
+  createCustomFieldDefinition(label: string) {
+    const key = label.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    return this.request<ContactCustomFieldDefinition>('/settings/custom-fields', {
+      method: 'POST',
+      body: JSON.stringify({ label, key, dataType: 'text' }),
+    });
+  }
+
+  deleteCustomFieldDefinition(definitionId: string) {
+    return this.request(`/settings/custom-fields/${definitionId}`, { method: 'DELETE' });
+  }
+
+  getContactAutomations() {
+    return this.request<ContactAutomationsOverview>('/automations');
+  }
+
+  enrollContactInAutomation(automationId: string, contactId: string) {
+    return this.request<{ enrollment?: unknown }>(`/automations/${automationId}/enroll-contact`, {
+      method: 'POST',
+      body: JSON.stringify({ contactId, mode: 'now' }),
     });
   }
 

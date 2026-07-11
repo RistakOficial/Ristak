@@ -88,6 +88,7 @@ import type { PhoneSection } from '@/components/phone/phoneNavigation'
 import { useAuth } from '@/contexts/AuthContext'
 import { hasLicenseFeature, hasModuleAccess } from '@/utils/accessControl'
 import { optimizeChatImageFile } from '@/utils/chatMedia'
+import { automationsService, type AutomationSummary } from '@/services/automationsService'
 import {
   getChatSendResponseIds,
   reconcileServerMessageIntoOptimistic
@@ -5416,6 +5417,10 @@ export const PhoneChat: React.FC = () => {
   const [contactInfoContact, setContactInfoContact] = useState<Contact | null>(null)
   const [contactInfoLoading, setContactInfoLoading] = useState(false)
   const [contactInfoError, setContactInfoError] = useState('')
+  const [contactAutomationOpen, setContactAutomationOpen] = useState(false)
+  const [contactAutomations, setContactAutomations] = useState<AutomationSummary[]>([])
+  const [contactAutomationsLoading, setContactAutomationsLoading] = useState(false)
+  const [enrollingAutomationId, setEnrollingAutomationId] = useState<string | null>(null)
   const [contactInfoDetailPanel, setContactInfoDetailPanel] = useState<ContactInfoDetailPanel>(null)
   const [contactInfoRecordDetail, setContactInfoRecordDetail] = useState<ContactInfoRecordDetail>(null)
   const [contactNameEditing, setContactNameEditing] = useState(false)
@@ -9799,6 +9804,7 @@ export const PhoneChat: React.FC = () => {
 
     setContactInfoContact(cachedContactInfo?.data || activeContact)
     setContactInfoLoading(true)
+    void loadChatTags()
 
     try {
       const details = await contactsService.getContactDetails(activeContact.id)
@@ -10106,7 +10112,7 @@ export const PhoneChat: React.FC = () => {
     }
   }
 
-  const openTagSheet = (contact?: Contact | null) => {
+  const openTagSheet = (contact?: Contact | null, preserveContactInfo = false) => {
     const targetContact = contact || activeContact
     if (!targetContact) {
       showToast('warning', 'Elige un chat', 'Abre una conversación antes de agregar una etiqueta.')
@@ -10132,9 +10138,38 @@ export const PhoneChat: React.FC = () => {
       setSheet('tag')
       setTagDropdownOpen(false)
     }
-    setContactInfoOpen(false)
+    if (!preserveContactInfo) setContactInfoOpen(false)
     closeSwipeActions()
     void loadChatTags()
+  }
+
+  const openContactAutomationSheet = async () => {
+    if (!contactInfoData) return
+    setContactAutomationOpen(true)
+    setContactAutomationsLoading(true)
+    try {
+      const overview = await automationsService.getOverview({ suppressFeatureNotAvailableToast: true })
+      setContactAutomations((overview.automations || []).filter((automation) => automation.status === 'published'))
+    } catch (error: any) {
+      setContactAutomations([])
+      showToast('error', 'No se cargaron las automatizaciones', getErrorMessage(error, 'Intenta otra vez.'))
+    } finally {
+      setContactAutomationsLoading(false)
+    }
+  }
+
+  const enrollContactInfoInAutomation = async (automation: AutomationSummary) => {
+    if (!contactInfoData || enrollingAutomationId) return
+    setEnrollingAutomationId(automation.id)
+    try {
+      await automationsService.enrollContact(automation.id, { contactId: contactInfoData.id, mode: 'now' })
+      setContactAutomationOpen(false)
+      showToast('success', 'Contacto agregado', `${getContactName(contactInfoData)} entró a ${automation.name}.`)
+    } catch (error: any) {
+      showToast('error', 'No se agregó a la automatización', getErrorMessage(error, 'Intenta otra vez.'))
+    } finally {
+      setEnrollingAutomationId(null)
+    }
   }
 
   const applyTagToContact = async (tag: ContactTag) => {
@@ -17043,12 +17078,6 @@ export const PhoneChat: React.FC = () => {
                 {businessPhones.length > 1 && <ChevronDown size={15} aria-hidden="true" />}
               </button>
             )}
-            {contactInfoLoading && (
-              <span className={styles.contactInfoLoading}>
-                <Loader2 size={14} className={styles.spinIcon} />
-                Actualizando datos
-              </span>
-            )}
             {contactInfoError && <span className={styles.contactInfoError}>{contactInfoError}</span>}
           </section>
 
@@ -17188,6 +17217,27 @@ export const PhoneChat: React.FC = () => {
               {renderContactInfoRow('created', <User size={17} />, 'Contacto creado', formatLocalDateTime(leadDate))}
               {renderContactInfoRow('stage', <Tag size={17} />, 'Estado', contactInfoStageBadge?.text || (contactInfoData.status === 'customer' ? customerLabel : leadLabel))}
             </div>
+          </section>
+
+          <section className={styles.contactInfoSection}>
+            <h3>Etiquetas</h3>
+            <div className={styles.contactInfoTagList}>
+              {(contactInfoData.tags || []).map((tagId) => {
+                const tag = chatTags.find((item) => item.id === tagId)
+                return tag ? <span key={tag.id} className={styles.contactInfoTagPill}>{tag.name}</span> : null
+              })}
+              {!(contactInfoData.tags || []).some((tagId) => chatTags.some((item) => item.id === tagId)) && (
+                <small>Este chat aún no tiene etiquetas.</small>
+              )}
+            </div>
+            <button type="button" className={styles.contactInfoManageButton} onClick={() => openTagSheet(contactInfoData, true)}>
+              <Plus size={16} /> Agregar etiqueta
+            </button>
+            <button type="button" className={styles.contactInfoAutomationButton} onClick={() => void openContactAutomationSheet()}>
+              <Repeat2 size={17} />
+              <span><strong>Meter a una automatización</strong><small>Inscribe al contacto en una secuencia publicada.</small></span>
+              <ChevronRight size={17} />
+            </button>
           </section>
 
           <section className={styles.contactInfoSection}>
@@ -21793,6 +21843,29 @@ export const PhoneChat: React.FC = () => {
               </button>
             )
           })}
+        </div>
+      </PhoneSheet>
+
+      <PhoneSheet
+        isOpen={contactAutomationOpen}
+        onClose={() => setContactAutomationOpen(false)}
+        title="Meter a una automatización"
+        subtitle={contactInfoData ? getContactName(contactInfoData) : undefined}
+      >
+        <div className={styles.contactAutomationList}>
+          {contactAutomationsLoading ? (
+            <span className={styles.contactAutomationLoading}><Loader2 size={18} className={styles.spinIcon} /> Cargando automatizaciones…</span>
+          ) : contactAutomations.length ? contactAutomations.map((automation) => (
+            <button
+              key={automation.id}
+              type="button"
+              disabled={Boolean(enrollingAutomationId)}
+              onClick={() => void enrollContactInfoInAutomation(automation)}
+            >
+              <span><strong>{automation.name}</strong><small>Publicada</small></span>
+              {enrollingAutomationId === automation.id ? <Loader2 size={17} className={styles.spinIcon} /> : <ChevronRight size={17} />}
+            </button>
+          )) : <p>No hay automatizaciones publicadas.</p>}
         </div>
       </PhoneSheet>
 

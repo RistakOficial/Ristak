@@ -119,8 +119,12 @@ export type ChatContact = {
   updatedAt?: string;
   customFields?: Array<{
     id?: string;
+    definitionId?: string;
     fieldId?: string;
     field_id?: string;
+    key?: string;
+    fieldKey?: string;
+    dataType?: string;
     name?: string;
     label?: string;
     value?: unknown;
@@ -132,6 +136,17 @@ export type ContactTag = {
   name: string;
   isSystem?: boolean;
   usageCount?: number;
+};
+
+export type ContactAutomationSummary = {
+  id: string;
+  name: string;
+  status: string;
+  description?: string;
+};
+
+export type ContactAutomationsOverview = {
+  automations?: ContactAutomationSummary[];
 };
 
 export type ConversationAgentState = {
@@ -980,7 +995,15 @@ export type ContactCustomFieldDefinition = {
   label?: string;
   name?: string;
   dataType?: string;
+  options?: Array<{ label: string; value: string }>;
+  folderId?: string;
   folderName?: string;
+  sourceType?: string;
+  system?: boolean;
+  systemManaged?: boolean;
+  locked?: boolean;
+  editable?: boolean;
+  deletable?: boolean;
   archived?: boolean;
 };
 

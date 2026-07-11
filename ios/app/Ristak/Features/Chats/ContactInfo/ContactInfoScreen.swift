@@ -266,10 +266,6 @@ struct ContactInfoScreen: View {
                         automationNoticePill(automationNotice)
                     }
 
-                    if viewModel.isRefreshing {
-                        refreshingPill
-                    }
-
                     heroSection(contact)
                     metricsSection(contact)
                     mainDataSection(contact)
@@ -279,7 +275,6 @@ struct ContactInfoScreen: View {
                     originSection(contact)
                     followUpSection(contact)
                     agentSection
-                    automationsSection
                     localChatSection(contact)
                 }
                 .frame(maxWidth: horizontalSizeClass == .regular ? 640 : .infinity)
@@ -290,21 +285,6 @@ struct ContactInfoScreen: View {
             .scrollDismissesKeyboard(.interactively)
             .refreshable { await viewModel.refresh() }
         }
-    }
-
-    /// Pill "Actualizando datos" (paridad /movil, doc 06 §4.1).
-    private var refreshingPill: some View {
-        HStack(spacing: RistakTheme.Spacing.xs) {
-            ProgressView()
-                .controlSize(.mini)
-            Text("Actualizando datos")
-                .font(.caption)
-                .foregroundStyle(RistakTheme.textDim)
-        }
-        .padding(.horizontal, RistakTheme.Spacing.sm)
-        .padding(.vertical, 6)
-        .background(Capsule().fill(RistakTheme.controlRest))
-        .transition(.opacity)
     }
 
     // MARK: Hero
@@ -678,6 +658,8 @@ struct ContactInfoScreen: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                 }
+
+                automationsSection
             }
         }
     }
@@ -1057,8 +1039,7 @@ struct ContactInfoScreen: View {
     @ViewBuilder
     private var automationsSection: some View {
         if canEditContact && access.canWrite(module: .automations) {
-            SectionCard {
-                Button {
+            Button {
                     showAutomationsSheet = true
                 } label: {
                     HStack(spacing: RistakTheme.Spacing.sm) {
@@ -1093,7 +1074,6 @@ struct ContactInfoScreen: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Meter a una automatización")
-            }
         }
     }
 

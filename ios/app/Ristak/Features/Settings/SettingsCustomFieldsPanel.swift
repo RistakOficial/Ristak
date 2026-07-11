@@ -4,6 +4,11 @@ import SwiftUI
 /// SOLO LECTURA de `GET /api/contacts/custom-fields`, agrupado por carpeta.
 struct SettingsCustomFieldsPanel: View {
     @Environment(SettingsModel.self) private var model
+    @State private var showCreate = false
+    @State private var draftName = ""
+    @State private var busy = false
+    @State private var errorMessage: String?
+    @State private var pendingDelete: ContactCustomFieldDefinition?
 
     var body: some View {
         SettingsLoadStateView(
@@ -15,7 +20,20 @@ struct SettingsCustomFieldsPanel: View {
         }
         .navigationTitle("Campos personalizados")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar { Button { showCreate = true } label: { Label("Crear campo", systemImage: "plus") } }
         .refreshable { await model.loadCustomFields() }
+        .alert("Nuevo campo personalizado", isPresented: $showCreate) {
+            TextField("Nombre del campo", text: $draftName)
+            Button("Crear") { Task { await createField() } }.disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || busy)
+            Button("Cancelar", role: .cancel) { draftName = "" }
+        } message: { Text("Este campo aparecerá en la info de todos los contactos.") }
+        .alert("No se guardó", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("Entendido", role: .cancel) {}
+        } message: { Text(errorMessage ?? "") }
+        .confirmationDialog("Eliminar campo", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
+            Button("Eliminar", role: .destructive) { if let field = pendingDelete { Task { await deleteField(field) } } }
+            Button("Cancelar", role: .cancel) {}
+        } message: { Text("Se borrará el campo y sus datos guardados en todos los contactos.") }
     }
 
     @ViewBuilder
@@ -104,11 +122,88 @@ struct SettingsCustomFieldsPanel: View {
 
             Spacer(minLength: RistakTheme.Spacing.xs)
 
-            Image(systemName: "checkmark.circle.fill")
-                .font(.body)
-                .foregroundStyle(RistakTheme.accent)
-                .accessibilityHidden(true)
+            if field.deletable {
+                Button(role: .destructive) { pendingDelete = field } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Eliminar \(field.label)")
+            }
         }
         .padding(.vertical, RistakTheme.Spacing.xxs)
+    }
+
+    private func createField() async {
+        busy = true
+        defer { busy = false }
+        do {
+            try await model.createCustomField(label: draftName)
+            draftName = ""
+        } catch {
+            errorMessage = (error as? RistakAPIError)?.message ?? "No se pudo crear el campo."
+        }
+    }
+
+    private func deleteField(_ field: ContactCustomFieldDefinition) async {
+        do { try await model.deleteCustomField(field) }
+        catch { errorMessage = (error as? RistakAPIError)?.message ?? "No se pudo eliminar el campo." }
+    }
+}
+
+struct SettingsTagsPanel: View {
+    @Environment(SettingsModel.self) private var model
+    @State private var showCreate = false
+    @State private var draftName = ""
+    @State private var errorMessage: String?
+    @State private var pendingDelete: ContactTag?
+
+    var body: some View {
+        SettingsLoadStateView(state: model.tags, loadingMessage: "Cargando etiquetas...", retry: { Task { await model.loadTags() } }) { tags in
+            SettingsPanelScroll {
+                if tags.isEmpty {
+                    RistakEmptyState(icon: "tag", title: "Etiquetas", message: "Todavía no hay etiquetas creadas.")
+                } else {
+                    SectionCard(title: "Etiquetas") {
+                        VStack(spacing: 0) {
+                            ForEach(tags) { tag in
+                                HStack {
+                                    Text(tag.name).frame(maxWidth: .infinity, alignment: .leading)
+                                    Button(role: .destructive) { pendingDelete = tag } label: { Image(systemName: "trash") }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("Eliminar \(tag.name)")
+                                }
+                                .padding(.vertical, RistakTheme.Spacing.xs)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Etiquetas")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { Button { showCreate = true } label: { Label("Crear etiqueta", systemImage: "plus") } }
+        .refreshable { await model.loadTags() }
+        .alert("Nueva etiqueta", isPresented: $showCreate) {
+            TextField("Nombre de la etiqueta", text: $draftName)
+            Button("Crear") { Task { await createTag() } }.disabled(draftName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("Cancelar", role: .cancel) { draftName = "" }
+        }
+        .alert("No se guardó", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("Entendido", role: .cancel) {}
+        } message: { Text(errorMessage ?? "") }
+        .confirmationDialog("Eliminar etiqueta", isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }), titleVisibility: .visible) {
+            Button("Eliminar", role: .destructive) { if let tag = pendingDelete { Task { await deleteTag(tag) } } }
+            Button("Cancelar", role: .cancel) {}
+        } message: { Text("Se quitará la etiqueta de todos los contactos.") }
+    }
+
+    private func createTag() async {
+        do { try await model.createTag(name: draftName); draftName = "" }
+        catch { errorMessage = (error as? RistakAPIError)?.message ?? "No se pudo crear la etiqueta." }
+    }
+
+    private func deleteTag(_ tag: ContactTag) async {
+        do { try await model.deleteTag(tag) }
+        catch { errorMessage = (error as? RistakAPIError)?.message ?? "No se pudo eliminar la etiqueta." }
     }
 }

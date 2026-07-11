@@ -35,6 +35,7 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
     case agent
     case chats
     case customFields = "custom-fields"
+    case tags
     case appearance
     case privacy
     case notifications
@@ -48,6 +49,7 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .agent: return "Asistente Personal AI"
         case .chats: return "Lista de chat"
         case .customFields: return "Campos personalizados"
+        case .tags: return "Etiquetas"
         case .appearance: return "Apariencia"
         case .privacy: return "Privacidad"
         case .notifications: return "Notificaciones"
@@ -61,6 +63,7 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .agent: return "Chat fijo y sugerencias."
         case .chats: return "Orden, archivados y vista previa."
         case .customFields: return "Datos visibles en cada contacto."
+        case .tags: return "Crea y elimina etiquetas del CRM."
         case .appearance: return "Claro, noche, sistema u horario."
         case .privacy: return "Controla vistos de WhatsApp, Messenger e Instagram."
         case .notifications: return "Mensajes, citas, sonido y vibración."
@@ -74,6 +77,7 @@ enum SettingsPanel: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .agent: return "sparkles"
         case .chats: return "bubble.left"
         case .customFields: return "checklist"
+        case .tags: return "tag"
         case .appearance: return "sun.max"
         case .privacy: return "checkmark.bubble"
         case .notifications: return "bell.fill"
@@ -97,6 +101,7 @@ final class SettingsModel {
     private(set) var agent: SettingsLoadState<AIAgentConfigStatus> = .idle
     private(set) var calendars: SettingsLoadState<[RistakCalendar]> = .idle
     private(set) var customFields: SettingsLoadState<[ContactCustomFieldDefinition]> = .idle
+    private(set) var tags: SettingsLoadState<[ContactTag]> = .idle
 
     /// Hay un `POST /whatsapp-api/refresh` en curso.
     private(set) var isRefreshingWhatsApp = false
@@ -105,6 +110,7 @@ final class SettingsModel {
 
     private var didLoadOnce = false
     private let contactsService = ContactsService()
+    private let tagsService = TagsService()
     private let templatesService = TemplatesService()
 
     init() {
@@ -158,7 +164,8 @@ final class SettingsModel {
         async let agentTask: Void = loadAgent()
         async let calendarsTask: Void = loadCalendars()
         async let fieldsTask: Void = loadCustomFields()
-        _ = await (whatsappTask, templatesTask, agentTask, calendarsTask, fieldsTask)
+        async let tagsTask: Void = loadTags()
+        _ = await (whatsappTask, templatesTask, agentTask, calendarsTask, fieldsTask, tagsTask)
     }
 
     func loadWhatsApp() async {
@@ -204,10 +211,44 @@ final class SettingsModel {
         if customFields.value == nil { customFields = .loading }
         do {
             let all = try await contactsService.fetchCustomFieldDefinitions(includeArchived: true)
-            persistCustomFields(all.filter { !$0.archived })
+            persistCustomFields(all.filter(ContactInfoViewModel.isUserCreatedDefinition))
         } catch {
             customFields = Self.failureState(from: error, keeping: customFields)
         }
+    }
+
+    func loadTags() async {
+        if tags.value == nil { tags = .loading }
+        do {
+            tags = .loaded(try await tagsService.fetchTags().filter { !$0.isSystem })
+        } catch {
+            tags = Self.failureState(from: error, keeping: tags)
+        }
+    }
+
+    func createCustomField(label: String) async throws {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = trimmed.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+            .replacingOccurrences(of: "[^a-z0-9]+", with: "_", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
+        _ = try await contactsService.createCustomFieldDefinition(label: trimmed, key: key)
+        await loadCustomFields()
+    }
+
+    func deleteCustomField(_ field: ContactCustomFieldDefinition) async throws {
+        try await contactsService.deleteCustomFieldDefinition(id: field.id)
+        await loadCustomFields()
+    }
+
+    func createTag(name: String) async throws {
+        _ = try await tagsService.createTag(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+        await loadTags()
+    }
+
+    func deleteTag(_ tag: ContactTag) async throws {
+        try await tagsService.deleteTag(id: tag.id)
+        await loadTags()
     }
 
     // MARK: - Persistencia SWR (estado + caché)
@@ -315,6 +356,11 @@ final class SettingsModel {
     var customFieldsMeta: String {
         guard let fields = customFields.value, !fields.isEmpty else { return "Todos" }
         return "\(fields.count)"
+    }
+
+    var tagsMeta: String {
+        guard let tags = tags.value, !tags.isEmpty else { return "Crear" }
+        return "\(tags.count)"
     }
 
     // MARK: - Helpers

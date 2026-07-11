@@ -14,12 +14,15 @@ import {
   LogOut,
   MessageCircle,
   Mic,
+  Plus,
   RefreshCw,
   Save,
   Smartphone,
   Sparkles,
   Square,
   Sun,
+  Tag,
+  Trash2,
   type LucideIcon
 } from 'lucide-react'
 import { PhoneEcosystemNav } from '@/components/phone/PhoneEcosystemNav'
@@ -29,7 +32,8 @@ import { useLabels } from '@/contexts/LabelsContext'
 import { useNotification } from '@/contexts/NotificationContext'
 import { useAIAgentAvailability, useAppConfig, useUserConfig, usePhoneElasticScroll, usePhoneTheme } from '@/hooks' // (MOB-006) useUserConfig
 import { calendarsService, type Calendar } from '@/services/calendarsService'
-import { contactsService } from '@/services/contactsService'
+import { customFieldsService, isSystemCustomFieldDefinition } from '@/services/customFieldsService'
+import { contactTagsService, type ContactTag } from '@/services/contactTagsService'
 import { aiAgentService } from '@/services/aiAgentService'
 import { mobileAppService } from '@/services/mobileAppService'
 import { clearRuntimeApiBaseUrl, isNativeAppRuntime } from '@/services/apiBaseUrl'
@@ -40,7 +44,7 @@ import { DEFAULT_CRM_LABELS, formatCrmLabelLower } from '@/utils/crmLabels'
 import { PHONE_APP_LOGIN_PATH, PHONE_APP_TENANT_PATH } from '@/utils/phoneAccess'
 import styles from './PhoneSettings.module.css'
 
-type SettingsSection = 'templates' | 'agent' | 'chats' | 'custom-fields' | 'appearance' | 'privacy' | 'notifications' | null
+type SettingsSection = 'templates' | 'agent' | 'chats' | 'custom-fields' | 'tags' | 'appearance' | 'privacy' | 'notifications' | null
 type ConversationSortMode = 'recent' | 'unread'
 type PhoneNotificationPermission = NotificationPermission | 'native_granted' | 'native_denied' | 'native_prompt' | 'unsupported' | 'checking'
 type BusinessVoiceState = 'idle' | 'recording' | 'processing'
@@ -148,6 +152,10 @@ export const PhoneSettings: React.FC = () => {
   const [customFieldDefinitions, setCustomFieldDefinitions] = useState<ContactCustomFieldDefinition[]>([])
   const [customFieldsLoading, setCustomFieldsLoading] = useState(false)
   const [customFieldsError, setCustomFieldsError] = useState('')
+  const [settingsTags, setSettingsTags] = useState<ContactTag[]>([])
+  const [newCustomFieldName, setNewCustomFieldName] = useState('')
+  const [newTagName, setNewTagName] = useState('')
+  const [catalogBusyId, setCatalogBusyId] = useState<string | null>(null)
   const [requestingPush, setRequestingPush] = useState(false)
   const [permission, setPermission] = useState(getNotificationPermission)
   const [backButtonCollapsed, setBackButtonCollapsed] = useState(false)
@@ -286,14 +294,19 @@ export const PhoneSettings: React.FC = () => {
     setCustomFieldsError('')
     setCustomFieldsLoading(true)
     try {
-      const definitions = await contactsService.getCustomFieldDefinitions()
-      setCustomFieldDefinitions(Array.isArray(definitions) ? definitions.filter((definition) => !definition.archived) : [])
+      const catalog = await customFieldsService.listCatalog()
+      setCustomFieldDefinitions((catalog.fields || []).filter((definition) => !definition.archived && !isSystemCustomFieldDefinition(definition)))
     } catch (error: any) {
       setCustomFieldDefinitions([])
       setCustomFieldsError(error?.message || 'No se pudieron cargar los campos personalizados.')
     } finally {
       setCustomFieldsLoading(false)
     }
+  }, [])
+
+  const loadSettingsTags = useCallback(async () => {
+    try { setSettingsTags(await contactTagsService.getTags({ includeSystem: false, forceRefresh: true })) }
+    catch { setSettingsTags([]) }
   }, [])
 
   useEffect(() => {
@@ -306,7 +319,8 @@ export const PhoneSettings: React.FC = () => {
 
   useEffect(() => {
     if (activeSection === 'custom-fields') loadCustomFieldDefinitions()
-  }, [activeSection, loadCustomFieldDefinitions])
+    if (activeSection === 'tags') loadSettingsTags()
+  }, [activeSection, loadCustomFieldDefinitions, loadSettingsTags])
 
   useEffect(() => {
     if (activeSection === 'agent') {
@@ -582,6 +596,7 @@ export const PhoneSettings: React.FC = () => {
       { id: 'agent', title: PERSONAL_ASSISTANT_AI_LABEL, mobileTitle: PERSONAL_ASSISTANT_AI_LABEL, description: 'Chat fijo y sugerencias.', meta: aiAvailability.configured ? aiAgentChatEnabled ? 'Activo' : 'Apagado' : 'Sin OpenAI', Icon: Bot, tone: 'blue' },
       { id: 'chats', title: 'Lista de chats', mobileTitle: 'Lista de chat', description: 'Orden, archivados y vista previa.', meta: conversationSortMode === 'recent' ? 'Recientes' : 'No leídas', Icon: MessageCircle, tone: 'green' },
       { id: 'custom-fields', title: 'Campos personalizados', description: 'Datos visibles en cada contacto.', meta: 'Todos', Icon: ListChecks, tone: 'gold' },
+      { id: 'tags', title: 'Etiquetas', description: 'Crea y elimina etiquetas del CRM.', meta: settingsTags.length ? `${settingsTags.length}` : 'Crear', Icon: Tag, tone: 'gold' },
       { id: 'appearance', title: 'Apariencia', description: 'El chat sigue el tema de tu app.', meta: resolvedThemeLabel, Icon: Sun, tone: 'blue' },
       { id: 'privacy', title: 'Privacidad', description: 'Controla vistos de WhatsApp, Messenger e Instagram.', meta: sendReadReceipts ? 'Vistos activos' : 'Vistos apagados', Icon: CheckCheck, tone: 'blue' },
       { id: 'notifications', title: 'Notificaciones', description: 'Mensajes, citas, sonido y vibración.', meta: permissionLabel, Icon: Bell, tone: 'red' }
@@ -763,6 +778,20 @@ export const PhoneSettings: React.FC = () => {
 
   const renderCustomFields = () => (
     <>
+      <section className={styles.catalogCreateSection}>
+        <strong>Crear campo personalizado</strong>
+        <input value={newCustomFieldName} onChange={(event) => setNewCustomFieldName(event.target.value)} placeholder="Ej. Historia clínica" />
+        <button type="button" disabled={!newCustomFieldName.trim() || catalogBusyId === 'new-field'} onClick={async () => {
+          const name = newCustomFieldName.trim(); if (!name) return
+          setCatalogBusyId('new-field')
+          try {
+            await customFieldsService.createField({ label: name, dataType: 'text' })
+            setNewCustomFieldName('')
+            await loadCustomFieldDefinitions()
+          } catch (error: any) { showToast('error', 'No se creó el campo', error?.message || 'Intenta otra vez.') }
+          finally { setCatalogBusyId(null) }
+        }}>{catalogBusyId === 'new-field' ? <Loader2 size={16} className={styles.spinIcon} /> : <Plus size={16} />} Crear</button>
+      </section>
       {customFieldsError && (
         <div className={styles.alertBox}>
           <CircleAlert size={18} />
@@ -785,7 +814,20 @@ export const PhoneSettings: React.FC = () => {
                   <strong>{definition.label || definition.name || `Campo ${index + 1}`}</strong>
                   <small>{definition.folderName || 'Campos personalizados'} · {definition.dataType || 'text'}</small>
                 </span>
-                <Check size={17} aria-hidden="true" />
+                {definition.deletable !== false && (
+                  <button type="button" className={styles.catalogDeleteButton} disabled={Boolean(catalogBusyId)} onClick={() => showConfirm(
+                    'Eliminar campo',
+                    `Se borrará “${definition.label || definition.name}” y sus datos guardados en todos los contactos.`,
+                    async () => {
+                      setCatalogBusyId(definition.definitionId || '')
+                      try { await customFieldsService.deleteField(definition.definitionId || ''); await loadCustomFieldDefinitions() }
+                      catch (error: any) { showToast('error', 'No se eliminó el campo', error?.message || 'Intenta otra vez.') }
+                      finally { setCatalogBusyId(null) }
+                    },
+                    'Eliminar',
+                    'Cancelar'
+                  )}><Trash2 size={17} /></button>
+                )}
               </div>
             ))}
           </div>
@@ -793,6 +835,44 @@ export const PhoneSettings: React.FC = () => {
       ) : (
         <div className={styles.emptyState}>Todavía no hay campos personalizados guardados.</div>
       )}
+    </>
+  )
+
+  const renderTags = () => (
+    <>
+      <section className={styles.catalogCreateSection}>
+        <strong>Crear etiqueta</strong>
+        <input value={newTagName} onChange={(event) => setNewTagName(event.target.value)} placeholder="Ej. Seguimiento" />
+        <button type="button" disabled={!newTagName.trim() || catalogBusyId === 'new-tag'} onClick={async () => {
+          const name = newTagName.trim(); if (!name) return
+          setCatalogBusyId('new-tag')
+          try { await contactTagsService.createTag(name); setNewTagName(''); await loadSettingsTags() }
+          catch (error: any) { showToast('error', 'No se creó la etiqueta', error?.message || 'Intenta otra vez.') }
+          finally { setCatalogBusyId(null) }
+        }}>{catalogBusyId === 'new-tag' ? <Loader2 size={16} className={styles.spinIcon} /> : <Plus size={16} />} Crear</button>
+      </section>
+      <section className={styles.settingsSection}>
+        <div className={styles.customFieldsList}>
+          {settingsTags.map((tag) => (
+            <div key={tag.id} className={styles.customFieldSummaryRow}>
+              <span><strong>{tag.name}</strong><small>Etiqueta del CRM</small></span>
+              <button type="button" className={styles.catalogDeleteButton} disabled={Boolean(catalogBusyId)} onClick={() => showConfirm(
+                'Eliminar etiqueta',
+                `Se quitará “${tag.name}” de todos los contactos.`,
+                async () => {
+                  setCatalogBusyId(tag.id)
+                  try { await contactTagsService.deleteTag(tag.id); await loadSettingsTags() }
+                  catch (error: any) { showToast('error', 'No se eliminó la etiqueta', error?.message || 'Intenta otra vez.') }
+                  finally { setCatalogBusyId(null) }
+                },
+                'Eliminar',
+                'Cancelar'
+              )}><Trash2 size={17} /></button>
+            </div>
+          ))}
+          {!settingsTags.length && <div className={styles.emptyState}>Todavía no hay etiquetas creadas.</div>}
+        </div>
+      </section>
     </>
   )
 
@@ -909,6 +989,7 @@ export const PhoneSettings: React.FC = () => {
     if (activeSection === 'agent') return PERSONAL_ASSISTANT_AI_LABEL
     if (activeSection === 'chats') return 'Lista de chats'
     if (activeSection === 'custom-fields') return 'Campos personalizados'
+    if (activeSection === 'tags') return 'Etiquetas'
     if (activeSection === 'appearance') return 'Apariencia'
     if (activeSection === 'privacy') return 'Privacidad'
     if (activeSection === 'notifications') return 'Notificaciones'
@@ -926,6 +1007,7 @@ export const PhoneSettings: React.FC = () => {
     if (activeSection === 'agent') return renderAgent()
     if (activeSection === 'chats') return renderChats()
     if (activeSection === 'custom-fields') return renderCustomFields()
+    if (activeSection === 'tags') return renderTags()
     if (activeSection === 'appearance') return renderAppearance()
     if (activeSection === 'privacy') return renderPrivacy()
     if (activeSection === 'notifications') return renderNotifications()

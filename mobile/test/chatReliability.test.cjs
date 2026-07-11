@@ -24,6 +24,7 @@ const {
   sortChatContactsByRecency,
 } = require('../src/chatListState.ts');
 const { parseSortableDateValue, resolveChatMessageReactions } = require('../src/format.ts');
+const { buildUserCustomFieldRows } = require('../src/contactCustomFields.ts');
 const {
   NATIVE_LOCAL_OUTBOX_RETENTION_MS,
   getOldestConversationHistoryCursor,
@@ -52,6 +53,20 @@ function contact(id, lastMessageDate, overrides = {}) {
     ...overrides,
   };
 }
+
+test('info de contacto solo muestra campos definidos por el usuario', () => {
+  const rows = buildUserCustomFieldRows([
+    { definitionId: 'history', key: 'clinical_history', label: 'Historia clínica', sourceType: 'manual' },
+    { definitionId: 'meta', key: 'meta_social_sender_id', label: 'Meta Social Sender ID', sourceType: 'system', system: true },
+  ], [
+    { definitionId: 'history', key: 'clinical_history', value: 'Alergia a penicilina' },
+    { definitionId: 'meta', key: 'meta_social_sender_id', value: '178900000' },
+    { key: 'database_internal_id', label: 'Database Internal ID', value: 'abc' },
+  ]);
+
+  assert.deepEqual(rows.map((row) => row.label), ['Historia clínica']);
+  assert.equal(rows[0].value, 'Alergia a penicilina');
+});
 
 test('Analiticas movil usa el mismo permiso Dashboard que sus endpoints', () => {
   const dashboardOnlyUser = {

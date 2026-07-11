@@ -851,6 +851,16 @@ disco y la persistencia queda deshabilitada hasta tener usuario verificado.
 Las precargas y escrituras detached tambien llevan generacion de sesion, por lo
 que logout/relogin a la misma cuenta no puede revivir un snapshot anterior.
 
+En `Info del contacto`, `/movil`, `mobile/` e `ios/app` revalidan el detalle de
+forma silenciosa y no muestran un loader encima del avatar. La sección de campos
+personalizados se construye exclusivamente desde definiciones activas creadas o
+configuradas por el usuario; valores huérfanos y definiciones de sistema o de
+integraciones no se presentan aunque existan dentro del JSON del contacto. La
+acción para inscribir en una automatización publicada vive inmediatamente debajo
+de Etiquetas. Los Ajustes móviles permiten crear y eliminar tanto definiciones
+de campos personalizados como etiquetas usando los endpoints canónicos de
+`/api/settings/custom-fields` y `/api/contact-tags`.
+
 El hilo iOS muestra el bloque de `/contacts/:id/conversation` en cuanto llega;
 agente, programados y datos secundarios no pueden taparlo con un spinner. Para
 despliegues graduales conserva fallback a `/journey`. La salud se mide con

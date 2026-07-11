@@ -881,6 +881,17 @@ del chat, datos principales, origen y conversion, seguimiento, historial del
 agente, campos personalizados e integracion. No debe introducir una paleta clara
 local ni colores hardcodeados fuera de los tokens moviles compartidos.
 
+La ficha revalida en segundo plano sin mostrar una pastilla o spinner de
+`Actualizando datos` encima del avatar. `Campos personalizados` usa como fuente
+autoritaria las definiciones activas creadas por el usuario: valores huérfanos,
+campos `system/systemManaged/locked` y metadatos de integraciones como
+`meta_social_*` nunca se convierten en filas visibles. La sección `Etiquetas`
+permite buscar o crear una etiqueta y coloca inmediatamente debajo la acción
+`Meter a una automatización`, limitada a automatizaciones publicadas. En Ajustes
+móviles, `Campos personalizados` y `Etiquetas` permiten crear y eliminar sus
+catálogos; eliminar una definición o etiqueta aplica el contrato destructivo del
+backend para todos los contactos.
+
 Esta pantalla usa una escala compacta comun para textos, iconos, filas, tabs,
 metricas y sheets. Si se ajusta el tamano visual, modifica la escala o los tokens
 compartidos de esta familia de componentes; no agrandes cada elemento por

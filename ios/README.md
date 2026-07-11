@@ -107,7 +107,9 @@ solo en capa flotante; copy en español.
   Composer: adjuntos (cámara/galería/documentos/ubicación), notas de voz,
   plantillas cuando la ventana de 24h está cerrada, selector de número/canal,
   sugerencia IA, controles del agente (pausar/tomar/omitir/continuar + confirm
-  de envío manual). Info del contacto: edición, tags, campos personalizados,
+  de envío manual). Info del contacto: edición, tags, campos personalizados
+  definidos por el usuario (sin metadatos internos), automatización debajo de
+  etiquetas y revalidación silenciosa sin loader sobre el avatar,
   pagos/citas embebidos, fusión de duplicados por teléfono.
 - **Calendarios**: mes + agenda del día + timeline día/semana con selección de
   rango por long-press, Nueva cita (Por defecto con slots libres reales /
@@ -127,7 +129,8 @@ solo en capa flotante; copy en español.
   "sin acceso" para la trampa de módulo dashboard. Swift Charts, iPad en grid.
 - **Ajustes**: números de WhatsApp (principal, bandeja junta/separada),
   plantillas, Asistente AI (contexto de negocio + dictado por voz →
-  transcripción), lista de chat, campos personalizados, apariencia
+  transcripción), lista de chat, campos personalizados y etiquetas con alta y
+  eliminación, apariencia
   (sistema/claro/oscuro/auto), privacidad (confirmaciones de lectura),
   notificaciones (activación de push, toggles por tipo, calendarios con
   alerta), versión y cierre de sesión.

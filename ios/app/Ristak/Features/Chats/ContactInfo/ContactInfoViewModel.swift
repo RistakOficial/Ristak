@@ -237,7 +237,7 @@ final class ContactInfoViewModel {
     private func loadFieldDefinitions() async {
         do {
             let all = try await contacts.fetchCustomFieldDefinitions(includeArchived: false)
-            fieldDefinitions = all.filter { !$0.system && !$0.systemManaged && !$0.archived }
+            fieldDefinitions = all.filter(Self.isUserCreatedDefinition)
             definitionsLoadFailed = false
         } catch {
             definitionsLoadFailed = fieldDefinitions.isEmpty
@@ -526,7 +526,7 @@ final class ContactInfoViewModel {
             return nil
         }
 
-        var rows: [CustomFieldRow] = fieldDefinitions.map { definition in
+        let rows: [CustomFieldRow] = fieldDefinitions.filter(Self.isUserCreatedDefinition).map { definition in
             let value = matchValue(for: definition)
             return CustomFieldRow(
                 id: definition.id,
@@ -539,26 +539,17 @@ final class ContactInfoViewModel {
             )
         }
 
-        // Valores huérfanos (sin definición visible): solo lectura.
-        for (index, value) in values.enumerated() where !consumed.contains(index) {
-            let label = value.label.isEmpty ? (value.name.isEmpty ? value.key : value.name) : value.label
-            guard !label.isEmpty else { continue }
-            rows.append(
-                CustomFieldRow(
-                    id: value.definitionId.isEmpty ? "orphan-\(value.key.isEmpty ? String(index) : value.key)" : value.definitionId,
-                    label: label,
-                    dataType: ContactCustomFieldDefinition.normalizeDataType(value.dataType),
-                    options: value.options,
-                    definition: nil,
-                    value: value,
-                    isEditable: false
-                )
-            )
-        }
+        // Los valores sin una definición creada/configurada por el usuario son
+        // metadatos internos o de integración. Nunca se muestran como campos.
+        return rows
+    }
 
-        // El "Nombre del negocio" (business_name) es un dato del sistema; nunca
-        // se muestra como campo personalizado del contacto.
-        return rows.filter { !Self.isHiddenSystemField($0) }
+    static func isUserCreatedDefinition(_ definition: ContactCustomFieldDefinition) -> Bool {
+        !definition.archived
+            && !definition.system
+            && !definition.systemManaged
+            && !definition.locked
+            && definition.sourceType.lowercased() != "system"
     }
 
     /// Oculta el campo `business_name` / "Nombre del negocio" de la lista de

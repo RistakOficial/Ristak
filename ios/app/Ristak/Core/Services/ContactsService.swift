@@ -330,6 +330,17 @@ extension ContactsService {
         )
     }
 
+    func createCustomFieldDefinition(label: String, key: String, dataType: String = "text") async throws -> ContactCustomFieldDefinition {
+        try await client.post(
+            "/settings/custom-fields",
+            body: ContactCustomFieldDefinitionWrite(label: label, key: key, dataType: dataType)
+        )
+    }
+
+    func deleteCustomFieldDefinition(id: String) async throws {
+        try await client.delete("/settings/custom-fields/\(id)")
+    }
+
     /// `PUT /contacts/:id { customFields }` (merge server-side por identidad).
     @discardableResult
     func updateCustomFields(contactId: String, fields: [ContactCustomFieldWrite]) async throws -> ContactDetail {
@@ -352,4 +363,10 @@ extension ContactsService {
     func fetchHiddenContactFilters() async throws -> [HiddenContactFilter] {
         try await client.get("/hidden-contacts")
     }
+}
+
+private struct ContactCustomFieldDefinitionWrite: Encodable, Sendable {
+    let label: String
+    let key: String
+    let dataType: String
 }

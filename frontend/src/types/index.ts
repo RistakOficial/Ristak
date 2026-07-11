@@ -120,6 +120,11 @@ export interface ContactCustomFieldDefinition {
   sourceLabel?: string
   sourceContext?: Record<string, unknown> | null
   ownerUserId?: number | null
+  system?: boolean
+  systemManaged?: boolean
+  locked?: boolean
+  editable?: boolean
+  deletable?: boolean
   archived?: boolean
   sources?: ContactCustomFieldDefinitionSource[]
   createdAt?: string | null
