@@ -8,6 +8,7 @@ import { API_URLS } from '../src/config/constants.js'
 import { encrypt, initializeMasterKey } from '../src/utils/encryption.js'
 import {
   processMetaSocialWebhook,
+  sendMetaSocialAttachmentMessage,
   sendMetaSocialAudioMessage,
   sendMetaSocialCommentReply,
   sendMetaSocialReactionMessage,
@@ -1530,6 +1531,97 @@ test('sendMetaSocialTextMessage mantiene Messenger con Page token y messaging_ty
     if (previousMetaGraphDescriptor) {
       Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
     }
+  }
+})
+
+test('sendMetaSocialAttachmentMessage manda una imagen de Messenger sin requerir texto', async () => {
+  const previousMetaGraphDescriptor = Object.getOwnPropertyDescriptor(API_URLS, 'META_GRAPH')
+  const calls = []
+  let metaServer
+  const contactId = 'meta_send_image_messenger_contact'
+  const metaContactId = 'meta_send_image_messenger_profile'
+
+  try {
+    await initializeMasterKey()
+    metaServer = await startMetaSendServer(calls)
+    Object.defineProperty(API_URLS, 'META_GRAPH', {
+      value: `http://127.0.0.1:${metaServer.address().port}`,
+      configurable: true
+    })
+
+    await snapshotMetaConfig(async () => {
+      await snapshotAppConfig(['meta_messenger_messaging_enabled'], async () => {
+        try {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+
+          await db.run(`
+            INSERT INTO meta_config (
+              ad_account_id, access_token, pixel_id, page_id, instagram_account_id,
+              timezone_id, timezone_name, timezone_offset_hours_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `, [
+            'act-send-image-test',
+            encrypt('user-token-send-test'),
+            null,
+            'page-send-test',
+            'ig-business-send-test',
+            null,
+            null,
+            null
+          ])
+          await setAppConfig('meta_messenger_messaging_enabled', '1')
+          await seedMessengerContact({ contactId, metaContactId })
+
+          const result = await sendMetaSocialAttachmentMessage({
+            contactId,
+            platform: 'messenger',
+            attachmentType: 'image',
+            attachmentUrl: 'https://cdn.example.test/automation-image.jpg',
+            mimeType: 'image/jpeg'
+          })
+
+          assert.equal(result.remoteMessageId, 'mid-messenger-send-test')
+          assert.equal(result.attachment.type, 'image')
+          const sendCall = calls.find(call => call.method === 'POST' && call.url === '/page-send-test/messages')
+          assert.ok(sendCall)
+          assert.deepEqual(JSON.parse(sendCall.body), {
+            messaging_type: 'RESPONSE',
+            recipient: { id: 'psid-send-test' },
+            message: {
+              attachment: {
+                type: 'image',
+                payload: {
+                  url: 'https://cdn.example.test/automation-image.jpg',
+                  is_reusable: false
+                }
+              }
+            }
+          })
+
+          const row = await db.get(
+            `SELECT message_type, message_text, media_url, media_mime_type
+             FROM meta_social_messages
+             WHERE contact_id = ? AND direction = 'outbound'
+             ORDER BY message_timestamp DESC
+             LIMIT 1`,
+            [contactId]
+          )
+          assert.equal(row.message_type, 'image')
+          assert.equal(row.message_text, '')
+          assert.equal(row.media_url, 'https://cdn.example.test/automation-image.jpg')
+          assert.equal(row.media_mime_type, 'image/jpeg')
+        } finally {
+          await db.run('DELETE FROM meta_social_messages WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM meta_social_contacts WHERE contact_id = ?', [contactId]).catch(() => undefined)
+          await db.run('DELETE FROM contacts WHERE id = ?', [contactId]).catch(() => undefined)
+        }
+      })
+    })
+  } finally {
+    if (metaServer) await new Promise(resolve => metaServer.close(resolve))
+    if (previousMetaGraphDescriptor) Object.defineProperty(API_URLS, 'META_GRAPH', previousMetaGraphDescriptor)
   }
 })
 

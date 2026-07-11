@@ -19,6 +19,7 @@ import {
   FileText,
   Image,
   Link2,
+  Mic,
   Music,
   Plus,
   Trash2,
@@ -65,13 +66,15 @@ interface ContentBlockOption {
   icon: React.ComponentType<{ size?: number | string }>
 }
 
-// Bloques de contenido disponibles (los adjuntos usan URL: adaptador
-// pendiente para subir archivos cuando exista backend de medios)
+// Cada adjunto es un mensaje válido por sí solo: no necesita un globo de texto
+// antes ni después. "Audio" y "Nota de voz" se guardan como tipos distintos
+// porque WhatsApp los presenta distinto al receptor.
 const CONTENT_BLOCKS: ContentBlockOption[] = [
   { type: 'text', title: 'Texto', description: 'Añadir texto y botones simples', icon: AlignLeft },
   { type: 'image', title: 'Imagen', description: 'Aumenta la participación con elementos visuales', icon: Image },
   { type: 'video', title: 'Video', description: 'Comparte un video con el contacto', icon: Video },
-  { type: 'audio', title: 'Audio', description: 'Envía una nota de voz o audio', icon: Music },
+  { type: 'audio', title: 'Audio', description: 'Envía un archivo de audio reproducible', icon: Music },
+  { type: 'voice', title: 'Nota de voz', description: 'Envía el audio como mensaje de voz de WhatsApp', icon: Mic },
   { type: 'file', title: 'Archivo', description: 'Adjunta un documento o archivo', icon: FileText },
   { type: 'delay', title: 'Retraso', description: 'Espera unos segundos entre los textos', icon: Clock }
 ]
@@ -86,6 +89,7 @@ const MEDIA_ACCEPT: Record<string, string> = {
   image: 'image/*',
   video: 'video/*',
   audio: 'audio/*',
+  voice: 'audio/*',
   file: '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip'
 }
 
@@ -93,6 +97,7 @@ const MEDIA_LABELS: Record<string, string> = {
   image: 'Imagen',
   video: 'Video',
   audio: 'Audio',
+  voice: 'Nota de voz',
   file: 'Archivo'
 }
 
@@ -105,6 +110,12 @@ function newBlock(type: MessageBlockType): MessageBlock {
   }
   if (type === 'template') {
     return { id: genId('blk'), type, templateId: '', templateName: '' }
+  }
+  if (type === 'audio') {
+    return { id: genId('blk'), type, url: '', caption: '', voiceNote: false }
+  }
+  if (type === 'voice') {
+    return { id: genId('blk'), type, url: '', caption: '', voiceNote: true }
   }
   return { id: genId('blk'), type, url: '', caption: '' }
 }
@@ -465,8 +476,9 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
           )
         }
 
-        // Adjuntos: imagen, video, audio, archivo (subir a Ristak o pegar URL)
+        // Adjuntos: también son mensajes válidos sin bloque de texto.
         const MediaIcon = CONTENT_BLOCKS.find((option) => option.type === block.type)?.icon || Link2
+        const isAudioBlock = block.type === 'audio' || block.type === 'voice'
         const isUploading = Boolean(uploading[block.id])
         const uploadError = uploadErrors[block.id]
         return (
@@ -484,17 +496,8 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
             {block.url && block.type === 'video' && (
               <video src={block.url} controls className={styles.mediaPreviewImage} />
             )}
-            {block.url && block.type === 'audio' && (
+            {block.url && isAudioBlock && (
               <audio src={block.url} controls className={styles.mediaPreviewAudio} />
-            )}
-            {block.type === 'audio' && (
-              <div style={{ marginBottom: 8 }}>
-                <Toggle
-                  checked={block.voiceNote !== false}
-                  onChange={(checked) => updateBlock(index, { voiceNote: checked })}
-                  label="Enviar como nota de voz de WhatsApp"
-                />
-              </div>
             )}
             {block.url && block.type === 'file' && (
               <a href={block.url} target="_blank" rel="noreferrer" className={styles.mediaPreviewFile}>
@@ -532,7 +535,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
             <div style={{ marginTop: 6 }}>
               <TextInput
                 value={block.caption || ''}
-                placeholder="Texto opcional que acompaña al adjunto"
+                placeholder={block.type === 'voice' ? 'Texto opcional que se envía aparte de la nota' : 'Texto opcional que acompaña al adjunto'}
                 onChange={(event) => updateBlock(index, { caption: event.target.value })}
               />
             </div>

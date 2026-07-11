@@ -1,15 +1,14 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { AlertCircle, Clock, Copy, FileText, GitBranch, Image, Link2, Music, Plus, Trash2, UserRound, Video, X, Zap } from 'lucide-react'
+import { AlertCircle, Clock, Copy, FileText, GitBranch, Image, Link2, Mic, Music, Plus, Trash2, UserRound, Video, X, Zap } from 'lucide-react'
 import { cn } from '@/utils/cn'
 import type { AutomationNode } from '@/services/automationsService'
 import {
   asMessageBlocks,
   getNodeDefinition,
   validateNodeConfig,
-  type MessageBlock,
   type NodeDefinition
 } from './nodeRegistry'
-import { genId, getNodeOutputs, getStartTriggers, isStartNode, nodeHasInput } from './flowUtils'
+import { getNodeOutputs, getStartTriggers, isStartNode, nodeHasInput } from './flowUtils'
 import { compiledToReadable } from './composer/MessageComposer'
 import styles from './AutomationEditor.module.css'
 
@@ -165,14 +164,9 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
   const blocks = showBlocks ? visibleMessageBlocks : []
 
   const addMessageBlock = () => {
-    const block: MessageBlock = { id: genId('blk'), type: 'text', compiledText: '', buttons: [], quickReplies: [] }
-    const nextBlocks = node.type === 'channel-whatsapp' ? visibleMessageBlocks : rawMessageBlocks
-    const patch: Record<string, unknown> = { messageBlocks: [...nextBlocks, block] }
-    if (node.type === 'channel-whatsapp') {
-      patch.templateId = ''
-      patch.templateName = ''
-    }
-    onPatchConfig(node, patch, true)
+    // No asumimos que el primer contenido debe ser texto: abrir el selector
+    // permite crear directamente una imagen, video, audio o nota de voz.
+    onOpenConfig(node)
   }
 
 
@@ -432,7 +426,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                     <img src={block.url} alt={block.caption || 'Imagen'} className={styles.nodeMediaThumb} draggable={false} />
                   ) : (
                     <span className={styles.chatBubbleText}>
-                      {block.type === 'image' ? <Image size={11} /> : block.type === 'video' ? <Video size={11} /> : block.type === 'audio' ? <Music size={11} /> : <FileText size={11} />}{' '}
+                      {block.type === 'image' ? <Image size={11} /> : block.type === 'video' ? <Video size={11} /> : block.type === 'voice' ? <Mic size={11} /> : block.type === 'audio' ? <Music size={11} /> : <FileText size={11} />}{' '}
                       {block.caption || block.url || 'Adjunto sin archivo'}
                     </span>
                   )}
@@ -452,7 +446,7 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
               }}
             >
               <Plus size={12} />
-              {definition?.addButtonLabel || 'Agregar mensaje'}
+              Agregar contenido
             </button>
 
             {hasErrors && (

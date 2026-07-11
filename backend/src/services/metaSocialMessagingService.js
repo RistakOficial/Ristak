@@ -2304,6 +2304,127 @@ export async function sendMetaSocialAudioMessage({ contactId, platform, audioDat
   }
 }
 
+const META_SOCIAL_ATTACHMENT_TYPES = new Set(['image', 'video', 'audio', 'file'])
+
+/**
+ * Envía un adjunto ya publicado por HTTPS en un DM de Messenger o Instagram.
+ * A diferencia de WhatsApp, Meta no acepta un caption dentro del payload del
+ * adjunto: el caller puede mandar texto como un mensaje separado si lo necesita.
+ */
+export async function sendMetaSocialAttachmentMessage({ contactId, platform, attachmentType, attachmentUrl, mimeType = '', externalId, agentId, replyToMessageId = '', replyToProviderMessageId = '' } = {}) {
+  const cleanContactId = cleanString(contactId)
+  const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'
+  const cleanAttachmentType = cleanString(attachmentType).toLowerCase()
+  const cleanAttachmentUrl = cleanString(attachmentUrl)
+  const cleanMimeType = cleanString(mimeType)
+
+  if (!cleanContactId) throw createMetaSocialMessageError('Falta el contacto', 400)
+  if (!META_SOCIAL_ATTACHMENT_TYPES.has(cleanAttachmentType)) {
+    throw createMetaSocialMessageError('Meta solo permite imagen, video, audio o archivo como adjunto.', 400)
+  }
+  if (!cleanAttachmentUrl) throw createMetaSocialMessageError('Falta el archivo para enviar', 400)
+  if (!/^https:\/\//i.test(cleanAttachmentUrl)) {
+    throw createMetaSocialMessageError('Meta necesita una URL pública HTTPS para enviar el adjunto.', 400)
+  }
+
+  const enabled = await isMetaSocialMessagingEnabled(cleanPlatform)
+  if (!enabled) {
+    throw createMetaSocialMessageError(`Activa ${getPlatformLabel(cleanPlatform)} en Configuración > Meta Ads > Redes sociales para responder por este canal.`, 409)
+  }
+
+  const config = await getMetaConfig().catch(error => {
+    logger.warn(`No se pudo leer Meta para enviar adjunto DM: ${error.message}`)
+    return null
+  })
+  const hasRequiredToken = hasMetaSocialGraphTokenSource(cleanPlatform, config || {})
+  if (!hasRequiredToken) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Conecta Meta Ads con un token que pueda operar la Página enlazada a Instagram.'
+        : 'Conecta Meta Ads para responder por Messenger.',
+      409
+    )
+  }
+
+  const profile = await db.get(
+    `SELECT id, sender_id, recipient_id, page_id, instagram_account_id
+     FROM meta_social_contacts
+     WHERE contact_id = ? AND platform = ?
+     ORDER BY updated_at DESC, last_seen_at DESC
+     LIMIT 1`,
+    [cleanContactId, cleanPlatform]
+  ).catch(() => null)
+
+  const recipientId = cleanString(profile?.sender_id)
+  if (!profile || !recipientId) {
+    throw createMetaSocialMessageError(`Este contacto no tiene ${getPlatformLabel(cleanPlatform)} enlazado.`, 404)
+  }
+
+  const businessId = getMetaSocialBusinessId(cleanPlatform, config, profile)
+  if (!businessId) {
+    throw createMetaSocialMessageError(
+      cleanPlatform === 'instagram'
+        ? 'Falta seleccionar la cuenta de Instagram en Meta Ads.'
+        : 'Falta seleccionar la página de Facebook en Meta Ads.',
+      409
+    )
+  }
+
+  const replyReference = await resolveMetaSocialMessageReference({
+    contactId: cleanContactId,
+    platform: cleanPlatform,
+    messageId: replyToMessageId,
+    providerMessageId: replyToProviderMessageId
+  })
+  const replyProviderMessageId = cleanString(replyReference?.providerMessageId)
+
+  let response
+  try {
+    response = cleanPlatform === 'instagram'
+      ? await sendMetaInstagramAttachmentRequest({ businessId, recipientId, attachmentType: cleanAttachmentType, attachmentUrl: cleanAttachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
+      : await sendMetaMessengerAttachmentRequest({ businessId, recipientId, attachmentType: cleanAttachmentType, attachmentUrl: cleanAttachmentUrl, config, replyToProviderMessageId: replyProviderMessageId })
+  } catch (error) {
+    throw normalizeMetaSocialSendError(error, cleanPlatform)
+  }
+
+  const sent = await saveMetaSocialOutboundMessage({
+    platform: cleanPlatform,
+    contactId: cleanContactId,
+    profile,
+    messageId: response?.message_id || response?.id,
+    text: '',
+    response,
+    externalId,
+    agentId,
+    messageType: cleanAttachmentType,
+    mediaUrl: cleanAttachmentUrl,
+    mediaMimeType: cleanMimeType,
+    context: {
+      attachment: {
+        type: cleanAttachmentType,
+        link: cleanAttachmentUrl,
+        url: cleanAttachmentUrl,
+        ...(cleanMimeType ? { mimeType: cleanMimeType } : {})
+      },
+      ...(replyProviderMessageId ? { reply_to: { mid: replyProviderMessageId } } : {})
+    }
+  })
+
+  return {
+    ...sent,
+    id: sent.remoteMessageId || sent.localMessageId,
+    platform: cleanPlatform,
+    provider: 'meta',
+    attachment: {
+      type: cleanAttachmentType,
+      link: cleanAttachmentUrl,
+      url: cleanAttachmentUrl,
+      ...(cleanMimeType ? { mimeType: cleanMimeType } : {})
+    },
+    data: sent
+  }
+}
+
 export async function sendMetaSocialReactionMessage({ contactId, platform, emoji, targetMessageId = '', targetProviderMessageId = '', externalId } = {}) {
   const cleanContactId = cleanString(contactId)
   const cleanPlatform = cleanString(platform).toLowerCase() === 'instagram' ? 'instagram' : 'messenger'

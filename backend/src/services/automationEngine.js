@@ -3474,6 +3474,7 @@ async function executeSystemNotification(node, ctx, enrollment) {
 async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport = 'api', allowQrFallback = true, ctx }) {
   const {
     sendWhatsAppApiImageMessage,
+    sendWhatsAppApiVideoMessage,
     sendWhatsAppApiAudioMessage,
     sendWhatsAppApiDocumentMessage
   } = await import('./whatsappApiService.js')
@@ -3505,20 +3506,22 @@ async function sendMediaBlock({ block, to, phoneNumberId, fromPhone, transport =
 
   if (block.type === 'image') {
     return sendWhatsAppApiImageMessage({ to, from: fromPhone, imageDataUrl: dataUrl || undefined, imageUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
-  } else if (block.type === 'audio') {
+  } else if (block.type === 'video') {
+    return sendWhatsAppApiVideoMessage({ to, from: fromPhone, videoDataUrl: dataUrl || undefined, videoUrl: externalUrl || undefined, caption, contactId: ctx.contact?.id, phoneNumberId, transport, allowQrFallback })
+  } else if (block.type === 'audio' || block.type === 'voice') {
     return sendWhatsAppApiAudioMessage({
       to,
       from: fromPhone,
       audioDataUrl: dataUrl || undefined,
       audioUrl: externalUrl || undefined,
-      // Nota de voz de WhatsApp (ogg/opus) salvo que el usuario lo apague
-      voice: block.voiceNote !== false,
+      // Los bloques nuevos son explícitos. Los flujos viejos guardaban "audio"
+      // como nota de voz por default; conservamos ese comportamiento.
+      voice: block.type === 'voice' || block.voiceNote !== false,
       phoneNumberId,
       transport,
       allowQrFallback
     })
   } else {
-    // video y archivo se envían como documento (conserva calidad y nombre)
     return sendWhatsAppApiDocumentMessage({
       to,
       from: fromPhone,
@@ -3875,7 +3878,7 @@ async function sendWhatsAppBlocks(node, ctx) {
         Math.max(0, (Number(block.amount) || 0) * (block.unit === 'minutes' ? 60 : 1))
       )
       if (seconds > 0) await sleep(seconds * 1000)
-    } else if (['image', 'video', 'audio', 'file'].includes(block.type) && str(block.url)) {
+    } else if (['image', 'video', 'audio', 'voice', 'file'].includes(block.type) && str(block.url)) {
       const response = await sendWhatsAppAutomationMessage({
         allowQrFallback,
         qrPrimary,
@@ -3898,18 +3901,54 @@ async function sendWhatsAppBlocks(node, ctx) {
       notes.push(`adjunto "${block.type}" sin archivo: omitido`)
     }
   }
-  if (sent === 0) throw new Error('El mensaje está vacío: configura al menos un globo de texto')
+  if (sent === 0) throw new Error('El mensaje está vacío: configura texto o un adjunto multimedia')
   return {
     detail: `${sent} mensaje${sent > 1 ? 's' : ''} de WhatsApp enviado${sent > 1 ? 's' : ''} por ${whatsappTransportLabel(transports)}${notes.length ? ` (${notes.join(', ')})` : ''}`
   }
 }
 
+function publicAutomationMediaUrl(rawUrl, ctx = {}) {
+  const mediaUrl = renderTemplate(str(rawUrl), ctx, { preserveUnknown: true }).trim()
+  if (/^https:\/\//i.test(mediaUrl)) return mediaUrl
+
+  const baseUrl = [
+    ctx.publicBaseUrl,
+    ctx.public_base_url,
+    process.env.PUBLIC_URL,
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.PUBLIC_APP_URL,
+    process.env.APP_URL
+  ].map(str).find((candidate) => /^https:\/\//i.test(candidate))
+
+  if (!baseUrl || !mediaUrl) return mediaUrl
+  try {
+    return new URL(mediaUrl, baseUrl).toString()
+  } catch {
+    return mediaUrl
+  }
+}
+
+async function automationMediaMimeType(block) {
+  const mediaUrl = str(block.url)
+  const assetMatch = /\/api\/automations\/assets\/([\w-]+)/.exec(mediaUrl)
+  if (!assetMatch) return ''
+  const row = await db.get('SELECT content_type FROM automation_assets WHERE id = ?', [assetMatch[1]]).catch(() => null)
+  return str(row?.content_type)
+}
+
 async function sendMetaSocialBlocks(node, ctx, platform) {
-  const { sendMetaSocialTextMessage } = await import('./metaSocialMessagingService.js')
+  const {
+    sendMetaSocialAttachmentMessage,
+    sendMetaSocialAudioMessage,
+    sendMetaSocialTextMessage
+  } = await import('./metaSocialMessagingService.js')
   const config = node.config || {}
   const blocks = Array.isArray(config.messageBlocks) ? config.messageBlocks : []
   const sentMessages = []
   const notes = []
+  const baseExternalId = `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}`
+
+  const nextExternalId = () => `${baseExternalId}:${sentMessages.length + 1}`
 
   for (const block of blocks) {
     if (block.type === 'text') {
@@ -3919,7 +3958,7 @@ async function sendMetaSocialBlocks(node, ctx, platform) {
         contactId: ctx.contact?.id,
         platform,
         message: text,
-        externalId: `${ctx.automationId || 'automation'}:${ctx.enrollmentId || ''}:${node.id}:${sentMessages.length + 1}`
+        externalId: nextExternalId()
       })
       sentMessages.push(text)
     } else if (block.type === 'delay') {
@@ -3928,13 +3967,49 @@ async function sendMetaSocialBlocks(node, ctx, platform) {
         Math.max(0, (Number(block.amount) || 0) * (block.unit === 'minutes' ? 60 : 1))
       )
       if (seconds > 0) await sleep(seconds * 1000)
+    } else if (['image', 'video', 'audio', 'voice', 'file'].includes(block.type) && str(block.url)) {
+      const attachmentUrl = publicAutomationMediaUrl(block.url, ctx)
+      const mimeType = await automationMediaMimeType(block)
+      const externalId = nextExternalId()
+      if (block.type === 'audio' || block.type === 'voice') {
+        await sendMetaSocialAudioMessage({
+          contactId: ctx.contact?.id,
+          platform,
+          audioUrl: attachmentUrl,
+          externalId
+        })
+      } else {
+        await sendMetaSocialAttachmentMessage({
+          contactId: ctx.contact?.id,
+          platform,
+          attachmentType: block.type,
+          attachmentUrl,
+          mimeType,
+          externalId
+        })
+      }
+      sentMessages.push(block.type)
+
+      // Meta no acepta captions dentro del payload de adjunto. Si el usuario
+      // escribió uno, lo enviamos como un segundo mensaje deliberado; si no,
+      // el adjunto queda perfectamente válido por sí solo.
+      const caption = renderTemplate(str(block.caption), ctx, { preserveUnknown: true }).trim()
+      if (caption) {
+        await sendMetaSocialTextMessage({
+          contactId: ctx.contact?.id,
+          platform,
+          message: caption,
+          externalId: nextExternalId()
+        })
+        sentMessages.push(caption)
+      }
     } else if (block.type) {
       notes.push(`bloque "${block.type}" sin soporte en ${platform}: omitido`)
     }
   }
 
   if (sentMessages.length === 0) {
-    throw new Error(`El mensaje de ${platform === 'instagram' ? 'Instagram' : 'Messenger'} está vacío: configura al menos un globo de texto`)
+    throw new Error(`El mensaje de ${platform === 'instagram' ? 'Instagram' : 'Messenger'} está vacío: configura texto o un adjunto multimedia`)
   }
 
   const label = platform === 'instagram' ? 'Instagram' : 'Messenger'
@@ -4053,7 +4128,7 @@ function evaluateGoalMet(config, ctx) {
 // Qué adjuntos acepta Meta al responder un comentario, por tipo de respuesta y
 // plataforma (verificado en la doc oficial): público FB = 1 imagen; público IG =
 // solo texto; DM (Messenger/Instagram) = imagen/video/audio/archivo.
-const COMMENT_MEDIA_BLOCKS = ['image', 'video', 'audio', 'file']
+const COMMENT_MEDIA_BLOCKS = ['image', 'video', 'audio', 'voice', 'file']
 const COMMENT_REPLY_TARGETS = {
   facebook_public_comment: {
     value: 'facebook_public_comment',
@@ -4077,7 +4152,7 @@ const COMMENT_REPLY_TARGETS = {
     eventPlatform: 'facebook',
     apiPlatform: 'messenger',
     replyType: 'private',
-    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'file'])
+    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'voice', 'file'])
   },
   instagram_private_message: {
     value: 'instagram_private_message',
@@ -4085,7 +4160,7 @@ const COMMENT_REPLY_TARGETS = {
     eventPlatform: 'instagram',
     apiPlatform: 'instagram',
     replyType: 'private',
-    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'file'])
+    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'voice', 'file'])
   }
 }
 
@@ -4106,7 +4181,7 @@ function commentContentBlock(block, ctx) {
   }
   if (COMMENT_MEDIA_BLOCKS.includes(block.type)) {
     const url = str(block.url)
-    return url ? { kind: 'media', type: block.type, url, block } : null
+    return url ? { kind: 'media', type: block.type === 'voice' ? 'audio' : block.type, url, block } : null
   }
   return null
 }

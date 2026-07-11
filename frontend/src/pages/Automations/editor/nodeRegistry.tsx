@@ -150,7 +150,7 @@ export interface MessageButton {
   url?: string
 }
 
-export type MessageBlockType = 'text' | 'delay' | 'image' | 'video' | 'audio' | 'file' | 'template'
+export type MessageBlockType = 'text' | 'delay' | 'image' | 'video' | 'audio' | 'voice' | 'file' | 'template'
 
 export interface MessageBlock {
   id: string
@@ -164,12 +164,10 @@ export interface MessageBlock {
   unit?: 'seconds' | 'minutes'
   /** Mostrar "escribiendo…" durante el retraso */
   showTyping?: boolean
-  /** Adjuntos (imagen, video, audio, archivo): URL del recurso.
-   *  ADAPTADOR PENDIENTE: cuando exista subida de archivos, reemplazar por
-   *  el selector de medios real. */
+  /** Adjuntos (imagen, video, audio, nota de voz, archivo): URL del recurso. */
   url?: string
   caption?: string
-  /** Audio: enviar como nota de voz de WhatsApp (ogg/opus). Default true */
+  /** Compatibilidad con bloques de audio viejos: true los mantiene como voz. */
   voiceNote?: boolean
   /** Bloque de plantilla de WhatsApp */
   templateId?: string
@@ -180,7 +178,7 @@ export interface MessageBlock {
   headerMediaUrl?: string
 }
 
-export const MEDIA_BLOCK_TYPES: MessageBlockType[] = ['image', 'video', 'audio', 'file']
+export const MEDIA_BLOCK_TYPES: MessageBlockType[] = ['image', 'video', 'audio', 'voice', 'file']
 
 export type CommentReplyTarget =
   | 'facebook_public_comment'
@@ -228,7 +226,7 @@ export const COMMENT_REPLY_TARGETS: CommentReplyTargetDefinition[] = [
     eventPlatform: 'facebook',
     delivery: 'private',
     apiChannel: 'messenger',
-    allowedBlockTypes: ['text', 'image', 'video', 'audio', 'file']
+    allowedBlockTypes: ['text', 'image', 'video', 'audio', 'voice', 'file']
   },
   {
     value: 'instagram_private_message',
@@ -238,7 +236,7 @@ export const COMMENT_REPLY_TARGETS: CommentReplyTargetDefinition[] = [
     eventPlatform: 'instagram',
     delivery: 'private',
     apiChannel: 'instagram',
-    allowedBlockTypes: ['text', 'image', 'video', 'audio', 'file']
+    allowedBlockTypes: ['text', 'image', 'video', 'audio', 'voice', 'file']
   }
 ]
 

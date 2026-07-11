@@ -705,9 +705,23 @@ Messenger/Instagram nativo el chat puede conservar texto y notas de voz. El
 audio nativo de Meta se guarda primero como media reproducible de Ristak y luego
 se envia a Messenger/Instagram como `message.attachment.type='audio'` con URL
 publica HTTPS; la burbuja local queda como `message_type='audio'` con
-`media_url`/MIME para poder reproducirse al recargar. Otros adjuntos de
-Messenger/Instagram siguen dependiendo de HighLevel: si esta conectado, se
-publican primero como URLs publicas y se envian por `attachments` de HighLevel.
+`media_url`/MIME para poder reproducirse al recargar. Los adjuntos manuales de
+Messenger/Instagram pueden salir por HighLevel cuando esa integracion esta
+conectada; el transporte nativo de Meta conserva audio y las automatizaciones
+usan el envio nativo de adjuntos publicado por HTTPS.
+
+En Automatizaciones, los bloques de mensaje de WhatsApp, Messenger e Instagram
+pueden consistir en un solo adjunto: imagen, video, archivo de audio, nota de
+voz o archivo, sin requerir un bloque de texto. WhatsApp conserva el tipo real
+de imagen/video/documento y el bloque `Nota de voz` se envia como voz (OGG/Opus
+cuando el proveedor lo necesita), separado del bloque `Audio`, que se manda como
+archivo reproducible. Messenger e Instagram reciben imagen, video, audio y
+archivo mediante `message.attachment` con una URL publica HTTPS; si el bloque
+trae texto opcional, Ristak lo manda como el siguiente mensaje porque Meta no
+admite caption dentro del payload de adjunto. Los assets cargados en
+`/api/automations/assets/:assetId` son publicos exclusivamente para que los
+proveedores los puedan descargar; el endpoint mantiene MIME, `nosniff` y fuerza
+la descarga de tipos no seguros.
 
 Cuando el usuario toca contenido enviado o recibido dentro del chat (`/chat`,
 `/movil` o `mobile/`), Ristak debe abrirlo primero en su propio modal de enfoque,

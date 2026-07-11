@@ -76,7 +76,7 @@ const SUPPORTED_TRIGGER_TYPES = new Set([
 ])
 const CHANNEL_CONFIG_KEYS = ['channel', 'replyChannel', 'conversationChannel', 'actionChannel']
 const COMMENT_TRIGGER_TYPES = new Set(['trigger-facebook-comment', 'trigger-instagram-comment'])
-const COMMENT_REPLY_MEDIA_BLOCKS = new Set(['image', 'video', 'audio', 'file'])
+const COMMENT_REPLY_MEDIA_BLOCKS = new Set(['image', 'video', 'audio', 'voice', 'file'])
 const COMMENT_REPLY_TARGETS = {
   facebook_public_comment: {
     label: 'responder comentario público en Facebook',
@@ -97,14 +97,14 @@ const COMMENT_REPLY_TARGETS = {
     eventPlatform: 'facebook',
     delivery: 'private',
     apiChannel: 'messenger',
-    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'file'])
+    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'voice', 'file'])
   },
   instagram_private_message: {
     label: 'enviar mensaje privado por Instagram DM',
     eventPlatform: 'instagram',
     delivery: 'private',
     apiChannel: 'instagram',
-    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'file'])
+    allowedBlockTypes: new Set(['text', 'image', 'video', 'audio', 'voice', 'file'])
   }
 }
 

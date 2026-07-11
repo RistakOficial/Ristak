@@ -117,6 +117,27 @@ test('publicar acepta mensaje privado por Instagram DM desde comentario de Insta
   assert.deepEqual(validateFlowForPublish(flow), [])
 })
 
+test('publicar acepta una nota de voz sola por mensaje privado', () => {
+  const privateReply = {
+    id: 'comment_voice_private',
+    type: 'channel-comment-public-reply',
+    position: { x: 100, y: 0 },
+    config: {
+      commentReplyTarget: 'messenger_private_message',
+      messageBlocks: [{ id: 'b1', type: 'voice', url: 'https://example.com/voice.ogg' }]
+    }
+  }
+  const flow = {
+    nodes: [
+      startNode([{ id: 't1', type: 'trigger-facebook-comment', config: {} }]),
+      privateReply
+    ],
+    edges: [edge('e1', 'start', 'comment_voice_private')]
+  }
+
+  assert.deepEqual(validateFlowForPublish(flow), [])
+})
+
 test('publicar rechaza respuesta de comentario que no coincide con la plataforma del disparador', () => {
   const reply = {
     id: 'comment_private',
