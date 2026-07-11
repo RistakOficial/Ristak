@@ -10,6 +10,7 @@ import {
 } from './nodeRegistry'
 import { getNodeOutputs, getStartTriggers, isStartNode, nodeHasInput } from './flowUtils'
 import { compiledToReadable } from './composer/MessageComposer'
+import { AutomationAudioPreview } from './AutomationAudioPreview'
 import styles from './AutomationEditor.module.css'
 
 /** Posiciones locales (en px del nodo) de los conectores, para dibujar flechas */
@@ -406,6 +407,28 @@ export const AutomationNodeCard: React.FC<AutomationNodeCardProps> = ({
                   {block.showTyping !== false ? 'Escribiendo' : 'Espera'} {Number(block.amount) || 0}{' '}
                   {block.unit === 'minutes' ? 'min' : 'seg'}
                 </button>
+              ) : (block.type === 'audio' || block.type === 'voice') && block.url ? (
+                <div
+                  key={block.id}
+                  className={cn(styles.chatBubble, styles.chatAudioBubble)}
+                  role="button"
+                  tabIndex={0}
+                  title="Editar el adjunto"
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onOpenConfig(node)
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' && event.key !== ' ') return
+                    event.preventDefault()
+                    event.stopPropagation()
+                    onOpenConfig(node)
+                  }}
+                >
+                  <AutomationAudioPreview src={block.url} compact />
+                  {block.caption && <span className={styles.chatAudioCaption}>{block.caption}</span>}
+                </div>
               ) : (
                 <button
                   key={block.id}

@@ -726,6 +726,12 @@ El editor no repone un bloque de texto vacío: al borrar el último bloque el fl
 queda vacío hasta que el usuario agregue explícitamente texto, imagen, video,
 audio, nota de voz, archivo o retraso; esta regla aplica igual a WhatsApp,
 Messenger e Instagram.
+Cuando un bloque de audio o nota de voz ya tiene archivo, su tarjeta dentro del
+lienzo muestra un reproductor compacto, nunca la URL técnica del CDN. Ese
+reproductor y el de la configuración usan la misma instancia de reproducción por
+archivo: pausar, avanzar o reproducir desde cualquiera refleja el mismo estado en
+ambas vistas. Es un control propio basado en los tokens activos de Ristak, por lo
+que conserva el modo oscuro y no depende de los controles blancos del navegador.
 Las notas de voz de Automatizaciones pasan por la misma preparación del chat
 directo: WhatsApp API recibe un OGG real con códec Opus y la marca de voz; el
 transporte QR/Baileys usa además `ptt=true`. Messenger e Instagram no exponen un

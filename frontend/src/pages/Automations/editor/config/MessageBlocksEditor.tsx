@@ -39,6 +39,7 @@ import automationsService from '@/services/automationsService'
 import { MessageComposer } from '../composer/MessageComposer'
 import { CatalogSelect, NumberTextInput, TextInput, Toggle } from './configPrimitives'
 import { WhatsAppTemplatePreview } from './WhatsAppTemplatePreview'
+import { AutomationAudioPreview } from '../AutomationAudioPreview'
 import styles from '../AutomationEditor.module.css'
 
 /**
@@ -508,7 +509,7 @@ export const MessageBlocksEditor: React.FC<MessageBlocksEditorProps> = ({
               <video src={block.url} controls className={styles.mediaPreviewImage} />
             )}
             {block.url && isAudioBlock && (
-              <audio src={block.url} controls className={styles.mediaPreviewAudio} />
+              <AutomationAudioPreview src={block.url} />
             )}
             {block.url && block.type === 'file' && (
               <a href={block.url} target="_blank" rel="noreferrer" className={styles.mediaPreviewFile}>
